@@ -1,6 +1,34 @@
+.iml
+*injectXServer.js
+*spider.js
+com.guazi*
+com.ganji*
+*.python-version
+*/xinit/*.dex
+*pydevproject
+.DS_Store
+log
+.*source/.*
+com.example.myapplication/
+__handlers__/
+build/
 __pycache__/
+__pycache__
 *.pyc
 *.bak
+*.jar
+.idea/
+.classpath
+.project
+.settings/
+target/
+logs/
+data/doc/
+data/test/
+.vscode/
+com.*
+cn.com.*
+qidian/scripts/output/*
 
 # smart-fund-server 运行时/敏感文件
 smart-fund-server/server.log

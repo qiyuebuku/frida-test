@@ -1,0 +1,6 @@
+id=yyhook_zygisk
+name=YYHook Zygisk
+version=v0.1
+versionCode=1
+author=yuyang
+description=Zygisk module for YanYan hook

@@ -1,0 +1,6 @@
+id=qdhook_zygisk
+name=QDHook Zygisk
+version=v0.1
+versionCode=1
+author=yuyang
+description=Zygisk module for QDReader hook (detection test)

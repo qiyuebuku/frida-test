@@ -1,0 +1,503 @@
+#!/usr/bin/env python3
+"""
+起点读书自动化探测脚本
+用于配合 Hook 代码发现关键调用链
+"""
+import subprocess
+import time
+import os
+import socket
+import json
+import xml.etree.ElementTree as ET
+from typing import Optional, Tuple, List, Dict
+
+# ADB 配置
+ADB = "/mnt/d/123pan/Downloads/一加Ace6/adb命令行/adb.exe -s 3B15BJ00GZL00000"
+PACKAGE = "com.qidian.QDReader"
+TAG = "QDHook"
+PROBE_TAG = "QDProbe"
+CRYPTO_TAG = "QDCrypto"
+
+
+def run_adb(args: str, timeout: int = 30) -> str:
+    """执行 ADB 命令"""
+    cmd = f"{ADB} {args}"
+    try:
+        result = subprocess.run(cmd, shell=True, capture_output=True, text=True, timeout=timeout)
+        return result.stdout + result.stderr
+    except subprocess.TimeoutExpired:
+        return "[TIMEOUT]"
+    except Exception as e:
+        return f"[ERROR] {e}"
+
+
+def screenshot(output_path: str = "/tmp/qd_screen.png") -> str:
+    """截图"""
+    os.system(f'{ADB} exec-out screencap -p > {output_path}')
+    return output_path
+
+
+def tap(x: int, y: int, delay: float = 0.5):
+    """点击指定坐标"""
+    run_adb(f'shell input tap {x} {y}')
+    time.sleep(delay)
+
+
+def swipe(x1: int, y1: int, x2: int, y2: int, duration: int = 300, delay: float = 0.5):
+    """滑动"""
+    run_adb(f'shell input swipe {x1} {y1} {x2} {y2} {duration}')
+    time.sleep(delay)
+
+
+def input_text(text: str):
+    """输入文字（需要 ADBKeyboard 或使用剪贴板）"""
+    # 简单处理：用 adb shell input text 处理英文
+    # 中文需要用 ADBKeyboard 或 broadcast 方式
+    run_adb(f'shell input text "{text}"')
+
+
+def clear_logs():
+    """清空日志"""
+    run_adb('logcat -c')
+
+
+def get_logs(tags: List[str] = None, lines: int = 200) -> str:
+    """获取日志"""
+    if tags is None:
+        tags = [TAG, PROBE_TAG, CRYPTO_TAG]
+    grep_pattern = "\\|".join(tags)
+    result = subprocess.run(
+        f'{ADB} logcat -d | grep -a "{grep_pattern}" | tail -{lines}',
+        shell=True, capture_output=True, text=True
+    )
+    return result.stdout
+
+
+def launch_app():
+    """启动 App"""
+    run_adb(f'shell am start {PACKAGE}/.ui.activity.SplashActivity')
+    time.sleep(5)
+
+
+def force_stop():
+    """强制停止"""
+    run_adb(f'shell am force-stop {PACKAGE}')
+    time.sleep(1)
+
+
+def get_ui_dump() -> Optional[ET.Element]:
+    """获取 UI 层级结构"""
+    run_adb('shell uiautomator dump /data/local/tmp/ui.xml')
+    run_adb('pull /data/local/tmp/ui.xml /tmp/ui.xml')
+    try:
+        return ET.parse('/tmp/ui.xml').getroot()
+    except:
+        return None
+
+
+def parse_bounds(bounds_str: str) -> Tuple[int, int]:
+    """解析 bounds 字符串，返回中心点坐标"""
+    # bounds="[x1,y1][x2,y2]"
+    import re
+    match = re.match(r'\[(\d+),(\d+)\]\[(\d+),(\d+)\]', bounds_str)
+    if match:
+        x1, y1, x2, y2 = map(int, match.groups())
+        return (x1 + x2) // 2, (y1 + y2) // 2
+    return 0, 0
+
+
+def find_element_by_text(root: ET.Element, text: str, partial: bool = True) -> Optional[Tuple[int, int]]:
+    """通过文本查找元素"""
+    for elem in root.iter('node'):
+        elem_text = elem.get('text', '')
+        if partial:
+            if text in elem_text:
+                bounds = elem.get('bounds', '')
+                return parse_bounds(bounds)
+        else:
+            if text == elem_text:
+                bounds = elem.get('bounds', '')
+                return parse_bounds(bounds)
+    return None
+
+
+def find_element_by_resource_id(root: ET.Element, resource_id: str) -> Optional[Tuple[int, int]]:
+    """通过 resource-id 查找元素"""
+    for elem in root.iter('node'):
+        rid = elem.get('resource-id', '')
+        if resource_id in rid:
+            bounds = elem.get('bounds', '')
+            return parse_bounds(bounds)
+    return None
+
+
+def find_element_by_class(root: ET.Element, class_name: str) -> List[Tuple[int, int]]:
+    """通过类名查找所有元素"""
+    results = []
+    for elem in root.iter('node'):
+        cls = elem.get('class', '')
+        if class_name in cls:
+            bounds = elem.get('bounds', '')
+            results.append(parse_bounds(bounds))
+    return results
+
+
+# ==================== RPC 客户端 ====================
+
+class RpcClient:
+    """通过 LocalSocket 与 Hook 通信"""
+
+    def __init__(self, socket_name: str = "qdhook_rpc"):
+        self.socket_name = socket_name
+        self.sock = None
+
+    def connect(self) -> bool:
+        """连接到 Hook 端"""
+        try:
+            # 先建立 ADB forward
+            run_adb(f'forward tcp:12345 localabstract:{self.socket_name}')
+            time.sleep(0.5)
+
+            self.sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            self.sock.connect(('127.0.0.1', 12345))
+            self.sock.settimeout(5.0)
+            return True
+        except Exception as e:
+            print(f"[RPC] Connect failed: {e}")
+            return False
+
+    def send_command(self, cmd: str, **kwargs) -> dict:
+        """发送命令"""
+        if not self.sock:
+            return {"success": False, "error": "Not connected"}
+
+        try:
+            request = {"cmd": cmd, **kwargs}
+            self.sock.sendall((json.dumps(request) + "\n").encode('utf-8'))
+
+            # 读取响应
+            response = b""
+            while True:
+                chunk = self.sock.recv(4096)
+                if not chunk:
+                    break
+                response += chunk
+                if b"\n" in response:
+                    break
+
+            return json.loads(response.decode('utf-8').strip())
+        except Exception as e:
+            return {"success": False, "error": str(e)}
+
+    def ping(self) -> dict:
+        return self.send_command("ping")
+
+    def get_recent_decrypted(self, limit: int = 10) -> dict:
+        return self.send_command("getRecentDecrypted", limit=limit)
+
+    def get_logs(self, limit: int = 100) -> dict:
+        return self.send_command("getLogs", limit=limit)
+
+    def get_status(self) -> dict:
+        return self.send_command("getStatus")
+
+    def close(self):
+        if self.sock:
+            try:
+                self.sock.close()
+            except:
+                pass
+        # 移除 forward
+        run_adb(f'forward --remove tcp:12345')
+
+
+# ==================== 自动化探测流程 ====================
+
+def explore_home():
+    """探测首页"""
+    print("=== 探测首页 ===")
+    clear_logs()
+    screenshot("/tmp/step_home.png")
+
+    root = get_ui_dump()
+    if root:
+        # 查找关键元素
+        print("UI 元素分析：")
+        search_pos = find_element_by_text(root, "搜索")
+        if search_pos:
+            print(f"  - 搜索框: {search_pos}")
+
+        bookshelf_pos = find_element_by_text(root, "书架")
+        if bookshelf_pos:
+            print(f"  - 书架: {bookshelf_pos}")
+
+        # 查找 Tab 栏
+        tabs = find_element_by_class(root, "TabLayout")
+        print(f"  - TabLayout: {tabs}")
+
+    logs = get_logs()
+    print(f"日志行数: {len(logs.splitlines())}")
+    return logs
+
+
+def explore_search_flow(keyword: str = "斗破苍穹"):
+    """探测搜索流程"""
+    print(f"=== 探测搜索流程 (keyword={keyword}) ===")
+    clear_logs()
+
+    # 1. 查找并点击搜索框
+    root = get_ui_dump()
+    if not root:
+        print("[ERROR] 无法获取 UI dump")
+        return
+
+    search_pos = find_element_by_text(root, "搜索")
+    if not search_pos:
+        search_pos = find_element_by_resource_id(root, "search")
+    if not search_pos:
+        print("[WARN] 未找到搜索框，使用默认坐标")
+        search_pos = (540, 120)
+
+    print(f"点击搜索框: {search_pos}")
+    tap(*search_pos)
+    time.sleep(1)
+    screenshot("/tmp/step_search_input.png")
+
+    # 2. 输入关键词（这里需要特殊处理中文）
+    # 先获取当前焦点的输入框，然后通过 broadcast 输入中文
+    run_adb(f'shell am broadcast -a ADB_INPUT_TEXT --es msg "{keyword}"')
+    time.sleep(1)
+
+    # 3. 点击搜索按钮
+    root = get_ui_dump()
+    if root:
+        search_btn = find_element_by_text(root, "搜索")
+        if search_btn:
+            tap(*search_btn)
+    else:
+        # 使用默认坐标
+        tap(1000, 120)
+
+    time.sleep(3)
+    screenshot("/tmp/step_search_results.png")
+
+    # 4. 收集日志
+    logs = get_logs()
+    with open("/tmp/search_flow_logs.txt", "w") as f:
+        f.write(logs)
+    print(f"日志已保存: /tmp/search_flow_logs.txt ({len(logs)} bytes)")
+
+    return logs
+
+
+def explore_book_detail():
+    """探测书籍详情页（从搜索结果点击进入）"""
+    print("=== 探测书籍详情页 ===")
+    clear_logs()
+
+    # 点击第一个搜索结果
+    root = get_ui_dump()
+    if root:
+        # 通常搜索结果是 RecyclerView 的子项
+        results = find_element_by_class(root, "RecyclerView")
+        if results:
+            # 点击第一个结果（大约在屏幕中间偏上）
+            tap(540, 400)
+        else:
+            tap(540, 400)
+    else:
+        tap(540, 400)
+
+    time.sleep(3)
+    screenshot("/tmp/step_book_detail.png")
+
+    logs = get_logs()
+    with open("/tmp/book_detail_logs.txt", "w") as f:
+        f.write(logs)
+    print(f"日志已保存: /tmp/book_detail_logs.txt ({len(logs)} bytes)")
+
+    return logs
+
+
+def explore_reading():
+    """探测阅读流程"""
+    print("=== 探测阅读流程 ===")
+    clear_logs()
+
+    # 查找"开始阅读"或"继续阅读"按钮
+    root = get_ui_dump()
+    read_btn = None
+    if root:
+        read_btn = find_element_by_text(root, "开始阅读")
+        if not read_btn:
+            read_btn = find_element_by_text(root, "继续阅读")
+        if not read_btn:
+            read_btn = find_element_by_text(root, "免费阅读")
+
+    if read_btn:
+        print(f"点击阅读按钮: {read_btn}")
+        tap(*read_btn)
+    else:
+        # 使用默认坐标（通常在屏幕底部）
+        print("使用默认坐标点击阅读按钮")
+        tap(540, 2200)
+
+    time.sleep(5)
+    screenshot("/tmp/step_reading.png")
+
+    # 翻页测试
+    print("翻页测试...")
+    for i in range(3):
+        tap(900, 1200)  # 点击右侧翻页
+        time.sleep(2)
+
+    logs = get_logs()
+    with open("/tmp/reading_logs.txt", "w") as f:
+        f.write(logs)
+    print(f"日志已保存: /tmp/reading_logs.txt ({len(logs)} bytes)")
+
+    return logs
+
+
+def analyze_logs(log_file: str):
+    """分析日志，提取调用链"""
+    print(f"\n=== 分析日志: {log_file} ===")
+
+    with open(log_file) as f:
+        lines = f.readlines()
+
+    # 统计事件类型
+    activity_events = []
+    fragment_events = []
+    method_events = []
+    http_events = []
+    crypto_events = []
+
+    for line in lines:
+        if "ACTIVITY_" in line:
+            activity_events.append(line.strip())
+        elif "FRAGMENT_" in line:
+            fragment_events.append(line.strip())
+        elif "METHOD_CALL" in line:
+            method_events.append(line.strip())
+        elif "→" in line or "←" in line:
+            http_events.append(line.strip())
+        elif "DECRYPT" in line:
+            crypto_events.append(line.strip())
+
+    print(f"\n事件统计:")
+    print(f"  Activity 事件: {len(activity_events)}")
+    print(f"  Fragment 事件: {len(fragment_events)}")
+    print(f"  方法调用: {len(method_events)}")
+    print(f"  HTTP 请求: {len(http_events)}")
+    print(f"  解密事件: {len(crypto_events)}")
+
+    # 打印关键事件
+    if activity_events:
+        print("\nActivity 流程:")
+        for e in activity_events[-10:]:
+            print(f"  {e}")
+
+    if method_events:
+        print("\n方法调用:")
+        for e in method_events[-20:]:
+            print(f"  {e}")
+
+    if crypto_events:
+        print("\n解密事件:")
+        for e in crypto_events[-5:]:
+            print(f"  {e}")
+
+
+def full_exploration():
+    """完整探测流程"""
+    print("=" * 60)
+    print("起点读书完整探测流程")
+    print("=" * 60)
+
+    # 1. 重启 App
+    print("\n[1/5] 重启 App...")
+    force_stop()
+    time.sleep(1)
+    launch_app()
+    time.sleep(5)
+
+    # 2. 探测首页
+    print("\n[2/5] 探测首页...")
+    explore_home()
+
+    # 3. 探测搜索
+    print("\n[3/5] 探测搜索流程...")
+    explore_search_flow("斗破苍穹")
+    time.sleep(2)
+
+    # 4. 探测书籍详情
+    print("\n[4/5] 探测书籍详情...")
+    explore_book_detail()
+    time.sleep(2)
+
+    # 5. 探测阅读
+    print("\n[5/5] 探测阅读流程...")
+    explore_reading()
+
+    # 分析所有日志
+    print("\n" + "=" * 60)
+    for log_file in ["/tmp/search_flow_logs.txt", "/tmp/book_detail_logs.txt", "/tmp/reading_logs.txt"]:
+        if os.path.exists(log_file):
+            analyze_logs(log_file)
+
+
+def test_rpc():
+    """测试 RPC 连接"""
+    print("=== 测试 RPC 连接 ===")
+
+    client = RpcClient()
+    if not client.connect():
+        print("[ERROR] 无法连接到 Hook")
+        return
+
+    # Ping
+    result = client.ping()
+    print(f"ping: {result}")
+
+    # 获取状态
+    result = client.get_status()
+    print(f"status: {json.dumps(result, indent=2)}")
+
+    # 获取最近解密内容
+    result = client.get_recent_decrypted(5)
+    print(f"recent decrypted: {json.dumps(result, indent=2, ensure_ascii=False)}")
+
+    # 获取探测日志
+    result = client.get_logs(20)
+    print(f"probe logs: {json.dumps(result, indent=2, ensure_ascii=False)}")
+
+    client.close()
+
+
+if __name__ == "__main__":
+    import sys
+
+    if len(sys.argv) < 2:
+        print("用法:")
+        print("  python auto_probe.py full      # 完整探测流程")
+        print("  python auto_probe.py search    # 只探测搜索")
+        print("  python auto_probe.py read      # 只探测阅读（需先手动进入书籍页）")
+        print("  python auto_probe.py rpc       # 测试 RPC 连接")
+        print("  python auto_probe.py analyze <log_file>  # 分析日志文件")
+        sys.exit(1)
+
+    cmd = sys.argv[1]
+
+    if cmd == "full":
+        full_exploration()
+    elif cmd == "search":
+        explore_search_flow()
+    elif cmd == "read":
+        explore_reading()
+    elif cmd == "rpc":
+        test_rpc()
+    elif cmd == "analyze" and len(sys.argv) >= 3:
+        analyze_logs(sys.argv[2])
+    else:
+        print(f"未知命令: {cmd}")

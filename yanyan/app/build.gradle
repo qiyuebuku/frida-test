@@ -1,0 +1,38 @@
+plugins {
+    id 'com.android.application'
+}
+
+android {
+    namespace 'com.yuyang.yyhook'
+    compileSdk 34
+
+    defaultConfig {
+        applicationId "com.yuyang.yyhook"
+        minSdk 26
+        targetSdk 34
+        versionCode 1
+        versionName "1.0"
+    }
+
+    buildTypes {
+        release {
+            minifyEnabled false
+        }
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+
+    // Don't package native libs - we'll handle them separately
+    packagingOptions {
+        jniLibs {
+            keepDebugSymbols += ['**/*.so']
+        }
+    }
+}
+
+dependencies {
+    implementation 'top.canyie.pine:core:0.3.0'
+}

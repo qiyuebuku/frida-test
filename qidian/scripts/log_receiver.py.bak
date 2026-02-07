@@ -1,0 +1,213 @@
+#!/usr/bin/env python3
+"""
+起点读书 Hook - 日志接收器
+
+运行在 Windows 宿主机上，接收来自 Android 端的 Hook 日志
+并按时间/类型分类保存到文件
+
+用法：
+    python log_receiver.py
+
+日志将保存到：./logs/YYYY-MM-DD/YYYY-MM-DD_HH-MM-SS_hook.log
+"""
+
+import socket
+import time
+import os
+import json
+from datetime import datetime
+from pathlib import Path
+
+# 配置
+HOST = '0.0.0.0'  # 监听所有网络接口
+PORT = 8889       # 日志转发器端口
+import sys
+LOG_DIR = sys.argv[1] if len(sys.argv) > 1 else './logs'  # 支持命令行指定日志目录
+
+# 创建日志目录
+Path(LOG_DIR).mkdir(parents=True, exist_ok=True)
+
+class LogReceiver:
+    def __init__(self, host, port):
+        self.host = host
+        self.port = port
+        self.running = False
+        self.client_count = 0
+        self.current_log_file = None
+        self.current_log_writer = None
+        self.last_rotation_check = time.time()
+        self.log_rotation_interval = 300  # 5 分钟轮转一次日志文件
+
+    def start(self):
+        """启动日志接收服务器"""
+        self.running = True
+
+        # 创建 TCP Socket
+        server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        server_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        server_socket.bind((self.host, self.port))
+        server_socket.listen(5)
+        server_socket.settimeout(1.0)  # 设置超时以便能够响应 Ctrl+C
+
+        print(f"[*] 日志接收器已启动: {self.host}:{self.port}")
+        print(f"[*] 日志保存目录: {os.path.abspath(LOG_DIR)}")
+        print(f"[*] 等待 Android 端连接...")
+        print("[*] 按 Ctrl+C 停止")
+
+        try:
+            while self.running:
+                try:
+                    # 等待客户端连接
+                    client_socket, address = server_socket.accept()
+                    self.client_count += 1
+
+                    client_id = f"Client-{self.client_count}"
+                    print(f"[+] {client_id} 已连接: {address[0]}:{address[1]}")
+
+                    # 为每个客户端创建一个处理线程
+                    import threading
+                    client_thread = threading.Thread(
+                        target=self.handle_client,
+                        args=(client_socket, address, client_id),
+                        daemon=True
+                    )
+                    client_thread.start()
+
+                except socket.timeout:
+                    continue
+                except KeyboardInterrupt:
+                    break
+                except Exception as e:
+                    print(f"[!] 接受连接错误: {e}")
+                    continue
+
+        except KeyboardInterrupt:
+            print("\n[*] 正在停止...")
+        finally:
+            self.running = False
+            server_socket.close()
+            if self.current_log_writer:
+                self.current_log_writer.close()
+            print("[*] 日志接收器已停止")
+
+    def handle_client(self, client_socket, address, client_id):
+        """处理客户端连接"""
+        try:
+            # 设置接收超时
+            client_socket.settimeout(60.0)
+
+            buffer = ""
+            while self.running:
+                try:
+                    # 接收数据
+                    data = client_socket.recv(4096).decode('utf-8', errors='ignore')
+
+                    if not data:
+                        break
+
+                    buffer += data
+
+                    # 按行处理
+                    while '\n' in buffer:
+                        line, buffer = buffer.split('\n', 1)
+
+                        if not line.strip():
+                            continue
+
+                        # 解析 JSON 日志
+                        try:
+                            log_entry = json.loads(line.strip())
+                            self.write_log(log_entry)
+
+                            # 打印到控制台（可选）
+                            self.print_log(log_entry)
+                        except json.JSONDecodeError:
+                            # 不是 JSON 格式，直接写入
+                            self.write_raw_log(line.strip())
+
+                    # 定期检查日志轮转
+                    self.check_log_rotation()
+
+                except socket.timeout:
+                    continue
+                except Exception as e:
+                    print(f"[!] {client_id} 处理错误: {e}")
+                    break
+
+        except Exception as e:
+            print(f"[!] {client_id} 连接异常: {e}")
+        finally:
+            client_socket.close()
+            print(f"[-] {client_id} 已断开")
+
+    def get_log_filename(self):
+        """获取当前日志文件名"""
+        now = datetime.now()
+        date_dir = now.strftime('%Y-%m-%d')
+        time_str = now.strftime('%Y-%m-%d_%H-%M-%S')
+
+        # 创建日期目录
+        dir_path = Path(LOG_DIR) / date_dir
+        dir_path.mkdir(parents=True, exist_ok=True)
+
+        # 返回日志文件路径
+        return dir_path / f"{time_str}_hook.log"
+
+    def check_log_rotation(self):
+        """检查是否需要轮转日志文件"""
+        now = time.time()
+        if now - self.last_rotation_check > self.log_rotation_interval:
+            # 轮转日志文件
+            if self.current_log_writer:
+                self.current_log_writer.close()
+                self.current_log_writer = None
+            self.last_rotation_check = now
+
+    def write_log(self, log_entry):
+        """写入日志到文件"""
+        if not self.current_log_writer:
+            log_file = self.get_log_filename()
+            self.current_log_writer = open(log_file, 'a', encoding='utf-8')
+
+        # 格式化日志
+        timestamp = log_entry.get('timestamp', 0)
+        dt = datetime.fromtimestamp(timestamp)
+        time_str = dt.strftime('%Y-%m-%d %H:%M:%S.%f')[:-3]
+
+        thread = log_entry.get('thread', '')
+        tag = log_entry.get('tag', '')
+        message = log_entry.get('message', '')
+
+        log_line = f"[{time_str}] [{thread}] [{tag}] {message}\n"
+
+        self.current_log_writer.write(log_line)
+        self.current_log_writer.flush()
+
+    def write_raw_log(self, line):
+        """写入原始日志（非 JSON 格式）"""
+        if not self.current_log_writer:
+            log_file = self.get_log_filename()
+            self.current_log_writer = open(log_file, 'a', encoding='utf-8')
+
+        self.current_log_writer.write(line + '\n')
+        self.current_log_writer.flush()
+
+    def print_log(self, log_entry):
+        """打印日志到控制台"""
+        timestamp = log_entry.get('timestamp', 0)
+        dt = datetime.fromtimestamp(timestamp)
+        time_str = dt.strftime('%H:%M:%S')
+
+        tag = log_entry.get('tag', '')
+        message = log_entry.get('message', '')
+
+        # 只打印重要的日志
+        if any(keyword in tag.lower() for keyword in ['search', 'hook', 'qdhook', 'qdcrypto']):
+            print(f"[{time_str}] [{tag}] {message[:100]}")
+
+def main():
+    receiver = LogReceiver(HOST, PORT)
+    receiver.start()
+
+if __name__ == "__main__":
+    main()

@@ -1,0 +1,6 @@
+id=xhshook_zygisk
+name=XHSHook Zygisk
+version=v0.1
+versionCode=1
+author=yuyang
+description=Zygisk module for Xiaohongshu (XHS) API analysis

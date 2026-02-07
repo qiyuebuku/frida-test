@@ -1,0 +1,677 @@
+#!/usr/bin/env python3
+"""
+起点读书 Hook - 日志分析工具
+
+功能：
+    1. 统计概览：按标签分类统计
+    2. 搜索入口分析：提取搜索相关的类和方法
+    3. 调用栈分析：分析搜索方法的调用链
+    4. 时间线分析：搜索操作的完整流程
+    5. 潜在入口推荐：根据调用频率和参数推荐入口
+
+用法：
+    python3 analyze_logs.py                         # 分析最新日志
+    python3 analyze_logs.py --log-dir ./logs        # 指定目录
+    python3 analyze_logs.py --filter search         # 过滤搜索日志
+    python3 analyze_logs.py --report                # 生成完整分析报告
+    python3 analyze_logs.py --report -o report.txt  # 报告输出到文件
+"""
+
+import os
+import json
+import re
+import sys
+import argparse
+from pathlib import Path
+from datetime import datetime
+from collections import Counter, defaultdict
+
+LOG_DIR = './logs'
+
+
+class LogEntry:
+    """结构化日志条目"""
+    def __init__(self, raw_line, line_num=0, file_name=''):
+        self.raw = raw_line
+        self.line_num = line_num
+        self.file_name = file_name
+        self.timestamp = 0
+        self.time_str = ''
+        self.thread = ''
+        self.tag = ''
+        self.message = ''
+        self.is_json = False
+
+        self._parse(raw_line)
+
+    def _parse(self, line):
+        # 尝试 JSON 解析
+        try:
+            data = json.loads(line)
+            self.timestamp = data.get('timestamp', 0)
+            self.thread = data.get('thread', '')
+            self.tag = data.get('tag', '')
+            self.message = data.get('message', '')
+            self.is_json = True
+            if self.timestamp:
+                dt = datetime.fromtimestamp(self.timestamp / 1000.0)
+                self.time_str = dt.strftime('%H:%M:%S.%f')[:-3]
+            return
+        except (json.JSONDecodeError, ValueError):
+            pass
+
+        # 尝试解析格式化日志: [YYYY-MM-DD HH:MM:SS.mmm] [thread] [tag] message
+        m = re.match(
+            r'\[(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\.\d+)\]\s*'
+            r'\[([^\]]*)\]\s*'
+            r'\[([^\]]*)\]\s*(.*)',
+            line, re.DOTALL
+        )
+        if m:
+            self.time_str = m.group(1).split(' ')[1] if ' ' in m.group(1) else m.group(1)
+            self.thread = m.group(2)
+            self.tag = m.group(3)
+            self.message = m.group(4)
+            try:
+                dt = datetime.strptime(m.group(1), '%Y-%m-%d %H:%M:%S.%f')
+                self.timestamp = int(dt.timestamp() * 1000)
+            except ValueError:
+                pass
+            return
+
+        # 无法解析，保留原始行
+        self.message = line
+
+    @property
+    def category(self):
+        """根据 message 前缀判断日志类别"""
+        msg = self.message
+        if msg.startswith('SEARCH_SETUP'):
+            return 'SEARCH_SETUP'
+        if msg.startswith('SEARCH_UI'):
+            return 'SEARCH_UI'
+        if msg.startswith('SEARCH_HTTP'):
+            return 'SEARCH_HTTP'
+        if msg.startswith('SEARCH_REPO_CALLSTACK'):
+            return 'SEARCH_REPO_CALLSTACK'
+        if msg.startswith('SEARCH_REPO_RESULT'):
+            return 'SEARCH_REPO_RESULT'
+        if msg.startswith('SEARCH_REPO'):
+            return 'SEARCH_REPO'
+        if msg.startswith('ACTIVITY_'):
+            return 'ACTIVITY'
+        if msg.startswith('FRAGMENT_'):
+            return 'FRAGMENT'
+        if msg.startswith('METHOD_CALL'):
+            return 'METHOD_CALL'
+        if msg.startswith('CALL |'):
+            return 'DISCOVERED_CALL'
+        if msg.startswith('VIEWMODEL'):
+            return 'VIEWMODEL'
+        if msg.startswith('REPOSITORY'):
+            return 'REPOSITORY'
+        if msg.startswith('NETWORK_CALL'):
+            return 'NETWORK_CALL'
+        if msg.startswith('DECRYPT'):
+            return 'DECRYPT'
+        return 'OTHER'
+
+    def is_search_related(self):
+        return self.category.startswith('SEARCH_')
+
+    def __repr__(self):
+        return f'[{self.time_str}] [{self.tag}] {self.message[:80]}'
+
+
+class LogAnalyzer:
+    def __init__(self, log_dir=LOG_DIR):
+        self.log_dir = Path(log_dir)
+        self.entries: list[LogEntry] = []
+
+    def load_logs(self, date=None):
+        """加载日志文件"""
+        if not self.log_dir.exists():
+            print(f"[!] 日志目录不存在: {self.log_dir}")
+            return False
+
+        # 找到日期目录
+        date_dirs = sorted(
+            [d for d in self.log_dir.iterdir() if d.is_dir()],
+            reverse=True
+        )
+
+        if not date_dirs:
+            # 也许 logs 目录下直接就是 .log 文件
+            log_files = sorted(self.log_dir.glob('*.log'))
+            if not log_files:
+                print(f"[!] 未找到日志文件: {self.log_dir}")
+                return False
+            target_dir = self.log_dir
+        else:
+            if date:
+                target_dir = self.log_dir / date
+                if not target_dir.exists():
+                    print(f"[!] 指定日期目录不存在: {target_dir}")
+                    return False
+            else:
+                target_dir = date_dirs[0]
+
+        print(f"[*] 加载日志目录: {target_dir}")
+
+        for log_file in sorted(target_dir.glob('*.log')):
+            print(f"    - {log_file.name}")
+            try:
+                with open(log_file, 'r', encoding='utf-8') as f:
+                    for i, line in enumerate(f, 1):
+                        line = line.strip()
+                        if not line:
+                            continue
+                        entry = LogEntry(line, line_num=i, file_name=log_file.name)
+                        self.entries.append(entry)
+            except Exception as e:
+                print(f"      读取失败: {e}")
+
+        print(f"[+] 加载了 {len(self.entries)} 条日志\n")
+        return len(self.entries) > 0
+
+    # ==================== 分析功能 ====================
+
+    def show_stats(self):
+        """统计概览"""
+        print("=" * 70)
+        print("  日志统计概览")
+        print("=" * 70)
+        print(f"总日志数: {len(self.entries)}")
+
+        # 按 tag 分类
+        tag_counter = Counter(e.tag for e in self.entries if e.tag)
+        print(f"\n按 Tag 分类 (共 {len(tag_counter)} 种):")
+        for tag, count in tag_counter.most_common(20):
+            print(f"  {count:6d}  {tag}")
+
+        # 按 category 分类
+        cat_counter = Counter(e.category for e in self.entries)
+        print(f"\n按类别分类:")
+        for cat, count in cat_counter.most_common():
+            marker = " ★" if cat.startswith("SEARCH") else ""
+            print(f"  {count:6d}  {cat}{marker}")
+
+        # 搜索相关统计
+        search_count = sum(1 for e in self.entries if e.is_search_related())
+        print(f"\n搜索相关日志: {search_count} / {len(self.entries)}")
+        print("=" * 70)
+
+    def analyze_search_entries(self):
+        """搜索入口分析：提取所有搜索相关的类和方法"""
+        print("\n" + "=" * 70)
+        print("  搜索入口分析")
+        print("=" * 70)
+
+        # 收集搜索 UI 调用
+        ui_calls = defaultdict(list)
+        for e in self.entries:
+            if e.category == 'SEARCH_UI':
+                m = re.search(r'SEARCH_UI \| ([^\|]+) \| (\w+)\(([^)]*)\)', e.message)
+                if m:
+                    cls = m.group(1).strip()
+                    method = m.group(2)
+                    args = m.group(3)
+                    ui_calls[f"{cls}.{method}"].append({
+                        'time': e.time_str,
+                        'args': args,
+                        'thread': e.thread
+                    })
+
+        if ui_calls:
+            print(f"\n搜索 UI 方法调用 ({len(ui_calls)} 个不同方法):")
+            for method_key, calls in sorted(ui_calls.items(), key=lambda x: -len(x[1])):
+                print(f"\n  [{len(calls):3d}x] {method_key}")
+                # 显示前 3 次调用的参数
+                for call in calls[:3]:
+                    args_display = call['args'][:60] if call['args'] else '(无参数)'
+                    print(f"         {call['time']}  args=({args_display})")
+        else:
+            print("\n  未发现搜索 UI 调用")
+
+        # 收集搜索 Repository 调用
+        repo_calls = defaultdict(list)
+        for e in self.entries:
+            if e.category == 'SEARCH_REPO':
+                m = re.search(r'SEARCH_REPO \| ([^\(]+)\(([^)]*)\)', e.message)
+                if m:
+                    method = m.group(1).strip()
+                    args = m.group(2)
+                    repo_calls[method].append({
+                        'time': e.time_str,
+                        'args': args,
+                        'thread': e.thread
+                    })
+
+        if repo_calls:
+            print(f"\n搜索 Repository 方法调用 ({len(repo_calls)} 个不同方法):")
+            for method_key, calls in sorted(repo_calls.items(), key=lambda x: -len(x[1])):
+                print(f"\n  [{len(calls):3d}x] {method_key}")
+                for call in calls[:3]:
+                    args_display = call['args'][:80] if call['args'] else '(无参数)'
+                    print(f"         {call['time']}  args=({args_display})")
+        else:
+            print("\n  未发现搜索 Repository 调用")
+
+        # 收集搜索 HTTP 请求
+        http_requests = []
+        for e in self.entries:
+            if e.category == 'SEARCH_HTTP' and 'URL:' in e.message:
+                m = re.search(r'URL: (.+)', e.message)
+                if m:
+                    http_requests.append({
+                        'time': e.time_str,
+                        'url': m.group(1).strip()
+                    })
+
+        if http_requests:
+            print(f"\n搜索 HTTP 请求 ({len(http_requests)} 个):")
+            for req in http_requests:
+                print(f"  {req['time']}  {req['url']}")
+        else:
+            print("\n  未捕获搜索 HTTP 请求")
+
+        # 搜索 HTTP 请求体
+        http_bodies = []
+        for e in self.entries:
+            if e.category == 'SEARCH_HTTP' and 'Body:' in e.message and 'Response' not in e.message:
+                m = re.search(r'Body: (.+)', e.message)
+                if m:
+                    http_bodies.append({
+                        'time': e.time_str,
+                        'body': m.group(1).strip()
+                    })
+
+        if http_bodies:
+            print(f"\n搜索请求体 ({len(http_bodies)} 个):")
+            for body in http_bodies:
+                print(f"  {body['time']}  {body['body'][:120]}")
+
+        # 搜索 HTTP 响应体
+        http_responses = []
+        for e in self.entries:
+            if e.category == 'SEARCH_HTTP' and 'ResponseBody:' in e.message:
+                m = re.search(r'ResponseBody: (.+)', e.message)
+                if m:
+                    http_responses.append({
+                        'time': e.time_str,
+                        'body': m.group(1).strip()
+                    })
+
+        if http_responses:
+            print(f"\n搜索响应体 ({len(http_responses)} 个):")
+            for resp in http_responses:
+                print(f"  {resp['time']}  {resp['body'][:120]}")
+
+        print("=" * 70)
+
+    def analyze_call_stacks(self):
+        """调用栈分析：找到搜索方法的调用链顶层入口"""
+        print("\n" + "=" * 70)
+        print("  调用栈分析")
+        print("=" * 70)
+
+        call_stacks = []
+        for e in self.entries:
+            if e.category == 'SEARCH_REPO_CALLSTACK' or \
+               (e.category == 'SEARCH_HTTP' and 'CallStack:' in e.message):
+                call_stacks.append(e)
+
+        if not call_stacks:
+            print("\n  未发现搜索调用栈日志")
+            print("  提示：需要先在 App 中触发一次搜索操作")
+            print("=" * 70)
+            return
+
+        print(f"\n共捕获 {len(call_stacks)} 条调用栈\n")
+
+        # 分析每个调用栈，提取关键帧
+        top_callers = Counter()  # 统计顶层调用者
+        qidian_callers = Counter()  # 统计起点 App 内的调用者
+
+        for entry in call_stacks:
+            # 提取方法名
+            header_match = re.match(r'SEARCH_\w+ \| ([^\n]+)', entry.message)
+            method_name = header_match.group(1) if header_match else '?'
+
+            # 解析栈帧
+            frames = re.findall(r'at ([^\n]+)', entry.message)
+            qidian_frames = [
+                f for f in frames
+                if 'com.qidian' in f
+                and 'MainHook' not in f
+                and 'yuyang' not in f
+            ]
+
+            if qidian_frames:
+                # 最顶层的起点代码调用者（栈底方向）
+                top_frame = qidian_frames[-1]
+                top_callers[top_frame] += 1
+
+                # 所有起点代码调用者
+                for frame in qidian_frames:
+                    qidian_callers[frame] += 1
+
+            # 打印调用栈摘要
+            print(f"  [{entry.time_str}] {method_name}")
+            for f in qidian_frames[:8]:
+                print(f"    → {f}")
+            if len(qidian_frames) > 8:
+                print(f"    ... (还有 {len(qidian_frames) - 8} 帧)")
+            print()
+
+        # 打印顶层调用者排名
+        if top_callers:
+            print(f"\n顶层调用者排名（可能的搜索触发点）:")
+            for caller, count in top_callers.most_common(10):
+                print(f"  [{count:3d}x] {caller}")
+
+        # 打印高频出现的起点代码位置
+        if qidian_callers:
+            print(f"\n高频出现的代码位置（可能的搜索入口）:")
+            for caller, count in qidian_callers.most_common(15):
+                print(f"  [{count:3d}x] {caller}")
+
+        print("=" * 70)
+
+    def analyze_timeline(self):
+        """时间线分析：搜索操作的完整流程"""
+        print("\n" + "=" * 70)
+        print("  搜索操作时间线")
+        print("=" * 70)
+
+        search_entries = [e for e in self.entries if e.is_search_related()]
+
+        if not search_entries:
+            print("\n  未发现搜索相关日志")
+            print("=" * 70)
+            return
+
+        print(f"\n共 {len(search_entries)} 条搜索日志\n")
+
+        # 按时间排序
+        search_entries.sort(key=lambda e: e.timestamp if e.timestamp else 0)
+
+        # 识别搜索会话（相邻日志间隔 > 5秒视为新会话）
+        sessions = []
+        current_session = []
+        last_ts = 0
+
+        for entry in search_entries:
+            ts = entry.timestamp or 0
+            if ts and last_ts and (ts - last_ts) > 5000:
+                if current_session:
+                    sessions.append(current_session)
+                current_session = []
+            current_session.append(entry)
+            last_ts = ts
+
+        if current_session:
+            sessions.append(current_session)
+
+        print(f"识别出 {len(sessions)} 个搜索会话\n")
+
+        for i, session in enumerate(sessions):
+            duration = 0
+            if len(session) >= 2 and session[0].timestamp and session[-1].timestamp:
+                duration = session[-1].timestamp - session[0].timestamp
+
+            print(f"--- 会话 {i + 1} ({len(session)} 条日志, {duration}ms) ---")
+
+            for entry in session:
+                cat = entry.category
+                msg = entry.message
+
+                # 简化显示
+                if cat == 'SEARCH_REPO_CALLSTACK':
+                    # 只显示第一行
+                    first_line = msg.split('\n')[0]
+                    print(f"  {entry.time_str}  [{cat:25s}] {first_line}")
+                else:
+                    display_msg = msg[:100]
+                    if len(msg) > 100:
+                        display_msg += '...'
+                    print(f"  {entry.time_str}  [{cat:25s}] {display_msg}")
+
+            print()
+
+        print("=" * 70)
+
+    def recommend_search_entries(self):
+        """潜在入口推荐：综合分析推荐可能的搜索入口方法"""
+        print("\n" + "=" * 70)
+        print("  潜在搜索入口推荐")
+        print("=" * 70)
+
+        candidates = []
+
+        # 1. 从 SEARCH_REPO 中提取候选
+        for e in self.entries:
+            if e.category == 'SEARCH_REPO':
+                m = re.search(r'SEARCH_REPO \| ([^\(]+)\(([^)]*)\)', e.message)
+                if m:
+                    method = m.group(1).strip()
+                    args = m.group(2)
+                    candidates.append({
+                        'source': 'SEARCH_REPO',
+                        'method': method,
+                        'args': args,
+                        'time': e.time_str,
+                        'has_string_arg': 'String=' in args,
+                        'has_keyword_arg': any(
+                            kw in args.lower()
+                            for kw in ['keyword', 'query', 'search', 'key']
+                        )
+                    })
+
+        # 2. 从 SEARCH_UI 中提取候选
+        for e in self.entries:
+            if e.category == 'SEARCH_UI':
+                m = re.search(r'SEARCH_UI \| ([^\|]+) \| (\w+)\(([^)]*)\)', e.message)
+                if m:
+                    cls = m.group(1).strip()
+                    method = m.group(2)
+                    args = m.group(3)
+                    method_lower = method.lower()
+                    if any(kw in method_lower for kw in ['search', 'query', 'submit', 'request']):
+                        candidates.append({
+                            'source': 'SEARCH_UI',
+                            'method': f'{cls}.{method}',
+                            'args': args,
+                            'time': e.time_str,
+                            'has_string_arg': bool(args and '"' in args),
+                            'has_keyword_arg': True
+                        })
+
+        # 3. 从 SEARCH_HTTP 中提取 API 端点
+        for e in self.entries:
+            if e.category == 'SEARCH_HTTP' and 'URL:' in e.message:
+                m = re.search(r'URL: (.+)', e.message)
+                if m:
+                    candidates.append({
+                        'source': 'SEARCH_HTTP',
+                        'method': 'HTTP ' + m.group(1).strip(),
+                        'args': '',
+                        'time': e.time_str,
+                        'has_string_arg': False,
+                        'has_keyword_arg': False
+                    })
+
+        # 4. 从动态发现的类中找 search 相关方法
+        for e in self.entries:
+            if e.category in ('DISCOVERED_CALL', 'METHOD_CALL', 'VIEWMODEL'):
+                msg_lower = e.message.lower()
+                if 'search' in msg_lower or 'query' in msg_lower:
+                    candidates.append({
+                        'source': e.category,
+                        'method': e.message.split('|')[1].strip() if '|' in e.message else e.message[:80],
+                        'args': '',
+                        'time': e.time_str,
+                        'has_string_arg': '"' in e.message,
+                        'has_keyword_arg': True
+                    })
+
+        if not candidates:
+            print("\n  未发现候选搜索入口")
+            print("  提示：")
+            print("  1. 确认 Hook 模块已正确安装")
+            print("  2. 在 App 中手动执行一次搜索操作")
+            print("  3. 重新运行分析")
+            print("=" * 70)
+            return
+
+        # 去重并按优先级排序
+        seen = set()
+        unique_candidates = []
+        for c in candidates:
+            key = c['method']
+            if key not in seen:
+                seen.add(key)
+                unique_candidates.append(c)
+
+        # 评分
+        for c in unique_candidates:
+            score = 0
+            if c['source'] == 'SEARCH_REPO':
+                score += 3
+            elif c['source'] == 'SEARCH_UI':
+                score += 2
+            elif c['source'] == 'SEARCH_HTTP':
+                score += 4  # HTTP 端点最直接
+            else:
+                score += 1
+
+            if c['has_string_arg']:
+                score += 2  # 有字符串参数可能是关键词
+            if c['has_keyword_arg']:
+                score += 1
+            c['score'] = score
+
+        unique_candidates.sort(key=lambda x: -x['score'])
+
+        print(f"\n共发现 {len(unique_candidates)} 个候选搜索入口:\n")
+
+        for i, c in enumerate(unique_candidates[:20], 1):
+            stars = '*' * c['score']
+            print(f"  {i:2d}. [{c['source']:20s}] [{stars:8s}] {c['method']}")
+            if c['args']:
+                print(f"      参数: {c['args'][:80]}")
+            print(f"      首次出现: {c['time']}")
+            print()
+
+        # 最终推荐
+        top = unique_candidates[0] if unique_candidates else None
+        if top:
+            print(f"\n  >>> 最佳推荐: {top['method']}")
+            print(f"  >>> 来源: {top['source']}, 评分: {top['score']}")
+
+        print("=" * 70)
+
+    def filter_logs(self, keyword):
+        """按关键词过滤日志"""
+        keyword_lower = keyword.lower()
+        filtered = [
+            e for e in self.entries
+            if keyword_lower in e.message.lower()
+            or keyword_lower in e.tag.lower()
+            or keyword_lower in e.category.lower()
+        ]
+
+        print(f"\n过滤结果: '{keyword}' ({len(filtered)} / {len(self.entries)} 条)\n")
+        for entry in filtered:
+            msg = entry.message[:120]
+            if len(entry.message) > 120:
+                msg += '...'
+            print(f"  [{entry.time_str}] [{entry.tag}] {msg}")
+
+        return filtered
+
+    def generate_report(self, output_file=None):
+        """生成完整分析报告"""
+        import io
+
+        # 如果要输出到文件，重定向 stdout
+        old_stdout = sys.stdout
+        if output_file:
+            sys.stdout = io.StringIO()
+
+        print("=" * 70)
+        print("  起点读书搜索 Hook - 日志分析报告")
+        print(f"  生成时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+        print(f"  日志数量: {len(self.entries)}")
+        print("=" * 70)
+
+        self.show_stats()
+        self.analyze_search_entries()
+        self.analyze_call_stacks()
+        self.analyze_timeline()
+        self.recommend_search_entries()
+
+        if output_file:
+            content = sys.stdout.getvalue()
+            sys.stdout = old_stdout
+
+            with open(output_file, 'w', encoding='utf-8') as f:
+                f.write(content)
+            print(f"[+] 报告已保存到: {output_file}")
+            # 同时打印到控制台
+            print(content)
+
+
+def main():
+    parser = argparse.ArgumentParser(description='起点读书 Hook 日志分析工具')
+    parser.add_argument('--log-dir', default=LOG_DIR, help='日志目录路径')
+    parser.add_argument('--date', default=None, help='指定分析日期 (YYYY-MM-DD)')
+    parser.add_argument('--filter', default=None, help='按关键词过滤日志')
+    parser.add_argument('--report', action='store_true', help='生成完整分析报告')
+    parser.add_argument('-o', '--output', default=None, help='报告输出文件路径')
+    parser.add_argument('--stats', action='store_true', help='只显示统计概览')
+    parser.add_argument('--search', action='store_true', help='只分析搜索入口')
+    parser.add_argument('--stacks', action='store_true', help='只分析调用栈')
+    parser.add_argument('--timeline', action='store_true', help='只显示时间线')
+    parser.add_argument('--recommend', action='store_true', help='只显示入口推荐')
+    args = parser.parse_args()
+
+    analyzer = LogAnalyzer(args.log_dir)
+    if not analyzer.load_logs(args.date):
+        sys.exit(1)
+
+    # 如果指定了过滤关键词
+    if args.filter:
+        analyzer.filter_logs(args.filter)
+        return
+
+    # 如果生成完整报告
+    if args.report:
+        analyzer.generate_report(args.output)
+        return
+
+    # 根据参数执行特定分析
+    any_specific = args.stats or args.search or args.stacks or args.timeline or args.recommend
+
+    if not any_specific:
+        # 默认：显示所有分析
+        analyzer.show_stats()
+        analyzer.analyze_search_entries()
+        analyzer.analyze_call_stacks()
+        analyzer.analyze_timeline()
+        analyzer.recommend_search_entries()
+    else:
+        if args.stats:
+            analyzer.show_stats()
+        if args.search:
+            analyzer.analyze_search_entries()
+        if args.stacks:
+            analyzer.analyze_call_stacks()
+        if args.timeline:
+            analyzer.analyze_timeline()
+        if args.recommend:
+            analyzer.recommend_search_entries()
+
+
+if __name__ == "__main__":
+    main()

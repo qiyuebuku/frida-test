@@ -1,0 +1,478 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>[原创]某右APP分析第一弹：过检测-Android安全-看雪安全社区｜专业技术交流与安全研究论坛</title>
+    <style>
+        body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; max-width: 900px; margin: 0 auto; padding: 20px; line-height: 1.7; color: #333; }
+        pre { background: #f6f8fa; padding: 16px; overflow-x: auto; border-radius: 6px; }
+        code { background: #f0f0f0; padding: 2px 6px; border-radius: 4px; font-family: 'Fira Code', monospace; }
+        pre code { background: none; padding: 0; }
+        img { max-width: 100%; }
+        table { border-collapse: collapse; width: 100%; margin: 1em 0; }
+        th, td { border: 1px solid #ddd; padding: 10px; text-align: left; }
+        th { background: #f6f8fa; }
+        h1, h2, h3, h4 { color: #1a1a1a; margin-top: 1.5em; }
+        a { color: #0066cc; text-decoration: none; }
+        a:hover { text-decoration: underline; }
+        blockquote { border-left: 4px solid #ddd; margin: 1em 0; padding-left: 1em; color: #666; }
+        .source-info { background: #f6f8fa; padding: 10px 15px; border-radius: 6px; margin-bottom: 20px; font-size: 0.9em; color: #666; }
+    </style>
+</head>
+<body>
+    <div class="source-info">
+        <strong>来源:</strong> <a href="https://bbs.kanxue.com/thread-287922.htm">https://bbs.kanxue.com/thread-287922.htm</a><br>
+        <strong>采集时间:</strong> 2026-02-04 19:54:15
+    </div>
+    
+							<input type="hidden" id="content_show" value="1" style="">
+														
+							<h1 id="msg_header_h1_0"><span id="前言">前言</span></h1>
+<p>原本是想等分析完再一起发的，但是想了想检测部分还是单独发出来吧，这个APP的检测难度对我来说是相当大的(之前没有具体的分析过检测)，记录一下</p>
+<h1 id="msg_header_h1_1"><span id="分析">分析</span></h1>
+<p>首先正常附加frida，启动，退出，一气呵成<br> <img src="upload/attach/202508/1020078_5V289WX5896K5F5.webp" style="max-width: 100%; cursor: zoom-in;" referrerpolicy="no-referrer" alt="图片描述" class="div_message_boxShadow">
+<pre class="ocr-result"><code>Frida 14.2.18 -Aworld-class dynamic instrumentation toolkit
+1（-1
+Commands:
+/-/1-1
+help
+-&gt;Displaysthehelp system
+object?
+-&gt;Display information about&#x27;object
+exit/quit-&gt;Exit
+Moreinfo athttps://frida.re/docs/home/
+Spawned cn.xiaochuankeji.tieba.Resuming main thread!
+看雪
+[AoSP on blueline::cn.xiaochuankeji.tieba]-&gt;Process terminated
+[AosPonblueline::cn.xiaochuankeji.tieba]-&gt;</code></pre><br>hook 一下dlopen，打印一下加载的so，然后可以发现了一个很熟悉的so(上次研究到一半的某游戏盒也是这个)，libmsaoaidsec.so<br> <img src="upload/attach/202508/1020078_3K3RK6WTEZEZJBN.webp" style="max-width: 100%; cursor: zoom-in;" referrerpolicy="no-referrer" alt="图片描述" class="div_message_boxShadow">
+<pre class="ocr-result"><code>functionhook_dlopen（）：void{显示用法
+//Android8.8之后加载so通过android_dLopen_ext@数
+Var android_dlopen_ext : NativePointer = Module.findExportByName( moduleName: null, exportName &quot;android_dlopen_ext&quot;);
+10
+console.log(&quot;addr_android_dlopen_ext&quot;,android_dlopen_ext);
+11
+Interceptor.attach(android_dlopen_ext, callbacksOrProbe: {
+12
+onEnter:function(args : InvocationArguments ) :void {
+13
+var pathptr :NativePointer = args[0];
+if(pathptr!=null &amp;&amp; pathptr != undefined){
+15
+16
+console.log(&quot;android_dLopen_ext:&quot;,path);
+18
+19
+onLeave:function(retvel :InvocationReturnValue ) :void {
+20
+console.log(&quot;leave!&quot;);
+21
+H)
+23
+hook,dlopen0
+onEnter0
+终端
+本地
+本地（2）×
+本地（5）
+本地（3）x
+android_dlopen_ext:/data/app/cn.xiaochuankeji.tieba-KPdzys8RtTQghACl3zaiyQ==/Lib/arn/Libmarsxlog.so
+Leave!
+android_dlopen_ext:/data/app/cn.xiaochuankeji.tieba-KPdzys8RtTQghACl3zaiyQ==/Lib/arn/LibBugly-ext.so
+Leave!
+android_dlopen_ext:/data/app/cn.xiaochuankeji.tieba-KPdzys8RtTQghAcl3zaiyQ==/lib/arn/Libxcrash.so
+leave!
+android_dlopen_ext: /data/app/cn.xiaochuankeji.tieba-KPdzys8RtTQghACl3zaiyQ==/Lib/arn/Libmsaoaidsec.so
+Process terninated
+看雪
+[AoSP on blueline::cn.xiaochuankeji.tieba]-&gt;
+Thank you for using Frida!</code></pre><br>一开始以为很简单，毕竟已经有很多前辈研究过了，使用前辈的笔记代码过掉他就行了，【地址：https://bbs.kanxue.com/thread-285811.htm】，没想到，还是我太天真了，直接就运行报错，地址找不到？<br> <img src="upload/attach/202508/1020078_WW56349T49VVX75.webp" style="max-width: 100%; cursor: zoom-in;" referrerpolicy="no-referrer" alt="图片描述" class="div_message_boxShadow">
+<pre class="ocr-result"><code>Error:already replaced this function
+at value （frida/runtime/core.js:322)
+at onEnter（/hook2.js:47)
+Error: already replaced this function
+at value （frida/runtime/core.js:322)
+at onEnter（/hook2.js:47)
+hooked call_constructors
+Error: already replaced this function
+at value （frida/runtime/core.js:322)
+at onEnter （/hook2.js:47)
+hooked call_constructors
+Error: already replaced this function
+at value （frida/runtime/core.js:322)
+淼看雪
+at onEnter（/hook2.js:47)
+Process terminated</code></pre><br>咱们hook一下 create 进行打印看看调用的线程，这次线程出来了<br>address libmsaoaidsec.so 0x127f1<br>address libmsaoaidsec.so 0x11e1d<br>address libmsaoaidsec.so 0x19c09<br>咦，没想到这个so的地址居然变更了，没关系，咱们手动替换一下，运行，，但是五秒不到，还是直接闪退<br> <img src="upload/attach/202508/1020078_DU3Z5J64UUCRD3Q.webp" style="max-width: 100%; cursor: zoom-in;" referrerpolicy="no-referrer" alt="图片描述" class="div_message_boxShadow">
+<pre class="ocr-result"><code>Spawned
+cn.xiaochuankeji.tieba.Resuming
+mainthread:
+[A0SP on blueline::cn.xiaochuankeji.tieba]-&gt; android_dlopen_ext:/data/app/cn.xiaochuankeji.tieba-KPdzys8RtTQghACl3zaiyQ==/lib/arm/Libmsaoaidsec.so
+[pth_create]0xf2b1b081
+address libmsaoaidsec.so0x127f1
+address libmsaoaidsec.so 0x11e1d
+addresslibmsaoaidsec.so0x19c09
+Process terminated
+[AoSPonblueline::cn.xiaochuankeji.tieba]-&gt;</code></pre><br> <img src="upload/attach/202508/1020078_8PPBGR7XY25HGEH.webp" style="max-width: 100%; cursor: zoom-in;" referrerpolicy="no-referrer" alt="图片描述" class="div_message_boxShadow">
+<pre class="ocr-result"><code>Spawned`cn.xiaochuankeji.tieba&#x27;.Resuming main thread!
+[A0SP on blueline::cn.xiaochuankeji.tieba]-&gt;android_dlopen_ext:/data/app/cn.xiaochuankeji.tieba-KPdzys8RtTQghACl3zaiyQ==/lib/arm/libmsaoaidsec.so
+0xf5da4915
+hookedcall_constructors
+8x127f1：智换成功
+0x11e1d：替换成功
+0x19c09：管换成功
+Processterminated
+[AosPon blueline::cn.xiaochuankeji.tieba]-&gt;</code></pre><br>打开IDA分析一下，首先进去就感觉不对劲，地址居然是0x127F0,和打印出来的线程对不上，查了一下(另外两个也是一样)<br> <img src="upload/attach/202508/1020078_CWU85BDR22M3KJV.webp" style="max-width: 100%; cursor: zoom-in;" referrerpolicy="no-referrer" alt="图片描述" class="div_message_boxShadow">
+<pre class="ocr-result"><code>LOAD:000127F0;Attributes:noreturn
+L0AD:000127F0
+L0AD:000127F0
+；void
+fastcall
+noreturn
+sub_127F0(int)
+L0AD:000127F0
+sub_127F0
+;DATA XREF: sub_12AC0+1D2↓o
+L0AD:000127F0
+；sub_12AC0+1D4↓o
+L0AD:000127F0
+L0AD:000127F0
+var_1c
+-0x1C
+L0AD:000127F0
+var_18
+-0x18
+L0AD:000127F0
+L0AD:000127F0
+PUSH
+{R4-R7,LR}
+L0AD:000127F2
+SUB
+SP，SP，#OxC
+LOAD:000127F4
+MOVS
+R4,R0
+L0AD:000127F6
+LDR
+R5,=(s_- 0x127FC)
+L0AD:000127F8
+ADD
+R5，PC</code></pre><br> <img src="upload/attach/202508/1020078_ZHS6WESJSTJ2CXY.webp" style="max-width: 100%; cursor: zoom-in;" referrerpolicy="no-referrer" alt="图片描述" class="div_message_boxShadow">
+<pre class="ocr-result"><code>Q为什么差了一位？
+看雪
+首页 课程问答
+CTF
+社区
+招聘
+峰会
+发现
+社区关键词回车
+Q
+ARM处理器有两种指令模式：
+·ARM模式-指令长度4字节，功能强大但占空间
+·Thumb模式-指令长度2字节，节省空间但功能相对简单
+地址的&quot;标签&quot;机制
+ARM处理器用地址的最后一位来标记指令类型：
+地址最后一位=日→ARM指令模式
+地址最后一位=1→Thumb指令模式
+你的具体情况
+Frida显示：0x127f1
+（最后一位=1，意思是&quot;这里是Thumb指令&quot;)
+IDA显示：0X127F0
+(实际存储代码的位置)
+类比理解
+就像门牌号和门铃按钮：
+·0x127F0=房子的门牌号（实际位置）
+·0x127f1=门铃按钮位置（门牌号+1，告诉你这是特殊类型的房子）
+处理器的工作流程
+1.看到地址0x127f1
+2.&quot;哦，最后一位是1，这是Thumb代码&quot;
+3.去掉标志位：0x127f1→0x127Fθ
+4.跳专到日x127F0执行Thumb指令
+自总结
+这不是错误，而是ARM的设计特色！
+·0x127f1=带&quot;标签&quot;的地址（告诉处理器指令类型）
+·0x127F0=真正的代码存放位置
+就像你写信时，信封上写的地址可能比实际门牌号多个标记，但邮递员知道怎么处理！
+米
+凸
+52
+Retry</code></pre><br>看来貌似是我hook错了，全部减一位，然后<br> <img src="upload/attach/202508/1020078_7YRHYWB8QM4MM92.webp" style="max-width: 100%; cursor: zoom-in;" referrerpolicy="no-referrer" alt="图片描述" class="div_message_boxShadow">
+<pre class="ocr-result"><code>nooked call_constructors
+Error:unable to intercept function at 0xbf2d1e1c;please file abug
+at value （frida/runtime/core.js:322)
+atonEnter（/hook2.js:50)
+nooked call_constructors
+Error:alreadyreplaced this function
+at value（frida/runtime/core.js:322)
+at onEnter(/hook2.js:47)hookedcall_constructors
+nooked call_constructors
+Error:alreadyreplaced this function
+atvalue（frida/runtime/core.js:322)
+atonEnter(/hook2.js:47)
+榮看雪
+Error:alreadyreplaced this function</code></pre><br>一样报错，看来直接替换掉线程是有问题的了，那接下来我的思路就分为了两个<br>一：找找修改的frida或者模块以及其他的办法来绕过检测<br>二：直接硬刚，深入分析检查点进行处理<br>我首先选择的是绕过检测，毕竟之前都没有研究过，没有底，所以打算去网上找找看有没有什么过检测的办法</p>
+<h1 id="msg_header_h1_2"><span id="过检测">过检测</span></h1>
+<h2 id="msg_header_h2_0"><span id="绕过检测">绕过检测</span></h2>
+<h3 id="msg_header_h3_0"><span id="使用模块绕过">使用模块绕过</span></h3>
+<p>首先在b站找到了一个大佬发布的模块，看视频测试效果测试挺不错的，是能绕过大部分的frida检测，【地址：https://github.com/sucsand/sucsand】。<br>我个人按照步骤折腾了好久，两部手机都没有实现效果，不晓得啥原因，差点还折腾坏了一部手机，让我朋友测试是正常的(有点不稳定)，但是也是能够绕过的，各位有兴趣的可以试试。<br>PS：这个模块是作者发布在b站的，我感觉不错就放在这里了，如果对作者造成影响或者有什么不妥的话，请联系我进行删除<br> <img src="upload/attach/202508/1020078_ZZ2XWU4CXX5X6CF.webp" style="max-width: 100%; cursor: zoom-in;" referrerpolicy="no-referrer" alt="图片描述" class="div_message_boxShadow">
+<pre class="ocr-result"><code>Reportrepository
+ZygiskFridaGadget模块使用指南
+Releases
+一个基于Zygisk的Frida注入模块，绕过传统frida-server的检测方式，仅支持arm64
+v1.0.6
+Latest
+2 weeks ago
+Inject gadget.so into target app via Zygisk. Only supports arm64
+Packages
+功能简介
+No packages published
+本模块可通过注入gadget.so实现Frida脚本注入，避免frida-server进程被直接识别或检测。
+适用于已Root的Android设备，要求已启用Magisk或KermelSU的Zygisk环境。
+视频教程：点击观看
+微信公众号：https://mp.weixin.qq.com/s/GMfiT2SkX9kyeEPouDrFKg</code></pre></p>
+<h3 id="msg_header_h3_1"><span id="魔改frida绕过">魔改frida绕过</span></h3>
+<p>正在折腾上面的sucsand的时候我朋友给我发来了一个大佬魔改过的frida<br><a href="https://bbs.kanxue.com/thread-284739.htm">frida16.2.1 编译patch全过程</a><br>【地址：https://github.com/taisuii/rusda/?tab=readme-ov-file】<br>简直就是雪中送炭，测试 hook 上之后能够正常运行，成功绕过，但是一运行Java.perform()的代码就闪退，应该是有其他的检测点存在，不完美<br> <img src="upload/attach/202508/1020078_SH75GXDBAB43TTV.webp" style="max-width: 100%; cursor: zoom-in;" referrerpolicy="no-referrer" alt="图片描述" class="div_message_boxShadow">
+<pre class="ocr-result"><code>frida以后你用rusda吧，魔改的
+今天测试了，可以直接Frida量
+app</code></pre></p>
+<h3 id="msg_header_h3_2"><span id="魔改系统输出日志">魔改系统输出日志</span></h3>
+<p>frida都hook上了，但是java层还是没办法输出，有点不甘心，那么再深入，直接修改系统代码打印输出调用函数以及参数呢？<br>说干就干，折腾半天后(这块具体过程就不发了，有兴趣的可以自己网上找找相关的资料)我们直接看看结果，调用的函数以及传递的账密参数都能打印出来，但是不是每个人都能用这个办法的，还有没有其他的方案呢？有的，那就是<br> <img src="upload/attach/202508/1020078_PZV2TYKMDJGM8UK.webp" style="max-width: 100%; cursor: zoom-in;" referrerpolicy="no-referrer" alt="图片描述" class="div_message_boxShadow">
+<pre class="ocr-result"><code>()x&#x27;Oxn PTOA
+vo1d uko.k()
+=Java.lang.Integer Java,lang.Integer.valueOf(int)=[Regs]vreg0=0x0oooo002
+intJava.lang.tnteger.intvalue()
+=[8ega]vreg0=0x7oc3tpd8/3ava.lang.1ntegex
+void uko.k()
+cn.izuiyou.coroutine.zy/lowse.ciiava.lang.string,java.lang.string,inc)
+-Java.lang.Cbject java.util.HashMap-put(5ava.lang.Cbject,Java.lang.Cbject)
+cn.lzuiyou.coroutine.zyFlow se.t(java,lang.String,Java,lang.String,int)
+com,meituan.robust.PatchProxyiesult oom,leituan.robust.PatchProxy-proxy(java.lang.Objeot[],Java,lang.Cbject,oom,leituan.robust.ChangeQuickRedireot,bc
+cn.izuiyou.coroutine.2y7low se.5(java.lang.5tring,Java.lang.String,int)
+Java.lang.stringxd.a(iava.lang.5tring)
+cn.izuiyou.coroutine.Zyrloy se.t(java.lang.String,Java.lang.String,int)
+[Rega]vxeg0=0xl6f3b3e0/oxg-json.J50N0bject vregl=0xl6f3b4e0/1ava.lang.5tring&quot;phone*vreg2=0xl6f3a9b0/1ava.lang.5tring&quot;12345670901*
+cn.izuiyou.coroutine.zyrlow se.t(java,lang.String,Java,lang.String,int)=Java,lang.String xd.a(yava.lang.String)
+com,meituan.robust.PatchProxyReault con.meituan.robust.PatchProxy.proxy(java,lang.Object[],Java.lang.Object,con.meltuan.robust.ChangeQuickRedirect,boolean,int,Java.lang.Class[],Je
+3ava.1asg.Strieg vk7.1(2ava.1asg.Strieg)
+[Rega]vxeg0=0xl6f3b64o/iava.lang.0b5ect1]vregl=0x000ooo00vreg2=0x000ooo00vreg3=0x00ooooo1vreg4=ox0o0id166vreg5=ox16t3h650/iava.lang.Class1]vreg6=0x7095a2c)/java.1ang.Claas&lt;java.lang.5tring&gt;
+com.meituan.zobust.PatchPzoxyResult com.meituan.zcbust.FatchPxoxy-proxy(java.lang.Cbject[]. Java.lang.Cbject,con.meituan.zcbust.ChangeQuickRedirect, boolean, int, Java.lang.Class[]. Je
+Java.lang.String vt?.l(java,lang.String)
+-byte[] java.leng.String-getBytes()
+byte[]vk?.k(byte[1)
+byte[] vk7.x(byte[])=
+=con.meituan.robust.PatchFroxyResult com,meituan.robust.PatchPzoxy-proxy(java,lang.Object[l,Java,lang.Object,com,meituan.robust.ChangeQuickRedirect,boolean,1nt,Java.lang.Class[l,Java.lang.Class)
+void com,android.org.conscrypt.OpenSSiKessageDigeatJDK,&lt;init&gt;(long,int)
+Java.securiey-MessageDigest Sera.securiey.MessageDigest.getinstance(yava.leng.String)
+void com,android.org.conscrypt.OpenSslMessageDigestjDk.&lt;init&gt;(long,int)=long con.android,org.conscrypt.NativeCrypto.EVP_MD GiX_create ()=[Regs]
+void com.android.org.conserypt.NativeReftEVF_MD_ctx.&lt;init&gt;(lceg)
+byte[] vk?.k(byte[1)-byte[]java.security.HessageDigest.digest()=[Regs]vzego=0xl6f3b7b8 /java.security.MessageDigest&amp;Delegate
+java.1ang.5tringvk7.3(bytet1)
+java.lang.Stringvk7.3(byte1)
+com.meituan.zobust.PatchPxoxyReault ccm.meicuan.xcbust.PatchProxy.proxy(java.lang.CbjectE],Java.lang.Object,ccm.meituan.xcbust.ChangeQuickRedixect,boolean,int,Java.lang.CiasaE],Java.lang.C]
+voidjava.lang.Stringbailder.&lt;init&gt;(int)
+[Regs]vreg0=0xi6f3b820/3ava.1ang.Stringbu11dervregl=0x00000020</code></pre><br> <img src="upload/attach/202508/1020078_CZYRWBQYJQBGKVV.webp" style="max-width: 100%; cursor: zoom-in;" referrerpolicy="no-referrer" alt="图片描述" class="div_message_boxShadow">
+<pre class="ocr-result"><code>length : 958,006
+lines :3,190
+Ln : 257
+Col: 96
+Sel:00
+Unix (LF)</code></pre></p>
+<h2 id="msg_header_h2_1"><span id="分析检测点">分析检测点</span></h2>
+<p>只要定位到检查点然后过掉不就行了，先打开IDA，分析分析那三个线程干了什么<br>0x127f1：首先对字符串进行了一系列的解密，然后进入循环重复执行，下面的这些函数估计就是主力<br> <img src="upload/attach/202508/1020078_NWS6WPEAWDSP4NT.webp" style="max-width: 100%; cursor: zoom-in;" referrerpolicy="no-referrer" alt="图片描述" class="div_message_boxShadow">
+<pre class="ocr-result"><code>219
+++v41;
+220
+--v39;
+221
+++s_9;
+222
+++v40;
+223
+224
+while（v53!=1）；
+225
+226
+while（1)
+227
+228
+v42=sub_122BC();
+229
+v43=sub_123F0（v42）;
+230
+sub_124c0(v43);
+231
+sub_195B8(a1);
+232
+sleep(4u);
+233
+234
+00012A5E SUb 127F0:230 (12A5E)</code></pre><br>​0x11e1d：这个也是直接进入循环检测的线程，貌似是检测Native层的反调试检测<br> <img src="upload/attach/202508/1020078_6A648QR3WHZCTV2.webp" style="max-width: 100%; cursor: zoom-in;" referrerpolicy="no-referrer" alt="图片描述" class="div_message_boxShadow">
+<pre class="ocr-result"><code>void
+noreturn sub_11E1c()
+unsignedint n2000000_1;//r0
+useconds_tn2000000;//r4
+intv2;//r0
+n2000000_1=sub_81FC（）;
+8
+if（n2000000_1&lt;0x64）
+9
+n2000000=2000000;
+10
+else
+11
+n2000000 =n2000000_1;
+12
+while ( 1)
+13
+14
+v2=sub_117F0（）;
+15
+if （v2 ==-11
+v2&amp;&amp;1sub_11630（v2,v2+1)11sub_11CF8（）==777）
+16
+sub_BA20();
+17
+usleep(n2000000);
+18
+19</code></pre><br>0x19c09：这个貌似是一个验证什么东西的<br> <img src="upload/attach/202508/1020078_8DN47DVXAHGSDCN.webp" style="max-width: 100%; cursor: zoom-in;" referrerpolicy="no-referrer" alt="图片描述" class="div_message_boxShadow">
+<pre class="ocr-result"><code>int
+fastcall sub_19c08(int a1, int a2)
+234
+int v2;// r1
+unsigned int n0xD; // [sp+4h] [bp-24h]
+5
+6
+n0xD = sub_8070(-1104431950, a2, 1443051395);
+if（n0xD&amp;&amp; n0xD&lt;0xD&amp;&amp;!((int（*)(void))loc_EC7C)(）)
+00
+sub_1991C(0, v2, 1443051395);
+9
+return0;
+10</code></pre><br>那我们先把重点先放在前面两个线程身上，首先第一个线程<br>sub_122BC()：检测系统进程<br> <img src="upload/attach/202508/1020078_THVWAGH3ARZSJNK.webp" style="max-width: 100%; cursor: zoom-in;" referrerpolicy="no-referrer" alt="图片描述" class="div_message_boxShadow">
+<pre class="ocr-result"><code>步骤
+操作
+目的
+关键代码
+opendir(s.._.4)
+打开/proc目录
+遍历所有进程
+2
+readdirO循环
+读取目录项
+获取进程PID
+3
+跳过：和..
+过滤特殊目录
+strcmp(s1，&quot;.&quot;)
+4
+snprintf(s,0x200u, s__2， s1)
+构造路径
+生成/proc/PID/cmdline
+5
+openat（-100,S，0x80000,0)
+打开cmdline文件
+读取进程命令行
+6
+逐字节读取内容
+获取进程启动参数
+read（fd,buf，1u)
+7
+strstr(haystack, s_)
+关键检测
+搜索调试器特征字符串
+8
+exit(0)
+反调试触发
+发现调试器立即退出</code></pre><br>sub_123F0()：检测当前进程的文件<br> <img src="upload/attach/202508/1020078_M3HN25DVKNMZUBG.webp" style="max-width: 100%; cursor: zoom-in;" referrerpolicy="no-referrer" alt="图片描述" class="div_message_boxShadow">
+<pre class="ocr-result"><code>步骤
+代码
+功能
+检测原理
+opendir(s.__3)
+打开/proc/self/fd/
+获取当前进程所有文件描述符
+snprintf(path, 0x200u,&quot;/proc/self/fd/%s&quot;,...)
+构造FD路径
+生成具体的fd路径
+3
+lstat(path,(struct stat *)buf_)
+获取文件状态
+检查文件类型
+（v8&amp;0xF000)==0xA000
+关键判断
+检测是否为符号链接
+readlink(path,buf,0x200u)
+读取链接目标
+获取真实文件路径
+strstr (buf, s__1)
+字符串匹配
+检测可疑文件路径</code></pre><br>sub_124C0：内存映射区域检测<br> <img src="upload/attach/202508/1020078_KPWTGT59AMJ5URH.webp" style="max-width: 100%; cursor: zoom-in;" referrerpolicy="no-referrer" alt="图片描述" class="div_message_boxShadow">
+<pre class="ocr-result"><code>步骤
+代码片段
+功能
+检测目的
+fopen(s-_5,&quot;r&quot;)
+打开/proc/self/maps
+获取内存映射信息
+2
+sscanf(s_,&quot;%1x-%1x %s %1x %s %1d %s&quot;,...)
+解析maps格式
+提取地址、权限、路径
+3
+strstr(haystack, s__6)
+关键过滤
+检查特定库名
+strchr(s__1, 120)
+检查&#x27;x&#x27;权限
+确认可执行权限
+5
+strchr(s__1, 114)
+检查r权限
+确认可读权限</code></pre><br>sub_195B8：动态解密并执行shellcode来进行反调试检测<br> <img src="upload/attach/202508/1020078_E4G85ARYQ6HU3DM.webp" style="max-width: 100%; cursor: zoom-in;" referrerpolicy="no-referrer" alt="图片描述" class="div_message_boxShadow">
+<pre class="ocr-result"><code>步骤
+代码
+功能
+安全意图
+a1&amp;OxFFFFFFFE
+地址2字节对齐
+确保有效指针
+2
+*（_DW0RD *)（a1 &amp;0xFFFFFFFE)==-268371745
+魔数验证
+防止随意调用
+3
+魔数-268371745=0xF00DBAFF
+特殊标识
+激活条件</code></pre><br>可以看到直接一个检测比一个检测牛逼，当时第一反应是能不能nop掉这些，直接不运行呢，尝试了半天，还是打开APP就卡死，实在没办法（不晓得是我的代码有问题还是有其他检测），那再换一种思路，你这不是每隔几秒钟才循环检测一次吗？我把你的检测时间调大不就行了。<br>然后又折腾了半天，终于可以了，启动，触发检测，都正常，虽然有点小瑕疵，比如说退出附加控制台可能会卡住什么的，但是起码把检测过了<br> <img src="upload/attach/202508/1020078_PSBGGYUW6NC7AD4.webp" style="max-width: 100%; cursor: zoom-in;" referrerpolicy="no-referrer" alt="图片描述" class="div_message_boxShadow">
+<pre class="ocr-result"><code>paumeds
+cn.xiaocnuankejl.tieba
+[A0SPonblueline::cn.xiaochuankeji.tieba]-&gt;目标库基址：0xbd945000
+进行sleep函数Hook..
+SleepHook完成！检测延迟到1小时
+sleep
+检测：4秒-&gt;3600秒（1小时）
+测试Java.perform是否正常运行！请等待五秒钟
+[AosPonblueline::cn.xiaochuankeji.tieba]-&gt;</code></pre></p>
+<h1 id="msg_header_h1_3"><span id="总结">总结</span></h1>
+<p>直接分析之后逻辑基本上都能看得懂，并不是很难，重点是代码部分，我最初的想法是直接nop掉那几个具体的检测函数点，但是一直都有问题，或者说，根本没办法进行nop(不晓得我的代码是不是有问题)，然后又尝试nop掉sleep的，一样不行，后面只能转变思路调大检测线程的时间</p>
+<table border="0" cellpadding="0" cellspacing="0" class="syntaxhighlighter  python"><tbody><tr><td class="gutter"><div class="line number1 index0 alt2">1</div><div class="line number2 index1 alt1">2</div><div class="line number3 index2 alt2">3</div><div class="line number4 index3 alt1">4</div><div class="line number5 index4 alt2">5</div><div class="line number6 index5 alt1">6</div><div class="line number7 index6 alt2">7</div><div class="line number8 index7 alt1">8</div><div class="line number9 index8 alt2">9</div><div class="line number10 index9 alt1">10</div><div class="line number11 index10 alt2">11</div><div class="line number12 index11 alt1">12</div><div class="line number13 index12 alt2">13</div><div class="line number14 index13 alt1">14</div><div class="line number15 index14 alt2">15</div><div class="line number16 index15 alt1">16</div><div class="line number17 index16 alt2">17</div><div class="line number18 index17 alt1">18</div><div class="line number19 index18 alt2">19</div><div class="line number20 index19 alt1">20</div><div class="line number21 index20 alt2">21</div><div class="line number22 index21 alt1">22</div><div class="line number23 index22 alt2">23</div><div class="line number24 index23 alt1">24</div><div class="line number25 index24 alt2">25</div><div class="line number26 index25 alt1">26</div><div class="line number27 index26 alt2">27</div><div class="line number28 index27 alt1">28</div><div class="line number29 index28 alt2">29</div><div class="line number30 index29 alt1">30</div><div class="line number31 index30 alt2">31</div><div class="line number32 index31 alt1">32</div><div class="line number33 index32 alt2">33</div><div class="line number34 index33 alt1">34</div><div class="line number35 index34 alt2">35</div><div class="line number36 index35 alt1">36</div><div class="line number37 index36 alt2">37</div><div class="line number38 index37 alt1">38</div><div class="line number39 index38 alt2">39</div><div class="line number40 index39 alt1">40</div><div class="line number41 index40 alt2">41</div><div class="line number42 index41 alt1">42</div><div class="line number43 index42 alt2">43</div><div class="line number44 index43 alt1">44</div><div class="line number45 index44 alt2">45</div><div class="line number46 index45 alt1">46</div><div class="line number47 index46 alt2">47</div><div class="line number48 index47 alt1">48</div><div class="line number49 index48 alt2">49</div><div class="line number50 index49 alt1">50</div><div class="line number51 index50 alt2">51</div><div class="line number52 index51 alt1">52</div><div class="line number53 index52 alt2">53</div><div class="line number54 index53 alt1">54</div><div class="line number55 index54 alt2">55</div><div class="line number56 index55 alt1">56</div><div class="line number57 index56 alt2">57</div><div class="line number58 index57 alt1">58</div><div class="line number59 index58 alt2">59</div><div class="line number60 index59 alt1">60</div><div class="line number61 index60 alt2">61</div><div class="line number62 index61 alt1">62</div><div class="line number63 index62 alt2">63</div><div class="line number64 index63 alt1">64</div><div class="line number65 index64 alt2">65</div><div class="line number66 index65 alt1">66</div><div class="line number67 index66 alt2">67</div><div class="line number68 index67 alt1">68</div><div class="line number69 index68 alt2">69</div><div class="line number70 index69 alt1">70</div><div class="line number71 index70 alt2">71</div><div class="line number72 index71 alt1">72</div></td><td class="code"><div class="container"><div class="line number1 index0 alt2"><code class="python keyword">/</code><code class="python keyword">*</code><code class="python keyword">*</code></div><div class="line number2 index1 alt1"><code class="python spaces">&nbsp;</code><code class="python keyword">*</code> <code class="python plain">不修改指令的延迟方案 </code><code class="python keyword">-</code> <code class="python plain">Hook sleep函数</code></div><div class="line number3 index2 alt2"><code class="python spaces">&nbsp;</code><code class="python keyword">*</code><code class="python keyword">/</code></div><div class="line number4 index3 alt1"><code class="python plain">function hookSleepDelay() {</code></div><div class="line number5 index4 alt2"><code class="python spaces">&nbsp;&nbsp;&nbsp;&nbsp;</code><code class="python plain">let hasHooked </code><code class="python keyword">=</code> <code class="python plain">false;</code></div><div class="line number6 index5 alt1"><code class="python spaces">&nbsp;&nbsp;&nbsp;&nbsp;</code><code class="python plain">let moduleBase </code><code class="python keyword">=</code> <code class="python plain">null;</code></div><div class="line number7 index6 alt2">&nbsp;</div><div class="line number8 index7 alt1"><code class="python spaces">&nbsp;&nbsp;&nbsp;&nbsp;</code><code class="python keyword">/</code><code class="python keyword">/</code> <code class="python plain">监控目标库加载</code></div><div class="line number9 index8 alt2"><code class="python spaces">&nbsp;&nbsp;&nbsp;&nbsp;</code><code class="python plain">Interceptor.attach(Module.findExportByName(</code><code class="python string">"libc.so"</code><code class="python plain">, </code><code class="python string">"__system_property_get"</code><code class="python plain">), {</code></div><div class="line number10 index9 alt1"><code class="python spaces">&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;</code><code class="python plain">onEnter: function (args) {</code></div><div class="line number11 index10 alt2"><code class="python spaces">&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;</code><code class="python keyword">if</code> <code class="python plain">(hasHooked) </code><code class="python keyword">return</code><code class="python plain">;</code></div><div class="line number12 index11 alt1">&nbsp;</div><div class="line number13 index12 alt2"><code class="python spaces">&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;</code><code class="python plain">const module </code><code class="python keyword">=</code> <code class="python plain">Process.findModuleByName(</code><code class="python string">"libmsaoaidsec.so"</code><code class="python plain">);</code></div><div class="line number14 index13 alt1"><code class="python spaces">&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;</code><code class="python keyword">if</code> <code class="python plain">(!module) </code><code class="python keyword">return</code><code class="python plain">;</code></div><div class="line number15 index14 alt2">&nbsp;</div><div class="line number16 index15 alt1"><code class="python spaces">&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;</code><code class="python plain">const propName </code><code class="python keyword">=</code> <code class="python plain">args[</code><code class="python value">0</code><code class="python plain">].readCString();</code></div><div class="line number17 index16 alt2"><code class="python spaces">&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;</code><code class="python keyword">if</code> <code class="python plain">(propName &amp;&amp; propName.includes(</code><code class="python string">"ro.build.version.sdk"</code><code class="python plain">)) {</code></div><div class="line number18 index17 alt1"><code class="python spaces">&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;</code><code class="python plain">moduleBase </code><code class="python keyword">=</code> <code class="python plain">module.base;</code></div><div class="line number19 index18 alt2"><code class="python spaces">&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;</code><code class="python plain">console.log(`目标库基址: ${moduleBase}`);</code></div><div class="line number20 index19 alt1">&nbsp;</div><div class="line number21 index20 alt2"><code class="python spaces">&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;</code><code class="python keyword">/</code><code class="python keyword">/</code> <code class="python plain">Hook sleep函数实现延迟</code></div><div class="line number22 index21 alt1"><code class="python spaces">&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;</code><code class="python plain">hookSleepFunction();</code></div><div class="line number23 index22 alt2"><code class="python spaces">&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;</code><code class="python plain">hasHooked </code><code class="python keyword">=</code> <code class="python plain">true;</code></div><div class="line number24 index23 alt1"><code class="python spaces">&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;</code><code class="python plain">}</code></div><div class="line number25 index24 alt2"><code class="python spaces">&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;</code><code class="python plain">}</code></div><div class="line number26 index25 alt1"><code class="python spaces">&nbsp;&nbsp;&nbsp;&nbsp;</code><code class="python plain">});</code></div><div class="line number27 index26 alt2">&nbsp;</div><div class="line number28 index27 alt1"><code class="python spaces">&nbsp;&nbsp;&nbsp;&nbsp;</code><code class="python keyword">/</code><code class="python keyword">/</code> <code class="python plain">Hook sleep函数，针对反调试调用进行延长</code></div><div class="line number29 index28 alt2"><code class="python spaces">&nbsp;&nbsp;&nbsp;&nbsp;</code><code class="python plain">function hookSleepFunction() {</code></div><div class="line number30 index29 alt1"><code class="python spaces">&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;</code><code class="python plain">console.log(</code><code class="python string">"进行 sleep 函数Hook..."</code><code class="python plain">);</code></div><div class="line number31 index30 alt2">&nbsp;</div><div class="line number32 index31 alt1"><code class="python spaces">&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;</code><code class="python plain">const sleepPtr </code><code class="python keyword">=</code> <code class="python plain">Module.findExportByName(</code><code class="python string">"libc.so"</code><code class="python plain">, </code><code class="python string">"sleep"</code><code class="python plain">);</code></div><div class="line number33 index32 alt2">&nbsp;</div><div class="line number34 index33 alt1"><code class="python spaces">&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;</code><code class="python plain">Interceptor.replace(sleepPtr, new NativeCallback(function(seconds) {</code></div><div class="line number35 index34 alt2"><code class="python spaces">&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;</code><code class="python keyword">/</code><code class="python keyword">/</code> <code class="python plain">检查调用来源</code></div><div class="line number36 index35 alt1"><code class="python spaces">&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;</code><code class="python plain">const backtrace </code><code class="python keyword">=</code> <code class="python plain">Thread.backtrace(this.context, Backtracer.ACCURATE);</code></div><div class="line number37 index36 alt2">&nbsp;</div><div class="line number38 index37 alt1"><code class="python spaces">&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;</code><code class="python keyword">/</code><code class="python keyword">/</code> <code class="python plain">检查是否来自目标模块的反调试检测</code></div><div class="line number39 index38 alt2"><code class="python spaces">&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;</code><code class="python plain">let isFromAntiDebug </code><code class="python keyword">=</code> <code class="python plain">false;</code></div><div class="line number40 index39 alt1"><code class="python spaces">&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;</code><code class="python keyword">for</code> <code class="python plain">(let addr of backtrace) {</code></div><div class="line number41 index40 alt2"><code class="python spaces">&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;</code><code class="python keyword">if</code> <code class="python plain">(moduleBase &amp;&amp; addr.compare(moduleBase) &gt;</code><code class="python keyword">=</code> <code class="python value">0</code> <code class="python plain">&amp;&amp;</code></div><div class="line number42 index41 alt1"><code class="python spaces">&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;</code><code class="python plain">addr.compare(moduleBase.add(</code><code class="python value">0x100000</code><code class="python plain">)) &lt; </code><code class="python value">0</code><code class="python plain">) {</code></div><div class="line number43 index42 alt2"><code class="python spaces">&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;</code><code class="python plain">isFromAntiDebug </code><code class="python keyword">=</code> <code class="python plain">true;</code></div><div class="line number44 index43 alt1"><code class="python spaces">&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;</code><code class="python keyword">break</code><code class="python plain">;</code></div><div class="line number45 index44 alt2"><code class="python spaces">&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;</code><code class="python plain">}</code></div><div class="line number46 index45 alt1"><code class="python spaces">&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;</code><code class="python plain">}</code></div><div class="line number47 index46 alt2">&nbsp;</div><div class="line number48 index47 alt1"><code class="python spaces">&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;</code><code class="python keyword">if</code> <code class="python plain">(isFromAntiDebug &amp;&amp; seconds </code><code class="python keyword">=</code><code class="python keyword">=</code><code class="python keyword">=</code> <code class="python value">4</code><code class="python plain">) {</code></div><div class="line number49 index48 alt2"><code class="python spaces">&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;</code><code class="python plain">const extendedTime </code><code class="python keyword">=</code> <code class="python value">3600</code><code class="python plain">; </code><code class="python keyword">/</code><code class="python keyword">/</code> <code class="python value">1</code><code class="python plain">小时</code></div><div class="line number50 index49 alt1"><code class="python spaces">&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;</code><code class="python plain">console.log(`sleep 检测: ${seconds}秒 </code><code class="python keyword">-</code><code class="python plain">&gt; ${extendedTime}秒 (</code><code class="python value">1</code><code class="python plain">小时)`);</code></div><div class="line number51 index50 alt2"><code class="python spaces">&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;</code><code class="python keyword">/</code><code class="python keyword">/</code> <code class="python plain">调用原始sleep但用延长时间</code></div><div class="line number52 index51 alt1"><code class="python spaces">&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;</code><code class="python plain">const originalSleep </code><code class="python keyword">=</code> <code class="python plain">new NativeFunction(sleepPtr, </code><code class="python string">'uint'</code><code class="python plain">, [</code><code class="python string">'uint'</code><code class="python plain">]);</code></div><div class="line number53 index52 alt2"><code class="python spaces">&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;</code><code class="python keyword">return</code> <code class="python plain">originalSleep(extendedTime);</code></div><div class="line number54 index53 alt1"><code class="python spaces">&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;</code><code class="python plain">}</code></div><div class="line number55 index54 alt2"><code class="python spaces">&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;</code><code class="python keyword">/</code><code class="python keyword">/</code> <code class="python plain">其他正常sleep调用</code></div><div class="line number56 index55 alt1"><code class="python spaces">&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;</code><code class="python plain">const originalSleep </code><code class="python keyword">=</code> <code class="python plain">new NativeFunction(sleepPtr, </code><code class="python string">'uint'</code><code class="python plain">, [</code><code class="python string">'uint'</code><code class="python plain">]);</code></div><div class="line number57 index56 alt2"><code class="python spaces">&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;</code><code class="python keyword">return</code> <code class="python plain">originalSleep(seconds);</code></div><div class="line number58 index57 alt1">&nbsp;</div><div class="line number59 index58 alt2"><code class="python spaces">&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;</code><code class="python plain">}, </code><code class="python string">'uint'</code><code class="python plain">, [</code><code class="python string">'uint'</code><code class="python plain">]));</code></div><div class="line number60 index59 alt1">&nbsp;</div><div class="line number61 index60 alt2"><code class="python spaces">&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;</code><code class="python plain">console.log(</code><code class="python string">"Sleep Hook完成！检测延迟到1小时"</code><code class="python plain">);</code></div><div class="line number62 index61 alt1">&nbsp;</div><div class="line number63 index62 alt2"><code class="python spaces">&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;</code><code class="python keyword">/</code><code class="python keyword">/</code> <code class="python plain">测试</code></div><div class="line number64 index63 alt1"><code class="python spaces">&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;</code><code class="python plain">setTimeout(() </code><code class="python keyword">=</code><code class="python plain">&gt; {</code></div><div class="line number65 index64 alt2"><code class="python spaces">&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;</code><code class="python plain">Java.perform(() </code><code class="python keyword">=</code><code class="python plain">&gt; {</code></div><div class="line number66 index65 alt1"><code class="python spaces">&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;</code><code class="python plain">console.log(</code><code class="python string">"测试 Java.perform 是否正常运行！请等待五秒钟"</code><code class="python plain">);</code></div><div class="line number67 index66 alt2"><code class="python spaces">&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;</code><code class="python plain">});</code></div><div class="line number68 index67 alt1"><code class="python spaces">&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;</code><code class="python plain">}, </code><code class="python value">1000</code><code class="python plain">);</code></div><div class="line number69 index68 alt2"><code class="python spaces">&nbsp;&nbsp;&nbsp;&nbsp;</code><code class="python plain">}</code></div><div class="line number70 index69 alt1"><code class="python plain">}</code></div><div class="line number71 index70 alt2">&nbsp;</div><div class="line number72 index71 alt1"><code class="python plain">hookSleepDelay();</code></div></div></td></tr></tbody></table>
+<p>参考<br><a href="https://bbs.kanxue.com/thread-284816.htm">libmsaoaidsec.so反调试及算法逆向案例(爱库存) </a><br><a href="https://bbs.kanxue.com/thread-287058.htm">libmsaoaidsec.so 过检测 </a></p>							
+<br>
+<p><a class="bbs_thread" target="_blank" href="https://www.kanxue.com/book-section_list-220.htm">[培训]Windows内核深度攻防：从Hook技术到Rootkit实战！</a></p>
+
+
+
+<div class="my-3">
+		<a href="forum-161-1-117.htm" class="hidden-sm hidden-md small px-2 py-1 mr-2 " style="border-radius: 3px; background-color: #daf2ff; color: #0099ee;">#基础理论</a>
+		<a href="forum-161-1-118.htm" class="hidden-sm hidden-md small px-2 py-1 mr-2 " style="border-radius: 3px; background-color: #daf2ff; color: #0099ee;">#逆向分析</a>
+		<a href="forum-161-1-125.htm" class="hidden-sm hidden-md small px-2 py-1 mr-2 " style="border-radius: 3px; background-color: #daf2ff; color: #0099ee;">#HOOK注入</a>
+	</div>					
+
+														
+							
+							
+							
+
+													
+</body>
+</html>
