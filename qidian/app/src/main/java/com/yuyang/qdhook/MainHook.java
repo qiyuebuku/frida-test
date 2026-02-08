@@ -95,6 +95,10 @@ public class MainHook {
     private static volatile String searchBodyTemplate = null;
     private static volatile String lastSearchResponse = null;
 
+    // HTTP 请求节流：记录上次请求时间，防止请求过于密集导致 App 无响应
+    private static volatile long lastRequestTime = 0;
+    private static final long MIN_REQUEST_INTERVAL_MS = 30;  // 每个请求之间最少间隔 30ms
+
     // 保存最近一次 pf.cihai.search 调用捕获的密钥（String 参数）
     private static volatile String lastCapturedDecryptKey = null;
     // 保存 pf.cihai.search 解密方法的引用（hook 初始化时获取，避免 ClassLoader 问题）
@@ -2209,19 +2213,25 @@ public class MainHook {
             Class<?> bllVClass = bllVInstance.getClass();
             long bookIdLong = Long.parseLong(bookId);
 
-            // 查找 N 方法 (5个参数: long, ChapterItem, v, boolean, Object)
+            // 查找 N 方法 (支持 5 或 6 个参数版本)
+            // 5参数: long, ChapterItem, v, boolean, Object
+            // 6参数: long, ChapterItem, v, boolean, Object, boolean
             Method methodN = null;
+            int paramCount = 0;
             for (Method m : bllVClass.getDeclaredMethods()) {
-                if ("N".equals(m.getName()) && m.getParameterTypes().length == 5) {
+                int pc = m.getParameterTypes().length;
+                if ("N".equals(m.getName()) && (pc == 5 || pc == 6)) {
                     methodN = m;
+                    paramCount = pc;
                     break;
                 }
             }
             if (methodN == null) {
-                Log.i(TAG, "tryFetchViaBllVN: method N(5 params) not found");
+                Log.i(TAG, "tryFetchViaBllVN: method N(5 or 6 params) not found");
                 return null;
             }
             methodN.setAccessible(true);
+            Log.i(TAG, "tryFetchViaBllVN: found N method with " + paramCount + " parameters");
 
             // 获取或构造 ChapterItem
             Object chapterItem = chapterItems.get(chapterId);
@@ -2248,10 +2258,15 @@ public class MainHook {
                 Log.i(TAG, "tryFetchViaBllVN: using bllVInstance as v object");
             }
 
-            Log.i(TAG, "tryFetchViaBllVN: calling bll.v.N(" + bookId + ", ChapterItem, " + vObj.getClass().getSimpleName() + ", true, null)");
+            Log.i(TAG, "tryFetchViaBllVN: calling bll.v.N(" + bookId + ", ChapterItem, " + vObj.getClass().getSimpleName() + ", true, null" + (paramCount == 6 ? ", true" : "") + ")");
 
-            // 调用 N 方法
-            Object result = methodN.invoke(bllVInstance, bookIdLong, chapterItem, vObj, true, null);
+            // 调用 N 方法（根据参数数量传递正确数量的参数）
+            Object result;
+            if (paramCount == 6) {
+                result = methodN.invoke(bllVInstance, bookIdLong, chapterItem, vObj, true, null, true);
+            } else {
+                result = methodN.invoke(bllVInstance, bookIdLong, chapterItem, vObj, true, null);
+            }
             Log.i(TAG, "tryFetchViaBllVN: N returned " + (result != null ? result.getClass().getSimpleName() : "null"));
 
             // 如果返回 ChapterContentItem，直接提取内容
@@ -2607,10 +2622,15 @@ public class MainHook {
                 Method methodN = findMethod(bllVClass, "N");
                 if (methodN != null) {
                     Class<?>[] paramTypes = methodN.getParameterTypes();
-                    if (paramTypes.length == 5) {
+                    int paramCount = paramTypes.length;
+                    if (paramCount == 5 || paramCount == 6) {
                         methodN.setAccessible(true);
-                        Log.i(TAG, "Calling bll.v.N with saved vObject");
-                        result = methodN.invoke(bllVInstance, Long.parseLong(bookId), chapterItem, savedV, true, null);
+                        Log.i(TAG, "Calling bll.v.N with saved vObject (paramCount=" + paramCount + ")");
+                        if (paramCount == 6) {
+                            result = methodN.invoke(bllVInstance, Long.parseLong(bookId), chapterItem, savedV, true, null, true);
+                        } else {
+                            result = methodN.invoke(bllVInstance, Long.parseLong(bookId), chapterItem, savedV, true, null);
+                        }
                         methodNameUsed = "N(with saved v)";
                         Log.i(TAG, "bll.v.N returned: " + (result != null ? result.getClass().getName() : "null"));
                     }
@@ -4536,6 +4556,18 @@ public class MainHook {
      * 通用 GET 请求执行器（复用 savedOkHttpClient 带签名拦截器）
      */
     private static String executeGetRequest(String url) throws Exception {
+        // 请求节流：如果距离上次请求时间太短，等待一段时间
+        long now = System.currentTimeMillis();
+        long timeSinceLastRequest = now - lastRequestTime;
+        if (lastRequestTime > 0 && timeSinceLastRequest < MIN_REQUEST_INTERVAL_MS) {
+            long sleepTime = MIN_REQUEST_INTERVAL_MS - timeSinceLastRequest;
+            try {
+                Thread.sleep(sleepTime);
+            } catch (InterruptedException ie) {
+                Thread.currentThread().interrupt();
+            }
+        }
+
         if (savedOkHttpClient == null) {
             throw new IllegalStateException("OkHttpClient not saved yet");
         }
@@ -4567,6 +4599,9 @@ public class MainHook {
         if (responseBody != null) {
             bodyStr = (String) responseBody.getClass().getMethod("string").invoke(responseBody);
         }
+
+        // 更新上次请求时间（用于节流）
+        lastRequestTime = System.currentTimeMillis();
 
         if (code != 200) {
             throw new RuntimeException("HTTP " + code + ": " + bodyStr);

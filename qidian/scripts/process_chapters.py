@@ -2,19 +2,22 @@
 """
 起点读书章节数据处理工具
 
-支持两种模式：
+支持三种模式：
 1. json 清洗模式：将原始 JSON 清洗为结构化数据
 2. markdown 转换模式：将清洗后的 JSON 转换为 Markdown
+3. kb 知识库模式：输出纯正文 + 结构化评论到知识库目录
 
 使用示例：
     python process_chapters.py --mode json --input 原始目录 --output 清洗后目录
     python process_chapters.py --mode markdown --input 清洗后目录 --output markdown目录
     python process_chapters.py --mode markdown --min-agree 10  # 只保留点赞≥10的评论
+    python process_chapters.py --mode kb --min-agree 15  # 知识库模式
     python process_chapters.py --mode json --test  # 测试单个章节
 """
 import argparse
 import json
 import os
+import re
 import sys
 from pathlib import Path
 from datetime import datetime
@@ -362,6 +365,13 @@ def process_json_mode(input_dir: str, output_dir: str, test_mode: bool = False):
     stats = {"total": len(json_files), "processed": 0, "orig_size": 0, "out_size": 0}
 
     for json_file in json_files:
+        # _book_detail.json 不是章节文件，原样复制
+        if json_file.name == "_book_detail.json":
+            import shutil
+            shutil.copy2(json_file, output_path / json_file.name)
+            print(f"原样复制: {json_file.name}")
+            continue
+
         try:
             print(f"处理: {json_file.name}")
             cleaned = clean_chapter_to_json(json_file, output_path)
@@ -448,6 +458,251 @@ def process_markdown_mode(input_dir: str, output_dir: str, test_mode: bool = Fal
     print(f"输出目录: {output_path.absolute()}")
 
 
+# ==================== 知识库模式 ====================
+
+# 正文章节名正则：匹配 "第X章 标题"、"第X章标题"（无空格）、"第X 标题"（缺章字）、"X章 标题"（缺第字）
+CHAPTER_NAME_PATTERN = re.compile(
+    r'^第.+章[\s\S]|^第[\d一二三四五六七八九十百千]+\s|^[\d一二三四五六七八九十百千]+章[\s\S]'
+)
+
+
+def is_chapter_file(data: dict) -> bool:
+    """判断 cleaned JSON 是否为正文章节"""
+    name = data.get("chapterName", "")
+    return bool(CHAPTER_NAME_PATTERN.match(name))
+
+
+def extract_text(data: dict, min_agree: int = 15) -> str:
+    """从 cleaned JSON 提取纯正文 Markdown，有评论的段落标注评论数"""
+    chapter_name = data.get("chapterName", "")
+    lines = [f"# {chapter_name}", ""]
+
+    for item in data.get("items", []):
+        if item.get("isChapterReview"):
+            continue
+        text = item.get("text", "").strip()
+        if not text:
+            continue
+        # 统计达到阈值的评论数
+        comment_count = sum(1 for c in item.get("comments", []) if c.get("AgreeAmount", 0) >= min_agree)
+        if comment_count > 0:
+            lines.append(f"{text}({comment_count}评)")
+        else:
+            lines.append(text)
+
+    return "\n".join(lines) + "\n"
+
+
+def extract_comments(data: dict, min_agree: int = 15) -> str:
+    """从 cleaned JSON 提取结构化评论 Markdown"""
+    chapter_name = data.get("chapterName", "")
+    lines = [f"# {chapter_name} · 评论", ""]
+
+    items = data.get("items", [])
+
+    # 构建评论ID映射（用于回复关系）
+    id_to_comment = {}
+    for item in items:
+        for comment in item.get("comments", []):
+            cid = comment.get("Id")
+            if cid:
+                id_to_comment[cid] = comment
+
+    has_any_comment = False
+
+    for item in items:
+        comments = item.get("comments", [])
+        if not comments:
+            continue
+
+        # 筛选需要显示的评论（复用 show_comment_ids 机制）
+        show_comment_ids = set()
+        for comment in comments:
+            agree = comment.get("AgreeAmount", 0)
+            if agree >= min_agree:
+                show_comment_ids.add(comment.get("Id"))
+            elif has_high_agree_replies(comment, min_agree):
+                show_comment_ids.add(comment.get("Id"))
+
+        # 收集被高赞回复引用的评论
+        for comment in comments:
+            if comment.get("Id") in show_comment_ids:
+                reffer_id = comment.get("RefferCommentId", 0)
+                if reffer_id > 0 and reffer_id not in show_comment_ids:
+                    show_comment_ids.add(reffer_id)
+
+        # 生成过滤后的评论列表
+        filtered = []
+        for comment in comments:
+            if comment.get("Id") in show_comment_ids:
+                md = comment_to_markdown(comment, id_to_comment, min_agree=min_agree, force_show=True)
+                if md.strip():
+                    filtered.append(md)
+
+        if not filtered:
+            continue
+
+        has_any_comment = True
+
+        if item.get("isChapterReview"):
+            lines.append(f"## 章评（{len(filtered)}条）")
+            lines.append("")
+        else:
+            index = item.get("index", 0)
+            text = item.get("text", "").strip()
+            lines.append(f"## 第{index}段评论（{len(filtered)}条）")
+            lines.append("")
+            # 引用原文（截取前100字）
+            if text:
+                preview = text[:100] + ("..." if len(text) > 100 else "")
+                lines.append(f"> 原文：{preview}")
+                lines.append("")
+
+        for md in filtered:
+            lines.append(md)
+
+    if not has_any_comment:
+        # 整章无评论，只保留标题
+        return f"# {chapter_name} · 评论\n"
+
+    # 压缩空行：去掉连续空行，节省 token
+    result = "\n".join(lines)
+    while "\n\n\n" in result:
+        result = result.replace("\n\n\n", "\n\n")
+    # 去掉所有空行，只保留段落间单换行
+    result = re.sub(r'\n\n+', '\n', result)
+    return result + "\n"
+
+
+def extract_book_detail(data: dict) -> str:
+    """从 _book_detail.json 提取书籍详情 Markdown"""
+    base = data.get("BaseBookInfo", {})
+    author = data.get("AuthorInfo", {})
+    chapter_info = base.get("ChapterInfo", {})
+    role_info = data.get("RoleInfo", {})
+
+    lines = [f"# {base.get('BookName', '未知')}", ""]
+
+    # 基本信息
+    lines.append("## 基本信息")
+    lines.append(f"- 作者：{author.get('Author', '')}（{author.get('AuthorLevel', '')}）")
+    lines.append(f"- 分类：{base.get('CategoryName', '')} / {base.get('SubCategoryName', '')}")
+    lines.append(f"- 状态：{base.get('BookStatus', '')}（{base.get('SignStatus', '')}）")
+    lines.append(f"- 总字数：{base.get('WordsCnt', 0):,}")
+    lines.append(f"- 总章数：{chapter_info.get('TotalChapterCount', 0)}")
+    lines.append(f"- 月票数：{base.get('MonthTicketCount', 0):,}")
+    lines.append(f"- 总推荐：{base.get('RecommendAll', 0):,}")
+    lines.append(f"- 总粉丝：{data.get('BookCircleScope', {}).get('TotalFansCount', 0):,}")
+    lines.append(f"- BookId：{base.get('BookId', '')}")
+
+    # 简介
+    desc = base.get("Description", "").replace("\r\n", "\n").strip()
+    if desc:
+        lines.append("")
+        lines.append("## 简介")
+        lines.append(desc)
+
+    # 标签
+    tags = [t.get("TagName", "") for t in base.get("BookUgcTag", []) if t.get("Type") == 1]
+    if tags:
+        lines.append("")
+        lines.append("## 标签")
+        lines.append("、".join(tags))
+
+    # 角色榜
+    roles = role_info.get("RoleList", [])
+    if roles:
+        lines.append("")
+        lines.append(f"## 角色人气榜（共{role_info.get('TotalRoleCount', 0)}个角色）")
+        for role in roles:
+            name = role.get("RoleName", "")
+            position = role.get("Position", "")
+            likes = role.get("Likes", 0)
+            role_tags = [t.get("TagName", "") for t in role.get("TagList", [])]
+            tag_str = "、".join(role_tags) if role_tags else ""
+            lines.append(f"- **{name}**（{position}）👍{likes:,} — {tag_str}")
+
+    return "\n".join(lines) + "\n"
+
+
+def process_kb_mode(input_dir: str, output_dir: str, min_agree: int = 15):
+    """知识库模式：输出纯正文 + 结构化评论"""
+    input_path = Path(input_dir)
+    output_path = Path(output_dir)
+
+    text_dir = output_path / "text"
+    comments_dir = output_path / "reader" / "comments"
+    text_dir.mkdir(parents=True, exist_ok=True)
+    comments_dir.mkdir(parents=True, exist_ok=True)
+
+    # 0. 处理书籍详情
+    book_detail_file = input_path / "_book_detail.json"
+    if book_detail_file.exists():
+        with open(book_detail_file, 'r', encoding='utf-8') as f:
+            book_data = json.load(f)
+        if book_data.get("BaseBookInfo"):
+            detail_md = extract_book_detail(book_data)
+            with open(output_path / "book_detail.md", 'w', encoding='utf-8') as f:
+                f.write(detail_md)
+            print(f"书籍详情: book_detail.md")
+        else:
+            print(f"警告: _book_detail.json 缺少 BaseBookInfo，跳过书籍详情")
+
+    # 1. 扫描所有 JSON 文件（排除 _book_detail.json）
+    json_files = sorted(f for f in input_path.glob("*.json") if f.name != "_book_detail.json")
+    print(f"扫描到 {len(json_files)} 个 JSON 文件")
+
+    # 2. 过滤正文章节
+    chapter_files = []
+    skipped = []
+    for json_file in json_files:
+        with open(json_file, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+        if is_chapter_file(data):
+            chapter_files.append((json_file, data))
+        else:
+            skipped.append((json_file.name, data.get("chapterName", "")))
+
+    print(f"正文章节: {len(chapter_files)} 个")
+    print(f"跳过非正文: {len(skipped)} 个")
+    if skipped:
+        for fname, cname in skipped[:5]:
+            print(f"  跳过: {fname} ({cname})")
+        if len(skipped) > 5:
+            print(f"  ... 共 {len(skipped)} 个")
+
+    # 3. 按文件名排序后顺序编号，生成输出
+    stats = {"text_files": 0, "comments_files": 0, "total_text_bytes": 0, "total_comments_bytes": 0}
+
+    for seq, (json_file, data) in enumerate(chapter_files, start=1):
+        ch_id = f"ch{seq:04d}"
+
+        # 生成纯正文
+        text_content = extract_text(data, min_agree=min_agree)
+        text_file = text_dir / f"{ch_id}.md"
+        with open(text_file, 'w', encoding='utf-8') as f:
+            f.write(text_content)
+        stats["text_files"] += 1
+        stats["total_text_bytes"] += len(text_content.encode('utf-8'))
+
+        # 生成结构化评论
+        comments_content = extract_comments(data, min_agree=min_agree)
+        comments_file = comments_dir / f"{ch_id}.md"
+        with open(comments_file, 'w', encoding='utf-8') as f:
+            f.write(comments_content)
+        stats["comments_files"] += 1
+        stats["total_comments_bytes"] += len(comments_content.encode('utf-8'))
+
+        if seq % 100 == 0:
+            print(f"  进度: {seq}/{len(chapter_files)}")
+
+    print("\n" + "=" * 50)
+    print(f"知识库生成完成:")
+    print(f"  纯正文: {stats['text_files']} 个文件, {stats['total_text_bytes'] / 1024 / 1024:.2f} MB")
+    print(f"  评论:   {stats['comments_files']} 个文件, {stats['total_comments_bytes'] / 1024 / 1024:.2f} MB")
+    print(f"  输出目录: {output_path.absolute()}")
+
+
 # ==================== 主函数 ====================
 
 def main():
@@ -465,14 +720,17 @@ def main():
   # Markdown 转换模式（只保留点赞≥10的评论）
   python process_chapters.py --mode markdown --min-agree 10
 
+  # 知识库模式（输出纯正文 + 结构化评论）
+  python process_chapters.py --mode kb --min-agree 15
+
   # 测试模式
   python process_chapters.py --mode json --test
   python process_chapters.py --mode markdown --test --min-agree 5
         """
     )
 
-    parser.add_argument("--mode", choices=["json", "markdown"], required=True,
-                        help="处理模式: json=清洗JSON, markdown=转换为Markdown")
+    parser.add_argument("--mode", choices=["json", "markdown", "kb"], required=True,
+                        help="处理模式: json=清洗JSON, markdown=转换为Markdown, kb=知识库模式")
     parser.add_argument("--input", help="输入目录（默认为内置目录）")
     parser.add_argument("--output", help="输出目录（默认为内置目录）")
     parser.add_argument("--test", action="store_true", help="测试模式：只处理单个文件")
@@ -485,9 +743,17 @@ def main():
     default_input_json = "/home/yuyang/frida-test/qidian/scripts/output/1035420986_玄鉴仙族"
     default_output_json = "/home/yuyang/frida-test/qidian/scripts/output/1035420986_玄鉴仙族_cleaned"
     default_output_md = "/home/yuyang/frida-test/qidian/scripts/output/1035420986_玄鉴仙族_markdown"
+    default_output_kb = "/home/yuyang/frida-test/qidian/novel_kb/玄鉴仙族"
 
-    input_dir = args.input or (default_input_json if args.mode == "json" else default_output_json)
-    output_dir = args.output or (default_output_json if args.mode == "json" else default_output_md)
+    if args.mode == "json":
+        input_dir = args.input or default_input_json
+        output_dir = args.output or default_output_json
+    elif args.mode == "markdown":
+        input_dir = args.input or default_output_json
+        output_dir = args.output or default_output_md
+    else:  # kb
+        input_dir = args.input or default_output_json
+        output_dir = args.output or default_output_kb
 
     print(f"模式: {args.mode.upper()}")
     print(f"输入: {input_dir}")
@@ -496,8 +762,10 @@ def main():
 
     if args.mode == "json":
         process_json_mode(input_dir, output_dir, args.test)
-    else:
+    elif args.mode == "markdown":
         process_markdown_mode(input_dir, output_dir, args.test, args.min_agree)
+    else:  # kb
+        process_kb_mode(input_dir, output_dir, args.min_agree)
 
 
 if __name__ == "__main__":

@@ -29,6 +29,11 @@ data/test/
 com.*
 cn.com.*
 qidian/scripts/output/*
+qidian/novel_kb/玄鉴仙族/reader/comments/*
+qidian/novel_kb/玄鉴仙族/text/*
+qidian/novel_kb/*/*/.build/*
+qidian/novel_kb/*/plot/outline/.segments/*
+qidian/novel_kb/*
 
 # smart-fund-server 运行时/敏感文件
 smart-fund-server/server.log

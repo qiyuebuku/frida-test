@@ -17,7 +17,8 @@
   batch_fetch.py fetch 1                         # 采集全部
   batch_fetch.py fetch 1 --last 3 --no-comments  # 只要正文
   batch_fetch.py fetch 1 --range 15-500 --force  # 强制重采所有章节
-  batch_fetch.py fetch 1 --last 5 --with-replies # 同时采集评论回复
+  batch_fetch.py fetch 1 --last 5              # 采集评论（默认含回复）
+  batch_fetch.py fetch 1 --last 5 --no-replies  # 不采集回复（更快）
   batch_fetch.py fetch 1 --update-comments       # 增量更新已有评论
 """
 
@@ -267,6 +268,95 @@ def _build_old_replies_index(old_comments: dict, changed_pids: list[int]) -> dic
     return index
 
 
+def get_comments_in_batches(api: QidianAPI, book_id: str, chapter_id: str,
+                             fetch_replies: bool = False, batch_size: int = 15,
+                             batch_delay: int = 3) -> dict:
+    """
+    分批获取章节所有评论，避免单次请求时间过长或 App 压力过大。
+
+    Args:
+        api: QidianAPI 实例
+        book_id: 书籍 ID
+        chapter_id: 章节 ID
+        fetch_replies: 是否获取评论回复
+        batch_size: 每批处理的段落数量（默认 20）
+
+    Returns:
+        合并后的完整评论数据
+    """
+    try:
+        # Step 1: 获取评论摘要，获取所有有评论的段落
+        t0 = time.time()
+        summary = api.get_comment_summary(book_id, chapter_id)
+        paragraphs = summary.get("paragraphs", [])
+
+        # 过滤出有评论的段落
+        paragraph_ids = [p["paragraphId"] for p in paragraphs if p.get("commentCount", 0) > 0]
+
+        if not paragraph_ids:
+            return {
+                "totalComments": 0,
+                "totalParagraphs": 0,
+                "paragraphs": [],
+                "batches": 0
+            }
+
+        # Step 2: 分批处理段落
+        all_paragraphs = []
+        total_comments = 0
+        batch_count = 0
+
+        print(f"    评论分批获取: 共 {len(paragraph_ids)} 个段落，每批 {batch_size} 个")
+
+        for i in range(0, len(paragraph_ids), batch_size):
+            batch_num = i // batch_size + 1
+            batch_ids = paragraph_ids[i:i + batch_size]
+            batch_count = batch_num
+
+            batch_start = time.time()
+            print(f"    批次 {batch_count}/{(len(paragraph_ids) + batch_size - 1) // batch_size}: 段落 {len(batch_ids)} 个")
+
+            # 批次间延迟（让 App "喘口气"）
+            if i > 0:
+                print(f"      等待 {batch_delay} 秒后继续...")
+                time.sleep(batch_delay)
+
+            try:
+                batch_result = api.get_all_paragraph_comments(
+                    book_id, chapter_id,
+                    page_size=20,
+                    include_chapter_comments=True,
+                    fetch_replies=fetch_replies,
+                    only_paragraphs=batch_ids
+                )
+
+                batch_paragraphs = batch_result.get("paragraphs", [])
+                batch_comments = sum(p.get("fetchedCount", 0) for p in batch_paragraphs)
+                batch_time = time.time() - batch_start
+
+                print(f"      完成: {batch_comments} 条评论, {batch_time:.1f}s")
+
+                all_paragraphs.extend(batch_paragraphs)
+                total_comments = batch_result.get("totalComments", 0)
+
+            except Exception as e:
+                print(f"      批次 {batch_count} 失败: {e}")
+                # 继续下一批，不要让整章失败
+
+        total_time = time.time() - t0
+        print(f"    评论采集完成: {total_comments} 条, {batch_count} 批, {total_time:.1f}s")
+
+        return {
+            "totalComments": total_comments,
+            "totalParagraphs": len(all_paragraphs),
+            "paragraphs": all_paragraphs,
+            "batches": batch_count
+        }
+
+    except Exception as e:
+        raise RpcError(f"分批获取评论失败: {e}")
+
+
 def _merge_comments(old_comments: dict, new_data: dict, changed_pids: list[int]) -> dict:
     """合并旧数据和增量新数据。
 
@@ -413,12 +503,15 @@ def fetch_one(api: QidianAPI, book_id: str, ch: dict, idx: int, total: int,
                 result["comments"] = existing["comments"]
                 print(f"  评论增量检测失败，保留旧数据: {e}")
         else:
-            # 首次获取，完整采集
+            # 首次获取，使用分批采集（避免单次请求超时）
             t0 = time.time()
             try:
-                resp = api.get_all_paragraph_comments(
-                    book_id, cid, page_size=20, include_chapter_comments=True,
-                    fetch_replies=fetch_replies)
+                resp = get_comments_in_batches(
+                    api, book_id, cid,
+                    fetch_replies=True,  # 默认采集回复（HTTP 30ms 节流已足够保护 App）
+                    batch_size=30,   # 每批 30 个段落
+                    batch_delay=0    # 无需批次延迟（30ms 节流已足够）
+                )
                 # 记录摘要总数，用于后续增量对比
                 summary = api.get_comment_summary(book_id, cid)
                 resp["summaryTotalComments"] = summary.get("totalComments", 0)
@@ -512,13 +605,15 @@ def cmd_fetch(args):
 
         result = fetch_one(api, book_id, ch, i + 1, total_sel, fetch_content, fetch_comments,
                            existing=existing, update_comments=update_comments,
-                           fetch_replies=args.with_replies)
+                           fetch_replies=not args.no_replies)
         result["index"] = seq
         results.append(result)
 
         # 请求间隔，避免触发服务器限流
+        # HTTP 30ms 节流已保护 App，无需额外延迟
+        delay = 0.5 if fetch_comments else 0.1
         if i < total_sel - 1:
-            time.sleep(0.3)
+            time.sleep(delay)
 
         safe_name = ch["name"].replace("/", "_").replace("\\", "_").replace(":", "_")[:50]
         fpath = os.path.join(out_dir, f"{seq:04d}_{ch['id']}_{safe_name}.json")
@@ -590,7 +685,7 @@ def main():
   %(prog)s fetch 1 --last 5         # 采集最后5章（正文+根评论）
   %(prog)s fetch 1 --chapters 1-10  # 采集第1~10章
   %(prog)s fetch 1 --no-comments    # 只采集正文
-  %(prog)s fetch 1 --with-replies   # 同时采集评论回复
+  %(prog)s fetch 1 --no-replies    # 不采集评论回复（默认采集）
   %(prog)s fetch 1 --update-comments       # 增量更新已有评论
   %(prog)s fetch 1 --range 15-500 --force  # 强制重采所有（默认跳过已成功）
 """)
@@ -616,9 +711,9 @@ def main():
     p.add_argument("--chapters", metavar="SPEC", help="指定章节序号，如 1,5,10-15,20")
     p.add_argument("--no-content", action="store_true", help="不采集正文")
     p.add_argument("--no-comments", action="store_true", help="不采集评论")
+    p.add_argument("--no-replies", action="store_true", help="不采集评论回复（默认采集）")
     p.add_argument("--force", action="store_true", help="强制重新采集所有章节（默认跳过已成功的）")
     p.add_argument("--update-comments", action="store_true", help="增量更新评论（检测新增评论并合并）")
-    p.add_argument("--with-replies", action="store_true", help="同时采集评论的回复（默认只采集根评论）")
     p.add_argument("--output-dir", default=DEFAULT_OUTPUT_DIR, help="输出目录")
 
     args = parser.parse_args()
