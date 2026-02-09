@@ -1,27 +1,106 @@
 #!/usr/bin/env python3
 """
-剧情层提取批量编排脚本
+T3 剧情层提取 — 批量编排脚本
 
-从章节摘要中提取全局剧情结构（故事弧、主线追踪、伏笔汇总、时间线）。
-三阶段 pipeline：分段扫描 → 全局融合 → 精修验证。
+从 T2 章节摘要提取全局剧情结构（故事弧、主线追踪、伏笔汇总、时间线）。
 
-用法：
-    python batch_plot.py --book-dir qidian/novel_kb/玄鉴仙族
-    python batch_plot.py --book-dir ... --phase segment-scan
-    python batch_plot.py --book-dir ... --phase global-merge
-    python batch_plot.py --book-dir ... --phase refine
-    python batch_plot.py --book-dir ... --dry-run
-    python batch_plot.py --book-dir ... --validate
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+前置条件
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  - T2 已完成: plot/chapters/ 下有章节摘要 (chXXXX.md)
+  - plot/chapters/index.md 存在（用于快速浏览全书结构）
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+三阶段 Pipeline（按顺序自动执行，支持断点续传）
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  阶段 1  segment-scan   分段扫描，每段 100 章，提取重要事件 + 主线进度 + 弧候选
+                         产出: plot/outline/.segments/segment_XX.json
+                         耗时: 取决于章节数，每段 1 次 AI 调用
+                               支持 --concurrency M 并发 M 段加速
+
+  阶段 2  global-merge   全局融合，合并所有段数据 → 完整剧情文件
+                         产出: plot/outline/plot_lines.md（主线追踪）
+                               plot/outline/arc_XX.md（故事弧，N 个）
+                               plot/open_loops.md（伏笔汇总）
+                               plot/timeline/index.md（时间线）
+                               plot/outline/index.md（大纲概览）
+                         耗时: ~2-3min, 1 次 AI 调用（需要 Write 工具）
+
+  阶段 3  refine         精修验证，分 4 步自动执行
+                         3a. 弧边界验证 + 调整（检查弧起止章节是否准确）
+                         3b. 弧内容充实（逐弧补充详细信息，支持串行处理）
+                         3c. 伏笔交叉验证（验证已埋伏笔与回收的一致性）
+                         3d. 最终更新（应用验证结果，更新所有文件）
+                         产出: 更新上述全部文件 + plot/index.md（导航页）
+                         耗时: ~5-10min, 每个弧 1 次 AI + 验证 2-3 次 AI
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+典型用法
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  # 一键全流程（从当前进度自动继续）
+  python batch_plot.py --book-dir qidian/novel_kb/玄鉴仙族
+
+  # 加速：阶段 1 分段扫描并发 3 段
+  python batch_plot.py --book-dir ... --concurrency 3
+
+  # 清除旧产出，从头重跑（慎用）
+  python batch_plot.py --book-dir ... --reset --concurrency 3
+
+  # 只运行某个阶段
+  python batch_plot.py --book-dir ... --phase segment-scan --concurrency 3
+  python batch_plot.py --book-dir ... --phase global-merge
+  python batch_plot.py --book-dir ... --phase refine
+
+  # 试运行 + 验证产出
+  python batch_plot.py --book-dir ... --dry-run
+  python batch_plot.py --book-dir ... --validate
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+参数说明
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  --book-dir PATH        知识库目录（必需）
+  --segment-size N       每段章节数（默认 100，影响阶段 1）
+  --concurrency M        并发数（默认 1，仅对 segment-scan 生效）
+  --phase PHASE          只运行特定阶段（segment-scan/global-merge/refine）
+  --reset                清除旧产出和进度，从头重跑（慎用）
+  --model MODEL          Claude 模型（默认 sonnet）
+  --timeout SEC          单次调用超时秒数（默认 600）
+  --dry-run              试运行，不执行 Claude 调用
+  --validate             验证产出文件完整性
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+产出目录结构
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  {book_dir}/
+    plot/
+      outline/
+        plot_lines.md             主线追踪（主线名称、状态、关键章节）
+        arc_01.md, arc_02.md...   故事弧（章节范围、核心冲突、转折点、新世界信息）
+        index.md                  大纲概览（全书结构概述）
+        .segments/                中间产物（段级分析 JSON）
+        .progress.json            进度文件
+      open_loops.md               伏笔汇总（已回收/未回收，按重要性分类）
+      timeline/
+        index.md                  时间线（时间标记事件按时序排列）
+      index.md                    剧情层导航页（链接上述全部文件）
 """
 
 import argparse
+import fcntl
 import json
 import os
 import re
 import subprocess
 import sys
+import threading
 import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
+from json_fixer import fix_and_parse_json
 
 # Skill 目录
 SKILL_DIR = Path(__file__).parent
@@ -44,6 +123,10 @@ def parse_args():
     parser.add_argument("--validate", action="store_true", help="验证产出")
     parser.add_argument("--timeout", type=int, default=600,
                         help="单次 Claude 调用超时秒数（默认 600）")
+    parser.add_argument("--concurrency", type=int, default=1,
+                        help="segment-scan 阶段并发数（默认 1）")
+    parser.add_argument("--reset", action="store_true",
+                        help="清除进度和产出，从头重跑")
     return parser.parse_args()
 
 
@@ -98,10 +181,7 @@ def get_progress_path(book_dir: Path) -> Path:
 # 进度管理
 # ============================================================
 
-def load_progress(progress_path: Path) -> dict:
-    if progress_path.exists():
-        with open(progress_path, "r", encoding="utf-8") as f:
-            return json.load(f)
+def _default_progress() -> dict:
     return {
         "phase": "segment_scan",
         "segment_scan": {
@@ -128,9 +208,64 @@ def load_progress(progress_path: Path) -> dict:
     }
 
 
+def _read_progress_raw(progress_path: Path) -> dict:
+    if progress_path.exists():
+        with open(progress_path, "r", encoding="utf-8") as f:
+            return json.load(f)
+    return _default_progress()
+
+
+def load_progress(progress_path: Path) -> dict:
+    lock_path = progress_path.with_suffix(".lock")
+    with open(lock_path, "w") as lf:
+        fcntl.flock(lf, fcntl.LOCK_SH)
+        try:
+            return _read_progress_raw(progress_path)
+        finally:
+            fcntl.flock(lf, fcntl.LOCK_UN)
+
+
 def save_progress(progress_path: Path, progress: dict):
-    with open(progress_path, "w", encoding="utf-8") as f:
-        json.dump(progress, f, ensure_ascii=False, indent=2)
+    """带文件锁的保存（合并 segment_scan、refine、stats）"""
+    lock_path = progress_path.with_suffix(".lock")
+    with open(lock_path, "w") as lf:
+        fcntl.flock(lf, fcntl.LOCK_EX)
+        try:
+            disk = _read_progress_raw(progress_path)
+            # 合并 segment_scan 的 completed/failed
+            disk_ss = disk.get("segment_scan", {})
+            local_ss = progress.get("segment_scan", {})
+            merged_completed = sorted(set(disk_ss.get("completed", [])) | set(local_ss.get("completed", [])))
+            merged_failed = sorted(
+                (set(disk_ss.get("failed", [])) | set(local_ss.get("failed", []))) - set(merged_completed)
+            )
+            progress["segment_scan"]["completed"] = merged_completed
+            progress["segment_scan"]["failed"] = merged_failed
+            # 合并 refine（布尔值取 or，列表取并集）
+            disk_ref = disk.get("refine", {})
+            local_ref = progress.get("refine", {})
+            for bkey in ("arc_boundary_validated", "foreshadow_validated", "final_updated"):
+                progress["refine"][bkey] = disk_ref.get(bkey, False) or local_ref.get(bkey, False)
+            for lkey in ("arc_details_completed", "arc_details_failed"):
+                merged = sorted(set(disk_ref.get(lkey, [])) | set(local_ref.get(lkey, [])))
+                progress["refine"][lkey] = merged
+            # stats 累加
+            progress["stats"]["total_calls"] = max(
+                disk["stats"].get("total_calls", 0),
+                progress["stats"].get("total_calls", 0))
+            progress["stats"]["total_time_seconds"] = max(
+                disk["stats"].get("total_time_seconds", 0),
+                progress["stats"].get("total_time_seconds", 0))
+            # phase 取更靠后的
+            phase_order = ["segment_scan", "global_merge", "refine"]
+            disk_phase = disk.get("phase", "segment_scan")
+            local_phase = progress.get("phase", "segment_scan")
+            if phase_order.index(disk_phase) > phase_order.index(local_phase):
+                progress["phase"] = disk_phase
+            with open(progress_path, "w", encoding="utf-8") as f:
+                json.dump(progress, f, ensure_ascii=False, indent=2)
+        finally:
+            fcntl.flock(lf, fcntl.LOCK_UN)
 
 
 # ============================================================
@@ -202,11 +337,16 @@ def compute_segments(all_chapters: list[int], segment_size: int) -> list[dict]:
 # ============================================================
 
 def run_claude_prompt(prompt: str, model: str, timeout: int,
-                      allow_tools: str = "") -> tuple[bool, str]:
-    """调用 claude -p 并返回 (成功, stdout 输出)"""
+                      allow_tools: str = "",
+                      verbose: bool = True) -> tuple[bool, str]:
+    """调用 claude -p 并返回 (成功, stdout 输出)
+
+    prompt 通过 stdin 管道传入，避免命令行参数长度限制。
+    verbose=True 时 stderr 直接输出到终端；False 时捕获全部输出（适合并发）。
+    """
     cmd = [
         "claude",
-        "-p", prompt,
+        "-p", "-",
         "--model", model,
         "--permission-mode", "bypassPermissions",
     ]
@@ -214,46 +354,34 @@ def run_claude_prompt(prompt: str, model: str, timeout: int,
         cmd.extend(["--allowedTools", allow_tools])
 
     try:
-        result = subprocess.run(
-            cmd,
-            capture_output=True,
-            text=True,
-            timeout=timeout,
-        )
-        if result.returncode != 0:
-            return False, f"退出码 {result.returncode}\nstderr: {result.stderr[:1000]}"
+        if verbose:
+            result = subprocess.run(
+                cmd,
+                input=prompt,
+                stdout=subprocess.PIPE,
+                stderr=None,
+                text=True,
+                timeout=timeout,
+            )
+            if result.returncode != 0:
+                return False, f"退出码 {result.returncode}\n{result.stdout[:1000]}"
+        else:
+            result = subprocess.run(
+                cmd,
+                input=prompt,
+                capture_output=True,
+                text=True,
+                timeout=timeout,
+            )
+            if result.returncode != 0:
+                err_detail = result.stderr[:1000] if result.stderr.strip() else result.stdout[:1000]
+                return False, f"退出码 {result.returncode}\n{err_detail}"
         return True, result.stdout
     except subprocess.TimeoutExpired:
         return False, f"超时（{timeout}秒）"
     except Exception as e:
         return False, f"异常: {e}"
 
-
-def extract_json_from_output(output: str) -> dict | None:
-    """从 Claude 输出中提取 JSON 对象"""
-    # 尝试直接解析
-    text = output.strip()
-    # 去除可能的 markdown 代码块（兼容各种格式）
-    if "```json" in text:
-        m = re.search(r"```json\s*\n(.*?)\n\s*```", text, re.DOTALL)
-        if m:
-            text = m.group(1)
-    elif "```" in text:
-        m = re.search(r"```\s*\n(.*?)\n\s*```", text, re.DOTALL)
-        if m:
-            text = m.group(1)
-
-    # 找到第一个 { 和最后一个 }
-    first_brace = text.find("{")
-    last_brace = text.rfind("}")
-    if first_brace != -1 and last_brace != -1 and last_brace > first_brace:
-        json_str = text[first_brace:last_brace + 1]
-        try:
-            return json.loads(json_str)
-        except json.JSONDecodeError:
-            pass
-
-    return None
 
 
 # ============================================================
@@ -263,7 +391,7 @@ def extract_json_from_output(output: str) -> dict | None:
 def build_segment_prompt(segment: dict, full_index: str,
                          segment_summaries: str) -> str:
     """构建分段扫描的 prompt"""
-    template = (PROMPTS_DIR / "segment_scan.md").read_text(encoding="utf-8")
+    template = (PROMPTS_DIR / "plot_segment_scan.md").read_text(encoding="utf-8")
     prompt = template.replace("{segment_range}", segment["range"])
     prompt = prompt.replace("{start_ch}", f"ch{segment['start_ch']:04d}")
     prompt = prompt.replace("{end_ch}", f"ch{segment['end_ch']:04d}")
@@ -275,7 +403,8 @@ def build_segment_prompt(segment: dict, full_index: str,
 
 def run_segment_scan(segment: dict, chapters_dir: Path, full_index: str,
                      segments_dir: Path, all_chapters: list[int],
-                     model: str, timeout: int) -> tuple[bool, str]:
+                     model: str, timeout: int,
+                     verbose: bool = True) -> tuple[bool, str]:
     """运行单段扫描"""
     seg_num = segment["num"]
     output_path = segments_dir / f"segment_{seg_num:02d}.json"
@@ -289,14 +418,15 @@ def run_segment_scan(segment: dict, chapters_dir: Path, full_index: str,
     prompt = build_segment_prompt(segment, full_index, summaries)
 
     # 调用 Claude（不需要工具，直接输出 JSON）
-    success, output = run_claude_prompt(prompt, model, timeout)
+    success, output = run_claude_prompt(prompt, model, timeout, verbose=verbose)
     if not success:
         return False, output
 
     # 解析 JSON
-    data = extract_json_from_output(output)
+    debug_path = segments_dir / f"segment_{seg_num:02d}_json_debug.txt"
+    data = fix_and_parse_json(output, verbose=False, save_debug_to=debug_path)
     if data is None:
-        return False, f"无法解析 JSON 输出（前 500 字符）:\n{output[:500]}"
+        return False, f"无法解析 JSON 输出，调试信息已保存到: {debug_path}"
 
     # 保存
     with open(output_path, "w", encoding="utf-8") as f:
@@ -308,8 +438,8 @@ def run_segment_scan(segment: dict, chapters_dir: Path, full_index: str,
 def phase_segment_scan(book_dir: Path, chapters_dir: Path, all_chapters: list[int],
                        progress: dict, progress_path: Path,
                        segment_size: int, model: str, timeout: int,
-                       dry_run: bool):
-    """执行阶段 1：分段扫描"""
+                       dry_run: bool, concurrency: int = 1):
+    """执行阶段 1：分段扫描（支持并发）"""
     print("\n" + "=" * 60)
     print("阶段 1：分段扫描")
     print("=" * 60)
@@ -336,36 +466,77 @@ def phase_segment_scan(book_dir: Path, chapters_dir: Path, all_chapters: list[in
             print(f"  段 {seg['num']}/{len(segments)}: {seg['range']} ({len(seg['chapters'])} 章)")
         return
 
-    for seg in pending:
-        print(f"\n--- 段 {seg['num']}/{len(segments)}: {seg['range']} ---")
+    concurrency = max(1, concurrency)
+    print_lock = threading.Lock()
+    done_counter = {"n": 0, "total": len(pending)}
+
+    def process_one_segment(seg: dict, verbose: bool = True) -> dict:
+        seg_label = f"段 {seg['num']}/{len(segments)}: {seg['range']}"
+        with print_lock:
+            print(f"\n--- {seg_label} 开始 ---")
 
         start_time = time.time()
         success, msg = run_segment_scan(
             seg, chapters_dir, full_index, segments_dir,
-            all_chapters, model, timeout
+            all_chapters, model, timeout, verbose=verbose
         )
         elapsed = time.time() - start_time
 
-        progress["stats"]["total_calls"] += 1
-        progress["stats"]["total_time_seconds"] += int(elapsed)
+        # 带锁更新进度到磁盘
+        lock_path = progress_path.with_suffix(".lock")
+        with open(lock_path, "w") as lf:
+            fcntl.flock(lf, fcntl.LOCK_EX)
+            try:
+                disk = _read_progress_raw(progress_path)
+                disk["stats"]["total_calls"] = disk["stats"].get("total_calls", 0) + 1
+                disk["stats"]["total_time_seconds"] = disk["stats"].get("total_time_seconds", 0) + int(elapsed)
+                if success:
+                    if seg["num"] not in disk["segment_scan"]["completed"]:
+                        disk["segment_scan"]["completed"].append(seg["num"])
+                    if seg["num"] in disk["segment_scan"]["failed"]:
+                        disk["segment_scan"]["failed"].remove(seg["num"])
+                else:
+                    if seg["num"] not in disk["segment_scan"]["failed"]:
+                        disk["segment_scan"]["failed"].append(seg["num"])
+                # 检查是否全部完成
+                if len(disk["segment_scan"]["completed"]) == len(segments):
+                    disk["phase"] = "global_merge"
+                with open(progress_path, "w", encoding="utf-8") as f:
+                    json.dump(disk, f, ensure_ascii=False, indent=2)
+                # 同步回内存
+                progress.update(disk)
+            finally:
+                fcntl.flock(lf, fcntl.LOCK_UN)
 
-        if success:
-            print(f"  完成 ({elapsed:.0f}s): {msg}")
-            progress["segment_scan"]["completed"].append(seg["num"])
-            if seg["num"] in progress["segment_scan"]["failed"]:
-                progress["segment_scan"]["failed"].remove(seg["num"])
-        else:
-            print(f"  失败 ({elapsed:.0f}s): {msg}")
-            if seg["num"] not in progress["segment_scan"]["failed"]:
-                progress["segment_scan"]["failed"].append(seg["num"])
+        with print_lock:
+            done_counter["n"] += 1
+            status = "✓" if success else "✗"
+            print(f"  [{seg_label}] {status} ({elapsed:.0f}s): {msg}  [{done_counter['n']}/{done_counter['total']}]")
 
-        save_progress(progress_path, progress)
+        return {"seg": seg["num"], "success": success, "elapsed": elapsed}
 
-    # 检查是否全部完成
-    if len(progress["segment_scan"]["completed"]) == len(segments):
-        progress["phase"] = "global_merge"
-        save_progress(progress_path, progress)
+    if concurrency == 1:
+        for seg in pending:
+            process_one_segment(seg)
+    else:
+        print(f"并发数: {concurrency}")
+        with ThreadPoolExecutor(max_workers=concurrency) as executor:
+            futures = {executor.submit(process_one_segment, seg, verbose=False): seg for seg in pending}
+            for future in as_completed(futures):
+                try:
+                    future.result()
+                except Exception as e:
+                    with print_lock:
+                        print(f"  ✗ 线程异常: {e}")
+
+    # 重新读取最终状态
+    final = load_progress(progress_path)
+    completed_count = len(final["segment_scan"]["completed"])
+    if completed_count == len(segments):
         print("\n分段扫描全部完成！进入全局融合阶段。")
+    else:
+        failed_count = len(final["segment_scan"].get("failed", []))
+        print(f"\n分段扫描: {completed_count}/{len(segments)} 完成, {failed_count} 失败")
 
 
 # ============================================================
@@ -427,7 +598,7 @@ def build_merge_prompt(full_index: str, all_segments: list[dict],
                        aux_signals: str, book_dir: Path,
                        last_ch: int) -> str:
     """构建全局融合的 prompt"""
-    template = (PROMPTS_DIR / "global_merge.md").read_text(encoding="utf-8")
+    template = (PROMPTS_DIR / "plot_global_merge.md").read_text(encoding="utf-8")
 
     # 生成路径占位符
     outline_dir = book_dir / "plot" / "outline"
@@ -583,13 +754,27 @@ def phase_refine_boundary(book_dir: Path, chapters_dir: Path,
 
     print(f"找到 {len(arcs)} 个弧")
 
-    full_index = load_full_index(chapters_dir)
+    # 精简版索引：只保留章节号+标题，不含摘要（减少 token 用量）
+    full_index_raw = load_full_index(chapters_dir)
+    compact_lines = []
+    for line in full_index_raw.splitlines():
+        if line.startswith("| ch"):
+            parts = line.split("|")
+            if len(parts) >= 4:
+                compact_lines.append(f"| {parts[1].strip()} | {parts[2].strip()} |")
+        elif line.startswith("| 编号"):
+            compact_lines.append("| 编号 | 标题 |")
+        elif line.startswith("|---"):
+            compact_lines.append("|------|------|")
+        else:
+            compact_lines.append(line)
+    full_index = "\n".join(compact_lines)
 
-    # 加载边界附近的章节摘要
+    # 加载边界附近的章节摘要（±2 章，避免 prompt 过大）
     boundary_chapters = set()
     for arc in arcs:
         for ch in all_chapters:
-            if abs(ch - arc["start_ch"]) <= 5 or abs(ch - arc["end_ch"]) <= 5:
+            if abs(ch - arc["start_ch"]) <= 2 or abs(ch - arc["end_ch"]) <= 2:
                 boundary_chapters.add(ch)
     boundary_chapters = sorted(boundary_chapters)
 
@@ -606,10 +791,11 @@ def phase_refine_boundary(book_dir: Path, chapters_dir: Path,
     )
 
     # 构建 prompt
-    template = (PROMPTS_DIR / "arc_boundary_validate.md").read_text(encoding="utf-8")
+    template = (PROMPTS_DIR / "plot_arc_boundary_validate.md").read_text(encoding="utf-8")
     prompt = template.replace("{arc_boundaries}", arc_boundaries_text)
     prompt = prompt.replace("{full_index}", full_index)
     prompt = prompt.replace("{boundary_summaries}", boundary_summaries)
+    print(f"prompt 大小: {len(prompt)} 字符 ({len(prompt.encode('utf-8')) / 1024:.0f} KB)")
 
     start_time = time.time()
     success, output = run_claude_prompt(prompt, model, timeout)
@@ -618,19 +804,23 @@ def phase_refine_boundary(book_dir: Path, chapters_dir: Path,
     progress["stats"]["total_calls"] += 1
     progress["stats"]["total_time_seconds"] += int(elapsed)
 
+    debug_path = get_segments_dir(book_dir) / "boundary_validation_raw.txt"
+
     if not success:
         print(f"失败 ({elapsed:.0f}s): {output}")
-        save_progress(progress_path, progress)
-        return
+        # 尝试从已有的 raw output 恢复
+        if debug_path.exists():
+            print("尝试从已有的 raw output 恢复...")
+            output = debug_path.read_text(encoding="utf-8")
+        else:
+            save_progress(progress_path, progress)
+            return
 
     # 解析验证结果
-    validation = extract_json_from_output(output)
+    validation = fix_and_parse_json(output, verbose=False, save_debug_to=debug_path)
     if validation is None:
         print(f"无法解析验证结果 JSON")
-        # 保存原始输出以供调试
-        debug_path = get_segments_dir(book_dir) / "boundary_validation_raw.txt"
-        debug_path.write_text(output, encoding="utf-8")
-        print(f"原始输出已保存: {debug_path}")
+        print(f"调试信息已保存: {debug_path}")
         save_progress(progress_path, progress)
         return
 
@@ -716,7 +906,7 @@ def phase_refine_arc_details(book_dir: Path, chapters_dir: Path,
         )
     other_arcs_summary = "\n".join(other_arcs_parts)
 
-    template = (PROMPTS_DIR / "arc_detail.md").read_text(encoding="utf-8")
+    template = (PROMPTS_DIR / "plot_arc_detail.md").read_text(encoding="utf-8")
 
     for arc in pending:
         print(f"\n  弧 {arc['num']}: {arc['name']} (ch{arc['start_ch']:04d}-ch{arc['end_ch']:04d})")
@@ -848,7 +1038,7 @@ def phase_refine_foreshadow(book_dir: Path, chapters_dir: Path,
     validation_summaries = "\n\n---\n\n".join(validation_parts)
 
     # 构建 prompt
-    template = (PROMPTS_DIR / "foreshadow_validate.md").read_text(encoding="utf-8")
+    template = (PROMPTS_DIR / "plot_foreshadow_validate.md").read_text(encoding="utf-8")
     prompt = template.replace("{resolved_foreshadowing}", resolved)
     prompt = prompt.replace("{unresolved_high}", unresolved_high)
     prompt = template.replace("{unresolved_low}", unresolved_low)
@@ -874,12 +1064,11 @@ def phase_refine_foreshadow(book_dir: Path, chapters_dir: Path,
         return
 
     # 解析结果
-    corrections = extract_json_from_output(output)
+    debug_path = segments_dir / "foreshadow_validation_json_debug.txt"
+    corrections = fix_and_parse_json(output, verbose=False, save_debug_to=debug_path)
     if corrections is None:
         print("无法解析验证结果")
-        debug_path = segments_dir / "foreshadow_validation_raw.txt"
-        debug_path.write_text(output, encoding="utf-8")
-        print(f"原始输出已保存: {debug_path}")
+        print(f"调试信息已保存: {debug_path}")
     else:
         result_path = segments_dir / "foreshadow_validation.json"
         with open(result_path, "w", encoding="utf-8") as f:
@@ -943,7 +1132,7 @@ def phase_refine_final_update(book_dir: Path, chapters_dir: Path,
     timeline_events = "\n".join(timeline_parts) if timeline_parts else "（无时间标记事件）"
 
     # 构建 prompt
-    template = (PROMPTS_DIR / "final_update.md").read_text(encoding="utf-8")
+    template = (PROMPTS_DIR / "plot_final_update.md").read_text(encoding="utf-8")
     prompt = template.replace("{validated_arcs}", validated_arcs)
     prompt = prompt.replace("{validated_foreshadowing}", validated_foreshadowing)
     prompt = prompt.replace("{current_plot_lines}", current_plot_lines)
@@ -1112,6 +1301,25 @@ def main():
         run_validate(book_dir)
         return
 
+    # --reset: 清除旧进度和产出
+    if args.reset:
+        import shutil
+        outline_dir = book_dir / "plot" / "outline"
+        segments_dir = outline_dir / ".segments"
+        for f in outline_dir.glob("*.md"):
+            f.unlink()
+            print(f"  删除: {f.name}")
+        if segments_dir.exists():
+            shutil.rmtree(segments_dir)
+            print(f"  删除: .segments/")
+        if progress_path.exists():
+            progress_path.unlink()
+            print(f"  删除: .progress.json")
+        lock_path = progress_path.with_suffix(".lock")
+        if lock_path.exists():
+            lock_path.unlink()
+        print("已清除 T3 所有产出，从头开始。\n")
+
     # 加载进度
     progress = load_progress(progress_path)
     print(f"当前阶段: {progress['phase']}")
@@ -1130,7 +1338,7 @@ def main():
             book_dir, chapters_dir, all_chapters,
             progress, progress_path,
             args.segment_size, args.model, args.timeout,
-            args.dry_run,
+            args.dry_run, args.concurrency,
         )
 
     if args.phase == "global-merge" or (not args.phase and progress["phase"] in ("global_merge", "segment_scan")):

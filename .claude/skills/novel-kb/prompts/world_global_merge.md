@@ -1,16 +1,12 @@
 你是专业的小说世界观构建师。你的任务是将分类后的设定数据融合为完整的世界观文档。
 
-## 已分类的设定数据
+## 数据来源
 
-以下是全部段级分类合并后的设定数据：
+**分段设定文件**（使用 Read 工具读取以下文件）：
+{segment_files_list}
 
-{merged_data_json}
-
-## 角色势力信息（来自 T4 角色层）
-
-以下是从角色档案中提取的势力归属信息：
-
-{character_factions_json}
+**角色势力信息**（使用 Read 工具读取）：
+`{raw_world_data_path}` 中的 `character_factions` 字段
 
 ## 任务
 

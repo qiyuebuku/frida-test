@@ -2,7 +2,8 @@
 """
 草稿验证脚本 — T9 验证测试
 
-三层验证：Layer 1 定量检测 → Layer 2 AI 深度分析 → Layer 3 跨章一致性
+四层验证：Layer 1 定量检测 → Layer 2 风格分析 → Layer 3 读者对齐 → Layer 4 跨章一致性
+盲测对比降级为 --calibrate 校准模式（仅校准用）
 产出 verification_report.md + 综合评分（A/B/C/D）
 
 用法：
@@ -11,6 +12,7 @@
     python .claude/skills/novel-write/verify/batch_verify.py --book-dir ... --chapter 4
     python .claude/skills/novel-write/verify/batch_verify.py --book-dir ... --promote --chapter 902
     python .claude/skills/novel-write/verify/batch_verify.py --book-dir ... --history
+    python .claude/skills/novel-write/verify/batch_verify.py --book-dir ... --calibrate --chapter 4
 """
 
 import argparse
@@ -29,9 +31,9 @@ from pathlib import Path
 # ============================================================
 
 # 将 batch_style.py 所在目录加入 sys.path
-# 从 novel-write/verify/ 向上到 skills/，再进入 kb-style-analyze/
-_STYLE_SKILL_DIR = Path(__file__).parent.parent.parent / "kb-style-analyze"
-sys.path.insert(0, str(_STYLE_SKILL_DIR))
+# novel-kb skill 与 novel-write skill 是同级目录
+_NOVEL_KB_DIR = Path(__file__).parent.parent.parent / "novel-kb"
+sys.path.insert(0, str(_NOVEL_KB_DIR))
 
 from batch_style import (
     COMMENT_COUNT_RE,
@@ -63,10 +65,12 @@ def parse_args():
     parser = argparse.ArgumentParser(description="草稿验证（T9）")
     parser.add_argument("--book-dir", required=True, help="知识库目录路径")
     parser.add_argument("--chapter", type=int, help="指定验证章节号")
-    parser.add_argument("--layer", type=int, choices=[1, 2, 3],
-                        help="只运行特定层（1=定量, 2=AI分析, 3=跨章）")
+    parser.add_argument("--layer", type=int, choices=[1, 2, 3, 4],
+                        help="只运行特定层（1=定量, 2=风格, 3=读者对齐, 4=跨章）")
     parser.add_argument("--promote", action="store_true",
                         help="反哺：将验证通过的草稿纳入正式知识库")
+    parser.add_argument("--calibrate", action="store_true",
+                        help="校准模式：运行盲测对比（需要原文）")
     parser.add_argument("--history", action="store_true",
                         help="显示验证历史")
     parser.add_argument("--model", default="sonnet",
@@ -118,6 +122,7 @@ def get_paths(book_dir: Path) -> dict:
         "narrative_path": style_dir / "narrative.md",
         "vocabulary_path": style_dir / "vocabulary.md",
         "guide_path": book_dir / "guide.md",
+        "reader_dir": book_dir / "reader" / "feedback",
     }
 
 
@@ -478,34 +483,23 @@ def _gen_suggestion(metric_key: str, result: dict) -> str:
 # Layer 2：AI 深度分析
 # ============================================================
 
-def run_layer2(draft_text: str, original_text: str | None,
-               paths: dict, ch_num: int, model: str, timeout: int) -> dict:
-    """运行 Layer 2 AI 深度分析"""
+def run_layer2(draft_text: str, paths: dict, ch_num: int,
+               model: str, timeout: int) -> dict:
+    """运行 Layer 2 风格分析（盲测已分离到 --calibrate 模式）"""
     print("\n" + "=" * 60)
-    print(f"  Layer 2：AI 深度分析 — ch{ch_num:04d}")
+    print(f"  Layer 2：风格分析 — ch{ch_num:04d}")
     print("=" * 60)
 
-    blind_result = None
-    style_result = None
-
-    # --- 盲测对比（仅当原文存在时）---
-    if original_text:
-        print("\n[2a] 盲测对比...")
-        blind_result = _run_blind_compare(draft_text, original_text, model, timeout)
-    else:
-        print("\n[2a] 盲测对比：跳过（无原文 text/chNNNN.md）")
-
     # --- 深度风格分析 ---
-    print("\n[2b] 深度风格分析...")
+    print("\n[2a] 深度风格分析...")
     style_result = _run_style_analysis(draft_text, paths, model, timeout)
 
-    # 计算 Layer 2 得分
-    l2_score = _compute_l2_score(blind_result, style_result)
+    # 计算 Layer 2 得分（纯风格分析）
+    l2_score = _compute_l2_score(style_result)
     print(f"\nLayer 2 得分：{l2_score:.1f}/100")
 
     return {
         "score": round(l2_score, 1),
-        "blind_compare": blind_result,
         "style_analysis": style_result,
     }
 
@@ -640,36 +634,118 @@ def _extract_book_rules(guide_text: str) -> str:
     return "\n".join(rules_sections) if rules_sections else ""
 
 
-def _compute_l2_score(blind_result: dict | None, style_result: dict | None) -> float:
-    """计算 Layer 2 综合得分
-
-    有盲测时：盲测 40% + 风格分析 60%
-    无盲测时：风格分析独占 100%（不降权）
-    """
+def _compute_l2_score(style_result: dict | None) -> float:
+    """计算 Layer 2 得分（纯风格分析）"""
     if style_result:
         overall = style_result.get("overall", {})
         total_avg = overall.get("total_avg", 0)
-        style_score = total_avg * 20  # 1-5 分映射到 0-100
+        return total_avg * 20  # 1-5 分映射到 0-100
     else:
-        style_score = 50.0  # 无数据时给中间分
-
-    if blind_result:
-        similarity = blind_result.get("similarity_score", 50)
-        return similarity * 0.4 + style_score * 0.6
-    else:
-        # 无原文时，风格分析独占 100%
-        return style_score
+        return 50.0  # 无数据时给中间分
 
 
 # ============================================================
-# Layer 3：跨章一致性
+# Layer 3：读者对齐（新增）
 # ============================================================
 
-def run_layer3(drafts_dir: Path, text_dir: Path, draft_chapters: list[int],
-               model: str, timeout: int) -> dict:
-    """运行 Layer 3 跨章一致性检测"""
+def extract_reader_feedback(reader_dir: Path) -> dict | None:
+    """提取读者反馈数据，返回 4 类摘要文本"""
+    if not reader_dir.exists() or not reader_dir.is_dir():
+        return None
+
+    file_mapping = {
+        "emotions": ("emotions.md", 800),
+        "complaints": ("complaints.md", 400),
+        "expectations": ("expectations.md", 600),
+        "characters": ("popular_characters.md", 600),
+    }
+
+    result = {}
+    any_content = False
+    for key, (filename, budget) in file_mapping.items():
+        filepath = reader_dir / filename
+        if filepath.exists():
+            content = filepath.read_text(encoding="utf-8")
+            result[key] = _extract_key_sections(content, max_chars=budget)
+            if result[key].strip():
+                any_content = True
+        else:
+            result[key] = ""
+
+    return result if any_content else None
+
+
+def run_layer3_reader(draft_text: str, reader_dir: Path,
+                      model: str, timeout: int) -> dict:
+    """运行 Layer 3 读者对齐分析"""
     print("\n" + "=" * 60)
-    print("  Layer 3：跨章一致性")
+    print("  Layer 3：读者对齐")
+    print("=" * 60)
+
+    feedback = extract_reader_feedback(reader_dir)
+    if feedback is None:
+        print("  跳过：无读者反馈数据（reader/feedback/ 不存在或为空）")
+        return {"score": None, "skipped": True, "reason": "no_reader_data"}
+
+    prompt_template = (PROMPTS_DIR / "reader_alignment.md").read_text(encoding="utf-8")
+
+    prompt = (prompt_template
+              .replace("{EMOTIONS_EXCERPT}", feedback.get("emotions", ""))
+              .replace("{COMPLAINTS_EXCERPT}", feedback.get("complaints", ""))
+              .replace("{EXPECTATIONS_EXCERPT}", feedback.get("expectations", ""))
+              .replace("{CHARACTERS_EXCERPT}", feedback.get("characters", ""))
+              .replace("{DRAFT_TEXT}", draft_text))
+
+    ok, output = run_claude_prompt(prompt, model, timeout)
+    if not ok:
+        print(f"  读者对齐分析调用失败: {output[:200]}")
+        return {"score": None, "skipped": True, "reason": "api_error"}
+
+    data = extract_json_from_output(output)
+    if not data:
+        print(f"  读者对齐 JSON 解析失败")
+        print(f"  原始输出: {output[:500]}")
+        return {"score": None, "skipped": True, "reason": "parse_error"}
+
+    dimensions = data.get("dimensions", {})
+    dim_scores = {}
+    dim_names = {
+        "shuangdian_hit": "爽点命中",
+        "caodian_avoid": "槽点规避",
+        "character_alignment": "角色人气对齐",
+        "expectation_response": "读者期待呼应",
+    }
+    for dim_key, dim_name in dim_names.items():
+        dim_data = dimensions.get(dim_key, {})
+        score = dim_data.get("score", 3)
+        dim_scores[dim_key] = score
+        print(f"  {dim_name}: {score}/5")
+
+    if dim_scores:
+        avg = sum(dim_scores.values()) / len(dim_scores)
+        l3_score = avg * 20  # 1-5 映射到 0-100
+    else:
+        l3_score = 60.0
+
+    print(f"\nLayer 3 得分：{l3_score:.1f}/100")
+
+    return {
+        "score": round(l3_score, 1),
+        "skipped": False,
+        "dimensions": dim_scores,
+        "raw_data": data,
+    }
+
+
+# ============================================================
+# Layer 4：跨章一致性
+# ============================================================
+
+def run_layer4_cross_chapter(drafts_dir: Path, text_dir: Path, draft_chapters: list[int],
+                             model: str, timeout: int) -> dict:
+    """运行 Layer 4 跨章一致性检测"""
+    print("\n" + "=" * 60)
+    print("  Layer 4：跨章一致性")
     print("=" * 60)
 
     if len(draft_chapters) < 2:
@@ -677,18 +753,18 @@ def run_layer3(drafts_dir: Path, text_dir: Path, draft_chapters: list[int],
         return {"score": None, "skipped": True, "reason": "single_chapter"}
 
     # Python 自动检测
-    print("\n[3a] 重复表达检测...")
+    print("\n[4a] 重复表达检测...")
     repetition = _detect_repetition(drafts_dir, draft_chapters)
 
     print(f"  检测到 {len(repetition)} 处重复表达")
 
     # 计算得分
     repetition_penalty = min(len(repetition) * 5, 30)  # 每处扣 5 分，最多扣 30
-    l3_score = max(100 - repetition_penalty, 0)
-    print(f"\nLayer 3 得分：{l3_score:.1f}/100")
+    l4_score = max(100 - repetition_penalty, 0)
+    print(f"\nLayer 4 得分：{l4_score:.1f}/100")
 
     return {
-        "score": round(l3_score, 1),
+        "score": round(l4_score, 1),
         "skipped": False,
         "repetition_issues": repetition,
     }
@@ -741,18 +817,32 @@ def _simple_similarity(a: str, b: str) -> float:
 # ============================================================
 
 def compute_final_score(l1_result: dict, l2_result: dict | None,
-                        l3_result: dict | None) -> tuple[float, str]:
-    """计算综合评分和评级"""
-    l1_score = l1_result.get("score", 0)
+                        l3_reader_result: dict | None,
+                        l4_result: dict | None) -> tuple[float, str]:
+    """计算综合评分和评级
 
-    if l3_result and not l3_result.get("skipped", True):
-        # 多章：L1 × 40% + L2 × 45% + L3 × 15%
-        l2_score = l2_result.get("score", 50) if l2_result else 50
-        l3_score = l3_result.get("score", 50)
-        final = l1_score * 0.40 + l2_score * 0.45 + l3_score * 0.15
+    评分公式：
+    - 单章+读者数据：L1×0.35 + L2×0.40 + L3×0.25
+    - 单章无读者：    L1×0.45 + L2×0.55（向后兼容）
+    - 多章+读者数据：L1×0.25 + L2×0.35 + L3×0.20 + L4×0.20
+    - 多章无读者：    L1×0.40 + L2×0.45 + L4×0.15（向后兼容）
+    """
+    l1_score = l1_result.get("score", 0)
+    l2_score = l2_result.get("score", 50) if l2_result else 50
+    has_reader = l3_reader_result and not l3_reader_result.get("skipped", True)
+    has_cross = l4_result and not l4_result.get("skipped", True)
+
+    if has_cross and has_reader:
+        l3_score = l3_reader_result.get("score", 50)
+        l4_score = l4_result.get("score", 50)
+        final = l1_score * 0.25 + l2_score * 0.35 + l3_score * 0.20 + l4_score * 0.20
+    elif has_cross:
+        l4_score = l4_result.get("score", 50)
+        final = l1_score * 0.40 + l2_score * 0.45 + l4_score * 0.15
+    elif has_reader:
+        l3_score = l3_reader_result.get("score", 50)
+        final = l1_score * 0.35 + l2_score * 0.40 + l3_score * 0.25
     else:
-        # 单章：L1 × 45% + L2 × 55%
-        l2_score = l2_result.get("score", 50) if l2_result else 50
         final = l1_score * 0.45 + l2_score * 0.55
 
     # 评级
@@ -773,8 +863,8 @@ def compute_final_score(l1_result: dict, l2_result: dict | None,
 # ============================================================
 
 def generate_report(ch_num: int, l1_result: dict, l2_result: dict | None,
-                    l3_result: dict | None, final_score: float,
-                    grade: str, drafts_dir: Path) -> str:
+                    l3_reader_result: dict | None, l4_result: dict | None,
+                    final_score: float, grade: str, drafts_dir: Path) -> str:
     """生成 verification_report.md"""
     lines = [
         f"# ch{ch_num:04d} 验证报告",
@@ -802,21 +892,12 @@ def generate_report(ch_num: int, l1_result: dict, l2_result: dict | None,
 
     # Layer 2 结果
     if l2_result:
-        lines.append(f"\n## Layer 2：AI 深度分析")
+        lines.append(f"\n## Layer 2：风格分析")
         lines.append(f"\n得分：{l2_result['score']}/100\n")
-
-        if l2_result.get("blind_compare"):
-            bc = l2_result["blind_compare"]
-            lines.append("### 盲测对比\n")
-            lines.append(f"- 相似度：{bc.get('similarity_score', '?')}/100")
-            lines.append(f"- Claude 识别正确：{'是' if bc.get('correct_identification') else '否'}")
-            lines.append(f"- 置信度：{bc.get('confidence', '?')}")
-            lines.append(f"- 依据：{bc.get('reasoning', '无')}")
 
         if l2_result.get("style_analysis"):
             sa = l2_result["style_analysis"]
             overall = sa.get("overall", {})
-            lines.append("\n### 深度风格分析\n")
             lines.append("| 维度 | 评分 |")
             lines.append("|------|------|")
             for dim, key in [("情感表达", "emotion_avg"), ("对话自然度", "dialogue_avg"),
@@ -835,16 +916,48 @@ def generate_report(ch_num: int, l1_result: dict, l2_result: dict | None,
                 for sugg in sa["improvement_suggestions"][:5]:
                     lines.append(f"- **{sugg.get('location', '?')}**：{sugg.get('issue', '')} → {sugg.get('suggestion', '')}")
 
-    # Layer 3 结果
-    if l3_result and not l3_result.get("skipped", True):
-        lines.append(f"\n## Layer 3：跨章一致性")
-        lines.append(f"\n得分：{l3_result['score']}/100\n")
-        if l3_result.get("repetition_issues"):
+    # Layer 3 结果（读者对齐）
+    if l3_reader_result and not l3_reader_result.get("skipped", True):
+        lines.append(f"\n## Layer 3：读者对齐")
+        lines.append(f"\n得分：{l3_reader_result['score']}/100\n")
+        dim_names = {
+            "shuangdian_hit": "爽点命中",
+            "caodian_avoid": "槽点规避",
+            "character_alignment": "角色人气对齐",
+            "expectation_response": "读者期待呼应",
+        }
+        dims = l3_reader_result.get("dimensions", {})
+        if dims:
+            lines.append("| 维度 | 评分 |")
+            lines.append("|------|------|")
+            for dim_key, dim_name in dim_names.items():
+                score = dims.get(dim_key, "—")
+                lines.append(f"| {dim_name} | {score}/5 |")
+        raw_data = l3_reader_result.get("raw_data", {})
+        if raw_data.get("summary"):
+            lines.append(f"\n**总评**：{raw_data['summary']}")
+        if raw_data.get("suggestions"):
+            lines.append("\n### 读者对齐建议\n")
+            for sugg in raw_data["suggestions"][:5]:
+                lines.append(f"- {sugg}")
+    elif l3_reader_result and l3_reader_result.get("skipped"):
+        lines.append("\n## Layer 3：读者对齐\n")
+        reason = l3_reader_result.get("reason", "unknown")
+        if reason == "no_reader_data":
+            lines.append("跳过（无读者反馈数据）\n")
+        else:
+            lines.append(f"跳过（{reason}）\n")
+
+    # Layer 4 结果（跨章一致性）
+    if l4_result and not l4_result.get("skipped", True):
+        lines.append(f"\n## Layer 4：跨章一致性")
+        lines.append(f"\n得分：{l4_result['score']}/100\n")
+        if l4_result.get("repetition_issues"):
             lines.append("### 重复表达\n")
-            for issue in l3_result["repetition_issues"][:5]:
+            for issue in l4_result["repetition_issues"][:5]:
                 lines.append(f"- {issue['chapter_pair']}：\"{issue['text_a']}\" ↔ \"{issue['text_b']}\" (相似度 {issue['similarity']})")
-    elif l3_result and l3_result.get("skipped"):
-        lines.append("\n## Layer 3：跨章一致性\n")
+    elif l4_result and l4_result.get("skipped"):
+        lines.append("\n## Layer 4：跨章一致性\n")
         lines.append("跳过（单章验证，不触发跨章检测）\n")
 
     # 综合评价
@@ -881,9 +994,15 @@ def generate_report(ch_num: int, l1_result: dict, l2_result: dict | None,
         for s in l1_result.get("suggestions", []):
             feedback_lines.append(f"- {s}")
         if l2_result and l2_result.get("style_analysis", {}).get("improvement_suggestions"):
-            feedback_lines.append("\n## AI 建议\n")
+            feedback_lines.append("\n## AI 风格建议\n")
             for sugg in l2_result["style_analysis"]["improvement_suggestions"][:5]:
                 feedback_lines.append(f"- {sugg.get('location', '?')}：{sugg.get('suggestion', '')}")
+        if l3_reader_result and not l3_reader_result.get("skipped", True):
+            raw_data = l3_reader_result.get("raw_data", {})
+            if raw_data.get("suggestions"):
+                feedback_lines.append("\n## 读者对齐建议\n")
+                for sugg in raw_data["suggestions"][:5]:
+                    feedback_lines.append(f"- {sugg}")
 
         feedback_path = drafts_dir / f"ch{ch_num:04d}_feedback.md"
         feedback_path.write_text("\n".join(feedback_lines), encoding="utf-8")
@@ -1068,12 +1187,12 @@ def verify_chapter(ch_num: int, paths: dict, layer: int | None,
         print(f"错误：草稿 ch{ch_num:04d}.md 为空或不存在")
         sys.exit(1)
 
-    # 加载原文（如果存在）
+    # 加载原文（如果存在，用于 L1 对比显示）
     original_text = load_chapter_text(text_dir, ch_num) if text_dir.exists() else None
     if original_text:
         print(f"原文已加载: text/ch{ch_num:04d}.md")
     else:
-        print(f"无原文 text/ch{ch_num:04d}.md（跳过盲测对比）")
+        print(f"无原文 text/ch{ch_num:04d}.md")
 
     # 加载 stats.json
     with open(stats_path, "r", encoding="utf-8") as f:
@@ -1085,30 +1204,35 @@ def verify_chapter(ch_num: int, paths: dict, layer: int | None,
     if layer == 1:
         final_score = l1_result["score"]
         grade = "A" if final_score >= 90 else "B" if final_score >= 80 else "C" if final_score >= 70 else "D"
-        generate_report(ch_num, l1_result, None, None, final_score, grade, drafts_dir)
+        generate_report(ch_num, l1_result, None, None, None, final_score, grade, drafts_dir)
         update_history(paths["history_path"], ch_num, final_score, grade, l1_result)
         return final_score, grade
 
-    # Layer 2：AI 深度分析
+    # Layer 2：风格分析
     l2_result = None
     if layer is None or layer == 2:
-        l2_result = run_layer2(draft_text, original_text, paths, ch_num, model, timeout)
+        l2_result = run_layer2(draft_text, paths, ch_num, model, timeout)
 
-    # Layer 3：跨章一致性
-    l3_result = None
+    # Layer 3：读者对齐（新增）
+    l3_reader_result = None
     if layer is None or layer == 3:
+        l3_reader_result = run_layer3_reader(draft_text, paths["reader_dir"], model, timeout)
+
+    # Layer 4：跨章一致性
+    l4_result = None
+    if layer is None or layer == 4:
         draft_chapters = list_draft_chapters(drafts_dir)
-        l3_result = run_layer3(drafts_dir, text_dir, draft_chapters, model, timeout)
+        l4_result = run_layer4_cross_chapter(drafts_dir, text_dir, draft_chapters, model, timeout)
 
     # 综合评分
-    final_score, grade = compute_final_score(l1_result, l2_result, l3_result)
+    final_score, grade = compute_final_score(l1_result, l2_result, l3_reader_result, l4_result)
 
     print("\n" + "=" * 60)
     print(f"  综合评分：{final_score}/100（评级 {grade}）")
     print("=" * 60)
 
     # 生成报告
-    generate_report(ch_num, l1_result, l2_result, l3_result,
+    generate_report(ch_num, l1_result, l2_result, l3_reader_result, l4_result,
                     final_score, grade, drafts_dir)
 
     # 更新历史
@@ -1133,6 +1257,32 @@ def main():
             print("错误：--promote 需要指定 --chapter")
             sys.exit(1)
         promote_chapter(book_dir, args.chapter, args.model, args.timeout)
+        return
+
+    # 校准模式：运行盲测对比（不影响评级）
+    if args.calibrate:
+        if not args.chapter:
+            print("错误：--calibrate 需要指定 --chapter")
+            sys.exit(1)
+        ch_num = args.chapter
+        drafts_dir = paths["drafts_dir"]
+        text_dir = paths["text_dir"]
+        draft_text = load_draft_text(drafts_dir, ch_num)
+        if not draft_text:
+            print(f"错误：草稿 ch{ch_num:04d}.md 为空或不存在")
+            sys.exit(1)
+        original_text = load_chapter_text(text_dir, ch_num) if text_dir.exists() else None
+        if not original_text:
+            print(f"错误：校准模式需要原文 text/ch{ch_num:04d}.md，但原文不存在")
+            sys.exit(1)
+        print(f"\n{'=' * 60}")
+        print(f"  校准模式：盲测对比 — ch{ch_num:04d}")
+        print(f"{'=' * 60}")
+        blind_result = _run_blind_compare(draft_text, original_text, args.model, args.timeout)
+        if blind_result:
+            print(f"\n校准完成。盲测结果仅供参考，不影响正式评级。")
+        else:
+            print(f"\n校准失败：盲测对比未返回有效结果。")
         return
 
     # 确定要验证的章节

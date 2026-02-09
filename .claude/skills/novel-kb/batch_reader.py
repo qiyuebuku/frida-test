@@ -1,27 +1,102 @@
 #!/usr/bin/env python3
 """
-读者层分析批量编排脚本
+T6 读者反馈分析 — 批量编排脚本
 
-从段落级评论数据中提炼读者反馈，构建读者层知识库。
-三阶段 pipeline：Python 预处理 → 分段分析 → 全局融合。
+从 T1 段落评论中提炼读者反馈，构建情绪触发点 + 角色人气 + 期待分析。
 
-用法：
-    python batch_reader.py --book-dir qidian/novel_kb/玄鉴仙族
-    python batch_reader.py --book-dir ... --phase preprocess
-    python batch_reader.py --book-dir ... --phase segment
-    python batch_reader.py --book-dir ... --phase merge
-    python batch_reader.py --book-dir ... --dry-run
-    python batch_reader.py --book-dir ... --validate
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+前置条件
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  - T1 已完成: reader/comments/ 下有评论文件 (chXXXX.md)
+    格式：章评 + 段评（每段含原文引用、用户、地区、点赞数、评论内容）
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+三阶段 Pipeline（按顺序自动执行，支持断点续传）
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  阶段 0  preprocess     Python 预处理，去重去噪 + 统计 + 精选
+                         产出: reader/.build/processed_data.json
+                               包含全局 TOP 评论、热度段落、章节热度排名
+                         耗时: ~30s（取决于评论量），0 次 AI 调用
+
+  阶段 1  segment        分段分析，每段 100 章，Claude 提取 4 类反馈
+                         产出: reader/.build/seg_XX.json
+                               包含情绪触发点、角色提及、不满点、期待点
+                         耗时: 取决于章节数，每段 1 次 AI 调用
+                               支持 --concurrency M 并发 M 段加速
+                               小规模（≤100 章）跳过分段，直接全量处理
+
+  阶段 2  merge          全局融合，合并所有段数据 → 4 个 MD 文件
+                         产出: reader/feedback/emotions.md（情绪触发点）
+                               reader/feedback/popular_characters.md（角色人气）
+                               reader/feedback/complaints.md（读者不满点）
+                               reader/feedback/expectations.md（读者期待）
+                               reader/index.md（读者层总览）
+                         耗时: ~2min, 1 次 AI 调用（需要 Write 工具）
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+典型用法
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  # 一键全流程（从当前进度自动继续）
+  python batch_reader.py --book-dir qidian/novel_kb/玄鉴仙族
+
+  # 加速：阶段 1 分段分析并发 3 段
+  python batch_reader.py --book-dir ... --concurrency 3
+
+  # 只运行某个阶段
+  python batch_reader.py --book-dir ... --phase preprocess
+  python batch_reader.py --book-dir ... --phase segment --concurrency 3
+  python batch_reader.py --book-dir ... --phase merge
+
+  # 试运行 + 验证产出
+  python batch_reader.py --book-dir ... --dry-run
+  python batch_reader.py --book-dir ... --validate
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+参数说明
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  --book-dir PATH         知识库目录（必需）
+  --segment-size N        每段章节数（默认 100，影响阶段 1）
+  --top-per-chapter M     每章精选高赞评论数（默认 5，影响阶段 1 输入）
+  --concurrency K         并发数（默认 1，仅对 segment 阶段生效）
+  --phase PHASE           只运行特定阶段（preprocess/segment/merge）
+  --model MODEL           Claude 模型（默认 sonnet）
+  --timeout SEC           单次调用超时秒数（默认 600）
+  --dry-run               试运行，不执行 Claude 调用
+  --validate              验证产出文件完整性
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+产出目录结构
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  {book_dir}/
+    reader/
+      feedback/
+        emotions.md              情绪触发点（场景分类、TOP 高赞段落、写作启示）
+        popular_characters.md    角色人气（提及次数、高赞评论、读者态度）
+        complaints.md            读者不满点（槽点分类、改进建议）
+        expectations.md          读者期待（期待剧情、角色发展预测）
+      index.md                   读者反馈总览（统计 + 文件导航）
+      .build/
+        processed_data.json      预处理数据（全局统计、TOP 评论、热度章节）
+        seg_XX.json              段级分析 JSON
+      .progress.json             进度文件
 """
 
 import argparse
+import fcntl
 import hashlib
 import json
 import re
 import subprocess
 import sys
+import threading
 import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
+from json_fixer import fix_and_parse_json
 
 # Skill 目录
 SKILL_DIR = Path(__file__).parent
@@ -65,6 +140,8 @@ def parse_args():
                         help="每段处理的章节数（默认 100）")
     parser.add_argument("--top-per-chapter", type=int, default=5,
                         help="每章精选的高赞评论数（默认 5）")
+    parser.add_argument("--concurrency", type=int, default=1,
+                        help="segment 阶段并发数（默认 1）")
     return parser.parse_args()
 
 
@@ -118,10 +195,7 @@ def get_progress_path(book_dir: Path) -> Path:
 # 进度管理
 # ============================================================
 
-def load_progress(progress_path: Path) -> dict:
-    if progress_path.exists():
-        with open(progress_path, "r", encoding="utf-8") as f:
-            return json.load(f)
+def _default_progress() -> dict:
     return {
         "phase": "preprocess",
         "preprocess": {"status": "pending"},
@@ -138,9 +212,45 @@ def load_progress(progress_path: Path) -> dict:
     }
 
 
+def _read_progress_raw(progress_path: Path) -> dict:
+    if progress_path.exists():
+        with open(progress_path, "r", encoding="utf-8") as f:
+            return json.load(f)
+    return _default_progress()
+
+
+def load_progress(progress_path: Path) -> dict:
+    lock_path = progress_path.with_suffix(".lock")
+    with open(lock_path, "w") as lf:
+        fcntl.flock(lf, fcntl.LOCK_SH)
+        try:
+            return _read_progress_raw(progress_path)
+        finally:
+            fcntl.flock(lf, fcntl.LOCK_UN)
+
+
 def save_progress(progress_path: Path, progress: dict):
-    with open(progress_path, "w", encoding="utf-8") as f:
-        json.dump(progress, f, ensure_ascii=False, indent=2)
+    lock_path = progress_path.with_suffix(".lock")
+    with open(lock_path, "w") as lf:
+        fcntl.flock(lf, fcntl.LOCK_EX)
+        try:
+            disk = _read_progress_raw(progress_path)
+            sa = progress.get("segment_analyze", {})
+            dsa = disk.get("segment_analyze", {})
+            merged_completed = sorted(set(dsa.get("segments_completed", [])) | set(sa.get("segments_completed", [])))
+            merged_failed = sorted(
+                (set(dsa.get("segments_failed", [])) | set(sa.get("segments_failed", []))) - set(merged_completed)
+            )
+            progress["segment_analyze"]["segments_completed"] = merged_completed
+            progress["segment_analyze"]["segments_failed"] = merged_failed
+            progress["stats"]["total_calls"] = max(
+                disk["stats"].get("total_calls", 0), progress["stats"].get("total_calls", 0))
+            progress["stats"]["total_time_seconds"] = max(
+                disk["stats"].get("total_time_seconds", 0), progress["stats"].get("total_time_seconds", 0))
+            with open(progress_path, "w", encoding="utf-8") as f:
+                json.dump(progress, f, ensure_ascii=False, indent=2)
+        finally:
+            fcntl.flock(lf, fcntl.LOCK_UN)
 
 
 # ============================================================
@@ -148,10 +258,11 @@ def save_progress(progress_path: Path, progress: dict):
 # ============================================================
 
 def run_claude_prompt(prompt: str, model: str, timeout: int,
-                      allow_tools: str = "") -> tuple[bool, str]:
+                      allow_tools: str = "",
+                      verbose: bool = True) -> tuple[bool, str]:
     cmd = [
         "claude",
-        "-p", prompt,
+        "-p", "-",
         "--model", model,
         "--permission-mode", "bypassPermissions",
     ]
@@ -159,14 +270,28 @@ def run_claude_prompt(prompt: str, model: str, timeout: int,
         cmd.extend(["--allowedTools", allow_tools])
 
     try:
-        result = subprocess.run(
-            cmd,
-            capture_output=True,
-            text=True,
-            timeout=timeout,
-        )
-        if result.returncode != 0:
-            return False, f"退出码 {result.returncode}\nstderr: {result.stderr[:1000]}"
+        if verbose:
+            result = subprocess.run(
+                cmd,
+                input=prompt,
+                stdout=subprocess.PIPE,
+                stderr=None,
+                text=True,
+                timeout=timeout,
+            )
+            if result.returncode != 0:
+                return False, f"退出码 {result.returncode}\n{result.stdout[:1000]}"
+        else:
+            result = subprocess.run(
+                cmd,
+                input=prompt,
+                capture_output=True,
+                text=True,
+                timeout=timeout,
+            )
+            if result.returncode != 0:
+                err_detail = result.stderr[:1000] if result.stderr.strip() else result.stdout[:1000]
+                return False, f"退出码 {result.returncode}\n{err_detail}"
         return True, result.stdout
     except subprocess.TimeoutExpired:
         return False, f"超时（{timeout}秒）"
@@ -174,80 +299,6 @@ def run_claude_prompt(prompt: str, model: str, timeout: int,
         return False, f"异常: {e}"
 
 
-def _fix_json_unescaped_quotes(json_str: str) -> str:
-    """修复 JSON 字符串内未转义的双引号。
-
-    Claude 输出的 JSON 中，评论内容可能包含未转义的双引号，如：
-        "看来"狗剩"这个贱名也保不住啊"
-    需要转为：
-        "看来\\"狗剩\\"这个贱名也保不住啊"
-    """
-    result = []
-    in_string = False
-    i = 0
-    while i < len(json_str):
-        ch = json_str[i]
-        if ch == '\\' and in_string:
-            # 转义序列，跳过下一个字符
-            result.append(ch)
-            if i + 1 < len(json_str):
-                result.append(json_str[i + 1])
-                i += 2
-            else:
-                i += 1
-            continue
-        if ch == '"':
-            if not in_string:
-                in_string = True
-                result.append(ch)
-            else:
-                # 判断这个引号是字符串结束还是未转义的内部引号
-                # 结束引号的特征：后面紧跟 , ] } : 或空白+这些字符
-                rest = json_str[i + 1:].lstrip()
-                if rest and rest[0] in (',', ']', '}', ':'):
-                    # 这是字符串结束引号
-                    in_string = False
-                    result.append(ch)
-                elif not rest:
-                    # 到末尾了
-                    in_string = False
-                    result.append(ch)
-                else:
-                    # 这是内部未转义的引号，转义它
-                    result.append('\\"')
-            i += 1
-            continue
-        result.append(ch)
-        i += 1
-    return ''.join(result)
-
-
-def extract_json_from_output(output: str) -> dict | None:
-    text = output.strip()
-    if "```json" in text:
-        m = re.search(r"```json\s*\n(.*?)\n\s*```", text, re.DOTALL)
-        if m:
-            text = m.group(1)
-    elif "```" in text:
-        m = re.search(r"```\s*\n(.*?)\n\s*```", text, re.DOTALL)
-        if m:
-            text = m.group(1)
-
-    first_brace = text.find("{")
-    last_brace = text.rfind("}")
-    if first_brace != -1 and last_brace != -1 and last_brace > first_brace:
-        json_str = text[first_brace:last_brace + 1]
-        try:
-            return json.loads(json_str)
-        except json.JSONDecodeError:
-            pass
-        # 尝试修复：JSON 字符串内未转义的双引号
-        fixed = _fix_json_unescaped_quotes(json_str)
-        try:
-            return json.loads(fixed)
-        except json.JSONDecodeError:
-            pass
-    return None
 
 
 # ============================================================
@@ -733,7 +784,7 @@ def build_segment_text(processed: dict, start_ch: int, end_ch: int,
 
 def build_segment_analyze_prompt(segment_text: str, segment_label: str) -> str:
     """构建分段分析 prompt"""
-    template = (PROMPTS_DIR / "segment_analyze.md").read_text(encoding="utf-8")
+    template = (PROMPTS_DIR / "reader_segment_analyze.md").read_text(encoding="utf-8")
     prompt = template.replace("{segment_data}", segment_text)
     prompt = prompt.replace("{segment_label}", segment_label)
     return prompt
@@ -742,7 +793,8 @@ def build_segment_analyze_prompt(segment_text: str, segment_label: str) -> str:
 def phase_segment_analyze(book_dir: Path, all_chapters: list[int],
                           progress: dict, progress_path: Path,
                           model: str, timeout: int, dry_run: bool,
-                          segment_size: int, top_per_chapter: int):
+                          segment_size: int, top_per_chapter: int,
+                          concurrency: int = 1):
     """执行阶段 1：分段分析"""
     print("\n" + "=" * 60)
     print("阶段 1：分段分析")
@@ -789,7 +841,8 @@ def phase_segment_analyze(book_dir: Path, all_chapters: list[int],
         progress["stats"]["total_time_seconds"] += int(elapsed)
 
         if success:
-            result = extract_json_from_output(output)
+            debug_path = build_dir / "segment_all_json_debug.txt"
+            result = fix_and_parse_json(output, verbose=False, save_debug_to=debug_path)
             if result:
                 output_path = build_dir / "segment_all.json"
                 with open(output_path, "w", encoding="utf-8") as f:
@@ -798,9 +851,7 @@ def phase_segment_analyze(book_dir: Path, all_chapters: list[int],
                 _print_segment_summary(result)
             else:
                 print(f"无法解析 JSON ({elapsed:.0f}s)")
-                debug_path = build_dir / "segment_all_raw.txt"
-                debug_path.write_text(output, encoding="utf-8")
-                print(f"原始输出已保存: {debug_path}")
+                print(f"调试信息已保存: {debug_path}")
                 save_progress(progress_path, progress)
                 return
         else:
@@ -836,60 +887,106 @@ def phase_segment_analyze(book_dir: Path, all_chapters: list[int],
             print(f"  {label} (ch{start:04d}-ch{end:04d}): ~{len(seg_text)} 字符")
         return
 
-    for start, end, seg_label in pending:
-        segment_text = build_segment_text(
-            processed, start, end, top_per_chapter
-        )
+    concurrency = max(1, concurrency)
+    print_lock = threading.Lock()
+    done_counter = {"n": 0, "total": len(pending)}
+
+    def process_one_segment(start: int, end: int, seg_label: str,
+                            verbose: bool = True) -> dict:
         seg_display = f"ch{start:04d}-ch{end:04d}"
+        segment_text = build_segment_text(processed, start, end, top_per_chapter)
 
         if not segment_text:
-            print(f"\n--- {seg_label} ({seg_display}): 无评论，跳过 ---")
-            progress["segment_analyze"]["segments_completed"].append(seg_label)
-            save_progress(progress_path, progress)
-            continue
+            with print_lock:
+                print(f"\n--- {seg_label} ({seg_display}): 无评论，跳过 ---")
+            lock_path = progress_path.with_suffix(".lock")
+            with open(lock_path, "w") as lf:
+                fcntl.flock(lf, fcntl.LOCK_EX)
+                try:
+                    disk = _read_progress_raw(progress_path)
+                    if seg_label not in disk["segment_analyze"]["segments_completed"]:
+                        disk["segment_analyze"]["segments_completed"].append(seg_label)
+                    with open(progress_path, "w", encoding="utf-8") as f:
+                        json.dump(disk, f, ensure_ascii=False, indent=2)
+                finally:
+                    fcntl.flock(lf, fcntl.LOCK_UN)
+            with print_lock:
+                done_counter["n"] += 1
+            return {"seg": seg_label, "success": True, "skipped": True}
 
-        prompt = build_segment_analyze_prompt(
-            segment_text, f"{seg_label} ({seg_display})"
-        )
+        prompt = build_segment_analyze_prompt(segment_text, f"{seg_label} ({seg_display})")
 
-        print(f"\n--- {seg_label} ({seg_display}) ---")
+        with print_lock:
+            print(f"\n--- {seg_label} ({seg_display}) ---")
+
         start_time = time.time()
-        success, output = run_claude_prompt(prompt, model, timeout)
+        success, output = run_claude_prompt(prompt, model, timeout, verbose=verbose)
         elapsed = time.time() - start_time
 
-        progress["stats"]["total_calls"] += 1
-        progress["stats"]["total_time_seconds"] += int(elapsed)
+        lock_path = progress_path.with_suffix(".lock")
+        with open(lock_path, "w") as lf:
+            fcntl.flock(lf, fcntl.LOCK_EX)
+            try:
+                disk = _read_progress_raw(progress_path)
+                disk["stats"]["total_calls"] = disk["stats"].get("total_calls", 0) + 1
+                disk["stats"]["total_time_seconds"] = disk["stats"].get("total_time_seconds", 0) + int(elapsed)
+                ok = False
+                if success:
+                    debug_path = build_dir / f"{seg_label}_json_debug.txt"
+                    result = fix_and_parse_json(output, verbose=False, save_debug_to=debug_path)
+                    if result:
+                        output_path = build_dir / f"{seg_label}.json"
+                        with open(output_path, "w", encoding="utf-8") as fo:
+                            json.dump(result, fo, ensure_ascii=False, indent=2)
+                        if seg_label not in disk["segment_analyze"]["segments_completed"]:
+                            disk["segment_analyze"]["segments_completed"].append(seg_label)
+                        ok = True
+                    else:
+                        if seg_label not in disk["segment_analyze"]["segments_failed"]:
+                            disk["segment_analyze"]["segments_failed"].append(seg_label)
+                else:
+                    if seg_label not in disk["segment_analyze"]["segments_failed"]:
+                        disk["segment_analyze"]["segments_failed"].append(seg_label)
+                with open(progress_path, "w", encoding="utf-8") as f:
+                    json.dump(disk, f, ensure_ascii=False, indent=2)
+                progress.update(disk)
+            finally:
+                fcntl.flock(lf, fcntl.LOCK_UN)
 
-        if success:
-            result = extract_json_from_output(output)
-            if result:
-                output_path = build_dir / f"{seg_label}.json"
-                with open(output_path, "w", encoding="utf-8") as f:
-                    json.dump(result, f, ensure_ascii=False, indent=2)
-                print(f"  完成 ({elapsed:.0f}s)")
+        with print_lock:
+            done_counter["n"] += 1
+            status = "✓" if ok else "✗"
+            msg = f"  [{seg_label}] {status} ({elapsed:.0f}s)  [{done_counter['n']}/{done_counter['total']}]"
+            if ok:
                 _print_segment_summary(result)
-                progress["segment_analyze"]["segments_completed"].append(seg_label)
-            else:
-                print(f"  无法解析 JSON ({elapsed:.0f}s)")
-                debug_path = build_dir / f"{seg_label}_raw.txt"
-                debug_path.write_text(output, encoding="utf-8")
-                if seg_label not in progress["segment_analyze"]["segments_failed"]:
-                    progress["segment_analyze"]["segments_failed"].append(seg_label)
-        else:
-            print(f"  失败 ({elapsed:.0f}s): {output[:200]}")
-            if seg_label not in progress["segment_analyze"]["segments_failed"]:
-                progress["segment_analyze"]["segments_failed"].append(seg_label)
+            elif not success:
+                msg += f" {output[:100]}"
+            print(msg)
 
-        save_progress(progress_path, progress)
+        return {"seg": seg_label, "success": ok}
+
+    if concurrency == 1:
+        for start, end, seg_label in pending:
+            process_one_segment(start, end, seg_label)
+    else:
+        print(f"并发数: {concurrency}")
+        with ThreadPoolExecutor(max_workers=concurrency) as executor:
+            futures = {executor.submit(process_one_segment, s, e, l, verbose=False): l for s, e, l in pending}
+            for future in as_completed(futures):
+                try:
+                    future.result()
+                except Exception as e:
+                    with print_lock:
+                        print(f"  ✗ 线程异常 ({futures[future]}): {e}")
 
     # 检查是否全部完成
-    all_done = set(s[2] for s in segments) <= set(
-        progress["segment_analyze"]["segments_completed"]
-    )
+    final = load_progress(progress_path)
+    all_done = set(s[2] for s in segments) <= set(final["segment_analyze"]["segments_completed"])
     if all_done:
-        progress["segment_analyze"]["status"] = "completed"
-        progress["phase"] = "global_merge"
-        save_progress(progress_path, progress)
+        final["segment_analyze"]["status"] = "completed"
+        final["phase"] = "global_merge"
+        save_progress(progress_path, final)
+        progress.update(final)
         print("\n分段分析全部完成！")
 
 
@@ -933,7 +1030,7 @@ def build_global_merge_prompt(merged_data: dict, global_stats: dict,
                               chapter_heat_ranking: list,
                               feedback_dir: str) -> str:
     """构建全局融合 prompt"""
-    template = (PROMPTS_DIR / "global_merge.md").read_text(encoding="utf-8")
+    template = (PROMPTS_DIR / "reader_global_merge.md").read_text(encoding="utf-8")
     prompt = template.replace(
         "{merged_data_json}",
         json.dumps(merged_data, ensure_ascii=False, indent=2)
@@ -1206,7 +1303,8 @@ def main():
             phase_segment_analyze(
                 book_dir, all_chapters, progress, progress_path,
                 args.model, args.timeout, args.dry_run,
-                args.segment_size, args.top_per_chapter
+                args.segment_size, args.top_per_chapter,
+                args.concurrency
             )
 
     # 阶段 2: 全局融合

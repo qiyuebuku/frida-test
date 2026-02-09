@@ -1,29 +1,103 @@
 #!/usr/bin/env python3
 """
-角色层提取批量编排脚本
+T4 角色层提取 — 批量编排脚本
 
-从章节摘要 + 剧情层产出中提取角色信息，构建完整人物库。
-五阶段 pipeline：Python 预处理 → 别名合并 → 角色深度分析 → 关系网构建 → 状态精修。
+从 T2 章节摘要 + T3 剧情层产出中提取角色信息，构建完整人物库。
 
-用法：
-    python batch_character.py --book-dir qidian/novel_kb/玄鉴仙族
-    python batch_character.py --book-dir ... --phase preprocess
-    python batch_character.py --book-dir ... --phase alias-merge
-    python batch_character.py --book-dir ... --phase deep-dive
-    python batch_character.py --book-dir ... --phase deep-dive --character "李木田"
-    python batch_character.py --book-dir ... --phase relationship
-    python batch_character.py --book-dir ... --phase status-update
-    python batch_character.py --book-dir ... --dry-run
-    python batch_character.py --book-dir ... --validate
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+前置条件
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  - T2 已完成: plot/chapters/ 下有章节摘要 (chXXXX.md)
+  - T3 已完成: plot/outline/ 下有弧文件 (arc_XX.md) 和 plot_lines.md
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+五阶段 Pipeline（按顺序自动执行，支持断点续传）
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  阶段 0  preprocess    Python 预处理，从摘要中提取角色名册
+                        产出: characters/.build/raw_census.json
+                        耗时: ~10s, 0 次 AI 调用
+
+  阶段 1  alias-merge   别名合并与分级（分批调 Claude）
+                        产出: characters/.build/census.json, alias_mapping.json
+                        耗时: ~5min, 每 150 角色 1 次 AI + 1 次跨批次检测
+
+  阶段 2  deep-dive     逐角色生成详细档案（支持并发）
+                        产出: characters/{name}.md（核心 5 模块 / 重要 3 模块）
+                        耗时: 取决于角色数，每角色 1 次 AI（高章节数分批提取）
+
+  阶段 3  relationship  关系网构建 + 交叉验证
+                        产出: characters/relationships.md
+                        耗时: ~2min, 2 次 AI 调用
+
+  阶段 4  status-update 活跃角色当前状态精修 + 生成 index.md
+                        产出: characters/index.md + 更新各角色档案的当前状态
+                        耗时: ~2min, 1 次 AI 调用
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+典型用法
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  # 一键全流程（从当前进度自动继续，直到全部完成）
+  python batch_character.py --book-dir qidian/novel_kb/玄鉴仙族
+
+  # 全流程 + deep-dive 阶段 10 并发加速
+  python batch_character.py --book-dir ... --concurrency 10
+
+  # 只运行某个阶段（跳过前面已完成的，不执行后面的）
+  python batch_character.py --book-dir ... --phase preprocess
+  python batch_character.py --book-dir ... --phase alias-merge
+  python batch_character.py --book-dir ... --phase deep-dive --concurrency 10
+  python batch_character.py --book-dir ... --phase relationship
+  python batch_character.py --book-dir ... --phase status-update
+
+  # deep-dive 只处理单个角色（调试用）
+  python batch_character.py --book-dir ... --phase deep-dive --character "李木田"
+
+  # 试运行（不实际调用 AI，只显示将要做什么）
+  python batch_character.py --book-dir ... --dry-run
+
+  # 验证产出完整性
+  python batch_character.py --book-dir ... --validate
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+参数说明
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  --book-dir PATH      知识库目录（必须）
+  --phase PHASE        只运行指定阶段（可选，默认从当前进度继续）
+  --character NAME     只处理指定角色，仅 deep-dive 阶段有效（可选）
+  --concurrency N      deep-dive 阶段并发数（默认 1，推荐 5-10）
+  --model MODEL        Claude 模型（默认 sonnet）
+  --timeout SECONDS    单次 AI 调用超时（默认 600s）
+  --dry-run            试运行，不实际调用 AI
+  --validate           验证所有产出文件的完整性
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+产出目录结构
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  {book-dir}/characters/
+  ├── index.md                  # 人物索引（阶段 4 生成）
+  ├── relationships.md          # 关系网（阶段 3 生成）
+  ├── {name}.md                 # 各角色详细档案（阶段 2 生成）
+  ├── .progress.json            # 进度文件（断点续传）
+  └── .build/                   # 中间产物
+      ├── raw_census.json       # 阶段 0: 原始角色名册
+      ├── census.json           # 阶段 1: 合并后角色名册
+      ├── alias_mapping.json    # 阶段 1: 别名映射表
+      └── alias_batch_*.json    # 阶段 1: 各批次结果
 """
 
 import argparse
+import fcntl
 import json
 import re
 import subprocess
 import sys
+import threading
 import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
+from json_fixer import fix_and_parse_json
 
 try:
     from pypinyin import lazy_pinyin, Style
@@ -53,6 +127,8 @@ def parse_args():
     parser.add_argument("--validate", action="store_true", help="验证产出")
     parser.add_argument("--timeout", type=int, default=600,
                         help="单次 Claude 调用超时秒数（默认 600）")
+    parser.add_argument("--concurrency", type=int, default=1,
+                        help="deep-dive 阶段并发数（默认 1）")
     return parser.parse_args()
 
 
@@ -109,10 +185,7 @@ def get_progress_path(book_dir: Path) -> Path:
 # 进度管理
 # ============================================================
 
-def load_progress(progress_path: Path) -> dict:
-    if progress_path.exists():
-        with open(progress_path, "r", encoding="utf-8") as f:
-            return json.load(f)
+def _default_progress() -> dict:
     return {
         "phase": "preprocess",
         "preprocess": {
@@ -148,9 +221,51 @@ def load_progress(progress_path: Path) -> dict:
     }
 
 
+def _read_progress_raw(progress_path: Path) -> dict:
+    if progress_path.exists():
+        with open(progress_path, "r", encoding="utf-8") as f:
+            return json.load(f)
+    return _default_progress()
+
+
+def load_progress(progress_path: Path) -> dict:
+    lock_path = progress_path.with_suffix(".lock")
+    with open(lock_path, "w") as lf:
+        fcntl.flock(lf, fcntl.LOCK_SH)
+        try:
+            return _read_progress_raw(progress_path)
+        finally:
+            fcntl.flock(lf, fcntl.LOCK_UN)
+
+
 def save_progress(progress_path: Path, progress: dict):
-    with open(progress_path, "w", encoding="utf-8") as f:
-        json.dump(progress, f, ensure_ascii=False, indent=2)
+    lock_path = progress_path.with_suffix(".lock")
+    with open(lock_path, "w") as lf:
+        fcntl.flock(lf, fcntl.LOCK_EX)
+        try:
+            disk = _read_progress_raw(progress_path)
+            # 合并 deep_dive completed/failed（并集）
+            for key in ("core_completed", "important_completed"):
+                merged = sorted(set(disk["deep_dive"].get(key, [])) | set(progress["deep_dive"].get(key, [])))
+                progress["deep_dive"][key] = merged
+            for key in ("core_failed", "important_failed"):
+                completed_key = key.replace("failed", "completed")
+                merged = sorted(
+                    (set(disk["deep_dive"].get(key, [])) | set(progress["deep_dive"].get(key, [])))
+                    - set(progress["deep_dive"].get(completed_key, []))
+                )
+                progress["deep_dive"][key] = merged
+            # stats 取 max
+            progress["stats"]["total_calls"] = max(
+                disk["stats"].get("total_calls", 0),
+                progress["stats"].get("total_calls", 0))
+            progress["stats"]["total_time_seconds"] = max(
+                disk["stats"].get("total_time_seconds", 0),
+                progress["stats"].get("total_time_seconds", 0))
+            with open(progress_path, "w", encoding="utf-8") as f:
+                json.dump(progress, f, ensure_ascii=False, indent=2)
+        finally:
+            fcntl.flock(lf, fcntl.LOCK_UN)
 
 
 # ============================================================
@@ -188,10 +303,11 @@ def load_summaries_for_chapters(chapters_dir: Path, ch_list: list[int]) -> str:
 # ============================================================
 
 def run_claude_prompt(prompt: str, model: str, timeout: int,
-                      allow_tools: str = "") -> tuple[bool, str]:
+                      allow_tools: str = "",
+                      verbose: bool = True) -> tuple[bool, str]:
     cmd = [
         "claude",
-        "-p", prompt,
+        "-p", "-",
         "--model", model,
         "--permission-mode", "bypassPermissions",
     ]
@@ -199,14 +315,30 @@ def run_claude_prompt(prompt: str, model: str, timeout: int,
         cmd.extend(["--allowedTools", allow_tools])
 
     try:
-        result = subprocess.run(
-            cmd,
-            capture_output=True,
-            text=True,
-            timeout=timeout,
-        )
-        if result.returncode != 0:
-            return False, f"退出码 {result.returncode}\nstderr: {result.stderr[:1000]}"
+        if verbose:
+            # stderr 直接输出到终端（显示 Claude CLI 进度）
+            result = subprocess.run(
+                cmd,
+                input=prompt,
+                stdout=subprocess.PIPE,
+                stderr=None,
+                text=True,
+                timeout=timeout,
+            )
+            if result.returncode != 0:
+                return False, f"退出码 {result.returncode}\n{result.stdout[:1000]}"
+        else:
+            # 静默模式（并发时避免输出交错）
+            result = subprocess.run(
+                cmd,
+                input=prompt,
+                capture_output=True,
+                text=True,
+                timeout=timeout,
+            )
+            if result.returncode != 0:
+                err_detail = result.stderr[:1000] if result.stderr.strip() else result.stdout[:1000]
+                return False, f"退出码 {result.returncode}\n{err_detail}"
         return True, result.stdout
     except subprocess.TimeoutExpired:
         return False, f"超时（{timeout}秒）"
@@ -214,26 +346,6 @@ def run_claude_prompt(prompt: str, model: str, timeout: int,
         return False, f"异常: {e}"
 
 
-def extract_json_from_output(output: str) -> dict | None:
-    text = output.strip()
-    if "```json" in text:
-        m = re.search(r"```json\s*\n(.*?)\n\s*```", text, re.DOTALL)
-        if m:
-            text = m.group(1)
-    elif "```" in text:
-        m = re.search(r"```\s*\n(.*?)\n\s*```", text, re.DOTALL)
-        if m:
-            text = m.group(1)
-
-    first_brace = text.find("{")
-    last_brace = text.rfind("}")
-    if first_brace != -1 and last_brace != -1 and last_brace > first_brace:
-        json_str = text[first_brace:last_brace + 1]
-        try:
-            return json.loads(json_str)
-        except json.JSONDecodeError:
-            pass
-    return None
 
 
 # ============================================================
@@ -526,19 +638,240 @@ def phase_preprocess(book_dir: Path, all_chapters: list[int],
 # 阶段 1：别名合并与分级
 # ============================================================
 
-def build_alias_merge_prompt(raw_census: dict, plot_lines_content: str) -> str:
-    """构建别名合并 prompt"""
-    template = (PROMPTS_DIR / "alias_merge.md").read_text(encoding="utf-8")
+MIN_APPEARANCE_FOR_ALIAS = 3  # 出场 < 3 次的角色自动归为 minor，不发给 Claude
+
+
+def _compact_census_for_alias(raw_census: dict) -> dict:
+    """精简 raw_census 以适配别名合并 prompt。
+
+    1. 过滤：出场 < MIN_APPEARANCE_FOR_ALIAS 次的角色不发给 Claude（自动 minor）
+    2. 精简：去掉 appearance_chapters、key_actions、raw_relationships 等大字段
+    """
+    compact_chars = {}
+    skipped = 0
+    for name, info in raw_census.get("characters", {}).items():
+        if info.get("appearance_count", 0) < MIN_APPEARANCE_FOR_ALIAS:
+            skipped += 1
+            continue
+        compact = {
+            "identity": info.get("identity", ""),
+            "first_appearance": info.get("first_appearance", "unknown"),
+            "appearance_count": info.get("appearance_count", 0),
+        }
+        if info.get("t2_identity"):
+            compact["t2_identity"] = info["t2_identity"]
+        # arc_roles 只保留弧名和角色简述（截断过长的）
+        if info.get("arc_roles"):
+            compact["arc_roles"] = [
+                {"arc": ar["arc"], "role": ar["role"][:80]}
+                for ar in info["arc_roles"][:5]
+            ]
+        compact_chars[name] = compact
+    return {
+        "characters": compact_chars,
+        "stats": raw_census.get("stats", {}),
+        "note": f"已过滤 {skipped} 个出场<{MIN_APPEARANCE_FOR_ALIAS}次的角色（自动归为 minor）",
+    }
+
+
+ALIAS_BATCH_SIZE = 150  # 每批发给 Claude 的角色数
+
+
+def build_alias_merge_prompt(char_batch: dict, plot_lines_content: str,
+                             batch_label: str) -> str:
+    """构建别名合并 prompt（单批）"""
+    template = (PROMPTS_DIR / "char_alias_merge.md").read_text(encoding="utf-8")
 
     prompt = template.replace("{raw_census_json}",
-                              json.dumps(raw_census, ensure_ascii=False, indent=2))
+                              json.dumps(char_batch, ensure_ascii=False, indent=2))
     prompt = prompt.replace("{plot_lines_content}", plot_lines_content)
     return prompt
 
 
+def _split_characters_into_batches(raw_census: dict) -> list[dict]:
+    """将角色分批，每批 ALIAS_BATCH_SIZE 个（只含出场>=MIN_APPEARANCE_FOR_ALIAS的）。
+
+    按出场次数降序排列，高频角色优先处理。
+    """
+    chars = raw_census.get("characters", {})
+    # 过滤低频角色
+    eligible = {k: v for k, v in chars.items()
+                if v.get("appearance_count", 0) >= MIN_APPEARANCE_FOR_ALIAS}
+    # 按出场次数降序
+    sorted_names = sorted(eligible.keys(),
+                          key=lambda n: eligible[n].get("appearance_count", 0),
+                          reverse=True)
+
+    batches = []
+    for i in range(0, len(sorted_names), ALIAS_BATCH_SIZE):
+        batch_names = sorted_names[i:i + ALIAS_BATCH_SIZE]
+        batch_chars = {n: eligible[n] for n in batch_names}
+        batches.append(batch_chars)
+    return batches
+
+
+def _build_cross_batch_summary(batch_results: list[dict]) -> list[dict]:
+    """提取紧凑的跨批次角色摘要，用于别名检测。"""
+    summary = []
+    for i, result in enumerate(batch_results):
+        for char in result.get("characters", []):
+            entry = {
+                "batch": i + 1,
+                "name": char["canonical_name"],
+                "identity": char.get("identity", ""),
+                "count": char.get("appearance_count", 0),
+            }
+            if char.get("aliases"):
+                entry["aliases"] = char["aliases"]
+            summary.append(entry)
+    return summary
+
+
+def _apply_cross_batch_merges(batch_results: list[dict],
+                               merges: list[dict]) -> list[dict]:
+    """将跨批次别名合并应用到 batch_results 上。"""
+    if not merges:
+        return batch_results
+
+    # 建立 name -> (batch_idx, char_idx) 索引
+    name_to_loc = {}
+    for bi, result in enumerate(batch_results):
+        for ci, char in enumerate(result.get("characters", [])):
+            name_to_loc[char["canonical_name"]] = (bi, ci)
+
+    removed = set()
+    applied = 0
+
+    for m in merges:
+        keep = m.get("keep", "")
+        drop = m.get("merge", "")
+
+        if keep not in name_to_loc or drop not in name_to_loc:
+            continue
+        keep_bi, keep_ci = name_to_loc[keep]
+        drop_bi, drop_ci = name_to_loc[drop]
+
+        if (keep_bi, keep_ci) == (drop_bi, drop_ci):
+            continue
+        if (drop_bi, drop_ci) in removed:
+            continue
+
+        keep_char = batch_results[keep_bi]["characters"][keep_ci]
+        drop_char = batch_results[drop_bi]["characters"][drop_ci]
+
+        # 合并别名
+        existing = set(keep_char.get("aliases", []))
+        existing.add(drop)
+        for alias in drop_char.get("aliases", []):
+            if alias != keep:
+                existing.add(alias)
+        keep_char["aliases"] = sorted(existing)
+
+        # 合并出场次数
+        keep_char["appearance_count"] = (
+            keep_char.get("appearance_count", 0) +
+            drop_char.get("appearance_count", 0)
+        )
+
+        # 保留更高分级
+        cls_rank = {"core": 3, "important": 2, "minor": 1}
+        if cls_rank.get(drop_char.get("classification"), 0) > \
+           cls_rank.get(keep_char.get("classification"), 0):
+            keep_char["classification"] = drop_char["classification"]
+
+        # 更新 alias_mapping
+        batch_results[keep_bi].setdefault("alias_mapping", {})[drop] = keep
+        for alias in drop_char.get("aliases", []):
+            batch_results[keep_bi]["alias_mapping"][alias] = keep
+
+        removed.add((drop_bi, drop_ci))
+        applied += 1
+
+    # 删除被合并的条目
+    for bi in range(len(batch_results)):
+        batch_results[bi]["characters"] = [
+            c for ci, c in enumerate(batch_results[bi].get("characters", []))
+            if (bi, ci) not in removed
+        ]
+
+    print(f"  应用了 {applied} 对跨批次合并，移除 {len(removed)} 个重复条目")
+    return batch_results
+
+
+def _merge_batch_results(batch_results: list[dict], raw_census: dict) -> dict:
+    """合并多批 Claude 结果 + 低频角色 → 最终 census。
+
+    去重策略：同名角色保留分级最高的条目，合并别名。
+    """
+    cls_rank = {"core": 3, "important": 2, "minor": 1}
+    all_alias_mapping = {}
+    # name -> best char entry（去重）
+    best_by_name: dict[str, dict] = {}
+
+    for result in batch_results:
+        for char in result.get("characters", []):
+            # 强制用 Python 生成 file_name，不信任 Claude 的拼音
+            char["file_name"] = name_to_pinyin(char["canonical_name"])
+            name = char["canonical_name"]
+            if name in best_by_name:
+                existing = best_by_name[name]
+                # 保留分级更高的
+                if cls_rank.get(char.get("classification"), 0) > \
+                   cls_rank.get(existing.get("classification"), 0):
+                    # 合并别名后替换
+                    merged_aliases = sorted(
+                        set(existing.get("aliases", [])) | set(char.get("aliases", []))
+                    )
+                    char["aliases"] = merged_aliases
+                    best_by_name[name] = char
+                else:
+                    # 只合并别名
+                    merged_aliases = sorted(
+                        set(existing.get("aliases", [])) | set(char.get("aliases", []))
+                    )
+                    existing["aliases"] = merged_aliases
+            else:
+                best_by_name[name] = char
+        all_alias_mapping.update(result.get("alias_mapping", {}))
+
+    # 追加低频角色为 minor
+    for name, info in raw_census.get("characters", {}).items():
+        if info.get("appearance_count", 0) < MIN_APPEARANCE_FOR_ALIAS and name not in best_by_name:
+            best_by_name[name] = {
+                "canonical_name": name,
+                "aliases": [],
+                "classification": "minor",
+                "identity": info.get("identity", ""),
+                "first_appearance": info.get("first_appearance", "unknown"),
+                "appearance_count": info.get("appearance_count", 0),
+                "file_name": name_to_pinyin(name),
+            }
+
+    # 按分级汇总
+    all_core, all_important, all_minor = [], [], []
+    for name, char in best_by_name.items():
+        cls = char.get("classification", "minor")
+        if cls == "core":
+            all_core.append(name)
+        elif cls == "important":
+            all_important.append(name)
+        else:
+            all_minor.append(name)
+
+    return {
+        "characters": list(best_by_name.values()),
+        "alias_mapping": all_alias_mapping,
+        "classification_summary": {
+            "core": sorted(all_core),
+            "important": sorted(all_important),
+            "minor": sorted(all_minor),
+        },
+    }
+
+
 def phase_alias_merge(book_dir: Path, progress: dict, progress_path: Path,
                       model: str, timeout: int, dry_run: bool):
-    """执行阶段 1：别名合并与分级"""
+    """执行阶段 1：别名合并与分级（分批处理）"""
     print("\n" + "=" * 60)
     print("阶段 1：别名合并与分级")
     print("=" * 60)
@@ -562,72 +895,162 @@ def phase_alias_merge(book_dir: Path, progress: dict, progress_path: Path,
     if plot_lines_path.exists():
         plot_lines_content = plot_lines_path.read_text(encoding="utf-8")
 
+    # 分批
+    char_batches = _split_characters_into_batches(raw_census)
+    total_eligible = sum(len(b) for b in char_batches)
+    total_chars = len(raw_census.get("characters", {}))
+    auto_minor = total_chars - total_eligible
+
+    print(f"总角色: {total_chars}，需 Claude 分析: {total_eligible}（出场>={MIN_APPEARANCE_FOR_ALIAS}）")
+    print(f"自动归为 minor: {auto_minor}（出场<{MIN_APPEARANCE_FOR_ALIAS}）")
+    print(f"分 {len(char_batches)} 批处理（每批 {ALIAS_BATCH_SIZE} 个）")
+
     if dry_run:
-        print(f"将分析 {raw_census['stats']['total_characters']} 个角色")
-        print("产出: census.json + alias_mapping.json")
+        for i, batch in enumerate(char_batches):
+            print(f"  批 {i+1}: {len(batch)} 个角色")
         return
 
-    prompt = build_alias_merge_prompt(raw_census, plot_lines_content)
+    # 恢复已完成的批次
+    completed_batches = progress["alias_merge"].get("batches_completed", [])
+    batch_results = []
 
-    print("调用 Claude 进行别名合并与分级...")
-    start_time = time.time()
-    success, output = run_claude_prompt(prompt, model, timeout)
-    elapsed = time.time() - start_time
+    # 加载已完成批次的结果
+    for label in completed_batches:
+        result_path = build_dir / f"alias_{label}.json"
+        if result_path.exists():
+            with open(result_path, "r", encoding="utf-8") as f:
+                batch_results.append(json.load(f))
 
-    progress["stats"]["total_calls"] += 1
-    progress["stats"]["total_time_seconds"] += int(elapsed)
+    for i, batch_chars in enumerate(char_batches):
+        batch_label = f"batch_{i+1:02d}"
+        if batch_label in completed_batches:
+            continue
 
-    if not success:
-        print(f"失败 ({elapsed:.0f}s): {output}")
+        compact = _compact_census_for_alias({"characters": batch_chars, "stats": {}})
+        prompt = build_alias_merge_prompt(compact, plot_lines_content, batch_label)
+        print(f"\n--- {batch_label} ({len(batch_chars)} 角色, "
+              f"prompt {len(prompt.encode('utf-8')) // 1024} KB) ---")
+
+        start_time = time.time()
+        success, output = run_claude_prompt(prompt, model, timeout)
+        elapsed = time.time() - start_time
+
+        progress["stats"]["total_calls"] += 1
+        progress["stats"]["total_time_seconds"] += int(elapsed)
+
+        if not success:
+            print(f"  失败 ({elapsed:.0f}s): {output[:200]}")
+            save_progress(progress_path, progress)
+            continue
+
+        debug_path = build_dir / f"alias_{batch_label}_json_debug.txt"
+        result = fix_and_parse_json(output, verbose=False, save_debug_to=debug_path)
+        if result is None:
+            print(f"  无法解析 JSON ({elapsed:.0f}s)")
+            print(f"  调试信息已保存: {debug_path}")
+            save_progress(progress_path, progress)
+            continue
+
+        # 保存单批结果
+        result_path = build_dir / f"alias_{batch_label}.json"
+        with open(result_path, "w", encoding="utf-8") as f:
+            json.dump(result, f, ensure_ascii=False, indent=2)
+
+        batch_results.append(result)
+        n_chars = len(result.get("characters", []))
+        n_aliases = len(result.get("alias_mapping", {}))
+        print(f"  完成 ({elapsed:.0f}s): {n_chars} 角色, {n_aliases} 别名")
+
+        progress["alias_merge"].setdefault("batches_completed", []).append(batch_label)
         save_progress(progress_path, progress)
-        return
 
-    census = extract_json_from_output(output)
-    if census is None:
-        print("无法解析 JSON 输出")
-        debug_path = build_dir / "alias_merge_raw.txt"
-        debug_path.write_text(output, encoding="utf-8")
-        print(f"原始输出已保存: {debug_path}")
+    # 检查是否全部完成
+    expected_labels = [f"batch_{i+1:02d}" for i in range(len(char_batches))]
+    if set(expected_labels) <= set(progress["alias_merge"].get("batches_completed", [])):
+        # === 跨批次别名检测 ===
+        cross_path = build_dir / "cross_batch_aliases.json"
+        cross_merges = []
+
+        if len(char_batches) > 1 and not progress["alias_merge"].get("cross_batch_done"):
+            print("\n--- 跨批次别名检测 ---")
+            summary = _build_cross_batch_summary(batch_results)
+            template = (PROMPTS_DIR / "char_cross_batch_alias.md").read_text(encoding="utf-8")
+            prompt = template.replace("{characters_summary_json}",
+                                      json.dumps(summary, ensure_ascii=False, indent=2))
+            print(f"  {len(summary)} 个角色, prompt {len(prompt.encode('utf-8')) // 1024} KB")
+
+            start_time = time.time()
+            success, output = run_claude_prompt(prompt, model, timeout)
+            elapsed = time.time() - start_time
+
+            progress["stats"]["total_calls"] += 1
+            progress["stats"]["total_time_seconds"] += int(elapsed)
+
+            if success:
+                debug_path = build_dir / "cross_batch_json_debug.txt"
+                result = fix_and_parse_json(output, verbose=False, save_debug_to=debug_path)
+                if result:
+                    cross_merges = result.get("cross_batch_aliases", [])
+                    with open(cross_path, "w", encoding="utf-8") as f:
+                        json.dump(result, f, ensure_ascii=False, indent=2)
+                    if cross_merges:
+                        print(f"  发现 {len(cross_merges)} 对跨批次别名 ({elapsed:.0f}s)")
+                    else:
+                        print(f"  未发现跨批次重复 ({elapsed:.0f}s)")
+                else:
+                    print(f"  无法解析结果 ({elapsed:.0f}s)")
+                    print(f"  调试信息已保存: {debug_path}")
+            else:
+                print(f"  失败 ({elapsed:.0f}s): {output[:200]}")
+
+            progress["alias_merge"]["cross_batch_done"] = True
+            save_progress(progress_path, progress)
+        elif cross_path.exists():
+            # 恢复已有的跨批次结果
+            with open(cross_path, "r", encoding="utf-8") as f:
+                cross_data = json.load(f)
+            cross_merges = cross_data.get("cross_batch_aliases", [])
+
+        # 应用跨批次合并
+        if cross_merges:
+            batch_results = _apply_cross_batch_merges(batch_results, cross_merges)
+
+        # === 最终合并 ===
+        census = _merge_batch_results(batch_results, raw_census)
+
+        # 保存 census.json
+        census_path = build_dir / "census.json"
+        with open(census_path, "w", encoding="utf-8") as f:
+            json.dump(census, f, ensure_ascii=False, indent=2)
+
+        # 保存 alias_mapping.json
+        alias_mapping = census.get("alias_mapping", {})
+        alias_path = build_dir / "alias_mapping.json"
+        with open(alias_path, "w", encoding="utf-8") as f:
+            json.dump(alias_mapping, f, ensure_ascii=False, indent=2)
+
+        classification = census["classification_summary"]
+        core_count = len(classification["core"])
+        important_count = len(classification["important"])
+        minor_count = len(classification["minor"])
+
+        print(f"\n合并完成！")
+        print(f"  核心角色: {core_count}")
+        print(f"  重要角色: {important_count}")
+        print(f"  次要角色: {minor_count}")
+        print(f"  别名映射: {len(alias_mapping)} 条")
+        print(f"\n已保存: {census_path}")
+
+        progress["alias_merge"]["status"] = "completed"
+        progress["alias_merge"]["total_characters_merged"] = len(census["characters"])
+        progress["alias_merge"]["core_count"] = core_count
+        progress["alias_merge"]["important_count"] = important_count
+        progress["alias_merge"]["minor_count"] = minor_count
+        progress["phase"] = "deep_dive"
         save_progress(progress_path, progress)
-        return
-
-    # 如果 Claude 没有生成 file_name，用 pypinyin 补充
-    for char in census.get("characters", []):
-        if not char.get("file_name"):
-            char["file_name"] = name_to_pinyin(char["canonical_name"])
-
-    # 保存 census.json
-    census_path = build_dir / "census.json"
-    with open(census_path, "w", encoding="utf-8") as f:
-        json.dump(census, f, ensure_ascii=False, indent=2)
-
-    # 保存 alias_mapping.json
-    alias_mapping = census.get("alias_mapping", {})
-    alias_path = build_dir / "alias_mapping.json"
-    with open(alias_path, "w", encoding="utf-8") as f:
-        json.dump(alias_mapping, f, ensure_ascii=False, indent=2)
-
-    # 统计
-    classification = census.get("classification_summary", {})
-    core_count = len(classification.get("core", []))
-    important_count = len(classification.get("important", []))
-    minor_count = len(classification.get("minor", []))
-
-    print(f"完成 ({elapsed:.0f}s)")
-    print(f"  核心角色: {core_count}")
-    print(f"  重要角色: {important_count}")
-    print(f"  次要角色: {minor_count}")
-    print(f"  别名映射: {len(alias_mapping)} 条")
-    print(f"\n已保存: {census_path}")
-    print(f"别名映射: {alias_path}（可手动审查修正）")
-
-    progress["alias_merge"]["status"] = "completed"
-    progress["alias_merge"]["total_characters_merged"] = len(census.get("characters", []))
-    progress["alias_merge"]["core_count"] = core_count
-    progress["alias_merge"]["important_count"] = important_count
-    progress["alias_merge"]["minor_count"] = minor_count
-    progress["phase"] = "deep_dive"
-    save_progress(progress_path, progress)
+    else:
+        done = len(progress["alias_merge"].get("batches_completed", []))
+        print(f"\n部分完成: {done}/{len(char_batches)} 批，请重新运行继续")
 
 
 # ============================================================
@@ -729,10 +1152,91 @@ def get_related_characters(char_name: str, raw_census: dict) -> str:
     return "\n".join(parts) if parts else "（无相关角色）"
 
 
+DEEP_DIVE_BATCH_SIZE = 100  # 每批加载的章节数
+
+
+def _extract_character_notes(char_name: str, ch_batch: list[int],
+                              chapters_dir: Path, batch_label: str,
+                              model: str, timeout: int,
+                              verbose: bool = False) -> tuple[bool, str, float]:
+    """从一批章节摘要中提取指定角色的关键笔记。
+
+    返回 (success, notes_text, elapsed_seconds)。
+    """
+    summaries = load_summaries_for_chapters(chapters_dir, ch_batch)
+    prompt = f"""从以下章节摘要中提取关于「{char_name}」的关键信息。只关注该角色相关内容，忽略无关内容。
+
+## 章节摘要（ch{ch_batch[0]:04d} ~ ch{ch_batch[-1]:04d}）
+
+{summaries}
+
+## 提取要求
+
+简洁列出以下信息，每项一行，格式 `- chXXXX: 描述`。无内容的分类可省略。
+
+### 关键事件
+该角色的重要行动、决策、遭遇。
+
+### 关系变化
+与其他角色之间关系的建立、变化、破裂。
+
+### 状态变化
+实力、修为、地位、处境等方面的变化。
+
+### 性格展现
+体现性格特征的具体行为、对话、选择。
+
+不要输出 JSON，直接输出 Markdown 文本。"""
+
+    start = time.time()
+    success, output = run_claude_prompt(prompt, model, timeout, verbose=verbose)
+    elapsed = time.time() - start
+    if success:
+        notes = f"## {batch_label}（ch{ch_batch[0]:04d} ~ ch{ch_batch[-1]:04d}）\n\n{output.strip()}"
+    else:
+        notes = f"## {batch_label}（失败: {output[:100]}）"
+    return success, notes, elapsed
+
+
+def _batched_extract_for_character(char_name: str, ch_list: list[int],
+                                    chapters_dir: Path,
+                                    model: str, timeout: int,
+                                    verbose: bool = False,
+                                    print_lock=None) -> tuple[str, int, float]:
+    """对高章节数角色分批提取笔记。
+
+    返回 (merged_notes, call_count, total_elapsed)。
+    """
+    batches = []
+    for i in range(0, len(ch_list), DEEP_DIVE_BATCH_SIZE):
+        batches.append(ch_list[i:i + DEEP_DIVE_BATCH_SIZE])
+
+    all_notes = []
+    total_calls = 0
+    total_elapsed = 0.0
+
+    for idx, batch_chs in enumerate(batches):
+        label = f"提取批次 {idx + 1}/{len(batches)}"
+        if print_lock:
+            with print_lock:
+                print(f"    {label} ({len(batch_chs)} 章)...")
+        success, notes, elapsed = _extract_character_notes(
+            char_name, batch_chs, chapters_dir, label, model, timeout, verbose)
+        total_calls += 1
+        total_elapsed += elapsed
+        all_notes.append(notes)
+        if print_lock:
+            with print_lock:
+                status = "✓" if success else "✗"
+                print(f"    {label} {status} ({elapsed:.0f}s)")
+
+    return "\n\n---\n\n".join(all_notes), total_calls, total_elapsed
+
+
 def build_core_character_prompt(char_data: dict, summaries: str,
                                 arc_context: str, plotline_context: str,
                                 related_chars: str, output_path: str) -> str:
-    template = (PROMPTS_DIR / "character_deep_core.md").read_text(encoding="utf-8")
+    template = (PROMPTS_DIR / "char_deep_core.md").read_text(encoding="utf-8")
     prompt = template.replace("{character_name}", char_data["canonical_name"])
     prompt = prompt.replace("{character_data_json}",
                             json.dumps(char_data, ensure_ascii=False, indent=2))
@@ -746,7 +1250,7 @@ def build_core_character_prompt(char_data: dict, summaries: str,
 
 def build_important_character_prompt(char_data: dict, summaries: str,
                                      output_path: str) -> str:
-    template = (PROMPTS_DIR / "character_deep_important.md").read_text(encoding="utf-8")
+    template = (PROMPTS_DIR / "char_deep_important.md").read_text(encoding="utf-8")
     prompt = template.replace("{character_name}", char_data["canonical_name"])
     prompt = prompt.replace("{character_data_json}",
                             json.dumps(char_data, ensure_ascii=False, indent=2))
@@ -757,7 +1261,8 @@ def build_important_character_prompt(char_data: dict, summaries: str,
 
 def phase_deep_dive(book_dir: Path, progress: dict, progress_path: Path,
                     model: str, timeout: int, dry_run: bool,
-                    target_character: str | None = None):
+                    target_character: str | None = None,
+                    concurrency: int = 1):
     """执行阶段 2：角色深度分析"""
     print("\n" + "=" * 60)
     print("阶段 2：角色深度分析")
@@ -820,79 +1325,113 @@ def phase_deep_dive(book_dir: Path, progress: dict, progress_path: Path,
     # 查找角色数据的辅助函数
     chars_by_name = {c["canonical_name"]: c for c in census.get("characters", [])}
 
-    # 处理核心角色
-    for name in pending_core:
+    concurrency = max(1, concurrency)
+    print_lock = threading.Lock()
+    done_counter = {"n": 0, "total": len(pending_core) + len(pending_important)}
+
+    def process_one_character(name: str, cls: str) -> dict:
+        """处理单个角色，cls 为 'core' 或 'important'"""
         char_data = chars_by_name.get(name, {"canonical_name": name})
         ch_list = get_character_chapters(name, raw_census, alias_mapping)
         output_path = str(characters_dir / f"{char_data.get('file_name', name_to_pinyin(name))}.md")
+        label = f"[{'核心' if cls == 'core' else '重要'}] {name}"
 
-        print(f"\n--- [核心] {name} ({len(ch_list)} 章) ---")
+        needs_batch = len(ch_list) > DEEP_DIVE_BATCH_SIZE
+        with print_lock:
+            extra = f", 分 {(len(ch_list) - 1) // DEEP_DIVE_BATCH_SIZE + 1} 批提取" if needs_batch else ""
+            print(f"\n--- {label} ({len(ch_list)} 章{extra}) ---")
 
-        summaries = load_summaries_for_chapters(chapters_dir, ch_list)
-        arc_context = get_character_arc_context(name, outline_dir)
-        related_chars = get_related_characters(name, raw_census)
+        extra_calls = 0
+        extra_time = 0.0
 
-        prompt = build_core_character_prompt(
-            char_data, summaries, arc_context, plotline_context,
-            related_chars, output_path,
-        )
+        if needs_batch:
+            # 分批提取笔记，再合成
+            summaries, extra_calls, extra_time = _batched_extract_for_character(
+                name, ch_list, chapters_dir, model, timeout,
+                verbose=False, print_lock=print_lock)
+        else:
+            summaries = load_summaries_for_chapters(chapters_dir, ch_list)
+
+        if cls == "core":
+            arc_context = get_character_arc_context(name, outline_dir)
+            related_chars = get_related_characters(name, raw_census)
+            prompt = build_core_character_prompt(
+                char_data, summaries, arc_context, plotline_context,
+                related_chars, output_path,
+            )
+        else:
+            prompt = build_important_character_prompt(char_data, summaries, output_path)
 
         start_time = time.time()
-        success, output = run_claude_prompt(prompt, model, timeout, allow_tools="Write")
-        elapsed = time.time() - start_time
+        success, output = run_claude_prompt(prompt, model, timeout,
+                                           allow_tools="Write", verbose=False)
+        elapsed = time.time() - start_time + extra_time
+        extra_calls += 1  # 合成调用本身
 
-        progress["stats"]["total_calls"] += 1
-        progress["stats"]["total_time_seconds"] += int(elapsed)
+        # 验证文件是否真的被写入
+        if success and not Path(output_path).exists():
+            success = False
+            output = f"Claude 返回成功但文件未创建: {output_path}"
 
-        if success:
-            print(f"  完成 ({elapsed:.0f}s)")
-            progress["deep_dive"]["core_completed"].append(name)
-            if name in progress["deep_dive"]["core_failed"]:
-                progress["deep_dive"]["core_failed"].remove(name)
-        else:
-            print(f"  失败 ({elapsed:.0f}s): {output[:200]}")
-            if name not in progress["deep_dive"]["core_failed"]:
-                progress["deep_dive"]["core_failed"].append(name)
+        # 带锁写入进度
+        completed_key = f"{cls}_completed"
+        failed_key = f"{cls}_failed"
+        lock_path = progress_path.with_suffix(".lock")
+        with open(lock_path, "w") as lf:
+            fcntl.flock(lf, fcntl.LOCK_EX)
+            try:
+                disk = _read_progress_raw(progress_path)
+                disk["stats"]["total_calls"] = disk["stats"].get("total_calls", 0) + extra_calls
+                disk["stats"]["total_time_seconds"] = disk["stats"].get("total_time_seconds", 0) + int(elapsed)
+                if success:
+                    if name not in disk["deep_dive"][completed_key]:
+                        disk["deep_dive"][completed_key].append(name)
+                    if name in disk["deep_dive"][failed_key]:
+                        disk["deep_dive"][failed_key].remove(name)
+                else:
+                    if name not in disk["deep_dive"][failed_key]:
+                        disk["deep_dive"][failed_key].append(name)
+                with open(progress_path, "w", encoding="utf-8") as f:
+                    json.dump(disk, f, ensure_ascii=False, indent=2)
+                progress.update(disk)
+            finally:
+                fcntl.flock(lf, fcntl.LOCK_UN)
 
-        save_progress(progress_path, progress)
+        with print_lock:
+            done_counter["n"] += 1
+            status = "✓" if success else "✗"
+            msg = f"  [{label}] {status} ({elapsed:.0f}s)  [{done_counter['n']}/{done_counter['total']}]"
+            if not success:
+                msg += f" {output[:100]}"
+            print(msg)
 
-    # 处理重要角色
-    for name in pending_important:
-        char_data = chars_by_name.get(name, {"canonical_name": name})
-        ch_list = get_character_chapters(name, raw_census, alias_mapping)
-        output_path = str(characters_dir / f"{char_data.get('file_name', name_to_pinyin(name))}.md")
+        return {"name": name, "cls": cls, "success": success}
 
-        print(f"\n--- [重要] {name} ({len(ch_list)} 章) ---")
+    # 构建任务列表：核心角色优先
+    tasks = [(n, "core") for n in pending_core] + [(n, "important") for n in pending_important]
 
-        summaries = load_summaries_for_chapters(chapters_dir, ch_list)
-
-        prompt = build_important_character_prompt(char_data, summaries, output_path)
-
-        start_time = time.time()
-        success, output = run_claude_prompt(prompt, model, timeout, allow_tools="Write")
-        elapsed = time.time() - start_time
-
-        progress["stats"]["total_calls"] += 1
-        progress["stats"]["total_time_seconds"] += int(elapsed)
-
-        if success:
-            print(f"  完成 ({elapsed:.0f}s)")
-            progress["deep_dive"]["important_completed"].append(name)
-            if name in progress["deep_dive"]["important_failed"]:
-                progress["deep_dive"]["important_failed"].remove(name)
-        else:
-            print(f"  失败 ({elapsed:.0f}s): {output[:200]}")
-            if name not in progress["deep_dive"]["important_failed"]:
-                progress["deep_dive"]["important_failed"].append(name)
-
-        save_progress(progress_path, progress)
+    if concurrency == 1:
+        for name, cls in tasks:
+            process_one_character(name, cls)
+    else:
+        print(f"并发数: {concurrency}")
+        with ThreadPoolExecutor(max_workers=concurrency) as executor:
+            futures = {executor.submit(process_one_character, n, c): n for n, c in tasks}
+            for future in as_completed(futures):
+                try:
+                    future.result()
+                except Exception as e:
+                    with print_lock:
+                        print(f"  ✗ 线程异常 ({futures[future]}): {e}")
 
     # 检查是否全部完成
-    all_core_done = set(progress["deep_dive"]["core_completed"]) >= set(core_chars)
-    all_imp_done = set(progress["deep_dive"]["important_completed"]) >= set(important_chars)
+    final = load_progress(progress_path)
+    all_core_done = set(final["deep_dive"]["core_completed"]) >= set(core_chars)
+    all_imp_done = set(final["deep_dive"]["important_completed"]) >= set(important_chars)
     if all_core_done and all_imp_done:
-        progress["phase"] = "relationship"
-        save_progress(progress_path, progress)
+        final["phase"] = "relationship"
+        save_progress(progress_path, final)
+        progress.update(final)
         print("\n角色深度分析全部完成！")
 
 
@@ -922,7 +1461,7 @@ def extract_relationship_sections(characters_dir: Path) -> str:
 
 def build_relationship_prompt(raw_census: dict, character_profiles: str,
                               arc_summary: str, output_path: str) -> str:
-    template = (PROMPTS_DIR / "relationship_build.md").read_text(encoding="utf-8")
+    template = (PROMPTS_DIR / "char_relationship_build.md").read_text(encoding="utf-8")
     prompt = template.replace("{relationship_timeline_json}",
                               json.dumps(raw_census.get("relationship_timeline", []),
                                         ensure_ascii=False, indent=2))
@@ -934,7 +1473,7 @@ def build_relationship_prompt(raw_census: dict, character_profiles: str,
 
 def build_relationship_validate_prompt(current_relationships: str,
                                        character_profiles: str) -> str:
-    template = (PROMPTS_DIR / "relationship_validate.md").read_text(encoding="utf-8")
+    template = (PROMPTS_DIR / "char_relationship_validate.md").read_text(encoding="utf-8")
     prompt = template.replace("{current_relationships}", current_relationships)
     prompt = prompt.replace("{character_profiles_relationships}", character_profiles)
     return prompt
@@ -1017,7 +1556,8 @@ def phase_relationship(book_dir: Path, progress: dict, progress_path: Path,
             progress["stats"]["total_time_seconds"] += int(elapsed)
 
             if success:
-                corrections = extract_json_from_output(output)
+                debug_path = build_dir / "relationship_validation_json_debug.txt"
+                corrections = fix_and_parse_json(output, verbose=False, save_debug_to=debug_path)
                 if corrections:
                     n_issues = len(corrections.get("issues", []))
                     print(f"完成 ({elapsed:.0f}s): 发现 {n_issues} 个问题")
@@ -1045,7 +1585,7 @@ def phase_relationship(book_dir: Path, progress: dict, progress_path: Path,
 
 def build_status_update_prompt(active_chars: list[dict], recent_summaries: str,
                                char_file_paths: dict) -> str:
-    template = (PROMPTS_DIR / "status_update.md").read_text(encoding="utf-8")
+    template = (PROMPTS_DIR / "char_status_update.md").read_text(encoding="utf-8")
     prompt = template.replace("{active_characters_json}",
                               json.dumps(active_chars, ensure_ascii=False, indent=2))
     prompt = prompt.replace("{recent_chapter_summaries}", recent_summaries)
@@ -1374,7 +1914,7 @@ def main():
         if progress["phase"] == "deep_dive" or args.phase == "deep-dive":
             phase_deep_dive(book_dir, progress, progress_path,
                             args.model, args.timeout, args.dry_run,
-                            args.character)
+                            args.character, args.concurrency)
 
     # 阶段 3: 关系网构建
     if args.phase == "relationship" or (not args.phase and progress["phase"] in ("relationship", "deep_dive")):

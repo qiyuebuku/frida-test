@@ -1,6 +1,7 @@
 # 写作 Skill 实施任务
 
 > 基于 [架构设计.md](../架构设计.md) 拆分的分步实施任务
+> 架构文档回答"为什么这样设计、整体长什么样"，本文档回答"怎么做、做到哪了"
 > 实施原则：**全部通过 Claude Code skill 完成**，不直接调用 AI 模型 API
 
 ---
@@ -30,15 +31,15 @@ T4  角色层提取 ✅   → characters/                            skill（五
 T5  世界层提取 ✅   → world/                                 skill（四阶段 pipeline）
 T6  读者层分析 ✅   → reader/feedback/                       skill（三阶段 pipeline）
 T7  风格层分析 ✅   → style/                                 skill（三阶段 pipeline）
-T8  写作 Skill ✅   → SKILL.md + guide.md                    skill 编写
-T9  验证测试   ✅   → 续写效果评估                            skill 测试
+T8  写作 Skill ✅   → SKILL.md + guide.md + verify/            skill 编写（含验证系统）
+T9  验证测试   ✅   → 已合并到 T8，四层验证体系                集成到 novel-write Skill
 ```
 
 ### 依赖关系
 
 ```
 T1 ──→ T2 ──→ T3 ──┐
-                    ├──→ T8 ──→ T9
+                    ├──→ T8（含 T9 验证系统）
 T1 ──→ T6          │
 T1 ──→ T7          │
 T2 ──→ T4 ──→ T5 ──┘
@@ -51,6 +52,7 @@ T2 ──→ T4 ──→ T5 ──┘
 - T6 依赖 T1（需要 `reader/comments/` 评论数据）
 - T7 依赖 T1（需要 `text/` 纯正文分析风格）
 - T8 依赖 T3~T7（知识库全部就绪后才能写 SKILL.md）
+- T9 已合并到 T8（验证系统是 Skill 的内置组件，非独立任务）
 - **T6、T7 可与 T2~T5 并行**
 
 ---
@@ -298,75 +300,120 @@ T2 ──→ T4 ──→ T5 ──┘
 
 ## T8：写作 Skill 编写 ✅
 
-**类型**：skill 编写
-**产出**：`.claude/skills/novel-write/SKILL.md` + `templates/` + `novel_kb/{book}/guide.md`
+**类型**：skill 编写（含验证系统）
+**产出**：`.claude/skills/novel-write/SKILL.md` + `templates/` + `verify/` + `novel_kb/{book}/guide.md`
 **详细方案**：[T8_写作Skill.md](./T8_写作Skill.md)
 
 ### 目标
 
-编写最终的续写 skill，指导 Claude 如何使用知识库进行续写。
+编写统一的续写 Skill，**写作和验证一体化**——写作流程内置 L1 自动检测，深度验证通过独立进程实现上下文隔离。
 
-### 内容
-
-- `SKILL.md`：skill 定义 + 7 步续写流程（含 Context Bundle + Scene Plan + Style Anchors）
-- `templates/context_bundle.md`：Bundle 模板（S1-S5 结构框架）
-- `templates/style_anchors.md`：风格锚点候选库（6 类场景，从原文精选）
-- `guide.md`：放在知识库内的 AI 使用说明
-
-### 关键流程（v2：7 步）
+### 文件结构
 
 ```
-读 guide.md → Research → Context Bundle（~3KB 高密度上下文）
-→ 大纲（写什么）→ 用户确认
-→ Scene Plan + Style Anchors（怎么写）⭐
-→ 写正文 → 保存到 drafts/
+.claude/skills/novel-write/
+├── SKILL.md                          # Skill 定义（9 步流程 + 7 种模式）
+├── templates/
+│   ├── context_bundle.md             # Bundle 模板（S1-S5 结构框架）
+│   └── style_anchors.md              # 风格锚点生成模板（6 类场景）
+└── verify/
+    ├── batch_verify.py               # 三层验证脚本（独立进程执行）
+    └── prompts/
+        ├── blind_test.md             # 盲测对比 prompt
+        ├── style_deep_analysis.md    # 深度风格分析 prompt（含 {BOOK_RULES} 注入）
+        └── cross_chapter.md          # 跨章一致性 prompt
 ```
 
-> T8 只负责生成，质量审核完全交给 T9（独立评审，非"自己改卷"）。
+### 关键流程（v2：9 步）
+
+```
+Step 1-2: 读 guide.md → Research → Context Bundle（~3KB）
+Step 3-4: 大纲（写什么）→ 用户确认
+Step 5:   Scene Plan + Style Anchors（怎么写）⭐
+Step 6-7: 写正文 → 保存到 drafts/
+Step 8:   自动运行 L1 定量检测（"编译器"，必须执行）⭐
+Step 9:   根据结果询问用户（FAIL→强提示 / WARN→温和 / PASS→结束）⭐
+```
+
+**设计理念**：
+
+- **L1 = 编译器**：检查格式合法性（禁忌词、句长、短句率），每次写作后自动运行，<5s，0 次 AI 调用
+- **L2/L3 = 编辑+市场**：风格分析 + 读者对齐，各 1 次 AI 调用，由用户通过 `--verify` 手动触发
+- **L4 = 连续性**：跨章重复检测，纯 Python
+- **盲测 → 降级为 `--calibrate`**：仅校准用，不参与评级
+- **自动检测 ≠ 自动修复**：检测结果交给用户决定，不擅自改动
+
+### 7 种模式
+
+| 模式 | 命令 | 说明 |
+|------|------|------|
+| 正常续写 | `--chapter N` | 9 步流程（含自动 L1） |
+| 带提示续写 | `--hint "方向"` | 同上，用户提示融入大纲 |
+| 修复 | `--revise N` | 在既定设计图下修复正文 |
+| 验证 | `--verify N` | 手动触发 L1+L2+L3 深度验证 |
+| 自动循环 | `--auto` | 写作→验证→修复→循环（≤3轮） |
+| 反哺 | `--promote N` | 草稿纳入正式知识库 |
+| 历史 | `--history` | 查看验证历史 |
+
+### 四层验证体系
+
+| 层级 | 内容 | AI 调用 | 耗时 |
+|------|------|---------|------|
+| Layer 1 | 纯 Python 定量检测（12 项指标 vs `stats.json` 基准线） | 0 次 | <5s |
+| Layer 2 | 深度风格分析（注入 `guide.md` 书籍规则防误判） | 1 次 `claude -p` | ~60s |
+| Layer 3 | 读者对齐（爽点命中/槽点规避/角色人气/读者期待） | 1 次 `claude -p` | ~60s |
+| Layer 4 | 跨章一致性（重复表达检测，2+ 章时触发） | 0 次 | ~5s |
+| — | 盲测校准（`--calibrate`，需原文） | 1 次 `claude -p` | ~60s |
+
+**评分**：
+- 单章+读者数据：`L1×0.35 + L2×0.40 + L3×0.25`
+- 单章无读者：`L1×0.45 + L2×0.55`（向后兼容）
+- 多章+读者数据：`L1×0.25 + L2×0.35 + L3×0.20 + L4×0.20`
+- 多章无读者：`L1×0.40 + L2×0.45 + L4×0.15`（向后兼容）
 
 ### 实现状态
 
-- ✅ 方案文档完成（`T8_写作Skill.md`：5 大挑战、7 步流程、三个中间产物设计）
-- ✅ SKILL.md 重写完成（v2：7 步流程、Context Bundle + Scene Plan + Style Anchors、铁则速查版）
-- ✅ templates/context_bundle.md 创建完成（S1-S5 结构框架 + 占位符）
-- ✅ templates/style_anchors.md 创建完成（6 类场景、18 个锚点、从 ch0001-ch0004 精选）
-- ✅ guide.md 创建完成（`qidian/novel_kb/玄鉴仙族/guide.md`：知识库导航、续写铁则、场景加载策略）
+- ✅ SKILL.md 完成（v2：9 步流程、Context Bundle + Scene Plan + Style Anchors、3 通用铁则 + 书籍特定规则）
+- ✅ templates/ 完成（context_bundle.md + style_anchors.md）
+- ✅ verify/ 完成（batch_verify.py + 3 个 prompt 模板 + reader_alignment.md）
+- ✅ guide.md 完成（`qidian/novel_kb/玄鉴仙族/guide.md`：知识库导航、续写铁则、场景加载策略）
+- ✅ L2 prompt 注入 guide.md 书籍规则（修复穿越者现代词汇误判）
+- ✅ 无原文时 L2 评分调整（风格分析独占 100%，不被盲测稀释）
+- ✅ 端到端测试通过（ch0004：L1=90.8(A), L2=79.3, 综合=84.5(B)，**首次生成即 B 级**）
+- ✅ 反哺流程完成（`--promote`：正文→text/，摘要→plot/chapters/，索引更新）
+- ✅ 验证历史追踪（`--history`：recurring_issues 追踪反复问题）
 
 ---
 
-## T9：验证测试 ✅
+## T9：验证测试 ✅（已合并到 T8）
 
-**类型**：skill 测试
-**skill 名称**：`novel-write/verify`（已合并到 novel-write）
+> **注意**：T9 已不再是独立 Skill。验证系统已完全合并到 `novel-write/verify/` 中，通过 `batch_verify.py` 实现。此处保留 T9 条目仅作为历史记录和详细方案索引。
+
 **详细方案**：[T9_验证测试.md](./T9_验证测试.md)
 
-### 目标
+### 合并说明
 
-构建独立的三层验证体系，对 T8 续写草稿进行质量评估。T8 只负责生成，T9 是**唯一的质量关卡**。
+T9 原为独立的 `kb-verify-draft` Skill，后合并到 `novel-write/verify/` 子目录中：
 
-### 三层验证架构
+- Writer 和 Reviewer 仍通过独立进程（`claude -p`）实现上下文隔离
+- 验证脚本由 `/novel-write` Skill 统一调度（`--verify`/`--auto`/Step 8 自动触发）
+- 信息流单向：审核→写作（feedback 文件），Writer 不能访问审核的评分标准和盲测细节
 
-| 层级 | 内容 | AI 调用 |
-|------|------|---------|
-| Layer 1 | 纯 Python 定量检测（12 项指标 vs stats.json 基准线） | 0 次 |
-| Layer 2 | 盲测对比 + 深度风格分析 | 2 次 |
-| Layer 3 | 跨章一致性（2+ 章时触发） | 0-1 次 |
+### 相对独立时的改进
 
-### 评分系统
+| 改进项 | 说明 |
+|--------|------|
+| Step 8 自动 L1 | 写作后自动运行 L1，无需用户手动触发 |
+| Step 9 用户决策 | FAIL→强提示修复，WARN→温和提示，PASS→结束 |
+| Book rules 注入 | L2 prompt 从 guide.md 提取书籍规则，防止合法用词误判 |
+| 无盲测评分 | 新章节无原文时，风格分析独占 100%（不降权） |
+
+### 最新测试结果（2026-02-08）
 
 ```
-总分 = L1 × 40% + L2 × 45% + L3 × 15%
-A (90-100) 优秀 | B (80-89) 良好 | C (70-79) 及格 | D (<70) 不合格
+v1（独立T9）：L1=85.0, L2=76.8, 综合=80.5 (B)，3 项 FAIL
+v2（合并后） ：L1=90.8, L2=79.3, 综合=84.5 (B)，0 项 FAIL，首次生成即 B 级
 ```
-
-### 实现状态
-
-- ✅ 方案文档完成（`T9_验证测试.md`：三层架构、12 项指标、评分系统、反哺流程）
-- ✅ Skill 文件创建完成（`batch_verify.py` + 3 个 prompt 模板 + `SKILL.md`）
-- ✅ 端到端测试通过（ch0004：L1=85.0, L2=76.8, 综合=80.5, 评级 B）
-- ✅ 盲测对比有效（Claude 错误地判断原文为 AI，说明草稿质量高）
-- ✅ 历史追踪正常（recurring_issues 追踪反复问题）
-- ✅ T8 自审已移除，质量审核完全由 T9 独立承担
 
 ---
 
@@ -376,7 +423,9 @@ A (90-100) 优秀 | B (80-89) 良好 | C (70-79) 及格 | D (<70) 不合格
 第一轮（基础层）：T1 → T2
 第二轮（并行）：  T3 + T4 | T6 | T7
 第三轮（依赖层）：T5
-第四轮（集成）：  T8 → T9
+第四轮（集成）：  T8（含验证系统）
 ```
 
 其中 T2 是工作量最大的任务（900+ 章需要多次 skill 调用），建议优先启动。
+
+> **当前全部代码已完成**，T2 待全量运行后，T3/T4/T5 需基于完整数据重跑。

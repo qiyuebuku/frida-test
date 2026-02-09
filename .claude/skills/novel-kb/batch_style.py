@@ -1,28 +1,107 @@
 #!/usr/bin/env python3
 """
-风格层分析批量编排脚本
+T7 风格层分析 — 批量编排脚本
 
-分析原文写作风格，生成结构化风格参考文件。
-三阶段 pipeline：Python 全量统计 → Claude 抽样精析 → 全局融合。
+从 T1 原文 + T3 弧文件 + T6 读者反馈中提取写作风格特征。
 
-用法：
-    python batch_style.py --book-dir qidian/novel_kb/玄鉴仙族
-    python batch_style.py --book-dir ... --phase preprocess
-    python batch_style.py --book-dir ... --phase sample
-    python batch_style.py --book-dir ... --phase merge
-    python batch_style.py --book-dir ... --dry-run
-    python batch_style.py --book-dir ... --validate
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+前置条件
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  - T1 已完成: text/ 下有原文章节 (chXXXX.md)
+  - T3 已完成: plot/outline/ 下有弧文件（用于智能抽样）
+  - T6 已完成: reader/feedback/emotions.md（用于验证高赞段落风格）
+  - 需要 jieba（pip install jieba）用于词频统计
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+三阶段 Pipeline（按顺序自动执行，支持断点续传）
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  阶段 0  preprocess     Python 全量定量统计 + 智能抽样计划
+                         全量统计：句长分布、对话占比、段落长度、时间表达、情感表达
+                         智能抽样：首章/末章 + 高赞章 + 转折章 + 各弧代表章
+                         产出: style/.build/stats.json（全量统计数据）
+                               style/.build/sampling_plan.json（抽样计划，默认 20 章）
+                         耗时: ~1-2min（取决于章节数 + 字数），0 次 AI 调用
+
+  阶段 1  sample         Claude 抽样精析，每批 4 章，提取 7 维定性特征
+                         产出: style/.build/batch_XX.json
+                               包含叙事视角、场景描写、情感表达、意象、用词、写作技巧、读者验证
+                         耗时: 取决于抽样章数，每批 1 次 AI 调用
+                               支持 --concurrency M 并发 M 批加速
+
+  阶段 2  merge          全局融合，合并定量统计 + 定性分析 → 3 个 MD 文件
+                         产出: style/narrative.md（叙事特征：视角、节奏、章节结构）
+                               style/vocabulary.md（用词特征：高频词、时间表达、情感词）
+                               style/rhythm.md（节奏特征：句长分布、对话占比、段落长度）
+                               style/index.md（风格概览）
+                         耗时: ~2min, 1 次 AI 调用（需要 Write 工具）
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+典型用法
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  # 一键全流程（从当前进度自动继续）
+  python batch_style.py --book-dir qidian/novel_kb/玄鉴仙族
+
+  # 加速：阶段 1 抽样精析并发 3 批
+  python batch_style.py --book-dir ... --concurrency 3
+
+  # 自定义抽样参数
+  python batch_style.py --book-dir ... --sample-size 30 --chapters-per-call 5
+
+  # 只运行某个阶段
+  python batch_style.py --book-dir ... --phase preprocess
+  python batch_style.py --book-dir ... --phase sample --concurrency 3
+  python batch_style.py --book-dir ... --phase merge
+
+  # 试运行 + 验证产出
+  python batch_style.py --book-dir ... --dry-run
+  python batch_style.py --book-dir ... --validate
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+参数说明
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  --book-dir PATH          知识库目录（必需）
+  --sample-size N          抽样章节数（默认 20，影响阶段 0）
+  --chapters-per-call M    每批分析章数（默认 4，影响阶段 1）
+  --concurrency K          并发数（默认 1，仅对 sample 阶段生效，建议 2-4）
+  --phase PHASE            只运行特定阶段（preprocess/sample/merge）
+  --model MODEL            Claude 模型（默认 sonnet）
+  --timeout SEC            单次调用超时秒数（默认 600）
+  --dry-run                试运行，不执行 Claude 调用
+  --validate               验证产出文件完整性
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+产出目录结构
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  {book_dir}/
+    style/
+      narrative.md          叙事特征（叙事视角、节奏控制、章节开头/结尾模式）
+      vocabulary.md         用词特征（高频词 TOP 100、时间表达、情感表达方式）
+      rhythm.md             节奏特征（句长分布、对话占比、段落长度统计）
+      index.md              风格概览（统计摘要 + 文件导航）
+      .build/
+        stats.json          全量统计数据（按章、按弧、按三段统计）
+        sampling_plan.json  抽样计划（抽样章节 + 原因标注 + 弧信息）
+        batch_XX.json       抽样分析 JSON
+      .progress.json        进度文件
 """
 
 import argparse
+import fcntl
 import json
 import math
 import re
 import subprocess
 import sys
+import threading
 import time
 from collections import Counter, defaultdict
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
+from json_fixer import fix_and_parse_json
 
 # ============================================================
 # 硬依赖检查
@@ -93,6 +172,8 @@ def parse_args():
                         help="抽样章节数（默认 20）")
     parser.add_argument("--chapters-per-call", type=int, default=4,
                         help="每次 Claude 调用分析的章节数（默认 4）")
+    parser.add_argument("--concurrency", type=int, default=1,
+                        help="并发 Claude 调用数（默认 1，建议 2-4）")
     return parser.parse_args()
 
 
@@ -162,10 +243,10 @@ def get_progress_path(book_dir: Path) -> Path:
 # 进度管理
 # ============================================================
 
-def load_progress(progress_path: Path) -> dict:
-    if progress_path.exists():
-        with open(progress_path, "r", encoding="utf-8") as f:
-            return json.load(f)
+print_lock = threading.Lock()
+
+
+def _default_progress() -> dict:
     return {
         "phase": "preprocess",
         "preprocess": {"status": "pending"},
@@ -182,9 +263,61 @@ def load_progress(progress_path: Path) -> dict:
     }
 
 
+def _read_progress_raw(progress_path: Path) -> dict:
+    if progress_path.exists():
+        with open(progress_path, "r", encoding="utf-8") as f:
+            return json.load(f)
+    return _default_progress()
+
+
+def load_progress(progress_path: Path) -> dict:
+    lock_path = progress_path.with_suffix(".lock")
+    with open(lock_path, "w") as lf:
+        fcntl.flock(lf, fcntl.LOCK_SH)
+        try:
+            return _read_progress_raw(progress_path)
+        finally:
+            fcntl.flock(lf, fcntl.LOCK_UN)
+
+
 def save_progress(progress_path: Path, progress: dict):
-    with open(progress_path, "w", encoding="utf-8") as f:
-        json.dump(progress, f, ensure_ascii=False, indent=2)
+    lock_path = progress_path.with_suffix(".lock")
+    with open(lock_path, "w") as lf:
+        fcntl.flock(lf, fcntl.LOCK_EX)
+        try:
+            disk = _read_progress_raw(progress_path)
+            # 合并 sample_analyze 列表（并集）
+            for key in ("batches_completed", "batches_failed"):
+                merged = list(dict.fromkeys(
+                    disk.get("sample_analyze", {}).get(key, []) +
+                    progress.get("sample_analyze", {}).get(key, [])
+                ))
+                disk.setdefault("sample_analyze", {})[key] = merged
+                progress.setdefault("sample_analyze", {})[key] = merged
+            # 合并 stats（取较大值）
+            for sk in ("total_calls", "total_time_seconds"):
+                disk["stats"][sk] = max(
+                    disk.get("stats", {}).get(sk, 0),
+                    progress.get("stats", {}).get(sk, 0),
+                )
+            # 合并 phase / status（取进度较前的）
+            phase_order = ["preprocess", "sample_analyze", "global_merge", "done"]
+            for field in ("phase",):
+                di = phase_order.index(disk.get(field, "preprocess")) if disk.get(field, "preprocess") in phase_order else 0
+                pi = phase_order.index(progress.get(field, "preprocess")) if progress.get(field, "preprocess") in phase_order else 0
+                disk[field] = phase_order[max(di, pi)]
+            for section in ("preprocess", "sample_analyze", "global_merge"):
+                ds = disk.get(section, {}).get("status", "pending")
+                ps = progress.get(section, {}).get("status", "pending")
+                status_order = ["pending", "completed"]
+                dsi = status_order.index(ds) if ds in status_order else 0
+                psi = status_order.index(ps) if ps in status_order else 0
+                disk[section]["status"] = status_order[max(dsi, psi)]
+            with open(progress_path, "w", encoding="utf-8") as f:
+                json.dump(disk, f, ensure_ascii=False, indent=2)
+            progress.update(disk)
+        finally:
+            fcntl.flock(lf, fcntl.LOCK_UN)
 
 
 # ============================================================
@@ -192,10 +325,11 @@ def save_progress(progress_path: Path, progress: dict):
 # ============================================================
 
 def run_claude_prompt(prompt: str, model: str, timeout: int,
-                      allow_tools: str = "") -> tuple[bool, str]:
+                      allow_tools: str = "",
+                      verbose: bool = True) -> tuple[bool, str]:
     cmd = [
         "claude",
-        "-p", prompt,
+        "-p", "-",
         "--model", model,
         "--permission-mode", "bypassPermissions",
     ]
@@ -203,14 +337,28 @@ def run_claude_prompt(prompt: str, model: str, timeout: int,
         cmd.extend(["--allowedTools", allow_tools])
 
     try:
-        result = subprocess.run(
-            cmd,
-            capture_output=True,
-            text=True,
-            timeout=timeout,
-        )
-        if result.returncode != 0:
-            return False, f"退出码 {result.returncode}\nstderr: {result.stderr[:1000]}"
+        if verbose:
+            result = subprocess.run(
+                cmd,
+                input=prompt,
+                stdout=subprocess.PIPE,
+                stderr=None,
+                text=True,
+                timeout=timeout,
+            )
+            if result.returncode != 0:
+                return False, f"退出码 {result.returncode}\n{result.stdout[:1000]}"
+        else:
+            result = subprocess.run(
+                cmd,
+                input=prompt,
+                capture_output=True,
+                text=True,
+                timeout=timeout,
+            )
+            if result.returncode != 0:
+                err_detail = result.stderr[:1000] if result.stderr.strip() else result.stdout[:1000]
+                return False, f"退出码 {result.returncode}\n{err_detail}"
         return True, result.stdout
     except subprocess.TimeoutExpired:
         return False, f"超时（{timeout}秒）"
@@ -218,91 +366,6 @@ def run_claude_prompt(prompt: str, model: str, timeout: int,
         return False, f"异常: {e}"
 
 
-def _fix_json_common_errors(json_str: str) -> str:
-    """修复 Claude 输出 JSON 中的常见错误"""
-    # 修复：数组中非法文字，如 "信息"等现代词汇 → "信息"
-    json_str = re.sub(r'"\s*等[^\n"]*', '"', json_str)
-    # 修复：JSON 值中的中文引号 "" → 转义为单引号（JSON 安全）
-    json_str = json_str.replace('\u201c', "'").replace('\u201d', "'")
-    json_str = json_str.replace('\u2018', "'").replace('\u2019', "'")
-    return json_str
-
-
-def _fix_json_unescaped_quotes(json_str: str) -> str:
-    """修复 JSON 字符串内未转义的双引号。
-
-    Claude 输出的 JSON 中，中文内容可能包含未转义的双引号，如：
-        "建立"术雷需要"的预期"
-    需要转为：
-        "建立\\"术雷需要\\"的预期"
-    """
-    result = []
-    in_string = False
-    i = 0
-    while i < len(json_str):
-        ch = json_str[i]
-        if ch == '\\' and in_string:
-            result.append(ch)
-            if i + 1 < len(json_str):
-                result.append(json_str[i + 1])
-                i += 2
-            else:
-                i += 1
-            continue
-        if ch == '"':
-            if not in_string:
-                in_string = True
-                result.append(ch)
-            else:
-                rest = json_str[i + 1:].lstrip()
-                if rest and rest[0] in (',', ']', '}', ':'):
-                    in_string = False
-                    result.append(ch)
-                elif not rest:
-                    in_string = False
-                    result.append(ch)
-                else:
-                    result.append('\\"')
-            i += 1
-            continue
-        result.append(ch)
-        i += 1
-    return ''.join(result)
-
-
-def extract_json_from_output(output: str) -> dict | None:
-    text = output.strip()
-    if "```json" in text:
-        m = re.search(r"```json\s*\n(.*?)\n\s*```", text, re.DOTALL)
-        if m:
-            text = m.group(1)
-    elif "```" in text:
-        m = re.search(r"```\s*\n(.*?)\n\s*```", text, re.DOTALL)
-        if m:
-            text = m.group(1)
-
-    first_brace = text.find("{")
-    last_brace = text.rfind("}")
-    if first_brace != -1 and last_brace != -1 and last_brace > first_brace:
-        json_str = text[first_brace:last_brace + 1]
-        # 第 1 次：直接解析
-        try:
-            return json.loads(json_str)
-        except json.JSONDecodeError:
-            pass
-        # 第 2 次：修复常见错误（中文引号、"等"注释）
-        fixed = _fix_json_common_errors(json_str)
-        try:
-            return json.loads(fixed)
-        except json.JSONDecodeError:
-            pass
-        # 第 3 次：修复未转义的双引号
-        fixed2 = _fix_json_unescaped_quotes(fixed)
-        try:
-            return json.loads(fixed2)
-        except json.JSONDecodeError:
-            pass
-    return None
 
 
 # ============================================================
@@ -1003,19 +1066,117 @@ def build_sample_batch_text(text_dir: Path, batch_chapters: list[int],
 
 
 def build_sample_analyze_prompt(batch_text: str, batch_label: str,
-                                arc_info: str) -> str:
+                                arc_info: str, output_file: str) -> str:
     """构建抽样分析 prompt"""
-    template = (PROMPTS_DIR / "sample_analyze.md").read_text(encoding="utf-8")
+    template = (PROMPTS_DIR / "style_sample_analyze.md").read_text(encoding="utf-8")
     prompt = template.replace("{batch_text}", batch_text)
-    prompt = prompt.replace("{batch_label}", batch_label)
+    prompt = template.replace("{batch_label}", batch_label)
     prompt = prompt.replace("{arc_info}", arc_info)
+    prompt = prompt.replace("{output_file}", output_file)
     return prompt
+
+
+def _process_one_sample_batch(batch_chs: list[int], batch_label: str,
+                              arcs: list, reader_paragraphs: list,
+                              text_dir: Path, build_dir: Path,
+                              progress_path: Path,
+                              model: str, timeout: int,
+                              verbose: bool = True):
+    """处理单个抽样分析批次（线程安全）"""
+    # 构建弧信息
+    arc_notes = []
+    for ch in batch_chs:
+        for arc in arcs:
+            start = int(arc["chapter_range"].split("-")[0].replace("ch", ""))
+            end = int(arc["chapter_range"].split("-")[1].replace("ch", ""))
+            if start <= ch <= end:
+                arc_notes.append(f"ch{ch:04d} 属于 {arc['arc_id']}（{arc['mood']}弧）")
+                break
+    arc_info = "\n".join(arc_notes) if arc_notes else "无弧信息"
+
+    batch_text = build_sample_batch_text(text_dir, batch_chs, reader_paragraphs)
+    if not batch_text:
+        with print_lock:
+            print(f"\n--- {batch_label}: 无有效文本，跳过 ---")
+        # 原子更新进度
+        lock_path = progress_path.with_suffix(".lock")
+        with open(lock_path, "w") as lf:
+            fcntl.flock(lf, fcntl.LOCK_EX)
+            try:
+                disk = _read_progress_raw(progress_path)
+                if batch_label not in disk["sample_analyze"]["batches_completed"]:
+                    disk["sample_analyze"]["batches_completed"].append(batch_label)
+                with open(progress_path, "w", encoding="utf-8") as f:
+                    json.dump(disk, f, ensure_ascii=False, indent=2)
+            finally:
+                fcntl.flock(lf, fcntl.LOCK_UN)
+        return batch_label, True
+
+    # 输出文件路径（让 Claude agent 直接写入）
+    output_path = build_dir / f"{batch_label}.json"
+    prompt = build_sample_analyze_prompt(batch_text, batch_label, arc_info, str(output_path))
+
+    ch_strs = [f"ch{c:04d}" for c in batch_chs]
+    with print_lock:
+        print(f"\n--- {batch_label} ({', '.join(ch_strs)}) ---")
+
+    start_time = time.time()
+    success, output = run_claude_prompt(prompt, model, timeout, verbose=verbose)
+    elapsed = time.time() - start_time
+
+    # 原子更新进度
+    lock_path = progress_path.with_suffix(".lock")
+    with open(lock_path, "w") as lf:
+        fcntl.flock(lf, fcntl.LOCK_EX)
+        try:
+            disk = _read_progress_raw(progress_path)
+            disk["stats"]["total_calls"] += 1
+            disk["stats"]["total_time_seconds"] += int(elapsed)
+
+            # 检查文件是否被 Claude 成功创建
+            if success and output_path.exists():
+                # 验证 JSON 格式
+                try:
+                    with open(output_path, 'r', encoding='utf-8') as f:
+                        result = json.load(f)
+                    with print_lock:
+                        print(f"  {batch_label}: 完成 ({elapsed:.0f}s)")
+                        dims = ["narrative_voice", "scene_description",
+                                "emotion_expression", "imagery", "vocabulary",
+                                "writing_techniques", "reader_validated"]
+                        found = [d for d in dims if result.get(d)]
+                        print(f"  维度: {', '.join(found)}")
+                    if batch_label not in disk["sample_analyze"]["batches_completed"]:
+                        disk["sample_analyze"]["batches_completed"].append(batch_label)
+                except json.JSONDecodeError as e:
+                    with print_lock:
+                        print(f"  {batch_label}: JSON 格式错误 ({elapsed:.0f}s): {e}")
+                    if batch_label not in disk["sample_analyze"]["batches_failed"]:
+                        disk["sample_analyze"]["batches_failed"].append(batch_label)
+            else:
+                with print_lock:
+                    if not output_path.exists():
+                        print(f"  {batch_label}: 文件未创建 ({elapsed:.0f}s)")
+                    else:
+                        print(f"  {batch_label}: 失败 ({elapsed:.0f}s): {output[:200]}")
+                # 保存 Claude 的原始输出供调试
+                debug_path = build_dir / f"{batch_label}_debug.txt"
+                debug_path.write_text(output, encoding="utf-8")
+                if batch_label not in disk["sample_analyze"]["batches_failed"]:
+                    disk["sample_analyze"]["batches_failed"].append(batch_label)
+
+            with open(progress_path, "w", encoding="utf-8") as f_out:
+                json.dump(disk, f_out, ensure_ascii=False, indent=2)
+        finally:
+            fcntl.flock(lf, fcntl.LOCK_UN)
+
+    return batch_label, success
 
 
 def phase_sample_analyze(book_dir: Path, all_chapters: list[int],
                          progress: dict, progress_path: Path,
                          model: str, timeout: int, dry_run: bool,
-                         chapters_per_call: int):
+                         chapters_per_call: int, concurrency: int = 1):
     """执行阶段 1：Claude 抽样精析"""
     print("\n" + "=" * 60)
     print("阶段 1：Claude 抽样精析")
@@ -1049,6 +1210,8 @@ def phase_sample_analyze(book_dir: Path, all_chapters: list[int],
 
     print(f"抽样章节: {len(sampled)} 章，分 {len(batches)} 批（每批 {chapters_per_call} 章）")
     print(f"已完成: {len(completed)}，待处理: {len(pending)}")
+    if concurrency > 1:
+        print(f"并发数: {concurrency}")
 
     if dry_run:
         for chs, label in pending:
@@ -1056,64 +1219,37 @@ def phase_sample_analyze(book_dir: Path, all_chapters: list[int],
             print(f"  {label}: {ch_strs}")
         return
 
-    for batch_chs, batch_label in pending:
-        # 构建弧信息
-        arc_notes = []
-        for ch in batch_chs:
-            for arc in arcs:
-                start = int(arc["chapter_range"].split("-")[0].replace("ch", ""))
-                end = int(arc["chapter_range"].split("-")[1].replace("ch", ""))
-                if start <= ch <= end:
-                    arc_notes.append(f"ch{ch:04d} 属于 {arc['arc_id']}（{arc['mood']}弧）")
-                    break
-        arc_info = "\n".join(arc_notes) if arc_notes else "无弧信息"
+    if not pending:
+        print("无待处理批次")
+    elif concurrency <= 1:
+        # 串行执行
+        for batch_chs, batch_label in pending:
+            _process_one_sample_batch(
+                batch_chs, batch_label, arcs, reader_paragraphs,
+                text_dir, build_dir, progress_path, model, timeout,
+            )
+    else:
+        # 并发执行
+        with ThreadPoolExecutor(max_workers=concurrency) as pool:
+            futures = {
+                pool.submit(
+                    _process_one_sample_batch,
+                    batch_chs, batch_label, arcs, reader_paragraphs,
+                    text_dir, build_dir, progress_path, model, timeout,
+                    verbose=False,
+                ): batch_label
+                for batch_chs, batch_label in pending
+            }
+            for future in as_completed(futures):
+                label = futures[future]
+                try:
+                    future.result()
+                except Exception as e:
+                    with print_lock:
+                        print(f"  {label}: 异常 - {e}")
 
-        batch_text = build_sample_batch_text(text_dir, batch_chs, reader_paragraphs)
-        if not batch_text:
-            print(f"\n--- {batch_label}: 无有效文本，跳过 ---")
-            progress["sample_analyze"]["batches_completed"].append(batch_label)
-            save_progress(progress_path, progress)
-            continue
-
-        prompt = build_sample_analyze_prompt(batch_text, batch_label, arc_info)
-
-        ch_strs = [f"ch{c:04d}" for c in batch_chs]
-        print(f"\n--- {batch_label} ({', '.join(ch_strs)}) ---")
-        start_time = time.time()
-        success, output = run_claude_prompt(prompt, model, timeout)
-        elapsed = time.time() - start_time
-
-        progress["stats"]["total_calls"] += 1
-        progress["stats"]["total_time_seconds"] += int(elapsed)
-
-        if success:
-            result = extract_json_from_output(output)
-            if result:
-                output_path = build_dir / f"{batch_label}.json"
-                with open(output_path, "w", encoding="utf-8") as f:
-                    json.dump(result, f, ensure_ascii=False, indent=2)
-                print(f"  完成 ({elapsed:.0f}s)")
-                # 简要打印
-                dims = ["narrative_voice", "scene_description", "emotion_expression",
-                         "imagery", "vocabulary", "writing_techniques", "reader_validated"]
-                found = [d for d in dims if result.get(d)]
-                print(f"  维度: {', '.join(found)}")
-                progress["sample_analyze"]["batches_completed"].append(batch_label)
-            else:
-                print(f"  无法解析 JSON ({elapsed:.0f}s)")
-                debug_path = build_dir / f"{batch_label}_raw.txt"
-                debug_path.write_text(output, encoding="utf-8")
-                print(f"  原始输出已保存: {debug_path}")
-                if batch_label not in progress["sample_analyze"]["batches_failed"]:
-                    progress["sample_analyze"]["batches_failed"].append(batch_label)
-        else:
-            print(f"  失败 ({elapsed:.0f}s): {output[:200]}")
-            if batch_label not in progress["sample_analyze"]["batches_failed"]:
-                progress["sample_analyze"]["batches_failed"].append(batch_label)
-
-        save_progress(progress_path, progress)
-
-    # 检查是否全部完成
+    # 重新加载进度，检查是否全部完成
+    progress = load_progress(progress_path)
     all_done = set(label for _, label in batches) <= set(
         progress["sample_analyze"]["batches_completed"]
     )
@@ -1141,7 +1277,7 @@ def build_global_merge_prompt(stats_json: str, samples_json: str,
                                reader_benchmarks_json: str,
                                style_dir: str) -> str:
     """构建全局融合 prompt"""
-    template = (PROMPTS_DIR / "global_merge.md").read_text(encoding="utf-8")
+    template = (PROMPTS_DIR / "style_global_merge.md").read_text(encoding="utf-8")
     prompt = template.replace("{stats_json}", stats_json)
     prompt = prompt.replace("{samples_json}", samples_json)
     prompt = prompt.replace("{reader_benchmarks_json}", reader_benchmarks_json)
@@ -1424,7 +1560,7 @@ def main():
             phase_sample_analyze(
                 book_dir, all_chapters, progress, progress_path,
                 args.model, args.timeout, args.dry_run,
-                args.chapters_per_call
+                args.chapters_per_call, args.concurrency
             )
 
     # 阶段 2: 全局融合
