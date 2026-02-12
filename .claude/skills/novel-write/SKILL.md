@@ -13,12 +13,14 @@ user_invocable: true
 **模式判断**（按优先级）：
 1. `--history` → 调用验证脚本后结束
 2. `--promote N` → 调用验证脚本后结束
-3. `--verify N` → 调用验证脚本后结束
+3. `--verify N` → L1 Python + Reviewer subagent
 4. `--auto` → 自动循环模式
 5. `--revise N` → 修复流程
 6. 默认 → 正常续写流程
 
-**`--verify`/`--promote`/`--history`**：用 Bash 执行 `python .claude/skills/novel-write/verify/batch_verify.py --book-dir {KB_DIR} [--chapter N] [--layer 1] [--promote] [--history]`，完成后读取 `{KB_DIR}/drafts/chNNNN_verification.md` 展示结果。
+**`--promote`/`--history`**：用 Bash 执行 `python .claude/skills/novel-write/verify/batch_verify.py --book-dir {KB_DIR} [--promote --chapter N] [--history]`，完成后展示结果。
+
+**`--verify N`**：执行 Step 6 + Step 7（L1 定量 + Reviewer subagent 深度分析）。
 
 > **知识库构建**：KB 构建已独立为 `novel-kb` skill，使用 `/novel-kb` 调用。
 
@@ -26,17 +28,16 @@ user_invocable: true
 
 ## 执行流程
 
-### 正常模式（8 步）
+### 正常模式（7 步）
 
 ```
-Step 1: 读 guide.md
-Step 2: Research + 大纲（读 KB → 生成 Context Bundle + 章节大纲，都保存到文件）
-Step 3: Scene Plan（怎么写）（保存到文件）⭐
-Step 4: 等待用户确认（大纲 + Scene Plan 完整方案）
-Step 5: 写正文
-Step 6: 保存草稿
-Step 7: 自动运行 Layer 1 定量检测（编译器，必须执行）
-Step 8: 根据结果询问用户是否修复
+Step 1: 读 guide.md，确定章节号
+Step 2: Task(sonnet) → Researcher subagent → Context Bundle + 大纲 + 涉及名词清单（落盘，释放）
+Step 3: Task(sonnet) → Enricher subagent → 按名词清单搜 KB → Scene Plan（落盘，释放）
+Step 4: 主 Agent 读落盘文件 → 展示大纲 + Scene Plan → 用户确认
+Step 5: 主 Agent 写全章正文（落盘）
+Step 6: Task(sonnet) → Reviewer subagent → Bash L1 + L2/L3 深度分析 → 评级（落盘，释放）
+Step 7: 主 Agent 展示评级 → 根据结果询问用户
 ```
 
 ### 修复模式（--revise，4 步）
@@ -45,7 +46,7 @@ Step 8: 根据结果询问用户是否修复
 Revise Step 1: 加载已保存的设计图（context_bundle + scene_plan + draft + feedback）
 Revise Step 2: 分析问题清单
 Revise Step 3: 在既定设计图下修复正文
-Revise Step 4: 保存修复后的草稿
+Revise Step 4: 保存修复后的草稿 → 再次执行 Step 6-7
 ```
 
 详见 [修复流程](#修复流程revise-模式)。
@@ -53,165 +54,68 @@ Revise Step 4: 保存修复后的草稿
 ### 自动循环模式（--auto，全自动）
 
 ```
-Auto Step 1: 正常写作（Step 1-8）
-Auto Step 2: 调用外部验证脚本（独立进程，上下文隔离）
-Auto Step 3: 读取反馈 → 在设计图下修复
-Auto Step 4: 再次验证 → 循环直到 ≥ B 或 3 轮
+Auto Step 1: 正常写作（Step 1-7）
+Auto Step 2: 读取评级 → >= B 则完成
+Auto Step 3: 读取 feedback → 修复 → 再次 Step 6-7
+Auto Step 4: 循环直到 >= B 或 3 轮
 Auto Step 5: 输出最终结果
 ```
 
 详见 [自动循环](#自动循环auto-模式)。
 
 **架构原则**：
-- **无自检**：Writer 不自审。质量审核由 `batch_verify.py` 在独立进程中完成（通过 `claude -p` 调用独立 AI 上下文）
-- **上下文隔离**：Writer 和 Reviewer 物理隔离，Reviewer 的评分逻辑和盲测细节不泄露给 Writer
-- **信息流单向**：审核 → 写作（feedback 文件），写作不能反向影响审核标准
+- **三 Subagent 隔离**：Researcher/Enricher/Reviewer 各在独立 Task subagent 中执行，上下文用完即释放，不污染主 Agent
+- **主 Agent 上下文极度干净**：只有 Bundle（~3K）+ 大纲（~1K）+ Scene Plan（~3-5K）+ 用户交互
+- **主 Agent 写正文**：不再用 Scene Writer subagent，主 Agent 直接基于干净上下文写全章
+- **无自检**：Writer 不自审。质量审核由 Reviewer subagent 在独立上下文中完成
+- **信息流单向**：审核 → 写作（feedback 文件），Writer 不能访问审核标准
 
 ---
 
-### Step 1：读取 guide.md
+### Step 1：读取 guide.md + 确定章节号
 
-读取 `{KB_DIR}/guide.md`。如果文件不存在，提示用户先运行 `/novel-kb` 构建知识库，终止流程。
+1. 读取 `{KB_DIR}/guide.md`。如果文件不存在，提示用户先运行 `/novel-kb` 构建知识库，终止流程。
+2. **确定章节号 N**：
+   - 如果用户指定了 `--chapter N`：**直接使用 N，不读 index.md，不检查原文是否存在，不做任何验证**
+   - 如果未指定，读取 `{KB_DIR}/plot/chapters/index.md`，找到最后一个已完成章节号，N = 最后章节号 + 1
+3. 计算零填充格式 `{NNNN}`（如 N=42 → NNNN=0042，N=1168 → NNNN=1168）
 
----
-
-### Step 2：Research + 大纲
-
-**目标**：读取知识库 → 生成 Context Bundle + 章节大纲，两者都保存到文件。
-
-#### 必读文件（按顺序）
-
-| # | 文件 | 用途 |
-|---|------|------|
-| 1 | `{KB_DIR}/plot/chapters/index.md` | 确定章节号 |
-| 2 | `{KB_DIR}/plot/outline/index.md` → 当前弧 `arc_XX.md` | 弧详情 |
-| 3 | `{KB_DIR}/plot/outline/plot_lines.md` | 主线状态 |
-| 4 | `{KB_DIR}/plot/open_loops.md` | 伏笔 |
-| 5 | `{KB_DIR}/plot/chapters/ch{N-1}.md`（+ ch{N-2}.md） | 近章摘要 |
-| 6 | `{KB_DIR}/text/ch{N-1}.md` | 衔接段 + 风格锚点候选 |
-| 7 | `{KB_DIR}/style/narrative.md` | 叙事风格 + 禁忌 |
-| 8 | `{KB_DIR}/style/vocabulary.md` | 用词禁忌 |
-| 9 | `{KB_DIR}/style/rhythm.md` | 节奏指标 |
-
-#### 按需文件
-
-根据场景类型自主决定是否加载：
-- `{KB_DIR}/characters/{name}.md` — 涉及角色的详细档案
-- `{KB_DIR}/characters/relationships.md` — 多角色互动时
-- `{KB_DIR}/world/index.md` — 世界层总览（从中确定需要读哪些子文件）
-- `{KB_DIR}/world/power_system.md` — 力量体系（战斗/修炼场景）
-- `{KB_DIR}/world/geography.md` — 地理设定（场景转换）
-- `{KB_DIR}/world/factions.md` — 组织势力
-- `{KB_DIR}/world/rules.md` — 世界规则与限制
-- `{KB_DIR}/reader/feedback/emotions.md` — 情绪触发点
-- `{KB_DIR}/reader/feedback/popular_characters.md` — 角色人气
-- `{KB_DIR}/reader/feedback/complaints.md` — 读者不满点
-- `{KB_DIR}/reader/feedback/expectations.md` — 读者期待
-
-#### 产出 A：Context Bundle
-
-按 `templates/context_bundle.md` 模板生成，包含 5 个 Section：
-
-- **S1. 故事位置**（~150 字）：弧、主线进展、上一章尾原文、本章方向、用户提示
-- **S2. 场景角色**（~300 字）：出场角色简表（状态+说话特征）、伏笔状态
-- **S3. 风格硬指标**（~100 字）：量化目标与红线（字数/句长/对话占比/标签/禁词/首尾）
-- **S4. 禁忌速查**（~200 字）：绝对禁止词 + 替代公式
-- **S5. 上一章衔接**（~300 字）：上一章最后一个场景完整段落（原文直接复制）
-
-保存到 `{KB_DIR}/drafts/context_bundle_ch{NNNN}.md`（如 `{KB_DIR}/drafts/` 不存在则创建）。
-
-#### 产出 B：章节大纲
-
-基于已读的全部 KB 数据生成事件序列大纲：
-
-```markdown
-# 第{N}章 大纲
-
-## 章节定位
-- 所属故事弧：{弧名}
-- 主线推进：{本章推进哪条主线，推进到什么程度}
-- 与上一章衔接：{从什么场景/情绪接入}
-
-## 场景规划
-### 场景 1：{场景名}（约 XXX 字）
-- 地点：{地点}
-- 出场角色：{角色列表}
-- 核心事件：{事件描述}
-- 情绪基调：{基调}
-
-### 场景 2：{场景名}（约 XXX 字）
-...
-
-## 伏笔计划
-- 回收：{本章回收哪些 open_loops 中的伏笔}
-- 新增/推进：{本章新铺或推进哪些伏笔}
-
-## 预期情绪曲线
-{简述本章从开始到结尾的情绪走向，标注高点位置}
-
-## 用户方向提示
-{如有 --hint，在此复述并说明如何融入}
-```
-
-**大纲不含任何写法指导**——"怎么写"在 Step 3 规划。
+**Step 1 完成后立即进入 Step 2，不做任何额外的文件探索。**
 
 ---
 
-### Step 3：Scene Plan（怎么写）⭐核心步骤
+### Step 2：Research（Subagent）
 
-**大纲回答"写什么"，Scene Plan 回答"怎么写"**。
+启动 Researcher subagent 生成 Context Bundle、章节大纲和涉及名词清单：
 
-**⚠️ 强制要求**：必须在对话中完整输出 Scene Plan 后，才能进入 Step 5。不得跳过或与 Step 5 合并执行。
+1. 读取 `templates/research_agent.md`
+2. 将 `{KB_DIR}`、`{N}`（章节号）、`{NNNN}`（零填充）、`{HINT}` 替换为 Step 1 确定的实际值
+3. 调用 Task 工具：
+   - subagent_type: "general-purpose"
+   - model: "sonnet"
+   - prompt: 替换后的模板内容
+4. 等待完成后，读取产出文件：
+   - `{KB_DIR}/drafts/context_bundle_ch{NNNN}.md`
+   - `{KB_DIR}/drafts/outline_ch{NNNN}.md`（含"涉及名词清单"section）
 
-基于两个输入：
-1. Step 2 生成的大纲（事件序列）
-2. Step 2 生成的 Context Bundle（S3 硬指标 + S4 禁忌 + S2 角色说话特征 + S5 上一章原文）
+Researcher 只读章节级信息（剧情进度、伏笔、风格规则），不碰角色档案、世界设定。详见 `templates/research_agent.md`。
 
-#### 3A：为每个场景生成 6 维度写法规划
+---
 
-```markdown
-## Scene Writing Plan
+### Step 3：Enricher（Subagent）
 
-### 场景 1：{场景名}（约 XXX 字）
+启动 Enricher subagent 按名词清单搜 KB，生成信息完备的 Scene Plan：
 
-**叙事视角距离**：第三人称近距离，贴近{角色名}感官
-**情绪表达方式**：
-- 禁止直接写"紧张/恐惧/愤怒"
-- 替代手法：{具体手法}（如"指节攥白"表紧张，"低低骂了一声"表愤怒）
-**对话风格**：
-- 多留白，少解释动机
-- {角色A}用"{标签}"，{角色B}用"{标签}"
-- 同一标签不得连续使用超过 2 次
-**节奏控制**：
-- {节奏模式}（如"慢铺垫→突然转折"或"均匀推进"）
-- 段落长度：{目标长度}字
-**细节来源**：
-- 环境细节：{具体可用细节，如"油灯昏黄""月光从窗纸透入"}
-- 动作细节：{具体可用动作，如"摸下巴胡须""拍手上的血"}
-**⭐段落融合规划**：
-- 本场景预计 {N} 个段落，每段 {30-60} 字
-- 对话密集段：{哪些对话+动作应融合为同一段落}
-- 叙述段：{哪里插入背景/环境/心理的长叙述段落（≥50字）}
-- 禁止出现连续 3 个 <15 字段落
+1. 确认 Step 2 产出文件存在
+2. 读取 `templates/enricher_agent.md`
+3. 将 `{KB_DIR}`、`{N}`、`{NNNN}`、`{HINT}` 替换为实际值
+4. 调用 Task 工具：
+   - subagent_type: "general-purpose"
+   - model: "sonnet"
+   - prompt: 替换后的模板内容
+5. 等待完成后，读取 `{KB_DIR}/drafts/scene_plan_ch{NNNN}.md`
 
-### 场景 2：{场景名}（约 XXX 字）
-（同上 6 维度）
-```
-
-#### 3B：从近章原文选取风格锚点
-
-从 Step 2 已读的近章原文（`{KB_DIR}/text/ch{N-1}.md`、`{KB_DIR}/text/ch{N-2}.md`）中，选取 3-5 个与本章场景类型匹配的段落作为风格锚点，直接写入 Scene Plan 中：
-
-- 必选：章首段落 + 章尾段落
-- 按需：与本章场景类型匹配的段落（日常/紧张/情感/对话）
-- **重点关注段落的物理结构**（对话与叙述如何交织），而非仅关注技法
-- 引用时去掉原文中的评论标注（如 `(25评)`）
-
-**产出**：
-1. 在对话中完整输出 Scene Plan（含风格锚点）
-2. **保存到文件** `{KB_DIR}/drafts/scene_plan_ch{NNNN}.md`
-
-**落盘原因**：Scene Plan 是章节的"设计图"。如果只在上下文中，修复循环时会蒸发，导致 Writer 在"另一套计划"下修复旧文章（Plan Drift）。落盘后修复时可重新加载，确保在既定设计图下施工。
+Enricher 按名词清单逐项搜 KB（角色档案、世界设定），补全信息到 Scene Plan。详见 `templates/enricher_agent.md`。
 
 ---
 
@@ -226,36 +130,41 @@ Auto Step 5: 输出最终结果
 
 ---
 
-### Step 5：生成完整章节正文
+### Step 5：主 Agent 写全章正文
 
-**⚠️ 前置检查**：确认 Step 3 的 Scene Plan 已在对话中完整输出。如未输出，回到 Step 3。
+**主 Agent 直接写全章**，不拆分到 Scene Writer subagent。此时主 Agent 上下文干净（~7-9K 全是有效信息）：
 
-按确认的大纲逐场景生成正文。生成时参照材料优先级：
+| 内容 | 大小 |
+|------|------|
+| Context Bundle（S1-S5） | ~3K |
+| 章节大纲 | ~1K |
+| Scene Plan（角色设定+世界设定+风格锚点+注意事项） | ~3-5K |
+| 续写铁则 | ~0.5K |
 
-| 优先级 | 材料 | 作用 |
-|--------|------|------|
-| 1 | **铁则 3（段落融合）** | 最重要——决定句长能否达标 |
-| 2 | **Scene Plan 段落融合规划** | 每段的物理结构指引 |
-| 3 | **Scene Plan 中的风格锚点** | 模仿近章原文的段落结构 |
-| 4 | **Context Bundle S3** | 量化红线（字数/句长/占比） |
-| 5 | **Context Bundle S4** | 禁忌清单（书籍特定） |
-| 6 | **Context Bundle S5** | 上一章衔接 |
+**写作步骤**：
+
+1. 读取已落盘的三个文件：
+   - `{KB_DIR}/drafts/context_bundle_ch{NNNN}.md`
+   - `{KB_DIR}/drafts/outline_ch{NNNN}.md`
+   - `{KB_DIR}/drafts/scene_plan_ch{NNNN}.md`
+2. 基于大纲中的场景规划，按顺序写每个场景
+3. 场景间使用分隔符 `————`
+4. 保存到 `{KB_DIR}/drafts/ch{NNNN}.md`
 
 #### 正文硬指标（从 Context Bundle S3 获取具体阈值）
 
 | 指标 | 目标来源 | 如何达标 |
 |------|----------|----------|
-| 总字数 | S3 字数目标（从 `stats.json` 基线推导） | 每场景按预算写够字数 |
-| 平均句长 | S3 句长目标（从 `rhythm.md` 基线推导） | **遵守铁则 3 段落融合** |
-| 对话占比 | S3 对话占比范围（从 `stats.json` 推导） | 对话之间插入叙述/环境段落 |
-| 对话标签偏好 | S3 标签偏好（从 `narrative.md` 提取） | 遵守书籍的标签风格 |
-| 禁忌词 | S4 禁忌清单（从 `vocabulary.md` 提取） | 按书籍规则替代 |
-| 章首类型 | S3 章首偏好（从 `rhythm.md` 提取） | 参照章首锚点 |
-| 章尾类型 | S3 章尾偏好（从 `rhythm.md` 提取） | 参照章尾锚点 |
+| 总字数 | S3 字数目标 | 按大纲中场景字数预算写够 |
+| 平均句长 | S3 句长目标 | **遵守铁则 3 段落融合** |
+| 对话占比 | S3 对话占比范围 | 对话之间插入叙述/环境段落 |
+| 对话标签偏好 | S3 标签偏好 | 遵守书籍的标签风格 |
+| 禁忌词 | S4 禁忌清单 | 按书籍规则替代 |
+| 章首/章尾类型 | S3 偏好 | 参照风格锚点 |
 | 段落长度 | S3 段落长度范围 | **对话与动作融为同段** |
 | 短句率 | S3 短句率范围 | 减少独立短对话行 |
 
-> **注意**：具体阈值不在 SKILL.md 中固定。每本书的基线不同，由 Research Phase 从 `{KB_DIR}/style/.build/stats.json` 和 `{KB_DIR}/style/*.md` 中提取后写入 Context Bundle S3。
+> **注意**：具体阈值不在 SKILL.md 中固定。每本书的基线不同，由 Researcher 从 KB 提取后写入 Context Bundle S3。
 
 #### 输出格式
 
@@ -267,68 +176,49 @@ Auto Step 5: 输出最终结果
 
 正文中段落之间用**单个空行**分隔（非连续空行）。场景切换使用分隔符 `————`。
 
----
-
-### Step 6：保存并输出最终结果
-
-将所有产物保存到 `{KB_DIR}/drafts/` 目录：
-
-| 文件 | 内容 | 何时生成 |
-|------|------|----------|
-| `{KB_DIR}/drafts/ch{NNNN}.md` | 章节正文 | Step 6 |
-| `{KB_DIR}/drafts/context_bundle_ch{NNNN}.md` | 写作上下文包 | Step 2 |
-| `{KB_DIR}/drafts/scene_plan_ch{NNNN}.md` | 场景设计图 + 风格锚点 | Step 3 |
-
-如果 `{KB_DIR}/drafts/` 目录不存在则自动创建。
-
-**正文文件格式**：
-```markdown
-# 第{N}章 {章节标题}
-
-{正文内容}
-```
+保存到 `{KB_DIR}/drafts/ch{NNNN}.md`。如果 `{KB_DIR}/drafts/` 目录不存在则自动创建。
 
 保存后在对话中输出正文供用户阅读。
 
-**重要**：不修改知识库正式目录（text/、plot/、characters/ 等）中的任何文件。drafts/ 是独立的草稿区，验证脚本从此处读取评估，通过后再决定是否反哺到正式知识库。
+**重要**：不修改知识库正式目录（text/、plot/、characters/ 等）中的任何文件。drafts/ 是独立的草稿区。
 
 ---
 
-### Step 7：自动运行 Layer 1 定量检测
+### Step 6：Review（Subagent，L1 + L2/L3）
 
-**这是写作的"编译器"，必须自动执行，不需要用户确认。**
+启动 Reviewer subagent，**内部先跑 L1 再做 L2/L3 深度分析**：
 
-使用 Bash 工具执行：
+1. 读取 `templates/reviewer_agent.md`
+2. 将 `{KB_DIR}`、`{N}`、`{NNNN}` 替换为实际值
+3. 调用 Task 工具：
+   - subagent_type: "general-purpose"
+   - model: "sonnet"
+   - prompt: 替换后的模板内容
+4. Reviewer subagent 内部流程：
+   - **先 Bash 执行** `python .claude/skills/novel-write/verify/batch_verify.py --book-dir {KB_DIR} --chapter {N} --layer 1` 获取 L1 结果
+   - **再基于 L1 结果** + 草稿 + style/*.md + 原文样本做 L2/L3 深度分析
+5. 等待完成后，读取产出文件：
+   - `{KB_DIR}/drafts/ch{NNNN}_verification.md`（审核报告）
+   - `{KB_DIR}/drafts/ch{NNNN}_feedback.md`（C/D 时生成）
+6. 展示评级和关键发现
 
-```bash
-python .claude/skills/novel-write/verify/batch_verify.py \
-  --book-dir {KB_DIR} \
-  --chapter {N} \
-  --layer 1
-```
+**Reviewer 不看 context_bundle / scene_plan / outline（Writer 过程文件）**。L1 输出和审核推理过程全部留在 subagent 上下文中，释放后消失。
 
-Layer 1 是纯 Python 定量检测，<5s 完成，0 次 AI 调用。它检查的是**格式合法性**（禁用词、句长、短句率、字数、对话标签比例），不是质量评价。
-
-执行后读取 `{KB_DIR}/drafts/ch{NNNN}_verification.md`，在对话中展示指标表格。
+**SKILL.md 不描述审核的内部逻辑**（评分权重、盲测方法、检查维度）。这些细节在 `reviewer_agent.md` 中，Writer 看不到。
 
 ---
 
-### Step 8：根据结果询问用户
+### Step 7：根据结果决定下一步
 
-根据 Layer 1 结果分三种情况处理：
+根据 Reviewer 评级分情况处理：
 
 | 情况 | 处理 |
 |------|------|
-| 有 FAIL 项 | 强提示修复：使用 AskUserQuestion 询问"有 X 项 FAIL，是否自动修复？" |
-| 只有 WARN/PASS | 温和提示：使用 AskUserQuestion 询问"有 X 项 WARN，是否要修复？" |
-| 全部 PASS | 直接输出结果，流程结束 |
+| 评级 A/B | 完成。提示可用 `--promote` 反哺到正式知识库 |
+| 评级 C/D + 有 FAIL | 强提示修复：使用 AskUserQuestion 询问"评级 {X}，有 {N} 项 FAIL，是否自动修复？" |
+| 评级 C/D + 无 FAIL | 温和提示：展示 feedback 摘要，询问是否修复 |
 
-如用户选择修复，按 [修复流程](#修复流程revise-模式) 的 Revise Step 1-4 执行修复，修复后**再次自动运行 Step 7**（Layer 1）确认修复效果。
-
-**不自动运行 Layer 2/L3/L4**。L2/L3 需要 AI 调用（~90s + 成本），由用户手动触发：
-```bash
-/novel-write KB --verify N
-```
+如用户选择修复，按 [修复流程](#修复流程revise-模式) 的 Revise Step 1-4 执行修复，修复后**再次执行 Step 6-7**（L1 + Reviewer）确认修复效果。
 
 ---
 
@@ -336,13 +226,13 @@ Layer 1 是纯 Python 定量检测，<5s 完成，0 次 AI 调用。它检查的
 
 ### 1. 每句包含多重信息
 
-一句承载 ≥2 种信息（动作+情绪、状态+背景、细节+暗示）。禁止一句只传达单一信息。
+一句承载 >= 2 种信息（动作+情绪、状态+背景、细节+暗示）。禁止一句只传达单一信息。
 
 ### 2. 章首/章尾类型匹配 Context Bundle S3 中的偏好
 
 S3 已从 `{KB_DIR}/style/rhythm.md` 提取了章首/章尾类型偏好，生成时**严格遵守**。
 
-### 3. ⭐段落融合——对话与叙述必须交织
+### 3. 段落融合——对话与叙述必须交织
 
 对话+标签+动作+环境必须融为同一段落，禁止一行一段格式。Scene Plan 中的段落融合规划和风格锚点已提供具体指引。
 
@@ -360,7 +250,7 @@ S3 已从 `{KB_DIR}/style/rhythm.md` 提取了章首/章尾类型偏好，生成
 
 | # | 文件 | 用途 |
 |---|------|------|
-| 1 | `{KB_DIR}/drafts/scene_plan_ch{NNNN}.md` | 场景设计图 + 风格锚点（**不修改，只遵循**） |
+| 1 | `{KB_DIR}/drafts/scene_plan_ch{NNNN}.md` | 场景设计图（**不修改，只遵循**） |
 | 2 | `{KB_DIR}/drafts/context_bundle_ch{NNNN}.md` | 写作上下文（硬指标 + 禁忌） |
 | 3 | `{KB_DIR}/drafts/ch{NNNN}.md` | 当前草稿（待修复的正文） |
 | 4 | `{KB_DIR}/drafts/ch{NNNN}_feedback.md` | 审核反馈（必须修改的问题 + 改进建议） |
@@ -378,7 +268,7 @@ S3 已从 `{KB_DIR}/style/rhythm.md` 提取了章首/章尾类型偏好，生成
 ### Revise Step 3：在既定设计图下修复
 
 **关键约束**：
-1. **不修改 Scene Plan**——场景结构、视角距离、情绪表达方式、节奏控制保持不变
+1. **不修改 Scene Plan**——场景结构、角色设定、世界设定保持不变
 2. **不修改大纲**——事件序列、伏笔计划、情绪曲线保持不变
 3. **只改正文**——针对 feedback 中的具体问题逐项修复
 
@@ -407,19 +297,16 @@ S3 已从 `{KB_DIR}/style/rhythm.md` 提取了章首/章尾类型偏好，生成
 
 | 问题 | 修复前 | 修复后 | 状态 |
 |------|--------|--------|------|
-| 平均句长 | 15.9 | {新值} | ✅/❌ |
-| 短句率 | 0.409 | {新值} | ✅/❌ |
+| 平均句长 | 15.9 | {新值} | /  |
+| 短句率 | 0.409 | {新值} | /  |
 | ... | ... | ... | ... |
 
 ### 主要修改
-- {具体修改了什么，如"将第3-5段的对话+动作分行格式合并为段落融合式"}
+- {具体修改了什么}
 - {具体修改了什么}
 ```
 
-**不自审**——修复后的质量验证由用户再次调用验证脚本完成：
-```bash
-python .claude/skills/novel-write/verify/batch_verify.py --book-dir {KB_DIR} --chapter N
-```
+**不自审**——修复后再次执行 Step 6-7 验证。
 
 ---
 
@@ -428,31 +315,25 @@ python .claude/skills/novel-write/verify/batch_verify.py --book-dir {KB_DIR} --c
 ```
 正常模式（默认）:
   /novel-write KB --chapter N
-  → Step 1-6: 生成 context_bundle + scene_plan + draft
-  → Step 7: 自动 Layer 1 检测（<5s，编译器）
-  → Step 8: 有 FAIL/WARN → 询问用户 → 可选修复
-  → 修复后再次 Step 7 确认
+  → Step 1-5: Researcher → Enricher → 确认 → 主 Agent 写正文 → 保存
+  → Step 6-7: Reviewer subagent（L1+L2/L3）→ 评级 → 可选修复
 
-手动深度验证（可选，用户主动触发）:
+手动深度验证（可选）:
   /novel-write KB --verify N
-  → Layer 1 + Layer 2（风格）+ Layer 3（读者对齐）+ Layer 4（跨章）
-  → ~90s + AI 调用成本
-
-校准模式（可选，有原文时使用）:
-  /novel-write KB --verify N --calibrate
-  → 盲测对比（不影响评级，仅供参考）
+  → Step 6 + Step 7（Reviewer subagent）
 
 修复模式:
   /novel-write KB --revise N
-  → 读取 scene_plan + feedback → 修复 draft
+  → 读取 scene_plan + feedback → 修复 draft → 再次 Step 6-7
 ```
 
-也可以用 `--auto` 模式自动完成整个循环（含 L2 验证）。
+也可以用 `--auto` 模式自动完成整个循环。
 
 **信息流方向**：
-- 写作上下文（Author KB）→ 只有 Writer 访问
-- 审核反馈（feedback）→ 单向流入 Writer，Writer 不能访问审核的评分标准和原文对比细节
+- 写作上下文（Context Bundle + Scene Plan）→ 只有 Writer（主 Agent）访问
+- 审核反馈（feedback）→ 单向流入 Writer，Writer 不能访问审核标准
 - Style KB（续写铁则 + `{KB_DIR}/style/`）→ 写作和审核共享
+- Reviewer 的评审逻辑（`reviewer_agent.md`）→ 只有 Reviewer subagent 访问
 
 ---
 
@@ -462,77 +343,63 @@ python .claude/skills/novel-write/verify/batch_verify.py --book-dir {KB_DIR} --c
 
 ### 上下文隔离机制
 
-`verify/batch_verify.py` 通过 `claude -p` 子进程调用 AI，Writer 和 Reviewer 在不同进程、不同上下文中工作，天然避免"自己审自己"的自证循环。Reviewer 的评分标准、盲测对比细节不会泄露给 Writer，Writer 只看到 `feedback.md` 中的具体修改建议。
+所有阶段通过 Task subagent 实现上下文隔离：
+- Research → sonnet subagent，用完释放
+- Enricher → sonnet subagent，用完释放
+- Writing → 主 Agent 直接写（上下文干净，无需 subagent）
+- Review → sonnet subagent，用完释放
+- Writer 和 Reviewer 零共享：Writer 不看 `reviewer_agent.md`，Reviewer 不看 `scene_plan`
 
 ### Auto 流程
 
 ```
-┌──────────────────────────────────────────────────┐
-│  Auto Round 1：正常写作                            │
-│  Step 1-8（正常模式）→ 生成 draft + scene_plan     │
-└──────────────┬───────────────────────────────────┘
-               ↓
-┌──────────────────────────────────────────────────┐
-│  Auto Verify：调用外部验证脚本                      │
-│  python batch_verify.py --book-dir KB --chapter N │
-│  （独立进程，独立 Claude 上下文）                    │
-│  → 生成 verification.md + feedback.md              │
-└──────────────┬───────────────────────────────────┘
-               ↓
-         评级 ≥ B？ ─── 是 ──→ 完成 ✅
-               │
+ Auto Round 1：正常写作
+  Step 1-7（正常模式，Step 4 自动确认跳过）
+  → 生成 draft + scene_plan + verification
+               |
+         评级 >= B？ --- 是 --→ 完成
+               |
               否（C/D）
-               ↓
-┌──────────────────────────────────────────────────┐
-│  Auto Round 2：修复模式                            │
-│  读取 scene_plan + feedback → 修复 draft           │
-└──────────────┬───────────────────────────────────┘
-               ↓
-         再次验证 → 评级 ≥ B？ → ...
-               │
+               |
+ Auto Round 2：修复模式
+  读取 scene_plan + feedback → 修复 draft
+  → 再次 Step 6-7（Reviewer subagent）
+               |
+         评级 >= B？ → ...
+               |
          最多 3 轮，超出则停止并报告
 ```
 
 ### Auto 执行步骤
 
-#### Auto Step 1：正常写作（Step 1-8）
+#### Auto Step 1：正常写作（Step 1-7）
 
-与正常模式完全相同（包括 Step 7 自动 L1 + Step 8 自动修复 FAIL 项）。完成后得到：
+与正常模式完全相同（Step 4 自动确认跳过）。完成后得到：
 - `{KB_DIR}/drafts/ch{NNNN}.md`
 - `{KB_DIR}/drafts/context_bundle_ch{NNNN}.md`
 - `{KB_DIR}/drafts/scene_plan_ch{NNNN}.md`
+- `{KB_DIR}/drafts/ch{NNNN}_verification.md`
 
-#### Auto Step 2：调用外部验证
+#### Auto Step 2：检查评级
 
-使用 Bash 工具执行：
-
-```bash
-python .claude/skills/novel-write/verify/batch_verify.py \
-  --book-dir {KB_DIR} \
-  --chapter {N} \
-  --timeout 300
-```
-
-**关键**：这是**外部 Python 进程**，其中的 Claude 调用与当前对话完全隔离。Writer 不会看到 Reviewer 的推理过程。
-
-执行后检查生成的文件：
-- 读取 `{KB_DIR}/drafts/ch{NNNN}_verification.md` 获取评级和分数
-- 如果评级为 A 或 B → 跳到 Auto Step 5（完成）
-- 如果评级为 C 或 D → 继续 Auto Step 3
+- 读取 `{KB_DIR}/drafts/ch{NNNN}_verification.md` 获取评级
+- 评级 A/B → 跳到 Auto Step 5
+- 评级 C/D → 继续 Auto Step 3
 
 #### Auto Step 3：读取反馈并修复
 
-1. 读取 `{KB_DIR}/drafts/ch{NNNN}_feedback.md`（由验证脚本自动生成）
+1. 读取 `{KB_DIR}/drafts/ch{NNNN}_feedback.md`
 2. 按 [修复流程](#修复流程revise-模式) 的 Revise Step 1-4 执行修复
 3. 保存修复后的 `{KB_DIR}/drafts/ch{NNNN}.md`
+4. 重新执行 Step 6-7（Reviewer subagent）
 
-#### Auto Step 4：再次验证
+#### Auto Step 4：再次检查
 
-重复 Auto Step 2。如果仍未达标且未超过最大轮数（3 轮），回到 Auto Step 3。
+如果仍未达标且未超过最大轮数，回到 Auto Step 3。
 
 **防死循环机制**：
 - 最大修复轮数：3 轮（超过则停止）
-- 每轮验证后对比分数，如果连续 2 轮分数无提升（±2 分内），提前停止
+- 每轮验证后对比分数，如果连续 2 轮分数无提升（+-2 分内），提前停止
 - 停止时输出所有轮次的分数变化供用户判断
 
 #### Auto Step 5：输出最终结果
@@ -543,27 +410,38 @@ python .claude/skills/novel-write/verify/batch_verify.py \
 | 轮次 | 操作 | 评分 | 评级 |
 |------|------|------|------|
 | Round 1 | 初始生成 | {分数} | {评级} |
-| Verify 1 | 验证 | — | — |
 | Round 2 | 修复 | {分数} | {评级} |
 | ... | ... | ... | ... |
 
 **最终评级**：{评级}（{分数}/100）
 **总轮数**：{N} 轮
-**总耗时**：{时间}
 
 {如果最终达标}
-✅ 达到目标评级 B，草稿就绪。可用以下命令反哺到正式知识库：
+达到目标评级 B，草稿就绪。可用以下命令反哺到正式知识库：
 python .claude/skills/novel-write/verify/batch_verify.py --book-dir {KB_DIR} --promote --chapter {N}
 
 {如果未达标}
-⚠️ 经过 3 轮修复仍未达标。建议人工检查 feedback 后手动修改。
+经过 3 轮修复仍未达标。建议人工检查 feedback 后手动修改。
 ```
+
+---
+
+## 产出文件
+
+| 文件 | 内容 | 何时生成 | 生成者 |
+|------|------|----------|--------|
+| `drafts/outline_ch{NNNN}.md` | 章节大纲 + 涉及名词清单 | Step 2 | Researcher subagent |
+| `drafts/context_bundle_ch{NNNN}.md` | 写作上下文包 | Step 2 | Researcher subagent |
+| `drafts/scene_plan_ch{NNNN}.md` | 角色设定+世界设定+风格锚点 | Step 3 | Enricher subagent |
+| `drafts/ch{NNNN}.md` | 章节正文 | Step 5 | 主 Agent |
+| `drafts/ch{NNNN}_verification.md` | 审核报告 | Step 6 | Reviewer subagent |
+| `drafts/ch{NNNN}_feedback.md` | 修复建议（C/D 时） | Step 6 | Reviewer subagent |
 
 ---
 
 ## 验证脚本（verify/batch_verify.py）
 
-验证脚本位于 `verify/batch_verify.py`，通过 Python 独立运行（不是 Claude Skill 调用），上下文与 Writer 物理隔离。
+验证脚本仅保留 L1 定量检测功能（纯 Python，无 AI 调用）。L2/L3 深度分析由 Reviewer subagent 完成。
 
 ### 前置条件
 
@@ -574,17 +452,11 @@ python .claude/skills/novel-write/verify/batch_verify.py --book-dir {KB_DIR} --p
 ### 常用命令
 
 ```bash
-# 完整验证（Layer 1 + Layer 2 + Layer 3 + Layer 4）
-python .claude/skills/novel-write/verify/batch_verify.py --book-dir <知识库目录>
-
-# 只 Layer 1（纯定量，<5s，0 次 AI 调用）
+# L1 定量检测（<5s，0 次 AI 调用）
 python .claude/skills/novel-write/verify/batch_verify.py --book-dir <知识库目录> --layer 1
 
 # 指定章节
-python .claude/skills/novel-write/verify/batch_verify.py --book-dir <知识库目录> --chapter 4
-
-# 校准模式（盲测对比，需要原文，不影响评级）
-python .claude/skills/novel-write/verify/batch_verify.py --book-dir <知识库目录> --chapter 4 --calibrate
+python .claude/skills/novel-write/verify/batch_verify.py --book-dir <知识库目录> --chapter 4 --layer 1
 
 # 反哺（验证通过后将草稿纳入正式知识库）
 python .claude/skills/novel-write/verify/batch_verify.py --book-dir <知识库目录> --promote --chapter 902
@@ -593,33 +465,11 @@ python .claude/skills/novel-write/verify/batch_verify.py --book-dir <知识库�
 python .claude/skills/novel-write/verify/batch_verify.py --book-dir <知识库目录> --history
 ```
 
-### 四层验证架构
-
-| 层 | 名称 | AI 调用 | 触发条件 |
-|----|------|---------|----------|
-| Layer 1 | 定量检测：12 项指标与 stats.json 基准对比 | 0 次 | 总是 |
-| Layer 2 | 风格分析：深度风格质量评估 | 1 次 `claude -p` | `--layer` ≠ 1 |
-| Layer 3 | 读者对齐：爽点/槽点/角色/期待 | 1 次 `claude -p` | `--layer` ≠ 1 且存在 reader/feedback/ |
-| Layer 4 | 跨章一致性：重复表达检测 | 0 次 | 多章时 |
-| — | 盲测校准 | 1 次 `claude -p` | `--calibrate` 且有原文 |
-
-### 评分系统
-
-```
-单章+读者数据：  L1×0.35 + L2×0.40 + L3×0.25
-单章无读者数据：  L1×0.45 + L2×0.55（向后兼容）
-多章+读者数据：  L1×0.25 + L2×0.35 + L3×0.20 + L4×0.20
-多章无读者数据：  L1×0.40 + L2×0.45 + L4×0.15（向后兼容）
-
-A (90-100) 优秀    B (80-89) 良好
-C (70-79) 及格     D (<70) 不合格
-```
-
 ### 输出文件
 
 | 文件 | 内容 |
 |------|------|
-| `{KB_DIR}/drafts/chNNNN_verification.md` | 四层验证结果 + 综合评分 |
+| `{KB_DIR}/drafts/chNNNN_verification.md` | 审核报告（L1 + L2/L3 综合） |
 | `{KB_DIR}/drafts/chNNNN_feedback.md` | 评级 C/D 时生成，用于 `--revise` 修复 |
 | `{KB_DIR}/drafts/.verify_history.json` | 累积验证历史 |
 
@@ -629,5 +479,3 @@ C (70-79) 及格     D (<70) 不合格
 - 正文 → `{KB_DIR}/text/chNNNN.md`
 - 章节摘要 → `{KB_DIR}/plot/chapters/chNNNN.md`（调 Claude 生成）
 - 索引更新 → `{KB_DIR}/plot/chapters/index.md`
-
-

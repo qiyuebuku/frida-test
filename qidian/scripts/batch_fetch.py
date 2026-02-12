@@ -20,6 +20,7 @@
   batch_fetch.py fetch 1 --last 5              # 采集评论（默认含回复）
   batch_fetch.py fetch 1 --last 5 --no-replies  # 不采集回复（更快）
   batch_fetch.py fetch 1 --update-comments       # 增量更新已有评论
+  batch_fetch.py fetch 1 --max-comments 50       # 每段最多采集前50条评论（回复不计入）
 """
 
 import argparse
@@ -35,6 +36,20 @@ from qidian_api import QidianAPI, RpcError
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 CACHE_FILE = os.path.join(SCRIPT_DIR, ".last_search.json")
 DEFAULT_OUTPUT_DIR = os.path.join(SCRIPT_DIR, "output")
+
+
+def _is_rpc_error(msg: str) -> bool:
+    """判断错误消息是否为 RPC 连接级错误（需要重启 App）"""
+    return "RPC" in msg and any(k in msg for k in ("无响应", "超时", "连接被拒绝"))
+
+
+def _needs_restart(result: dict) -> bool:
+    """检查 fetch_one 的结果是否包含需要重启的 RPC 错误"""
+    for field in ("contentError", "commentsError"):
+        err = result.get(field, "")
+        if err and _is_rpc_error(err):
+            return True
+    return False
 
 
 # ==================== 工具函数 ====================
@@ -154,6 +169,8 @@ def _do_search(api: QidianAPI, keyword: str) -> list:
 
 def cmd_search(args):
     api = QidianAPI(timeout=15)
+    if not _ensure_rpc(api):
+        return
     print(f"搜索: {args.keyword}")
     books = _do_search(api, args.keyword)
 
@@ -177,6 +194,8 @@ def cmd_search(args):
 
 def cmd_list(args):
     api = QidianAPI(timeout=60)
+    if not _ensure_rpc(api):
+        return
     book = resolve_book(api, args.book)
     if not book:
         return
@@ -270,7 +289,8 @@ def _build_old_replies_index(old_comments: dict, changed_pids: list[int]) -> dic
 
 def get_comments_in_batches(api: QidianAPI, book_id: str, chapter_id: str,
                              fetch_replies: bool = False, batch_size: int = 15,
-                             batch_delay: int = 3) -> dict:
+                             batch_delay: int = 3,
+                             max_comments: int = 0) -> dict:
     """
     分批获取章节所有评论，避免单次请求时间过长或 App 压力过大。
 
@@ -280,6 +300,8 @@ def get_comments_in_batches(api: QidianAPI, book_id: str, chapter_id: str,
         chapter_id: 章节 ID
         fetch_replies: 是否获取评论回复
         batch_size: 每批处理的段落数量（默认 20）
+        max_comments: 每个段落最多保留前 N 条评论（0=不限制）。
+                      回复不计入，一条有 500 回复的评论只算 1 条。
 
     Returns:
         合并后的完整评论数据
@@ -291,7 +313,8 @@ def get_comments_in_batches(api: QidianAPI, book_id: str, chapter_id: str,
         paragraphs = summary.get("paragraphs", [])
 
         # 过滤出有评论的段落
-        paragraph_ids = [p["paragraphId"] for p in paragraphs if p.get("commentCount", 0) > 0]
+        commented_paragraphs = [p for p in paragraphs if p.get("commentCount", 0) > 0]
+        paragraph_ids = [p["paragraphId"] for p in commented_paragraphs]
 
         if not paragraph_ids:
             return {
@@ -327,7 +350,8 @@ def get_comments_in_batches(api: QidianAPI, book_id: str, chapter_id: str,
                     page_size=20,
                     include_chapter_comments=True,
                     fetch_replies=fetch_replies,
-                    only_paragraphs=batch_ids
+                    only_paragraphs=batch_ids,
+                    max_comments_per_paragraph=max_comments
                 )
 
                 batch_paragraphs = batch_result.get("paragraphs", [])
@@ -340,8 +364,39 @@ def get_comments_in_batches(api: QidianAPI, book_id: str, chapter_id: str,
                 total_comments = batch_result.get("totalComments", 0)
 
             except Exception as e:
-                print(f"      批次 {batch_count} 失败: {e}")
-                # 继续下一批，不要让整章失败
+                err_str = str(e)
+                if _is_rpc_error(err_str):
+                    batch_ok = False
+                    for _retry in range(10):
+                        print(f"      批次 {batch_count} RPC 失败，自动重启 App... (重试 {_retry+1}/10)")
+                        if not api.restart_app():
+                            continue
+                        try:
+                            batch_result = api.get_all_paragraph_comments(
+                                book_id, chapter_id,
+                                page_size=20,
+                                include_chapter_comments=True,
+                                fetch_replies=fetch_replies,
+                                only_paragraphs=batch_ids,
+                                max_comments_per_paragraph=max_comments
+                            )
+                            batch_paragraphs = batch_result.get("paragraphs", [])
+                            batch_comments = sum(p.get("fetchedCount", 0) for p in batch_paragraphs)
+                            batch_time = time.time() - batch_start
+                            print(f"      重试成功: {batch_comments} 条评论, {batch_time:.1f}s")
+                            all_paragraphs.extend(batch_paragraphs)
+                            total_comments = batch_result.get("totalComments", 0)
+                            batch_ok = True
+                            break
+                        except Exception as e2:
+                            err_str = str(e2)
+                            if not _is_rpc_error(err_str):
+                                print(f"      重试失败(非RPC错误): {e2}")
+                                break
+                    if not batch_ok:
+                        raise RpcError(f"批次 {batch_count} 重试 10 次仍失败")
+                else:
+                    print(f"      批次 {batch_count} 失败: {e}")
 
         total_time = time.time() - t0
         print(f"    评论采集完成: {total_comments} 条, {batch_count} 批, {total_time:.1f}s")
@@ -422,7 +477,8 @@ def fetch_one(api: QidianAPI, book_id: str, ch: dict, idx: int, total: int,
               fetch_content: bool, fetch_comments: bool,
               existing: dict | None = None,
               update_comments: bool = False,
-              fetch_replies: bool = False) -> dict:
+              fetch_replies: bool = False,
+              max_comments: int = 0) -> dict:
     """采集单章。existing 非空时，已有有效数据的部分直接复用。"""
     cid = ch["id"]
     cname = ch["name"]
@@ -482,7 +538,8 @@ def fetch_one(api: QidianAPI, book_id: str, ch: dict, idx: int, total: int,
                         # 摘要总数变了但逐段没变（可能是章评计数差异），全量更新
                         resp = api.get_all_paragraph_comments(
                             book_id, cid, page_size=20, include_chapter_comments=True,
-                            fetch_replies=fetch_replies)
+                            fetch_replies=fetch_replies,
+                            max_comments_per_paragraph=max_comments)
                         resp["summaryTotalComments"] = new_total
                         result["comments"] = resp
                         total_c = resp.get("totalComments", 0)
@@ -494,7 +551,8 @@ def fetch_one(api: QidianAPI, book_id: str, ch: dict, idx: int, total: int,
                             book_id, cid, page_size=20, include_chapter_comments=True,
                             fetch_replies=fetch_replies,
                             only_paragraphs=changed_pids,
-                            existing_replies=existing_replies)
+                            existing_replies=existing_replies,
+                            max_comments_per_paragraph=max_comments)
                         merged = _merge_comments(existing["comments"], new_data, changed_pids)
                         merged["summaryTotalComments"] = new_total
                         result["comments"] = merged
@@ -510,7 +568,8 @@ def fetch_one(api: QidianAPI, book_id: str, ch: dict, idx: int, total: int,
                     api, book_id, cid,
                     fetch_replies=True,  # 默认采集回复（HTTP 30ms 节流已足够保护 App）
                     batch_size=30,   # 每批 30 个段落
-                    batch_delay=0    # 无需批次延迟（30ms 节流已足够）
+                    batch_delay=0,   # 无需批次延迟（30ms 节流已足够）
+                    max_comments=max_comments
                 )
                 # 记录摘要总数，用于后续增量对比
                 summary = api.get_comment_summary(book_id, cid)
@@ -528,8 +587,31 @@ def fetch_one(api: QidianAPI, book_id: str, ch: dict, idx: int, total: int,
     return result
 
 
+def _ensure_rpc(api: QidianAPI, max_retries: int = 2) -> bool:
+    """确保 RPC 连接可用，失败时自动重启 App。返回 True=就绪, False=失败"""
+    for attempt in range(max_retries + 1):
+        try:
+            api.ping()
+            return True
+        except RpcError:
+            if attempt < max_retries:
+                print(f"RPC 连接不可用，自动重启 App... (尝试 {attempt+1}/{max_retries})")
+                if not api.restart_app():
+                    print("App 重启失败")
+                    continue
+            else:
+                print("RPC 连接不可用，已尝试重启但仍失败，请手动检查设备")
+                return False
+    return False
+
+
 def cmd_fetch(args):
     api = QidianAPI(timeout=60)
+
+    # 确保 RPC 连接可用
+    if not _ensure_rpc(api):
+        return
+
     book = resolve_book(api, args.book)
     if not book:
         return
@@ -605,7 +687,22 @@ def cmd_fetch(args):
 
         result = fetch_one(api, book_id, ch, i + 1, total_sel, fetch_content, fetch_comments,
                            existing=existing, update_comments=update_comments,
-                           fetch_replies=not args.no_replies)
+                           fetch_replies=not args.no_replies,
+                           max_comments=args.max_comments or 0)
+
+        # RPC 错误自动重启并重试当前章节（最多 10 次）
+        for _retry in range(10):
+            if not _needs_restart(result):
+                break
+            print(f"  检测到 RPC 错误，自动重启 App... (重试 {_retry+1}/10)")
+            if not api.restart_app():
+                print(f"  App 重启失败，跳过当前章节")
+                break
+            result = fetch_one(api, book_id, ch, i + 1, total_sel, fetch_content, fetch_comments,
+                               existing=existing, update_comments=update_comments,
+                               fetch_replies=not args.no_replies,
+                               max_comments=args.max_comments or 0)
+
         result["index"] = seq
         results.append(result)
 
@@ -686,6 +783,7 @@ def main():
   %(prog)s fetch 1 --chapters 1-10  # 采集第1~10章
   %(prog)s fetch 1 --no-comments    # 只采集正文
   %(prog)s fetch 1 --no-replies    # 不采集评论回复（默认采集）
+  %(prog)s fetch 1 --max-comments 50       # 每段只采前50条评论（回复不计入）
   %(prog)s fetch 1 --update-comments       # 增量更新已有评论
   %(prog)s fetch 1 --range 15-500 --force  # 强制重采所有（默认跳过已成功）
 """)
@@ -712,6 +810,7 @@ def main():
     p.add_argument("--no-content", action="store_true", help="不采集正文")
     p.add_argument("--no-comments", action="store_true", help="不采集评论")
     p.add_argument("--no-replies", action="store_true", help="不采集评论回复（默认采集）")
+    p.add_argument("--max-comments", type=int, metavar="N", help="每段最多保留前 N 条评论（回复不计入，一条评论有500回复也只算1条）")
     p.add_argument("--force", action="store_true", help="强制重新采集所有章节（默认跳过已成功的）")
     p.add_argument("--update-comments", action="store_true", help="增量更新评论（检测新增评论并合并）")
     p.add_argument("--output-dir", default=DEFAULT_OUTPUT_DIR, help="输出目录")

@@ -1,0 +1,437 @@
+{
+  "power_system": [
+    {
+      "name": "【明王】",
+      "description": "受天光加持，压制敌手兵器得光，八十一道成明王法光",
+      "first_chapter": "ch1138",
+      "source_chapters": ["ch1138", "ch1140"],
+      "evolution": null
+    },
+    {
+      "name": "【先诛】",
+      "description": "戟影分身，有【明王】加持后比本体更快",
+      "first_chapter": "ch1138",
+      "source_chapters": ["ch1138", "ch1140"],
+      "evolution": null
+    },
+    {
+      "name": "【束光】",
+      "description": "驱使与禁锢，配合明阳神通越强",
+      "first_chapter": "ch1138",
+      "source_chapters": ["ch1138", "ch1140"],
+      "evolution": null
+    },
+    {
+      "name": "谛琰神通圆满",
+      "description": "备性求金，法血如灵物，锁在兵器中是圆满明阳",
+      "first_chapter": "ch1138",
+      "source_chapters": ["ch1138"],
+      "evolution": null
+    },
+    {
+      "name": "【晞光分仪宝台】",
+      "description": "灵宝，可分仪晞炁，对明阳修士有克制作用",
+      "first_chapter": "ch1138",
+      "source_chapters": ["ch1138", "ch1139", "ch1141"],
+      "evolution": null
+    },
+    {
+      "name": "玉真神通特点",
+      "description": "精炼纯一的大道，擅长防守，恢复需要时间",
+      "first_chapter": "ch1139",
+      "source_chapters": ["ch1139"],
+      "evolution": null
+    },
+    {
+      "name": "释修座次",
+      "description": "五目、赤罗之流众多，有背景才能向上爬",
+      "first_chapter": "ch1139",
+      "source_chapters": ["ch1139"],
+      "evolution": null
+    },
+    {
+      "name": "明阳古灵宝稀少",
+      "description": "在当今之世，【大昇】这样的明阳灵器价值极高",
+      "first_chapter": "ch1140",
+      "source_chapters": ["ch1140"],
+      "evolution": null
+    },
+    {
+      "name": "【大昇】的三神妙配合",
+      "description": "明王、先诛、束光相互配合，形成极高门槛",
+      "first_chapter": "ch1140",
+      "source_chapters": ["ch1140"],
+      "evolution": null
+    },
+    {
+      "name": "【天养瓮】",
+      "description": "灵宝，能吞噬神通",
+      "first_chapter": "ch1141",
+      "source_chapters": ["ch1141"],
+      "evolution": null
+    },
+    {
+      "name": "【南帝玄擭】",
+      "description": "李周巍性命之火凝聚的离火神通",
+      "first_chapter": "ch1141",
+      "source_chapters": ["ch1141"],
+      "evolution": null
+    },
+    {
+      "name": "【重火两明仪】",
+      "description": "灵宝，含【南离服食法】",
+      "first_chapter": "ch1141",
+      "source_chapters": ["ch1141", "ch1167"],
+      "evolution": null
+    },
+    {
+      "name": "【大离白熙光】",
+      "description": "六品离火之术，威力惊人",
+      "first_chapter": "ch1142",
+      "source_chapters": ["ch1142"],
+      "evolution": null
+    },
+    {
+      "name": "【冲阳辖星宝盘】",
+      "description": "大鸺葵观灵宝，在李周巍手中",
+      "first_chapter": "ch1163",
+      "source_chapters": ["ch1163"],
+      "evolution": null
+    },
+    {
+      "name": "【淮江图】",
+      "description": "司马家灵宝，在李周巍手中",
+      "first_chapter": "ch1163",
+      "source_chapters": ["ch1163"],
+      "evolution": null
+    },
+    {
+      "name": "【道煞玄名剑】",
+      "description": "赫连无疆的道剑，已断为两截",
+      "first_chapter": "ch1164",
+      "source_chapters": ["ch1164"],
+      "evolution": null
+    },
+    {
+      "name": "【少阴玄君水火录】",
+      "description": "李绛淳日日持修的术法",
+      "first_chapter": "ch1164",
+      "source_chapters": ["ch1164"],
+      "evolution": null
+    },
+    {
+      "name": "【大离书】",
+      "description": "李家离火功法，古朴强大",
+      "first_chapter": "ch1165",
+      "source_chapters": ["ch1165"],
+      "evolution": null
+    },
+    {
+      "name": "【赤金百转枪】",
+      "description": "兜玄道统灵器，品质与【华阳王钺】相当；后为箕安的本命灵器，足以与紫府抗衡",
+      "first_chapter": "ch1165",
+      "source_chapters": ["ch1165", "ch1166"],
+      "evolution": "从兜玄道统灵器变为箕安本命灵器"
+    },
+    {
+      "name": "【离泗杏果】",
+      "description": "来自【渑夬天】的明阳灵果，能引发性命感应，直接服下可获得最大效用",
+      "first_chapter": "ch1165",
+      "source_chapters": ["ch1165", "ch1166", "ch1167"],
+      "evolution": null
+    },
+    {
+      "name": "【寒夜结璘丹经】",
+      "description": "纯一道丹经，记述【避劫丹法】，含三类躲灾避劫丹方",
+      "first_chapter": "ch1165",
+      "source_chapters": ["ch1165", "ch1166"],
+      "evolution": null
+    },
+    {
+      "name": "持琅真君论道",
+      "description": "曾言：【中有衍化之道，嬗变之功，得之八九，可以脱仙神之属，入正始之门】",
+      "first_chapter": "ch1166",
+      "source_chapters": ["ch1166"],
+      "evolution": null
+    },
+    {
+      "name": "【广漠离焰】",
+      "description": "箕安的离火灵火，有生生无穷之焰，浩瀚无边之气，不惧土德之火；威能中游，重在广而如漠",
+      "first_chapter": "ch1166",
+      "source_chapters": ["ch1166", "ch1167"],
+      "evolution": null
+    },
+    {
+      "name": "【青阶无漏丹】",
+      "description": "以【阴闰夷气】为君药的丹药",
+      "first_chapter": "ch1166",
+      "source_chapters": ["ch1166"],
+      "evolution": null
+    },
+    {
+      "name": "【玄岸引灵丹】",
+      "description": "以【岸琊月藏】为君药的丹药",
+      "first_chapter": "ch1166",
+      "source_chapters": ["ch1166"],
+      "evolution": null
+    },
+    {
+      "name": "【阴穆宝身散】",
+      "description": "以【沉夜穆气】为君药的丹药",
+      "first_chapter": "ch1166",
+      "source_chapters": ["ch1166"],
+      "evolution": null
+    },
+    {
+      "name": "【清阴母药】",
+      "description": "可化生诸物的太阴灵物",
+      "first_chapter": "ch1166",
+      "source_chapters": ["ch1166"],
+      "evolution": null
+    },
+    {
+      "name": "【阐玄赐璘黜法】",
+      "description": "纯一道秘法，可化生太阴灵物",
+      "first_chapter": "ch1166",
+      "source_chapters": ["ch1166"],
+      "evolution": null
+    },
+    {
+      "name": "【阐化讷元闰法】",
+      "description": "元府仙法，可调和诸水，使一种水德变化为另一种",
+      "first_chapter": "ch1166",
+      "source_chapters": ["ch1166"],
+      "evolution": null
+    },
+    {
+      "name": "【离光妙法】",
+      "description": "李家功法，李绛迁传授给箕安",
+      "first_chapter": "ch1166",
+      "source_chapters": ["ch1166"],
+      "evolution": null
+    },
+    {
+      "name": "【性命感应术】",
+      "description": "李家功法，李绛迁传授给箕安",
+      "first_chapter": "ch1166",
+      "source_chapters": ["ch1166"],
+      "evolution": null
+    },
+    {
+      "name": "【六合宝瓶论】",
+      "description": "养育灵器之法，澈鸿看中此物",
+      "first_chapter": "ch1167",
+      "source_chapters": ["ch1167"],
+      "evolution": null
+    },
+    {
+      "name": "【江河大陵经】",
+      "description": "陈氏根本之法，与獾郡秘境相关",
+      "first_chapter": "ch1167",
+      "source_chapters": ["ch1167"],
+      "evolution": null
+    },
+    {
+      "name": "金羽宗观三雷之道",
+      "description": "玄霄二雷为阴阳二雷故为偶，元雷掌磁故为奇",
+      "first_chapter": "ch1168",
+      "source_chapters": ["ch1168"],
+      "evolution": null
+    },
+    {
+      "name": "【天殷元珠】",
+      "description": "张允从苗杜山取回，用在钟谦身上",
+      "first_chapter": "ch1168",
+      "source_chapters": ["ch1168"],
+      "evolution": null
+    },
+    {
+      "name": "【元雷】",
+      "description": "三雷之奇，钟谦成就的神通",
+      "first_chapter": "ch1168",
+      "source_chapters": ["ch1168"],
+      "evolution": null
+    },
+    {
+      "name": "【脱煞胎】",
+      "description": "元雷的组成部分，亦称【主煞仪】",
+      "first_chapter": "ch1168",
+      "source_chapters": ["ch1168"],
+      "evolution": null
+    },
+    {
+      "name": "【清琊华枝】",
+      "description": "戚览堰的灵宝，造成魏王戊土之伤",
+      "first_chapter": "ch1168",
+      "source_chapters": ["ch1168"],
+      "evolution": null
+    },
+    {
+      "name": "【收梁匿玄感召法】",
+      "description": "李家藏匿玄身的法门",
+      "first_chapter": "ch1168",
+      "source_chapters": ["ch1168"],
+      "evolution": null
+    },
+    {
+      "name": "【阐化冲元闰法】",
+      "description": "【六阐】之一，可转化灵物",
+      "first_chapter": "ch1168",
+      "source_chapters": ["ch1168"],
+      "evolution": null
+    },
+    {
+      "name": "【次显煅白再明王戟/大昇】",
+      "description": "重铸的王戟，名【大昇】，有三道神妙【明王】【先诛】【束光】",
+      "first_chapter": "ch1138",
+      "source_chapters": ["ch1138", "ch1140"],
+      "evolution": "从次显煅白再明王戟重铸为【大昇】"
+    },
+    {
+      "name": "铜剑",
+      "description": "谛琰捏碎取法血的兵器",
+      "first_chapter": "ch1138",
+      "source_chapters": ["ch1138"],
+      "evolution": null
+    },
+    {
+      "name": "玉符",
+      "description": "谛琰赐给况雨的符箓",
+      "first_chapter": "ch1138",
+      "source_chapters": ["ch1138"],
+      "evolution": null
+    },
+    {
+      "name": "【功成行满述卷】",
+      "description": "魏帝观想法，可能记载明阳修士突破秘法",
+      "first_chapter": "ch1138",
+      "source_chapters": ["ch1138"],
+      "evolution": null
+    },
+    {
+      "name": "大鼎",
+      "description": "刘白持有的法器，能化解种种光色",
+      "first_chapter": "ch1139",
+      "source_chapters": ["ch1139"],
+      "evolution": null
+    },
+    {
+      "name": "大玺",
+      "description": "拓跋赐持有的法器",
+      "first_chapter": "ch1139",
+      "source_chapters": ["ch1139"],
+      "evolution": null
+    },
+    {
+      "name": "血斧",
+      "description": "拓跋赐持武器",
+      "first_chapter": "ch1139",
+      "source_chapters": ["ch1139"],
+      "evolution": null
+    },
+    {
+      "name": "长刀",
+      "description": "司徒霍持武器",
+      "first_chapter": "ch1139",
+      "source_chapters": ["ch1139"],
+      "evolution": null
+    },
+    {
+      "name": "【血凶楼】",
+      "description": "司徒霍灵宝",
+      "first_chapter": "ch1139",
+      "source_chapters": ["ch1139"],
+      "evolution": null
+    },
+    {
+      "name": "【君失羊】",
+      "description": "司徒霍另一灵宝，可脱身",
+      "first_chapter": "ch1139",
+      "source_chapters": ["ch1139"],
+      "evolution": null
+    },
+    {
+      "name": "【三报入世莲】",
+      "description": "遮卢炼制的释器，修炼多年的宝物",
+      "first_chapter": "ch1139",
+      "source_chapters": ["ch1139", "ch1141"],
+      "evolution": null
+    },
+    {
+      "name": "【乾阳镯】",
+      "description": "奴孜的释器",
+      "first_chapter": "ch1139",
+      "source_chapters": ["ch1139"],
+      "evolution": null
+    },
+    {
+      "name": "【华阳王钺】",
+      "description": "李周巍持王钺，明阳古灵宝",
+      "first_chapter": "ch1140",
+      "source_chapters": ["ch1140"],
+      "evolution": null
+    },
+    {
+      "name": "瓷葫芦",
+      "description": "王子琊持，能收去金德",
+      "first_chapter": "ch1140",
+      "source_chapters": ["ch1140"],
+      "evolution": null
+    },
+    {
+      "name": "青石",
+      "description": "王子琊展示承受王钺一击的青石，上有钺痕",
+      "first_chapter": "ch1140",
+      "source_chapters": ["ch1140"],
+      "evolution": null
+    },
+    {
+      "name": "【报湮玄雷鼓】",
+      "description": "戚览堰的法器",
+      "first_chapter": "ch1142",
+      "source_chapters": ["ch1142"],
+      "evolution": null
+    }
+  ],
+  "geography": [
+    {
+      "name": "【渑夬天】",
+      "description": "古代兜玄道统洞天，现已坠落",
+      "first_chapter": "ch1165",
+      "source_chapters": ["ch1165"],
+      "evolution": null
+    },
+    {
+      "name": "【日月同辉天地】",
+      "description": "洞天，能削弱【清琊戊土之灾】",
+      "first_chapter": "ch1163",
+      "source_chapters": ["ch1163"],
+      "evolution": null
+    }
+  ],
+  "factions": [
+    {
+      "name": "【玄泗道统】",
+      "description": "渑夬天中的道统",
+      "first_chapter": "ch1165",
+      "source_chapters": ["ch1165"],
+      "evolution": null
+    },
+    {
+      "name": "【南炤】真君",
+      "description": "南火天府后人，欲走冲离老路但功败垂成，是【重火两明仪】的主人陆㼆",
+      "first_chapter": "ch1166",
+      "source_chapters": ["ch1166"],
+      "evolution": null
+    },
+    {
+      "name": "灵宝道轨",
+      "description": "介入南北之争，有真君级人物对明阳失控不满",
+      "first_chapter": "ch1138",
+      "source_chapters": ["ch1138", "ch1140"],
+      "evolution": null
+    }
+  ],
+  "rules": [],
+  "misc": []
+}

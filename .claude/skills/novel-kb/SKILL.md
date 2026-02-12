@@ -94,10 +94,25 @@ T1 需独立运行，不在 `--stage all` 编排范围内。
 │   ├── {name}.md
 │   └── relationships.md
 ├── world/                   # T5: 世界层
-│   ├── power_system.md
-│   ├── geography.md
-│   ├── factions.md
-│   └── rules.md
+│   ├── index.md             # 世界观总览（统计 + 类别导航）
+│   ├── power_system/        # 力量体系
+│   │   ├── index.md         # 实体索引（表格 + 链接）
+│   │   ├── 修仙六境.md      # 独立实体文件
+│   │   └── ...
+│   ├── geography/           # 地理空间
+│   │   ├── index.md
+│   │   └── ...
+│   ├── factions/            # 组织势力
+│   │   ├── index.md
+│   │   └── ...
+│   ├── rules/               # 规则与限制
+│   │   ├── index.md
+│   │   └── ...
+│   └── .build/              # 中间产物
+│       ├── raw_world_data.json
+│       ├── seg_XX.json
+│       ├── merged_entities.json
+│       └── expanded_entities.json
 ├── reader/                  # T6: 读者层
 │   ├── comments/            # 原始评论数据
 │   └── feedback/            # 分析结果

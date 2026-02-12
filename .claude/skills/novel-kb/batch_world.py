@@ -12,51 +12,69 @@ T5 世界观提取 — 批量编排脚本
   - T4 已完成: characters/ 下有角色档案（提取势力归属，可选）
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-四阶段 Pipeline（按顺序自动执行，支持断点续传）
+五阶段 Pipeline（按顺序自动执行，支持断点续传）
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
   阶段 0  preprocess       Python 预处理，合并三个数据源
                            产出: world/.build/raw_world_data.json
-                                 包含章节设定、弧世界信息、角色势力
                            耗时: ~10s, 0 次 AI 调用
 
   阶段 1  segment-classify 分段分类，每段 100 章，Claude 分类为 4 大体系 + misc
                            产出: world/.build/seg_XX.json
-                                 包含 power_system, geography, factions, rules, misc
-                           耗时: 取决于章节数，每段 1 次 AI 调用
-                                 支持 --concurrency M 并发 M 段加速
-                                 小规模（≤50 章）跳过分段，直接全量处理
+                           支持 --concurrency M 并发
 
-  阶段 2  global-merge     全局融合，合并所有段数据 → 4 个 MD 文件
-                           产出: world/power_system.md（力量体系）
-                                 world/geography.md（地理空间）
-                                 world/factions.md（组织势力）
-                                 world/rules.md（规则与限制）
-                                 world/index.md（世界观总览）
-                           耗时: ~2min, 1 次 AI 调用（需要 Write 工具）
+  阶段 2  global-merge     全局去重合并 + AI 实体扩写 + 生成实体文件
+                           2a. Python 全局去重合并 → merged_entities.json
+                           2b. AI 标注重要性 + 扩写描述（按类别）
+                           2c. Python 生成实体文件 + index.md
+                           产出: world/{category}/{entity}.md + index.md
+                           支持 --concurrency M 并发
 
-  阶段 3  refine           精修与原文补充，分 4 步自动执行
-                           3a-c. 逐类别精修（力量/地理/势力，补充原文细节）
-                           3d. 一致性验证（交叉检查 4 个文件的冲突）
-                           产出: 更新上述 4 个 MD 文件
-                                 world/.build/consistency_validation.json（验证结果）
-                           耗时: ~3-5min, 3 次精修 AI + 1 次验证 AI
-                                 支持 --concurrency M 并发精修加速
+  阶段 3  refine           实体级精修（仅 high 实体）
+                           按实体的 source_chapters 找章节摘要
+                           产出: 更新实体 .md 文件
+                           支持 --concurrency M 并发
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+产出目录结构
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  {book_dir}/
+    world/
+      power_system/
+        index.md              力量体系索引（实体列表 + 简介）
+        修仙六境.md            独立实体文件
+        ...
+      geography/
+        index.md
+        ...
+      factions/
+        index.md
+        ...
+      rules/
+        index.md
+        ...
+      index.md                世界观总览（链接到各类别 index）
+      .build/
+        raw_world_data.json
+        seg_XX.json
+        merged_entities.json  全局去重后的实体列表
+      .progress.json
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 典型用法
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-  # 一键全流程（从当前进度自动继续）
+  # 一键全流程
   python batch_world.py --book-dir qidian/novel_kb/玄鉴仙族
 
-  # 加速：阶段 1 + 3 并发处理
+  # 加速：并发处理
   python batch_world.py --book-dir ... --concurrency 3
 
   # 只运行某个阶段
   python batch_world.py --book-dir ... --phase preprocess
   python batch_world.py --book-dir ... --phase segment-classify --concurrency 3
-  python batch_world.py --book-dir ... --phase global-merge
+  python batch_world.py --book-dir ... --phase global-merge --concurrency 3
   python batch_world.py --book-dir ... --phase refine --concurrency 3
 
   # 试运行 + 验证产出
@@ -69,29 +87,12 @@ T5 世界观提取 — 批量编排脚本
 
   --book-dir PATH         知识库目录（必需）
   --segment-size N        每段章节数（默认 100，影响阶段 1）
-  --concurrency M         并发数（默认 1，对 segment-classify 和 refine 阶段生效）
-  --phase PHASE           只运行特定阶段（preprocess/segment-classify/global-merge/refine）
+  --concurrency M         并发数（默认 1）
+  --phase PHASE           只运行特定阶段
   --model MODEL           Claude 模型（默认 sonnet）
   --timeout SEC           单次调用超时秒数（默认 600）
   --dry-run               试运行，不执行 Claude 调用
   --validate              验证产出文件完整性
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-产出目录结构
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-  {book_dir}/
-    world/
-      power_system.md       力量体系（修炼等级、功法体系、法术分类、修炼资源）
-      geography.md          地理空间（区域划分、重要地点、空间结构、距离尺度）
-      factions.md           组织势力（宗门/家族/势力、层级结构、成员构成、势力关系）
-      rules.md              规则与限制（世界法则、修炼限制、社会规则、禁忌）
-      index.md              世界观总览（统计 + 文件导航）
-      .build/
-        raw_world_data.json        预处理数据（章节设定 + 弧世界信息 + 角色势力）
-        seg_XX.json                段级分类 JSON
-        consistency_validation.json 一致性验证结果
-      .progress.json        进度文件
 """
 
 import argparse
@@ -139,7 +140,7 @@ def parse_args():
     parser.add_argument("--segment-size", type=int, default=100,
                         help="每段处理的章节数（默认 100）")
     parser.add_argument("--concurrency", type=int, default=1,
-                        help="segment-classify 和 refine 阶段并发数（默认 1）")
+                        help="并发数（默认 1）")
     return parser.parse_args()
 
 
@@ -214,10 +215,10 @@ def _default_progress() -> dict:
             "segments_failed": [],
         },
         "global_merge": {"status": "pending"},
+        "entity_expand": {"status": "pending", "categories_completed": []},
         "refine": {
-            "power_system": False,
-            "geography": False,
-            "factions": False,
+            "status": "pending",
+            "entities_completed": [],
             "validated": False,
         },
         "stats": {
@@ -230,7 +231,13 @@ def _default_progress() -> dict:
 def _read_progress_raw(progress_path: Path) -> dict:
     if progress_path.exists():
         with open(progress_path, "r", encoding="utf-8") as f:
-            return json.load(f)
+            data = json.load(f)
+        # 迁移旧格式进度
+        defaults = _default_progress()
+        for key in defaults:
+            if key not in data:
+                data[key] = defaults[key]
+        return data
     return _default_progress()
 
 
@@ -259,9 +266,19 @@ def save_progress(progress_path: Path, progress: dict):
             )
             progress["segment_classify"]["segments_completed"] = merged_completed
             progress["segment_classify"]["segments_failed"] = merged_failed
-            # 合并 refine（取 True）
-            for key in ("power_system", "geography", "factions", "validated"):
-                progress["refine"][key] = progress["refine"].get(key, False) or disk["refine"].get(key, False)
+            # 合并 entity_expand categories_completed
+            ee = progress.get("entity_expand", {})
+            dee = disk.get("entity_expand", {})
+            progress["entity_expand"]["categories_completed"] = sorted(
+                set(dee.get("categories_completed", [])) | set(ee.get("categories_completed", []))
+            )
+            # 合并 refine entities_completed
+            ref = progress.get("refine", {})
+            dref = disk.get("refine", {})
+            progress["refine"]["entities_completed"] = sorted(
+                set(dref.get("entities_completed", [])) | set(ref.get("entities_completed", []))
+            )
+            progress["refine"]["validated"] = progress["refine"].get("validated", False) or dref.get("validated", False)
             # stats 取 max
             progress["stats"]["total_calls"] = max(
                 disk["stats"].get("total_calls", 0), progress["stats"].get("total_calls", 0))
@@ -288,18 +305,51 @@ def list_summary_chapters(chapters_dir: Path) -> list[int]:
 
 
 # ============================================================
-# Claude 调用
+# Claude 调用（支持 Subagent 模式）
 # ============================================================
+
+# Subagent 配置路径
+SKILL_DIR = Path(__file__).parent
+PROJECT_ROOT = SKILL_DIR.parent.parent
+AGENTS_DIR = PROJECT_ROOT / "agents"
+
+# 可用的 subagent 名称
+SUBAGENT_NAMES = {
+    "classify": "world-extractor",      # 分段分类
+    "expand": "world-extractor",        # 实体扩写
+    "refine": "world-extractor",        # 实体精修
+}
+
 
 def run_claude_prompt(prompt: str, model: str, timeout: int,
                       allow_tools: str = "",
-                      verbose: bool = True) -> tuple[bool, str]:
+                      verbose: bool = True,
+                      agent: str = "") -> tuple[bool, str]:
+    """
+    调用 Claude 执行任务
+
+    Args:
+        prompt: 任务 prompt
+        model: 模型名称
+        timeout: 超时秒数
+        allow_tools: 允许的工具列表
+        verbose: 是否显示详细输出
+        agent: 使用的 subagent 名称（如 "world-extractor"）
+
+    Returns:
+        (success, output) 元组
+    """
     cmd = [
         "claude",
         "-p", "-",
         "--model", model,
         "--permission-mode", "bypassPermissions",
     ]
+
+    # 使用 subagent 模式
+    if agent:
+        cmd.extend(["--agent", agent])
+
     if allow_tools:
         cmd.extend(["--allowedTools", allow_tools])
 
@@ -333,6 +383,44 @@ def run_claude_prompt(prompt: str, model: str, timeout: int,
         return False, f"异常: {e}"
 
 
+def run_claude_task(prompt: str, model: str, timeout: int,
+                    task_type: str = "classify",
+                    verbose: bool = True) -> tuple[bool, str]:
+    """
+    使用预定义的 subagent 执行任务（便捷封装）
+
+    Args:
+        prompt: 任务 prompt
+        model: 模型名称
+        timeout: 超时秒数
+        task_type: 任务类型（classify/expand/refine）
+        verbose: 是否显示详细输出
+
+    Returns:
+        (success, output) 元组
+    """
+    agent_name = SUBAGENT_NAMES.get(task_type, "world-extractor")
+    return run_claude_prompt(prompt, model, timeout, agent=agent_name, verbose=verbose)
+
+
+# ============================================================
+# 文件名工具
+# ============================================================
+
+def sanitize_filename(name: str) -> str:
+    """将实体名转为安全的文件名（保留中文）"""
+    # 移除不安全字符，保留中文、字母、数字、下划线、连字符
+    name = name.strip()
+    # 替换路径分隔符和特殊字符
+    name = re.sub(r'[/\\:*?"<>|]', '_', name)
+    # 替换空格为下划线
+    name = name.replace(' ', '_')
+    # 限制长度（文件系统通常 255 字节，UTF-8 中文 3 字节，留余量）
+    if len(name.encode('utf-8')) > 200:
+        # 按字符截断直到字节数 <= 200
+        while len(name.encode('utf-8')) > 200:
+            name = name[:-1]
+    return name or "unnamed"
 
 
 # ============================================================
@@ -353,7 +441,6 @@ def parse_setting_lines(section_text: str) -> list[dict]:
         line = line.strip()
         if not line.startswith("- ") or "（无）" in line:
             continue
-        # 匹配: - 设定名：描述 或 - 设定名: 描述
         m = re.match(r"- (.+?)[:：](.+)", line)
         if m:
             results.append({
@@ -370,7 +457,6 @@ def parse_bold_lines(section_text: str) -> list[dict]:
         line = line.strip()
         if not line.startswith("- ") or "（无）" in line:
             continue
-        # 匹配: - **设定名**: 描述
         m = re.match(r"- \*\*(.+?)\*\*[:：]\s*(.+)", line)
         if m:
             results.append({
@@ -422,7 +508,6 @@ def parse_arc_world_info(outline_dir: Path) -> list[dict]:
     for arc_file in sorted(outline_dir.glob("arc_*.md")):
         content = arc_file.read_text(encoding="utf-8")
 
-        # 解析弧标题和章节范围
         title_match = re.match(r"# (.+)", content)
         arc_title = title_match.group(1).strip() if title_match else arc_file.stem
 
@@ -432,7 +517,6 @@ def parse_arc_world_info(outline_dir: Path) -> list[dict]:
         ch_start = int(range_match.group(1)) if range_match else 0
         ch_end = int(range_match.group(2)) if range_match else 0
 
-        # 解析新世界信息
         world_section = parse_section(content, "新世界信息")
         entries = parse_bold_lines(world_section)
 
@@ -449,7 +533,7 @@ def parse_arc_world_info(outline_dir: Path) -> list[dict]:
 
 def parse_character_factions(characters_dir: Path) -> list[dict]:
     """从 T4 角色档案提取势力归属"""
-    factions = {}  # faction_name -> [member_names]
+    factions = {}
 
     if not characters_dir.exists():
         return []
@@ -460,16 +544,12 @@ def parse_character_factions(characters_dir: Path) -> list[dict]:
 
         content = f.read_text(encoding="utf-8")
 
-        # 提取角色名
         title_match = re.match(r"# (.+)", content)
         char_name = title_match.group(1).strip() if title_match else f.stem
 
-        # 从身份字段中提取势力名
-        # 匹配: - **身份**: XXX宗/门/派/族/帮/会
         identity_match = re.search(r"\*\*身份\*\*[:：]\s*(.+)", content)
         if identity_match:
             identity = identity_match.group(1).strip()
-            # 提取组织名
             org_matches = re.findall(r"([\u4e00-\u9fff]+(?:宗|门|派|族|帮|会|盟|教|谷|阁|堡|庄|楼))", identity)
             for org in org_matches:
                 if org not in factions:
@@ -494,16 +574,10 @@ def build_raw_world_data(book_dir: Path, all_chapters: list[int]) -> dict:
     outline_dir = get_outline_dir(book_dir)
     characters_dir = get_characters_dir(book_dir)
 
-    # 1. 解析全部章节摘要
     chapter_settings = parse_all_settings(chapters_dir, all_chapters)
-
-    # 2. 解析 T3 弧文件
     arc_world_info = parse_arc_world_info(outline_dir)
-
-    # 3. 解析 T4 角色势力
     character_factions = parse_character_factions(characters_dir)
 
-    # 统计
     total_settings = sum(
         len(v["settings"]) + len(v["items"])
         for v in chapter_settings.values()
@@ -541,7 +615,6 @@ def phase_preprocess(book_dir: Path, all_chapters: list[int],
 
     raw_data = build_raw_world_data(book_dir, all_chapters)
 
-    # 保存
     build_dir = get_build_dir(book_dir)
     output_path = build_dir / "raw_world_data.json"
     with open(output_path, "w", encoding="utf-8") as f:
@@ -553,7 +626,6 @@ def phase_preprocess(book_dir: Path, all_chapters: list[int],
     print(f"弧世界信息: {stats['total_arc_entries']} 条")
     print(f"角色势力: {stats['total_factions_from_characters']} 个")
 
-    # 列出各章设定
     for ch_str, data in sorted(raw_data["chapter_settings"].items()):
         n_s = len(data["settings"])
         n_i = len(data["items"])
@@ -574,7 +646,6 @@ def build_segment_data(raw_data: dict, start_ch: int, end_ch: int) -> str:
     """构建段数据文本"""
     parts = []
 
-    # 章节设定
     for ch_str, data in sorted(raw_data["chapter_settings"].items()):
         ch_num = int(re.match(r"ch(\d+)", ch_str).group(1))
         if ch_num < start_ch or ch_num > end_ch:
@@ -588,7 +659,6 @@ def build_segment_data(raw_data: dict, start_ch: int, end_ch: int) -> str:
         if entries:
             parts.append(f"### {ch_str}\n" + "\n".join(entries))
 
-    # 弧世界信息（范围内的）
     arc_parts = []
     for arc in raw_data["arc_world_info"]:
         range_match = re.match(r"ch(\d+)-ch(\d+)", arc["ch_range"])
@@ -636,7 +706,6 @@ def phase_segment_classify(book_dir: Path, all_chapters: list[int],
     # 小规模优化：≤50 章跳过分段，直接全量处理
     if total_chapters <= 50:
         print(f"章节数 ({total_chapters}) ≤ 50，跳过分段，直接进入阶段 2")
-        # 生成一个覆盖全部章节的 segment_all.json
         segment_data = build_segment_data(raw_data, all_chapters[0], all_chapters[-1])
         segment_label = f"ch{all_chapters[0]:04d}-ch{all_chapters[-1]:04d} (全部)"
 
@@ -662,7 +731,6 @@ def phase_segment_classify(book_dir: Path, all_chapters: list[int],
                     json.dump(result, f, ensure_ascii=False, indent=2)
                 print(f"完成 ({elapsed:.0f}s)")
 
-                # 统计
                 for cat in CATEGORIES + ["misc"]:
                     n = len(result.get(cat, []))
                     if n > 0:
@@ -714,7 +782,6 @@ def phase_segment_classify(book_dir: Path, all_chapters: list[int],
         if segment_data == "（本段无设定数据）":
             with print_lock:
                 print(f"\n--- {seg_label} ({seg_display}): 无设定，跳过 ---")
-            # 带锁更新进度
             lock_path = progress_path.with_suffix(".lock")
             with open(lock_path, "w") as lf:
                 fcntl.flock(lf, fcntl.LOCK_EX)
@@ -739,7 +806,6 @@ def phase_segment_classify(book_dir: Path, all_chapters: list[int],
         success, output = run_claude_prompt(prompt, model, timeout, verbose=verbose)
         elapsed = time.time() - start_time
 
-        # 带锁更新进度
         lock_path = progress_path.with_suffix(".lock")
         with open(lock_path, "w") as lf:
             fcntl.flock(lf, fcntl.LOCK_EX)
@@ -806,7 +872,7 @@ def phase_segment_classify(book_dir: Path, all_chapters: list[int],
 
 
 # ============================================================
-# 阶段 2：全局融合
+# 阶段 2：全局去重合并 + AI 扩写 + 生成实体文件
 # ============================================================
 
 def merge_segments(build_dir: Path) -> dict:
@@ -814,7 +880,6 @@ def merge_segments(build_dir: Path) -> dict:
     merged = {cat: [] for cat in CATEGORIES}
     merged["misc"] = []
 
-    # 查找所有 segment JSON 文件
     seg_files = sorted(build_dir.glob("segment_*.json")) + \
                 sorted(build_dir.glob("seg_*.json"))
 
@@ -829,25 +894,316 @@ def merge_segments(build_dir: Path) -> dict:
     return merged
 
 
-def build_global_merge_prompt(segment_files: list[Path], raw_world_data_path: Path,
-                              world_dir: str) -> str:
-    """构建全局融合 prompt（让 Claude 用 Read 工具读取文件，避免 prompt 过大）"""
-    template = (PROMPTS_DIR / "world_global_merge.md").read_text(encoding="utf-8")
+def _normalize_name(name: str) -> str:
+    """标准化实体名用于去重比较"""
+    # 去掉空格、括号内容、标点
+    name = re.sub(r'[（(].*?[）)]', '', name)
+    name = re.sub(r'[·\s\-_]', '', name)
+    return name.strip()
 
-    # 生成文件列表
-    files_list = "\n".join(f"- `{f}`" for f in segment_files)
 
-    prompt = template.replace("{segment_files_list}", files_list)
-    prompt = prompt.replace("{raw_world_data_path}", str(raw_world_data_path))
-    prompt = prompt.replace("{world_dir}", world_dir)
+def _names_match(a: str, b: str) -> bool:
+    """判断两个名称是否指向同一实体"""
+    na = _normalize_name(a)
+    nb = _normalize_name(b)
+    if na == nb:
+        return True
+    # 包含关系：短名是长名的子串
+    if len(na) >= 2 and len(nb) >= 2:
+        if na in nb or nb in na:
+            return True
+    return False
+
+
+def merge_and_dedup_entities(build_dir: Path) -> dict:
+    """Phase 2a: 合并所有 seg JSON，按 name 相似度去重"""
+    merged_raw = merge_segments(build_dir)
+
+    result = {}
+    for cat in CATEGORIES:
+        entries = merged_raw.get(cat, [])
+        # misc 中的条目尝试归入最合适的类别（保持兼容，这里直接丢弃 misc）
+        deduped = []
+        for entry in entries:
+            name = entry.get("name", "").strip()
+            if not name:
+                continue
+
+            # 查找是否已有匹配的实体
+            found = False
+            for existing in deduped:
+                if _names_match(existing["name"], name):
+                    # 合并：保留更长的描述
+                    if len(entry.get("description", "")) > len(existing.get("description", "")):
+                        existing["description"] = entry["description"]
+                    # 保留更长的名称
+                    if len(name) > len(existing["name"]):
+                        existing["name"] = name
+                    # 合并 source_chapters
+                    src = set(existing.get("source_chapters", []))
+                    src.update(entry.get("source_chapters", []))
+                    existing["source_chapters"] = sorted(src)
+                    # 合并 evolution
+                    if entry.get("evolution") and entry["evolution"] not in existing.get("evolution", ""):
+                        existing["evolution"] = (existing.get("evolution", "") + "；" + entry["evolution"]).strip("；")
+                    # 更新 first_chapter（取更早的）
+                    if entry.get("first_chapter", "z") < existing.get("first_chapter", "z"):
+                        existing["first_chapter"] = entry["first_chapter"]
+                    found = True
+                    break
+
+            if not found:
+                deduped.append({
+                    "name": name,
+                    "description": entry.get("description", ""),
+                    "first_chapter": entry.get("first_chapter", ""),
+                    "source_chapters": sorted(set(entry.get("source_chapters", []))),
+                    "evolution": entry.get("evolution", ""),
+                })
+
+        result[cat] = deduped
+
+    # misc 条目分配到最可能的类别（简单启发式）
+    for entry in merged_raw.get("misc", []):
+        name = entry.get("name", "").strip()
+        if not name:
+            continue
+        # 默认放 rules
+        target = "rules"
+        desc = (name + " " + entry.get("description", "")).lower()
+        if any(kw in desc for kw in ["修炼", "法术", "功法", "法宝", "灵气", "修为"]):
+            target = "power_system"
+        elif any(kw in desc for kw in ["山", "河", "村", "城", "湖", "地", "天地", "空间"]):
+            target = "geography"
+        elif any(kw in desc for kw in ["宗", "门", "派", "族", "帮", "会", "势力"]):
+            target = "factions"
+        result[target].append({
+            "name": name,
+            "description": entry.get("description", ""),
+            "first_chapter": entry.get("first_chapter", ""),
+            "source_chapters": sorted(set(entry.get("source_chapters", []))),
+            "evolution": entry.get("evolution", ""),
+        })
+
+    return result
+
+
+def build_entity_expand_prompt(category_key: str, entities: list[dict]) -> str:
+    """构建 Phase 2b 实体扩写 prompt"""
+    template = (PROMPTS_DIR / "world_entity_expand.md").read_text(encoding="utf-8")
+    prompt = template.replace("{category_name}", CATEGORY_NAMES[category_key])
+    prompt = prompt.replace("{category_key}", category_key)
+    prompt = prompt.replace("{entities_json}", json.dumps(entities, ensure_ascii=False, indent=2))
     return prompt
 
 
+def phase_entity_expand(build_dir: Path, merged_entities: dict,
+                        progress: dict, progress_path: Path,
+                        model: str, timeout: int, dry_run: bool,
+                        concurrency: int = 1):
+    """Phase 2b: AI 标注重要性 + 扩写描述"""
+    completed_cats = set(progress["entity_expand"].get("categories_completed", []))
+    pending_cats = [cat for cat in CATEGORIES if cat not in completed_cats and merged_entities.get(cat)]
+
+    if not pending_cats:
+        print("  所有类别扩写已完成")
+        return merged_entities  # 返回已有数据
+
+    print(f"  待扩写类别: {len(pending_cats)} ({', '.join(CATEGORY_NAMES[c] for c in pending_cats)})")
+
+    if dry_run:
+        for cat in pending_cats:
+            print(f"    {CATEGORY_NAMES[cat]}: {len(merged_entities[cat])} 个实体")
+        return merged_entities
+
+    # 尝试加载已有的扩写结果
+    expanded_path = build_dir / "expanded_entities.json"
+    if expanded_path.exists():
+        with open(expanded_path, "r", encoding="utf-8") as f:
+            expanded = json.load(f)
+    else:
+        expanded = {}
+
+    print_lock = threading.Lock()
+
+    def expand_one_category(cat: str, verbose: bool = True) -> tuple[str, list[dict] | None]:
+        entities = merged_entities[cat]
+        with print_lock:
+            print(f"    扩写 {CATEGORY_NAMES[cat]}（{len(entities)} 个实体）...")
+
+        prompt = build_entity_expand_prompt(cat, entities)
+        start_time = time.time()
+        success, output = run_claude_prompt(prompt, model, timeout, verbose=verbose)
+        elapsed = time.time() - start_time
+
+        # 更新统计
+        lock_path = progress_path.with_suffix(".lock")
+        with open(lock_path, "w") as lf:
+            fcntl.flock(lf, fcntl.LOCK_EX)
+            try:
+                disk = _read_progress_raw(progress_path)
+                disk["stats"]["total_calls"] = disk["stats"].get("total_calls", 0) + 1
+                disk["stats"]["total_time_seconds"] = disk["stats"].get("total_time_seconds", 0) + int(elapsed)
+                if success:
+                    debug_path = build_dir / f"expand_{cat}_json_debug.txt"
+                    result = fix_and_parse_json(output, verbose=False, save_debug_to=debug_path)
+                    if result and isinstance(result, list):
+                        if cat not in disk["entity_expand"].get("categories_completed", []):
+                            disk.setdefault("entity_expand", {}).setdefault("categories_completed", []).append(cat)
+                        with open(progress_path, "w", encoding="utf-8") as f:
+                            json.dump(disk, f, ensure_ascii=False, indent=2)
+                        progress.update(disk)
+                        with print_lock:
+                            print(f"    [{CATEGORY_NAMES[cat]}] ✓ ({elapsed:.0f}s) {len(result)} 个实体")
+                        return cat, result
+                    else:
+                        with print_lock:
+                            print(f"    [{CATEGORY_NAMES[cat]}] ✗ JSON 解析失败 ({elapsed:.0f}s)")
+                else:
+                    with print_lock:
+                        print(f"    [{CATEGORY_NAMES[cat]}] ✗ ({elapsed:.0f}s): {output[:100]}")
+                with open(progress_path, "w", encoding="utf-8") as f:
+                    json.dump(disk, f, ensure_ascii=False, indent=2)
+                progress.update(disk)
+            finally:
+                fcntl.flock(lf, fcntl.LOCK_UN)
+
+        return cat, None
+
+    concurrency = max(1, concurrency)
+    if concurrency == 1:
+        for cat in pending_cats:
+            cat_key, result = expand_one_category(cat)
+            if result:
+                expanded[cat_key] = result
+    else:
+        print(f"  并发数: {concurrency}")
+        with ThreadPoolExecutor(max_workers=min(concurrency, len(pending_cats))) as executor:
+            futures = {executor.submit(expand_one_category, c, verbose=False): c for c in pending_cats}
+            for future in as_completed(futures):
+                try:
+                    cat_key, result = future.result()
+                    if result:
+                        expanded[cat_key] = result
+                except Exception as e:
+                    with print_lock:
+                        print(f"    ✗ 线程异常 ({futures[future]}): {e}")
+
+    # 保存扩写结果
+    with open(expanded_path, "w", encoding="utf-8") as f:
+        json.dump(expanded, f, ensure_ascii=False, indent=2)
+
+    # 对于已完成但不在 pending 中的类别，从已有数据补充
+    for cat in CATEGORIES:
+        if cat in completed_cats and cat not in expanded:
+            expanded[cat] = merged_entities.get(cat, [])
+
+    return expanded
+
+
+def generate_entity_files(world_dir: Path, expanded_entities: dict,
+                          character_factions: list[dict]):
+    """Phase 2c: 为每个实体生成独立 .md 文件 + index.md"""
+    print("  生成实体文件...")
+
+    total_files = 0
+
+    for cat in CATEGORIES:
+        cat_dir = world_dir / cat
+        cat_dir.mkdir(parents=True, exist_ok=True)
+
+        entities = expanded_entities.get(cat, [])
+        if not entities:
+            continue
+
+        # 生成每个实体的独立文件
+        index_rows = []
+        for entity in entities:
+            name = entity.get("name", "unnamed")
+            filename = sanitize_filename(name) + ".md"
+            filepath = cat_dir / filename
+
+            importance = entity.get("importance", "low")
+            first_ch = entity.get("first_chapter", "")
+            source_chs = entity.get("source_chapters", [])
+            description = entity.get("description", "")
+            evolution = entity.get("evolution", "")
+            related = entity.get("related_entities", [])
+
+            # 如果是势力类别，补充角色成员
+            members_section = ""
+            if cat == "factions":
+                for cf in character_factions:
+                    if _names_match(cf["faction"], name):
+                        members = cf.get("members", [])
+                        if members:
+                            members_section = f"\n\n## 已知成员\n\n" + "\n".join(f"- {m}" for m in members)
+                        break
+
+            # 构建实体文件内容
+            lines = [f"# {name}\n"]
+            lines.append(f"**分类**：{CATEGORY_NAMES[cat]}")
+            lines.append(f"**重要性**：{importance}")
+            if first_ch:
+                lines.append(f"**首次提及**：{first_ch}")
+            if source_chs:
+                lines.append(f"**相关章节**：{', '.join(source_chs)}")
+            if related:
+                lines.append(f"**关联实体**：{', '.join(related)}")
+
+            lines.append(f"\n## 描述\n\n{description}")
+
+            if evolution:
+                lines.append(f"\n## 演化记录\n\n{evolution}")
+
+            if members_section:
+                lines.append(members_section)
+
+            filepath.write_text("\n".join(lines), encoding="utf-8")
+            total_files += 1
+
+            # 简介：取描述前 80 字
+            brief = description[:80].replace("\n", " ").strip()
+            if len(description) > 80:
+                brief += "..."
+            index_rows.append({
+                "name": name,
+                "filename": filename,
+                "importance": importance,
+                "first_chapter": first_ch,
+                "brief": brief,
+            })
+
+        # 生成类别 index.md
+        index_lines = [f"# {CATEGORY_NAMES[cat]}\n"]
+        index_lines.append("| 名称 | 重要性 | 首次提及 | 简介 |")
+        index_lines.append("|------|--------|----------|------|")
+
+        # 按重要性排序：high > medium > low
+        importance_order = {"high": 0, "medium": 1, "low": 2}
+        index_rows.sort(key=lambda r: (importance_order.get(r["importance"], 3), r["first_chapter"]))
+
+        for row in index_rows:
+            index_lines.append(
+                f"| [{row['name']}]({row['filename']}) "
+                f"| {row['importance']} "
+                f"| {row['first_chapter']} "
+                f"| {row['brief']} |"
+            )
+        index_lines.append("")
+
+        (cat_dir / "index.md").write_text("\n".join(index_lines), encoding="utf-8")
+        print(f"    {CATEGORY_NAMES[cat]}: {len(entities)} 个实体文件 + index.md")
+
+    print(f"  共生成 {total_files} 个实体文件")
+
+
 def phase_global_merge(book_dir: Path, progress: dict, progress_path: Path,
-                       model: str, timeout: int, dry_run: bool):
-    """执行阶段 2：全局融合"""
+                       model: str, timeout: int, dry_run: bool,
+                       concurrency: int = 1):
+    """执行阶段 2：全局去重合并 + AI 扩写 + 生成实体文件"""
     print("\n" + "=" * 60)
-    print("阶段 2：全局融合")
+    print("阶段 2：全局去重合并 + 实体扩写")
     print("=" * 60)
 
     if progress["global_merge"]["status"] == "completed":
@@ -857,206 +1213,159 @@ def phase_global_merge(book_dir: Path, progress: dict, progress_path: Path,
     build_dir = get_build_dir(book_dir)
     world_dir = get_world_dir(book_dir)
 
-    # 加载段级数据
-    merged_data = merge_segments(build_dir)
-    total_entries = sum(len(v) for v in merged_data.values())
+    # --- Phase 2a: Python 全局去重合并 ---
+    print("\n--- Phase 2a: Python 全局去重合并 ---")
+    merged_path = build_dir / "merged_entities.json"
 
-    if total_entries == 0:
-        print("警告：无分类数据，尝试从 raw_world_data.json 直接处理...")
-        # 如果没有段级文件但 raw 数据存在，说明是小规模跳过了分段
-        raw_path = build_dir / "raw_world_data.json"
-        if raw_path.exists():
-            with open(raw_path, "r", encoding="utf-8") as f:
-                raw_data = json.load(f)
-            # 直接用 raw 数据构建分类 prompt
-            # 这种情况不应该发生，因为小规模也会先生成 segment_all.json
-            print("错误：请先运行阶段 1")
-            return
-        else:
-            print("错误：无任何数据，请从阶段 0 开始")
-            return
+    if merged_path.exists():
+        print("  已有合并数据，加载中...")
+        with open(merged_path, "r", encoding="utf-8") as f:
+            merged_entities = json.load(f)
+    else:
+        merged_entities = merge_and_dedup_entities(build_dir)
+        with open(merged_path, "w", encoding="utf-8") as f:
+            json.dump(merged_entities, f, ensure_ascii=False, indent=2)
 
-    print(f"总条目数: {total_entries}")
-    for cat in CATEGORIES + ["misc"]:
-        n = len(merged_data[cat])
-        if n > 0:
-            label = CATEGORY_NAMES.get(cat, cat)
-            print(f"  {label}: {n} 条")
-
-    # 收集 segment 文件路径
-    segment_files = sorted(build_dir.glob("seg_*.json"))
-    raw_path = build_dir / "raw_world_data.json"
-
-    if dry_run:
-        print(f"将融合 {total_entries} 条设定到 4 个 MD 文件")
-        print(f"Segment 文件: {len(segment_files)} 个")
+    total_entities = sum(len(v) for v in merged_entities.values())
+    if total_entities == 0:
+        print("  警告：无分类数据，请先运行阶段 1")
         return
 
-    prompt = build_global_merge_prompt(segment_files, raw_path, str(world_dir))
-
-    print("调用 Claude 进行全局融合...")
-    start_time = time.time()
-    success, output = run_claude_prompt(prompt, model, timeout, allow_tools="Write")
-    elapsed = time.time() - start_time
-
-    progress["stats"]["total_calls"] += 1
-    progress["stats"]["total_time_seconds"] += int(elapsed)
-
-    if success:
-        print(f"完成 ({elapsed:.0f}s)")
-
-        # 验证文件是否已生成
-        generated = []
-        for cat in CATEGORIES:
-            fpath = world_dir / f"{cat}.md"
-            if fpath.exists():
-                generated.append(f"{cat}.md ({fpath.stat().st_size} bytes)")
-        print(f"  生成文件: {', '.join(generated) if generated else '无'}")
-
-        progress["global_merge"]["status"] = "completed"
-        progress["phase"] = "refine"
-    else:
-        print(f"失败 ({elapsed:.0f}s): {output[:200]}")
-
-    save_progress(progress_path, progress)
-
-
-# ============================================================
-# 阶段 3：精修与原文补充
-# ============================================================
-
-def build_refine_prompt(category: str, current_content: str,
-                        related_chapters: str) -> str:
-    """构建精修 prompt"""
-    template_name = f"world_refine_{category}.md"
-    template_path = PROMPTS_DIR / template_name
-    if not template_path.exists():
-        return ""
-
-    template = template_path.read_text(encoding="utf-8")
-    prompt = template.replace("{current_content}", current_content)
-    prompt = prompt.replace("{related_chapters}", related_chapters)
-    return prompt
-
-
-def build_validate_prompt(world_dir: Path) -> str:
-    """构建一致性验证 prompt"""
-    template = (PROMPTS_DIR / "world_validate_consistency.md").read_text(encoding="utf-8")
-
-    all_content_parts = []
+    print(f"  去重后总实体数: {total_entities}")
     for cat in CATEGORIES:
-        fpath = world_dir / f"{cat}.md"
-        if fpath.exists():
-            content = fpath.read_text(encoding="utf-8")
-            all_content_parts.append(f"### {CATEGORY_NAMES.get(cat, cat)}\n\n{content}")
+        n = len(merged_entities.get(cat, []))
+        if n > 0:
+            print(f"    {CATEGORY_NAMES[cat]}: {n} 条")
 
-    prompt = template.replace("{all_world_files}", "\n\n---\n\n".join(all_content_parts))
-    return prompt
+    if dry_run:
+        print("  [dry-run] 将为每个类别调用 AI 进行重要性标注和描述扩写")
+        return
+
+    # --- Phase 2b: AI 重要性标注 + 描述扩写 ---
+    print("\n--- Phase 2b: AI 重要性标注 + 描述扩写 ---")
+    expanded_entities = phase_entity_expand(
+        build_dir, merged_entities, progress, progress_path,
+        model, timeout, dry_run, concurrency
+    )
+
+    # --- Phase 2c: Python 生成实体文件 ---
+    print("\n--- Phase 2c: 生成实体文件 ---")
+
+    # 加载角色势力信息
+    raw_path = build_dir / "raw_world_data.json"
+    character_factions = []
+    if raw_path.exists():
+        with open(raw_path, "r", encoding="utf-8") as f:
+            raw_data = json.load(f)
+        character_factions = raw_data.get("character_factions", [])
+
+    generate_entity_files(world_dir, expanded_entities, character_factions)
+
+    # 生成顶层 index.md
+    build_index_md(world_dir, expanded_entities)
+
+    progress["global_merge"]["status"] = "completed"
+    progress["phase"] = "refine"
+    save_progress(progress_path, progress)
+    print("\n全局融合完成！")
 
 
-def get_related_chapter_summaries(book_dir: Path, category: str,
-                                  max_chapters: int = 10) -> str:
-    """获取与类别相关的章节摘要片段（用于精修时的原文参考）"""
-    build_dir = get_build_dir(book_dir)
+# ============================================================
+# 阶段 3：实体级精修（仅 high 实体）
+# ============================================================
+
+def get_entity_chapter_summaries(book_dir: Path, source_chapters: list[str],
+                                 max_chapters: int = 15) -> str:
+    """根据实体的 source_chapters 获取章节摘要"""
     chapters_dir = get_chapters_dir(book_dir)
 
-    raw_path = build_dir / "raw_world_data.json"
-    if not raw_path.exists():
-        return "（无原始数据）"
-
-    with open(raw_path, "r", encoding="utf-8") as f:
-        raw_data = json.load(f)
-
-    # 找出包含该类别设定的章节
-    related_chs = []
-    for ch_str, data in raw_data["chapter_settings"].items():
-        ch_num = int(re.match(r"ch(\d+)", ch_str).group(1))
-        for s in data["settings"] + data["items"]:
-            text = f"{s['name']} {s['description']}".lower()
-            if category == "power_system" and any(
-                kw in text for kw in ["修炼", "等级", "功法", "法术", "法宝",
-                                       "月华", "灵气", "修仙", "能力", "修为"]
-            ):
-                related_chs.append(ch_num)
-                break
-            elif category == "geography" and any(
-                kw in text for kw in ["山", "河", "村", "城", "湖", "海",
-                                       "洞", "地", "方向", "距离"]
-            ):
-                related_chs.append(ch_num)
-                break
-            elif category == "factions" and any(
-                kw in text for kw in ["宗", "门", "派", "族", "帮", "势力",
-                                       "组织", "仙宗"]
-            ):
-                related_chs.append(ch_num)
-                break
-
-    if not related_chs:
-        return "（无相关章节）"
-
     # 限制数量
-    related_chs = sorted(set(related_chs))[:max_chapters]
+    chapters = sorted(set(source_chapters))[:max_chapters]
 
     parts = []
-    for ch in related_chs:
-        filepath = chapters_dir / f"ch{ch:04d}.md"
+    for ch_str in chapters:
+        m = re.match(r"ch(\d+)", ch_str)
+        if not m:
+            continue
+        ch_num = int(m.group(1))
+        filepath = chapters_dir / f"ch{ch_num:04d}.md"
         if filepath.exists():
             content = filepath.read_text(encoding="utf-8")
-            parts.append(f"### ch{ch:04d}\n\n{content}")
+            parts.append(f"### {ch_str}\n\n{content}")
 
-    return "\n\n---\n\n".join(parts) if parts else "（无相关章节）"
+    return "\n\n---\n\n".join(parts) if parts else "（无相关章节摘要）"
+
+
+def build_refine_entity_prompt(entity: dict, category_key: str,
+                               related_summaries: str) -> str:
+    """构建实体级精修 prompt"""
+    prompt = (PROMPTS_DIR / "world_refine_entity.md").read_text(encoding="utf-8")
+    prompt = prompt.replace("{entity_name}", entity.get("name", ""))
+    prompt = prompt.replace("{category_name}", CATEGORY_NAMES[category_key])
+    prompt = prompt.replace("{importance}", entity.get("importance", "high"))
+    prompt = prompt.replace("{current_description}", entity.get("description", ""))
+    prompt = prompt.replace("{source_chapters}", ", ".join(entity.get("source_chapters", [])))
+    prompt = prompt.replace("{related_summaries}", related_summaries)
+    return prompt
 
 
 def phase_refine(book_dir: Path, progress: dict, progress_path: Path,
                  model: str, timeout: int, dry_run: bool,
                  concurrency: int = 1):
-    """执行阶段 3：精修与原文补充"""
+    """执行阶段 3：实体级精修（仅 high 实体）"""
     print("\n" + "=" * 60)
-    print("阶段 3：精修与原文补充")
+    print("阶段 3：实体级精修")
     print("=" * 60)
 
+    build_dir = get_build_dir(book_dir)
     world_dir = get_world_dir(book_dir)
 
-    # 精修各类别
-    refine_categories = ["power_system", "geography", "factions"]
-    pending_refine = []
-    for cat in refine_categories:
-        if progress["refine"].get(cat, False):
-            print(f"{CATEGORY_NAMES[cat]} 精修已完成")
-            continue
-        cat_file = world_dir / f"{cat}.md"
-        if not cat_file.exists():
-            print(f"跳过 {CATEGORY_NAMES[cat]}（文件不存在）")
-            continue
-        current_content = cat_file.read_text(encoding="utf-8")
-        if len(current_content) > 2000:
-            print(f"{CATEGORY_NAMES[cat]} 内容已足够丰富，跳过精修")
-            progress["refine"][cat] = True
-            save_progress(progress_path, progress)
-            continue
-        prompt = build_refine_prompt(cat, current_content, get_related_chapter_summaries(book_dir, cat))
-        if not prompt:
-            print(f"跳过 {CATEGORY_NAMES[cat]}（无精修模板）")
-            progress["refine"][cat] = True
-            save_progress(progress_path, progress)
-            continue
-        pending_refine.append((cat, prompt))
+    # 加载扩写后的实体数据
+    expanded_path = build_dir / "expanded_entities.json"
+    if not expanded_path.exists():
+        print("错误：expanded_entities.json 不存在，请先运行阶段 2")
+        return
 
-    if dry_run:
-        for cat, _ in pending_refine:
-            print(f"将精修 {CATEGORY_NAMES[cat]}")
-    elif pending_refine:
-        concurrency = max(1, concurrency)
+    with open(expanded_path, "r", encoding="utf-8") as f:
+        expanded = json.load(f)
+
+    # 收集所有 high 实体
+    high_entities = []
+    for cat in CATEGORIES:
+        for entity in expanded.get(cat, []):
+            if entity.get("importance") == "high":
+                high_entities.append((cat, entity))
+
+    completed = set(progress["refine"].get("entities_completed", []))
+    pending = [(cat, e) for cat, e in high_entities
+               if f"{cat}/{e['name']}" not in completed]
+
+    print(f"high 实体总数: {len(high_entities)} ({len(pending)} 待精修)")
+
+    if not pending:
+        print("所有 high 实体已精修")
+    elif dry_run:
+        for cat, entity in pending:
+            print(f"  将精修: [{CATEGORY_NAMES[cat]}] {entity['name']}")
+    else:
         print_lock = threading.Lock()
+        done_counter = {"n": 0, "total": len(pending)}
 
-        def refine_one(cat: str, prompt: str, verbose: bool = True):
+        def refine_one_entity(cat: str, entity: dict, verbose: bool = True):
+            entity_key = f"{cat}/{entity['name']}"
             with print_lock:
-                print(f"精修 {CATEGORY_NAMES[cat]}...")
+                print(f"  精修 [{CATEGORY_NAMES[cat]}] {entity['name']}...")
+
+            summaries = get_entity_chapter_summaries(
+                book_dir, entity.get("source_chapters", [])
+            )
+            prompt = build_refine_entity_prompt(entity, cat, summaries)
+
             start_time = time.time()
-            success, output = run_claude_prompt(prompt, model, timeout, allow_tools="Write", verbose=verbose)
+            success, output = run_claude_prompt(prompt, model, timeout, verbose=verbose)
             elapsed = time.time() - start_time
-            # 带锁更新
+
+            # 更新进度
             lock_path = progress_path.with_suffix(".lock")
             with open(lock_path, "w") as lf:
                 fcntl.flock(lf, fcntl.LOCK_EX)
@@ -1064,127 +1373,235 @@ def phase_refine(book_dir: Path, progress: dict, progress_path: Path,
                     disk = _read_progress_raw(progress_path)
                     disk["stats"]["total_calls"] = disk["stats"].get("total_calls", 0) + 1
                     disk["stats"]["total_time_seconds"] = disk["stats"].get("total_time_seconds", 0) + int(elapsed)
+
                     if success:
-                        disk["refine"][cat] = True
+                        debug_path = build_dir / f"refine_{sanitize_filename(entity['name'])}_json_debug.txt"
+                        result = fix_and_parse_json(output, verbose=False, save_debug_to=debug_path)
+                        if result and isinstance(result, dict):
+                            # 更新实体文件
+                            new_desc = result.get("description", entity.get("description", ""))
+                            new_evolution = result.get("evolution", entity.get("evolution", ""))
+                            new_source = result.get("source_chapters", entity.get("source_chapters", []))
+
+                            entity["description"] = new_desc
+                            entity["evolution"] = new_evolution
+                            entity["source_chapters"] = new_source
+
+                            # 重写实体文件
+                            filename = sanitize_filename(entity["name"]) + ".md"
+                            filepath = world_dir / cat / filename
+                            if filepath.exists():
+                                _write_entity_file(filepath, entity, cat)
+
+                            if entity_key not in disk["refine"].get("entities_completed", []):
+                                disk.setdefault("refine", {}).setdefault("entities_completed", []).append(entity_key)
+                            with print_lock:
+                                print(f"    [{entity['name']}] ✓ ({elapsed:.0f}s)")
+                        else:
+                            with print_lock:
+                                print(f"    [{entity['name']}] ✗ JSON 解析失败 ({elapsed:.0f}s)")
+                    else:
+                        with print_lock:
+                            print(f"    [{entity['name']}] ✗ ({elapsed:.0f}s): {output[:100]}")
+
                     with open(progress_path, "w", encoding="utf-8") as f:
                         json.dump(disk, f, ensure_ascii=False, indent=2)
                     progress.update(disk)
                 finally:
                     fcntl.flock(lf, fcntl.LOCK_UN)
-            with print_lock:
-                status = "✓" if success else "✗"
-                msg = f"  [{CATEGORY_NAMES[cat]}] {status} ({elapsed:.0f}s)"
-                if not success:
-                    msg += f" {output[:100]}"
-                print(msg)
 
+            with print_lock:
+                done_counter["n"] += 1
+
+        concurrency = max(1, concurrency)
         if concurrency == 1:
-            for cat, prompt in pending_refine:
-                refine_one(cat, prompt)
+            for cat, entity in pending:
+                refine_one_entity(cat, entity)
         else:
-            with ThreadPoolExecutor(max_workers=min(concurrency, len(pending_refine))) as executor:
-                futures = {executor.submit(refine_one, c, p, verbose=False): c for c, p in pending_refine}
+            print(f"并发数: {concurrency}")
+            with ThreadPoolExecutor(max_workers=min(concurrency, len(pending))) as executor:
+                futures = {executor.submit(refine_one_entity, c, e, verbose=False): f"{c}/{e['name']}" for c, e in pending}
                 for future in as_completed(futures):
                     try:
                         future.result()
                     except Exception as e:
                         with print_lock:
-                            print(f"  ✗ 精修异常 ({futures[future]}): {e}")
+                            print(f"    ✗ 精修异常 ({futures[future]}): {e}")
+
+    # 保存更新后的 expanded 数据
+    with open(expanded_path, "w", encoding="utf-8") as f:
+        json.dump(expanded, f, ensure_ascii=False, indent=2)
 
     # 一致性验证
     if not progress["refine"].get("validated", False):
-        # 检查是否有足够的文件进行验证
-        existing_files = [cat for cat in CATEGORIES
-                          if (world_dir / f"{cat}.md").exists()]
-        if len(existing_files) < 2:
-            print("文件不足，跳过一致性验证")
-            progress["refine"]["validated"] = True
-            save_progress(progress_path, progress)
+        if dry_run:
+            print("将验证世界观一致性")
         else:
-            if dry_run:
-                print(f"将验证 {len(existing_files)} 个世界文件的一致性")
-                return
+            _run_consistency_validation(world_dir, build_dir, progress, progress_path, model, timeout)
 
-            prompt = build_validate_prompt(world_dir)
+    # 重新生成 index（精修后内容可能变化）
+    build_index_md(world_dir, expanded)
 
-            print("一致性验证...")
-            start_time = time.time()
-            success, output = run_claude_prompt(prompt, model, timeout)
-            elapsed = time.time() - start_time
-
-            progress["stats"]["total_calls"] += 1
-            progress["stats"]["total_time_seconds"] += int(elapsed)
-
-            if success:
-                build_dir = get_build_dir(book_dir)
-                debug_path = build_dir / "consistency_validation_json_debug.txt"
-                result = fix_and_parse_json(output, verbose=False, save_debug_to=debug_path)
-                if result:
-                    n_issues = len(result.get("issues", []))
-                    print(f"  完成 ({elapsed:.0f}s): {n_issues} 个问题")
-                    # 保存验证结果
-                    val_path = build_dir / "consistency_validation.json"
-                    with open(val_path, "w", encoding="utf-8") as f:
-                        json.dump(result, f, ensure_ascii=False, indent=2)
-                else:
-                    print(f"  完成 ({elapsed:.0f}s): 无结构化输出")
-            else:
-                print(f"  失败 ({elapsed:.0f}s): {output[:200]}")
-
-            progress["refine"]["validated"] = True
-            save_progress(progress_path, progress)
-
-    # 生成 index.md
-    build_index_md(world_dir)
-
+    progress["refine"]["status"] = "completed"
+    save_progress(progress_path, progress)
     print("\n精修阶段完成！")
+
+
+def _write_entity_file(filepath: Path, entity: dict, cat: str):
+    """写入单个实体 .md 文件"""
+    name = entity.get("name", "unnamed")
+    importance = entity.get("importance", "low")
+    first_ch = entity.get("first_chapter", "")
+    source_chs = entity.get("source_chapters", [])
+    description = entity.get("description", "")
+    evolution = entity.get("evolution", "")
+    related = entity.get("related_entities", [])
+
+    lines = [f"# {name}\n"]
+    lines.append(f"**分类**：{CATEGORY_NAMES[cat]}")
+    lines.append(f"**重要性**：{importance}")
+    if first_ch:
+        lines.append(f"**首次提及**：{first_ch}")
+    if source_chs:
+        lines.append(f"**相关章节**：{', '.join(source_chs)}")
+    if related:
+        lines.append(f"**关联实体**：{', '.join(related)}")
+
+    lines.append(f"\n## 描述\n\n{description}")
+
+    if evolution:
+        lines.append(f"\n## 演化记录\n\n{evolution}")
+
+    filepath.write_text("\n".join(lines), encoding="utf-8")
+
+
+def _run_consistency_validation(world_dir: Path, build_dir: Path,
+                                progress: dict, progress_path: Path,
+                                model: str, timeout: int):
+    """一致性验证（抽样 high 实体 + index.md）"""
+    template = (PROMPTS_DIR / "world_validate_consistency.md").read_text(encoding="utf-8")
+
+    # 收集各类别 index.md + 抽样 high 实体
+    all_content_parts = []
+    for cat in CATEGORIES:
+        cat_dir = world_dir / cat
+        index_path = cat_dir / "index.md"
+        if index_path.exists():
+            all_content_parts.append(f"### {CATEGORY_NAMES[cat]} 索引\n\n{index_path.read_text(encoding='utf-8')}")
+
+        # 抽样最多 5 个 high 实体
+        sampled = 0
+        for entity_file in sorted(cat_dir.glob("*.md")):
+            if entity_file.name == "index.md":
+                continue
+            content = entity_file.read_text(encoding="utf-8")
+            if "**重要性**：high" in content:
+                all_content_parts.append(f"#### [{CATEGORY_NAMES[cat]}] {entity_file.stem}\n\n{content}")
+                sampled += 1
+                if sampled >= 5:
+                    break
+
+    if len(all_content_parts) < 2:
+        print("文件不足，跳过一致性验证")
+        progress["refine"]["validated"] = True
+        save_progress(progress_path, progress)
+        return
+
+    prompt = template.replace("{all_world_files}", "\n\n---\n\n".join(all_content_parts))
+
+    print("一致性验证...")
+    start_time = time.time()
+    success, output = run_claude_prompt(prompt, model, timeout)
+    elapsed = time.time() - start_time
+
+    progress["stats"]["total_calls"] += 1
+    progress["stats"]["total_time_seconds"] += int(elapsed)
+
+    if success:
+        debug_path = build_dir / "consistency_validation_json_debug.txt"
+        result = fix_and_parse_json(output, verbose=False, save_debug_to=debug_path)
+        if result:
+            n_issues = len(result.get("issues", []))
+            print(f"  完成 ({elapsed:.0f}s): {n_issues} 个问题")
+            val_path = build_dir / "consistency_validation.json"
+            with open(val_path, "w", encoding="utf-8") as f:
+                json.dump(result, f, ensure_ascii=False, indent=2)
+        else:
+            print(f"  完成 ({elapsed:.0f}s): 无结构化输出")
+    else:
+        print(f"  失败 ({elapsed:.0f}s): {output[:200]}")
+
+    progress["refine"]["validated"] = True
+    save_progress(progress_path, progress)
 
 
 # ============================================================
 # index.md 生成
 # ============================================================
 
-def build_index_md(world_dir: Path):
-    """Python 直接生成 index.md"""
+def build_index_md(world_dir: Path, expanded_entities: dict = None):
+    """生成顶层 world/index.md"""
     lines = ["# 世界观总览\n"]
 
-    # 统计各文件
-    file_stats = []
+    # 统计各类别
+    cat_stats = []
     for cat in CATEGORIES:
-        fpath = world_dir / f"{cat}.md"
-        if fpath.exists():
-            content = fpath.read_text(encoding="utf-8")
-            # 统计 ## 段落数
-            sections = re.findall(r"^## .+", content, re.MULTILINE)
-            # 统计 - 条目数
-            items = re.findall(r"^- .+", content, re.MULTILINE)
-            file_stats.append({
-                "file": f"{cat}.md",
-                "name": CATEGORY_NAMES[cat],
-                "sections": len(sections),
-                "items": len(items),
-                "size": len(content),
-            })
+        cat_dir = world_dir / cat
+        if not cat_dir.exists():
+            continue
+        # 统计实体文件数（排除 index.md）
+        entity_files = [f for f in cat_dir.glob("*.md") if f.name != "index.md"]
+        n_entities = len(entity_files)
 
-    if file_stats:
+        # 统计 high/medium/low
+        n_high = 0
+        n_medium = 0
+        n_low = 0
+        if expanded_entities and cat in expanded_entities:
+            for e in expanded_entities[cat]:
+                imp = e.get("importance", "low")
+                if imp == "high":
+                    n_high += 1
+                elif imp == "medium":
+                    n_medium += 1
+                else:
+                    n_low += 1
+
+        cat_stats.append({
+            "cat": cat,
+            "name": CATEGORY_NAMES[cat],
+            "total": n_entities,
+            "high": n_high,
+            "medium": n_medium,
+            "low": n_low,
+        })
+
+    if cat_stats:
         lines.append("## 统计\n")
-        lines.append("| 文件 | 类别 | 段落数 | 条目数 |")
-        lines.append("|------|------|--------|--------|")
-        total_sections = 0
-        total_items = 0
-        for fs in file_stats:
-            lines.append(f"| [{fs['name']}]({fs['file']}) | {fs['name']} | {fs['sections']} | {fs['items']} |")
-            total_sections += fs["sections"]
-            total_items += fs["items"]
-        lines.append(f"| **合计** | | **{total_sections}** | **{total_items}** |")
+        lines.append("| 类别 | 总数 | high | medium | low |")
+        lines.append("|------|------|------|--------|-----|")
+        total_all = 0
+        total_h = 0
+        total_m = 0
+        total_l = 0
+        for cs in cat_stats:
+            lines.append(
+                f"| [{cs['name']}]({cs['cat']}/index.md) "
+                f"| {cs['total']} | {cs['high']} | {cs['medium']} | {cs['low']} |"
+            )
+            total_all += cs["total"]
+            total_h += cs["high"]
+            total_m += cs["medium"]
+            total_l += cs["low"]
+        lines.append(f"| **合计** | **{total_all}** | **{total_h}** | **{total_m}** | **{total_l}** |")
         lines.append("")
 
-    # 文件链接
-    lines.append("## 文件导航\n")
+    # 文件导航
+    lines.append("## 类别导航\n")
     for cat in CATEGORIES:
-        fpath = world_dir / f"{cat}.md"
-        if fpath.exists():
-            lines.append(f"- [{CATEGORY_NAMES[cat]}]({cat}.md)")
+        cat_dir = world_dir / cat
+        if cat_dir.exists() and (cat_dir / "index.md").exists():
+            lines.append(f"- [{CATEGORY_NAMES[cat]}]({cat}/index.md)")
         else:
             lines.append(f"- {CATEGORY_NAMES[cat]}（未生成）")
 
@@ -1192,7 +1609,7 @@ def build_index_md(world_dir: Path):
 
     index_path = world_dir / "index.md"
     index_path.write_text("\n".join(lines), encoding="utf-8")
-    print(f"已生成: {index_path}")
+    print(f"  已生成: {index_path}")
 
 
 # ============================================================
@@ -1211,6 +1628,8 @@ def run_validate(book_dir: Path):
     # 检查中间产物
     for name, desc in [
         ("raw_world_data.json", "Python 预处理"),
+        ("merged_entities.json", "全局去重合并"),
+        ("expanded_entities.json", "AI 扩写结果"),
     ]:
         path = build_dir / name
         if path.exists():
@@ -1224,15 +1643,27 @@ def run_validate(book_dir: Path):
     results.append(("段级分类", "OK" if seg_files else "缺失",
                      f"{len(seg_files)} 个文件"))
 
-    # 检查 4 个 MD 文件
+    # 检查各类别实体文件
+    total_entity_files = 0
+    total_high = 0
     for cat in CATEGORIES:
-        fpath = world_dir / f"{cat}.md"
-        if fpath.exists():
-            content = fpath.read_text(encoding="utf-8")
-            sections = len(re.findall(r"^## .+", content, re.MULTILINE))
-            items = len(re.findall(r"^- .+", content, re.MULTILINE))
-            results.append((CATEGORY_NAMES[cat], "OK",
-                            f"{fpath.stat().st_size} bytes, {sections} 段, {items} 条"))
+        cat_dir = world_dir / cat
+        if cat_dir.exists():
+            entity_files = [f for f in cat_dir.glob("*.md") if f.name != "index.md"]
+            n = len(entity_files)
+            total_entity_files += n
+            # 统计 high
+            n_high = 0
+            for ef in entity_files:
+                content = ef.read_text(encoding="utf-8")
+                if "**重要性**：high" in content:
+                    n_high += 1
+            total_high += n_high
+            has_index = (cat_dir / "index.md").exists()
+            results.append((
+                CATEGORY_NAMES[cat], "OK",
+                f"{n} 实体 ({n_high} high), index: {'✓' if has_index else '✗'}"
+            ))
         else:
             results.append((CATEGORY_NAMES[cat], "缺失", ""))
 
@@ -1259,6 +1690,8 @@ def run_validate(book_dir: Path):
     for name, status, detail in results:
         print(f"{name:<20} {status:<6} {detail}")
 
+    print(f"\n总计: {total_entity_files} 个实体文件 ({total_high} 个 high)")
+
     # 加载进度统计
     progress_path = get_progress_path(book_dir)
     if progress_path.exists():
@@ -1280,7 +1713,6 @@ def main():
     chapters_dir = get_chapters_dir(book_dir)
     progress_path = get_progress_path(book_dir)
 
-    # 扫描已有章节摘要
     all_chapters = list_summary_chapters(chapters_dir)
     if not all_chapters:
         print(f"错误：chapters 目录中没有摘要文件: {chapters_dir}")
@@ -1327,7 +1759,8 @@ def main():
         progress = load_progress(progress_path)
         if progress["phase"] == "global_merge" or args.phase == "global-merge":
             phase_global_merge(book_dir, progress, progress_path,
-                               args.model, args.timeout, args.dry_run)
+                               args.model, args.timeout, args.dry_run,
+                               args.concurrency)
 
     # 阶段 3: 精修
     if args.phase == "refine" or (
@@ -1349,10 +1782,11 @@ def main():
     print(f"  分段分类: {sc['status']} ({len(sc['segments_completed'])} 完成/"
           f"{len(sc['segments_failed'])} 失败)")
     print(f"  全局融合: {progress['global_merge']['status']}")
+    ee = progress.get("entity_expand", {})
+    print(f"  实体扩写: {ee.get('status', 'pending')} ({len(ee.get('categories_completed', []))} 类别)")
     ref = progress["refine"]
-    print(f"  精修: 力量{'✓' if ref.get('power_system') else '✗'} "
-          f"地理{'✓' if ref.get('geography') else '✗'} "
-          f"势力{'✓' if ref.get('factions') else '✗'} "
+    n_refined = len(ref.get("entities_completed", []))
+    print(f"  精修: {ref.get('status', 'pending')} ({n_refined} 实体) "
           f"验证{'✓' if ref.get('validated') else '✗'}")
     print(f"  总调用: {progress['stats']['total_calls']} 次")
     total_s = progress["stats"]["total_time_seconds"]

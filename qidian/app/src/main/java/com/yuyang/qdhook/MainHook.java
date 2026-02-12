@@ -2005,7 +2005,8 @@ public class MainHook {
                     boolean apFetchReplies = request.optBoolean("fetchReplies", true);
                     JSONArray apOnlyParagraphs = request.optJSONArray("onlyParagraphs");
                     JSONObject apExistingReplies = request.optJSONObject("existingReplies");
-                    return handleGetAllParagraphComments(apBookId, apChapterId, apPageSize, apType, apIncludeChapterComments, apFetchReplies, apOnlyParagraphs, apExistingReplies);
+                    int apMaxCommentsPerParagraph = request.optInt("maxCommentsPerParagraph", 0);
+                    return handleGetAllParagraphComments(apBookId, apChapterId, apPageSize, apType, apIncludeChapterComments, apFetchReplies, apOnlyParagraphs, apExistingReplies, apMaxCommentsPerParagraph);
                 }
 
                 case "executePost": {
@@ -4850,13 +4851,14 @@ public class MainHook {
     /**
      * 一次性获取章节所有段评：先获取摘要，再逐段获取评论
      */
-    private static String handleGetAllParagraphComments(String bookId, String chapterId, int pageSize, int type, boolean includeChapterComments, boolean fetchReplies, JSONArray onlyParagraphs, JSONObject existingReplies) {
+    private static String handleGetAllParagraphComments(String bookId, String chapterId, int pageSize, int type, boolean includeChapterComments, boolean fetchReplies, JSONArray onlyParagraphs, JSONObject existingReplies, int maxCommentsPerParagraph) {
         try {
             Log.i(TAG, "RPC: getAllParagraphComments - bookId=" + bookId + ", chapterId=" + chapterId
                     + ", type=" + type + ", includeChapterComments=" + includeChapterComments
                     + ", fetchReplies=" + fetchReplies
                     + ", onlyParagraphs=" + (onlyParagraphs != null ? onlyParagraphs.length() + " ids" : "null")
-                    + ", existingReplies=" + (existingReplies != null ? existingReplies.length() + " entries" : "null"));
+                    + ", existingReplies=" + (existingReplies != null ? existingReplies.length() + " entries" : "null")
+                    + ", maxCommentsPerParagraph=" + maxCommentsPerParagraph);
 
             // Step 1: 获取段评摘要
             String summaryUrl = CHAPTER_REVIEW_SUMMARY_URL + "?bookId=" + bookId
@@ -4952,12 +4954,20 @@ public class MainHook {
                                     }
                                 }
                                 allComments.put(comment);
+
+                                // 达到每段评论上限时停止（回复不计入）
+                                if (maxCommentsPerParagraph > 0 && allComments.length() >= maxCommentsPerParagraph) {
+                                    hasMore = false;
+                                    break;
+                                }
                             }
                             // 判断是否还有下一页
-                            if (items.length() < pageSize) {
-                                hasMore = false;
-                            } else {
-                                currentPage++;
+                            if (hasMore) {
+                                if (items.length() < pageSize) {
+                                    hasMore = false;
+                                } else {
+                                    currentPage++;
+                                }
                             }
                         } else {
                             hasMore = false;

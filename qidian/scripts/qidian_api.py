@@ -24,6 +24,7 @@
 
 import json
 import socket
+import subprocess
 import sys
 import time
 from typing import Optional
@@ -39,9 +40,12 @@ class QidianAPI:
 
     RPC_HOST = "127.0.0.1"
     RPC_PORT = 12345
+    ADB_CMD = ["/mnt/d/123pan/Downloads/一加Ace6/adb命令行/adb.exe", "-s", "3B15BJ00GZL00000"]
+    PKG = "com.qidian.QDReader"
 
     def __init__(self, timeout: int = 30):
         self.timeout = timeout
+        self._last_restart_time = 0  # 防止频繁重启
 
     def _rpc(self, cmd: str, timeout: Optional[int] = None, **kwargs) -> dict:
         """底层 RPC 调用，直接 TCP 连接 ADB forward 端口"""
@@ -91,6 +95,70 @@ class QidianAPI:
         if not resp.get("success"):
             raise RpcError(resp.get("error", "未知错误"))
         return resp
+
+    # ==================== App 控制 ====================
+
+    def restart_app(self, max_wait: int = 30, min_interval: int = 30) -> bool:
+        """
+        重启 App 并等待 RPC 就绪。
+
+        Args:
+            max_wait: 最大等待秒数
+            min_interval: 两次重启最小间隔（秒），防止频繁重启
+
+        Returns:
+            True=RPC 就绪, False=超时
+        """
+        now = time.time()
+        since_last = now - self._last_restart_time
+        if since_last < min_interval:
+            wait = min_interval - since_last
+            print(f"  [自动恢复] 距上次重启仅 {since_last:.0f}s，等待 {wait:.0f}s...")
+            time.sleep(wait)
+
+        self._last_restart_time = time.time()
+        print(f"  [自动恢复] 重启 App...")
+
+        # 强制停止
+        try:
+            subprocess.run(
+                self.ADB_CMD + ["shell", "su", "-c", f"am force-stop {self.PKG}"],
+                capture_output=True, timeout=10
+            )
+        except Exception:
+            pass
+        time.sleep(1)
+
+        # 启动
+        try:
+            subprocess.run(
+                self.ADB_CMD + ["shell", "monkey", "-p", self.PKG,
+                                "-c", "android.intent.category.LAUNCHER", "1"],
+                capture_output=True, timeout=10
+            )
+        except Exception:
+            pass
+
+        # 轮询等待 RPC 就绪
+        for i in range(1, max_wait + 1):
+            time.sleep(1)
+            try:
+                subprocess.run(
+                    self.ADB_CMD + ["forward", f"tcp:{self.RPC_PORT}", "localabstract:qdhook_rpc"],
+                    capture_output=True, timeout=5
+                )
+            except Exception:
+                pass
+            try:
+                self.ping()
+                print(f"  [自动恢复] RPC 就绪 ({i}s)")
+                return True
+            except Exception:
+                if i % 5 == 0:
+                    print(f"  [自动恢复] 等待中... ({i}s)")
+
+        print(f"  [自动恢复] 超时 ({max_wait}s)")
+        return False
 
     # ==================== 系统命令 ====================
 
@@ -262,7 +330,8 @@ class QidianAPI:
                                    include_chapter_comments: bool = False,
                                    fetch_replies: bool = True,
                                    only_paragraphs: list[int] = None,
-                                   existing_replies: dict = None) -> dict:
+                                   existing_replies: dict = None,
+                                   max_comments_per_paragraph: int = 0) -> dict:
         """
         获取章节所有段评（自动翻页）
 
@@ -272,6 +341,7 @@ class QidianAPI:
             fetch_replies: 是否获取评论回复，默认开启
             only_paragraphs: 仅获取指定段落 ID 列表的评论（增量模式）
             existing_replies: 旧数据中评论的回复数映射 {str(评论Id): ReviewCount}，用于跳过未变化的回复
+            max_comments_per_paragraph: 每个段落最多获取前 N 条评论（0=不限制），回复不计入
         """
         kwargs = dict(
             bookId=book_id, chapterId=chapter_id,
@@ -283,6 +353,8 @@ class QidianAPI:
             kwargs["onlyParagraphs"] = only_paragraphs
         if existing_replies is not None:
             kwargs["existingReplies"] = existing_replies
+        if max_comments_per_paragraph > 0:
+            kwargs["maxCommentsPerParagraph"] = max_comments_per_paragraph
         resp = self._rpc_ok("getAllParagraphComments", timeout=300, **kwargs)
         return resp
 
