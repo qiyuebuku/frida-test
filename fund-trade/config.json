@@ -1,0 +1,78 @@
+{
+  "fund_pool": [
+    {
+      "code": "022365",
+      "name": "永赢科技智选混合发起C",
+      "role": "core",
+      "target_pct": 40,
+      "sector": "AI算力/光模块",
+      "notes": "近1年+200%，AI算力赛道龙头，规模107亿"
+    },
+    {
+      "code": "019018",
+      "name": "易方达信息产业混合C",
+      "role": "satellite",
+      "target_pct": 40,
+      "sector": "科技综合(AI芯片+消费电子)",
+      "notes": "持仓含寒武纪+立讯精密，配置均衡，诊断98分"
+    },
+    {
+      "code": "002207",
+      "name": "前海开源金银珠宝混合C",
+      "role": "hedge",
+      "target_pct": 20,
+      "sector": "黄金股",
+      "notes": "纯黄金股对冲，与科技赛道低相关，近1年+147%"
+    }
+  ],
+  "allocation": {
+    "core_pct": 40,
+    "satellite_pct": 40,
+    "hedge_pct": 20,
+    "core_desc": "宽基指数增强 + 优质主动基金（压舱石，稳定收益）",
+    "satellite_desc": "行业/主题基金（进攻型，捕捉结构性机会：AI/半导体/新能源/医药等）",
+    "hedge_desc": "商品类(黄金/原油) + 固收+（对冲极端风险、提供补仓弹药）"
+  },
+  "user_profile": {
+    "risk_tolerance": "high",
+    "preferred_sectors": ["科技", "AI", "半导体"],
+    "avoid_sectors": [],
+    "investment_horizon": "mixed",
+    "notes": "偏好科技赛道，能接受-20%以上浮亏，追求高收益"
+  },
+  "strategy": {
+    "initial_position_pct": 25,
+    "add_position_pct": 25,
+    "max_add_times": 3,
+    "add_trigger_drop_pct": -5,
+    "add_trigger_pe_percentile": 30,
+    "take_profit_step_pct": 30,
+    "take_profit_sell_ratio": 33,
+    "valuation_sell_pe_percentile": 80,
+    "clear_conditions": ["基金经理离职且新人业绩差", "风格漂移", "连续2季度排名后10%", "投资逻辑证伪"]
+  },
+  "risk": {
+    "max_single_position_pct": 30,
+    "max_daily_buy_amount": 10000,
+    "stop_loss_pct": -20,
+    "take_profit_pct": 50,
+    "min_trade_amount": 10,
+    "max_fund_count": 10,
+    "min_cash_reserve": 1000,
+    "cooldown_days": 1,
+    "reverse_cooldown_days": 7,
+    "min_hold_days": 7,
+    "circuit_breaker_loss_pct": -10,
+    "circuit_breaker_loss_days": 5,
+    "trade_cutoff_time": "14:50"
+  },
+  "cash_management": {
+    "parking_vehicle": "活期宝",
+    "parking_desc": "同花顺活期宝（T+0 实时赎回，无持有期限制，年化约 1.5-2%）",
+    "max_lockup_days": 0,
+    "min_idle_threshold": 500,
+    "auto_park": true
+  },
+  "total_capital": 10000,
+  "server_url": "http://127.0.0.1:8900"
+}
