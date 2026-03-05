@@ -86,7 +86,7 @@ def snapshot():
         "positions": pos_details,
         "risk_alerts": risk_alerts,
     }
-    print(json.dumps(result, ensure_ascii=False, default=_decimal_default, indent=2))
+    print(json.dumps(result, ensure_ascii=False, default=_decimal_default, separators=(",",":")))
 
 
 # ==================== check ====================
@@ -136,11 +136,14 @@ def check(decisions_json):
         if action == "buy":
             amount = float(d.get("amount", 0))
 
-            # a. 最小交易额
+            # a. 最小交易额（风控配置的最低额度）
             if amount < risk["min_trade_amount"]:
                 blocked_reasons.append(
                     f"低于最小交易额(买入{amount} < {risk['min_trade_amount']})"
                 )
+
+            # a2. 基金起购额（部分基金 minBuy >= 1000，需实际查询确认）
+            # 注意：此检查仅为提醒，实际起购额需在执行交易前通过 subscribe/init 查询
 
             # b. 买入后该基金仓位 <= max_single_position_pct
             existing_cost = float(pos_map[fund_code]["total_cost"]) if fund_code in pos_map else 0
@@ -283,7 +286,7 @@ def check(decisions_json):
         "results": results,
         "summary": f"{total}个决策中{passed_count}个通过，{blocked_count}个被拦截",
     }
-    print(json.dumps(output, ensure_ascii=False, default=_decimal_default, indent=2))
+    print(json.dumps(output, ensure_ascii=False, default=_decimal_default, separators=(",",":")))
 
 
 # ==================== preflight ====================
@@ -313,14 +316,17 @@ def preflight():
     cb_days = risk.get("circuit_breaker_loss_days", 5)
     positions = fund_db.get_positions()
     if positions:
-        total_cost = sum(float(p.get("total_cost", 0)) for p in positions)
-        total_value = sum(float(p.get("market_value", 0)) for p in positions)
-        if total_cost > 0:
-            overall_pct = (total_value - total_cost) / total_cost * 100
-            if overall_pct <= cb_loss_pct:
-                alerts.append(
-                    f"⚠️ 熔断警告：组合总亏损 {overall_pct:.1f}% 已达熔断线 {cb_loss_pct}%，建议暂停自动交易并人工复核"
-                )
+        # 只统计已确认的持仓（shares > 0），排除待确认的买入（market_value=0）
+        confirmed = [p for p in positions if float(p.get("shares", 0)) > 0]
+        if confirmed:
+            total_cost = sum(float(p.get("total_cost", 0)) for p in confirmed)
+            total_value = sum(float(p.get("market_value", 0)) for p in confirmed)
+            if total_cost > 0:
+                overall_pct = (total_value - total_cost) / total_cost * 100
+                if overall_pct <= cb_loss_pct:
+                    alerts.append(
+                        f"⚠️ 熔断警告：组合总亏损 {overall_pct:.1f}% 已达熔断线 {cb_loss_pct}%，建议暂停自动交易并人工复核"
+                    )
 
     result = {
         "can_trade": can_trade,
@@ -329,7 +335,7 @@ def preflight():
         "before_cutoff": not (now.hour > cutoff_hour or (now.hour == cutoff_hour and now.minute > cutoff_min)),
         "alerts": alerts,
     }
-    print(json.dumps(result, ensure_ascii=False, indent=2))
+    print(json.dumps(result, ensure_ascii=False, separators=(",",":")))
 
 
 # ==================== CLI ====================

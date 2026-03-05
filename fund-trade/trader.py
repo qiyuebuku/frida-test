@@ -49,7 +49,8 @@ def do_buy(fund_code, amount, reason=None):
         return {"status": "error", "message": f"API 请求失败: {e}"}
 
     resp_json = resp.json()
-    order_no = resp_json.get("order_no", "")
+    # buy_fund() 返回 app_sheet_serial_no，兼容 order_no
+    order_no = resp_json.get("app_sheet_serial_no", "") or resp_json.get("order_no", "")
     fund_name = resp_json.get("fund_name", "")
 
     # 记录交易
@@ -183,7 +184,7 @@ def main():
             sys.exit(1)
         result = do_sell(args.code, pct, reason=args.reason)
 
-    print(json.dumps(result, ensure_ascii=False, indent=2))
+    print(json.dumps(result, ensure_ascii=False, separators=(",",":")))
 
     if result["status"] == "error":
         sys.exit(1)

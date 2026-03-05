@@ -2,11 +2,15 @@
 """基金交易数据库层 - 建表/缓存/信号/交易/持仓 CRUD"""
 
 import json
+import os
 import sys
 from datetime import datetime, timedelta
 
 import psycopg2
 import psycopg2.extras
+
+SKILL_DIR = os.path.dirname(os.path.abspath(__file__))
+CONFIG_PATH = os.path.join(SKILL_DIR, "config.json")
 
 DB_CONFIG = {
     "host": "127.0.0.1",
@@ -166,6 +170,61 @@ CREATE INDEX IF NOT EXISTS idx_ft_reviews_date ON ft_reviews(decision_date);
 CREATE INDEX IF NOT EXISTS idx_ft_reviews_outcome ON ft_reviews(outcome);
 CREATE INDEX IF NOT EXISTS idx_ft_lessons_category ON ft_lessons(category);
 CREATE INDEX IF NOT EXISTS idx_ft_lessons_status ON ft_lessons(status);
+
+CREATE TABLE IF NOT EXISTS ft_alipay_positions (
+    id SERIAL PRIMARY KEY,
+    fund_name VARCHAR(100) NOT NULL,
+    fund_code VARCHAR(10),
+    current_value NUMERIC(12,2) NOT NULL,
+    total_cost NUMERIC(12,2),
+    total_profit NUMERIC(12,2),
+    profit_rate NUMERIC(8,2),
+    daily_pnl NUMERIC(12,2),
+    category VARCHAR(20),
+    snapshot_date DATE NOT NULL DEFAULT CURRENT_DATE,
+    created_at TIMESTAMP DEFAULT NOW(),
+    UNIQUE(fund_name, snapshot_date)
+);
+CREATE INDEX IF NOT EXISTS idx_ft_alipay_date ON ft_alipay_positions(snapshot_date);
+CREATE INDEX IF NOT EXISTS idx_ft_alipay_name ON ft_alipay_positions(fund_name);
+
+CREATE TABLE IF NOT EXISTS ft_alipay_decisions (
+    id SERIAL PRIMARY KEY,
+    fund_name VARCHAR(100) NOT NULL,
+    fund_code VARCHAR(10),
+    action VARCHAR(10) NOT NULL,
+    amount NUMERIC(12,2),
+    sell_pct NUMERIC(5,2),
+    reason TEXT,
+    confidence VARCHAR(10),
+    market_view TEXT,
+    decision_date DATE DEFAULT CURRENT_DATE,
+    created_at TIMESTAMP DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_ft_alipay_decisions_date ON ft_alipay_decisions(decision_date);
+
+-- 待执行决策表（交易截止后的决策，等待次日执行）
+CREATE TABLE IF NOT EXISTS ft_pending_decisions (
+    id SERIAL PRIMARY KEY,
+    fund_code VARCHAR(10) NOT NULL,
+    fund_name VARCHAR(100),
+    action VARCHAR(10) NOT NULL,  -- buy/sell/clear
+    amount NUMERIC(12,2),          -- 买入金额
+    sell_pct NUMERIC(5,2),         -- 卖出比例
+    reason TEXT,
+    confidence VARCHAR(10),
+    market_view TEXT,              -- 决策时的市场观点
+    market_phase VARCHAR(20),      -- 决策时的市场阶段
+    risk_notes TEXT,
+    decision_date DATE DEFAULT CURRENT_DATE,  -- 决策日期
+    status VARCHAR(20) DEFAULT 'pending',     -- pending/executed/cancelled
+    executed_at TIMESTAMP,
+    cancelled_at TIMESTAMP,
+    cancel_reason TEXT,
+    created_at TIMESTAMP DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_ft_pending_status ON ft_pending_decisions(status);
+CREATE INDEX IF NOT EXISTS idx_ft_pending_date ON ft_pending_decisions(decision_date);
 """
 
 
@@ -178,7 +237,7 @@ def init_tables():
         with conn.cursor() as cur:
             cur.execute(CREATE_TABLES_SQL)
         conn.commit()
-    print("✓ 9 张表创建完成 (ft_cache, ft_market_cache, ft_signals, ft_decisions, ft_trades, ft_positions, ft_run_log, ft_reviews, ft_lessons)")
+    print("✓ 12 张表创建完成 (ft_cache, ft_market_cache, ft_signals, ft_decisions, ft_trades, ft_positions, ft_run_log, ft_reviews, ft_lessons, ft_alipay_positions, ft_alipay_decisions, ft_pending_decisions)")
 
 
 # ==================== 缓存 ====================
@@ -266,8 +325,8 @@ def get_latest_signals(fund_code=None, days=1):
 
 # ==================== 决策 ====================
 
-def save_decision(fund_code, fund_name, action, amount, sell_pct, reason, confidence,
-                   market_view, risk_notes=None, referenced_lesson_ids=None):
+def save_decision(fund_code, fund_name, action, reason, confidence,
+                   market_view, amount=None, sell_pct=None, risk_notes=None, referenced_lesson_ids=None):
     with get_conn() as conn:
         with conn.cursor() as cur:
             cur.execute(
@@ -448,6 +507,299 @@ def delete_position(fund_code):
         with conn.cursor() as cur:
             cur.execute("DELETE FROM ft_positions WHERE fund_code=%s", (fund_code,))
         conn.commit()
+
+
+# ==================== 支付宝持仓 ====================
+
+def save_alipay_snapshot(holdings, snapshot_date=None):
+    """保存支付宝持仓快照（整批替换当日数据）
+
+    Args:
+        holdings: list of dict, 每个 dict 包含:
+            fund_name, fund_code(可选), current_value, total_cost(可选),
+            total_profit(可选), profit_rate(可选), daily_pnl(可选), category(可选)
+        snapshot_date: 快照日期，默认今天
+    """
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            # 删除当日已有数据（整批替换）
+            if snapshot_date:
+                cur.execute("DELETE FROM ft_alipay_positions WHERE snapshot_date=%s", (snapshot_date,))
+            else:
+                cur.execute("DELETE FROM ft_alipay_positions WHERE snapshot_date=CURRENT_DATE")
+
+            for h in holdings:
+                cur.execute(
+                    """INSERT INTO ft_alipay_positions
+                       (fund_name, fund_code, current_value, total_cost, total_profit,
+                        profit_rate, daily_pnl, category, snapshot_date)
+                       VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)""",
+                    (h["fund_name"], h.get("fund_code"), h["current_value"],
+                     h.get("total_cost"), h.get("total_profit"),
+                     h.get("profit_rate"), h.get("daily_pnl"),
+                     h.get("category"), snapshot_date or datetime.now().strftime("%Y-%m-%d")),
+                )
+        conn.commit()
+    return len(holdings)
+
+
+def get_alipay_positions(snapshot_date=None):
+    """获取支付宝持仓（默认最新快照）"""
+    with get_conn() as conn:
+        with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+            if snapshot_date:
+                cur.execute(
+                    "SELECT * FROM ft_alipay_positions WHERE snapshot_date=%s ORDER BY current_value DESC",
+                    (snapshot_date,),
+                )
+            else:
+                # 获取最新快照日期
+                cur.execute("SELECT MAX(snapshot_date) FROM ft_alipay_positions")
+                row = cur.fetchone()
+                max_date = row["max"] if row else None
+                if not max_date:
+                    return []
+                cur.execute(
+                    "SELECT * FROM ft_alipay_positions WHERE snapshot_date=%s ORDER BY current_value DESC",
+                    (max_date,),
+                )
+            rows = cur.fetchall()
+            for r in rows:
+                for k, v in r.items():
+                    if isinstance(v, datetime):
+                        r[k] = v.isoformat()
+                    elif hasattr(v, "days"):
+                        r[k] = str(v)
+            return rows
+
+
+def get_alipay_history(fund_name, days=30):
+    """获取某只支付宝基金的历史持仓变化"""
+    with get_conn() as conn:
+        with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+            cur.execute(
+                """SELECT snapshot_date, current_value, total_profit, profit_rate, daily_pnl
+                   FROM ft_alipay_positions
+                   WHERE fund_name=%s AND snapshot_date >= CURRENT_DATE - %s
+                   ORDER BY snapshot_date""",
+                (fund_name, days),
+            )
+            rows = cur.fetchall()
+            for r in rows:
+                for k, v in r.items():
+                    if isinstance(v, datetime):
+                        r[k] = v.isoformat()
+                    elif hasattr(v, "days"):
+                        r[k] = str(v)
+            return rows
+
+
+def get_alipay_snapshot_dates(limit=10):
+    """获取所有快照日期"""
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT DISTINCT snapshot_date FROM ft_alipay_positions ORDER BY snapshot_date DESC LIMIT %s",
+                (limit,),
+            )
+            return [r[0].isoformat() if hasattr(r[0], 'isoformat') else str(r[0]) for r in cur.fetchall()]
+
+
+def save_alipay_decision(fund_name, fund_code, action, amount=None, sell_pct=None,
+                         reason=None, confidence=None, market_view=None):
+    """保存支付宝基金操作建议记录"""
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """INSERT INTO ft_alipay_decisions
+                   (fund_name, fund_code, action, amount, sell_pct, reason, confidence, market_view)
+                   VALUES (%s, %s, %s, %s, %s, %s, %s, %s) RETURNING id""",
+                (fund_name, fund_code, action, amount, sell_pct, reason, confidence, market_view),
+            )
+            decision_id = cur.fetchone()[0]
+        conn.commit()
+    return decision_id
+
+
+def get_alipay_recent_decisions(days=7):
+    """获取最近的支付宝操作建议"""
+    with get_conn() as conn:
+        with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+            cur.execute(
+                """SELECT * FROM ft_alipay_decisions
+                   WHERE decision_date >= CURRENT_DATE - %s
+                   ORDER BY decision_date DESC, created_at DESC""",
+                (days,),
+            )
+            rows = cur.fetchall()
+            for r in rows:
+                for k, v in r.items():
+                    if isinstance(v, datetime):
+                        r[k] = v.isoformat()
+            return rows
+
+
+# ==================== 支付宝基金代码映射 ====================
+
+def _load_config():
+    with open(CONFIG_PATH, "r", encoding="utf-8") as f:
+        return json.load(f)
+
+
+def _save_config(config):
+    with open(CONFIG_PATH, "w", encoding="utf-8") as f:
+        json.dump(config, f, ensure_ascii=False, indent=2)
+    # 尾部换行
+    with open(CONFIG_PATH, "a") as f:
+        f.write("\n")
+
+
+def load_alipay_fund_map():
+    config = _load_config()
+    return config.get("alipay_fund_map", {})
+
+
+def save_alipay_fund_map(fund_map):
+    config = _load_config()
+    config["alipay_fund_map"] = fund_map
+    _save_config(config)
+
+
+def alipay_map_add(name, code):
+    fund_map = load_alipay_fund_map()
+    fund_map[name] = code
+    save_alipay_fund_map(fund_map)
+    return {"ok": True, "name": name, "code": code, "total": len(fund_map)}
+
+
+def alipay_map_batch(batch_dict):
+    fund_map = load_alipay_fund_map()
+    fund_map.update(batch_dict)
+    save_alipay_fund_map(fund_map)
+    return {"ok": True, "added": len(batch_dict), "total": len(fund_map)}
+
+
+def alipay_resolve(names):
+    """批量解析基金名称为代码"""
+    fund_map = load_alipay_fund_map()
+    resolved = {}
+    unresolved = []
+    for name in names:
+        code = fund_map.get(name)
+        if not code:
+            name_clean = name.replace(" ", "").replace("（", "(").replace("）", ")")
+            for map_name, map_code in fund_map.items():
+                map_clean = map_name.replace(" ", "").replace("（", "(").replace("）", ")")
+                if name_clean == map_clean or name_clean in map_clean or map_clean in name_clean:
+                    code = map_code
+                    break
+        if code:
+            resolved[name] = code
+        else:
+            unresolved.append(name)
+    return {
+        "resolved": resolved,
+        "unresolved": unresolved,
+        "resolved_count": len(resolved),
+        "unresolved_count": len(unresolved),
+    }
+
+
+# ==================== 待执行决策（延迟交易） ====================
+
+def save_pending_decision(fund_code, fund_name, action, reason, confidence,
+                          market_view, market_phase=None, amount=None, sell_pct=None, risk_notes=None):
+    """保存待执行的决策（交易截止后的决策，等待次日执行）"""
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            # 检查是否已存在同一基金的 pending 决策，如果有则更新
+            cur.execute(
+                "SELECT id FROM ft_pending_decisions WHERE fund_code=%s AND status='pending'",
+                (fund_code,),
+            )
+            existing = cur.fetchone()
+            if existing:
+                cur.execute(
+                    """UPDATE ft_pending_decisions SET
+                       action=%s, amount=%s, sell_pct=%s, reason=%s, confidence=%s,
+                       market_view=%s, market_phase=%s, risk_notes=%s, decision_date=CURRENT_DATE, created_at=NOW()
+                       WHERE id=%s""",
+                    (action, amount, sell_pct, reason, confidence, market_view, market_phase, risk_notes, existing[0]),
+                )
+                decision_id = existing[0]
+            else:
+                cur.execute(
+                    """INSERT INTO ft_pending_decisions
+                       (fund_code, fund_name, action, amount, sell_pct, reason, confidence, market_view, market_phase, risk_notes)
+                       VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s) RETURNING id""",
+                    (fund_code, fund_name, action, amount, sell_pct, reason, confidence, market_view, market_phase, risk_notes),
+                )
+                decision_id = cur.fetchone()[0]
+        conn.commit()
+    return decision_id
+
+
+def get_pending_decisions():
+    """获取所有待执行的决策"""
+    with get_conn() as conn:
+        with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+            cur.execute(
+                """SELECT * FROM ft_pending_decisions WHERE status='pending' ORDER BY decision_date, created_at"""
+            )
+            rows = cur.fetchall()
+            for r in rows:
+                for k, v in r.items():
+                    if isinstance(v, datetime):
+                        r[k] = v.isoformat()
+            return rows
+
+
+def execute_pending_decision(pending_id):
+    """标记待执行决策为已执行"""
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                "UPDATE ft_pending_decisions SET status='executed', executed_at=NOW() WHERE id=%s",
+                (pending_id,),
+            )
+        conn.commit()
+
+
+def cancel_pending_decision(pending_id, cancel_reason=None):
+    """撤销待执行决策"""
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                "UPDATE ft_pending_decisions SET status='cancelled', cancelled_at=NOW(), cancel_reason=%s WHERE id=%s",
+                (cancel_reason, pending_id),
+            )
+        conn.commit()
+
+
+def cancel_all_pending_for_fund(fund_code, cancel_reason=None):
+    """撤销某基金的所有待执行决策"""
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                "UPDATE ft_pending_decisions SET status='cancelled', cancelled_at=NOW(), cancel_reason=%s WHERE fund_code=%s AND status='pending'",
+                (cancel_reason, fund_code),
+            )
+            count = cur.rowcount
+        conn.commit()
+    return count
+
+
+def get_pending_decisions_summary():
+    """获取待执行决策汇总（按基金分组）"""
+    pending = get_pending_decisions()
+    if not pending:
+        return {"count": 0, "total_buy_amount": 0, "decisions": []}
+    total_buy = sum(float(d.get("amount") or 0) for d in pending if d.get("action") == "buy")
+    return {
+        "count": len(pending),
+        "total_buy_amount": total_buy,
+        "decisions": pending,
+    }
 
 
 # ==================== 运行日志 ====================
@@ -819,6 +1171,14 @@ if __name__ == "__main__":
         print("  pending-reviews   - 获取待复盘记录 [可选: 回溯天数, 默认3]")
         print("  review-stats      - 复盘统计 [可选: 天数, 默认30]")
         print("  lessons           - 查看经验知识库 [可选: 类别]")
+        print("  alipay-save       - 保存支付宝持仓快照 (stdin JSON)")
+        print("  alipay-positions  - 查看支付宝持仓 [可选: 日期]")
+        print("  alipay-history    - 查看某基金历史 <基金名> [天数]")
+        print("  alipay-dates      - 查看所有快照日期")
+        print("  alipay-decisions  - 查看支付宝操作建议 [可选: 天数]")
+        print("  alipay-map        - 添加基金名称→代码映射 <名称> <代码> 或 --batch '<JSON>'")
+        print("  alipay-list-map   - 查看所有名称→代码映射")
+        print("  alipay-resolve    - 批量解析基金名称 '<JSON数组>'")
         sys.exit(1)
 
     cmd = sys.argv[1]
@@ -835,15 +1195,89 @@ if __name__ == "__main__":
     elif cmd == "pending-reviews":
         days = int(sys.argv[2]) if len(sys.argv) >= 3 else 3
         reviews = get_pending_reviews(days)
-        print(json.dumps(reviews, ensure_ascii=False, default=str, indent=2))
+        print(json.dumps(reviews, ensure_ascii=False, default=str, separators=(",",":")))
     elif cmd == "review-stats":
         days = int(sys.argv[2]) if len(sys.argv) >= 3 else 30
         stats = get_review_stats(days)
-        print(json.dumps(stats, ensure_ascii=False, indent=2))
+        print(json.dumps(stats, ensure_ascii=False, separators=(",",":")))
     elif cmd == "lessons":
         category = sys.argv[2] if len(sys.argv) >= 3 else None
         lessons = get_lessons(category=category)
-        print(json.dumps(lessons, ensure_ascii=False, default=str, indent=2))
+        print(json.dumps(lessons, ensure_ascii=False, default=str, separators=(",",":")))
+    elif cmd == "alipay-save":
+        data = json.loads(sys.stdin.read())
+        holdings = data if isinstance(data, list) else data.get("holdings", [])
+        snapshot_date = data.get("snapshot_date") if isinstance(data, dict) else None
+        count = save_alipay_snapshot(holdings, snapshot_date)
+        print(json.dumps({"saved": count, "message": f"保存 {count} 条支付宝持仓记录"}, ensure_ascii=False))
+    elif cmd == "alipay-positions":
+        date_arg = sys.argv[2] if len(sys.argv) >= 3 else None
+        positions = get_alipay_positions(date_arg)
+        print(json.dumps(positions, ensure_ascii=False, default=str, separators=(",",":")))
+    elif cmd == "alipay-history":
+        if len(sys.argv) < 3:
+            print("用法: fund_db.py alipay-history <基金名称> [天数]")
+            sys.exit(1)
+        fund_name = sys.argv[2]
+        days = int(sys.argv[3]) if len(sys.argv) >= 4 else 30
+        history = get_alipay_history(fund_name, days)
+        print(json.dumps(history, ensure_ascii=False, default=str, separators=(",",":")))
+    elif cmd == "alipay-dates":
+        dates = get_alipay_snapshot_dates()
+        print(json.dumps(dates, ensure_ascii=False))
+    elif cmd == "alipay-decisions":
+        days = int(sys.argv[2]) if len(sys.argv) >= 3 else 7
+        decisions = get_alipay_recent_decisions(days)
+        print(json.dumps(decisions, ensure_ascii=False, default=str, separators=(",",":")))
+    elif cmd == "alipay-map":
+        if len(sys.argv) < 3:
+            print("用法: fund_db.py alipay-map <基金名称> <基金代码>")
+            print("      fund_db.py alipay-map --batch '<JSON>'")
+            sys.exit(1)
+        if sys.argv[2] == "--batch":
+            batch = json.loads(sys.argv[3])
+            result = alipay_map_batch(batch)
+        else:
+            result = alipay_map_add(sys.argv[2], sys.argv[3])
+        print(json.dumps(result, ensure_ascii=False))
+    elif cmd == "alipay-list-map":
+        fund_map = load_alipay_fund_map()
+        print(json.dumps(fund_map, ensure_ascii=False, indent=2) if fund_map else '{"message": "映射为空"}')
+    elif cmd == "alipay-resolve":
+        if len(sys.argv) < 3:
+            print('用法: fund_db.py alipay-resolve \'["名称1", "名称2", ...]\'')
+            sys.exit(1)
+        names = json.loads(sys.argv[2])
+        result = alipay_resolve(names)
+        print(json.dumps(result, ensure_ascii=False, indent=2))
+    elif cmd == "pending":
+        # 获取待执行决策
+        summary = get_pending_decisions_summary()
+        print(json.dumps(summary, ensure_ascii=False, default=str, separators=(",",":")))
+    elif cmd == "pending-cancel":
+        # 撤销待执行决策
+        if len(sys.argv) < 3:
+            print("用法: fund_db.py pending-cancel <pending_id> [撤销原因]")
+            print("      fund_db.py pending-cancel --fund <基金代码> [撤销原因]")
+            sys.exit(1)
+        if sys.argv[2] == "--fund":
+            fund_code = sys.argv[3]
+            reason = sys.argv[4] if len(sys.argv) >= 5 else None
+            count = cancel_all_pending_for_fund(fund_code, reason)
+            print(json.dumps({"cancelled": count, "fund_code": fund_code}, ensure_ascii=False))
+        else:
+            pending_id = int(sys.argv[2])
+            reason = sys.argv[3] if len(sys.argv) >= 4 else None
+            cancel_pending_decision(pending_id, reason)
+            print(json.dumps({"cancelled": pending_id, "reason": reason}, ensure_ascii=False))
+    elif cmd == "pending-execute":
+        # 标记为已执行
+        if len(sys.argv) < 3:
+            print("用法: fund_db.py pending-execute <pending_id>")
+            sys.exit(1)
+        pending_id = int(sys.argv[2])
+        execute_pending_decision(pending_id)
+        print(json.dumps({"executed": pending_id}, ensure_ascii=False))
     else:
         print(f"未知命令: {cmd}")
         sys.exit(1)

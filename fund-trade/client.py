@@ -76,6 +76,13 @@
   currency       货币风向（美元/离岸人民币汇率走势 / Shibor利率+LPR变化，--currency-tab 选维度）
   news_feed      滚动快讯（财经要闻实时滚动，每页20条，支持翻页）
 
+  === 个股查询（股票代码作为 code 参数） ===
+  stock_quote    个股实时行情（支持批量，逗号分隔，腾讯数据源）
+  stock_kline    个股K线数据（日K/周K/月K，前复权，--stock-period 选周期）
+  stock_flow     个股资金流向（主力/超大单/大单/中单/小单，--stock-days 选天数）
+  stock_valuation 个股估值历史（PE_TTM/PB历史数据，--years 选年数）
+  stock_financial 个股财务数据（EPS/营收/净利/ROE/毛利率/分红方案）
+
 选项:
   --count N      显示条数，默认 10（适用于 stability/nav/announcements/news）
   --period P     净值走势周期: year/month/nowyear（适用于 nav）
@@ -101,7 +108,9 @@
   --cf-days N    资金流向回溯天数，默认 20（适用于 capital_flow）
   --currency-tab 货币风向: usdcny=美元/离岸人民币/shibor=Shibor利率+LPR（适用于 currency）
   --currency-days 货币风向回溯天数，默认 120（适用于 currency）
-  --sort-type S  排行排序字段: year/hyear/tmonth/month/week/sharpeYear/maxDrawDownYear（适用于 ranking/screen）
+  --stock-period P K线周期: day=日K/week=周K/month=月K（适用于 stock_kline）
+  --stock-days N 个股资金流回溯天数，默认 20（适用于 stock_flow）
+  --sort-type S  排行排序字段（支持别名）: year(1y/rise1y)/hyear(6m)/tmonth(3m)/month(1m)/week(1w)/sharpeYear(sharpe)/maxDrawDownYear(dd)（适用于 ranking/screen）
   --ranking-sort 排行排序方向: DESC=降序/ASC=升序（适用于 ranking）
   --board NAME   排行榜名称: 涨幅榜/反弹榜/人气榜/加仓榜/超额榜（适用于 ranking）
   --strategy KEY 筛选策略 key: fund0001=年年正收益/fund0002=三年翻倍等（适用于 screen）
@@ -204,6 +213,19 @@
   python client.py screen --strategy fund0002                    # 三年翻倍
   python client.py screen --strategy fund0011                    # 机构偏爱
   python client.py companies                                     # 基金公司列表
+
+  # 个股查询（股票代码作为 code 参数）
+  python client.py stock_quote 600519                               # 贵州茅台实时行情
+  python client.py stock_quote 600519,000001,002594                  # 批量查询行情
+  python client.py stock_kline 600519                                # 贵州茅台日K线（近60条）
+  python client.py stock_kline 600519 --stock-period week --count 20 # 周K线近20条
+  python client.py stock_kline 600519 --stock-period month           # 月K线
+  python client.py stock_flow 600519                                 # 贵州茅台资金流向（近20日）
+  python client.py stock_flow 600519 --stock-days 60                 # 近60日资金流向
+  python client.py stock_valuation 600519                            # 估值历史（近3年PE/PB）
+  python client.py stock_valuation 600519 --years 5 --count 50       # 近5年估值，显示50条
+  python client.py stock_financial 600519                            # 财务数据（近10期）
+  python client.py stock_financial 600519 --count 20                 # 近20期财务数据
 
 当前已覆盖的决策维度（10 大类 35+ 指标）
   维度: 基本面
@@ -2040,6 +2062,203 @@ def cmd_fund_flow(args):
             print(f"  ● {s}")
 
 
+def cmd_stock_quote(args):
+    """个股实时行情"""
+    codes = args.code or ""
+    code_list = [c.strip() for c in codes.split(",") if c.strip()]
+    if not code_list:
+        print("错误: 请提供股票代码，如: python client.py stock_quote 600519", file=sys.stderr)
+        sys.exit(1)
+    d = get(f"/api/stock/quote?codes={','.join(code_list)}")
+    stocks = d.get("data", {}).get("stocks", [])
+    if not stocks:
+        print("无行情数据")
+        return
+
+    print(f"个股实时行情  (共 {len(stocks)} 只)\n")
+    print(f"{'名称':<8}{'代码':<8}{'现价':>8}{'涨跌幅':>8}{'涨跌额':>8}{'成交额(亿)':>10}{'换手率':>7}{'PE':>8}{'PB':>7}{'总市值(亿)':>10}")
+    print("-" * 100)
+    for s in stocks:
+        price = s.get("price")
+        chg_r = s.get("changeRate", 0)
+        chg_a = s.get("changeAmt", 0)
+        turnover = (s.get("turnover") or 0) / 1e8
+        tr = s.get("turnoverRate", 0)
+        pe = s.get("pe")
+        pb = s.get("pb")
+        mcap = (s.get("marketCap") or 0) / 1e8
+        pe_s = f"{pe:.1f}" if pe else "-"
+        pb_s = f"{pb:.2f}" if pb else "-"
+        price_s = f"{price:.2f}" if price else "-"
+        print(f"{s.get('name', ''):<8}{s.get('code', ''):<8}{price_s:>8}{chg_r:>+7.2f}%{chg_a:>+8.2f}"
+              f"{turnover:>10.2f}{tr:>6.2f}%{pe_s:>8}{pb_s:>7}{mcap:>10.1f}")
+
+
+def cmd_stock_kline(args):
+    """个股K线"""
+    code = args.code
+    if not code:
+        print("错误: 请提供股票代码，如: python client.py stock_kline 600519", file=sys.stderr)
+        sys.exit(1)
+    period_map = {"day": "101", "week": "102", "month": "103"}
+    period = period_map.get(getattr(args, "stock_period", "day"), "101")
+    limit = getattr(args, "count", 60)
+    d = get(f"/api/stock/{code}/kline?period={period}&limit={limit}")
+    data = d.get("data", {})
+    if d.get("status_code") != 0:
+        print(f"获取失败: {d.get('msg', '未知错误')}")
+        return
+
+    name = data.get("name", "")
+    klines = data.get("klines", [])
+    period_name = data.get("period", "日K")
+    print(f"{name}({code}) {period_name}  (共 {len(klines)} 条)\n")
+    print(f"{'日期':<12}{'开盘':>8}{'收盘':>8}{'最高':>8}{'最低':>8}{'成交量(手)':>12}{'成交额(亿)':>10}")
+    print("-" * 80)
+    for k in klines:
+        vol = k.get("volume", 0)
+        amt = k.get("turnover", 0) / 1e8
+        print(f"{k['date']:<12}{k['open']:>8.2f}{k['close']:>8.2f}{k['high']:>8.2f}"
+              f"{k['low']:>8.2f}{vol:>12,}{amt:>10.2f}")
+
+
+def cmd_stock_flow(args):
+    """个股资金流向"""
+    code = args.code
+    if not code:
+        print("错误: 请提供股票代码，如: python client.py stock_flow 600519", file=sys.stderr)
+        sys.exit(1)
+    days = getattr(args, "stock_days", 20)
+    d = get(f"/api/stock/{code}/capital_flow?days={days}")
+    data = d.get("data", {})
+    if d.get("status_code") != 0:
+        print(f"获取失败: {d.get('msg', '未知错误')}")
+        return
+
+    def _yi(v):
+        return (v or 0) / 1e8
+
+    name = data.get("name", "")
+    items = data.get("items", [])
+    latest = data.get("latest", {})
+    sum5d = data.get("sum5d")
+    sum10d = data.get("sum10d")
+
+    print(f"{name}({code}) 资金流向\n")
+
+    if latest:
+        print(f"最新交易日: {latest.get('date', '')}  收盘: {latest.get('close', 0):.2f}  涨跌幅: {latest.get('changeRate', 0):+.2f}%\n")
+        print(f"  主力净流入:   {_yi(latest.get('mainNet')):>+10.2f} 亿  ({latest.get('mainPct', 0):+.2f}%)")
+        print(f"  超大单净流入: {_yi(latest.get('superNet')):>+10.2f} 亿  ({latest.get('superPct', 0):+.2f}%)")
+        print(f"  大单净流入:   {_yi(latest.get('bigNet')):>+10.2f} 亿  ({latest.get('bigPct', 0):+.2f}%)")
+        print(f"  中单净流入:   {_yi(latest.get('midNet')):>+10.2f} 亿  ({latest.get('midPct', 0):+.2f}%)")
+        print(f"  小单净流入:   {_yi(latest.get('smallNet')):>+10.2f} 亿  ({latest.get('smallPct', 0):+.2f}%)")
+
+    if sum5d is not None or sum10d is not None:
+        print(f"\n累计主力净流入:")
+        if sum5d is not None:
+            print(f"  近 5日: {_yi(sum5d):>+10.2f} 亿")
+        if sum10d is not None:
+            print(f"  近10日: {_yi(sum10d):>+10.2f} 亿")
+
+    if items:
+        print(f"\n{'日期':<12}{'收盘':>8}{'涨跌幅':>8}{'主力(亿)':>10}{'超大单(亿)':>10}{'大单(亿)':>10}{'中单(亿)':>10}{'小单(亿)':>10}")
+        print("-" * 90)
+        for s in items:
+            print(f"{s['date']:<12}{s['close']:>8.2f}{s['changeRate']:>+7.2f}%"
+                  f"{_yi(s['mainNet']):>+10.2f}{_yi(s['superNet']):>+10.2f}{_yi(s['bigNet']):>+10.2f}"
+                  f"{_yi(s['midNet']):>+10.2f}{_yi(s['smallNet']):>+10.2f}")
+
+
+def cmd_stock_valuation(args):
+    """个股估值历史"""
+    code = args.code
+    if not code:
+        print("错误: 请提供股票代码，如: python client.py stock_valuation 600519", file=sys.stderr)
+        sys.exit(1)
+    years = getattr(args, "years", 3)
+    count = getattr(args, "count", 30)
+    d = get(f"/api/stock/{code}/valuation?years={years}")
+    data = d.get("data", {})
+    items = data.get("items", [])
+    if not items:
+        print("无估值数据")
+        return
+
+    print(f"个股估值历史 {code}  (近{years}年，共 {len(items)} 条，显示最近{min(count, len(items))}条)\n")
+
+    # 计算百分位
+    pe_vals = [i["pe_ttm"] for i in items if i.get("pe_ttm") is not None]
+    pb_vals = [i["pb"] for i in items if i.get("pb") is not None]
+    if pe_vals:
+        current_pe = pe_vals[0]
+        pe_pct = sum(1 for v in pe_vals if v <= current_pe) / len(pe_vals) * 100
+        print(f"当前 PE_TTM: {current_pe:.2f}  百分位: {pe_pct:.1f}%  (近{years}年)")
+    if pb_vals:
+        current_pb = pb_vals[0]
+        pb_pct = sum(1 for v in pb_vals if v <= current_pb) / len(pb_vals) * 100
+        print(f"当前 PB:     {current_pb:.2f}  百分位: {pb_pct:.1f}%  (近{years}年)")
+    print()
+
+    print(f"{'日期':<12}{'PE_TTM':>10}{'PB':>10}{'总市值(亿)':>12}")
+    print("-" * 50)
+    for item in items[:count]:
+        pe = item.get("pe_ttm")
+        pb = item.get("pb")
+        mcap = item.get("market_cap")
+        pe_s = f"{pe:.2f}" if pe is not None else "-"
+        pb_s = f"{pb:.2f}" if pb is not None else "-"
+        mcap_s = f"{mcap / 1e8:.1f}" if mcap is not None else "-"
+        print(f"{item['date']:<12}{pe_s:>10}{pb_s:>10}{mcap_s:>12}")
+
+
+def cmd_stock_financial(args):
+    """个股财务数据"""
+    code = args.code
+    if not code:
+        print("错误: 请提供股票代码，如: python client.py stock_financial 600519", file=sys.stderr)
+        sys.exit(1)
+    count = getattr(args, "count", 10)
+    d = get(f"/api/stock/{code}/financial?limit={count}")
+    data = d.get("data", {})
+    if d.get("status_code") != 0:
+        print(f"获取失败: {d.get('msg', '未知错误')}")
+        return
+
+    name = data.get("name", "")
+    items = data.get("items", [])
+    print(f"{name}({code}) 财务数据  (共 {len(items)} 期)\n")
+
+    def _yi(v):
+        if v is None:
+            return "-"
+        return f"{v / 1e8:.2f}"
+
+    def _pct(v):
+        if v is None:
+            return "-"
+        return f"{v:+.2f}%"
+
+    def _val(v, fmt=".2f"):
+        if v is None:
+            return "-"
+        return f"{v:{fmt}}"
+
+    print(f"{'报告期':<12}{'EPS':>7}{'营收(亿)':>10}{'净利(亿)':>10}{'ROE':>8}{'毛利率':>8}{'营收同比':>10}{'净利同比':>10}{'分红方案':<20}")
+    print("-" * 105)
+    for item in items:
+        date = item.get("reportDate", "")[:10]
+        eps = _val(item.get("basicEps"))
+        rev = _yi(item.get("revenue"))
+        profit = _yi(item.get("netProfit"))
+        roe = _pct(item.get("roe"))
+        gm = _pct(item.get("grossMargin"))
+        rev_yoy = _pct(item.get("revenueYoy"))
+        profit_yoy = _pct(item.get("profitYoy"))
+        dividend = item.get("dividend") or "-"
+        print(f"{date:<12}{eps:>7}{rev:>10}{profit:>10}{roe:>8}{gm:>8}{rev_yoy:>10}{profit_yoy:>10}  {dividend}")
+
+
 def cmd_hotlist(args):
     """热榜数据"""
     market = getattr(args, "market", "a")
@@ -2655,8 +2874,24 @@ def cmd_flash_news(args):
 
 def cmd_ranking(args):
     """基金排行"""
+    # 排序字段别名映射（支持多种常见命名方式）
+    sort_type_aliases = {
+        "rise1y": "year", "riseYear": "year", "1y": "year",           # 近一年
+        "rise6m": "hyear", "riseHyear": "hyear", "6m": "hyear",       # 近半年
+        "rise3m": "tmonth", "riseTmonth": "tmonth", "3m": "tmonth",   # 近三月
+        "rise1m": "month", "riseMonth": "month", "1m": "month",       # 近一月
+        "rise1w": "week", "riseWeek": "week", "1w": "week",           # 近一周
+        "ytd": "nowyear", "riseYtd": "nowyear",                        # 今年以来
+        "rise3y": "tyear", "riseTyear": "tyear", "3y": "tyear",       # 近三年
+        "rise5y": "fyear", "riseFyear": "fyear", "5y": "fyear",       # 近五年
+        "sharpe": "sharpeYear", "sharpe1y": "sharpeYear",             # 夏普比率
+        "drawdown": "maxDrawDownYear", "dd": "maxDrawDownYear",       # 最大回撤
+    }
+    raw_sort_type = getattr(args, "sort_type", "year")
+    sort_type = sort_type_aliases.get(raw_sort_type, raw_sort_type)
+
     params = {
-        "sort_type": getattr(args, "sort_type", "year"),
+        "sort_type": sort_type,
         "sort": getattr(args, "ranking_sort", "DESC"),
         "limit": args.count,
         "offset": getattr(args, "offset", 0),
@@ -3258,6 +3493,14 @@ def cmd_set_password(args):
     print(f"交易密码已设置 (MD5: {password_md5})")
 
 
+def cmd_buy_limits(args):
+    """查询基金购买限制（最低/最高购买额）"""
+    import json as _json
+    fund_code = args.code
+    resp = get(f"/api/trade/buy_limits/{fund_code}")
+    print(_json.dumps(resp, ensure_ascii=False, indent=2))
+
+
 def cmd_buy(args):
     """买入基金"""
     fund_code = args.code
@@ -3402,13 +3645,13 @@ def cmd_orders(args):
     print("-" * 110)
 
     for i, o in enumerate(orders, 1):
-        fund_code = o.get("fundCode", "")
-        fund_name = o.get("fundName", "")
+        fund_code = o.get("fundCode") or ""
+        fund_name = o.get("fundName") or ""
         # 截断过长的基金名称
         if len(fund_name) > 14:
             fund_name = fund_name[:13] + "…"
-        total_fee = o.get("totalFee", "0")
-        op_type = o.get("opTypeSecondMsg") or o.get("opTypeOneMsg", "")
+        total_fee = o.get("totalFee") or "0"
+        op_type = o.get("opTypeSecondMsg") or o.get("opTypeOneMsg") or ""
         accept_time = o.get("acceptTime", "")
         end_flag = o.get("endFlag", "")
         process_status = o.get("processStatus", "")
@@ -3754,7 +3997,7 @@ def main():
 """,
     )
     # 热榜命令不需要基金代码，用 nargs="?" 让 code 可选
-    HOTLIST_CMDS = {"hotlist", "hotlist_topics", "hotlist_posts", "headlines", "news_feed", "news_themes", "theme_articles", "flash_news", "market_overview", "stock_rank", "sector_rank", "hot_board", "dragon_tiger", "ths_dragon_tiger", "capital_flow", "currency", "yesterday_limit", "stock_changes", "market_changes", "ranking", "screen", "companies", "account", "positions", "wallet", "autoinvest", "trade_binding", "trade_all", "buy", "sell", "order", "set_password", "orders", "cancel"}
+    HOTLIST_CMDS = {"hotlist", "hotlist_topics", "hotlist_posts", "headlines", "news_feed", "news_themes", "theme_articles", "flash_news", "market_overview", "stock_rank", "sector_rank", "hot_board", "dragon_tiger", "ths_dragon_tiger", "capital_flow", "currency", "yesterday_limit", "stock_changes", "market_changes", "ranking", "screen", "companies", "stock_quote", "stock_kline", "stock_flow", "stock_valuation", "stock_financial", "account", "positions", "wallet", "autoinvest", "trade_binding", "trade_all", "buy", "sell", "order", "set_password", "orders", "cancel"}
     ALL_CHOICES = ["all", "detail", "product", "rank", "year_return", "drawdown", "stability",
                    "hold_overview", "holdings", "valuation", "position", "profit", "style", "asset",
                    "nav", "realtime", "manager", "rsi",
@@ -3766,8 +4009,9 @@ def main():
                    "stock_rank", "sector_rank", "hot_board", "dragon_tiger", "ths_dragon_tiger",
                    "capital_flow", "currency", "yesterday_limit", "stock_changes", "market_changes",
                    "ranking", "screen", "companies",
+                   "stock_quote", "stock_kline", "stock_flow", "stock_valuation", "stock_financial",
                    "account", "positions", "wallet", "autoinvest", "trade_binding", "trade_all",
-                   "buy", "sell", "order", "set_password", "orders", "cancel"]
+                   "buy_limits", "buy", "sell", "order", "set_password", "orders", "cancel"]
 
     parser.add_argument("code", nargs="?", default=None, help="基金代码（热榜命令可省略）")
     parser.add_argument(
@@ -3824,6 +4068,10 @@ def main():
                         help="货币风向: usdcny=美元/离岸人民币, shibor=Shibor利率+LPR")
     parser.add_argument("--currency-days", type=int, default=120,
                         help="货币风向回溯天数 (默认 120)")
+    parser.add_argument("--stock-period", default="day", choices=["day", "week", "month"],
+                        help="K线周期: day=日K, week=周K, month=月K (适用于 stock_kline)")
+    parser.add_argument("--stock-days", type=int, default=20,
+                        help="个股资金流回溯天数 (默认 20，适用于 stock_flow)")
     parser.add_argument("--sort-type", default="year",
                         help="排行排序字段: year/hyear/tmonth/month/week/nowyear/tyear/fyear/sharpeYear/maxDrawDownYear (适用于 ranking/screen)")
     parser.add_argument("--ranking-sort", default="DESC", choices=["DESC", "ASC"],
@@ -3948,12 +4196,18 @@ def main():
         "ranking": cmd_ranking,
         "screen": cmd_screen,
         "companies": cmd_companies,
+        "stock_quote": cmd_stock_quote,
+        "stock_kline": cmd_stock_kline,
+        "stock_flow": cmd_stock_flow,
+        "stock_valuation": cmd_stock_valuation,
+        "stock_financial": cmd_stock_financial,
         "account": cmd_account,
         "positions": cmd_positions,
         "wallet": cmd_wallet,
         "autoinvest": cmd_autoinvest,
         "trade_binding": cmd_trade_binding,
         "trade_all": cmd_trade_all,
+        "buy_limits": cmd_buy_limits,
         "buy": cmd_buy,
         "sell": cmd_sell,
         "order": cmd_order,

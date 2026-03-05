@@ -26,6 +26,11 @@ class THSFundClient:
         "Cache-Control": "max-age=60",
     }
 
+    # 可重试的错误码（如 9100=系统繁忙）
+    RETRYABLE_STATUS_CODES = {9100, 9101, 9102, -1}
+    MAX_RETRIES = 3
+    BASE_DELAY = 1.0  # 基础延迟秒数
+
     def __init__(self, timeout: float = 10.0):
         self._client = httpx.AsyncClient(
             headers=self.DEFAULT_HEADERS,
@@ -36,15 +41,41 @@ class THSFundClient:
     async def close(self):
         await self._client.aclose()
 
+    async def _retry_on_busy(self, coro_func, *args, **kwargs) -> dict:
+        """指数退避重试：遇到系统繁忙等临时错误时自动重试"""
+        last_result = None
+        for attempt in range(self.MAX_RETRIES):
+            result = await coro_func(*args, **kwargs)
+            # 检查是否为可重试的错误
+            status_code = result.get("status_code") if isinstance(result, dict) else None
+            if status_code not in self.RETRYABLE_STATUS_CODES:
+                return result
+            last_result = result
+            # 指数退避：1s, 2s, 4s...
+            delay = self.BASE_DELAY * (2 ** attempt)
+            import sys
+            print(f"[THS API] 系统繁忙(code={status_code})，{delay:.1f}s 后重试({attempt+1}/{self.MAX_RETRIES})...", file=sys.stderr)
+            await asyncio.sleep(delay)
+        # 重试耗尽，返回最后一次结果
+        return last_result
+
     async def _get(self, url: str, params: Optional[dict] = None) -> dict:
         resp = await self._client.get(url, params=params)
         resp.raise_for_status()
         return resp.json()
 
+    async def _get_with_retry(self, url: str, params: Optional[dict] = None) -> dict:
+        """带重试的 GET 请求"""
+        return await self._retry_on_busy(self._get, url, params)
+
     async def _post(self, url: str, data: Optional[dict] = None, json: Optional[dict] = None) -> dict:
         resp = await self._client.post(url, data=data, json=json)
         resp.raise_for_status()
         return resp.json()
+
+    async def _post_with_retry(self, url: str, data: Optional[dict] = None, json: Optional[dict] = None) -> dict:
+        """带重试的 POST 请求"""
+        return await self._retry_on_busy(self._post, url, data, json)
 
     # ========== 基金详情 ==========
 
@@ -1268,7 +1299,7 @@ class THSFundClient:
             }],
         }
 
-        return await self._post(
+        return await self._post_with_retry(
             f"{self.BASE_URL}/quotation/common/v1/list/card/info",
             json=body,
         )
@@ -1436,7 +1467,8 @@ class THSFundClient:
         return resp.json()
 
     async def _proxy_request(self, path: str, method: str = "POST",
-                             body: str = None, content_type: str = None) -> dict:
+                             body: str = None, content_type: str = None,
+                             extra_headers: dict = None) -> dict:
         """通过 App 内代理转发请求（用于 /rz/ 路径的 API，需要 App 级认证）"""
         payload = {
             "url": f"{self.TRADE_BASE_URL}{path}",
@@ -1446,6 +1478,8 @@ class THSFundClient:
             payload["body"] = body
         if content_type:
             payload["content_type"] = content_type
+        if extra_headers:
+            payload["extra_headers"] = extra_headers
         resp = await self._client.post(
             self.TRADE_PROXY_URL,
             json=payload,
@@ -1495,6 +1529,43 @@ class THSFundClient:
     def trade_cust_id(self) -> str:
         return self.TRADE_AUTH["key3"]
 
+    async def get_buy_limits(self, fund_code: str) -> dict:
+        """获取基金购买限制（最低/最高购买额、是否可购买等）
+
+        fund_code: 基金代码
+        返回: {
+            "fund_code": "012922",
+            "fund_name": "易方达全球成长精选混合C",
+            "can_buy": True,
+            "min_buy": 1.0,
+            "max_buy": 50.0,  # None 表示无限制
+            "confirm_date": "2026-03-09",
+            "buy_status": "1",  # 1=可买 0=暂停
+        }
+        """
+        init_resp = await self._proxy_request(
+            "/rz/trade/dubbo/subscribe/init",
+            body=f"fundCode={fund_code}",
+            content_type="application/x-www-form-urlencoded",
+        )
+        init_data = init_resp.get("data", init_resp)
+        fund_info = init_data.get("paramOpenFundAccBean", {})
+
+        min_buy = float(init_data.get("minBuy", "1") or "1")
+        max_buy_str = init_data.get("maxBuy")
+        max_buy = float(max_buy_str) if max_buy_str else None
+        buy_status = init_data.get("buyStatus", "1")
+
+        return {
+            "fund_code": fund_code,
+            "fund_name": fund_info.get("fundName", ""),
+            "can_buy": buy_status == "1",
+            "min_buy": min_buy,
+            "max_buy": max_buy,
+            "confirm_date": fund_info.get("confirmDay", ""),
+            "buy_status": buy_status,
+        }
+
     async def buy_fund(self, fund_code: str, amount: float, use_wallet: bool = True,
                        password_md5: str = None) -> dict:
         """买入基金（完整6步流程）
@@ -1504,10 +1575,15 @@ class THSFundClient:
         use_wallet: 是否使用活期宝支付（默认True）
         password_md5: 交易密码MD5（优先级高于 TRADE_PASSWORD_MD5）
         返回: 订单信息（含 appSheetSerialNo）
+
+        注意: 如果 amount 超过单日限购(maxBuy)，会自动调整为限购金额并在返回中标记
         """
         pwd = password_md5 or self.TRADE_PASSWORD_MD5
         if not pwd:
             raise ValueError("未设置交易密码，请通过 --password 参数传入或先调用 set_password")
+
+        # Step 0: 刷新交易认证（Cookie 和 key5 可能已过期）
+        await self.refresh_auth_from_hook()
 
         money = f"{amount:.2f}"
         cust_id = self.trade_cust_id
@@ -1532,6 +1608,22 @@ class THSFundClient:
         fund_name = fund_info.get("fundName", "")
         bank_name = bank_card.get("bankName", "")
         fund_risk_level = str(init_data.get("fundRiskLevel", "4"))
+
+        # 检查购买限制（minBuy / maxBuy）
+        min_buy = float(init_data.get("minBuy", "1") or "1")
+        max_buy_str = init_data.get("maxBuy")
+        max_buy = float(max_buy_str) if max_buy_str else None
+        original_amount = amount
+        amount_adjusted = False
+
+        if amount < min_buy:
+            raise ValueError(f"买入金额 {amount} 低于最低起购额 {min_buy}")
+
+        if max_buy and amount > max_buy:
+            # 自动调整为限购金额，而不是失败
+            amount = max_buy
+            money = f"{amount:.2f}"
+            amount_adjusted = True
 
         # Step 2: 账户状态检查
         acct_resp = await self._proxy_request(
@@ -1619,7 +1711,7 @@ class THSFundClient:
         )
 
         buy_data = buy_resp.get("data", buy_resp)
-        return {
+        result = {
             "fund_code": fund_code,
             "fund_name": fund_name,
             "amount": money,
@@ -1628,8 +1720,16 @@ class THSFundClient:
             "confirm_date": buy_data.get("confirmDate", "") or fund_info.get("confirmDay", ""),
             "bank_name": bank_name,
             "charge": buy_data.get("charge", "0.00"),
+            "min_buy": min_buy,
+            "max_buy": max_buy,
             "raw_response": buy_resp,
         }
+        # 如果金额被调整，记录原始金额和调整原因
+        if amount_adjusted:
+            result["amount_adjusted"] = True
+            result["original_amount"] = f"{original_amount:.2f}"
+            result["adjust_reason"] = f"超过单日限购 {max_buy:.2f} 元，已自动调整"
+        return result
 
     async def sell_fund(self, fund_code: str, share_vol: str = None,
                         sell_all: bool = False, password_md5: str = None) -> dict:
@@ -1665,7 +1765,10 @@ class THSFundClient:
         if available_vol_float <= 0:
             raise ValueError(f"基金 {fund_code} 可用份额为 {available_vol_str}，不足以赎回")
 
-        transaction_account_id = target.get("transactionAccountId") or target.get("transActionAccountId") or ""
+        # 持仓数据中的字段名是 transAccIdList，不是 transactionAccountId
+        transaction_account_id = (target.get("transAccIdList") or
+                                   target.get("transactionAccountId") or
+                                   target.get("transActionAccountId") or "")
         fund_name = target.get("fundName") or ""
         share_type = target.get("shareType") or "0"
 
@@ -1683,8 +1786,21 @@ class THSFundClient:
         # 从 render 中补充信息
         if not transaction_account_id:
             transaction_account_id = render_data.get("transactionAccountId") or ""
+        fund_info = render_data.get("fundInfo", {})
         if not fund_name:
-            fund_name = render_data.get("fundName") or ""
+            fund_name = fund_info.get("fundName") or render_data.get("fundName") or ""
+        if not share_type:
+            share_type = fund_info.get("shareType") or "0"
+
+        # 获取 defenderToken（必需）
+        defender_token = render_data.get("defenderToken", {})
+        dt = defender_token.get("dt", "")
+        if not dt:
+            raise ValueError("未获取到 defenderToken，无法提交赎回")
+
+        # 获取钱包信息（用于超级转换到货币基金）
+        wallet_info = render_data.get("walletInfo", {})
+        can_redeem_to_wallet = fund_info.get("canRedeemToWallet", "0")
 
         # Step 3: 确定赎回份额
         if sell_all:
@@ -1700,29 +1816,54 @@ class THSFundClient:
         else:
             raise ValueError("请指定赎回份额 (--shares) 或使用全部赎回 (--all)")
 
-        # Step 4: 提交赎回
-        redeem_body = json.dumps({
-            "redemptionType": "0",
-            "shareType": share_type,
+        # Step 4: 构建赎回参数（form-urlencoded 格式）
+        redeem_params = {
             "fundCode": fund_code,
             "fundName": fund_name,
+            "shareType": share_type,
+            "shareVol": share_vol,
             "transActionAccountId": transaction_account_id,
             "tradePassword": pwd,
-            "shareVol": share_vol,
             "operator": "145",
             "largeRedemptionFlag": "0",
-        })
+        }
+
+        # 判断是否使用超级转换（赎回到货币基金）
+        if can_redeem_to_wallet == "1" and wallet_info:
+            # 超级转换模式：赎回到货币基金（更快到账）
+            redeem_params["redemptionType"] = "1"
+            redeem_params["targetFundCode"] = wallet_info.get("fundCode", "")
+            redeem_params["targetFundName"] = wallet_info.get("fundName", "")
+            redeem_params["targetTaCode"] = wallet_info.get("taCode", "")
+            redeem_params["targetShareType"] = wallet_info.get("shareType", "0")
+            redeem_params["targetFundType"] = wallet_info.get("fundType", "0")
+        else:
+            # 普通赎回模式
+            redeem_params["redemptionType"] = "0"
+
+        # 构建 form-urlencoded body
+        from urllib.parse import urlencode
+        redeem_body = urlencode(redeem_params)
+
+        # Step 5: 提交赎回（带 dt header）
         redeem_resp = await self._proxy_request(
             "/rz/trade/dubbo/redemption/v2/redeem",
             body=redeem_body,
-            content_type="application/json",
+            content_type="application/x-www-form-urlencoded",
+            extra_headers={"dt": dt},
         )
+
+        redeem_code = redeem_resp.get("code", "")
+        if redeem_code != "0000":
+            raise ValueError(f"赎回失败: {redeem_resp.get('message', redeem_code)}")
 
         return {
             "fund_code": fund_code,
             "fund_name": fund_name,
             "share_vol": share_vol,
             "available_vol": available_vol_str,
+            "redemption_type": "超级转换" if redeem_params["redemptionType"] == "1" else "普通赎回",
+            "app_sheet_serial_no": redeem_resp.get("data", {}).get("appSheetSerialNo", ""),
             "render_data": render_data,
             "redeem_result": redeem_resp,
         }
@@ -3005,7 +3146,7 @@ class THSFundClient:
 
     # ========== 资金流向 ==========
 
-    PUSH2HIS = "http://push2his.eastmoney.com"
+    PUSH2HIS = "https://push2his.eastmoney.com"
     EM_FFLOW_UT = "b2884a393a59ad64002292a3e90d46a5"
 
     async def get_capital_flow(self, tab: str = "market", days: int = 20) -> dict:
@@ -3220,8 +3361,6 @@ class THSFundClient:
 
     # ========== 热点板块 ==========
 
-    PUSH2_SUBDOMAINS = [2, 3, 12, 18, 42, 82]
-
     async def get_hot_board(self, board_type: str = "concept", sort: str = "rise", count: int = 10) -> dict:
         """热点板块排行（东方财富 push2 API）
 
@@ -3242,10 +3381,8 @@ class THSFundClient:
         fields = "f2,f3,f4,f8,f12,f14,f20,f62,f104,f105,f128,f140,f109"
 
         # 带重试的请求（push2 API 偶尔返回空）
-        import random
         for attempt in range(3):
-            subdomain = random.choice(self.PUSH2_SUBDOMAINS)
-            url = f"http://{subdomain}.push2.eastmoney.com/api/qt/clist/get"
+            url = f"{self.EASTMONEY_PUSH2}/api/qt/clist/get"
             try:
                 resp = await self._client.get(url, params={
                     "pn": 1, "pz": min(count, 30), "po": po, "np": 1,
@@ -3813,4 +3950,275 @@ class THSFundClient:
                     sections.append({"type": "说明", "content": clean})
         for sub in comp.get("components", []):
             self._extract_special_section(sub, sections)
+
+    # ========== 个股查询 ==========
+
+    @staticmethod
+    def _stock_secid(code: str) -> str:
+        """股票代码转东财 secid 格式: 6开头/9开头→1.{code}(沪), 其他→0.{code}(深)"""
+        code = code.strip()
+        if code.startswith(("6", "9")):
+            return f"1.{code}"
+        return f"0.{code}"
+
+    @staticmethod
+    def _stock_tencent(code: str) -> str:
+        """股票代码转腾讯行情格式: 6开头→sh{code}, 其他→sz{code}"""
+        code = code.strip()
+        if code.startswith(("6", "9")):
+            return f"sh{code}"
+        return f"sz{code}"
+
+    async def get_stock_quote(self, codes: list[str]) -> dict:
+        """从腾讯证券获取实时行情（支持批量，最多20只）
+
+        codes: 股票代码列表，如 ["600519", "000001"]
+        """
+        codes = codes[:20]
+        tencent_codes = ",".join(self._stock_tencent(c) for c in codes)
+        resp = await self._client.get(
+            f"https://web.sqt.gtimg.cn/q={tencent_codes}",
+            headers={"User-Agent": self.DEFAULT_HEADERS["User-Agent"]},
+            timeout=10,
+        )
+        resp.raise_for_status()
+        text = resp.content.decode("gbk", errors="replace")
+
+        stocks = []
+        for line in text.strip().split(";"):
+            line = line.strip()
+            if not line or "=" not in line:
+                continue
+            raw = line.split("=", 1)[1].strip('" \n')
+            parts = raw.split("~")
+            if len(parts) < 50:
+                continue
+            try:
+                stocks.append({
+                    "name": parts[1],
+                    "code": parts[2],
+                    "price": float(parts[3]) if parts[3] else None,
+                    "prevClose": float(parts[4]) if parts[4] else None,
+                    "open": float(parts[5]) if parts[5] else None,
+                    "high": float(parts[33]) if parts[33] else None,
+                    "low": float(parts[34]) if parts[34] else None,
+                    "volume": int(parts[36]) if parts[36] else 0,  # 手
+                    "turnover": float(parts[37]) * 10000 if parts[37] else 0,  # 万→元
+                    "changeAmt": float(parts[31]) if parts[31] else 0,
+                    "changeRate": float(parts[32]) if parts[32] else 0,
+                    "amplitude": float(parts[43]) if parts[43] else 0,
+                    "turnoverRate": float(parts[38]) if parts[38] else 0,
+                    "pe": float(parts[39]) if parts[39] else None,
+                    "pb": float(parts[46]) if parts[46] else None,
+                    "marketCap": float(parts[44]) * 1e8 if parts[44] else None,  # 亿→元
+                    "time": parts[30] if len(parts) > 30 else "",
+                })
+            except (ValueError, IndexError):
+                continue
+
+        return {"status_code": 0, "data": {"stocks": stocks, "total": len(stocks)}}
+
+    async def get_stock_kline(self, code: str, period: str = "101", limit: int = 60) -> dict:
+        """获取个股K线数据
+
+        code: 股票代码
+        period: 101=日K, 102=周K, 103=月K
+        limit: 返回条数
+        """
+        secid = self._stock_secid(code)
+        headers = {
+            "User-Agent": self.DEFAULT_HEADERS["User-Agent"],
+            "Referer": "https://quote.eastmoney.com/",
+        }
+        for attempt in range(3):
+            try:
+                resp = await self._client.get(
+                    "https://push2his.eastmoney.com/api/qt/stock/kline/get",
+                    params={
+                        "secid": secid,
+                        "fields1": "f1,f2,f3",
+                        "fields2": "f51,f52,f53,f54,f55,f56,f57",
+                        "klt": period,
+                        "fqt": "1",  # 前复权
+                        "end": "20500101",
+                        "lmt": str(min(limit, 500)),
+                    },
+                    headers=headers,
+                    timeout=15,
+                )
+                resp.raise_for_status()
+                data = resp.json()
+                break
+            except Exception:
+                if attempt < 2:
+                    await asyncio.sleep(1)
+                else:
+                    return {"status_code": -1, "msg": "获取K线失败"}
+
+        if data.get("rc") != 0 or not data.get("data"):
+            return {"status_code": -1, "msg": "无数据"}
+
+        raw = data["data"]
+        name = raw.get("name", "")
+        klines = []
+        for line in raw.get("klines", []):
+            parts = line.split(",")
+            if len(parts) < 7:
+                continue
+            klines.append({
+                "date": parts[0],
+                "open": float(parts[1]),
+                "close": float(parts[2]),
+                "high": float(parts[3]),
+                "low": float(parts[4]),
+                "volume": int(parts[5]),  # 手
+                "turnover": float(parts[6]),  # 元
+            })
+
+        period_name = {"101": "日K", "102": "周K", "103": "月K"}.get(period, "日K")
+        return {
+            "status_code": 0,
+            "data": {
+                "code": code,
+                "name": name,
+                "period": period_name,
+                "total": len(klines),
+                "klines": klines,
+            },
+        }
+
+    async def get_stock_capital_flow(self, code: str, days: int = 20) -> dict:
+        """获取个股资金流向（主力/超大单/大单/中单/小单）
+
+        code: 股票代码
+        days: 回溯天数
+        """
+        secid = self._stock_secid(code)
+        headers = {
+            "User-Agent": self.DEFAULT_HEADERS["User-Agent"],
+            "Referer": "http://data.eastmoney.com/zjlx/detail.html",
+        }
+        resp = await self._client.get(
+            f"{self.PUSH2HIS}/api/qt/stock/fflow/daykline/get",
+            params={
+                "secid": secid,
+                "klt": "101",
+                "lmt": "0",
+                "fields1": "f1,f2,f3,f7",
+                "fields2": "f51,f52,f53,f54,f55,f56,f57,f58,f59,f60,f61,f62,f63,f64,f65",
+                "ut": self.EM_FFLOW_UT,
+            },
+            headers=headers,
+            timeout=15,
+        )
+        resp.raise_for_status()
+        data = resp.json()
+        if data.get("rc") != 0 or not data.get("data"):
+            return {"status_code": -1, "msg": "无数据"}
+
+        name = data["data"].get("name", "")
+        items = []
+        for line in data["data"].get("klines", []):
+            parts = line.split(",")
+            if len(parts) < 13:
+                continue
+            items.append({
+                "date": parts[0],
+                "mainNet": float(parts[1]),
+                "smallNet": float(parts[2]),
+                "midNet": float(parts[3]),
+                "bigNet": float(parts[4]),
+                "superNet": float(parts[5]),
+                "mainPct": float(parts[6]),
+                "smallPct": float(parts[7]),
+                "midPct": float(parts[8]),
+                "bigPct": float(parts[9]),
+                "superPct": float(parts[10]),
+                "close": float(parts[11]),
+                "changeRate": float(parts[12]),
+            })
+
+        items = items[-days:] if days else items
+        latest = items[-1] if items else {}
+        main_5d = sum(i["mainNet"] for i in items[-5:]) if len(items) >= 5 else None
+        main_10d = sum(i["mainNet"] for i in items[-10:]) if len(items) >= 10 else None
+
+        return {
+            "status_code": 0,
+            "data": {
+                "code": code,
+                "name": name,
+                "latest": latest,
+                "sum5d": main_5d,
+                "sum10d": main_10d,
+                "total": len(items),
+                "items": items,
+            },
+        }
+
+    async def get_stock_financial(self, code: str, limit: int = 10) -> dict:
+        """获取个股财务数据（EPS/营收/净利/ROE等）
+
+        code: 纯数字股票代码
+        limit: 返回报告期数
+        """
+        headers = {
+            "User-Agent": self.DEFAULT_HEADERS["User-Agent"],
+            "Referer": "https://data.eastmoney.com/",
+        }
+        resp = await self._client.get(
+            "https://datacenter-web.eastmoney.com/api/data/v1/get",
+            params={
+                "reportName": "RPT_LICO_FN_CPD",
+                "columns": "SECURITY_CODE,SECURITY_NAME_ABBR,REPORTDATE,BASIC_EPS,"
+                           "DEDUCT_BASIC_EPS,TOTAL_OPERATE_INCOME,PARENT_NETPROFIT,"
+                           "WEIGHTAVG_ROE,YSTZ,SJLTZ,BPS,MGJYXJJE,XSMLL,YSHZ,SJLHZ,"
+                           "ASSIGNDSCRPT,QDATE",
+                "filter": f'(SECURITY_CODE="{code}")',
+                "pageNumber": "1",
+                "pageSize": str(min(limit, 50)),
+                "sortTypes": "-1",
+                "sortColumns": "REPORTDATE",
+            },
+            headers=headers,
+            timeout=15,
+        )
+        resp.raise_for_status()
+        body = resp.json()
+        result = body.get("result", {})
+        rows = result.get("data") or []
+        if not rows:
+            return {"status_code": -1, "msg": "无财务数据"}
+
+        name = rows[0].get("SECURITY_NAME_ABBR", "")
+        items = []
+        for row in rows:
+            report_date = (row.get("REPORTDATE") or "")[:10]
+            items.append({
+                "reportDate": report_date,
+                "quarter": row.get("QDATE", ""),
+                "basicEps": row.get("BASIC_EPS"),
+                "deductEps": row.get("DEDUCT_BASIC_EPS"),
+                "revenue": row.get("TOTAL_OPERATE_INCOME"),
+                "netProfit": row.get("PARENT_NETPROFIT"),
+                "roe": row.get("WEIGHTAVG_ROE"),
+                "revenueYoy": row.get("YSTZ"),      # 营收同比 %
+                "profitYoy": row.get("SJLTZ"),       # 净利同比 %
+                "bps": row.get("BPS"),               # 每股净资产
+                "cashPerShare": row.get("MGJYXJJE"), # 每股经营现金流
+                "grossMargin": row.get("XSMLL"),     # 销售毛利率 %
+                "revenueQoq": row.get("YSHZ"),       # 营收环比 %
+                "profitQoq": row.get("SJLHZ"),       # 净利环比 %
+                "dividend": row.get("ASSIGNDSCRPT"),  # 分红方案
+            })
+
+        return {
+            "status_code": 0,
+            "data": {
+                "code": code,
+                "name": name,
+                "total": len(items),
+                "items": items,
+            },
+        }
 

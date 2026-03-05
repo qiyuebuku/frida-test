@@ -736,6 +736,13 @@ async def trade_auth_update(req: TradeAuthUpdate = Body(...)):
     return {"status": "ok", "message": "交易认证参数已更新"}
 
 
+@app.post("/api/trade/auth/refresh", summary="从 Hook 刷新 token", tags=["交易账户"])
+async def trade_auth_refresh():
+    """主动从 Hook 代理拉取最新交易 token（需要手机端 App 正在运行）"""
+    ok = await client.refresh_auth_from_hook()
+    return {"refreshed": ok}
+
+
 # ==================== 基金交易 ====================
 
 
@@ -746,9 +753,22 @@ async def trade_password_update(req: TradePasswordUpdate):
     return {"status": "ok", "message": "交易密码已设置"}
 
 
+@app.get("/api/trade/buy_limits/{fund_code}", summary="获取购买限制", tags=["基金交易"])
+async def trade_buy_limits(fund_code: str):
+    """获取基金购买限制（最低/最高购买额、是否可购买等）
+
+    用于买入前检查限购情况，避免超额买入失败。
+    返回: {"fund_code", "fund_name", "can_buy", "min_buy", "max_buy", "confirm_date"}
+    """
+    return await safe_call(client.get_buy_limits(fund_code))
+
+
 @app.post("/api/trade/buy", summary="买入基金", tags=["基金交易"])
 async def trade_buy(req: BuyFundRequest):
-    """买入基金（完整流程：初始化→检查→下单）"""
+    """买入基金（完整流程：初始化→检查→下单）
+
+    注意: 如果 amount 超过单日限购(maxBuy)，会自动调整为限购金额并在返回中标记 amount_adjusted=True
+    """
     import hashlib
     password_md5 = None
     if req.password:
@@ -819,6 +839,59 @@ async def trade_cancel(req: CancelOrderRequest):
         else:
             password_md5 = hashlib.md5(raw.encode()).hexdigest().upper()
     return await safe_call(client.cancel_order(req.order_no, password_md5))
+
+
+# ==================== 个股查询 ====================
+
+@app.get("/api/stock/quote", summary="个股实时行情", tags=["个股查询"])
+async def stock_quote(
+    codes: str = Query(..., description="股票代码，逗号分隔，如 600519,000001"),
+):
+    """获取个股实时行情（腾讯证券数据源，支持批量最多20只）"""
+    code_list = [c.strip() for c in codes.split(",") if c.strip()]
+    if not code_list:
+        raise HTTPException(400, "codes 不能为空")
+    return await safe_call(client.get_stock_quote(code_list))
+
+
+@app.get("/api/stock/{code}/kline", summary="个股K线", tags=["个股查询"])
+async def stock_kline(
+    code: str,
+    period: str = Query("101", description="周期: 101=日K, 102=周K, 103=月K"),
+    limit: int = Query(60, description="返回条数"),
+):
+    """获取个股K线数据（前复权）"""
+    if period not in {"101", "102", "103"}:
+        raise HTTPException(400, "period 必须是 101/102/103")
+    return await safe_call(client.get_stock_kline(code, period, min(limit, 500)))
+
+
+@app.get("/api/stock/{code}/capital_flow", summary="个股资金流", tags=["个股查询"])
+async def stock_capital_flow(
+    code: str,
+    days: int = Query(20, description="回溯天数"),
+):
+    """获取个股资金流向（主力/超大单/大单/中单/小单）"""
+    return await safe_call(client.get_stock_capital_flow(code, min(days, 120)))
+
+
+@app.get("/api/stock/{code}/valuation", summary="个股估值历史", tags=["个股查询"])
+async def stock_valuation(
+    code: str,
+    years: int = Query(3, description="回溯年数"),
+):
+    """获取个股 PE_TTM/PB 历史数据"""
+    data = await safe_call(client.get_stock_valuation_history(code, min(years, 10)))
+    return {"status_code": 0, "data": {"code": code, "total": len(data), "items": data}}
+
+
+@app.get("/api/stock/{code}/financial", summary="个股财务数据", tags=["个股查询"])
+async def stock_financial(
+    code: str,
+    limit: int = Query(10, description="返回报告期数"),
+):
+    """获取个股财务数据（EPS/营收/净利/ROE/毛利率等）"""
+    return await safe_call(client.get_stock_financial(code, min(limit, 50)))
 
 
 if __name__ == "__main__":
