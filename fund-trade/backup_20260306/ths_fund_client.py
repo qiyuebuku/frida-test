@@ -1466,20 +1466,76 @@ class THSFundClient:
         resp.raise_for_status()
         return resp.json()
 
+    async def _call_jsbridge(self, data: dict, timeout: int = 35) -> dict:
+        """通过 JSBridge 调用 API（用于基金交易等必须在 WebView 环境中的操作）
+
+        Args:
+            data: JSBridge请求数据，通常包含:
+                - method: HTTP方法 (GET/POST)
+                - url: 目标URL
+                - params: 请求参数
+                - needToken: 是否需要自动注入token
+                - requestType: 请求类型 (如 "guomiSSL")
+                - Header: 额外的请求头
+            timeout: 超时时间（秒）
+
+        Returns:
+            API 响应数据
+        """
+        request_data = {
+            "handler": "clientRequestHX",
+            "data": data
+        }
+
+        try:
+            response = await self._client.post(
+                f"{self.HOOK_PROXY_URL}/jsbridge",
+                json=request_data,
+                timeout=timeout
+            )
+            response.raise_for_status()
+
+            # 解析响应
+            result = response.json()
+            if isinstance(result, str):
+                import json
+                result = json.loads(result)
+
+            if not result.get("success"):
+                raise Exception(f"JSBridge调用失败: {result.get('error')}")
+
+            return result.get("data", {})
+
+        except Exception as e:
+            raise Exception(f"JSBridge请求失败: {e}")
+
     async def _proxy_request(self, path: str, method: str = "POST",
                              body: str = None, content_type: str = None,
                              extra_headers: dict = None) -> dict:
         """通过 App 内代理转发请求（用于 /rz/ 路径的 API，需要 App 级认证）"""
+        # 构建认证headers（key1-key5, userId, sessionId）
+        auth_headers = {
+            "key1": self.TRADE_AUTH["key1"],
+            "key2": self.TRADE_AUTH["key2"],
+            "key3": self.TRADE_AUTH["key3"],
+            "key4": self.TRADE_AUTH["key4"],
+            "key5": self.TRADE_AUTH["key5"],
+            "userId": self.TRADE_AUTH["userId"],
+            "sessionId": self.TRADE_AUTH["sessionId"],
+        }
+        # 合并用户自定义headers
+        if extra_headers:
+            auth_headers.update(extra_headers)
+
         payload = {
             "url": f"{self.TRADE_BASE_URL}{path}",
             "method": method,
+            "extra_headers": auth_headers,  # 总是传递认证headers
         }
         if body is not None:
             payload["body"] = body
         if content_type:
             payload["content_type"] = content_type
-        if extra_headers:
-            payload["extra_headers"] = extra_headers
         resp = await self._client.post(
             self.TRADE_PROXY_URL,
             json=payload,
@@ -1513,7 +1569,20 @@ class THSFundClient:
             resp = await self._client.get(f"{self.HOOK_PROXY_URL}/auth", timeout=3.0)
             data = resp.json()
             if data.get("available") and data.get("key5"):
+                # 更新所有认证参数
+                if data.get("key1"):
+                    self.TRADE_AUTH["key1"] = data["key1"]
+                if data.get("key2"):
+                    self.TRADE_AUTH["key2"] = data["key2"]
+                if data.get("key3"):
+                    self.TRADE_AUTH["key3"] = data["key3"]
+                if data.get("key4"):
+                    self.TRADE_AUTH["key4"] = data["key4"]
                 self.TRADE_AUTH["key5"] = data["key5"]
+                if data.get("userId"):
+                    self.TRADE_AUTH["userId"] = data["userId"]
+                if data.get("sessionId"):
+                    self.TRADE_AUTH["sessionId"] = data["sessionId"]
                 if data.get("cookie"):
                     self.TRADE_COOKIE = data["cookie"]
                 return True
@@ -1568,7 +1637,7 @@ class THSFundClient:
 
     async def buy_fund(self, fund_code: str, amount: float, use_wallet: bool = True,
                        password_md5: str = None) -> dict:
-        """买入基金（完整6步流程）
+        """买入基金（完整6步流程 - 使用JSBridge）
 
         fund_code: 基金代码
         amount: 买入金额（元）
@@ -1578,6 +1647,7 @@ class THSFundClient:
 
         注意: 如果 amount 超过单日限购(maxBuy)，会自动调整为限购金额并在返回中标记
         """
+        import json as json_module
         pwd = password_md5 or self.TRADE_PASSWORD_MD5
         if not pwd:
             raise ValueError("未设置交易密码，请通过 --password 参数传入或先调用 set_password")
@@ -1588,30 +1658,40 @@ class THSFundClient:
         money = f"{amount:.2f}"
         cust_id = self.trade_cust_id
 
-        # Step 1: 买入初始化 — 获取 transActionAccountId、费率、基金信息
-        init_resp = await self._proxy_request(
-            "/rz/trade/dubbo/subscribe/init",
-            body=f"fundCode={fund_code}",
-            content_type="application/x-www-form-urlencoded",
-        )
-        init_data = init_resp.get("data", init_resp)
-        # transActionAccountId 在 bankCardSplitListResult[0] 中
-        bank_cards = init_data.get("bankCardSplitListResult", [])
+        # Step 1: 买入初始化 — 获取费率、基金信息、transactionAccountId
+        init_data = {
+            "method": "POST",
+            "url": "https://trade.5ifund.com/rz/trade/dubbo/subscribe/init",
+            "params": {"fundCode": fund_code},
+            "Header": {
+                "Accept": "application/json, text/plain, */*",
+                "Content-Type": "application/x-www-form-urlencoded",
+                "custId": cust_id,
+                "source": "SDK"
+            },
+            "needToken": True,
+            "K5type": "none",
+            "requestType": "guomiSSL"
+        }
+        init_resp = await self._call_jsbridge(init_data)
+
+        # 提取transActionAccountId
+        bank_cards = init_resp.get("result", {}).get("data", {}).get("bankCardSplitListResult", [])
         if not bank_cards:
             raise ValueError(f"买入初始化失败，未获取到银行卡信息: {init_resp}")
-        bank_card = bank_cards[0]
-        transaction_account_id = bank_card.get("transActionAccountId", "")
+
+        transaction_account_id = bank_cards[0].get("transActionAccountId", "")
         if not transaction_account_id:
-            raise ValueError(f"买入初始化失败，未获取到 transActionAccountId: {init_resp}")
+            raise ValueError(f"未获取到transActionAccountId")
 
-        fund_info = init_data.get("paramOpenFundAccBean", {})
+        fund_info = init_resp.get("result", {}).get("data", {}).get("paramOpenFundAccBean", {})
         fund_name = fund_info.get("fundName", "")
-        bank_name = bank_card.get("bankName", "")
-        fund_risk_level = str(init_data.get("fundRiskLevel", "4"))
+        fund_risk_level = str(init_resp.get("result", {}).get("data", {}).get("fundRiskLevel", "4"))
 
-        # 检查购买限制（minBuy / maxBuy）
-        min_buy = float(init_data.get("minBuy", "1") or "1")
-        max_buy_str = init_data.get("maxBuy")
+        # 检查购买限制
+        init_data_obj = init_resp.get("result", {}).get("data", {})
+        min_buy = float(init_data_obj.get("minBuy", "1") or "1")
+        max_buy_str = init_data_obj.get("maxBuy")
         max_buy = float(max_buy_str) if max_buy_str else None
         original_amount = amount
         amount_adjusted = False
@@ -1620,49 +1700,74 @@ class THSFundClient:
             raise ValueError(f"买入金额 {amount} 低于最低起购额 {min_buy}")
 
         if max_buy and amount > max_buy:
-            # 自动调整为限购金额，而不是失败
             amount = max_buy
             money = f"{amount:.2f}"
             amount_adjusted = True
 
         # Step 2: 账户状态检查
-        acct_resp = await self._proxy_request(
-            "/rz/account/dubbo/accountInfo/getCustAccoStatus",
-            body="version=VOCATIONCODE_22",
-            content_type="application/x-www-form-urlencoded",
-        )
-        user_risk_level = str(acct_resp.get("data", {}).get("riskLevel", "4"))
+        acct_data = {
+            "method": "POST",
+            "url": "https://trade.5ifund.com/rz/account/dubbo/accountInfo/getCustAccoStatus",
+            "params": {"version": "VOCATIONCODE_22"},
+            "Header": {
+                "Content-Type": "application/x-www-form-urlencoded",
+                "custId": cust_id
+            },
+            "needToken": True,
+            "K5type": "none",
+            "requestType": "guomiSSL"
+        }
+        acct_resp = await self._call_jsbridge(acct_data)
+        user_risk_level = str(acct_resp.get("result", {}).get("data", {}).get("riskLevel", "4"))
 
         # Step 3: 交易前签约检查
-        await self._proxy_request(
-            "/rz/trade/dubbo/sign_contract/v1/check_before_trade",
-            body=f"fundCode={fund_code}&applicationAmount={money}&transactionAccountId={transaction_account_id}",
-            content_type="application/x-www-form-urlencoded",
-        )
+        check_data = {
+            "method": "POST",
+            "url": "https://trade.5ifund.com/rz/trade/dubbo/sign_contract/v1/check_before_trade",
+            "params": {
+                "fundCode": fund_code,
+                "applicationAmount": money,
+                "transactionAccountId": transaction_account_id
+            },
+            "Header": {
+                "Content-Type": "application/x-www-form-urlencoded",
+                "custId": cust_id
+            },
+            "needToken": True,
+            "K5type": "none",
+            "requestType": "guomiSSL"
+        }
+        await self._call_jsbridge(check_data)
 
         # Step 4: 获取短信验证状态
         auth = self.TRADE_AUTH
-        sms_dto = json.dumps({
+        sms_dto = json_module.dumps({
             "money": money,
             "fundCode": fund_code,
             "fundRiskLevel": fund_risk_level,
             "payType": "0",
             "userRiskLevel": user_risk_level,
         })
-        await self._trade_post_form(
-            f"/rs/trade/shen/getsms/{cust_id}",
-            data={
-                "key1": auth["key1"],
-                "key2": auth["key2"],
-                "key5": auth["key5"],
-                "rsBuySmsDTO": sms_dto,
-                "key3": auth["key3"],
-                "key4": "auth",
-            },
-        )
 
-        # Step 5: 校验短信 → 获取 tradeInfoSeq
-        checksms_dto = json.dumps({
+        getsms_url = f"https://trade.5ifund.com/rs/trade/shen/getsms/{cust_id}"
+        getsms_params = {
+            "key1": auth["key1"],
+            "key2": auth["key2"],
+            "key5": auth["key5"],
+            "rsBuySmsDTO": sms_dto,
+            "key3": auth["key3"],
+            "key4": "auth",
+        }
+        getsms_jsdata = {
+            "method": "POST",
+            "url": getsms_url,
+            "params": getsms_params,
+            "K5type": "normal"
+        }
+        await self._call_jsbridge(getsms_jsdata)
+
+        # Step 5: 校验短信并获取tradeInfoSeq
+        checksms_dto = json_module.dumps({
             "money": money,
             "fundCode": fund_code,
             "fundRiskLevel": fund_risk_level,
@@ -1671,69 +1776,170 @@ class THSFundClient:
             "isCheckSmsCode": 0,
             "custId": cust_id,
         })
-        checksms_resp = await self._trade_post_form(
-            f"/rs/trade/shen/checksms/{cust_id}",
-            data={
-                "key1": auth["key1"],
-                "key2": auth["key2"],
-                "key5": auth["key5"],
-                "rsBuySmsDTO": checksms_dto,
-                "key3": auth["key3"],
-                "key4": "auth",
-                "smsRandom": "",
-            },
-        )
-        trade_info_seq = checksms_resp.get("singleData", {}).get("tradeInfoSeq", "") or checksms_resp.get("tradeInfoSeq", "")
+
+        checksms_url = f"https://trade.5ifund.com/rs/trade/shen/checksms/{cust_id}"
+        checksms_params = {
+            "key1": auth["key1"],
+            "key2": auth["key2"],
+            "key5": auth["key5"],
+            "rsBuySmsDTO": checksms_dto,
+            "key3": auth["key3"],
+            "key4": "auth",
+            "smsRandom": "",
+        }
+        checksms_jsdata = {
+            "method": "POST",
+            "url": checksms_url,
+            "params": checksms_params,
+            "K5type": "normal"
+        }
+        checksms_resp = await self._call_jsbridge(checksms_jsdata)
+
+        # 提取tradeInfoSeq（多路径尝试）
+        trade_info_seq = (checksms_resp.get("result", {}).get("singleData", {}).get("tradeInfoSeq") or
+                         checksms_resp.get("singleData", {}).get("tradeInfoSeq") or
+                         checksms_resp.get("tradeInfoSeq", ""))
         if not trade_info_seq:
-            raise ValueError(f"获取 tradeInfoSeq 失败: {checksms_resp}")
+            raise ValueError(f"未获取到tradeInfoSeq: {checksms_resp}")
 
         # Step 6: 提交买入订单
-        agreement_str = json.dumps([{
+        agreement_str = json_module.dumps([{
             "protocalCode": "JJ_WDMCXY",
             "protocalVersion": "20230426",
         }])
-        buy_body = (
-            f"signFlag=1"
-            f"&useWallet={'1' if use_wallet else '0'}"
-            f"&money={money}"
-            f"&tradeInfoSeq={trade_info_seq}"
-            f"&fundCode={fund_code}"
-            f"&tradePassword={pwd}"
-            f"&buyType=1"
-            f"&transactionAccountId={transaction_account_id}"
-            f"&operator=145"
-            f"&agreementStr={agreement_str}"
-        )
-        buy_resp = await self._proxy_request(
-            "/rz/trade/dubbo/buy",
-            body=buy_body,
-            content_type="application/x-www-form-urlencoded",
-        )
 
-        buy_data = buy_resp.get("data", buy_resp)
+        buy_data = {
+            "method": "POST",
+            "url": "https://trade.5ifund.com/rz/trade/dubbo/buy",
+            "params": {
+                "signFlag": "1",
+                "useWallet": "1" if use_wallet else "0",
+                "money": money,
+                "tradeInfoSeq": trade_info_seq,
+                "fundCode": fund_code,
+                "tradePassword": pwd,
+                "buyType": "1",
+                "transactionAccountId": transaction_account_id,
+                "operator": "145",
+                "agreementStr": agreement_str
+            },
+            "needToken": True,
+            "K5type": "none",
+            "Header": {
+                "Accept": "application/json, text/plain, */*",
+                "Content-Type": "application/x-www-form-urlencoded"
+            },
+            "requestType": "guomiSSL"
+        }
+        buy_resp = await self._call_jsbridge(buy_data, timeout=40)
+
+        # 检查响应
+        result_obj = buy_resp.get("result", {})
+        error_code = result_obj.get("code", "")
+        error_msg = result_obj.get("message", "")
+
+        if error_code != "0000" and error_code != "":
+            raise Exception(f"买入失败 [{error_code}]: {error_msg}")
+
+        # 提取结果
+        buy_data_result = result_obj.get("data", {})
+        if not buy_data_result:
+            raise Exception(f"买入响应无数据: {buy_resp}")
+
+        app_sheet_serial_no = buy_data_result.get("appSheetSerialNo", "")
+
         result = {
             "fund_code": fund_code,
             "fund_name": fund_name,
             "amount": money,
-            "app_sheet_serial_no": buy_data.get("appSheetSerialNo", ""),
-            "accept_time": buy_data.get("acceptTime", ""),
-            "confirm_date": buy_data.get("confirmDate", "") or fund_info.get("confirmDay", ""),
-            "bank_name": bank_name,
-            "charge": buy_data.get("charge", "0.00"),
+            "app_sheet_serial_no": app_sheet_serial_no,
+            "accept_time": buy_data_result.get("acceptTime", ""),
+            "confirm_date": buy_data_result.get("confirmDate", "") or fund_info.get("confirmDay", ""),
+            "charge": buy_data_result.get("charge", "0.00"),
             "min_buy": min_buy,
             "max_buy": max_buy,
             "raw_response": buy_resp,
         }
+
         # 如果金额被调整，记录原始金额和调整原因
         if amount_adjusted:
             result["amount_adjusted"] = True
             result["original_amount"] = f"{original_amount:.2f}"
             result["adjust_reason"] = f"超过单日限购 {max_buy:.2f} 元，已自动调整"
+
         return result
+
+    async def buy_fund_via_webview(self, fund_code: str, amount: float,
+                                   password_md5: str = None) -> dict:
+        """通过 WebView 触发购买（利用 app 自身能力）
+
+        fund_code: 基金代码
+        amount: 买入金额（元）
+        password_md5: 交易密码MD5（可选，如果提供会自动填充）
+        返回: 触发结果
+        """
+        pwd = password_md5 or self.TRADE_PASSWORD_MD5
+
+        payload = {
+            "fundCode": fund_code,
+            "amount": str(amount),
+        }
+        if pwd:
+            payload["password"] = pwd
+
+        resp = await self._client.post(
+            f"{self.HOOK_PROXY_URL}/fund/buy",
+            json=payload,
+            timeout=10.0,
+        )
+        resp.raise_for_status()
+        return resp.json()
+
+    async def buy_fund_direct(self, fund_code: str, amount: float,
+                             password_md5: str = None) -> dict:
+        """直接调用 app 内部购买方法（不通过 UI 自动化）
+
+        fund_code: 基金代码
+        amount: 购买金额
+        password_md5: 交易密码MD5
+        返回: 购买结果
+        """
+        pwd = password_md5 or self.TRADE_PASSWORD_MD5
+
+        payload = {
+            "fundCode": fund_code,
+            "amount": str(amount),
+        }
+        if pwd:
+            payload["password"] = pwd
+
+        resp = await self._client.post(
+            f"{self.HOOK_PROXY_URL}/fund/buy_direct",
+            json=payload,
+            timeout=10.0,
+        )
+        resp.raise_for_status()
+        return resp.json()
+
+    async def open_fund_detail(self, fund_code: str) -> dict:
+        """打开基金详情页面（触发WebView创建和JSBridge初始化）
+
+        fund_code: 基金代码
+        返回: 操作结果
+        """
+        payload = {"fundCode": fund_code}
+
+        resp = await self._client.post(
+            f"{self.HOOK_PROXY_URL}/fund/open_detail",
+            json=payload,
+            timeout=10.0,
+        )
+        resp.raise_for_status()
+        return resp.json()
 
     async def sell_fund(self, fund_code: str, share_vol: str = None,
                         sell_all: bool = False, password_md5: str = None) -> dict:
-        """赎回基金（2步流程：render初始化 → 提交赎回）
+        """赎回基金（2步流程 - 使用JSBridge）：render初始化 → 提交赎回
 
         fund_code: 基金代码
         share_vol: 赎回份额（字符串，如 "100.00"）
@@ -1744,6 +1950,11 @@ class THSFundClient:
         pwd = password_md5 or self.TRADE_PASSWORD_MD5
         if not pwd:
             raise ValueError("未设置交易密码，请通过 --password 参数传入或先调用 set_password")
+
+        # Step 0: 刷新交易认证
+        await self.refresh_auth_from_hook()
+
+        cust_id = self.trade_cust_id
 
         # Step 1: 从持仓列表中找到目标基金
         pos_resp = await self.get_fund_positions()
@@ -1772,34 +1983,47 @@ class THSFundClient:
         fund_name = target.get("fundName") or ""
         share_type = target.get("shareType") or "0"
 
-        # Step 2: 调用 render API 初始化赎回
-        render_resp = await self._proxy_request(
-            "/rz/trade/dubbo/redemption/v1/render",
-            body=f"transactionAccountId={transaction_account_id}&fundCode={fund_code}",
-            content_type="application/x-www-form-urlencoded",
-        )
-        render_code = render_resp.get("code", "")
-        if render_code not in ("0000", ""):
-            raise ValueError(f"赎回初始化失败: {render_resp.get('message', render_code)}")
+        # Step 2: 调用 render API 初始化赎回（使用JSBridge）
+        render_data = {
+            "method": "POST",
+            "url": "https://trade.5ifund.com/rz/trade/dubbo/redemption/v1/render",
+            "params": {
+                "transactionAccountId": transaction_account_id,
+                "fundCode": fund_code
+            },
+            "Header": {
+                "Content-Type": "application/x-www-form-urlencoded",
+                "custId": cust_id
+            },
+            "needToken": True,
+            "K5type": "none",
+            "requestType": "guomiSSL"
+        }
+        render_resp = await self._call_jsbridge(render_data)
 
-        render_data = render_resp.get("data", render_resp)
+        render_result = render_resp.get("result", {})
+        render_code = render_result.get("code", "")
+        if render_code not in ("0000", ""):
+            raise ValueError(f"赎回初始化失败: {render_result.get('message', render_code)}")
+
+        render_data_obj = render_result.get("data", {})
         # 从 render 中补充信息
         if not transaction_account_id:
-            transaction_account_id = render_data.get("transactionAccountId") or ""
-        fund_info = render_data.get("fundInfo", {})
+            transaction_account_id = render_data_obj.get("transactionAccountId") or ""
+        fund_info = render_data_obj.get("fundInfo", {})
         if not fund_name:
-            fund_name = fund_info.get("fundName") or render_data.get("fundName") or ""
+            fund_name = fund_info.get("fundName") or render_data_obj.get("fundName") or ""
         if not share_type:
             share_type = fund_info.get("shareType") or "0"
 
         # 获取 defenderToken（必需）
-        defender_token = render_data.get("defenderToken", {})
+        defender_token = render_data_obj.get("defenderToken", {})
         dt = defender_token.get("dt", "")
         if not dt:
             raise ValueError("未获取到 defenderToken，无法提交赎回")
 
         # 获取钱包信息（用于超级转换到货币基金）
-        wallet_info = render_data.get("walletInfo", {})
+        wallet_info = render_data_obj.get("walletInfo", {})
         can_redeem_to_wallet = fund_info.get("canRedeemToWallet", "0")
 
         # Step 3: 确定赎回份额
@@ -1816,7 +2040,7 @@ class THSFundClient:
         else:
             raise ValueError("请指定赎回份额 (--shares) 或使用全部赎回 (--all)")
 
-        # Step 4: 构建赎回参数（form-urlencoded 格式）
+        # Step 4: 构建赎回参数
         redeem_params = {
             "fundCode": fund_code,
             "fundName": fund_name,
@@ -1841,31 +2065,37 @@ class THSFundClient:
             # 普通赎回模式
             redeem_params["redemptionType"] = "0"
 
-        # 构建 form-urlencoded body
-        from urllib.parse import urlencode
-        redeem_body = urlencode(redeem_params)
+        # Step 5: 提交赎回（使用JSBridge，带 dt header）
+        redeem_jsdata = {
+            "method": "POST",
+            "url": "https://trade.5ifund.com/rz/trade/dubbo/redemption/v2/redeem",
+            "params": redeem_params,
+            "Header": {
+                "Content-Type": "application/x-www-form-urlencoded",
+                "custId": cust_id,
+                "dt": dt
+            },
+            "needToken": True,
+            "K5type": "none",
+            "requestType": "guomiSSL"
+        }
+        redeem_full_resp = await self._call_jsbridge(redeem_jsdata, timeout=40)
 
-        # Step 5: 提交赎回（带 dt header）
-        redeem_resp = await self._proxy_request(
-            "/rz/trade/dubbo/redemption/v2/redeem",
-            body=redeem_body,
-            content_type="application/x-www-form-urlencoded",
-            extra_headers={"dt": dt},
-        )
+        redeem_result = redeem_full_resp.get("result", {})
+        redeem_code = redeem_result.get("code", "")
+        if redeem_code != "0000" and redeem_code != "":
+            raise ValueError(f"赎回失败: {redeem_result.get('message', redeem_code)}")
 
-        redeem_code = redeem_resp.get("code", "")
-        if redeem_code != "0000":
-            raise ValueError(f"赎回失败: {redeem_resp.get('message', redeem_code)}")
-
+        redeem_data = redeem_result.get("data", {})
         return {
             "fund_code": fund_code,
             "fund_name": fund_name,
             "share_vol": share_vol,
             "available_vol": available_vol_str,
             "redemption_type": "超级转换" if redeem_params["redemptionType"] == "1" else "普通赎回",
-            "app_sheet_serial_no": redeem_resp.get("data", {}).get("appSheetSerialNo", ""),
-            "render_data": render_data,
-            "redeem_result": redeem_resp,
+            "app_sheet_serial_no": redeem_data.get("appSheetSerialNo", ""),
+            "render_data": render_data_obj,
+            "redeem_result": redeem_full_resp,
         }
 
     async def get_order_detail(self, app_sheet_serial_no: str) -> dict:

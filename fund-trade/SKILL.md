@@ -30,10 +30,13 @@ user-invocable: true
 
 ## 前置条件
 
-1. 同花顺 API 服务已启动：`cd .claude/skills/fund-trade && python server.py`（监听 8900 端口）
+1. **同花顺 API 服务端已启动**：`cd /home/yuyang/frida-test/ths/api && python server.py`（监听 8900 端口）
 2. PostgreSQL 已运行（127.0.0.1:5432，dbname=jettask）
+3. 客户端通过轻量级 HTTP 客户端连接服务端：`python .claude/skills/fund-trade/client.py`
 
-所有脚本路径基于：`.claude/skills/fund-trade/`
+**架构说明**：
+- 服务端（`/home/yuyang/frida-test/ths/api/`）：包含所有业务逻辑、API 调用、数据库操作
+- 客户端（`.claude/skills/fund-trade/`）：轻量级 HTTP 客户端，仅负责请求转发
 
 ---
 
@@ -89,8 +92,8 @@ curl -s --noproxy '*' --connect-timeout 5 http://127.0.0.1:8900/api/trade/positi
 **0b. 持仓同步 + 前置检查**：
 
 ```bash
-python .claude/skills/fund-trade/fund_api.py sync
-python .claude/skills/fund-trade/risk_manager.py preflight
+# 通过轻量级客户端调用服务端
+python .claude/skills/fund-trade/client.py preflight
 ```
 
 sync 从同花顺真实账户同步持仓数据到 ft_positions，确保：
@@ -160,8 +163,8 @@ python .claude/skills/fund-trade/fund_db.py pending-reviews
 ```bash
 # 可以并行执行这 3 个命令（互不依赖）
 python .claude/skills/fund-trade/fund_api.py news-overview > /tmp/ft_overview.json
-python .claude/skills/fund-trade/indicators.py evaluate > /tmp/ft_signals.json
-python .claude/skills/fund-trade/risk_manager.py snapshot > /tmp/ft_snapshot.json
+python .claude/skills/fund-trade/client.py evaluate > /tmp/ft_signals.json
+python .claude/skills/fund-trade/client.py snapshot > /tmp/ft_snapshot.json
 ```
 
 执行完后用 Read 工具读取这 3 个文件。Claude 读取概览后：
@@ -312,7 +315,8 @@ scan-summary 数据可直接读取（~2KB），包含每只基金的关键决策
 
 将 Step 4 的决策 JSON 传给风控：
 ```bash
-python .claude/skills/fund-trade/risk_manager.py check '<决策JSON>'
+# 通过客户端调用服务端检查决策
+curl -X POST http://localhost:8900/api/risk/check -H "Content-Type: application/json" -d '<决策JSON>'
 ```
 
 如果有被拦截的决策 → Claude 查看原因，决定是否调整决策。
@@ -466,7 +470,7 @@ echo '{"decisions_count": N, "trades_count": M, "summary": "..."}' | python .cla
 
 ```bash
 python .claude/skills/fund-trade/fund_api.py sync
-python .claude/skills/fund-trade/risk_manager.py snapshot
+python .claude/skills/fund-trade/client.py snapshot
 ```
 
 分析当前持仓：
@@ -517,7 +521,7 @@ Claude 按照**配置缺位优先级**筛选：
    ```
 2. 获取量化信号：
    ```bash
-   python .claude/skills/fund-trade/indicators.py evaluate
+   python .claude/skills/fund-trade/client.py evaluate
    ```
 3. 读取 `.claude/skills/fund-trade/prompts/analyze_fund.md` 模板
 4. Claude 输出该基金的全面分析报告
@@ -544,8 +548,8 @@ Claude 按照**配置缺位优先级**筛选：
 
 1. 获取持仓和信号：
    ```bash
-   python .claude/skills/fund-trade/risk_manager.py snapshot
-   python .claude/skills/fund-trade/indicators.py evaluate
+   python .claude/skills/fund-trade/client.py snapshot
+   python .claude/skills/fund-trade/client.py evaluate
    python .claude/skills/fund-trade/fund_api.py market
    ```
 2. 获取历史交易和决策记录（通过 fund_db）

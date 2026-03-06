@@ -7,9 +7,6 @@ import os
 import sys
 from decimal import Decimal
 
-# 添加 ths/api 到路径以导入 fund_db
-sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '../../ths/api')))
-
 import fund_db
 from ths_trade_client import THSTradeClient
 
