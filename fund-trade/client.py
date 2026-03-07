@@ -232,6 +232,20 @@ class FundTradeClient:
         """钱包首页"""
         return self.request("GET", "/api/wallet/home")
 
+    # ========== 认证管理 ==========
+
+    def auth_status(self):
+        """查询认证状态"""
+        return self.request("GET", "/api/auth/status")
+
+    def auth_refresh(self):
+        """强制刷新认证参数（需要 app 已在交易页面）"""
+        return self.request("POST", "/api/auth/refresh")
+
+    def auth_auto_refresh(self):
+        """自动刷新认证参数（自动打开 app）"""
+        return self.request("POST", "/api/auth/auto-refresh")
+
 
 # ========== CLI 入口 ==========
 
@@ -267,6 +281,10 @@ def main():
         print("  python client.py account-overview  # 账户总览")
         print("  python client.py wallet-info       # 钱包信息")
         print("  python client.py wallet-home       # 钱包首页")
+        print("\n认证管理:")
+        print("  python client.py auth-status       # 查询认证状态")
+        print("  python client.py auth-refresh      # 强制刷新认证（需要 app 在交易页面）")
+        print("  python client.py auth-auto-refresh # 自动刷新认证（自动打开 app）")
         sys.exit(1)
 
     client = FundTradeClient()
@@ -369,6 +387,15 @@ def main():
 
     elif command == "wallet-home":
         result = client.get_wallet_home()
+
+    elif command == "auth-status":
+        result = client.auth_status()
+
+    elif command == "auth-refresh":
+        result = client.auth_refresh()
+
+    elif command == "auth-auto-refresh":
+        result = client.auth_auto_refresh()
 
     else:
         result = {"status": "error", "message": f"未知命令: {command}"}
