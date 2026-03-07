@@ -2,6 +2,68 @@
 
 基于 Claude Code Skill 的自动化基金交易系统，支持 LLM 决策 + 量化信号 + 风控硬约束。
 
+## 架构说明
+
+### 三层架构
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│  Client 层: fund-trade/client.py (7K)                        │
+│  - 轻量级 HTTP 客户端（PC 端）                                │
+│  - 命令行接口封装                                             │
+│  - 无业务逻辑，仅转发请求                                      │
+└─────────────────────────────────────────────────────────────┘
+                            │ HTTP (localhost:8900)
+                            ▼
+┌─────────────────────────────────────────────────────────────┐
+│  Server 层: ths/api/server.py (43K)                          │
+│  - FastAPI 服务器 (8900端口, PC 端)                          │
+│  - 业务逻辑层（风控/量化/决策复盘）                             │
+│  - 调用 ths_fund_client.py API 包装层                         │
+└─────────────────────────────────────────────────────────────┘
+                            │ HTTP (localhost:18900, via adb forward)
+                            ▼
+┌─────────────────────────────────────────────────────────────┐
+│  Hook 层: zygisk hook 模块 (手机端)                          │
+│  - Java/Kotlin HTTP 服务器 (18900端口)                       │
+│  - 注入到同花顺 App，通过 WebView JSBridge 获取认证参数       │
+│  - 提供实时认证参数 (K5, version, timestamp)                 │
+│  - 无需硬编码 token，自动刷新                                 │
+└─────────────────────────────────────────────────────────────┘
+```
+
+### 为什么需要 zygisk hook？
+
+- **问题**：同花顺 API 的认证参数（token/K5）每次 App 重启后会变化
+- **旧方案**：硬编码参数，导致频繁失效
+- **新方案**：通过 zygisk hook 注入到同花顺 App，启动 HTTP 服务器，实时从 App 的 WebView JSBridge 获取参数，无需手动更新
+
+### API 功能模块
+
+| 模块 | 功能 | client.py 命令 |
+|------|------|---------------|
+| **风控** | 风控快照 | `python client.py snapshot` |
+| | 交易前置检查 | `python client.py preflight` |
+| **量化信号** | 计算量化信号 | `python client.py evaluate` |
+| **决策复盘** | 执行决策复盘 | `python client.py review 30 7` |
+| | 创建待复盘记录 | `python client.py create-reviews` |
+| | 获取待复盘决策 | `python client.py pending-reviews` |
+| | 获取复盘统计 | `python client.py review-stats` |
+| | 获取经验知识库 | `python client.py lessons` |
+| **交易** | 持仓查询 | `python client.py position` |
+| | 订单查询 | `python client.py orders 7 5` |
+| | 买入基金 | `python client.py buy 008087 100` |
+| | 卖出基金 | `python client.py sell 008087 100` |
+| **决策管理** | 今日决策 | `python client.py today-decisions` |
+| | 最近决策 | `python client.py recent-decisions 5` |
+| | 连续观望天数 | `python client.py watch-streaks` |
+| **数据采集** | 基金扫描（完整） | `python client.py scan` |
+| | 基金扫描（精简） | `python client.py scan-summary` |
+| | 持仓同步 | `python client.py sync` |
+| **账户信息** | 账户总览 | `python client.py account-overview` |
+| | 钱包信息 | `python client.py wallet-info` |
+| | 钱包首页 | `python client.py wallet-home` |
+
 ## 快速开始
 
 ### 1. 初始化
@@ -25,6 +87,98 @@ claude
 ### 3. 自动化交易（定时任务）
 
 见下方"自动化配置"章节。
+
+---
+
+## 服务启动和测试
+
+### 启动服务
+
+```bash
+# 1. 确保 zygisk hook 模块已安装
+#    在 KernelSU 中安装 /home/yuyang/frida-test/ths/zygisk/thshook_zygisk.zip
+
+# 2. 启动同花顺 App（zygisk 会自动注入并启动 HTTP 服务器 18900端口）
+/mnt/d/123pan/Downloads/一加Ace6/adb命令行/adb.exe -s 3B15BJ00GZL00000 shell monkey -p com.hexin.plat.android -c android.intent.category.LAUNCHER 1
+
+# 3. 设置 adb forward
+/mnt/d/123pan/Downloads/一加Ace6/adb命令行/adb.exe -s 3B15BJ00GZL00000 forward tcp:18900 tcp:18900
+
+# 4. 启动 FastAPI 服务器（8900端口）
+cd /home/yuyang/frida-test/ths/api
+python server.py
+```
+
+### 测试 API 功能
+
+所有测试无需用户确认，可直接运行：
+
+```bash
+cd /home/yuyang/frida-test/.claude/skills/fund-trade
+
+# 测试所有重构后的 API
+bash /tmp/test_refactor_apis.sh
+
+# 测试 JSBridge 集成
+bash /tmp/test_summary.sh
+
+# 测试所有 JSBridge 接口
+bash /tmp/test_all_jsbridge.sh
+
+# 测试高级功能
+bash /tmp/test_advanced.sh
+```
+
+### 手动测试单个 API
+
+```bash
+cd /home/yuyang/frida-test/.claude/skills/fund-trade
+
+# 风控快照
+python client.py snapshot
+
+# 交易前置检查
+python client.py preflight
+
+# 计算量化信号
+python client.py evaluate
+
+# 决策复盘（30天内，最多7条）
+python client.py review 30 7
+
+# 持仓查询
+python client.py position
+
+# 订单查询（7天内，最多5条）
+python client.py orders 7 5
+
+# 买入基金（基金代码 008087，金额 100元）
+python client.py buy 008087 100
+
+# 卖出基金（基金代码 008087，份额 100份）
+python client.py sell 008087 100
+
+# 基金扫描（精简版）
+python client.py scan-summary
+
+# 同步持仓
+python client.py sync
+
+# 账户总览
+python client.py account-overview
+
+# 钱包信息
+python client.py wallet-info
+
+# 今日决策
+python client.py today-decisions
+
+# 最近5天决策
+python client.py recent-decisions 5
+
+# 连续观望天数
+python client.py watch-streaks
+```
 
 ---
 
@@ -167,25 +321,51 @@ tail -100 ~/fund-agent.log
 
 ## 文件结构
 
+### Client 层（fund-trade/）
+
 ```
 .claude/skills/fund-trade/
 ├── SKILL.md          # Skill 定义（Claude Code 读取）
 ├── README.md         # 本文档
 ├── agent_cron.sh     # cron job 包装脚本
-├── config.json       # 基金池和策略配置
-├── .env              # 交易密码（不进 git）
-├── fund_api.py       # 数据采集 API
-├── fund_db.py        # 数据库操作
-├── indicators.py     # 量化指标计算
-├── risk_manager.py   # 风控管理
-├── trader.py         # 交易执行
-├── server.py         # 同花顺 API 服务
-├── client.py         # CLI 工具
-└── prompts/          # LLM 决策 Prompt 模板
-    ├── daily_decision.md
-    ├── review_decision.md
-    └── ...
+├── config.json       # 客户端配置 (server_url 等)
+├── client.py         # 轻量级 HTTP 客户端 (7K)
+├── prompts/          # LLM 决策 Prompt 模板
+│   ├── daily_decision.md
+│   ├── review_decision.md
+│   └── ...
+└── backup_*/         # 备份目录
 ```
+
+### Server 层（ths/api/）
+
+```
+ths/api/
+├── server.py              # FastAPI 服务器 (43K, 8900端口)
+├── ths_fund_client.py     # 同花顺 API 包装层 (178K, 104方法)
+├── fund_db.py             # 数据库操作
+├── risk_manager.py        # 风控管理
+├── indicators.py          # 量化指标计算
+└── review_decision_executor.py  # 决策复盘执行器
+```
+
+### Hook 层（ths/zygisk/）
+
+```
+ths/zygisk/
+├── thshook_zygisk.zip     # KernelSU 模块安装包
+├── magisk/                # 模块文件（兼容 Magisk/KernelSU 格式）
+│   ├── dex/
+│   │   ├── classes.dex    # Java/Kotlin 代码（HTTP 服务器 + JSBridge）
+│   │   └── libpine.so     # hook 库
+│   └── zygisk/
+│       └── arm64-v8a.so   # zygisk 原生库
+└── jni/                   # 原生代码源码
+```
+
+**说明**：
+- zygisk hook 模块注入到同花顺 App 后，会启动一个 HTTP 服务器监听 0.0.0.0:18900，提供 JSBridge 接口
+- 虽然目录名是 `magisk/`，但模块兼容 KernelSU（KernelSU 兼容 Magisk 模块格式）
 
 ---
 
@@ -217,3 +397,42 @@ crontab -e
 ```bash
 crontab -r  # 删除所有定时任务
 ```
+
+### Q: 如何检查服务是否正常运行？
+
+```bash
+# 检查 FastAPI 服务器（8900端口）
+curl -s http://localhost:8900/health
+
+# 检查 JSBridge 代理（18900端口）
+curl -s http://localhost:18900/health
+
+# 检查 adb 连接
+adb devices
+```
+
+### Q: API 返回错误怎么办？
+
+1. **检查服务状态**：
+   - 确保 server.py (8900) 正在运行
+   - 确保手机上的 HTTP 服务器 (18900) 正在运行：`adb shell netstat -tuln | grep 18900`
+2. **检查同花顺 App**：确保 App 已打开并登录
+3. **检查 zygisk hook**：
+   - 检查 KernelSU 模块是否启用：`adb shell su -c 'ksud module list'`
+   - 查看 hook 日志：`adb logcat -s ThsHook:*`
+4. **检查 adb forward**：`adb forward --list | grep 18900`
+5. **测试连通性**：`curl -s --noproxy '*' http://localhost:18900/health`
+
+### Q: 旧文件在哪里？
+
+已清理的文件：
+- `client.py.old` (180K) - 旧版本客户端
+- `trader.py` (6.2K) - 旧的独立交易工具
+- `ths_trade_client.py` (14K) - 旧的API客户端
+- `config.json.full` (5.7K) - 旧的完整配置
+- `deprecated/` - 废弃文件目录
+
+这些功能已集成到新架构中：
+- `ths/api/server.py` - 服务器端业务逻辑
+- `ths/api/ths_fund_client.py` - API 包装层 (104方法)
+- `fund-trade/client.py` - 轻量级客户端 (7K)

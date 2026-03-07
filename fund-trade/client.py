@@ -44,19 +44,27 @@ class FundTradeClient:
 
     def buy(self, fund_code: str, amount: float, reason: str = None):
         """买入基金"""
-        return self.request("POST", "/api/trade/buy", json={
+        config = load_config()
+        data = {
             "fund_code": fund_code,
             "amount": amount,
-            "reason": reason
-        })
+            "password": config.get("trade_password"),
+        }
+        if reason:
+            data["reason"] = reason
+        return self.request("POST", "/api/trade/buy", json=data)
 
     def sell(self, fund_code: str, pct: float, reason: str = None):
         """卖出基金"""
-        return self.request("POST", "/api/trade/sell", json={
+        config = load_config()
+        data = {
             "fund_code": fund_code,
             "pct": pct,
-            "reason": reason
-        })
+            "password": config.get("trade_password"),
+        }
+        if reason:
+            data["reason"] = reason
+        return self.request("POST", "/api/trade/sell", json=data)
 
     # ========== 持仓查询 ==========
 
@@ -97,6 +105,74 @@ class FundTradeClient:
             "days_back": days_back
         })
 
+    def create_reviews(self, decision_date: str = None):
+        """创建待复盘记录"""
+        params = {"decision_date": decision_date} if decision_date else {}
+        return self.request("POST", "/api/review/create", params=params)
+
+    def get_pending_reviews(self, days_back: int = 3):
+        """获取待复盘决策"""
+        return self.request("GET", "/api/review/pending", params={"days_back": days_back})
+
+    def get_review_stats(self, days: int = 30):
+        """获取复盘统计"""
+        return self.request("GET", "/api/review/stats", params={"days": days})
+
+    def get_lessons(self, category: str = None, min_confidence: str = None,
+                    include_deprecated: bool = False, limit: int = 20):
+        """获取经验知识库"""
+        params = {"limit": limit, "include_deprecated": include_deprecated}
+        if category:
+            params["category"] = category
+        if min_confidence:
+            params["min_confidence"] = min_confidence
+        return self.request("GET", "/api/lessons", params=params)
+
+    def save_lesson(self, lesson: dict):
+        """保存经验教训"""
+        return self.request("POST", "/api/lessons/save", json=lesson)
+
+    def update_lesson_confidence(self, lesson_id: int, success: bool):
+        """更新经验可信度"""
+        return self.request("POST", f"/api/lessons/update-confidence/{lesson_id}", params={"success": success})
+
+    def update_review(self, review_id: int, review_data: dict):
+        """更新复盘结果"""
+        return self.request("POST", f"/api/review/update/{review_id}", json=review_data)
+
+    def mark_lesson_extracted(self, review_id: int):
+        """标记经验已提取"""
+        return self.request("POST", f"/api/review/mark-extracted/{review_id}")
+
+    # ========== 决策管理 ==========
+
+    def save_decision(self, decision: dict):
+        """保存决策"""
+        return self.request("POST", "/api/decisions/save", json=decision)
+
+    def save_pending_decision(self, decision: dict):
+        """保存待确认决策"""
+        return self.request("POST", "/api/decisions/save-pending", json=decision)
+
+    def execute_pending_decision(self, pending_id: int):
+        """执行待确认决策"""
+        return self.request("POST", f"/api/decisions/execute-pending/{pending_id}")
+
+    def get_today_decisions(self):
+        """获取今日决策"""
+        return self.request("GET", "/api/decisions/today")
+
+    def get_recent_decisions(self, days: int = 5, exclude_today: bool = False):
+        """获取最近决策"""
+        return self.request("GET", "/api/decisions/recent", params={
+            "days": days,
+            "exclude_today": exclude_today
+        })
+
+    def get_watch_streaks(self):
+        """获取连续观望天数"""
+        return self.request("GET", "/api/decisions/watch-streaks")
+
     # ========== 交易订单 ==========
 
     def get_orders(self, days: int = 30, limit: int = 20):
@@ -128,6 +204,34 @@ class FundTradeClient:
             "page": page
         })
 
+    def scan_funds(self):
+        """基金扫描（完整版）"""
+        return self.request("GET", "/api/funds/scan")
+
+    def scan_funds_summary(self):
+        """基金扫描（精简版）"""
+        return self.request("GET", "/api/funds/scan-summary")
+
+    # ========== 数据同步 ==========
+
+    def sync_positions(self):
+        """同步持仓"""
+        return self.request("POST", "/api/sync/positions")
+
+    # ========== 账户信息 ==========
+
+    def get_account_overview(self):
+        """账户总览"""
+        return self.request("GET", "/api/account/overview")
+
+    def get_wallet_info(self):
+        """钱包信息"""
+        return self.request("GET", "/api/wallet/info")
+
+    def get_wallet_home(self):
+        """钱包首页"""
+        return self.request("GET", "/api/wallet/home")
+
 
 # ========== CLI 入口 ==========
 
@@ -135,14 +239,34 @@ def main():
     """命令行入口（用于测试）"""
     if len(sys.argv) < 2:
         print("用法: python client.py <method> [args...]")
-        print("示例:")
+        print("\n交易相关:")
         print("  python client.py buy 008087 100 '测试'")
         print("  python client.py sell 008087 50")
+        print("  python client.py position [fund_code]")
+        print("  python client.py orders [days] [limit]")
+        print("\n风控相关:")
         print("  python client.py snapshot")
         print("  python client.py preflight")
+        print("\n量化相关:")
         print("  python client.py evaluate")
-        print("  python client.py orders [days] [limit]")
-        print("  python client.py position [fund_code]")
+        print("\n决策复盘:")
+        print("  python client.py review [limit] [days_back]")
+        print("  python client.py create-reviews [decision_date]")
+        print("  python client.py pending-reviews [days_back]")
+        print("  python client.py review-stats [days]")
+        print("  python client.py lessons")
+        print("\n决策管理:")
+        print("  python client.py today-decisions")
+        print("  python client.py recent-decisions [days] [exclude_today]")
+        print("  python client.py watch-streaks")
+        print("\n数据采集:")
+        print("  python client.py scan              # 基金扫描（完整版）")
+        print("  python client.py scan-summary      # 基金扫描（精简版）")
+        print("  python client.py sync              # 同步持仓")
+        print("\n账户信息:")
+        print("  python client.py account-overview  # 账户总览")
+        print("  python client.py wallet-info       # 钱包信息")
+        print("  python client.py wallet-home       # 钱包首页")
         sys.exit(1)
 
     client = FundTradeClient()
@@ -180,6 +304,32 @@ def main():
         days_back = int(sys.argv[3]) if len(sys.argv) > 3 else 7
         result = client.review_decisions(limit, days_back)
 
+    elif command == "create-reviews":
+        decision_date = sys.argv[2] if len(sys.argv) > 2 else None
+        result = client.create_reviews(decision_date)
+
+    elif command == "pending-reviews":
+        days_back = int(sys.argv[2]) if len(sys.argv) > 2 else 3
+        result = client.get_pending_reviews(days_back)
+
+    elif command == "review-stats":
+        days = int(sys.argv[2]) if len(sys.argv) > 2 else 30
+        result = client.get_review_stats(days)
+
+    elif command == "lessons":
+        result = client.get_lessons()
+
+    elif command == "today-decisions":
+        result = client.get_today_decisions()
+
+    elif command == "recent-decisions":
+        days = int(sys.argv[2]) if len(sys.argv) > 2 else 5
+        exclude_today = sys.argv[3].lower() == "true" if len(sys.argv) > 3 else False
+        result = client.get_recent_decisions(days, exclude_today)
+
+    elif command == "watch-streaks":
+        result = client.get_watch_streaks()
+
     elif command == "position":
         if len(sys.argv) > 2:
             result = client.get_position(sys.argv[2])
@@ -201,6 +351,24 @@ def main():
         days = int(sys.argv[2]) if len(sys.argv) > 2 else 30
         limit = int(sys.argv[3]) if len(sys.argv) > 3 else 20
         result = client.get_orders(days=days, limit=limit)
+
+    elif command == "scan":
+        result = client.scan_funds()
+
+    elif command == "scan-summary":
+        result = client.scan_funds_summary()
+
+    elif command == "sync":
+        result = client.sync_positions()
+
+    elif command == "account-overview":
+        result = client.get_account_overview()
+
+    elif command == "wallet-info":
+        result = client.get_wallet_info()
+
+    elif command == "wallet-home":
+        result = client.get_wallet_home()
 
     else:
         result = {"status": "error", "message": f"未知命令: {command}"}

@@ -1,1 +1,0 @@
-/home/yuyang/frida-test/ths/api/fund_db.py
