@@ -1,0 +1,37 @@
+plugins {
+    id 'com.android.application'
+}
+
+android {
+    namespace 'com.yuyang.wxhook'
+    compileSdk 34
+
+    defaultConfig {
+        applicationId "com.yuyang.wxhook"
+        minSdk 26
+        targetSdk 34
+        versionCode 1
+        versionName "1.0"
+    }
+
+    buildTypes {
+        release {
+            minifyEnabled false
+        }
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+
+    packagingOptions {
+        jniLibs {
+            keepDebugSymbols += ['**/*.so']
+        }
+    }
+}
+
+dependencies {
+    implementation 'top.canyie.pine:core:0.3.0'
+}

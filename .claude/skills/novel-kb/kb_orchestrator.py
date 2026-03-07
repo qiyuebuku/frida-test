@@ -28,6 +28,7 @@ import subprocess
 import sys
 import time
 import threading
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
 
@@ -79,6 +80,14 @@ STAGES = {
 # --stage all 的执行顺序（T1 需要额外 --input 参数，不纳入 all）
 EXEC_ORDER = ["t2", "t6", "t3", "t4", "t5", "t7"]
 
+# 并行执行计划：按波次分组
+# (波次名, [(stage, phase|None), ...], is_parallel)
+PARALLEL_PLAN = [
+    ("Wave 1: 基础数据", [("t2", None), ("t6", None)], True),
+    ("Wave 2: 统一段扫描", [("t3", "segment-scan")], False),
+    ("Wave 3: 各层并行构建", [("t3", None), ("t5", None), ("t4", None), ("t7", None)], True),
+]
+
 
 # ============================================================
 # 依赖检查
@@ -116,28 +125,25 @@ def check_dependency(book_dir: Path, stage: str, input_dir: str | None = None) -
         return True, f"plot/chapters/ 包含 {len(md_files)} 个摘要"
 
     if stage == "t4":
+        # T4 只需要 plot/chapters/（T2 产出），arc 文件在 T4 后期 phase 才需要，
+        # 此时 T3 通常已完成（T3 剩余 ~8 AI vs T4 深度分析 ~20 AI）
         chapters_dir = book_dir / "plot" / "chapters"
-        outline_dir = book_dir / "plot" / "outline"
         if not chapters_dir.exists():
             return False, f"plot/chapters/ 目录不存在（需要先完成 T2）"
-        if not outline_dir.exists():
-            return False, f"plot/outline/ 目录不存在（需要先完成 T3）"
-        arc_files = list(outline_dir.glob("arc_*.md"))
-        if not arc_files:
-            return False, f"plot/outline/ 下没有 arc_*.md（需要先完成 T3）"
-        return True, f"plot/chapters/ 和 plot/outline/ 就绪（{len(arc_files)} 个弧文件）"
+        md_files = list(chapters_dir.glob("ch*.md"))
+        if not md_files:
+            return False, f"plot/chapters/ 目录下没有章节摘要文件"
+        return True, f"plot/chapters/ 就绪（{len(md_files)} 个摘要）"
 
     if stage == "t5":
-        chapters_dir = book_dir / "plot" / "chapters"
-        outline_dir = book_dir / "plot" / "outline"
-        if not chapters_dir.exists():
-            return False, f"plot/chapters/ 目录不存在（需要先完成 T2）"
-        if not outline_dir.exists():
-            return False, f"plot/outline/ 目录不存在（需要先完成 T3）"
-        arc_files = list(outline_dir.glob("arc_*.md"))
-        if not arc_files:
-            return False, f"plot/outline/ 下没有 arc_*.md（需要先完成 T3）"
-        return True, f"plot/chapters/ 和 plot/outline/ 就绪"
+        # T5 需要 T3 段扫描结果（segment_*.json），不再需要 arc 文件
+        segments_dir = book_dir / "plot" / "outline" / ".segments"
+        if not segments_dir.exists():
+            return False, f"plot/outline/.segments/ 目录不存在（需要先完成 T3 段扫描）"
+        seg_files = list(segments_dir.glob("segment_*.json"))
+        if not seg_files:
+            return False, f"plot/outline/.segments/ 下没有 segment_*.json（需要先完成 T3 段扫描）"
+        return True, f"plot/outline/.segments/ 包含 {len(seg_files)} 个段结果"
 
     if stage == "t6":
         comments_dir = book_dir / "reader" / "comments"
@@ -324,26 +330,70 @@ def dispatch_stage(book_dir: Path, stage: str, phase: str | None,
     return result.returncode
 
 
+def _dispatch_to_log(book_dir: Path, stage: str, phase: str | None,
+                     model: str, timeout: int,
+                     dry_run: bool, validate: bool,
+                     log_dir: Path) -> tuple[int, float, Path]:
+    """在子进程中执行阶段，stdout/stderr 重定向到日志文件。
+
+    返回 (returncode, duration, log_path)。
+    """
+    script_name, stage_name, supports_phase = STAGES[stage]
+    script_path = KB_DIR / script_name
+
+    stage_key = f"{stage}_{phase}" if phase else stage
+    log_path = log_dir / f"{stage_key}.log"
+
+    cmd = [sys.executable, str(script_path), "--book-dir", str(book_dir)]
+    if supports_phase and phase:
+        cmd.extend(["--phase", phase])
+    cmd.extend(["--model", model, "--timeout", str(timeout)])
+    if dry_run:
+        cmd.append("--dry-run")
+    if validate:
+        cmd.append("--validate")
+
+    start = time.time()
+    with open(log_path, "w") as f:
+        result = subprocess.run(cmd, stdout=f, stderr=subprocess.STDOUT)
+    duration = time.time() - start
+
+    return result.returncode, duration, log_path
+
+
 # ============================================================
 # 进度汇总
 # ============================================================
 
-def _print_all_summary(results: dict, stage_names: dict, all_start: float):
-    """打印 --stage all 的汇总表"""
+def _stage_display(stage: str, phase: str | None) -> str:
+    """返回 stage 的显示名，如 'T3(segment-scan)' 或 'T5 世界层'"""
+    stage_name = STAGES[stage][1]
+    phase_str = f"({phase})" if phase else ""
+    return f"{stage.upper()}{phase_str} {stage_name}"
+
+
+def _print_all_summary(results: dict, all_start: float):
+    """打印波次并行执行的汇总表"""
     total_dur = time.time() - all_start
     print_flush(f"\n{'='*60}")
     print_flush(f"  汇总（总耗时 {fmt_duration(total_dur)}）")
     print_flush(f"{'='*60}")
-    for stage in EXEC_ORDER:
-        name = stage_names.get(stage, "?")
-        if stage in results:
-            status, dur = results[stage]
-            mark = {"OK": "✓", "FAIL": "✗", "SKIP": "-"}.get(status, "?")
-            dur_str = fmt_duration(dur) if dur > 0 else ""
-            print_flush(f"  [{mark}] {stage.upper()} {name:<8} {status:<6} {dur_str}")
-        else:
-            print_flush(f"  [ ] {stage.upper()} {name:<8} 未执行")
-    print_flush(f"{'='*60}\n")
+
+    for wave_name, wave_stages, is_parallel in PARALLEL_PLAN:
+        mode = "并行" if is_parallel and len(wave_stages) > 1 else "串行"
+        print_flush(f"\n  {wave_name} [{mode}]:")
+        for stage, phase in wave_stages:
+            stage_key = f"{stage}:{phase}" if phase else stage
+            display = _stage_display(stage, phase)
+            if stage_key in results:
+                status, dur, _ = results[stage_key]
+                mark = {"OK": "✓", "FAIL": "✗", "SKIP": "-"}.get(status, "?")
+                dur_str = fmt_duration(dur) if dur > 0 else ""
+                print_flush(f"    [{mark}] {display:<28} {status:<6} {dur_str}")
+            else:
+                print_flush(f"    [ ] {display:<28} 未执行")
+
+    print_flush(f"\n{'='*60}\n")
 
 
 # ============================================================
@@ -384,50 +434,119 @@ def main():
         show_status(book_dir)
         return
 
-    # 全部执行
+    # 全部执行（波次并行）
     if args.stage == "all":
-        total = len(EXEC_ORDER)
-        stage_names = {s: STAGES[s][1] for s in EXEC_ORDER}
-        print_flush(f"\n按依赖顺序执行全部阶段（共 {total} 个）:")
-        print_flush(f"  {' → '.join(f'{s.upper()}({stage_names[s]})' for s in EXEC_ORDER)}")
+        print_flush(f"\n并行执行计划（{len(PARALLEL_PLAN)} 波次）:")
+        for wave_name, wave_stages, is_parallel in PARALLEL_PLAN:
+            mode = "并行" if is_parallel and len(wave_stages) > 1 else "串行"
+            items = [f"{s.upper()}" + (f"({p})" if p else "") for s, p in wave_stages]
+            print_flush(f"  {wave_name} [{mode}]: {' + '.join(items)}")
         print_flush("")
 
         all_start = time.time()
-        results = {}  # stage → (status, duration)
+        results = {}  # stage_key → (status, duration, log_path|None)
+        log_dir = book_dir / ".logs"
+        log_dir.mkdir(exist_ok=True)
 
-        for idx, stage in enumerate(EXEC_ORDER, 1):
-            # 进度头
+        for wave_idx, (wave_name, wave_stages, is_parallel) in enumerate(PARALLEL_PLAN):
             elapsed = time.time() - all_start
             print_flush(f"\n{'#'*60}")
-            print_flush(f"  [{idx}/{total}] {stage.upper()} {stage_names[stage]}")
-            if idx > 1:
+            print_flush(f"  {wave_name}")
+            if wave_idx > 0:
                 print_flush(f"  已耗时: {fmt_duration(elapsed)}")
             print_flush(f"{'#'*60}")
 
-            ok, msg = check_dependency(book_dir, stage)
-            if not ok:
-                print_flush(f"\n  ✗ 依赖检查未通过: {msg}")
-                results[stage] = ("SKIP", 0)
-                # 打印中间汇总后退出
-                _print_all_summary(results, stage_names, all_start)
+            # 依赖检查
+            dep_fail = False
+            for stage, phase in wave_stages:
+                ok, msg = check_dependency(book_dir, stage)
+                if not ok:
+                    stage_key = f"{stage}:{phase}" if phase else stage
+                    print_flush(f"\n  ✗ {_stage_display(stage, phase)} 依赖检查未通过: {msg}")
+                    results[stage_key] = ("SKIP", 0, None)
+                    dep_fail = True
+                    break
+
+            if dep_fail:
+                _print_all_summary(results, all_start)
                 sys.exit(1)
 
-            stage_start = time.time()
-            rc = dispatch_stage(book_dir, stage, None,
-                                args.model, args.timeout,
-                                args.dry_run, args.validate)
-            stage_dur = time.time() - stage_start
+            if is_parallel and len(wave_stages) > 1:
+                # 并行执行：输出重定向到日志文件
+                wave_start = time.time()
+                items = [f"{s.upper()}" + (f"({p})" if p else "") for s, p in wave_stages]
+                print_flush(f"\n  并行启动: {' + '.join(items)}")
 
-            if rc != 0:
-                results[stage] = ("FAIL", stage_dur)
-                print_flush(f"\n  ✗ {stage.upper()} 执行失败（退出码 {rc}），耗时 {fmt_duration(stage_dur)}")
-                _print_all_summary(results, stage_names, all_start)
-                sys.exit(rc)
+                futures = {}
+                with ThreadPoolExecutor(max_workers=len(wave_stages)) as executor:
+                    for stage, phase in wave_stages:
+                        stage_key = f"{stage}:{phase}" if phase else stage
+                        fut = executor.submit(
+                            _dispatch_to_log,
+                            book_dir, stage, phase,
+                            args.model, args.timeout,
+                            args.dry_run, args.validate, log_dir
+                        )
+                        futures[fut] = (stage_key, stage, phase)
 
-            results[stage] = ("OK", stage_dur)
-            print_flush(f"\n  ✓ {stage.upper()} 完成，耗时 {fmt_duration(stage_dur)}")
+                    # 等待动画
+                    stop_event = threading.Event()
+                    anim_thread = threading.Thread(
+                        target=show_waiting_animation,
+                        args=(stop_event, f"并行执行 {' + '.join(items)}")
+                    )
+                    anim_thread.start()
 
-        _print_all_summary(results, stage_names, all_start)
+                    # 收集结果（按完成顺序）
+                    for fut in as_completed(futures):
+                        stage_key, stage, phase = futures[fut]
+                        rc, duration, log_path = fut.result()
+                        status = "OK" if rc == 0 else "FAIL"
+                        results[stage_key] = (status, duration, log_path)
+
+                    stop_event.set()
+                    anim_thread.join()
+
+                wave_dur = time.time() - wave_start
+                has_failure = False
+                for stage, phase in wave_stages:
+                    stage_key = f"{stage}:{phase}" if phase else stage
+                    status, duration, log_path = results[stage_key]
+                    mark = "✓" if status == "OK" else "✗"
+                    display = _stage_display(stage, phase)
+                    print_flush(f"  {mark} {display}: {fmt_duration(duration)}")
+                    if log_path:
+                        print_flush(f"    日志: {log_path}")
+                    if status == "FAIL":
+                        has_failure = True
+
+                print_flush(f"  波次耗时: {fmt_duration(wave_dur)}")
+
+                if has_failure:
+                    _print_all_summary(results, all_start)
+                    sys.exit(1)
+            else:
+                # 串行执行：实时输出
+                for stage, phase in wave_stages:
+                    stage_key = f"{stage}:{phase}" if phase else stage
+                    stage_start = time.time()
+                    rc = dispatch_stage(book_dir, stage, phase,
+                                        args.model, args.timeout,
+                                        args.dry_run, args.validate)
+                    stage_dur = time.time() - stage_start
+
+                    if rc != 0:
+                        results[stage_key] = ("FAIL", stage_dur, None)
+                        display = _stage_display(stage, phase)
+                        print_flush(f"\n  ✗ {display} 执行失败（退出码 {rc}），耗时 {fmt_duration(stage_dur)}")
+                        _print_all_summary(results, all_start)
+                        sys.exit(rc)
+
+                    results[stage_key] = ("OK", stage_dur, None)
+                    display = _stage_display(stage, phase)
+                    print_flush(f"\n  ✓ {display} 完成，耗时 {fmt_duration(stage_dur)}")
+
+        _print_all_summary(results, all_start)
         show_status(book_dir)
         return
 

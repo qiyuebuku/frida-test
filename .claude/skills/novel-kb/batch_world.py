@@ -12,7 +12,7 @@ T5 世界观提取 — 批量编排脚本
   - T4 已完成: characters/ 下有角色档案（提取势力归属，可选）
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-五阶段 Pipeline（按顺序自动执行，支持断点续传）
+三阶段 Pipeline（按顺序自动执行，支持断点续传）
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
   阶段 0  preprocess       Python 预处理，合并三个数据源
@@ -23,16 +23,11 @@ T5 世界观提取 — 批量编排脚本
                            产出: world/.build/seg_XX.json
                            支持 --concurrency M 并发
 
-  阶段 2  global-merge     全局去重合并 + AI 实体扩写 + 生成实体文件
+  阶段 2  global-merge     全局去重合并 + AI 扩写 + 生成实体文件
                            2a. Python 全局去重合并 → merged_entities.json
-                           2b. AI 标注重要性 + 扩写描述（按类别）
+                           2b. AI 标注重要性 + 扩写描述（按类别，high 实体一步到位）
                            2c. Python 生成实体文件 + index.md
                            产出: world/{category}/{entity}.md + index.md
-                           支持 --concurrency M 并发
-
-  阶段 3  refine           实体级精修（仅 high 实体）
-                           按实体的 source_chapters 找章节摘要
-                           产出: 更新实体 .md 文件
                            支持 --concurrency M 并发
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -75,7 +70,6 @@ T5 世界观提取 — 批量编排脚本
   python batch_world.py --book-dir ... --phase preprocess
   python batch_world.py --book-dir ... --phase segment-classify --concurrency 3
   python batch_world.py --book-dir ... --phase global-merge --concurrency 3
-  python batch_world.py --book-dir ... --phase refine --concurrency 3
 
   # 试运行 + 验证产出
   python batch_world.py --book-dir ... --dry-run
@@ -99,17 +93,20 @@ import argparse
 import fcntl
 import json
 import re
-import subprocess
 import sys
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from json_fixer import fix_and_parse_json
-
-# Skill 目录
-SKILL_DIR = Path(__file__).parent
-PROMPTS_DIR = SKILL_DIR / "prompts"
+from kb_common import (
+    SKILL_DIR, PROMPTS_DIR,
+    resolve_book_dir, load_progress, save_progress, merge_stats,
+    run_claude_prompt, list_chapter_files, load_chapter_file, compute_segments,
+    parse_section, parse_setting_lines, sanitize_filename,
+    print_flush,
+)
+from kb_preprocess import load_preprocess_cache, get_raw_world_data
 
 # 分类体系
 CATEGORIES = ["power_system", "geography", "factions", "rules"]
@@ -130,7 +127,7 @@ def parse_args():
     parser.add_argument("--book-dir", required=True, help="知识库目录路径")
     parser.add_argument("--phase",
                         choices=["preprocess", "segment-classify",
-                                 "global-merge", "refine"],
+                                 "global-merge"],
                         help="只运行特定阶段")
     parser.add_argument("--model", default="sonnet", help="Claude 模型（默认 sonnet）")
     parser.add_argument("--dry-run", action="store_true", help="试运行")
@@ -147,17 +144,6 @@ def parse_args():
 # ============================================================
 # 路径解析
 # ============================================================
-
-def resolve_book_dir(book_dir_arg: str) -> Path:
-    p = Path(book_dir_arg)
-    if not p.is_absolute():
-        p = Path.cwd() / p
-    p = p.resolve()
-    if not p.exists():
-        print(f"错误：目录不存在: {p}")
-        sys.exit(1)
-    return p
-
 
 def get_chapters_dir(book_dir: Path) -> Path:
     d = book_dir / "plot" / "chapters"
@@ -216,11 +202,6 @@ def _default_progress() -> dict:
         },
         "global_merge": {"status": "pending"},
         "entity_expand": {"status": "pending", "categories_completed": []},
-        "refine": {
-            "status": "pending",
-            "entities_completed": [],
-            "validated": False,
-        },
         "stats": {
             "total_calls": 0,
             "total_time_seconds": 0,
@@ -228,11 +209,11 @@ def _default_progress() -> dict:
     }
 
 
-def _read_progress_raw(progress_path: Path) -> dict:
+def _read_raw(progress_path: Path) -> dict:
+    """无锁读取进度文件（供已持锁的上下文使用）"""
     if progress_path.exists():
         with open(progress_path, "r", encoding="utf-8") as f:
             data = json.load(f)
-        # 迁移旧格式进度
         defaults = _default_progress()
         for key in defaults:
             if key not in data:
@@ -241,214 +222,47 @@ def _read_progress_raw(progress_path: Path) -> dict:
     return _default_progress()
 
 
-def load_progress(progress_path: Path) -> dict:
-    lock_path = progress_path.with_suffix(".lock")
-    with open(lock_path, "w") as lf:
-        fcntl.flock(lf, fcntl.LOCK_SH)
-        try:
-            return _read_progress_raw(progress_path)
-        finally:
-            fcntl.flock(lf, fcntl.LOCK_UN)
+def _load_progress(progress_path: Path) -> dict:
+    """加载进度（带旧格式迁移）"""
+    data = load_progress(progress_path, default_fn=_default_progress)
+    defaults = _default_progress()
+    for key in defaults:
+        if key not in data:
+            data[key] = defaults[key]
+    return data
 
 
-def save_progress(progress_path: Path, progress: dict):
-    lock_path = progress_path.with_suffix(".lock")
-    with open(lock_path, "w") as lf:
-        fcntl.flock(lf, fcntl.LOCK_EX)
-        try:
-            disk = _read_progress_raw(progress_path)
-            # 合并 segment_classify completed/failed
-            sc = progress.get("segment_classify", {})
-            dsc = disk.get("segment_classify", {})
-            merged_completed = sorted(set(dsc.get("segments_completed", [])) | set(sc.get("segments_completed", [])))
-            merged_failed = sorted(
-                (set(dsc.get("segments_failed", [])) | set(sc.get("segments_failed", []))) - set(merged_completed)
-            )
-            progress["segment_classify"]["segments_completed"] = merged_completed
-            progress["segment_classify"]["segments_failed"] = merged_failed
-            # 合并 entity_expand categories_completed
-            ee = progress.get("entity_expand", {})
-            dee = disk.get("entity_expand", {})
-            progress["entity_expand"]["categories_completed"] = sorted(
-                set(dee.get("categories_completed", [])) | set(ee.get("categories_completed", []))
-            )
-            # 合并 refine entities_completed
-            ref = progress.get("refine", {})
-            dref = disk.get("refine", {})
-            progress["refine"]["entities_completed"] = sorted(
-                set(dref.get("entities_completed", [])) | set(ref.get("entities_completed", []))
-            )
-            progress["refine"]["validated"] = progress["refine"].get("validated", False) or dref.get("validated", False)
-            # stats 取 max
-            progress["stats"]["total_calls"] = max(
-                disk["stats"].get("total_calls", 0), progress["stats"].get("total_calls", 0))
-            progress["stats"]["total_time_seconds"] = max(
-                disk["stats"].get("total_time_seconds", 0), progress["stats"].get("total_time_seconds", 0))
-            with open(progress_path, "w", encoding="utf-8") as f:
-                json.dump(progress, f, ensure_ascii=False, indent=2)
-        finally:
-            fcntl.flock(lf, fcntl.LOCK_UN)
+def _merge_progress(disk: dict, progress: dict) -> dict:
+    """T5 专用合并策略"""
+    # 合并 segment_classify completed/failed
+    sc = progress.get("segment_classify", {})
+    dsc = disk.get("segment_classify", {})
+    merged_completed = sorted(set(dsc.get("segments_completed", [])) | set(sc.get("segments_completed", [])))
+    merged_failed = sorted(
+        (set(dsc.get("segments_failed", [])) | set(sc.get("segments_failed", []))) - set(merged_completed)
+    )
+    progress["segment_classify"]["segments_completed"] = merged_completed
+    progress["segment_classify"]["segments_failed"] = merged_failed
+    # 合并 entity_expand categories_completed
+    ee = progress.get("entity_expand", {})
+    dee = disk.get("entity_expand", {})
+    progress["entity_expand"]["categories_completed"] = sorted(
+        set(dee.get("categories_completed", [])) | set(ee.get("categories_completed", []))
+    )
+    # stats
+    progress["stats"] = merge_stats(disk.get("stats", {}), progress.get("stats", {}))
+    return progress
+
+
+def _save_progress(progress_path: Path, progress: dict):
+    """保存进度（使用 T5 合并策略）"""
+    save_progress(progress_path, progress,
+                  default_fn=_default_progress, merge_fn=_merge_progress)
 
 
 # ============================================================
 # 数据加载
 # ============================================================
-
-def list_summary_chapters(chapters_dir: Path) -> list[int]:
-    chapters = []
-    for f in chapters_dir.iterdir():
-        m = re.match(r"ch(\d+)\.md$", f.name)
-        if m:
-            chapters.append(int(m.group(1)))
-    chapters.sort()
-    return chapters
-
-
-# ============================================================
-# Claude 调用（支持 Subagent 模式）
-# ============================================================
-
-# Subagent 配置路径
-SKILL_DIR = Path(__file__).parent
-PROJECT_ROOT = SKILL_DIR.parent.parent
-AGENTS_DIR = PROJECT_ROOT / "agents"
-
-# 可用的 subagent 名称
-SUBAGENT_NAMES = {
-    "classify": "world-extractor",      # 分段分类
-    "expand": "world-extractor",        # 实体扩写
-    "refine": "world-extractor",        # 实体精修
-}
-
-
-def run_claude_prompt(prompt: str, model: str, timeout: int,
-                      allow_tools: str = "",
-                      verbose: bool = True,
-                      agent: str = "") -> tuple[bool, str]:
-    """
-    调用 Claude 执行任务
-
-    Args:
-        prompt: 任务 prompt
-        model: 模型名称
-        timeout: 超时秒数
-        allow_tools: 允许的工具列表
-        verbose: 是否显示详细输出
-        agent: 使用的 subagent 名称（如 "world-extractor"）
-
-    Returns:
-        (success, output) 元组
-    """
-    cmd = [
-        "claude",
-        "-p", "-",
-        "--model", model,
-        "--permission-mode", "bypassPermissions",
-    ]
-
-    # 使用 subagent 模式
-    if agent:
-        cmd.extend(["--agent", agent])
-
-    if allow_tools:
-        cmd.extend(["--allowedTools", allow_tools])
-
-    try:
-        if verbose:
-            result = subprocess.run(
-                cmd,
-                input=prompt,
-                stdout=subprocess.PIPE,
-                stderr=None,
-                text=True,
-                timeout=timeout,
-            )
-            if result.returncode != 0:
-                return False, f"退出码 {result.returncode}\n{result.stdout[:1000]}"
-        else:
-            result = subprocess.run(
-                cmd,
-                input=prompt,
-                capture_output=True,
-                text=True,
-                timeout=timeout,
-            )
-            if result.returncode != 0:
-                err_detail = result.stderr[:1000] if result.stderr.strip() else result.stdout[:1000]
-                return False, f"退出码 {result.returncode}\n{err_detail}"
-        return True, result.stdout
-    except subprocess.TimeoutExpired:
-        return False, f"超时（{timeout}秒）"
-    except Exception as e:
-        return False, f"异常: {e}"
-
-
-def run_claude_task(prompt: str, model: str, timeout: int,
-                    task_type: str = "classify",
-                    verbose: bool = True) -> tuple[bool, str]:
-    """
-    使用预定义的 subagent 执行任务（便捷封装）
-
-    Args:
-        prompt: 任务 prompt
-        model: 模型名称
-        timeout: 超时秒数
-        task_type: 任务类型（classify/expand/refine）
-        verbose: 是否显示详细输出
-
-    Returns:
-        (success, output) 元组
-    """
-    agent_name = SUBAGENT_NAMES.get(task_type, "world-extractor")
-    return run_claude_prompt(prompt, model, timeout, agent=agent_name, verbose=verbose)
-
-
-# ============================================================
-# 文件名工具
-# ============================================================
-
-def sanitize_filename(name: str) -> str:
-    """将实体名转为安全的文件名（保留中文）"""
-    # 移除不安全字符，保留中文、字母、数字、下划线、连字符
-    name = name.strip()
-    # 替换路径分隔符和特殊字符
-    name = re.sub(r'[/\\:*?"<>|]', '_', name)
-    # 替换空格为下划线
-    name = name.replace(' ', '_')
-    # 限制长度（文件系统通常 255 字节，UTF-8 中文 3 字节，留余量）
-    if len(name.encode('utf-8')) > 200:
-        # 按字符截断直到字节数 <= 200
-        while len(name.encode('utf-8')) > 200:
-            name = name[:-1]
-    return name or "unnamed"
-
-
-# ============================================================
-# Markdown 解析工具
-# ============================================================
-
-def parse_section(content: str, section_name: str) -> str:
-    """从 Markdown 内容中提取指定 ## 段落的文本"""
-    pattern = rf"## {re.escape(section_name)}\s*\n(.*?)(?=\n## |\Z)"
-    m = re.search(pattern, content, re.DOTALL)
-    return m.group(1).strip() if m else ""
-
-
-def parse_setting_lines(section_text: str) -> list[dict]:
-    """解析设定行，返回 [{name, description}, ...]"""
-    results = []
-    for line in section_text.splitlines():
-        line = line.strip()
-        if not line.startswith("- ") or "（无）" in line:
-            continue
-        m = re.match(r"- (.+?)[:：](.+)", line)
-        if m:
-            results.append({
-                "name": m.group(1).strip(),
-                "description": m.group(2).strip(),
-            })
-    return results
-
 
 def parse_bold_lines(section_text: str) -> list[dict]:
     """解析加粗格式行（弧文件格式），返回 [{name, description}, ...]"""
@@ -613,7 +427,9 @@ def phase_preprocess(book_dir: Path, all_chapters: list[int],
         print("产出: world/.build/raw_world_data.json")
         return
 
-    raw_data = build_raw_world_data(book_dir, all_chapters)
+    # 使用统一预处理缓存
+    cache = load_preprocess_cache(book_dir)
+    raw_data = get_raw_world_data(cache)
 
     build_dir = get_build_dir(book_dir)
     output_path = build_dir / "raw_world_data.json"
@@ -635,7 +451,7 @@ def phase_preprocess(book_dir: Path, all_chapters: list[int],
 
     progress["preprocess"]["status"] = "completed"
     progress["phase"] = "segment_classify"
-    save_progress(progress_path, progress)
+    _save_progress(progress_path, progress)
 
 
 # ============================================================
@@ -687,188 +503,79 @@ def phase_segment_classify(book_dir: Path, all_chapters: list[int],
                            progress: dict, progress_path: Path,
                            model: str, timeout: int, dry_run: bool,
                            segment_size: int, concurrency: int = 1):
-    """执行阶段 1：分段提取与分类"""
+    """执行阶段 1：从 T3 统一段扫描结果中提取世界观分类数据"""
     print("\n" + "=" * 60)
-    print("阶段 1：分段提取与分类")
+    print("阶段 1：提取世界观分类数据（从 T3 段扫描）")
     print("=" * 60)
 
     build_dir = get_build_dir(book_dir)
-    raw_data_path = build_dir / "raw_world_data.json"
-    if not raw_data_path.exists():
-        print("错误：raw_world_data.json 不存在，请先运行阶段 0")
+    t3_segments_dir = book_dir / "plot" / "outline" / ".segments"
+
+    if not t3_segments_dir.exists():
+        print(f"错误：T3 段扫描结果不存在: {t3_segments_dir}")
+        print("请先运行 T3（batch_plot.py --phase segment-scan）")
         return
 
-    with open(raw_data_path, "r", encoding="utf-8") as f:
-        raw_data = json.load(f)
-
-    total_chapters = len(all_chapters)
-
-    # 小规模优化：≤50 章跳过分段，直接全量处理
-    if total_chapters <= 50:
-        print(f"章节数 ({total_chapters}) ≤ 50，跳过分段，直接进入阶段 2")
-        segment_data = build_segment_data(raw_data, all_chapters[0], all_chapters[-1])
-        segment_label = f"ch{all_chapters[0]:04d}-ch{all_chapters[-1]:04d} (全部)"
-
-        if dry_run:
-            print(f"将一次性分类全部 {total_chapters} 章设定")
-            return
-
-        prompt = build_segment_classify_prompt(segment_data, segment_label)
-        print(f"分类全部 {total_chapters} 章设定...")
-        start_time = time.time()
-        success, output = run_claude_prompt(prompt, model, timeout)
-        elapsed = time.time() - start_time
-
-        progress["stats"]["total_calls"] += 1
-        progress["stats"]["total_time_seconds"] += int(elapsed)
-
-        if success:
-            debug_path = build_dir / "segment_all_json_debug.txt"
-            result = fix_and_parse_json(output, verbose=False, save_debug_to=debug_path)
-            if result:
-                output_path = build_dir / "segment_all.json"
-                with open(output_path, "w", encoding="utf-8") as f:
-                    json.dump(result, f, ensure_ascii=False, indent=2)
-                print(f"完成 ({elapsed:.0f}s)")
-
-                for cat in CATEGORIES + ["misc"]:
-                    n = len(result.get(cat, []))
-                    if n > 0:
-                        label = CATEGORY_NAMES.get(cat, cat)
-                        print(f"  {label}: {n} 条")
-            else:
-                print(f"无法解析 JSON ({elapsed:.0f}s)")
-                print(f"调试信息已保存: {debug_path}")
-                save_progress(progress_path, progress)
-                return
-        else:
-            print(f"失败 ({elapsed:.0f}s): {output[:200]}")
-            save_progress(progress_path, progress)
-            return
-
-        progress["segment_classify"]["status"] = "completed"
-        progress["segment_classify"]["segments_completed"].append("all")
-        progress["phase"] = "global_merge"
-        save_progress(progress_path, progress)
+    # 扫描 T3 段文件
+    t3_seg_files = sorted(t3_segments_dir.glob("segment_*.json"))
+    if not t3_seg_files:
+        print("错误：T3 段目录中无段文件")
         return
-
-    # 正常分段处理
-    segments = []
-    for i in range(0, total_chapters, segment_size):
-        seg_chapters = all_chapters[i:i + segment_size]
-        segments.append((seg_chapters[0], seg_chapters[-1], f"seg_{i // segment_size + 1:02d}"))
-
-    completed = set(progress["segment_classify"]["segments_completed"])
-    pending = [s for s in segments if s[2] not in completed]
-
-    print(f"总段数: {len(segments)} ({len(pending)} 待处理)")
 
     if dry_run:
-        for start, end, label in pending:
-            seg_data = build_segment_data(raw_data, start, end)
-            n_lines = len([l for l in seg_data.splitlines() if l.strip().startswith("- [")])
-            print(f"  {label} (ch{start:04d}-ch{end:04d}): {n_lines} 条设定")
+        print(f"将从 {len(t3_seg_files)} 个 T3 段文件中提取世界观数据")
         return
 
-    concurrency = max(1, concurrency)
-    print_lock = threading.Lock()
-    done_counter = {"n": 0, "total": len(pending)}
+    total_extracted = 0
+    categories_count = {cat: 0 for cat in CATEGORIES + ["misc"]}
 
-    def process_one_segment(start: int, end: int, seg_label: str,
-                            verbose: bool = True) -> dict:
-        seg_display = f"ch{start:04d}-ch{end:04d}"
-        segment_data = build_segment_data(raw_data, start, end)
+    for seg_file in t3_seg_files:
+        with open(seg_file, "r", encoding="utf-8") as f:
+            data = json.load(f)
 
-        if segment_data == "（本段无设定数据）":
-            with print_lock:
-                print(f"\n--- {seg_label} ({seg_display}): 无设定，跳过 ---")
-            lock_path = progress_path.with_suffix(".lock")
-            with open(lock_path, "w") as lf:
-                fcntl.flock(lf, fcntl.LOCK_EX)
-                try:
-                    disk = _read_progress_raw(progress_path)
-                    if seg_label not in disk["segment_classify"]["segments_completed"]:
-                        disk["segment_classify"]["segments_completed"].append(seg_label)
-                    with open(progress_path, "w", encoding="utf-8") as f:
-                        json.dump(disk, f, ensure_ascii=False, indent=2)
-                finally:
-                    fcntl.flock(lf, fcntl.LOCK_UN)
-            with print_lock:
-                done_counter["n"] += 1
-            return {"seg": seg_label, "success": True, "skipped": True}
+        world_data = data.get("world")
+        if not world_data:
+            # 旧格式 T3 段文件（无 world 部分），跳过
+            print(f"  跳过 {seg_file.name}（无 world 数据，可能是旧格式）")
+            continue
 
-        prompt = build_segment_classify_prompt(segment_data, f"{seg_label} ({seg_display})")
+        # 保存为 T5 格式的 seg JSON
+        seg_name = seg_file.stem  # e.g., "segment_01"
+        # 转换为 T5 的命名约定
+        seg_match = re.match(r"segment_(\d+)", seg_name)
+        if seg_match:
+            seg_num = int(seg_match.group(1))
+            t5_seg_name = f"seg_{seg_num:02d}"
+        else:
+            t5_seg_name = seg_name
 
-        with print_lock:
-            print(f"\n--- {seg_label} ({seg_display}) ---")
+        output_path = build_dir / f"{t5_seg_name}.json"
+        with open(output_path, "w", encoding="utf-8") as f:
+            json.dump(world_data, f, ensure_ascii=False, indent=2)
 
-        start_time = time.time()
-        success, output = run_claude_prompt(prompt, model, timeout, verbose=verbose)
-        elapsed = time.time() - start_time
+        # 统计
+        for cat in CATEGORIES + ["misc"]:
+            n = len(world_data.get(cat, []))
+            categories_count[cat] += n
+            total_extracted += n
 
-        lock_path = progress_path.with_suffix(".lock")
-        with open(lock_path, "w") as lf:
-            fcntl.flock(lf, fcntl.LOCK_EX)
-            try:
-                disk = _read_progress_raw(progress_path)
-                disk["stats"]["total_calls"] = disk["stats"].get("total_calls", 0) + 1
-                disk["stats"]["total_time_seconds"] = disk["stats"].get("total_time_seconds", 0) + int(elapsed)
-                ok = False
-                if success:
-                    debug_path = build_dir / f"{seg_label}_json_debug.txt"
-                    result = fix_and_parse_json(output, verbose=False, save_debug_to=debug_path)
-                    if result:
-                        output_path = build_dir / f"{seg_label}.json"
-                        with open(output_path, "w", encoding="utf-8") as fo:
-                            json.dump(result, fo, ensure_ascii=False, indent=2)
-                        if seg_label not in disk["segment_classify"]["segments_completed"]:
-                            disk["segment_classify"]["segments_completed"].append(seg_label)
-                        ok = True
-                    else:
-                        if seg_label not in disk["segment_classify"]["segments_failed"]:
-                            disk["segment_classify"]["segments_failed"].append(seg_label)
-                else:
-                    if seg_label not in disk["segment_classify"]["segments_failed"]:
-                        disk["segment_classify"]["segments_failed"].append(seg_label)
-                with open(progress_path, "w", encoding="utf-8") as f:
-                    json.dump(disk, f, ensure_ascii=False, indent=2)
-                progress.update(disk)
-            finally:
-                fcntl.flock(lf, fcntl.LOCK_UN)
+        seg_label = t5_seg_name
+        if not progress["segment_classify"]["segments_completed"]:
+            progress["segment_classify"]["segments_completed"] = []
+        if seg_label not in progress["segment_classify"]["segments_completed"]:
+            progress["segment_classify"]["segments_completed"].append(seg_label)
 
-        with print_lock:
-            done_counter["n"] += 1
-            status = "✓" if ok else "✗"
-            msg = f"  [{seg_label}] {status} ({elapsed:.0f}s)  [{done_counter['n']}/{done_counter['total']}]"
-            if not success:
-                msg += f" {output[:100]}"
-            print(msg)
+    print(f"已提取 {total_extracted} 条设定（来自 {len(t3_seg_files)} 个段文件）")
+    for cat in CATEGORIES + ["misc"]:
+        n = categories_count[cat]
+        if n > 0:
+            label = CATEGORY_NAMES.get(cat, cat)
+            print(f"  {label}: {n} 条")
 
-        return {"seg": seg_label, "success": ok}
-
-    if concurrency == 1:
-        for start, end, seg_label in pending:
-            process_one_segment(start, end, seg_label)
-    else:
-        print(f"并发数: {concurrency}")
-        with ThreadPoolExecutor(max_workers=concurrency) as executor:
-            futures = {executor.submit(process_one_segment, s, e, l, verbose=False): l for s, e, l in pending}
-            for future in as_completed(futures):
-                try:
-                    future.result()
-                except Exception as e:
-                    with print_lock:
-                        print(f"  ✗ 线程异常 ({futures[future]}): {e}")
-
-    # 检查是否全部完成
-    final = load_progress(progress_path)
-    all_done = set(s[2] for s in segments) <= set(final["segment_classify"]["segments_completed"])
-    if all_done:
-        final["segment_classify"]["status"] = "completed"
-        final["phase"] = "global_merge"
-        save_progress(progress_path, final)
-        progress.update(final)
-        print("\n分段分类全部完成！")
+    progress["segment_classify"]["status"] = "completed"
+    progress["phase"] = "global_merge"
+    _save_progress(progress_path, progress)
+    print("\n世界观分类数据提取完成！")
 
 
 # ============================================================
@@ -1041,7 +748,7 @@ def phase_entity_expand(build_dir: Path, merged_entities: dict,
         with open(lock_path, "w") as lf:
             fcntl.flock(lf, fcntl.LOCK_EX)
             try:
-                disk = _read_progress_raw(progress_path)
+                disk = _read_raw(progress_path)
                 disk["stats"]["total_calls"] = disk["stats"].get("total_calls", 0) + 1
                 disk["stats"]["total_time_seconds"] = disk["stats"].get("total_time_seconds", 0) + int(elapsed)
                 if success:
@@ -1265,274 +972,9 @@ def phase_global_merge(book_dir: Path, progress: dict, progress_path: Path,
     build_index_md(world_dir, expanded_entities)
 
     progress["global_merge"]["status"] = "completed"
-    progress["phase"] = "refine"
-    save_progress(progress_path, progress)
+    progress["phase"] = "completed"
+    _save_progress(progress_path, progress)
     print("\n全局融合完成！")
-
-
-# ============================================================
-# 阶段 3：实体级精修（仅 high 实体）
-# ============================================================
-
-def get_entity_chapter_summaries(book_dir: Path, source_chapters: list[str],
-                                 max_chapters: int = 15) -> str:
-    """根据实体的 source_chapters 获取章节摘要"""
-    chapters_dir = get_chapters_dir(book_dir)
-
-    # 限制数量
-    chapters = sorted(set(source_chapters))[:max_chapters]
-
-    parts = []
-    for ch_str in chapters:
-        m = re.match(r"ch(\d+)", ch_str)
-        if not m:
-            continue
-        ch_num = int(m.group(1))
-        filepath = chapters_dir / f"ch{ch_num:04d}.md"
-        if filepath.exists():
-            content = filepath.read_text(encoding="utf-8")
-            parts.append(f"### {ch_str}\n\n{content}")
-
-    return "\n\n---\n\n".join(parts) if parts else "（无相关章节摘要）"
-
-
-def build_refine_entity_prompt(entity: dict, category_key: str,
-                               related_summaries: str) -> str:
-    """构建实体级精修 prompt"""
-    prompt = (PROMPTS_DIR / "world_refine_entity.md").read_text(encoding="utf-8")
-    prompt = prompt.replace("{entity_name}", entity.get("name", ""))
-    prompt = prompt.replace("{category_name}", CATEGORY_NAMES[category_key])
-    prompt = prompt.replace("{importance}", entity.get("importance", "high"))
-    prompt = prompt.replace("{current_description}", entity.get("description", ""))
-    prompt = prompt.replace("{source_chapters}", ", ".join(entity.get("source_chapters", [])))
-    prompt = prompt.replace("{related_summaries}", related_summaries)
-    return prompt
-
-
-def phase_refine(book_dir: Path, progress: dict, progress_path: Path,
-                 model: str, timeout: int, dry_run: bool,
-                 concurrency: int = 1):
-    """执行阶段 3：实体级精修（仅 high 实体）"""
-    print("\n" + "=" * 60)
-    print("阶段 3：实体级精修")
-    print("=" * 60)
-
-    build_dir = get_build_dir(book_dir)
-    world_dir = get_world_dir(book_dir)
-
-    # 加载扩写后的实体数据
-    expanded_path = build_dir / "expanded_entities.json"
-    if not expanded_path.exists():
-        print("错误：expanded_entities.json 不存在，请先运行阶段 2")
-        return
-
-    with open(expanded_path, "r", encoding="utf-8") as f:
-        expanded = json.load(f)
-
-    # 收集所有 high 实体
-    high_entities = []
-    for cat in CATEGORIES:
-        for entity in expanded.get(cat, []):
-            if entity.get("importance") == "high":
-                high_entities.append((cat, entity))
-
-    completed = set(progress["refine"].get("entities_completed", []))
-    pending = [(cat, e) for cat, e in high_entities
-               if f"{cat}/{e['name']}" not in completed]
-
-    print(f"high 实体总数: {len(high_entities)} ({len(pending)} 待精修)")
-
-    if not pending:
-        print("所有 high 实体已精修")
-    elif dry_run:
-        for cat, entity in pending:
-            print(f"  将精修: [{CATEGORY_NAMES[cat]}] {entity['name']}")
-    else:
-        print_lock = threading.Lock()
-        done_counter = {"n": 0, "total": len(pending)}
-
-        def refine_one_entity(cat: str, entity: dict, verbose: bool = True):
-            entity_key = f"{cat}/{entity['name']}"
-            with print_lock:
-                print(f"  精修 [{CATEGORY_NAMES[cat]}] {entity['name']}...")
-
-            summaries = get_entity_chapter_summaries(
-                book_dir, entity.get("source_chapters", [])
-            )
-            prompt = build_refine_entity_prompt(entity, cat, summaries)
-
-            start_time = time.time()
-            success, output = run_claude_prompt(prompt, model, timeout, verbose=verbose)
-            elapsed = time.time() - start_time
-
-            # 更新进度
-            lock_path = progress_path.with_suffix(".lock")
-            with open(lock_path, "w") as lf:
-                fcntl.flock(lf, fcntl.LOCK_EX)
-                try:
-                    disk = _read_progress_raw(progress_path)
-                    disk["stats"]["total_calls"] = disk["stats"].get("total_calls", 0) + 1
-                    disk["stats"]["total_time_seconds"] = disk["stats"].get("total_time_seconds", 0) + int(elapsed)
-
-                    if success:
-                        debug_path = build_dir / f"refine_{sanitize_filename(entity['name'])}_json_debug.txt"
-                        result = fix_and_parse_json(output, verbose=False, save_debug_to=debug_path)
-                        if result and isinstance(result, dict):
-                            # 更新实体文件
-                            new_desc = result.get("description", entity.get("description", ""))
-                            new_evolution = result.get("evolution", entity.get("evolution", ""))
-                            new_source = result.get("source_chapters", entity.get("source_chapters", []))
-
-                            entity["description"] = new_desc
-                            entity["evolution"] = new_evolution
-                            entity["source_chapters"] = new_source
-
-                            # 重写实体文件
-                            filename = sanitize_filename(entity["name"]) + ".md"
-                            filepath = world_dir / cat / filename
-                            if filepath.exists():
-                                _write_entity_file(filepath, entity, cat)
-
-                            if entity_key not in disk["refine"].get("entities_completed", []):
-                                disk.setdefault("refine", {}).setdefault("entities_completed", []).append(entity_key)
-                            with print_lock:
-                                print(f"    [{entity['name']}] ✓ ({elapsed:.0f}s)")
-                        else:
-                            with print_lock:
-                                print(f"    [{entity['name']}] ✗ JSON 解析失败 ({elapsed:.0f}s)")
-                    else:
-                        with print_lock:
-                            print(f"    [{entity['name']}] ✗ ({elapsed:.0f}s): {output[:100]}")
-
-                    with open(progress_path, "w", encoding="utf-8") as f:
-                        json.dump(disk, f, ensure_ascii=False, indent=2)
-                    progress.update(disk)
-                finally:
-                    fcntl.flock(lf, fcntl.LOCK_UN)
-
-            with print_lock:
-                done_counter["n"] += 1
-
-        concurrency = max(1, concurrency)
-        if concurrency == 1:
-            for cat, entity in pending:
-                refine_one_entity(cat, entity)
-        else:
-            print(f"并发数: {concurrency}")
-            with ThreadPoolExecutor(max_workers=min(concurrency, len(pending))) as executor:
-                futures = {executor.submit(refine_one_entity, c, e, verbose=False): f"{c}/{e['name']}" for c, e in pending}
-                for future in as_completed(futures):
-                    try:
-                        future.result()
-                    except Exception as e:
-                        with print_lock:
-                            print(f"    ✗ 精修异常 ({futures[future]}): {e}")
-
-    # 保存更新后的 expanded 数据
-    with open(expanded_path, "w", encoding="utf-8") as f:
-        json.dump(expanded, f, ensure_ascii=False, indent=2)
-
-    # 一致性验证
-    if not progress["refine"].get("validated", False):
-        if dry_run:
-            print("将验证世界观一致性")
-        else:
-            _run_consistency_validation(world_dir, build_dir, progress, progress_path, model, timeout)
-
-    # 重新生成 index（精修后内容可能变化）
-    build_index_md(world_dir, expanded)
-
-    progress["refine"]["status"] = "completed"
-    save_progress(progress_path, progress)
-    print("\n精修阶段完成！")
-
-
-def _write_entity_file(filepath: Path, entity: dict, cat: str):
-    """写入单个实体 .md 文件"""
-    name = entity.get("name", "unnamed")
-    importance = entity.get("importance", "low")
-    first_ch = entity.get("first_chapter", "")
-    source_chs = entity.get("source_chapters", [])
-    description = entity.get("description", "")
-    evolution = entity.get("evolution", "")
-    related = entity.get("related_entities", [])
-
-    lines = [f"# {name}\n"]
-    lines.append(f"**分类**：{CATEGORY_NAMES[cat]}")
-    lines.append(f"**重要性**：{importance}")
-    if first_ch:
-        lines.append(f"**首次提及**：{first_ch}")
-    if source_chs:
-        lines.append(f"**相关章节**：{', '.join(source_chs)}")
-    if related:
-        lines.append(f"**关联实体**：{', '.join(related)}")
-
-    lines.append(f"\n## 描述\n\n{description}")
-
-    if evolution:
-        lines.append(f"\n## 演化记录\n\n{evolution}")
-
-    filepath.write_text("\n".join(lines), encoding="utf-8")
-
-
-def _run_consistency_validation(world_dir: Path, build_dir: Path,
-                                progress: dict, progress_path: Path,
-                                model: str, timeout: int):
-    """一致性验证（抽样 high 实体 + index.md）"""
-    template = (PROMPTS_DIR / "world_validate_consistency.md").read_text(encoding="utf-8")
-
-    # 收集各类别 index.md + 抽样 high 实体
-    all_content_parts = []
-    for cat in CATEGORIES:
-        cat_dir = world_dir / cat
-        index_path = cat_dir / "index.md"
-        if index_path.exists():
-            all_content_parts.append(f"### {CATEGORY_NAMES[cat]} 索引\n\n{index_path.read_text(encoding='utf-8')}")
-
-        # 抽样最多 5 个 high 实体
-        sampled = 0
-        for entity_file in sorted(cat_dir.glob("*.md")):
-            if entity_file.name == "index.md":
-                continue
-            content = entity_file.read_text(encoding="utf-8")
-            if "**重要性**：high" in content:
-                all_content_parts.append(f"#### [{CATEGORY_NAMES[cat]}] {entity_file.stem}\n\n{content}")
-                sampled += 1
-                if sampled >= 5:
-                    break
-
-    if len(all_content_parts) < 2:
-        print("文件不足，跳过一致性验证")
-        progress["refine"]["validated"] = True
-        save_progress(progress_path, progress)
-        return
-
-    prompt = template.replace("{all_world_files}", "\n\n---\n\n".join(all_content_parts))
-
-    print("一致性验证...")
-    start_time = time.time()
-    success, output = run_claude_prompt(prompt, model, timeout)
-    elapsed = time.time() - start_time
-
-    progress["stats"]["total_calls"] += 1
-    progress["stats"]["total_time_seconds"] += int(elapsed)
-
-    if success:
-        debug_path = build_dir / "consistency_validation_json_debug.txt"
-        result = fix_and_parse_json(output, verbose=False, save_debug_to=debug_path)
-        if result:
-            n_issues = len(result.get("issues", []))
-            print(f"  完成 ({elapsed:.0f}s): {n_issues} 个问题")
-            val_path = build_dir / "consistency_validation.json"
-            with open(val_path, "w", encoding="utf-8") as f:
-                json.dump(result, f, ensure_ascii=False, indent=2)
-        else:
-            print(f"  完成 ({elapsed:.0f}s): 无结构化输出")
-    else:
-        print(f"  失败 ({elapsed:.0f}s): {output[:200]}")
-
-    progress["refine"]["validated"] = True
-    save_progress(progress_path, progress)
 
 
 # ============================================================
@@ -1695,7 +1137,7 @@ def run_validate(book_dir: Path):
     # 加载进度统计
     progress_path = get_progress_path(book_dir)
     if progress_path.exists():
-        progress = load_progress(progress_path)
+        progress = _load_progress(progress_path)
         print(f"\n统计:")
         print(f"  总调用: {progress['stats']['total_calls']} 次")
         total_s = progress["stats"]["total_time_seconds"]
@@ -1713,7 +1155,7 @@ def main():
     chapters_dir = get_chapters_dir(book_dir)
     progress_path = get_progress_path(book_dir)
 
-    all_chapters = list_summary_chapters(chapters_dir)
+    all_chapters = list_chapter_files(chapters_dir)
     if not all_chapters:
         print(f"错误：chapters 目录中没有摘要文件: {chapters_dir}")
         sys.exit(1)
@@ -1728,7 +1170,7 @@ def main():
         return
 
     # 加载进度
-    progress = load_progress(progress_path)
+    progress = _load_progress(progress_path)
     print(f"当前阶段: {progress['phase']}")
 
     # 确保输出目录存在
@@ -1746,7 +1188,7 @@ def main():
     if args.phase == "segment-classify" or (
         not args.phase and progress["phase"] in ("segment_classify", "preprocess")
     ):
-        progress = load_progress(progress_path)
+        progress = _load_progress(progress_path)
         if progress["phase"] == "segment_classify" or args.phase == "segment-classify":
             phase_segment_classify(book_dir, all_chapters, progress, progress_path,
                                    args.model, args.timeout, args.dry_run,
@@ -1756,24 +1198,14 @@ def main():
     if args.phase == "global-merge" or (
         not args.phase and progress["phase"] in ("global_merge", "segment_classify")
     ):
-        progress = load_progress(progress_path)
+        progress = _load_progress(progress_path)
         if progress["phase"] == "global_merge" or args.phase == "global-merge":
             phase_global_merge(book_dir, progress, progress_path,
                                args.model, args.timeout, args.dry_run,
                                args.concurrency)
 
-    # 阶段 3: 精修
-    if args.phase == "refine" or (
-        not args.phase and progress["phase"] in ("refine", "global_merge")
-    ):
-        progress = load_progress(progress_path)
-        if progress["phase"] == "refine" or args.phase == "refine":
-            phase_refine(book_dir, progress, progress_path,
-                         args.model, args.timeout, args.dry_run,
-                         args.concurrency)
-
     # 最终统计
-    progress = load_progress(progress_path)
+    progress = _load_progress(progress_path)
     print(f"\n{'=' * 60}")
     print("当前状态:")
     print(f"  阶段: {progress['phase']}")
@@ -1784,10 +1216,6 @@ def main():
     print(f"  全局融合: {progress['global_merge']['status']}")
     ee = progress.get("entity_expand", {})
     print(f"  实体扩写: {ee.get('status', 'pending')} ({len(ee.get('categories_completed', []))} 类别)")
-    ref = progress["refine"]
-    n_refined = len(ref.get("entities_completed", []))
-    print(f"  精修: {ref.get('status', 'pending')} ({n_refined} 实体) "
-          f"验证{'✓' if ref.get('validated') else '✗'}")
     print(f"  总调用: {progress['stats']['total_calls']} 次")
     total_s = progress["stats"]["total_time_seconds"]
     print(f"  总耗时: {total_s // 3600}h{(total_s % 3600) // 60}m{total_s % 60}s")
@@ -1797,7 +1225,6 @@ def main():
         progress["preprocess"]["status"] == "completed"
         and progress["segment_classify"]["status"] == "completed"
         and progress["global_merge"]["status"] == "completed"
-        and ref.get("validated", False)
     )
     if all_done:
         print("\nT5 全流程完成！建议运行验证:")

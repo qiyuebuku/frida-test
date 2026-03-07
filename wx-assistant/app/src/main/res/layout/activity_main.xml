@@ -1,0 +1,287 @@
+<?xml version="1.0" encoding="utf-8"?>
+<ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="@color/background">
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical"
+        android:padding="24dp">
+
+        <!-- Title -->
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="WX Assistant"
+            android:textSize="28sp"
+            android:textColor="@color/text_primary"
+            android:textStyle="bold"
+            android:layout_marginBottom="8dp" />
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="微信聊天 AI 回复助手"
+            android:textSize="14sp"
+            android:textColor="@color/text_secondary"
+            android:layout_marginBottom="24dp" />
+
+        <!-- Permission Section -->
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="权限设置"
+            android:textSize="18sp"
+            android:textColor="@color/text_primary"
+            android:textStyle="bold"
+            android:layout_marginBottom="12dp" />
+
+        <!-- Accessibility Permission -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal"
+            android:gravity="center_vertical"
+            android:background="@android:color/white"
+            android:padding="16dp"
+            android:layout_marginBottom="8dp">
+
+            <LinearLayout
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:orientation="vertical">
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="无障碍服务"
+                    android:textSize="15sp"
+                    android:textColor="@color/text_primary" />
+
+                <TextView
+                    android:id="@+id/status_accessibility"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="未开启"
+                    android:textSize="13sp"
+                    android:textColor="@color/error"
+                    android:layout_marginTop="2dp" />
+            </LinearLayout>
+
+            <Button
+                android:id="@+id/btn_enable_accessibility"
+                android:layout_width="wrap_content"
+                android:layout_height="36dp"
+                android:text="开启"
+                android:textSize="13sp"
+                android:minWidth="72dp" />
+        </LinearLayout>
+
+        <!-- Overlay Permission -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal"
+            android:gravity="center_vertical"
+            android:background="@android:color/white"
+            android:padding="16dp"
+            android:layout_marginBottom="24dp">
+
+            <LinearLayout
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:orientation="vertical">
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="悬浮窗权限"
+                    android:textSize="15sp"
+                    android:textColor="@color/text_primary" />
+
+                <TextView
+                    android:id="@+id/status_overlay"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="未开启"
+                    android:textSize="13sp"
+                    android:textColor="@color/error"
+                    android:layout_marginTop="2dp" />
+            </LinearLayout>
+
+            <Button
+                android:id="@+id/btn_enable_overlay"
+                android:layout_width="wrap_content"
+                android:layout_height="36dp"
+                android:text="开启"
+                android:textSize="13sp"
+                android:minWidth="72dp" />
+        </LinearLayout>
+
+        <!-- API Configuration Section -->
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="API 配置"
+            android:textSize="18sp"
+            android:textColor="@color/text_primary"
+            android:textStyle="bold"
+            android:layout_marginBottom="12dp" />
+
+        <!-- Base URL -->
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="Base URL"
+            android:textSize="14sp"
+            android:textColor="@color/text_secondary"
+            android:layout_marginBottom="4dp" />
+
+        <EditText
+            android:id="@+id/edit_base_url"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:background="@android:color/white"
+            android:padding="12dp"
+            android:textSize="14sp"
+            android:hint="https://api.openai.com"
+            android:inputType="textUri"
+            android:singleLine="true"
+            android:layout_marginBottom="12dp" />
+
+        <!-- API Key -->
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="API Key"
+            android:textSize="14sp"
+            android:textColor="@color/text_secondary"
+            android:layout_marginBottom="4dp" />
+
+        <EditText
+            android:id="@+id/edit_api_key"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:background="@android:color/white"
+            android:padding="12dp"
+            android:textSize="14sp"
+            android:hint="sk-..."
+            android:inputType="textPassword"
+            android:singleLine="true"
+            android:layout_marginBottom="12dp" />
+
+        <!-- Model -->
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="Model"
+            android:textSize="14sp"
+            android:textColor="@color/text_secondary"
+            android:layout_marginBottom="4dp" />
+
+        <EditText
+            android:id="@+id/edit_model"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:background="@android:color/white"
+            android:padding="12dp"
+            android:textSize="14sp"
+            android:hint="gpt-4o"
+            android:singleLine="true"
+            android:layout_marginBottom="12dp" />
+
+        <!-- System Prompt -->
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="System Prompt"
+            android:textSize="14sp"
+            android:textColor="@color/text_secondary"
+            android:layout_marginBottom="4dp" />
+
+        <EditText
+            android:id="@+id/edit_system_prompt"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:background="@android:color/white"
+            android:padding="12dp"
+            android:textSize="14sp"
+            android:hint="你是一个微信聊天助手..."
+            android:inputType="textMultiLine"
+            android:minLines="3"
+            android:gravity="top"
+            android:layout_marginBottom="12dp" />
+
+        <!-- Debug Mode -->
+        <CheckBox
+            android:id="@+id/check_debug_mode"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="调试模式（显示 UI 节点树，不调用 AI）"
+            android:textSize="14sp"
+            android:textColor="@color/text_secondary"
+            android:layout_marginBottom="16dp" />
+
+        <!-- Buttons -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal"
+            android:layout_marginBottom="8dp">
+
+            <Button
+                android:id="@+id/btn_save"
+                android:layout_width="0dp"
+                android:layout_height="48dp"
+                android:layout_weight="1"
+                android:text="保存配置"
+                android:textSize="15sp"
+                android:layout_marginEnd="8dp" />
+
+            <Button
+                android:id="@+id/btn_test_api"
+                android:layout_width="0dp"
+                android:layout_height="48dp"
+                android:layout_weight="1"
+                android:text="测试连接"
+                android:textSize="15sp"
+                android:layout_marginStart="8dp" />
+        </LinearLayout>
+
+        <!-- Test Result -->
+        <TextView
+            android:id="@+id/text_test_result"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:textSize="14sp"
+            android:textColor="@color/text_secondary"
+            android:gravity="center"
+            android:layout_marginTop="4dp"
+            android:layout_marginBottom="24dp" />
+
+        <!-- Usage Instructions -->
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="使用说明"
+            android:textSize="18sp"
+            android:textColor="@color/text_primary"
+            android:textStyle="bold"
+            android:layout_marginBottom="8dp" />
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="1. 开启上方两项权限\n2. 配置 API 信息并保存\n3. 打开微信进入聊天界面\n4. 点击屏幕右侧的 AI 悬浮按钮\n5. 等待 AI 分析并给出回复建议\n6. 点击「复制」将建议复制到剪贴板"
+            android:textSize="14sp"
+            android:textColor="@color/text_secondary"
+            android:lineSpacingExtra="6dp"
+            android:background="@android:color/white"
+            android:padding="16dp" />
+
+    </LinearLayout>
+</ScrollView>

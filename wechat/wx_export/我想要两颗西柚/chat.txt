@@ -1,0 +1,93 @@
+与 我想要两颗西柚 的聊天记录
+导出时间: 2026-02-24 13:01:21
+消息总数: 10
+============================================================
+
+  2026-02-23 05:24:11  ⬅️ 我想要两颗西柚: [系统] 以上是打招呼的消息
+  2026-02-23 05:24:11  ⬅️ 我想要两颗西柚: 我通过了你的朋友验证请求，现在我们可以开始聊天了
+  2026-02-23 05:24:04  ➡️ 我: 我是雨阳
+  2026-02-23 06:07:22  ⬅️ 我想要两颗西柚: 你好
+  2026-02-23 06:07:30  ⬅️ 我想要两颗西柚: 你在干嘛，下午吃饭吗
+  2026-02-23 06:07:42  ⬅️ 我想要两颗西柚: [图片]
+    📎 [thumbnail] media/8_thumbnail.jpg
+  2026-02-23 06:07:42  ⬅️ 我想要两颗西柚: [撤回消息]
+  2026-02-24 04:46:53  ➡️ 我: === 调试模式 ===
+
+=== 窗口列表 ===
+窗口数量: 4
+  [0] type=3 pkg=com.yuyang.wxassistant cls=android.widget.FrameLayout active=false
+  [1] type=3 pkg=com.android.systemui cls=android.widget.FrameLayout active=false
+  [2] type=3 pkg=com.android.systemui cls=android.widget.FrameLayout active=false
+  [3] type=1 pkg=com.tencent.mm cls=null active=true
+
+=== getRootInActiveWindow ===
+pkg=com.tencent.mm cls=null
+
+=== 节点树 Dump ===
+null [0,0][0,0]
+
+=== 解析结果 ===
+聊天标题: 
+列表节点: android.widget.RelativeLayout
+消息数量: 0
+  2026-02-24 04:50:06  ➡️ 我: === 调试模式 ===
+
+=== 窗口列表 ===
+窗口数量: 4
+  [0] type=3 pkg=com.yuyang.wxassistant cls=android.widget.FrameLayout active=false
+  [1] type=3 pkg=com.android.systemui cls=android.widget.FrameLayout active=false
+  [2] type=3 pkg=com.android.systemui cls=android.widget.FrameLayout active=false
+  [3] type=1 pkg=com.tencent.mm cls=null active=true
+
+=== getRootInActiveWindow ===
+pkg=com.tencent.mm cls=null
+
+=== Root 节点诊断 ===
+className: null
+childCount: 0
+bounds: [0,0][0,0]
+viewId: null
+text: null
+contentDesc: null
+windowId: 767
+refresh(): true
+childCount after refresh: 0
+
+=== 文本搜索测试 ===
+搜索"你好": 0 个结果
+搜索"微信": 0 个结果
+搜索"消息": 1 个结果 → text=null cls=null
+
+=== ID 搜索测试 ===
+搜索 com.tencent.mm:id/bn1: 1 个结果 → cls=android.widget.RelativeLayout bounds=[0,335][1080,2160] children=2
+搜索 com.tencent.mm:id/kbb: 0 个结果
+搜索 android:id/content: 0 个结果
+
+=== 节点树 Dump ===
+=== 节点树 Dump ===
+null [0,0][0,0]
+
+=== 解析结果 ===
+聊天标题: 
+列表节点: android.widget.RelativeLayout
+消息数量: 0
+  2026-02-24 04:52:32  ➡️ 我: === 调试模式 ===
+
+=== 从 bn1 开始遍历 ===
+bn1: cls=android.widget.RelativeLayout bounds=[0,251][1080,2160] children=2
+  RelativeLayout [com.tencent.mm:id/bn1] [0,251][1080,2160] ch=2
+    null [0,0][0,0] ch=0
+    null [0,0][0,0] ch=0
+
+=== 搜索屏幕可见文本 ===
+"你好": 1个
+  text=null cls=null desc=null bounds=[0,0][0,0] parent=null
+"我是雨阳": 0个
+"西柚": 1个
+  text=null cls=null desc=null bounds=[0,0][0,0] parent=null
+"聊天": 1个
+  text=null cls=null desc=null bounds=[0,0][0,0] parent=null
+
+=== 批量 ID 搜索 ===
+com.tencent.mm:id/bn1: 1个 cls=android.widget.RelativeLayout bounds=[0,251][1080,2160] children=2 text=null
+com.tencent.mm:id/obn: 1个 cls=null bounds=[0,0][0,0] children=0 text=null

@@ -1,0 +1,2 @@
+rootProject.name = 'wx-assistant'
+include ':app'

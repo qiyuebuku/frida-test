@@ -34,6 +34,8 @@ qidian/novel_kb/玄鉴仙族/text/*
 qidian/novel_kb/*/*/.build/*
 qidian/novel_kb/*/plot/outline/.segments/*
 qidian/novel_kb/*
+.env
+.claude/skills/fund-trade/.env
 
 # smart-fund-server 运行时/敏感文件
 smart-fund-server/server.log

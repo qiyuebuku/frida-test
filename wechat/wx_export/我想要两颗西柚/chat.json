@@ -1,0 +1,130 @@
+{
+  "contact": "我想要两颗西柚",
+  "talker": "wxid_16h76kh7cjjr21",
+  "exportTime": "2026-02-24 13:01:21",
+  "messageCount": 10,
+  "mediaCount": 1,
+  "messages": [
+    {
+      "msgId": 3,
+      "type": 10000,
+      "isSend": 0,
+      "createTime": 1771824251000,
+      "time": "2026-02-23 05:24:11",
+      "talker": "wxid_16h76kh7cjjr21",
+      "talkerName": "我想要两颗西柚",
+      "content": "以上是打招呼的消息",
+      "typeName": "system"
+    },
+    {
+      "msgId": 4,
+      "type": 1,
+      "isSend": 0,
+      "createTime": 1771824251001,
+      "time": "2026-02-23 05:24:11",
+      "talker": "wxid_16h76kh7cjjr21",
+      "talkerName": "我想要两颗西柚",
+      "content": "我通过了你的朋友验证请求，现在我们可以开始聊天了",
+      "typeName": "text"
+    },
+    {
+      "msgId": 5,
+      "type": 1,
+      "isSend": 1,
+      "createTime": 1771824244000,
+      "time": "2026-02-23 05:24:04",
+      "talker": "wxid_16h76kh7cjjr21",
+      "talkerName": "我想要两颗西柚",
+      "content": "我是雨阳",
+      "typeName": "text"
+    },
+    {
+      "msgId": 6,
+      "type": 1,
+      "isSend": 0,
+      "createTime": 1771826842000,
+      "time": "2026-02-23 06:07:22",
+      "talker": "wxid_16h76kh7cjjr21",
+      "talkerName": "我想要两颗西柚",
+      "content": "你好",
+      "typeName": "text"
+    },
+    {
+      "msgId": 7,
+      "type": 1,
+      "isSend": 0,
+      "createTime": 1771826850000,
+      "time": "2026-02-23 06:07:30",
+      "talker": "wxid_16h76kh7cjjr21",
+      "talkerName": "我想要两颗西柚",
+      "content": "你在干嘛，下午吃饭吗",
+      "typeName": "text"
+    },
+    {
+      "msgId": 8,
+      "type": 3,
+      "isSend": 0,
+      "createTime": 1771826862000,
+      "time": "2026-02-23 06:07:42",
+      "talker": "wxid_16h76kh7cjjr21",
+      "talkerName": "我想要两颗西柚",
+      "content": "<?xml version=\"1.0\"?>\n<msg>\n\t<img aeskey=\"7c410228fb06897c58970ec1f733d98d\" encryver=\"1\" cdnthumbaeskey=\"7c410228fb06897c58970ec1f733d98d\" cdnthumburl=\"3057020100044b30490201000204fc4fc98d02032dca4602049c2fc9710204699beead042439616336376364632d383439662d346533652d383161612d3935626433333838343332310204211508020201000405004c50ba00\" cdnthumblength=\"3064\" cdnthumbheight=\"131\" cdnthumbwidth=\"288\" cdnmidheight=\"0\" cdnmidwidth=\"0\" cdnhdheight=\"0\" cdnhdwidth=\"0\" cdnmidimgurl=\"3057020100044b30490201000204fc4fc98d02032dca4602049c2fc9710204699beead042439616336376364632d383439662d346533652d383161612d3935626433333838343332310204211508020201000405004c50ba00\" length=\"245581\" md5=\"334b0db4c181328e3f74aa8cc80b4ba2\" hevc_mid_size=\"22282\" originsourcemd5=\"293b4dbd25fe41e8fc7179ae924e14f9\">\n\t\t<secHashInfoBase64>eyJwaGFzaCI6IjdmMTAzMjAwMjAwMDE0MDAiLCJwZHFIYXNoIjoiOTVhOTZhNTZlYTU1ZjRhMmQ1\nNTJmNWE5NmJmNDg1YTE0YTUyMmExNzk1YWQ0YmY4NGI1MjBmYzM5NWFkYjQwNSJ9\n</secHashInfoBase64>\n\t\t<live>\n\t\t\t<duration>0</duration>\n\t\t\t<size>0</size>\n\t\t\t<md5 />\n\t\t\t<fileid />\n\t\t\t<hdsize>0</hdsize>\n\t\t\t<hdmd5 />\n\t\t\t<hdfileid />\n\t\t\t<stillimagetimems>0</stillimagetimems>\n\t\t</live>\n\t</img>\n\t<platform_signature />\n\t<imgdatahash />\n\t<ImgSourceInfo>\n\t\t<ImgSourceUrl />\n\t\t<BizType>0</BizType>\n\t</ImgSourceInfo>\n</msg>\n",
+      "imgPath": "THUMBNAIL_DIRPATH://th_de6dafbf88b3d644b13accfdc40b16e3",
+      "typeName": "image"
+    },
+    {
+      "msgId": 9,
+      "type": 10002,
+      "isSend": 2,
+      "createTime": 1771826862002,
+      "time": "2026-02-23 06:07:42",
+      "talker": "wxid_16h76kh7cjjr21",
+      "talkerName": "我想要两颗西柚",
+      "content": "       <sysmsg type=\"sysmsgtemplate\">\n         <sysmsgtemplate>\n           <content_template type=\"tmpl_type_recommend_remark_sys_tip\">\n             <plain><![CDATA[]]></plain>\n             <template><![CDATA[将图片 $remark_msg_native_url$]]></template>\n             <link_list>\n<link name=\"remark_msg_native_open_image_url\" type=\"link_recommend_remark_open_image\">\n                 <title>图片</title>\n                 <remarksend_newxml_info>\n                   <talker>wxid_16h76kh7cjjr21</talker>\n\t<img_msg_id>8</img_msg_id>\n                 </remarksend_newxml_info>\n               </link>\n               <link name=\"remark_msg_native_url\" type=\"link_recommend_remark_url\">\n                 <title>添加到备注</title>\n                 <remarksend_newxml_info>\n                   <msgid>8</msgid>\n                   <talker>wxid_16h76kh7cjjr21</talker>\n                   <remark></remark>\n\t<phone></phone>\n\t<img_msg_id>8</img_msg_id>\n                 </remarksend_newxml_info>\n               </link>\n             </link_list>\n           </content_template>\n         </sysmsgtemplate>\n       </sysmsg>",
+      "typeName": "revoke"
+    },
+    {
+      "msgId": 10,
+      "type": 1,
+      "isSend": 1,
+      "createTime": 1771908413302,
+      "time": "2026-02-24 04:46:53",
+      "talker": "wxid_16h76kh7cjjr21",
+      "talkerName": "我想要两颗西柚",
+      "content": "=== 调试模式 ===\n\n=== 窗口列表 ===\n窗口数量: 4\n  [0] type=3 pkg=com.yuyang.wxassistant cls=android.widget.FrameLayout active=false\n  [1] type=3 pkg=com.android.systemui cls=android.widget.FrameLayout active=false\n  [2] type=3 pkg=com.android.systemui cls=android.widget.FrameLayout active=false\n  [3] type=1 pkg=com.tencent.mm cls=null active=true\n\n=== getRootInActiveWindow ===\npkg=com.tencent.mm cls=null\n\n=== 节点树 Dump ===\nnull [0,0][0,0]\n\n=== 解析结果 ===\n聊天标题: \n列表节点: android.widget.RelativeLayout\n消息数量: 0",
+      "typeName": "text"
+    },
+    {
+      "msgId": 11,
+      "type": 1,
+      "isSend": 1,
+      "createTime": 1771908606753,
+      "time": "2026-02-24 04:50:06",
+      "talker": "wxid_16h76kh7cjjr21",
+      "talkerName": "我想要两颗西柚",
+      "content": "=== 调试模式 ===\n\n=== 窗口列表 ===\n窗口数量: 4\n  [0] type=3 pkg=com.yuyang.wxassistant cls=android.widget.FrameLayout active=false\n  [1] type=3 pkg=com.android.systemui cls=android.widget.FrameLayout active=false\n  [2] type=3 pkg=com.android.systemui cls=android.widget.FrameLayout active=false\n  [3] type=1 pkg=com.tencent.mm cls=null active=true\n\n=== getRootInActiveWindow ===\npkg=com.tencent.mm cls=null\n\n=== Root 节点诊断 ===\nclassName: null\nchildCount: 0\nbounds: [0,0][0,0]\nviewId: null\ntext: null\ncontentDesc: null\nwindowId: 767\nrefresh(): true\nchildCount after refresh: 0\n\n=== 文本搜索测试 ===\n搜索\"你好\": 0 个结果\n搜索\"微信\": 0 个结果\n搜索\"消息\": 1 个结果 → text=null cls=null\n\n=== ID 搜索测试 ===\n搜索 com.tencent.mm:id/bn1: 1 个结果 → cls=android.widget.RelativeLayout bounds=[0,335][1080,2160] children=2\n搜索 com.tencent.mm:id/kbb: 0 个结果\n搜索 android:id/content: 0 个结果\n\n=== 节点树 Dump ===\n=== 节点树 Dump ===\nnull [0,0][0,0]\n\n=== 解析结果 ===\n聊天标题: \n列表节点: android.widget.RelativeLayout\n消息数量: 0",
+      "typeName": "text"
+    },
+    {
+      "msgId": 12,
+      "type": 1,
+      "isSend": 1,
+      "createTime": 1771908752873,
+      "time": "2026-02-24 04:52:32",
+      "talker": "wxid_16h76kh7cjjr21",
+      "talkerName": "我想要两颗西柚",
+      "content": "=== 调试模式 ===\n\n=== 从 bn1 开始遍历 ===\nbn1: cls=android.widget.RelativeLayout bounds=[0,251][1080,2160] children=2\n  RelativeLayout [com.tencent.mm:id/bn1] [0,251][1080,2160] ch=2\n    null [0,0][0,0] ch=0\n    null [0,0][0,0] ch=0\n\n=== 搜索屏幕可见文本 ===\n\"你好\": 1个\n  text=null cls=null desc=null bounds=[0,0][0,0] parent=null\n\"我是雨阳\": 0个\n\"西柚\": 1个\n  text=null cls=null desc=null bounds=[0,0][0,0] parent=null\n\"聊天\": 1个\n  text=null cls=null desc=null bounds=[0,0][0,0] parent=null\n\n=== 批量 ID 搜索 ===\ncom.tencent.mm:id/bn1: 1个 cls=android.widget.RelativeLayout bounds=[0,251][1080,2160] children=2 text=null\ncom.tencent.mm:id/obn: 1个 cls=null bounds=[0,0][0,0] children=0 text=null",
+      "typeName": "text"
+    }
+  ],
+  "mediaMap": {
+    "8": [
+      {
+        "label": "thumbnail",
+        "file": "8_thumbnail.jpg",
+        "size": 2482,
+        "type": "file"
+      }
+    ]
+  }
+}

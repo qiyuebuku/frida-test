@@ -1,0 +1,6 @@
+id=wxhook_zygisk
+name=WXHook Zygisk
+version=v0.1
+versionCode=1
+author=yuyang
+description=Zygisk module for WeChat hook

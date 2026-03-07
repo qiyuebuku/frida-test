@@ -74,9 +74,7 @@ Pipeline（单阶段批量处理，支持断点续传 + 并发）
 """
 
 import argparse
-import fcntl
 import json
-import os
 import re
 import subprocess
 import sys
@@ -85,30 +83,13 @@ import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
+from kb_common import (
+    SKILL_DIR, PROMPTS_DIR,
+    resolve_book_dir, load_progress, save_progress, merge_stats,
+    list_chapter_files,
+    print_flush, show_waiting_animation,
+)
 
-def print_flush(msg: str, end: str = "\n"):
-    """带 flush 的 print，确保实时输出"""
-    print(msg, end=end, flush=True)
-
-
-def show_waiting_animation(stop_event: threading.Event, message: str = "处理中"):
-    """在后台线程显示等待动画（仅在 TTY 中显示）"""
-    # 检查是否在交互式终端中运行
-    if not sys.stdout.isatty():
-        return  # 输出被重定向时不显示动画
-
-    chars = "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"
-    idx = 0
-    while not stop_event.is_set():
-        print_flush(f"\r{chars[idx]} {message}...", end="")
-        idx = (idx + 1) % len(chars)
-        time.sleep(0.1)
-    # 清除动画行
-    print_flush("\r" + " " * (len(message) + 10) + "\r", end="")
-
-# Skill 目录（脚本所在位置）
-SKILL_DIR = Path(__file__).parent
-PROMPTS_DIR = SKILL_DIR / "prompts"
 PROMPT_TEMPLATE_PATH = PROMPTS_DIR / "summary_prompt.md"
 
 # 摘要必需的 8 个段落标题
@@ -139,18 +120,6 @@ def parse_args():
     return parser.parse_args()
 
 
-def resolve_book_dir(book_dir_arg: str) -> Path:
-    """解析 book-dir 参数为绝对路径"""
-    p = Path(book_dir_arg)
-    if not p.is_absolute():
-        p = Path.cwd() / p
-    p = p.resolve()
-    if not p.exists():
-        print(f"错误：目录不存在: {p}")
-        sys.exit(1)
-    return p
-
-
 def get_text_dir(book_dir: Path) -> Path:
     d = book_dir / "text"
     if not d.exists():
@@ -169,22 +138,7 @@ def get_progress_path(output_dir: Path) -> Path:
     return output_dir / ".progress.json"
 
 
-def list_chapters(text_dir: Path) -> list[int]:
-    """扫描 text/ 目录，返回排序后的章节编号列表"""
-    chapters = []
-    for f in text_dir.iterdir():
-        m = re.match(r"ch(\d+)\.md$", f.name)
-        if m:
-            chapters.append(int(m.group(1)))
-    chapters.sort()
-    return chapters
-
-
-def _read_progress_raw(progress_path: Path) -> dict:
-    """读取进度文件原始内容（不加锁，内部用）"""
-    if progress_path.exists():
-        with open(progress_path, "r", encoding="utf-8") as f:
-            return json.load(f)
+def _default_progress() -> dict:
     return {
         "completed": [],
         "failed": [],
@@ -193,57 +147,18 @@ def _read_progress_raw(progress_path: Path) -> dict:
     }
 
 
-def load_progress(progress_path: Path) -> dict:
-    """加载进度文件（带文件锁）"""
-    lock_path = progress_path.with_suffix(".lock")
-    with open(lock_path, "w") as lf:
-        fcntl.flock(lf, fcntl.LOCK_SH)
-        try:
-            return _read_progress_raw(progress_path)
-        finally:
-            fcntl.flock(lf, fcntl.LOCK_UN)
-
-
-def _merge_progress(base: dict, local: dict) -> dict:
-    """合并本地变更到磁盘最新状态（集合并集策略）"""
-    merged = json.loads(json.dumps(base))  # deep copy
-    # completed / failed: 并集
-    merged["completed"] = sorted(set(base.get("completed", [])) | set(local.get("completed", [])))
+def _merge_progress(disk: dict, local: dict) -> dict:
+    """T2 专用合并策略"""
+    merged = json.loads(json.dumps(disk))  # deep copy
+    merged["completed"] = sorted(set(disk.get("completed", [])) | set(local.get("completed", [])))
     merged["failed"] = sorted(
-        (set(base.get("failed", [])) | set(local.get("failed", []))) - set(merged["completed"])
+        (set(disk.get("failed", [])) | set(local.get("failed", []))) - set(merged["completed"])
     )
-    # characters: 合并（后来者补充，不覆盖已有）
-    base_chars = base.get("characters", {})
+    base_chars = disk.get("characters", {})
     local_chars = local.get("characters", {})
     merged["characters"] = {**base_chars, **local_chars}
-    # stats: 取较大值（各进程累加）
-    merged["stats"] = {
-        "total_calls": max(base.get("stats", {}).get("total_calls", 0),
-                          local.get("stats", {}).get("total_calls", 0)),
-        "total_time_seconds": max(base.get("stats", {}).get("total_time_seconds", 0),
-                                  local.get("stats", {}).get("total_time_seconds", 0)),
-    }
+    merged["stats"] = merge_stats(disk.get("stats", {}), local.get("stats", {}))
     return merged
-
-
-def save_progress(progress_path: Path, progress: dict):
-    """保存进度文件（带文件锁 + 合并策略）
-
-    流程：lock → 读磁盘最新 → 合并本地变更 → 写入 → unlock
-    多进程安全：completed/failed 取并集，characters 合并，stats 取 max。
-    """
-    lock_path = progress_path.with_suffix(".lock")
-    with open(lock_path, "w") as lf:
-        fcntl.flock(lf, fcntl.LOCK_EX)
-        try:
-            disk = _read_progress_raw(progress_path)
-            merged = _merge_progress(disk, progress)
-            with open(progress_path, "w", encoding="utf-8") as f:
-                json.dump(merged, f, ensure_ascii=False, indent=2)
-            # 同步回本地变量
-            progress.update(merged)
-        finally:
-            fcntl.flock(lf, fcntl.LOCK_UN)
 
 
 def extract_book_background(book_dir: Path) -> str:
@@ -586,7 +501,7 @@ def main():
     progress_path = get_progress_path(output_dir)
 
     # 扫描章节
-    all_chapters = list_chapters(text_dir)
+    all_chapters = list_chapter_files(text_dir)
     if not all_chapters:
         print(f"错误：text 目录中没有章节文件: {text_dir}")
         sys.exit(1)
@@ -603,7 +518,7 @@ def main():
         return
 
     # 加载进度
-    progress = load_progress(progress_path)
+    progress = load_progress(progress_path, default_fn=_default_progress)
     completed_count = len(progress.get("completed", []))
     print_flush(f"已完成: {completed_count}, 失败: {len(progress.get('failed', []))}")
 
@@ -654,7 +569,7 @@ def main():
 
         with print_lock:
             # 读取最新进度获取角色列表
-            latest = load_progress(progress_path)
+            latest = load_progress(progress_path, default_fn=_default_progress)
             chars_count = len(latest.get("characters", {}))
             characters_text = format_characters_context(latest.get("characters", {}))
             print_flush(f"\n{'='*60}")
@@ -705,34 +620,29 @@ def main():
                     print_flush(msg)
                 print_flush(f"  [{ch_range}] 结果: {batch_ok} 通过, {batch_fail} 失败")
 
-        # 合并到全局进度（带文件锁）
-        lock_path = progress_path.with_suffix(".lock")
-        with open(lock_path, "w") as lf:
-            fcntl.flock(lf, fcntl.LOCK_EX)
-            try:
-                disk = _read_progress_raw(progress_path)
-                for ch in local_completed:
-                    if ch not in disk["completed"]:
-                        disk["completed"].append(ch)
-                    if ch in disk["failed"]:
-                        disk["failed"].remove(ch)
-                for ch in local_failed:
-                    if ch not in disk["failed"] and ch not in disk["completed"]:
-                        disk["failed"].append(ch)
-                for name, desc in local_characters.items():
-                    if name not in disk["characters"]:
-                        disk["characters"][name] = desc
-                disk["stats"]["total_calls"] += 1
-                disk["stats"]["total_time_seconds"] += int(elapsed)
-                with open(progress_path, "w", encoding="utf-8") as f:
-                    json.dump(disk, f, ensure_ascii=False, indent=2)
-            finally:
-                fcntl.flock(lf, fcntl.LOCK_UN)
+        # 构建本批次局部进度，通过 save_progress 合并到磁盘
+        local_progress = _default_progress()
+        local_progress["completed"] = local_completed
+        local_progress["failed"] = local_failed
+        local_progress["characters"] = local_characters
+        # stats 使用增量：merge 时需要叠加到磁盘值上
+        local_progress["stats"]["total_calls"] = 1
+        local_progress["stats"]["total_time_seconds"] = int(elapsed)
+
+        def _batch_merge(disk: dict, local: dict) -> dict:
+            """单批次合并：completed/failed/characters 走 _merge_progress，stats 用增量"""
+            merged = _merge_progress(disk, local)
+            # stats 用增量叠加（而非 max）
+            merged["stats"]["total_calls"] = disk.get("stats", {}).get("total_calls", 0) + local["stats"]["total_calls"]
+            merged["stats"]["total_time_seconds"] = disk.get("stats", {}).get("total_time_seconds", 0) + local["stats"]["total_time_seconds"]
+            return merged
+
+        save_progress(progress_path, local_progress, default_fn=_default_progress, merge_fn=_batch_merge)
 
         with print_lock:
             completed_counter["done"] += 1
             # 重新读取合并后的进度
-            latest = load_progress(progress_path)
+            latest = load_progress(progress_path, default_fn=_default_progress)
             total_done = len(latest.get("completed", []))
             print_flush(f"  总进度: {total_done}/{len(all_chapters)} ({total_done*100//len(all_chapters)}%)  [{completed_counter['done']}/{completed_counter['total']} 批]")
 
@@ -761,7 +671,7 @@ def main():
                         print_flush(f"  ✗ 线程异常: {e}")
 
     # 最终统计（从磁盘读取最终状态）
-    final = load_progress(progress_path)
+    final = load_progress(progress_path, default_fn=_default_progress)
     print_flush(f"\n{'='*60}")
     print_flush("处理完成！")
     print_flush(f"  已完成: {len(final['completed'])}/{len(all_chapters)}")

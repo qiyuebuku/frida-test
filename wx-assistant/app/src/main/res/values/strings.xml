@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">WX Assistant</string>
+    <string name="accessibility_service_description">WX Assistant 需要无障碍权限来读取微信聊天界面的消息内容，以便为您提供 AI 回复建议。</string>
+</resources>

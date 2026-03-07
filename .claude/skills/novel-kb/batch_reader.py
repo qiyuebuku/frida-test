@@ -90,17 +90,17 @@ import fcntl
 import hashlib
 import json
 import re
-import subprocess
 import sys
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from json_fixer import fix_and_parse_json
-
-# Skill 目录
-SKILL_DIR = Path(__file__).parent
-PROMPTS_DIR = SKILL_DIR / "prompts"
+from kb_common import (
+    SKILL_DIR, PROMPTS_DIR,
+    resolve_book_dir, load_progress, save_progress, merge_stats,
+    run_claude_prompt, compute_segments, print_flush,
+)
 
 # 产出文件
 FEEDBACK_FILES = ["emotions", "popular_characters", "complaints", "expectations"]
@@ -148,17 +148,6 @@ def parse_args():
 # ============================================================
 # 路径解析
 # ============================================================
-
-def resolve_book_dir(book_dir_arg: str) -> Path:
-    p = Path(book_dir_arg)
-    if not p.is_absolute():
-        p = Path.cwd() / p
-    p = p.resolve()
-    if not p.exists():
-        print(f"错误：目录不存在: {p}")
-        sys.exit(1)
-    return p
-
 
 def get_comments_dir(book_dir: Path) -> Path:
     d = book_dir / "reader" / "comments"
@@ -212,93 +201,18 @@ def _default_progress() -> dict:
     }
 
 
-def _read_progress_raw(progress_path: Path) -> dict:
-    if progress_path.exists():
-        with open(progress_path, "r", encoding="utf-8") as f:
-            return json.load(f)
-    return _default_progress()
-
-
-def load_progress(progress_path: Path) -> dict:
-    lock_path = progress_path.with_suffix(".lock")
-    with open(lock_path, "w") as lf:
-        fcntl.flock(lf, fcntl.LOCK_SH)
-        try:
-            return _read_progress_raw(progress_path)
-        finally:
-            fcntl.flock(lf, fcntl.LOCK_UN)
-
-
-def save_progress(progress_path: Path, progress: dict):
-    lock_path = progress_path.with_suffix(".lock")
-    with open(lock_path, "w") as lf:
-        fcntl.flock(lf, fcntl.LOCK_EX)
-        try:
-            disk = _read_progress_raw(progress_path)
-            sa = progress.get("segment_analyze", {})
-            dsa = disk.get("segment_analyze", {})
-            merged_completed = sorted(set(dsa.get("segments_completed", [])) | set(sa.get("segments_completed", [])))
-            merged_failed = sorted(
-                (set(dsa.get("segments_failed", [])) | set(sa.get("segments_failed", []))) - set(merged_completed)
-            )
-            progress["segment_analyze"]["segments_completed"] = merged_completed
-            progress["segment_analyze"]["segments_failed"] = merged_failed
-            progress["stats"]["total_calls"] = max(
-                disk["stats"].get("total_calls", 0), progress["stats"].get("total_calls", 0))
-            progress["stats"]["total_time_seconds"] = max(
-                disk["stats"].get("total_time_seconds", 0), progress["stats"].get("total_time_seconds", 0))
-            with open(progress_path, "w", encoding="utf-8") as f:
-                json.dump(progress, f, ensure_ascii=False, indent=2)
-        finally:
-            fcntl.flock(lf, fcntl.LOCK_UN)
-
-
-# ============================================================
-# Claude 调用
-# ============================================================
-
-def run_claude_prompt(prompt: str, model: str, timeout: int,
-                      allow_tools: str = "",
-                      verbose: bool = True) -> tuple[bool, str]:
-    cmd = [
-        "claude",
-        "-p", "-",
-        "--model", model,
-        "--permission-mode", "bypassPermissions",
-    ]
-    if allow_tools:
-        cmd.extend(["--allowedTools", allow_tools])
-
-    try:
-        if verbose:
-            result = subprocess.run(
-                cmd,
-                input=prompt,
-                stdout=subprocess.PIPE,
-                stderr=None,
-                text=True,
-                timeout=timeout,
-            )
-            if result.returncode != 0:
-                return False, f"退出码 {result.returncode}\n{result.stdout[:1000]}"
-        else:
-            result = subprocess.run(
-                cmd,
-                input=prompt,
-                capture_output=True,
-                text=True,
-                timeout=timeout,
-            )
-            if result.returncode != 0:
-                err_detail = result.stderr[:1000] if result.stderr.strip() else result.stdout[:1000]
-                return False, f"退出码 {result.returncode}\n{err_detail}"
-        return True, result.stdout
-    except subprocess.TimeoutExpired:
-        return False, f"超时（{timeout}秒）"
-    except Exception as e:
-        return False, f"异常: {e}"
-
-
+def _merge_progress(disk: dict, progress: dict) -> dict:
+    """T6 专用合并策略"""
+    sa = progress.get("segment_analyze", {})
+    dsa = disk.get("segment_analyze", {})
+    merged_completed = sorted(set(dsa.get("segments_completed", [])) | set(sa.get("segments_completed", [])))
+    merged_failed = sorted(
+        (set(dsa.get("segments_failed", [])) | set(sa.get("segments_failed", []))) - set(merged_completed)
+    )
+    progress["segment_analyze"]["segments_completed"] = merged_completed
+    progress["segment_analyze"]["segments_failed"] = merged_failed
+    progress["stats"] = merge_stats(disk.get("stats", {}), progress.get("stats", {}))
+    return progress
 
 
 # ============================================================
@@ -713,7 +627,7 @@ def phase_preprocess(book_dir: Path, all_chapters: list[int],
 
     progress["preprocess"]["status"] = "completed"
     progress["phase"] = "segment_analyze"
-    save_progress(progress_path, progress)
+    save_progress(progress_path, progress, default_fn=_default_progress, merge_fn=_merge_progress)
 
 
 # ============================================================
@@ -823,7 +737,7 @@ def phase_segment_analyze(book_dir: Path, all_chapters: list[int],
             print("无有效评论数据")
             progress["segment_analyze"]["status"] = "completed"
             progress["phase"] = "global_merge"
-            save_progress(progress_path, progress)
+            save_progress(progress_path, progress, default_fn=_default_progress, merge_fn=_merge_progress)
             return
 
         if dry_run:
@@ -852,17 +766,17 @@ def phase_segment_analyze(book_dir: Path, all_chapters: list[int],
             else:
                 print(f"无法解析 JSON ({elapsed:.0f}s)")
                 print(f"调试信息已保存: {debug_path}")
-                save_progress(progress_path, progress)
+                save_progress(progress_path, progress, default_fn=_default_progress, merge_fn=_merge_progress)
                 return
         else:
             print(f"失败 ({elapsed:.0f}s): {output[:200]}")
-            save_progress(progress_path, progress)
+            save_progress(progress_path, progress, default_fn=_default_progress, merge_fn=_merge_progress)
             return
 
         progress["segment_analyze"]["status"] = "completed"
         progress["segment_analyze"]["segments_completed"].append("all")
         progress["phase"] = "global_merge"
-        save_progress(progress_path, progress)
+        save_progress(progress_path, progress, default_fn=_default_progress, merge_fn=_merge_progress)
         return
 
     # 正常分段处理
@@ -903,7 +817,7 @@ def phase_segment_analyze(book_dir: Path, all_chapters: list[int],
             with open(lock_path, "w") as lf:
                 fcntl.flock(lf, fcntl.LOCK_EX)
                 try:
-                    disk = _read_progress_raw(progress_path)
+                    disk = json.load(open(progress_path, "r", encoding="utf-8")) if progress_path.exists() else _default_progress()
                     if seg_label not in disk["segment_analyze"]["segments_completed"]:
                         disk["segment_analyze"]["segments_completed"].append(seg_label)
                     with open(progress_path, "w", encoding="utf-8") as f:
@@ -927,7 +841,7 @@ def phase_segment_analyze(book_dir: Path, all_chapters: list[int],
         with open(lock_path, "w") as lf:
             fcntl.flock(lf, fcntl.LOCK_EX)
             try:
-                disk = _read_progress_raw(progress_path)
+                disk = json.load(open(progress_path, "r", encoding="utf-8")) if progress_path.exists() else _default_progress()
                 disk["stats"]["total_calls"] = disk["stats"].get("total_calls", 0) + 1
                 disk["stats"]["total_time_seconds"] = disk["stats"].get("total_time_seconds", 0) + int(elapsed)
                 ok = False
@@ -980,12 +894,12 @@ def phase_segment_analyze(book_dir: Path, all_chapters: list[int],
                         print(f"  ✗ 线程异常 ({futures[future]}): {e}")
 
     # 检查是否全部完成
-    final = load_progress(progress_path)
+    final = load_progress(progress_path, default_fn=_default_progress)
     all_done = set(s[2] for s in segments) <= set(final["segment_analyze"]["segments_completed"])
     if all_done:
         final["segment_analyze"]["status"] = "completed"
         final["phase"] = "global_merge"
-        save_progress(progress_path, final)
+        save_progress(progress_path, final, default_fn=_default_progress, merge_fn=_merge_progress)
         progress.update(final)
         print("\n分段分析全部完成！")
 
@@ -1124,7 +1038,7 @@ def phase_global_merge(book_dir: Path, progress: dict, progress_path: Path,
     else:
         print(f"失败 ({elapsed:.0f}s): {output[:200]}")
 
-    save_progress(progress_path, progress)
+    save_progress(progress_path, progress, default_fn=_default_progress, merge_fn=_merge_progress)
 
     # 生成 index.md
     if progress["global_merge"]["status"] == "completed":
@@ -1242,7 +1156,7 @@ def run_validate(book_dir: Path):
     # 加载进度统计
     progress_path = get_progress_path(book_dir)
     if progress_path.exists():
-        progress = load_progress(progress_path)
+        progress = load_progress(progress_path, default_fn=_default_progress)
         print(f"\n统计:")
         print(f"  总调用: {progress['stats']['total_calls']} 次")
         total_s = progress["stats"]["total_time_seconds"]
@@ -1276,7 +1190,7 @@ def main():
         return
 
     # 加载进度
-    progress = load_progress(progress_path)
+    progress = load_progress(progress_path, default_fn=_default_progress)
     print(f"当前阶段: {progress['phase']}")
 
     # 确保输出目录存在
@@ -1298,7 +1212,7 @@ def main():
     if args.phase == "segment" or (
         not args.phase and progress["phase"] in ("segment_analyze", "preprocess")
     ):
-        progress = load_progress(progress_path)
+        progress = load_progress(progress_path, default_fn=_default_progress)
         if progress["phase"] == "segment_analyze" or args.phase == "segment":
             phase_segment_analyze(
                 book_dir, all_chapters, progress, progress_path,
@@ -1311,13 +1225,13 @@ def main():
     if args.phase == "merge" or (
         not args.phase and progress["phase"] in ("global_merge", "segment_analyze")
     ):
-        progress = load_progress(progress_path)
+        progress = load_progress(progress_path, default_fn=_default_progress)
         if progress["phase"] == "global_merge" or args.phase == "merge":
             phase_global_merge(book_dir, progress, progress_path,
                                args.model, args.timeout, args.dry_run)
 
     # 最终统计
-    progress = load_progress(progress_path)
+    progress = load_progress(progress_path, default_fn=_default_progress)
     print(f"\n{'=' * 60}")
     print("当前状态:")
     print(f"  阶段: {progress['phase']}")

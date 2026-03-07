@@ -11,7 +11,7 @@ T4 角色层提取 — 批量编排脚本
   - T3 已完成: plot/outline/ 下有弧文件 (arc_XX.md) 和 plot_lines.md
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-五阶段 Pipeline（按顺序自动执行，支持断点续传）
+四阶段 Pipeline（按顺序自动执行，支持断点续传）
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
   阶段 0  preprocess    Python 预处理，从摘要中提取角色名册
@@ -26,13 +26,9 @@ T4 角色层提取 — 批量编排脚本
                         产出: characters/{name}.md（核心 5 模块 / 重要 3 模块）
                         耗时: 取决于角色数，每角色 1 次 AI（高章节数分批提取）
 
-  阶段 3  relationship  关系网构建 + 交叉验证
-                        产出: characters/relationships.md
-                        耗时: ~2min, 2 次 AI 调用
-
-  阶段 4  status-update 活跃角色当前状态精修 + 生成 index.md
-                        产出: characters/index.md + 更新各角色档案的当前状态
-                        耗时: ~2min, 1 次 AI 调用
+  阶段 3  relationship  关系网构建 + 状态更新 + 交叉验证 + 生成 index.md
+                        产出: characters/relationships.md, index.md + 更新角色档案
+                        耗时: ~3min, 2 次 AI 调用
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 典型用法
@@ -49,7 +45,6 @@ T4 角色层提取 — 批量编排脚本
   python batch_character.py --book-dir ... --phase alias-merge
   python batch_character.py --book-dir ... --phase deep-dive --concurrency 10
   python batch_character.py --book-dir ... --phase relationship
-  python batch_character.py --book-dir ... --phase status-update
 
   # deep-dive 只处理单个角色（调试用）
   python batch_character.py --book-dir ... --phase deep-dive --character "李木田"
@@ -76,7 +71,7 @@ T4 角色层提取 — 批量编排脚本
 产出目录结构
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
   {book-dir}/characters/
-  ├── index.md                  # 人物索引（阶段 4 生成）
+  ├── index.md                  # 人物索引（阶段 3 生成）
   ├── relationships.md          # 关系网（阶段 3 生成）
   ├── {name}.md                 # 各角色详细档案（阶段 2 生成）
   ├── .progress.json            # 进度文件（断点续传）
@@ -91,24 +86,25 @@ import argparse
 import fcntl
 import json
 import re
-import subprocess
 import sys
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from json_fixer import fix_and_parse_json
+from kb_common import (
+    SKILL_DIR, PROMPTS_DIR,
+    resolve_book_dir, load_progress, save_progress, merge_stats,
+    run_claude_prompt, list_chapter_files, load_chapter_file,
+    parse_section, print_flush,
+)
+from kb_preprocess import load_preprocess_cache, get_raw_census
 
 try:
     from pypinyin import lazy_pinyin, Style
     HAS_PYPINYIN = True
 except ImportError:
     HAS_PYPINYIN = False
-
-# Skill 目录
-SKILL_DIR = Path(__file__).parent
-PROMPTS_DIR = SKILL_DIR / "prompts"
-
 
 # ============================================================
 # 命令行接口
@@ -119,7 +115,7 @@ def parse_args():
     parser.add_argument("--book-dir", required=True, help="知识库目录路径")
     parser.add_argument("--phase",
                         choices=["preprocess", "alias-merge", "deep-dive",
-                                 "relationship", "status-update"],
+                                 "relationship"],
                         help="只运行特定阶段")
     parser.add_argument("--character", help="只处理特定角色（阶段 2 调试用）")
     parser.add_argument("--model", default="sonnet", help="Claude 模型（默认 sonnet）")
@@ -135,17 +131,6 @@ def parse_args():
 # ============================================================
 # 路径解析
 # ============================================================
-
-def resolve_book_dir(book_dir_arg: str) -> Path:
-    p = Path(book_dir_arg)
-    if not p.is_absolute():
-        p = Path.cwd() / p
-    p = p.resolve()
-    if not p.exists():
-        print(f"错误：目录不存在: {p}")
-        sys.exit(1)
-    return p
-
 
 def get_chapters_dir(book_dir: Path) -> Path:
     d = book_dir / "plot" / "chapters"
@@ -207,12 +192,9 @@ def _default_progress() -> dict:
             "important_completed": [],
             "important_failed": [],
         },
-        "relationship": {
+        "relationship_and_status": {
             "built": False,
             "validated": False,
-        },
-        "status_update": {
-            "completed": False,
         },
         "stats": {
             "total_calls": 0,
@@ -221,130 +203,42 @@ def _default_progress() -> dict:
     }
 
 
-def _read_progress_raw(progress_path: Path) -> dict:
-    if progress_path.exists():
-        with open(progress_path, "r", encoding="utf-8") as f:
-            return json.load(f)
-    return _default_progress()
-
-
-def load_progress(progress_path: Path) -> dict:
-    lock_path = progress_path.with_suffix(".lock")
-    with open(lock_path, "w") as lf:
-        fcntl.flock(lf, fcntl.LOCK_SH)
-        try:
-            return _read_progress_raw(progress_path)
-        finally:
-            fcntl.flock(lf, fcntl.LOCK_UN)
-
-
-def save_progress(progress_path: Path, progress: dict):
-    lock_path = progress_path.with_suffix(".lock")
-    with open(lock_path, "w") as lf:
-        fcntl.flock(lf, fcntl.LOCK_EX)
-        try:
-            disk = _read_progress_raw(progress_path)
-            # 合并 deep_dive completed/failed（并集）
-            for key in ("core_completed", "important_completed"):
-                merged = sorted(set(disk["deep_dive"].get(key, [])) | set(progress["deep_dive"].get(key, [])))
-                progress["deep_dive"][key] = merged
-            for key in ("core_failed", "important_failed"):
-                completed_key = key.replace("failed", "completed")
-                merged = sorted(
-                    (set(disk["deep_dive"].get(key, [])) | set(progress["deep_dive"].get(key, [])))
-                    - set(progress["deep_dive"].get(completed_key, []))
-                )
-                progress["deep_dive"][key] = merged
-            # stats 取 max
-            progress["stats"]["total_calls"] = max(
-                disk["stats"].get("total_calls", 0),
-                progress["stats"].get("total_calls", 0))
-            progress["stats"]["total_time_seconds"] = max(
-                disk["stats"].get("total_time_seconds", 0),
-                progress["stats"].get("total_time_seconds", 0))
-            with open(progress_path, "w", encoding="utf-8") as f:
-                json.dump(progress, f, ensure_ascii=False, indent=2)
-        finally:
-            fcntl.flock(lf, fcntl.LOCK_UN)
+def _merge_progress(disk: dict, progress: dict) -> dict:
+    """T4 专用合并策略"""
+    # 合并 deep_dive completed/failed（并集）
+    for key in ("core_completed", "important_completed"):
+        merged = sorted(set(disk["deep_dive"].get(key, [])) | set(progress["deep_dive"].get(key, [])))
+        progress["deep_dive"][key] = merged
+    for key in ("core_failed", "important_failed"):
+        completed_key = key.replace("failed", "completed")
+        merged = sorted(
+            (set(disk["deep_dive"].get(key, [])) | set(progress["deep_dive"].get(key, [])))
+            - set(progress["deep_dive"].get(completed_key, []))
+        )
+        progress["deep_dive"][key] = merged
+    # relationship_and_status: 布尔值取 or
+    disk_ras = disk.get("relationship_and_status", {})
+    prog_ras = progress.get("relationship_and_status", {})
+    progress["relationship_and_status"] = {
+        "built": disk_ras.get("built", False) or prog_ras.get("built", False),
+        "validated": disk_ras.get("validated", False) or prog_ras.get("validated", False),
+    }
+    # stats
+    progress["stats"] = merge_stats(disk.get("stats", {}), progress.get("stats", {}))
+    return progress
 
 
 # ============================================================
 # 数据加载
 # ============================================================
 
-def list_summary_chapters(chapters_dir: Path) -> list[int]:
-    chapters = []
-    for f in chapters_dir.iterdir():
-        m = re.match(r"ch(\d+)\.md$", f.name)
-        if m:
-            chapters.append(int(m.group(1)))
-    chapters.sort()
-    return chapters
-
-
-def load_chapter_summary(chapters_dir: Path, ch_num: int) -> str:
-    filepath = chapters_dir / f"ch{ch_num:04d}.md"
-    if not filepath.exists():
-        return f"[ch{ch_num:04d} 摘要缺失]"
-    return filepath.read_text(encoding="utf-8")
-
-
 def load_summaries_for_chapters(chapters_dir: Path, ch_list: list[int]) -> str:
     """加载指定章节列表的全部摘要，拼接为字符串"""
     parts = []
     for ch in sorted(ch_list):
-        content = load_chapter_summary(chapters_dir, ch)
+        content = load_chapter_file(chapters_dir, ch)
         parts.append(f"### ch{ch:04d}\n\n{content}")
     return "\n\n---\n\n".join(parts)
-
-
-# ============================================================
-# Claude 调用
-# ============================================================
-
-def run_claude_prompt(prompt: str, model: str, timeout: int,
-                      allow_tools: str = "",
-                      verbose: bool = True) -> tuple[bool, str]:
-    cmd = [
-        "claude",
-        "-p", "-",
-        "--model", model,
-        "--permission-mode", "bypassPermissions",
-    ]
-    if allow_tools:
-        cmd.extend(["--allowedTools", allow_tools])
-
-    try:
-        if verbose:
-            # stderr 直接输出到终端（显示 Claude CLI 进度）
-            result = subprocess.run(
-                cmd,
-                input=prompt,
-                stdout=subprocess.PIPE,
-                stderr=None,
-                text=True,
-                timeout=timeout,
-            )
-            if result.returncode != 0:
-                return False, f"退出码 {result.returncode}\n{result.stdout[:1000]}"
-        else:
-            # 静默模式（并发时避免输出交错）
-            result = subprocess.run(
-                cmd,
-                input=prompt,
-                capture_output=True,
-                text=True,
-                timeout=timeout,
-            )
-            if result.returncode != 0:
-                err_detail = result.stderr[:1000] if result.stderr.strip() else result.stdout[:1000]
-                return False, f"退出码 {result.returncode}\n{err_detail}"
-        return True, result.stdout
-    except subprocess.TimeoutExpired:
-        return False, f"超时（{timeout}秒）"
-    except Exception as e:
-        return False, f"异常: {e}"
-
 
 
 
@@ -364,13 +258,6 @@ def name_to_pinyin(name: str) -> str:
 # ============================================================
 # 阶段 0：Python 预处理
 # ============================================================
-
-def parse_section(content: str, section_name: str) -> str:
-    """从 Markdown 内容中提取指定 ## 段落的文本"""
-    pattern = rf"## {re.escape(section_name)}\s*\n(.*?)(?=\n## |\Z)"
-    m = re.search(pattern, content, re.DOTALL)
-    return m.group(1).strip() if m else ""
-
 
 def parse_character_lines(section_text: str) -> list[tuple[str, str]]:
     """解析角色行列表，返回 [(角色名, 描述), ...]"""
@@ -605,7 +492,9 @@ def phase_preprocess(book_dir: Path, all_chapters: list[int],
         print(f"产出: characters/.build/raw_census.json")
         return
 
-    raw_census = build_raw_census(book_dir, all_chapters)
+    # 从统一预处理缓存读取数据
+    cache = load_preprocess_cache(book_dir)
+    raw_census = get_raw_census(cache)
 
     # 保存
     build_dir = get_build_dir(book_dir)
@@ -631,7 +520,7 @@ def phase_preprocess(book_dir: Path, all_chapters: list[int],
     progress["preprocess"]["total_chapters_parsed"] = stats["total_chapters_parsed"]
     progress["preprocess"]["total_relationships_found"] = stats["total_relationships"]
     progress["phase"] = "alias_merge"
-    save_progress(progress_path, progress)
+    save_progress(progress_path, progress, default_fn=_default_progress, merge_fn=_merge_progress)
 
 
 # ============================================================
@@ -940,7 +829,7 @@ def phase_alias_merge(book_dir: Path, progress: dict, progress_path: Path,
 
         if not success:
             print(f"  失败 ({elapsed:.0f}s): {output[:200]}")
-            save_progress(progress_path, progress)
+            save_progress(progress_path, progress, default_fn=_default_progress, merge_fn=_merge_progress)
             continue
 
         debug_path = build_dir / f"alias_{batch_label}_json_debug.txt"
@@ -948,7 +837,7 @@ def phase_alias_merge(book_dir: Path, progress: dict, progress_path: Path,
         if result is None:
             print(f"  无法解析 JSON ({elapsed:.0f}s)")
             print(f"  调试信息已保存: {debug_path}")
-            save_progress(progress_path, progress)
+            save_progress(progress_path, progress, default_fn=_default_progress, merge_fn=_merge_progress)
             continue
 
         # 保存单批结果
@@ -962,7 +851,7 @@ def phase_alias_merge(book_dir: Path, progress: dict, progress_path: Path,
         print(f"  完成 ({elapsed:.0f}s): {n_chars} 角色, {n_aliases} 别名")
 
         progress["alias_merge"].setdefault("batches_completed", []).append(batch_label)
-        save_progress(progress_path, progress)
+        save_progress(progress_path, progress, default_fn=_default_progress, merge_fn=_merge_progress)
 
     # 检查是否全部完成
     expected_labels = [f"batch_{i+1:02d}" for i in range(len(char_batches))]
@@ -1004,7 +893,7 @@ def phase_alias_merge(book_dir: Path, progress: dict, progress_path: Path,
                 print(f"  失败 ({elapsed:.0f}s): {output[:200]}")
 
             progress["alias_merge"]["cross_batch_done"] = True
-            save_progress(progress_path, progress)
+            save_progress(progress_path, progress, default_fn=_default_progress, merge_fn=_merge_progress)
         elif cross_path.exists():
             # 恢复已有的跨批次结果
             with open(cross_path, "r", encoding="utf-8") as f:
@@ -1047,7 +936,7 @@ def phase_alias_merge(book_dir: Path, progress: dict, progress_path: Path,
         progress["alias_merge"]["important_count"] = important_count
         progress["alias_merge"]["minor_count"] = minor_count
         progress["phase"] = "deep_dive"
-        save_progress(progress_path, progress)
+        save_progress(progress_path, progress, default_fn=_default_progress, merge_fn=_merge_progress)
     else:
         done = len(progress["alias_merge"].get("batches_completed", []))
         print(f"\n部分完成: {done}/{len(char_batches)} 批，请重新运行继续")
@@ -1380,7 +1269,11 @@ def phase_deep_dive(book_dir: Path, progress: dict, progress_path: Path,
         with open(lock_path, "w") as lf:
             fcntl.flock(lf, fcntl.LOCK_EX)
             try:
-                disk = _read_progress_raw(progress_path)
+                if progress_path.exists():
+                    with open(progress_path, "r", encoding="utf-8") as f:
+                        disk = json.load(f)
+                else:
+                    disk = _default_progress()
                 disk["stats"]["total_calls"] = disk["stats"].get("total_calls", 0) + extra_calls
                 disk["stats"]["total_time_seconds"] = disk["stats"].get("total_time_seconds", 0) + int(elapsed)
                 if success:
@@ -1425,18 +1318,18 @@ def phase_deep_dive(book_dir: Path, progress: dict, progress_path: Path,
                         print(f"  ✗ 线程异常 ({futures[future]}): {e}")
 
     # 检查是否全部完成
-    final = load_progress(progress_path)
+    final = load_progress(progress_path, default_fn=_default_progress)
     all_core_done = set(final["deep_dive"]["core_completed"]) >= set(core_chars)
     all_imp_done = set(final["deep_dive"]["important_completed"]) >= set(important_chars)
     if all_core_done and all_imp_done:
         final["phase"] = "relationship"
-        save_progress(progress_path, final)
+        save_progress(progress_path, final, default_fn=_default_progress, merge_fn=_merge_progress)
         progress.update(final)
         print("\n角色深度分析全部完成！")
 
 
 # ============================================================
-# 阶段 3：关系网构建
+# 阶段 3：关系网 + 状态更新
 # ============================================================
 
 def extract_relationship_sections(characters_dir: Path) -> str:
@@ -1479,21 +1372,47 @@ def build_relationship_validate_prompt(current_relationships: str,
     return prompt
 
 
-def phase_relationship(book_dir: Path, progress: dict, progress_path: Path,
-                       model: str, timeout: int, dry_run: bool):
-    """执行阶段 3：关系网构建"""
+def build_relationship_and_status_prompt(raw_census: dict, character_profiles: str,
+                                         arc_summary: str, output_path: str,
+                                         active_chars: list[dict],
+                                         recent_summaries: str,
+                                         char_file_paths: dict) -> str:
+    """构建合并的关系网+状态更新 prompt"""
+    template = (PROMPTS_DIR / "char_relationship_and_status.md").read_text(encoding="utf-8")
+    prompt = template.replace("{relationship_timeline_json}",
+                              json.dumps(raw_census.get("relationship_timeline", []),
+                                        ensure_ascii=False, indent=2))
+    prompt = prompt.replace("{character_profiles_summary}", character_profiles)
+    prompt = prompt.replace("{arc_summary}", arc_summary)
+    prompt = prompt.replace("{output_path}", output_path)
+    prompt = prompt.replace("{active_characters_json}",
+                            json.dumps(active_chars, ensure_ascii=False, indent=2))
+    prompt = prompt.replace("{recent_chapter_summaries}", recent_summaries)
+    prompt = prompt.replace("{character_file_paths}",
+                            json.dumps(char_file_paths, ensure_ascii=False, indent=2))
+    return prompt
+
+
+def phase_relationship_and_status(book_dir: Path, all_chapters: list[int],
+                                   progress: dict, progress_path: Path,
+                                   model: str, timeout: int, dry_run: bool):
+    """执行阶段 3：关系网构建 + 状态更新（合并）"""
     print("\n" + "=" * 60)
-    print("阶段 3：关系网构建")
+    print("阶段 3：关系网 + 状态更新")
     print("=" * 60)
 
-    if progress["relationship"]["built"] and progress["relationship"]["validated"]:
-        print("关系网已完成！")
+    ras = progress["relationship_and_status"]
+    if ras["built"] and ras["validated"]:
+        print("关系网+状态更新已完成！")
         return
 
     build_dir = get_build_dir(book_dir)
     characters_dir = get_characters_dir(book_dir)
+    chapters_dir = get_chapters_dir(book_dir)
     outline_dir = get_outline_dir(book_dir)
     raw_census = load_raw_census(build_dir)
+    census = load_census(build_dir)
+    alias_mapping = census.get("alias_mapping", {})
     output_path = str(characters_dir / "relationships.md")
 
     # 加载弧概览
@@ -1509,20 +1428,55 @@ def phase_relationship(book_dir: Path, progress: dict, progress_path: Path,
         arc_summary_parts.append(f"- {arc_title} ({range_str})")
     arc_summary = "\n".join(arc_summary_parts) if arc_summary_parts else "（无弧信息）"
 
+    # 准备活跃角色数据（同原 phase_status_update）
+    recent_n = min(20, len(all_chapters))
+    recent_chapters = all_chapters[-recent_n:]
+
+    chars_by_name = {c["canonical_name"]: c for c in census.get("characters", [])}
+    classification = census.get("classification_summary", {})
+    active_names = set()
+
+    for name in classification.get("core", []) + classification.get("important", []):
+        ch_list = get_character_chapters(name, raw_census, alias_mapping)
+        if any(ch in recent_chapters for ch in ch_list):
+            active_names.add(name)
+
+    active_chars = []
+    char_file_paths = {}
+    for name in sorted(active_names):
+        c = chars_by_name.get(name, {})
+        file_name = c.get("file_name", name_to_pinyin(name))
+        file_path = str(characters_dir / f"{file_name}.md")
+        active_chars.append({
+            "name": name,
+            "classification": c.get("classification", "important"),
+            "file_path": file_path,
+        })
+        char_file_paths[name] = file_path
+
     if dry_run:
         print(f"将从 {len(raw_census.get('relationship_timeline', []))} 条关系变化构建关系网")
         print(f"产出: {output_path}")
+        print(f"最后 {recent_n} 章中的活跃角色: {len(active_chars)} 人")
+        for ac in active_chars:
+            print(f"  [{ac['classification']}] {ac['name']}")
+        print("还将生成 index.md")
         return
 
-    # 步骤 1：构建关系网
-    if not progress["relationship"]["built"]:
+    # 步骤 1：构建关系网 + 更新状态（合并为 1 次 AI 调用）
+    if not ras["built"]:
         character_profiles = extract_relationship_sections(characters_dir)
-        prompt = build_relationship_prompt(raw_census, character_profiles,
-                                           arc_summary, output_path)
+        recent_summaries = load_summaries_for_chapters(chapters_dir, recent_chapters)
 
-        print("构建关系网...")
+        prompt = build_relationship_and_status_prompt(
+            raw_census, character_profiles, arc_summary, output_path,
+            active_chars, recent_summaries, char_file_paths,
+        )
+
+        print(f"构建关系网 + 更新 {len(active_chars)} 个活跃角色状态...")
         start_time = time.time()
-        success, output = run_claude_prompt(prompt, model, timeout, allow_tools="Write")
+        success, output = run_claude_prompt(prompt, model, timeout * 2,
+                                            allow_tools="Write,Read")
         elapsed = time.time() - start_time
 
         progress["stats"]["total_calls"] += 1
@@ -1530,14 +1484,14 @@ def phase_relationship(book_dir: Path, progress: dict, progress_path: Path,
 
         if success:
             print(f"完成 ({elapsed:.0f}s)")
-            progress["relationship"]["built"] = True
+            ras["built"] = True
         else:
             print(f"失败 ({elapsed:.0f}s): {output[:200]}")
 
-        save_progress(progress_path, progress)
+        save_progress(progress_path, progress, default_fn=_default_progress, merge_fn=_merge_progress)
 
     # 步骤 2：交叉验证
-    if progress["relationship"]["built"] and not progress["relationship"]["validated"]:
+    if ras["built"] and not ras["validated"]:
         rel_path = characters_dir / "relationships.md"
         if rel_path.exists():
             current_relationships = rel_path.read_text(encoding="utf-8")
@@ -1570,28 +1524,18 @@ def phase_relationship(book_dir: Path, progress: dict, progress_path: Path,
             else:
                 print(f"失败 ({elapsed:.0f}s): {output[:200]}")
 
-            progress["relationship"]["validated"] = True
-            save_progress(progress_path, progress)
+            ras["validated"] = True
+            save_progress(progress_path, progress, default_fn=_default_progress, merge_fn=_merge_progress)
 
-    # 检查阶段完成
-    if progress["relationship"]["built"] and progress["relationship"]["validated"]:
-        progress["phase"] = "status_update"
-        save_progress(progress_path, progress)
+    # 步骤 3：生成 index.md（Python 直接生成）
+    if ras["built"] and ras["validated"]:
+        index_content = build_index_md(census, characters_dir)
+        index_path = characters_dir / "index.md"
+        index_path.write_text(index_content, encoding="utf-8")
+        print(f"已生成: {index_path}")
 
-
-# ============================================================
-# 阶段 4：状态精修与索引
-# ============================================================
-
-def build_status_update_prompt(active_chars: list[dict], recent_summaries: str,
-                               char_file_paths: dict) -> str:
-    template = (PROMPTS_DIR / "char_status_update.md").read_text(encoding="utf-8")
-    prompt = template.replace("{active_characters_json}",
-                              json.dumps(active_chars, ensure_ascii=False, indent=2))
-    prompt = prompt.replace("{recent_chapter_summaries}", recent_summaries)
-    prompt = prompt.replace("{character_file_paths}",
-                            json.dumps(char_file_paths, ensure_ascii=False, indent=2))
-    return prompt
+        progress["phase"] = "completed"
+        save_progress(progress_path, progress, default_fn=_default_progress, merge_fn=_merge_progress)
 
 
 def build_index_md(census: dict, characters_dir: Path) -> str:
@@ -1661,92 +1605,6 @@ def build_index_md(census: dict, characters_dir: Path) -> str:
         lines.append("")
 
     return "\n".join(lines)
-
-
-def phase_status_update(book_dir: Path, all_chapters: list[int],
-                        progress: dict, progress_path: Path,
-                        model: str, timeout: int, dry_run: bool):
-    """执行阶段 4：状态精修与索引"""
-    print("\n" + "=" * 60)
-    print("阶段 4：状态精修与索引")
-    print("=" * 60)
-
-    if progress["status_update"]["completed"]:
-        print("状态精修已完成！")
-        return
-
-    build_dir = get_build_dir(book_dir)
-    characters_dir = get_characters_dir(book_dir)
-    chapters_dir = get_chapters_dir(book_dir)
-
-    census = load_census(build_dir)
-    raw_census = load_raw_census(build_dir)
-    alias_mapping = census.get("alias_mapping", {})
-
-    # 找出活跃角色（在最后 20 章有出场的核心/重要角色）
-    recent_n = min(20, len(all_chapters))
-    recent_chapters = all_chapters[-recent_n:]
-
-    chars_by_name = {c["canonical_name"]: c for c in census.get("characters", [])}
-    classification = census.get("classification_summary", {})
-    active_names = set()
-
-    for name in classification.get("core", []) + classification.get("important", []):
-        ch_list = get_character_chapters(name, raw_census, alias_mapping)
-        if any(ch in recent_chapters for ch in ch_list):
-            active_names.add(name)
-
-    active_chars = []
-    char_file_paths = {}
-    for name in sorted(active_names):
-        c = chars_by_name.get(name, {})
-        file_name = c.get("file_name", name_to_pinyin(name))
-        file_path = str(characters_dir / f"{file_name}.md")
-        active_chars.append({
-            "name": name,
-            "classification": c.get("classification", "important"),
-            "file_path": file_path,
-        })
-        char_file_paths[name] = file_path
-
-    if dry_run:
-        print(f"最后 {recent_n} 章中的活跃角色: {len(active_chars)} 人")
-        for ac in active_chars:
-            print(f"  [{ac['classification']}] {ac['name']}")
-        print("还将生成 index.md")
-        return
-
-    # 步骤 1：更新活跃角色的当前状态
-    if active_chars:
-        recent_summaries = load_summaries_for_chapters(chapters_dir, recent_chapters)
-
-        prompt = build_status_update_prompt(active_chars, recent_summaries,
-                                            char_file_paths)
-
-        print(f"更新 {len(active_chars)} 个活跃角色的当前状态...")
-        start_time = time.time()
-        success, output = run_claude_prompt(prompt, model, timeout * 2,
-                                            allow_tools="Write,Read")
-        elapsed = time.time() - start_time
-
-        progress["stats"]["total_calls"] += 1
-        progress["stats"]["total_time_seconds"] += int(elapsed)
-
-        if success:
-            print(f"完成 ({elapsed:.0f}s)")
-        else:
-            print(f"失败 ({elapsed:.0f}s): {output[:200]}")
-    else:
-        print("无活跃角色需要更新")
-
-    # 步骤 2：生成 index.md（Python 直接生成）
-    index_content = build_index_md(census, characters_dir)
-    index_path = characters_dir / "index.md"
-    index_path.write_text(index_content, encoding="utf-8")
-    print(f"已生成: {index_path}")
-
-    progress["status_update"]["completed"] = True
-    save_progress(progress_path, progress)
 
 
 # ============================================================
@@ -1853,7 +1711,7 @@ def run_validate(book_dir: Path):
     # 加载进度统计
     progress_path = get_progress_path(book_dir)
     if progress_path.exists():
-        progress = load_progress(progress_path)
+        progress = load_progress(progress_path, default_fn=_default_progress)
         print(f"\n统计:")
         print(f"  总调用: {progress['stats']['total_calls']} 次")
         total_s = progress["stats"]["total_time_seconds"]
@@ -1872,7 +1730,7 @@ def main():
     progress_path = get_progress_path(book_dir)
 
     # 扫描已有章节摘要
-    all_chapters = list_summary_chapters(chapters_dir)
+    all_chapters = list_chapter_files(chapters_dir)
     if not all_chapters:
         print(f"错误：chapters 目录中没有摘要文件: {chapters_dir}")
         sys.exit(1)
@@ -1887,7 +1745,7 @@ def main():
         return
 
     # 加载进度
-    progress = load_progress(progress_path)
+    progress = load_progress(progress_path, default_fn=_default_progress)
     print(f"当前阶段: {progress['phase']}")
 
     # 确保输出目录存在
@@ -1903,35 +1761,28 @@ def main():
 
     # 阶段 1: 别名合并
     if args.phase == "alias-merge" or (not args.phase and progress["phase"] in ("alias_merge", "preprocess")):
-        progress = load_progress(progress_path)
+        progress = load_progress(progress_path, default_fn=_default_progress)
         if progress["phase"] == "alias_merge" or args.phase == "alias-merge":
             phase_alias_merge(book_dir, progress, progress_path,
                               args.model, args.timeout, args.dry_run)
 
     # 阶段 2: 角色深度分析
     if args.phase == "deep-dive" or (not args.phase and progress["phase"] in ("deep_dive", "alias_merge")):
-        progress = load_progress(progress_path)
+        progress = load_progress(progress_path, default_fn=_default_progress)
         if progress["phase"] == "deep_dive" or args.phase == "deep-dive":
             phase_deep_dive(book_dir, progress, progress_path,
                             args.model, args.timeout, args.dry_run,
                             args.character, args.concurrency)
 
-    # 阶段 3: 关系网构建
+    # 阶段 3: 关系网 + 状态更新
     if args.phase == "relationship" or (not args.phase and progress["phase"] in ("relationship", "deep_dive")):
-        progress = load_progress(progress_path)
+        progress = load_progress(progress_path, default_fn=_default_progress)
         if progress["phase"] == "relationship" or args.phase == "relationship":
-            phase_relationship(book_dir, progress, progress_path,
-                               args.model, args.timeout, args.dry_run)
-
-    # 阶段 4: 状态精修
-    if args.phase == "status-update" or (not args.phase and progress["phase"] in ("status_update", "relationship")):
-        progress = load_progress(progress_path)
-        if progress["phase"] == "status_update" or args.phase == "status-update":
-            phase_status_update(book_dir, all_chapters, progress, progress_path,
-                                args.model, args.timeout, args.dry_run)
+            phase_relationship_and_status(book_dir, all_chapters, progress, progress_path,
+                                          args.model, args.timeout, args.dry_run)
 
     # 最终统计
-    progress = load_progress(progress_path)
+    progress = load_progress(progress_path, default_fn=_default_progress)
     print(f"\n{'=' * 60}")
     print("当前状态:")
     print(f"  阶段: {progress['phase']}")
@@ -1940,14 +1791,13 @@ def main():
     dd = progress["deep_dive"]
     print(f"  角色深度: 核心 {len(dd['core_completed'])} 完成/{len(dd['core_failed'])} 失败, "
           f"重要 {len(dd['important_completed'])} 完成/{len(dd['important_failed'])} 失败")
-    rel = progress["relationship"]
-    print(f"  关系网: 构建{'✓' if rel['built'] else '✗'} 验证{'✓' if rel['validated'] else '✗'}")
-    print(f"  状态精修: {'✓' if progress['status_update']['completed'] else '✗'}")
+    ras = progress.get("relationship_and_status", {})
+    print(f"  关系+状态: 构建{'✓' if ras.get('built') else '✗'} 验证{'✓' if ras.get('validated') else '✗'}")
     print(f"  总调用: {progress['stats']['total_calls']} 次")
     total_s = progress["stats"]["total_time_seconds"]
     print(f"  总耗时: {total_s // 3600}h{(total_s % 3600) // 60}m{total_s % 60}s")
 
-    if progress["status_update"]["completed"]:
+    if progress.get("relationship_and_status", {}).get("validated"):
         print("\nT4 全流程完成！建议运行验证:")
         print(f"  python {__file__} --book-dir {args.book_dir} --validate")
 
