@@ -39,6 +39,10 @@
   screen         策略筛选（年年正收益/三年翻倍/机构偏爱等预设策略）
   companies      基金公司列表
 
+  === 认证管理（不需要基金代码） ===
+  refresh-token  刷新认证 token（优先 Zygisk，失败则密码登录）
+  auth-status    查看认证状态（过期时间、剩余有效期）
+
   === 交易账户（不需要基金代码） ===
   account        账户总览（总资产、累计盈亏、当日盈亏、风险等级）
   positions      基金持仓列表（持仓基金明细、市值、收益）
@@ -281,8 +285,13 @@
 """
 
 import argparse
+import base64
+import hashlib
+import json
 import os
+import subprocess
 import sys
+import time
 
 import httpx
 
@@ -290,8 +299,12 @@ import httpx
 for _k in ("http_proxy", "https_proxy", "HTTP_PROXY", "HTTPS_PROXY", "all_proxy", "ALL_PROXY"):
     os.environ.pop(_k, None)
 
-API_BASE = "http://127.0.0.1:8900"
+API_BASE = "http://119.23.227.187:8900"
+ZYGISK_URL = "http://localhost:18900"
+SERVER_DIR = "/home/yuyang/frida-test/smart-fund-server"
 
+DEFAULT_KEY1 = "7246091a5f126b63"
+DEFAULT_KEY2 = "2293a78f6581c12bbb334759458d4de3"
 
 _client = httpx.Client(timeout=60)
 
@@ -375,6 +388,30 @@ def cmd_detail(args):
         val = info.get(key)
         if val is not None:
             print(f"{'  ' + label:　>6s}: {fmt_pct(val)}")
+
+    # 查询并展示限额信息
+    try:
+        limit_resp = get(f"/api/limits/{args.code}")
+        if limit_resp.get("status") == "ok":
+            limit_data = limit_resp.get("data", {})
+            print()
+            print("【买入限额】")
+            min_buy = limit_data.get("min_buy", 0)
+            max_buy = limit_data.get("max_buy", 0)
+            is_suspended = limit_data.get("is_suspended", False)
+            if is_suspended:
+                print(f"  ⚠️ 暂停申购: {limit_data.get('suspend_reason', '未知原因')}")
+            else:
+                print(f"  最小买入: {min_buy:.0f} 元")
+                if max_buy < 1000000:
+                    print(f"  当前可买: {max_buy:.0f} 元")
+                else:
+                    print(f"  当前可买: 无限额")
+            last_checked = limit_data.get("last_checked_at")
+            if last_checked:
+                print(f"  更新时间: {last_checked[:19]}")
+    except:
+        pass  # 限额查询失败不影响主流程
 
 
 def cmd_rank(args):
@@ -2664,12 +2701,32 @@ def cmd_flash_news(args):
 
 def cmd_ranking(args):
     """基金排行"""
+    # 基金类型映射（简称 -> 同花顺 l2code 代码）
+    FUND_TYPE_MAP = {
+        "stock": "282001001,282001002,282001003",   # 股票型（普通/偏股/灵活配置）
+        "mixed": "282002001,282002002,282002003,282002004,282002005,282002006,282002007",  # 混合型
+        "bond": "282003001,282003002,282003003,282003004",  # 债券型
+        "index": "282005001,282005002,282005003,282005004,282005005,282005006",  # 指数型
+        "qdii": "282008001,282008002,282008003,282008004,282008005",  # QDII（股票/混合/债券/另类/FOF）
+        "money": "282004001",   # 货币型
+        "fof": "282006001,282006002",  # FOF
+    }
+
     params = {
         "sort_type": getattr(args, "sort_type", "year"),
         "sort": getattr(args, "ranking_sort", "DESC"),
         "limit": args.count,
         "offset": getattr(args, "offset", 0),
     }
+
+    # 基金类型筛选
+    fund_type = getattr(args, "fund_type", None)
+    if fund_type:
+        if fund_type in FUND_TYPE_MAP:
+            params["fund_type"] = FUND_TYPE_MAP[fund_type]
+        else:
+            # 直接使用代码
+            params["fund_type"] = fund_type
 
     board = getattr(args, "board", None)
     if board:
@@ -2972,6 +3029,48 @@ def cmd_screen(args):
             print(f"  使用 'python client.py screen' 查看可用策略列表")
 
 
+def cmd_search(args):
+    """基金搜索"""
+    keyword = args.code  # 搜索关键词放在 code 位置
+    if not keyword:
+        print("错误: search 命令需要提供搜索关键词")
+        print("示例: python client.py search 标普500")
+        print("      python client.py search 纳斯达克")
+        print("      python client.py search 医疗")
+        return
+
+    limit = getattr(args, "count", 20)
+    import urllib.parse
+    encoded_keyword = urllib.parse.quote(keyword)
+    data = get(f"/api/fund/search?keyword={encoded_keyword}&limit={limit}")
+
+    if isinstance(data, dict) and data.get("status_code") and data.get("status_code") != 0:
+        print(f"  搜索失败: {data.get('status_msg', '未知错误')}")
+        return
+
+    results = data.get("data", []) if isinstance(data, dict) else data
+
+    if not results:
+        print(f"  未找到与 '{keyword}' 相关的基金")
+        return
+
+    print(f"\n【基金搜索: {keyword}】")
+    print(f"  找到 {len(results)} 只基金:\n")
+
+    for i, fund in enumerate(results, 1):
+        code = fund.get("code", "")
+        name = fund.get("name", "")
+        fund_type = fund.get("type", "")
+        pinyin = fund.get("pinyin", "")
+
+        print(f"  {i:2d}. {code} {name}")
+        if fund_type:
+            print(f"      类型: {fund_type}")
+        if pinyin:
+            print(f"      拼音: {pinyin}")
+        print()
+
+
 def cmd_companies(args):
     """基金公司列表"""
     data = get("/api/fund/companies")
@@ -3100,6 +3199,376 @@ def cmd_positions(args):
             buy_amount = str(pos.get("buyAmount") or "")
             income = str(pos.get("holdIncome") or "0")
             print(f"  {i:>4d}  {fund_code:<8s}  {fund_name:<20s}  {value:>10s}  {buy_amount:>10s}  {income:>10s}")
+
+
+def cmd_sync(args):
+    """同步持仓数据到本地数据库"""
+    print(f"\n{'=' * 50}")
+    print(f"  基金 sync 同步持仓")
+    print(f"{'=' * 50}\n")
+
+    # 调用同步 API
+    data = post("/api/sync/positions", {})
+    if data.get("status") == "success":
+        print(f"✅ {data.get('message', '同步成功')}")
+    else:
+        print(f"❌ 同步失败: {data.get('detail', data.get('message', '未知错误'))}")
+        return
+
+    # 显示同步后的持仓数据（从交易账户获取实时持仓）
+    positions_data = get("/api/trade/positions")
+    if positions_data.get("code") == "0000":
+        sd = positions_data.get("singleData", {})
+        general = sd.get("fundGeneral", {})
+        positions = general.get("fundPositonCombinedList", [])
+        if positions:
+            print(f"\n当前持仓 ({len(positions)} 只基金):\n")
+            print(f"  {'基金代码':<10s}  {'基金名称':<24s}  {'市值':>12s}  {'收益率':>10s}")
+            print(f"  {'─' * 60}")
+            for pos in positions:
+                code = pos.get("fundCode", "")
+                name = (pos.get("fundName", "") or "")[:20]
+                value = float(pos.get("shareValue") or pos.get("value") or 0)
+                profit_rate = float(pos.get("holdIncomeRate") or 0)
+                print(f"  {code:<10s}  {name:<24s}  {value:>12.2f}  {profit_rate:>+10.2f}%")
+        else:
+            print("\n暂无持仓记录")
+    else:
+        print(f"\n⚠️ 获取持仓详情失败: {positions_data.get('message', '未知错误')}")
+
+
+def cmd_snapshot(args):
+    """风控快照"""
+    import json
+    print(f"\n{'=' * 50}")
+    print(f"  风控快照")
+    print(f"{'=' * 50}\n")
+
+    data = get("/api/risk/snapshot")
+    if data.get("status") == "success":
+        snapshot = data.get("data", {})
+        print(json.dumps(snapshot, indent=2, ensure_ascii=False))
+    else:
+        print(f"❌ 获取风控快照失败: {data.get('detail', '未知错误')}")
+
+
+def cmd_preflight(args):
+    """交易前置检查"""
+    import json
+    print(f"\n{'=' * 50}")
+    print(f"  交易前置检查")
+    print(f"{'=' * 50}\n")
+
+    data = get("/api/risk/preflight")
+    if data.get("status") == "success":
+        result = data.get("data", {})
+        print(json.dumps(result, indent=2, ensure_ascii=False))
+    else:
+        print(f"❌ 前置检查失败: {data.get('detail', '未知错误')}")
+
+
+def cmd_evaluate(args):
+    """计算量化信号"""
+    import json
+    print(f"\n{'=' * 50}")
+    print(f"  量化信号评估")
+    print(f"{'=' * 50}\n")
+
+    data = post("/api/indicators/evaluate", {})
+    if data.get("status") == "success":
+        signals = data.get("data", {})
+        print(json.dumps(signals, indent=2, ensure_ascii=False))
+    else:
+        print(f"❌ 量化评估失败: {data.get('detail', '未知错误')}")
+
+
+def cmd_scan_summary(args):
+    """基金扫描精简版"""
+    import json
+    print(f"\n{'=' * 50}")
+    print(f"  基金扫描 (精简版)")
+    print(f"{'=' * 50}\n")
+
+    data = get("/api/funds/scan-summary")
+    if data.get("status") == "success":
+        funds = data.get("data", {}).get("funds", [])
+        print(f"共 {len(funds)} 只基金:\n")
+        for f in funds:
+            name = f.get('name') or ''
+            nav = f.get('nav') or 0
+            rate = f.get('rate') or 0
+            yield_month = f.get('yield_month') or 0
+            print(f"  {f.get('code', '')} {name[:16]:<16s}  "
+                  f"净值:{nav:.4f}  涨跌:{rate:+.2f}%  "
+                  f"近1月:{yield_month:+.2f}%")
+    else:
+        print(f"❌ 扫描失败: {data.get('detail', '未知错误')}")
+
+
+def cmd_account_overview(args):
+    """账户总览（新版）"""
+    import json
+    data = get("/api/account/overview")
+    if data.get("status") == "success":
+        print(json.dumps(data.get("data", {}), indent=2, ensure_ascii=False))
+    else:
+        print(f"❌ 获取账户总览失败: {data.get('detail', '未知错误')}")
+
+
+def cmd_wallet_info(args):
+    """钱包信息"""
+    import json
+    data = get("/api/wallet/info")
+    if data.get("status") == "success":
+        print(json.dumps(data.get("data", {}), indent=2, ensure_ascii=False))
+    else:
+        print(f"❌ 获取钱包信息失败: {data.get('detail', '未知错误')}")
+
+
+def cmd_wallet_home(args):
+    """钱包首页"""
+    import json
+    data = get("/api/wallet/home")
+    if data.get("status") == "success":
+        print(json.dumps(data.get("data", {}), indent=2, ensure_ascii=False))
+    else:
+        print(f"❌ 获取钱包首页失败: {data.get('detail', '未知错误')}")
+
+
+def cmd_today_decisions(args):
+    """今日决策"""
+    import json as json_module
+    data = get("/api/decisions/today")
+    if data.get("status") == "success":
+        raw = data.get("data", [])
+        decisions = raw if isinstance(raw, list) else raw.get("decisions", [])
+
+        # JSON 输出模式
+        if getattr(args, 'json', False):
+            print(json_module.dumps(decisions, indent=2, ensure_ascii=False))
+            return
+
+        if decisions:
+            print(f"今日决策 ({len(decisions)} 条):\n")
+            for d in decisions:
+                print(f"  {d.get('fund_code', '')} {d.get('fund_name', '')[:12]:<12s}  "
+                      f"{d.get('action', ''):>6s}  {d.get('reason', '')[:40]}")
+        else:
+            print("今日暂无决策记录")
+    else:
+        print(f"❌ 获取决策失败: {data.get('detail', '未知错误')}")
+
+
+def cmd_recent_decisions(args):
+    """最近决策"""
+    import json as json_module
+    days = getattr(args, 'count', 5) or 5
+    data = get(f"/api/decisions/recent?days={days}")
+    if data.get("status") == "success":
+        raw = data.get("data", [])
+        decisions = raw if isinstance(raw, list) else raw.get("decisions", [])
+
+        # JSON 输出模式
+        if getattr(args, 'json', False):
+            print(json_module.dumps(decisions, indent=2, ensure_ascii=False))
+            return
+
+        if decisions:
+            print(f"最近 {days} 天决策 ({len(decisions)} 条):\n")
+            for d in decisions:
+                print(f"  {d.get('decision_date', '')[:10]}  {d.get('fund_code', '')}  "
+                      f"{d.get('action', ''):>6s}  {d.get('reason', '')[:30]}")
+        else:
+            print(f"最近 {days} 天暂无决策记录")
+    else:
+        print(f"❌ 获取决策失败: {data.get('detail', '未知错误')}")
+
+
+def cmd_watch_streaks(args):
+    """观望连续天数"""
+    import json
+    data = get("/api/decisions/watch-streaks")
+    if data.get("status") == "success":
+        raw = data.get("data", {})
+        # API 直接返回 {"fund_code": days} 格式
+        streaks = raw if isinstance(raw, dict) else {}
+        if streaks:
+            print("基金观望连续天数:\n")
+            for code, days in streaks.items():
+                print(f"  {code}: {days} 天")
+        else:
+            print("暂无观望记录")
+    else:
+        print(f"❌ 获取观望记录失败: {data.get('detail', '未知错误')}")
+
+
+def cmd_create_reviews(args):
+    """创建待复盘记录"""
+    import json
+    data = post("/api/review/create", {})
+    if data.get("status") == "success":
+        created = data.get("data", {}).get("created_count", 0)
+        print(f"✅ 创建了 {created} 条待复盘记录")
+    else:
+        print(f"❌ 创建复盘记录失败: {data.get('detail', '未知错误')}")
+
+
+def cmd_pending_reviews(args):
+    """待复盘决策"""
+    import json as json_module
+    data = get("/api/review/pending")
+    if data.get("status") == "success":
+        # data 可能是列表或字典
+        raw_data = data.get("data", [])
+        if isinstance(raw_data, list):
+            reviews = raw_data
+        else:
+            reviews = raw_data.get("reviews", [])
+
+        # JSON 输出模式
+        if getattr(args, 'json', False):
+            print(json_module.dumps(reviews, indent=2, ensure_ascii=False))
+            return
+
+        if reviews:
+            print(f"待复盘决策 ({len(reviews)} 条):\n")
+            for r in reviews:
+                action = r.get('decision_action') or r.get('action', '')
+                reason = r.get('decision_reason') or r.get('reason', '')
+                print(f"  {r.get('decision_date', '')[:10]}  {r.get('fund_code', '')}  "
+                      f"{action:>6s}  {reason[:30]}")
+        else:
+            print("暂无待复盘决策")
+    else:
+        print(f"❌ 获取待复盘失败: {data.get('detail', '未知错误')}")
+
+
+def cmd_review_stats(args):
+    """复盘统计"""
+    import json
+    data = get("/api/review/stats")
+    if data.get("status") == "success":
+        stats = data.get("data", {})
+        print(json.dumps(stats, indent=2, ensure_ascii=False))
+    else:
+        print(f"❌ 获取统计失败: {data.get('detail', '未知错误')}")
+
+
+def cmd_lessons(args):
+    """经验知识库"""
+    import json as json_module
+    data = get("/api/lessons")
+    if data.get("status") == "success":
+        raw = data.get("data", [])
+        lessons = raw if isinstance(raw, list) else raw.get("lessons", [])
+
+        # JSON 输出模式
+        if getattr(args, 'json', False):
+            print(json_module.dumps(lessons, indent=2, ensure_ascii=False))
+            return
+
+        if lessons:
+            print(f"经验知识库 ({len(lessons)} 条):\n")
+            for l in lessons:
+                print(f"  [{l.get('category', '')}] {l.get('lesson_text', '')[:50]}")
+                print(f"      可信度: {l.get('confidence', '')}  验证: {l.get('verify_count', 0)}/{l.get('success_count', 0)}")
+        else:
+            print("暂无经验记录")
+    else:
+        print(f"❌ 获取经验失败: {data.get('detail', '未知错误')}")
+
+
+# ==================== 基金限额 ====================
+
+def cmd_limits(args):
+    """查询基金限额"""
+    # 如果提供了基金代码，查询单个基金
+    if args.code and args.code not in ["limits", "limits-summary", "limits-plan"]:
+        data = get(f"/api/limits/{args.code}")
+        if data.get("status") == "ok":
+            l = data.get("data", {})
+            print(f"\n基金 {l.get('fund_code')} 限额信息:")
+            print(f"  基金名称: {l.get('fund_name', '')}")
+            print(f"  最小买入: {l.get('min_buy', 0):.0f} 元")
+            max_buy = l.get('max_buy', 0)
+            if max_buy < 1000000:
+                print(f"  当前可买: {max_buy:.0f} 元")
+            else:
+                print(f"  当前可买: 无限额")
+            if l.get('is_suspended'):
+                print(f"  ⚠️ 状态: 暂停申购 ({l.get('suspend_reason', '')})")
+            print(f"  更新时间: {l.get('last_checked_at', '')[:19] if l.get('last_checked_at') else '未知'}")
+        elif data.get("status") == "not_found":
+            print(f"暂无基金 {args.code} 的限额信息，需要先尝试买入获取")
+        else:
+            print(f"❌ 查询失败: {data.get('detail', '未知错误')}")
+    else:
+        # 查询所有限额
+        data = get("/api/limits")
+        if data.get("status") == "ok":
+            limits = data.get("data", [])
+            if limits:
+                print(f"\n已记录 {len(limits)} 只基金的限额信息:\n")
+                print(f"{'代码':<10s} {'名称':<30s} {'最小':<8s} {'可买':<12s} {'状态':<8s}")
+                print("-" * 75)
+                for l in limits:
+                    max_buy = l.get('max_buy', 0)
+                    max_str = f"{max_buy:.0f}" if max_buy < 1000000 else "无限"
+                    status = "暂停" if l.get('is_suspended') else "正常"
+                    name = (l.get('fund_name') or '')[:28]
+                    print(f"{l.get('fund_code', ''):<10s} {name:<30s} {l.get('min_buy', 0):<8.0f} {max_str:<12s} {status:<8s}")
+            else:
+                print("暂无限额记录，需要先尝试买入基金获取限额信息")
+        else:
+            print(f"❌ 查询失败: {data.get('detail', '未知错误')}")
+
+
+def cmd_limits_summary(args):
+    """限额统计摘要"""
+    data = get("/api/limits/summary")
+    if data.get("status") == "ok":
+        s = data.get("data", {})
+        print(f"\n基金限额统计:")
+        print(f"  已记录基金数: {s.get('total', 0)}")
+        print(f"  暂停申购: {s.get('suspended', 0)}")
+        print(f"  最小买入≤10元: {s.get('min_buy_10', 0)}")
+        print(f"  最小买入≤100元: {s.get('min_buy_100', 0)}")
+        print(f"  可买≥1000元: {s.get('max_buy_1000', 0)}")
+        total_avail = s.get('total_available', 0)
+        if total_avail > 0:
+            print(f"  总可买金额: {total_avail:,.0f} 元")
+    else:
+        print(f"❌ 查询失败: {data.get('detail', '未知错误')}")
+
+
+def cmd_limits_plan(args):
+    """智能分配购买计划"""
+    # 从 --amount 获取目标金额，默认 2000 元
+    target_amount = args.amount if args.amount else 2000
+
+    data = post("/api/limits/plan", {"target_amount": target_amount, "exclude_codes": []})
+    if data.get("status") == "ok":
+        plan = data.get("plan", [])
+        allocated = data.get("allocated_amount", 0)
+        remaining = data.get("remaining_amount", 0)
+
+        print(f"\n智能购买计划 (目标: {target_amount:.0f} 元):")
+        print(f"{'=' * 70}")
+
+        if plan:
+            print(f"\n{'代码':<10s} {'名称':<25s} {'最小':<8s} {'可买':<10s} {'建议':<10s}")
+            print("-" * 70)
+            for p in plan:
+                name = (p.get('fund_name') or '')[:23]
+                print(f"{p.get('fund_code', ''):<10s} {name:<25s} {p.get('min_buy', 0):<8.0f} {p.get('max_buy', 0):<10.0f} {p.get('suggested_amount', 0):<10.0f}")
+
+            print(f"\n已分配: {allocated:.0f} 元 / 剩余: {remaining:.0f} 元")
+            if remaining > 0:
+                print(f"⚠️ 需要更多基金才能凑够目标金额")
+        else:
+            print("暂无可用的限额信息，需要先尝试买入基金获取限额")
+    else:
+        print(f"❌ 生成计划失败: {data.get('detail', '未知错误')}")
 
 
 def cmd_wallet(args):
@@ -3299,18 +3768,21 @@ def cmd_buy(args):
         print(f"买入失败: {detail or e}", file=sys.stderr)
         sys.exit(1)
 
+    # 响应格式: {"status": "success", "data": {"fund_code": ..., "raw_result": {...}}}
+    data = resp.get("data", resp)
+    raw = data.get("raw_result", data)
     print(f"\n{'=' * 50}")
     print(f"  买入提交成功")
     print(f"{'=' * 50}")
-    print(f"  基金代码:   {resp.get('fund_code', '')}")
-    print(f"  基金名称:   {resp.get('fund_name', '')}")
-    print(f"  买入金额:   {resp.get('amount', '')} 元")
-    print(f"  手续费:     {resp.get('charge', '0.00')} 元")
-    print(f"  银行卡:     {resp.get('bank_name', '')}")
-    print(f"  订单号:     {resp.get('app_sheet_serial_no', '')}")
-    print(f"  受理时间:   {resp.get('accept_time', '')}")
-    print(f"  确认日期:   {resp.get('confirm_date', '')}")
-    order_no = resp.get("app_sheet_serial_no", "")
+    print(f"  基金代码:   {data.get('fund_code', '') or raw.get('fund_code', '')}")
+    print(f"  基金名称:   {data.get('fund_name', '') or raw.get('fund_name', '')}")
+    print(f"  买入金额:   {data.get('amount', '') or raw.get('amount', '')} 元")
+    print(f"  手续费:     {raw.get('charge', '0.00')} 元")
+    print(f"  银行卡:     {raw.get('bank_name', '')}")
+    print(f"  订单号:     {data.get('order_no', '') or raw.get('app_sheet_serial_no', '')}")
+    print(f"  受理时间:   {raw.get('accept_time', '')}")
+    print(f"  确认日期:   {raw.get('confirm_date', '')}")
+    order_no = data.get("order_no", "") or raw.get("app_sheet_serial_no", "")
     if order_no:
         print(f"\n  查询订单: python client.py order {order_no}")
 
@@ -3399,7 +3871,9 @@ def cmd_orders(args):
     # 用 count 参数控制天数不太直觉，这里固定查30天，count控制显示条数
     params = {"days": 30, "limit": 50}
     resp = get(f"/api/trade/orders?days={params['days']}&limit={params['limit']}")
-    single_data = resp.get("singleData", resp)
+    # 响应格式: {"status": "success", "data": {"singleData": {"data": [...]}}}
+    data = resp.get("data", resp)
+    single_data = data.get("singleData", data)
     orders = single_data.get("data", [])
 
     if not orders:
@@ -3895,6 +4369,395 @@ def cmd_all(args):
     cmd_compare(args)
 
 
+def _decode_jwt_exp(jwt_token: str):
+    """解析同花顺 JWT 获取过期时间
+
+    同花顺 JWT 格式特殊：header.signature，exp 可能在 header（第一部分）或 payload（第二部分）中。
+    尝试两种解析方式。
+    """
+    for part_idx in (1, 0):  # 优先尝试 payload（标准），再尝试 header（同花顺特殊格式）
+        try:
+            parts = jwt_token.split(".")
+            if len(parts) <= part_idx:
+                continue
+            segment = parts[part_idx]
+            padding = 4 - len(segment) % 4
+            if padding != 4:
+                segment += "=" * padding
+            decoded = base64.urlsafe_b64decode(segment)
+            data = json.loads(decoded)
+            exp = data.get("exp")
+            if exp is not None:
+                # exp 是毫秒时间戳，转换为秒
+                if exp > 10000000000:
+                    exp = exp // 1000
+                return exp
+        except Exception:
+            continue
+    return None
+
+
+def _ensure_adb_forward():
+    """确保 ADB 端口转发已建立（手机 18900 -> 本地 18900）"""
+    config_file = os.path.join(SERVER_DIR, "config.json")
+    adb_path = "/mnt/d/123pan/Downloads/一加Ace6/adb命令行/adb.exe"
+    adb_device = "3B15BJ00GZL00000"
+    if os.path.exists(config_file):
+        try:
+            with open(config_file, "r", encoding="utf-8") as f:
+                cfg = json.load(f)
+            adb_path = cfg.get("adb_path", adb_path)
+            adb_device = cfg.get("adb_device", adb_device)
+        except Exception:
+            pass
+    try:
+        subprocess.run(
+            [adb_path, "-s", adb_device, "forward", "tcp:18900", "tcp:18900"],
+            capture_output=True, timeout=5
+        )
+    except Exception as e:
+        print(f"ADB 端口转发失败: {e}")
+
+
+def _fetch_token_from_zygisk():
+    """从 Zygisk 获取 token（先建立 ADB 端口转发，再通过 http://localhost:18900/auth）"""
+    _ensure_adb_forward()
+    try:
+        resp = httpx.get(f"{ZYGISK_URL}/auth", timeout=3)
+        data = resp.json()
+
+        if not data.get("available") or not data.get("key5"):
+            return None
+
+        expires_at = _decode_jwt_exp(data.get("key5", ""))
+
+        key1 = data.get("key1", "") or DEFAULT_KEY1
+        key2 = data.get("key2", "") or DEFAULT_KEY2
+        key3 = data.get("key3", "")
+
+        # 如果 key3 为空，尝试从 key5 JWT 中提取 cId
+        if not key3:
+            try:
+                jwt_parts = data.get("key5", "").split(".")
+                if jwt_parts:
+                    payload = jwt_parts[0]
+                    padding = 4 - len(payload) % 4
+                    if padding != 4:
+                        payload += "=" * padding
+                    decoded = base64.urlsafe_b64decode(payload)
+                    jwt_data = json.loads(decoded)
+                    key3 = jwt_data.get("cId", "")
+            except Exception:
+                pass
+
+        return {
+            "key1": key1,
+            "key2": key2,
+            "key3": key3,
+            "key4": data.get("key4", "") or "auth",
+            "key5": data.get("key5", ""),
+            "userId": data.get("userId", "") or key3,
+            "sessionId": data.get("sessionId", ""),
+            "cookie": data.get("cookie", ""),
+            "expires_at": expires_at,
+        }
+    except Exception as e:
+        print(f"从 Zygisk 获取 token 失败: {e}")
+        return None
+
+
+def _login_by_password():
+    """使用密码登录获取 token（会踢掉手机端）"""
+    try:
+        config_file = os.path.join(SERVER_DIR, "config.json")
+        if not os.path.exists(config_file):
+            print("配置文件不存在，无法使用密码登录")
+            return None
+
+        with open(config_file, "r", encoding="utf-8") as f:
+            config = json.load(f)
+
+        account = config.get("trade_account")
+        if not account:
+            print("配置文件中未设置 trade_account，无法使用密码登录")
+            return None
+
+        password = config.get("trade_password")
+        if not password:
+            print("配置文件中未设置 trade_password，无法使用密码登录")
+            return None
+
+        password_md5 = hashlib.md5(password.encode()).hexdigest().upper()
+
+        device_id = DEFAULT_KEY1
+        device_sign = DEFAULT_KEY2
+
+        url = "https://trade.5ifund.com/rz/account/login/noauth/v1/result/safe/check"
+
+        headers = {
+            "token": "-1",
+            "custId": "-1",
+            "source": "SDK",
+            "Content-Type": "application/x-www-form-urlencoded",
+            "User-Agent": "Hexin_Gphone/11.48.03 (Royal Flush) innerversion/G037.08.194.1.32 hxtheme/0 GphoneIjiJinSDK/V7.39.01 ifOperator/145",
+            "Client-Referer": "",
+            "Host": "trade.5ifund.com",
+            "Connection": "Keep-Alive",
+            "Accept-Encoding": "gzip",
+        }
+
+        form_data = {
+            "key1": device_id,
+            "uId": device_id,
+            "key2": device_sign,
+            "password": password_md5,
+            "ipAddress": "null",
+            "thsUserId": "690359103",
+            "device": "OnePlus PLQ110",
+            "deviceName": "OnePlus ",
+            "account": account,
+            "loginSource": "SDK",
+            "operator": "145",
+        }
+
+        resp = httpx.post(url, headers=headers, data=form_data, timeout=10)
+        resp.raise_for_status()
+
+        result = resp.json()
+
+        if result.get("code") != "0000":
+            error_msg = result.get("message", "未知错误")
+            print(f"密码登录失败: {error_msg}")
+            return None
+
+        data_field = result.get("data", {})
+        key3 = data_field.get("key3") or data_field.get("custId") or account
+        key4 = data_field.get("key4", "auth")
+        key5 = data_field.get("key5")
+
+        if not key5:
+            print("登录响应中未找到 key5")
+            return None
+
+        cookie = ""
+        if "set-cookie" in resp.headers:
+            cookie = resp.headers["set-cookie"]
+
+        expires_at = _decode_jwt_exp(key5)
+
+        print("密码登录成功（手机端已被踢下线）")
+
+        return {
+            "key1": device_id,
+            "key2": device_sign,
+            "key3": key3,
+            "key4": key4,
+            "key5": key5,
+            "userId": key3,
+            "sessionId": "",
+            "cookie": cookie,
+            "expires_at": expires_at,
+        }
+
+    except Exception as e:
+        print(f"密码登录异常: {e}")
+        return None
+
+
+def cmd_refresh_token(args):
+    """刷新认证 token：优先 Zygisk，失败则密码登录"""
+    # 1. 尝试 Zygisk
+    print("尝试从 Zygisk 获取 token ...")
+    token_data = _fetch_token_from_zygisk()
+    source = "zygisk"
+
+    # 2. 失败则密码登录
+    if not token_data:
+        print("Zygisk 获取失败，尝试密码登录 ...")
+        token_data = _login_by_password()
+        source = "password_login"
+
+    if not token_data:
+        print("所有获取方式均失败，无法刷新 token")
+        return
+
+    # 3. 保存到本地 auth_cache.json
+    cache_file = os.path.join(SERVER_DIR, "auth_cache.json")
+    cache_data = {
+        "auth": {
+            "key1": token_data["key1"],
+            "key2": token_data["key2"],
+            "key3": token_data["key3"],
+            "key4": token_data["key4"],
+            "key5": token_data["key5"],
+            "userId": token_data["userId"],
+            "sessionId": token_data["sessionId"],
+            "cookie": token_data["cookie"],
+            "account": token_data["key3"],
+        },
+        "expires_at": token_data["expires_at"],
+        "last_sync": int(time.time()),
+        "sync_source": source,
+    }
+
+    with open(cache_file, "w", encoding="utf-8") as f:
+        json.dump(cache_data, f, indent=2, ensure_ascii=False)
+    print(f"已保存到 {cache_file}")
+
+    # 4. 推送到服务器
+    try:
+        resp = _client.post(f"{API_BASE}/api/auth/refresh", json=cache_data)
+        if resp.status_code == 200:
+            print(f"已推送到服务器 (来源: {source})")
+        else:
+            print(f"推送到服务器失败: HTTP {resp.status_code}")
+    except Exception as e:
+        print(f"推送到服务器异常: {e}（本地缓存已保存，服务器会在下次请求时自动加载）")
+
+    # 5. 显示 token 信息
+    expires_at = token_data.get("expires_at")
+    if expires_at:
+        from datetime import datetime
+        expires_str = datetime.fromtimestamp(expires_at).strftime("%Y-%m-%d %H:%M:%S")
+        remaining = expires_at - int(time.time())
+        remaining_days = remaining // (24 * 3600)
+        remaining_hours = (remaining % (24 * 3600)) // 3600
+        print(f"账户: {token_data['key3']}")
+        print(f"过期时间: {expires_str}")
+        print(f"剩余有效期: {remaining_days}天{remaining_hours}小时")
+    else:
+        print(f"账户: {token_data['key3']}")
+        print("过期时间: 未知")
+
+
+def cmd_auth_status(args):
+    """查看认证状态"""
+    try:
+        resp = _client.get(f"{API_BASE}/api/auth/status")
+        resp.raise_for_status()
+        result = resp.json()
+    except httpx.ConnectError:
+        # 服务器未启动，直接读本地缓存
+        cache_file = os.path.join(SERVER_DIR, "auth_cache.json")
+        if not os.path.exists(cache_file):
+            print("认证缓存不存在（服务器未启动，本地缓存也不存在）")
+            return
+        with open(cache_file, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        expires_at = data.get("expires_at")
+        if expires_at:
+            from datetime import datetime
+            now = int(time.time())
+            remaining = expires_at - now
+            remaining_days = remaining // (24 * 3600)
+            is_expired = now >= expires_at
+            expires_str = datetime.fromtimestamp(expires_at).strftime("%Y-%m-%d %H:%M:%S")
+            status = "已过期" if is_expired else "有效"
+            print(f"状态: {status}")
+            print(f"过期时间: {expires_str}")
+            if not is_expired:
+                remaining_hours = (remaining % (24 * 3600)) // 3600
+                print(f"剩余有效期: {remaining_days}天{remaining_hours}小时")
+        else:
+            print("状态: 未知（无过期时间）")
+        print(f"同步来源: {data.get('sync_source', '未知')}")
+        print("(注: 服务器未启动，数据来自本地缓存)")
+        return
+
+    if result.get("status") != "success":
+        print(f"获取认证状态失败: {result.get('message', '未知错误')}")
+        return
+
+    data = result.get("data", {})
+    status = "已过期" if data.get("is_expired") else "有效"
+    print(f"状态: {status}")
+    print(f"过期时间: {data.get('expires_at', '未知')}")
+    if data.get("remaining_days") is not None:
+        print(f"剩余有效期: {data['remaining_days']}天")
+    print(f"同步来源: {data.get('sync_source', '未知')}")
+    last_sync = data.get("last_sync")
+    if last_sync:
+        from datetime import datetime
+        sync_str = datetime.fromtimestamp(last_sync).strftime("%Y-%m-%d %H:%M:%S")
+        print(f"上次同步: {sync_str}")
+
+
+def _get_ocr_action_filter(args):
+    """从参数中获取 OCR action 筛选值"""
+    # ocr-latest fund_holdings → action="fund_holdings"
+    ocr_actions = {"fund_holdings", "full_page", "table", "ocr", "chat_reply", "search"}
+    if args.action and args.action in ocr_actions:
+        return args.action
+    if args.code and args.code in ocr_actions:
+        return args.code
+    return None
+
+
+def cmd_ocr_records(args):
+    """查询OCR识别记录"""
+    params = {"limit": args.count}
+    ocr_action = _get_ocr_action_filter(args)
+    if ocr_action:
+        params["action"] = ocr_action
+    query = "&".join(f"{k}={v}" for k, v in params.items())
+    resp = get(f"/api/ocr/records?{query}")
+    records = resp.get("data", [])
+    if not records:
+        print("无OCR记录")
+        return
+
+    print(f"\nOCR识别记录（共{resp.get('total', len(records))}条）\n")
+    print(f"{'ID':<6}{'类型':<16}{'时间':<22}{'内容预览'}")
+    print("-" * 80)
+    for r in records:
+        action = r.get("action", "")
+        created = r.get("created_at", "")[:19]
+        text = (r.get("raw_text") or r.get("markdown_text") or "")
+        # 取第一行，截断
+        preview = text.split("\n")[0][:40] if text else "(空)"
+        print(f"{r['id']:<6}{action:<16}{created:<22}{preview}")
+
+
+def cmd_ocr_latest(args):
+    """获取最新OCR记录（支持 --count 和 action 筛选）"""
+    count = args.count
+    params = f"count={count}"
+    ocr_action = _get_ocr_action_filter(args)
+    if ocr_action:
+        params += f"&action={ocr_action}"
+    resp = get(f"/api/ocr/latest?{params}")
+    data = resp.get("data")
+    if not data:
+        print("无OCR记录")
+        return
+
+    # 如果返回单条
+    records = data if isinstance(data, list) else [data]
+    for r in records:
+        print(f"\n{'=' * 60}")
+        print(f"  ID: {r.get('id')}")
+        print(f"  类型: {r.get('action')}")
+        print(f"  时间: {r.get('created_at', '')[:19]}")
+        print(f"  客户端: {r.get('client_id', '')}")
+        print(f"{'=' * 60}")
+        # 优先展示结构化数据
+        structured = r.get("structured_data")
+        flat = r.get("flat_data")
+        if structured:
+            print("[结构化数据]")
+            print(structured)
+        if flat:
+            print(f"\n[扁平化数据]")
+            if isinstance(flat, dict):
+                import json as _json
+                print(_json.dumps(flat, ensure_ascii=False, indent=2))
+            else:
+                print(flat)
+        if not structured:
+            text = r.get("markdown_text") or r.get("raw_text") or "(空)"
+            print(text)
+
+
 def main():
     parser = argparse.ArgumentParser(
         description="同花顺基金数据查询客户端",
@@ -3976,7 +4839,7 @@ def main():
 """,
     )
     # 热榜命令不需要基金代码，用 nargs="?" 让 code 可选
-    HOTLIST_CMDS = {"hotlist", "hotlist_topics", "hotlist_posts", "headlines", "news_feed", "news_themes", "theme_articles", "flash_news", "market_overview", "stock_rank", "sector_rank", "hot_board", "dragon_tiger", "ths_dragon_tiger", "capital_flow", "currency", "yesterday_limit", "stock_changes", "market_changes", "ranking", "screen", "companies", "account", "positions", "wallet", "autoinvest", "trade_binding", "trade_all", "buy", "sell", "order", "set_password", "orders", "cancel", "stock_quote", "stock_kline", "stock_flow", "stock_valuation", "stock_financial"}
+    HOTLIST_CMDS = {"hotlist", "hotlist_topics", "hotlist_posts", "headlines", "news_feed", "news_themes", "theme_articles", "flash_news", "market_overview", "stock_rank", "sector_rank", "hot_board", "dragon_tiger", "ths_dragon_tiger", "capital_flow", "currency", "yesterday_limit", "stock_changes", "market_changes", "ranking", "screen", "companies", "account", "positions", "wallet", "autoinvest", "trade_binding", "trade_all", "buy", "sell", "order", "set_password", "orders", "cancel", "stock_quote", "stock_kline", "stock_flow", "stock_valuation", "stock_financial", "sync", "snapshot", "preflight", "evaluate", "scan-summary", "account-overview", "wallet-info", "wallet-home", "today-decisions", "recent-decisions", "watch-streaks", "create-reviews", "pending-reviews", "review-stats", "lessons", "limits", "limits-summary", "limits-plan", "refresh-token", "auth-status", "ocr-records", "ocr-latest"}
     ALL_CHOICES = ["all", "detail", "product", "rank", "year_return", "drawdown", "stability",
                    "hold_overview", "holdings", "valuation", "position", "profit", "style", "asset",
                    "nav", "realtime", "manager", "rsi",
@@ -3987,10 +4850,18 @@ def main():
                    "news_themes", "theme_articles", "flash_news", "market_overview",
                    "stock_rank", "sector_rank", "hot_board", "dragon_tiger", "ths_dragon_tiger",
                    "capital_flow", "currency", "yesterday_limit", "stock_changes", "market_changes",
-                   "ranking", "screen", "companies",
+                   "ranking", "screen", "search", "companies",
                    "account", "positions", "wallet", "autoinvest", "trade_binding", "trade_all",
                    "buy", "sell", "order", "set_password", "orders", "cancel",
-                   "stock_quote", "stock_kline", "stock_flow", "stock_valuation", "stock_financial"]
+                   "stock_quote", "stock_kline", "stock_flow", "stock_valuation", "stock_financial",
+                   "sync", "snapshot", "preflight", "evaluate", "scan-summary",
+                   "account-overview", "wallet-info", "wallet-home",
+                   "today-decisions", "recent-decisions", "watch-streaks",
+                   "create-reviews", "pending-reviews", "review-stats", "lessons",
+                   "limits", "limits-summary", "limits-plan",
+                   "refresh-token", "auth-status",
+                   "ocr-records", "ocr-latest",
+                   "fund_holdings", "full_page", "table"]
 
     parser.add_argument("code", nargs="?", default=None, help="基金代码（热榜命令可省略）")
     parser.add_argument(
@@ -4011,6 +4882,7 @@ def main():
     parser.add_argument("--with", dest="with_funds", default=None,
                         help="对比基金代码，逗号分隔（适用于 compare）")
     parser.add_argument("--years", type=int, default=3, help="估值百分位回溯年数 (默认 3)")
+    parser.add_argument("--json", action="store_true", help="输出 JSON 格式（适用于部分命令）")
     parser.add_argument("--market", default="a", choices=["a", "hk", "us"],
                         help="热榜市场: a=A股, hk=港股, us=美股")
     parser.add_argument("--topic", type=int, default=None,
@@ -4051,6 +4923,8 @@ def main():
                         help="排行排序字段: year/hyear/tmonth/month/week/nowyear/tyear/fyear/sharpeYear/maxDrawDownYear (适用于 ranking/screen)")
     parser.add_argument("--ranking-sort", default="DESC", choices=["DESC", "ASC"],
                         help="排行排序方向: DESC=降序, ASC=升序 (适用于 ranking)")
+    parser.add_argument("--fund-type", default=None,
+                        help="基金类型: stock=股票型/mixed=混合型/bond=债券型/index=指数型/qdii=QDII/money=货币型/fof=FOF (适用于 ranking)")
     parser.add_argument("--board", default=None,
                         help="排行榜名称: 涨幅榜/反弹榜/人气榜/加仓榜/超额榜 (适用于 ranking)")
     parser.add_argument("--strategy", default=None,
@@ -4077,19 +4951,32 @@ def main():
     # 预处理 argv：对 "buy <code> ..."、"set_password <pwd>"、"order <no>" 这类命令
     # 第二个位置参数不在 ALL_CHOICES 中会导致 argparse 报错，需要提前挪走
     _argv = sys.argv[1:]
-    _CMD_WITH_ARG = {"buy", "sell", "order", "set_password", "cancel",
+    _CMD_WITH_ARG = {"buy", "sell", "order", "set_password", "cancel", "search",
                      "stock_quote", "stock_kline", "stock_flow", "stock_valuation", "stock_financial"}
     _extra_cmd_arg = None
+    _extra_amount = None  # 用于 "buy <code> <amount>" 格式
     if (len(_argv) >= 2
             and _argv[0] in _CMD_WITH_ARG
             and not _argv[1].startswith("-")
             and _argv[1] not in ALL_CHOICES):
         _extra_cmd_arg = _argv[1]
-        _argv = [_argv[0]] + _argv[2:]
+        # 检查是否有第三个位置参数（金额），用于 "buy <code> <amount>" 格式
+        if (_argv[0] == "buy" and len(_argv) >= 3
+                and not _argv[2].startswith("-")
+                and _argv[2] not in ALL_CHOICES):
+            try:
+                _extra_amount = float(_argv[2])
+                _argv = [_argv[0]] + _argv[3:]
+            except ValueError:
+                _argv = [_argv[0]] + _argv[2:]
+        else:
+            _argv = [_argv[0]] + _argv[2:]
 
     args = parser.parse_args(_argv)
     if _extra_cmd_arg is not None:
         args.extra_arg = _extra_cmd_arg
+    if _extra_amount is not None and args.amount is None:
+        args.amount = _extra_amount
 
     # 处理带额外参数的命令：buy <code> / order <no> / set_password <pwd>
     # argparse 把命令名解析到 code，额外参数解析到 action 或 extra_arg
@@ -4100,6 +4987,12 @@ def main():
         args.action = cmd
         args.code = arg_val
     # 处理 "python client.py hotlist" 的情况（code=hotlist, action=all）
+    # 以及 "python client.py ocr-latest fund_holdings" 的情况（code=ocr-latest, action=fund_holdings）
+    elif args.code in HOTLIST_CMDS:
+        # code 是热榜命令，action 位置可能是该命令的参数（如 ocr action 筛选）
+        original_action = args.action  # 保存原始 action（可能是 ocr 子参数如 fund_holdings）
+        args.action = args.code
+        args.code = original_action if original_action != "all" else None
     elif args.code in ALL_CHOICES and args.action == "all":
         args.action = args.code
         args.code = None
@@ -4175,6 +5068,7 @@ def main():
         "yesterday_limit": cmd_yesterday_limit,
         "ranking": cmd_ranking,
         "screen": cmd_screen,
+        "search": cmd_search,
         "companies": cmd_companies,
         "account": cmd_account,
         "positions": cmd_positions,
@@ -4193,6 +5087,28 @@ def main():
         "stock_flow": cmd_stock_flow,
         "stock_valuation": cmd_stock_valuation,
         "stock_financial": cmd_stock_financial,
+        "sync": cmd_sync,
+        "snapshot": cmd_snapshot,
+        "preflight": cmd_preflight,
+        "evaluate": cmd_evaluate,
+        "scan-summary": cmd_scan_summary,
+        "account-overview": cmd_account_overview,
+        "wallet-info": cmd_wallet_info,
+        "wallet-home": cmd_wallet_home,
+        "today-decisions": cmd_today_decisions,
+        "recent-decisions": cmd_recent_decisions,
+        "watch-streaks": cmd_watch_streaks,
+        "create-reviews": cmd_create_reviews,
+        "pending-reviews": cmd_pending_reviews,
+        "review-stats": cmd_review_stats,
+        "lessons": cmd_lessons,
+        "limits": cmd_limits,
+        "limits-summary": cmd_limits_summary,
+        "limits-plan": cmd_limits_plan,
+        "refresh-token": cmd_refresh_token,
+        "auth-status": cmd_auth_status,
+        "ocr-records": cmd_ocr_records,
+        "ocr-latest": cmd_ocr_latest,
     }
 
     try:

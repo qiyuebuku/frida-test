@@ -1,10 +1,7 @@
 """All API routes converted from THS server.py + screenshot-assistant"""
 
 import asyncio
-import base64
-import hashlib
 import json
-import logging
 import sys
 import time
 from datetime import datetime, timedelta
@@ -745,200 +742,6 @@ async def news_overview(limit: int = Query(10, description="每类新闻的条�
 
 # ==================== 认证管理 ====================
 
-logger = logging.getLogger("auth")
-
-
-def _decode_jwt_exp(jwt_token: str):
-    """解析同花顺 JWT 获取过期时间（秒级时间戳）"""
-    if not jwt_token:
-        return None
-    for part_idx in (1, 0):
-        try:
-            parts = jwt_token.split(".")
-            if len(parts) <= part_idx:
-                continue
-            segment = parts[part_idx]
-            pad = 4 - len(segment) % 4
-            if pad != 4:
-                segment += "=" * pad
-            decoded = base64.urlsafe_b64decode(segment)
-            data = json.loads(decoded)
-            exp = data.get("exp")
-            if exp is not None:
-                if exp > 10000000000:
-                    exp = exp // 1000
-                return exp
-        except Exception:
-            continue
-    return None
-
-
-def _get_auth_expires_at():
-    """读取 auth_cache.json 中的过期时间，返回 (expires_at, is_expired)"""
-    cache_file = Path(__file__).parent.parent / "auth_cache.json"
-    if not cache_file.exists():
-        return None, True
-    try:
-        with open(cache_file, "r", encoding="utf-8") as f:
-            data = json.load(f)
-        expires_at = data.get("expires_at")
-        if not expires_at:
-            return None, False  # 无过期信息，假设有效
-        return expires_at, int(time.time()) >= expires_at
-    except Exception:
-        return None, True
-
-
-async def _login_by_password():
-    """使用密码登录获取 token（会踢掉手机端登录）
-
-    Returns:
-        成功返回 auth 数据 dict，失败返回 None
-    """
-    import httpx
-
-    config_file = Path(__file__).parent.parent / "config.json"
-    if not config_file.exists():
-        logger.warning("config.json 不存在，无法使用密码登录")
-        return None
-
-    with open(config_file, "r", encoding="utf-8") as f:
-        config = json.load(f)
-
-    account = config.get("trade_account")
-    password = config.get("trade_password")
-    if not account or not password:
-        logger.warning("config.json 中未设置 trade_account 或 trade_password")
-        return None
-
-    password_md5 = hashlib.md5(password.encode()).hexdigest().upper()
-    device_id = "7246091a5f126b63"
-    device_sign = "2293a78f6581c12bbb334759458d4de3"
-
-    url = "https://trade.5ifund.com/rz/account/login/noauth/v1/result/safe/check"
-    headers = {
-        "token": "-1",
-        "custId": "-1",
-        "source": "SDK",
-        "Content-Type": "application/x-www-form-urlencoded",
-        "User-Agent": "Hexin_Gphone/11.48.03 (Royal Flush) innerversion/G037.08.194.1.32 hxtheme/0 GphoneIjiJinSDK/V7.39.01 ifOperator/145",
-        "Client-Referer": "",
-        "Host": "trade.5ifund.com",
-        "Connection": "Keep-Alive",
-        "Accept-Encoding": "gzip",
-    }
-    form_data = {
-        "key1": device_id,
-        "uId": device_id,
-        "key2": device_sign,
-        "password": password_md5,
-        "ipAddress": "null",
-        "thsUserId": "690359103",
-        "device": "OnePlus PLQ110",
-        "deviceName": "OnePlus ",
-        "account": account,
-        "loginSource": "SDK",
-        "operator": "145",
-    }
-
-    try:
-        async with httpx.AsyncClient(timeout=10) as http:
-            resp = await http.post(url, headers=headers, data=form_data)
-            resp.raise_for_status()
-            result = resp.json()
-
-        if result.get("code") != "0000":
-            logger.warning(f"密码登录失败: {result.get('message', '未知错误')}")
-            return None
-
-        data_field = result.get("data", {})
-        key3 = data_field.get("key3") or data_field.get("custId") or account
-        key5 = data_field.get("key5")
-        if not key5:
-            logger.warning("登录响应中未找到 key5")
-            return None
-
-        cookie = ""
-        if "set-cookie" in resp.headers:
-            cookie = resp.headers["set-cookie"]
-
-        expires_at = _decode_jwt_exp(key5)
-
-        return {
-            "auth": {
-                "key1": device_id,
-                "key2": device_sign,
-                "key3": key3,
-                "key4": data_field.get("key4", "auth"),
-                "key5": key5,
-                "userId": key3,
-                "sessionId": "",
-                "cookie": cookie,
-                "account": key3,
-            },
-            "expires_at": expires_at,
-            "sync_source": "server_password_login",
-        }
-    except Exception as e:
-        logger.error(f"密码登录异常: {e}")
-        return None
-
-
-def _save_auth_cache(cache_data: dict):
-    """保存认证数据到 auth_cache.json 并刷新内存"""
-    cache_file = Path(__file__).parent.parent / "auth_cache.json"
-    cache_data.setdefault("last_sync", int(time.time()))
-    with open(cache_file, "w", encoding="utf-8") as f:
-        json.dump(cache_data, f, indent=2, ensure_ascii=False)
-    if client:
-        client.reload_auth_if_updated()
-
-
-# ---------- 后台自动刷新 ----------
-
-_auto_refresh_task = None
-
-
-async def start_auth_auto_refresh():
-    """启动后台定时检查 token 是否快过期，自动密码登录续期"""
-    global _auto_refresh_task
-    if _auto_refresh_task is not None:
-        return
-    _auto_refresh_task = asyncio.create_task(_auth_auto_refresh_loop())
-    logger.info("Auth 自动刷新后台任务已启动")
-
-
-async def _auth_auto_refresh_loop():
-    """每小时检查一次，token 剩余 < 3 天时自动密码登录续期"""
-    REFRESH_THRESHOLD = 3 * 24 * 3600  # 3天
-    CHECK_INTERVAL = 3600  # 1小时
-
-    while True:
-        try:
-            await asyncio.sleep(CHECK_INTERVAL)
-            expires_at, is_expired = _get_auth_expires_at()
-            if expires_at is None:
-                continue
-
-            remaining = expires_at - int(time.time())
-            if remaining > REFRESH_THRESHOLD:
-                continue
-
-            status = "已过期" if is_expired else f"剩余 {remaining // 3600} 小时"
-            logger.info(f"Token {status}，自动密码登录续期...")
-
-            result = await _login_by_password()
-            if result:
-                _save_auth_cache(result)
-                logger.info(f"自动续期成功，新过期时间: {result.get('expires_at')}")
-            else:
-                logger.error("自动续期失败，密码登录未返回有效数据")
-        except Exception as e:
-            logger.error(f"自动刷新异常: {e}")
-
-
-# ---------- API 端点 ----------
-
 @router.get("/api/auth/status", summary="认证状态", tags=["交易账户"])
 async def auth_status():
     """查看认证参数缓存状态"""
@@ -982,13 +785,13 @@ async def auth_status():
 
 @router.post("/api/auth/refresh", summary="推送认证Token", tags=["交易账户"])
 async def auth_refresh(body: dict = Body(...)):
-    """从 Hook 或客户端推送 token 数据并保存到 auth_cache.json
+    """从客户端推送 token 数据并保存到 auth_cache.json
 
     请求体格式:
     {
         "auth": {"key1": "...", "key2": "...", "key3": "...", "key4": "auth", "key5": "...", "userId": "...", "sessionId": "...", "cookie": "..."},
         "expires_at": 1234567890,
-        "sync_source": "zygisk_auto"
+        "sync_source": "zygisk"
     }
     """
     try:
@@ -996,6 +799,7 @@ async def auth_refresh(body: dict = Body(...)):
         if not isinstance(auth, dict) or not auth.get("key1") or not auth.get("key5"):
             raise HTTPException(status_code=400, detail="缺少必要字段: auth.key1, auth.key5")
 
+        cache_file = Path(__file__).parent.parent / "auth_cache.json"
         cache_data = {
             "auth": auth,
             "expires_at": body.get("expires_at"),
@@ -1003,7 +807,10 @@ async def auth_refresh(body: dict = Body(...)):
             "sync_source": body.get("sync_source", "client_push")
         }
 
-        _save_auth_cache(cache_data)
+        with open(cache_file, "w", encoding="utf-8") as f:
+            json.dump(cache_data, f, indent=2, ensure_ascii=False)
+
+        client.reload_auth_if_updated()
 
         return {
             "status": "success",
@@ -1014,26 +821,6 @@ async def auth_refresh(body: dict = Body(...)):
         raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"更新认证失败: {e}")
-
-
-@router.post("/api/auth/login", summary="密码登录获取Token", tags=["交易账户"])
-async def auth_login():
-    """服务端直接使用 config.json 中的账号密码登录获取 token（会踢掉手机端）"""
-    result = await _login_by_password()
-    if not result:
-        raise HTTPException(status_code=500, detail="密码登录失败，请检查 config.json 中的 trade_account/trade_password")
-
-    _save_auth_cache(result)
-
-    expires_at = result.get("expires_at")
-    expires_time = datetime.fromtimestamp(expires_at).strftime("%Y-%m-%d %H:%M:%S") if expires_at else "未知"
-
-    return {
-        "status": "success",
-        "message": "密码登录成功，token 已更新",
-        "account": result["auth"].get("key3", ""),
-        "expires_at": expires_time,
-    }
 
 
 # ==================== 交易账户 ====================
@@ -2034,23 +1821,11 @@ async def create_task(request: Request):
         filepath.write_bytes(base64.b64decode(image_base64))
         image_path = str(filepath)
 
-    # 自定义配置（提示词/规则）
-    config = None
-    system_prompt = data.get("system_prompt")
-    rules = data.get("rules")
-    if system_prompt or rules:
-        config = {}
-        if system_prompt:
-            config["system_prompt"] = system_prompt
-        if rules:
-            config["rules"] = rules
-
     task_id = _task_db.create_task(
         task_type=task_type,
         input_type="screenshot" if image_base64 else "command",
         image_path=image_path,
-        client_id=client_id,
-        config=config,
+        client_id=client_id
     )
 
     _executor.submit(task_id)
@@ -2079,51 +1854,6 @@ async def get_task(task_id: int):
     if not task:
         raise HTTPException(status_code=404, detail=f"任务 {task_id} 不存在")
     return {"status": "success", "data": task}
-
-
-@router.get("/api/tasks/{task_id}/stream", summary="任务实时事件流(SSE)", tags=["任务"])
-async def stream_task(task_id: int):
-    """SSE 端点，实时推送任务执行事件（tool_call / text_delta / done）"""
-    import asyncio
-    import queue as _queue
-    from starlette.responses import StreamingResponse
-    from services import task_db as _task_db
-    from services.event_bus import event_bus as _event_bus
-
-    task = _task_db.get_task(task_id)
-    if not task:
-        raise HTTPException(status_code=404, detail=f"任务 {task_id} 不存在")
-
-    # 任务已完成/失败，直接返回终态
-    if task["status"] in ("completed", "failed"):
-        async def done_stream():
-            event = {
-                "type": "done",
-                "status": task["status"],
-                "result": task.get("result"),
-                "error_msg": task.get("error_msg"),
-            }
-            yield f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
-        return StreamingResponse(done_stream(), media_type="text/event-stream")
-
-    q = _event_bus.subscribe(task_id)
-
-    async def event_stream():
-        try:
-            while True:
-                try:
-                    event = await asyncio.get_event_loop().run_in_executor(
-                        None, lambda: q.get(timeout=1)
-                    )
-                    yield f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
-                    if event.get("type") == "done":
-                        break
-                except _queue.Empty:
-                    yield ": heartbeat\n\n"
-        finally:
-            _event_bus.unsubscribe(task_id, q)
-
-    return StreamingResponse(event_stream(), media_type="text/event-stream")
 
 
 # ==================== 截图处理 ====================

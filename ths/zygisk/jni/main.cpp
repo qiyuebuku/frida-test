@@ -176,15 +176,33 @@ public:
         LOGI("InMemoryDexClassLoader created");
 
         // Step 3: Load MainHook class
+        LOGI("Step 3: Loading MainHook class...");
         jmethodID loadClass = env->GetMethodID(
             env->FindClass("java/lang/ClassLoader"), "loadClass",
             "(Ljava/lang/String;)Ljava/lang/Class;");
+        LOGI("Got loadClass method");
 
         jstring hookClassName = env->NewStringUTF("com.yuyang.thshook.MainHook");
+        LOGI("Created className string");
+
+        LOGI("Calling loadClass on dexClassLoader...");
         jclass hookClass = (jclass) env->CallObjectMethod(dexClassLoader, loadClass, hookClassName);
+        LOGI("loadClass returned, checking for exceptions...");
 
         if (env->ExceptionCheck()) {
-            env->ExceptionDescribe();
+            LOGE("Exception occurred during loadClass!");
+            env->ExceptionDescribe();  // This should print to logcat
+            jthrowable exc = env->ExceptionOccurred();
+            if (exc) {
+                jclass throwableClass = env->FindClass("java/lang/Throwable");
+                jmethodID getMessage = env->GetMethodID(throwableClass, "getMessage", "()Ljava/lang/String;");
+                jstring message = (jstring) env->CallObjectMethod(exc, getMessage);
+                if (message) {
+                    const char* msgChars = env->GetStringUTFChars(message, nullptr);
+                    LOGE("Exception message: %s", msgChars);
+                    env->ReleaseStringUTFChars(message, msgChars);
+                }
+            }
             env->ExceptionClear();
             LOGE("Failed to load MainHook class");
             unlink(pine_so_path.c_str());
@@ -192,11 +210,11 @@ public:
         }
 
         if (!hookClass) {
-            LOGE("MainHook class not found");
+            LOGE("MainHook class not found (hookClass is null)");
             unlink(pine_so_path.c_str());
             return;
         }
-        LOGI("MainHook class loaded");
+        LOGI("MainHook class loaded successfully!");
 
         // Step 4: Call MainHook.entry(classLoader, pineSoPath)
         jmethodID entryMethod = env->GetStaticMethodID(hookClass, "entry",

@@ -1,5 +1,6 @@
 """同花顺基金 API 服务"""
 
+import asyncio
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, HTTPException, Query, Body
@@ -7,15 +8,134 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
 from ths_fund_client import THSFundClient
+import fund_db
 
 client: THSFundClient
+auth_refresh_task = None
+
+
+async def auth_refresh_background_task():
+    """后台任务：只在 token 即将过期时才尝试刷新
+
+    策略：
+    1. 每 30 分钟检查一次 token 是否即将过期
+    2. 只有在即将过期（提前 3 天）时才尝试刷新
+    3. 刷新优先级：Zygisk → 密码登录
+    """
+    global client
+
+    while True:
+        try:
+            await asyncio.sleep(30 * 60)  # 30 分钟检查一次
+
+            import json
+            import time
+            from pathlib import Path
+            cache_file = Path(__file__).parent / "auth_cache.json"
+
+            # 检查 token 是否即将过期
+            need_refresh = False
+            if cache_file.exists():
+                try:
+                    with open(cache_file, "r") as f:
+                        cache_data = json.load(f)
+                        expires_at = cache_data.get("expires_at")
+
+                        if expires_at:
+                            now = int(time.time())
+                            buffer_seconds = 3 * 24 * 3600  # 提前 3 天
+                            need_refresh = now + buffer_seconds >= expires_at
+                except Exception:
+                    pass
+
+            if not need_refresh:
+                continue  # token 还没过期，跳过
+
+            print("⚠️ Token 即将过期，尝试刷新...")
+
+            loop = asyncio.get_event_loop()
+
+            # 策略 1: 尝试从 Zygisk 获取
+            token_data = await loop.run_in_executor(
+                None,
+                client._fetch_token_from_zygisk
+            )
+
+            # 策略 2: Zygisk 失败，使用密码登录
+            if not token_data:
+                print("⚠️ Zygisk 不可用，尝试使用密码登录...")
+                token_data = await loop.run_in_executor(
+                    None,
+                    client._login_by_password
+                )
+
+            if token_data:
+                # 保存新的 token
+                sync_source = "zygisk_server" if token_data.get("sessionId") else "password_server"
+
+                def save_token():
+                    new_cache = {
+                        "auth": {
+                            "key1": token_data["key1"],
+                            "key2": token_data["key2"],
+                            "key3": token_data["key3"],
+                            "key4": token_data["key4"],
+                            "key5": token_data["key5"],
+                            "userId": token_data.get("userId", ""),
+                            "sessionId": token_data.get("sessionId", ""),
+                            "cookie": token_data.get("cookie", ""),
+                            "account": token_data["key3"],
+                        },
+                        "expires_at": token_data.get("expires_at"),
+                        "last_sync": int(time.time()),
+                        "sync_source": sync_source
+                    }
+                    with open(cache_file, "w", encoding="utf-8") as f:
+                        json.dump(new_cache, f, indent=2, ensure_ascii=False)
+
+                await loop.run_in_executor(None, save_token)
+                print(f"✅ Token 刷新成功（来源: {sync_source}）")
+
+                # 重新加载认证参数
+                if client.reload_auth_if_updated():
+                    print("✅ Client 已加载新的认证参数")
+            else:
+                print("❌ Token 刷新失败（Zygisk 和密码登录都失败）")
+
+        except Exception as e:
+            print(f"⚠️ 认证刷新后台任务异常: {e}")
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    global client
-    client = THSFundClient()
+    global client, auth_refresh_task
+
+    # 自动初始化数据库表
+    try:
+        import fund_db
+        fund_db.init_tables()
+        print("✅ 数据库表已初始化")
+    except Exception as e:
+        print(f"⚠️ 数据库表初始化失败: {e}")
+
+    # 使用直接 HTTP 模式（使用缓存的认证参数）
+    # 这样不需要保持手机连接，只有在 token 过期时才需要刷新
+    client = THSFundClient(use_jsbridge=False)
+
+    # 启动认证参数自动刷新后台任务
+    auth_refresh_task = asyncio.create_task(auth_refresh_background_task())
+    print("✅ 认证参数自动刷新后台任务已启动（每 30 分钟检查一次）")
+
     yield
+
+    # 清理：取消后台任务
+    if auth_refresh_task:
+        auth_refresh_task.cancel()
+        try:
+            await auth_refresh_task
+        except asyncio.CancelledError:
+            pass
+
     await client.close()
 
 
@@ -34,12 +154,27 @@ async def safe_call(coro):
         raise HTTPException(status_code=502, detail=f"上游请求失败: {e}")
 
 
+@app.get("/health", summary="健康检查", tags=["系统"])
+async def health_check():
+    """服务健康检查"""
+    return {"status": "ok"}
+
+
 # ==================== 基金公司（必须在 /api/fund/{fund_code} 之前） ====================
 
 @app.get("/api/fund/companies", summary="基金公司列表", tags=["基金排行"])
 async def fund_company_list():
     """获取基金公司列表"""
     return await safe_call(client.get_fund_company_list())
+
+
+@app.get("/api/fund/search", summary="基金搜索", tags=["基金排行"])
+async def fund_search(
+    keyword: str = Query(..., description="搜索关键词（如 标普500、纳斯达克）"),
+    limit: int = Query(20, description="返回数量限制", ge=1, le=100),
+):
+    """搜索基金（按名称关键词）"""
+    return await safe_call(client.search_fund(keyword, limit))
 
 
 # ==================== 基金详情 ====================
@@ -440,7 +575,6 @@ class FundRankingRequest(BaseModel):
     board: str = Field(None, description="排行榜名称（涨幅榜/反弹榜/人气榜/加仓榜/超额榜），会自动获取配置")
     strategy: str = Field(None, description="策略筛选key（fund0001=年年正收益/fund0002=三年翻倍/fund0010=能涨抗跌 等）")
 
-
 @app.post("/api/fund/ranking", summary="基金排行", tags=["基金排行"])
 async def fund_ranking(req: FundRankingRequest = Body(...)):
     """同花顺基金排行（支持排序、筛选、预设策略、排行榜）"""
@@ -707,13 +841,43 @@ async def news_overview(limit: int = Query(10, description="每类新闻的条�
 async def auth_status():
     """查看认证参数缓存状态"""
     try:
-        from auth_manager import AuthManager
-        manager = AuthManager()
-        status = manager.check_status()
+        import json
+        from pathlib import Path
+        from datetime import datetime
+
+        cache_file = Path(__file__).parent / "auth_cache.json"
+        if not cache_file.exists():
+            return {
+                "status": "error",
+                "message": "认证缓存不存在"
+            }
+
+        with open(cache_file, "r", encoding="utf-8") as f:
+            data = json.load(f)
+
+        expires_at = data.get("expires_at")
+        if expires_at:
+            import time
+            now = int(time.time())
+            remaining_seconds = expires_at - now
+            remaining_days = remaining_seconds // (24 * 3600)
+            is_expired = now >= expires_at
+            expires_time = datetime.fromtimestamp(expires_at).strftime("%Y-%m-%d %H:%M:%S")
+        else:
+            remaining_days = None
+            is_expired = None
+            expires_time = None
 
         return {
             "status": "success",
-            "data": status
+            "data": {
+                "expires_at": expires_time,
+                "remaining_days": remaining_days,
+                "is_expired": is_expired,
+                "status": "expired" if is_expired else "valid",
+                "sync_source": data.get("sync_source", "unknown"),
+                "last_sync": data.get("last_sync"),
+            }
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"获取认证状态失败: {e}")
@@ -721,39 +885,63 @@ async def auth_status():
 
 @app.post("/api/auth/refresh", summary="刷新认证", tags=["交易账户"])
 async def auth_refresh():
-    """强制从 JSBridge 刷新认证参数（需要 app 已在交易页面）"""
+    """强制从 Zygisk 刷新认证参数"""
     try:
-        from auth_manager import AuthManager
-        manager = AuthManager()
-        auth = manager.get_auth(force_refresh=True)
+        global client
 
-        if auth:
+        # 从 Zygisk 获取 token
+        loop = asyncio.get_event_loop()
+        token_data = await loop.run_in_executor(
+            None,
+            client._fetch_token_from_zygisk
+        )
+
+        if token_data:
+            # 保存到文件
+            import json
+            import time
+            from pathlib import Path
+
+            cache_file = Path(__file__).parent / "auth_cache.json"
+            cache_data = {
+                "auth": {
+                    "key1": token_data["key1"],
+                    "key2": token_data["key2"],
+                    "key3": token_data["key3"],
+                    "key4": token_data["key4"],
+                    "key5": token_data["key5"],
+                    "userId": token_data["userId"],
+                    "sessionId": token_data["sessionId"],
+                    "cookie": token_data["cookie"],
+                    "account": token_data["key3"],
+                },
+                "expires_at": token_data["expires_at"],
+                "last_sync": int(time.time()),
+                "sync_source": "manual_refresh"
+            }
+
+            with open(cache_file, "w", encoding="utf-8") as f:
+                json.dump(cache_data, f, indent=2, ensure_ascii=False)
+
+            # 重新加载
+            client.reload_auth_if_updated()
+
             return {
                 "status": "success",
-                "message": "认证参数刷新成功"
+                "message": "认证参数刷新成功",
+                "account": token_data["key3"]
             }
         else:
-            raise HTTPException(status_code=502, detail="刷新失败：JSBridge 不可用，请确保同花顺 App 已打开并在交易页面")
+            raise HTTPException(status_code=502, detail="刷新失败：Zygisk 未捕获到 token，请确保同花顺 App 已打开并在交易页面")
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"刷新认证失败: {e}")
 
 
 @app.post("/api/auth/auto-refresh", summary="自动刷新认证", tags=["交易账户"])
 async def auth_auto_refresh():
-    """自动刷新认证参数（自动打开 app 并导航到交易页面）"""
-    try:
-        from auth_manager import AuthManager
-        manager = AuthManager()
-
-        if manager.auto_refresh_auth():
-            return {
-                "status": "success",
-                "message": "认证参数自动刷新成功"
-            }
-        else:
-            raise HTTPException(status_code=502, detail="自动刷新失败：请检查 adb 连接和配置")
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"自动刷新失败: {e}")
+    """自动刷新认证参数（从 Zygisk 获取）"""
+    # 直接调用 /api/auth/refresh（功能相同）
+    return await auth_refresh()
 
 
 class TradeAuthUpdate(BaseModel):
@@ -875,6 +1063,22 @@ async def trade_buy(req: BuyFundRequest):
         min_buy = float(init_data.get("minBuy", 0))
         fund_name = init_data.get("paramOpenFundAccBean", {}).get("fundName", req.fund_code)
 
+        # 保存限额信息到数据库（无论是否能买入都保存）
+        try:
+            # max_buy 是当前可买金额（会随待确认订单变化）
+            # 如果 max_buy 很大（如 99999999999999.99），说明是基金本身的每日限额
+            daily_limit = max_buy if max_buy > 1000000 else 0
+            fund_db.save_fund_limit(
+                fund_code=req.fund_code,
+                fund_name=fund_name,
+                min_buy=min_buy,
+                max_buy=max_buy,
+                daily_limit=daily_limit,
+                is_suspended=False
+            )
+        except Exception as e:
+            print(f"⚠️ 保存限额信息失败: {e}")
+
         # 检查待确认额度
         if max_buy < req.amount:
             return {
@@ -903,6 +1107,11 @@ async def trade_buy(req: BuyFundRequest):
                 }
             }
     except Exception as e:
+        # 初始化失败，可能是暂停申购，记录下来
+        try:
+            fund_db.mark_fund_suspended(req.fund_code, reason=str(e))
+        except:
+            pass
         raise HTTPException(status_code=500, detail=f"买入初始化失败: {e}")
 
     # 调用同花顺 API 买入
@@ -1520,6 +1729,116 @@ async def get_local_trades(
         raise HTTPException(status_code=500, detail=f"查询交易记录失败: {e}")
 
 
+# ==================== 基金限额模块 ====================
+
+@app.get("/api/limits/summary", summary="限额统计摘要", tags=["基金限额"])
+async def get_limits_summary():
+    """获取限额统计信息"""
+    try:
+        summary = fund_db.get_fund_limits_summary()
+        return {
+            "status": "ok",
+            "data": {
+                "total": summary["total"],
+                "suspended": summary["suspended"],
+                "min_buy_10": summary["min_buy_10"],
+                "min_buy_100": summary["min_buy_100"],
+                "max_buy_1000": summary["max_buy_1000"],
+                "total_available": float(summary["total_available"]) if summary["total_available"] else 0,
+            }
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"查询统计失败: {e}")
+
+
+@app.get("/api/limits", summary="批量查询限额", tags=["基金限额"])
+async def get_fund_limits(
+    codes: str = Query(None, description="基金代码列表，逗号分隔"),
+    min_buy_lte: float = Query(None, description="最小买入金额上限"),
+    include_suspended: bool = Query(False, description="是否包含暂停申购的基金")
+):
+    """批量查询基金限额信息"""
+    try:
+        fund_codes = codes.split(",") if codes else None
+        limits = fund_db.get_fund_limits(
+            fund_codes=fund_codes,
+            min_buy_lte=min_buy_lte,
+            include_suspended=include_suspended
+        )
+        return {
+            "status": "ok",
+            "count": len(limits),
+            "data": [
+                {
+                    "fund_code": l["fund_code"],
+                    "fund_name": l["fund_name"],
+                    "min_buy": float(l["min_buy"]) if l["min_buy"] else 0,
+                    "max_buy": float(l["max_buy"]) if l["max_buy"] else 0,
+                    "is_suspended": l["is_suspended"],
+                    "last_checked_at": str(l["last_checked_at"]) if l["last_checked_at"] else None,
+                }
+                for l in limits
+            ]
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"查询限额失败: {e}")
+
+
+@app.get("/api/limits/{fund_code}", summary="查询单个基金限额", tags=["基金限额"])
+async def get_fund_limit(fund_code: str):
+    """查询单个基金的买入限额信息"""
+    try:
+        limit_info = fund_db.get_fund_limit(fund_code)
+        if not limit_info:
+            return {"status": "not_found", "fund_code": fund_code, "message": "暂无限额信息，需要先尝试买入获取"}
+        return {
+            "status": "ok",
+            "data": {
+                "fund_code": limit_info["fund_code"],
+                "fund_name": limit_info["fund_name"],
+                "min_buy": float(limit_info["min_buy"]) if limit_info["min_buy"] else 0,
+                "max_buy": float(limit_info["max_buy"]) if limit_info["max_buy"] else 0,
+                "daily_limit": float(limit_info["daily_limit"]) if limit_info["daily_limit"] else 0,
+                "is_suspended": limit_info["is_suspended"],
+                "suspend_reason": limit_info["suspend_reason"],
+                "last_checked_at": str(limit_info["last_checked_at"]) if limit_info["last_checked_at"] else None,
+            }
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"查询限额失败: {e}")
+
+
+@app.post("/api/limits/plan", summary="智能分配购买计划", tags=["基金限额"])
+async def plan_buy(
+    target_amount: float = Body(..., description="目标总金额"),
+    exclude_codes: list = Body(default=[], description="排除的基金代码"),
+    fund_codes: list = Body(default=None, description="限定的基金代码范围")
+):
+    """根据已知限额智能分配购买计划"""
+    try:
+        result, remaining = fund_db.get_buyable_funds(
+            target_amount=target_amount,
+            exclude_codes=exclude_codes
+        )
+
+        # 如果指定了基金代码范围，只保留范围内的
+        if fund_codes:
+            result = [r for r in result if r["fund_code"] in fund_codes]
+            # 重新计算剩余
+            allocated = sum(r["suggested_amount"] for r in result)
+            remaining = target_amount - allocated
+
+        return {
+            "status": "ok",
+            "target_amount": target_amount,
+            "allocated_amount": target_amount - remaining,
+            "remaining_amount": remaining,
+            "plan": result
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"生成购买计划失败: {e}")
+
+
 # ==================== 数据采集和同步模块 ====================
 
 @app.post("/api/sync/positions", summary="同步持仓", tags=["数据同步"])
@@ -1639,13 +1958,41 @@ async def scan_funds_summary():
                 base = await client.get_fund_base(code)
                 info = await client.get_fund_info(code)
 
+                base_data = base.get("data", {})
+                info_data = info.get("data", {})
+
+                # 尝试从多个可能的字段获取净值
+                nav = info_data.get("net")
+                if nav:
+                    try:
+                        nav = float(nav)
+                    except (ValueError, TypeError):
+                        nav = None
+
+                # 获取近一周涨跌幅
+                rate = info_data.get("week")
+                if rate:
+                    try:
+                        rate = float(rate)
+                    except (ValueError, TypeError):
+                        rate = None
+
+                # 获取近一月涨跌幅
+                yield_month = info_data.get("month")
+                if yield_month:
+                    try:
+                        yield_month = float(yield_month)
+                    except (ValueError, TypeError):
+                        yield_month = None
+
                 funds_summary.append({
                     "code": code,
-                    "name": base.get("data", {}).get("fundName"),
-                    "type": base.get("data", {}).get("fundType"),
-                    "nav": info.get("data", {}).get("nav"),
-                    "rate": info.get("data", {}).get("gszzl"),  # 估算涨跌幅
-                    "risk": base.get("data", {}).get("riskGrade")
+                    "name": base_data.get("simpleName") or info_data.get("name"),
+                    "type": base_data.get("fundType"),
+                    "nav": nav,
+                    "rate": rate,  # 近一周涨跌幅
+                    "yield_month": yield_month,  # 近一月涨跌幅
+                    "risk": base_data.get("riskLevel")
                 })
             except:
                 continue

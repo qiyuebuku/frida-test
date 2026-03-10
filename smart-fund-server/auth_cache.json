@@ -1,0 +1,16 @@
+{
+  "auth": {
+    "key1": "7246091a5f126b63",
+    "key2": "2293a78f6581c12bbb334759458d4de3",
+    "key3": "100113970166",
+    "key4": "auth",
+    "key5": "eyJjSWQiOiIxMDAxMTM5NzAxNjYiLCJleHAiOjE3NzU3MTcxNzgxODUsInNvdSI6IlNESyIsInR5cGUiOiJQV0QiLCJ2IjoiMS4wIn0=.cXE2dWN6QkwxWFdTdmFyRU9oZ0hUTDZSVXpKY2lsb0FZUng2NDh4anQwRnNGQjd4L2hUcTUyL1gwQ0dVdG42SFFWWEFrWFlOOG1mV3hiL1NUc0FleEFEbUJCM21yYTlQWDZIL3FIT1E2cjhiR1lXNGFrcitHNjBta0oyZS8wN3RESUNKUjlwb0F6TnVQWWpuWEllUWlHdm9EWDJNMmhRWXF4eVF2WTd3NldZPQ==",
+    "userId": "100113970166",
+    "sessionId": "",
+    "cookie": "",
+    "account": "100113970166"
+  },
+  "expires_at": 1775717178,
+  "last_sync": 1773126466,
+  "sync_source": "zygisk"
+}

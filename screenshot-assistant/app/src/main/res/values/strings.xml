@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">截屏助手</string>
+    <string name="accessibility_service_description">截屏助手需要无障碍权限来执行滚动操作和自动化任务</string>
+    <string name="notification_channel_name">截屏服务</string>
+    <string name="notification_channel_description">截屏服务运行状态通知</string>
+</resources>

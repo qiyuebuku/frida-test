@@ -225,6 +225,22 @@ CREATE TABLE IF NOT EXISTS ft_pending_decisions (
 );
 CREATE INDEX IF NOT EXISTS idx_ft_pending_status ON ft_pending_decisions(status);
 CREATE INDEX IF NOT EXISTS idx_ft_pending_date ON ft_pending_decisions(decision_date);
+
+-- 基金买入限额表（记录每次买入时获取的限额信息）
+CREATE TABLE IF NOT EXISTS ft_fund_limits (
+    id SERIAL PRIMARY KEY,
+    fund_code VARCHAR(10) NOT NULL UNIQUE,
+    fund_name VARCHAR(100),
+    min_buy NUMERIC(12,2) DEFAULT 0,           -- 最小买入金额
+    max_buy NUMERIC(18,2) DEFAULT 0,           -- 最大买入金额（当日可买）
+    daily_limit NUMERIC(18,2) DEFAULT 0,       -- 每日申购限额（基金本身的限制）
+    is_suspended BOOLEAN DEFAULT FALSE,        -- 是否暂停申购
+    suspend_reason TEXT,                       -- 暂停原因
+    last_checked_at TIMESTAMP DEFAULT NOW(),   -- 最后检查时间
+    created_at TIMESTAMP DEFAULT NOW(),
+    updated_at TIMESTAMP DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_ft_fund_limits_code ON ft_fund_limits(fund_code);
 """
 
 
@@ -237,7 +253,7 @@ def init_tables():
         with conn.cursor() as cur:
             cur.execute(CREATE_TABLES_SQL)
         conn.commit()
-    print("✓ 12 张表创建完成 (ft_cache, ft_market_cache, ft_signals, ft_decisions, ft_trades, ft_positions, ft_run_log, ft_reviews, ft_lessons, ft_alipay_positions, ft_alipay_decisions, ft_pending_decisions)")
+    print("✓ 13 张表创建完成 (ft_cache, ft_market_cache, ft_signals, ft_decisions, ft_trades, ft_positions, ft_run_log, ft_reviews, ft_lessons, ft_alipay_positions, ft_alipay_decisions, ft_pending_decisions, ft_fund_limits)")
 
 
 # ==================== 缓存 ====================
@@ -1178,6 +1194,176 @@ def revise_lesson(old_lesson_id, new_lesson_text, new_trigger_pattern=None,
             )
         conn.commit()
     return new_id
+
+
+# ==================== 基金限额 ====================
+
+def save_fund_limit(fund_code, fund_name=None, min_buy=0, max_buy=0,
+                   daily_limit=0, is_suspended=False, suspend_reason=None):
+    """保存或更新基金买入限额信息"""
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """INSERT INTO ft_fund_limits
+                   (fund_code, fund_name, min_buy, max_buy, daily_limit,
+                    is_suspended, suspend_reason, last_checked_at, updated_at)
+                   VALUES (%s, %s, %s, %s, %s, %s, %s, NOW(), NOW())
+                   ON CONFLICT (fund_code) DO UPDATE SET
+                       fund_name = COALESCE(EXCLUDED.fund_name, ft_fund_limits.fund_name),
+                       min_buy = EXCLUDED.min_buy,
+                       max_buy = EXCLUDED.max_buy,
+                       daily_limit = CASE
+                           WHEN EXCLUDED.daily_limit > 0 THEN EXCLUDED.daily_limit
+                           ELSE ft_fund_limits.daily_limit
+                       END,
+                       is_suspended = EXCLUDED.is_suspended,
+                       suspend_reason = EXCLUDED.suspend_reason,
+                       last_checked_at = NOW(),
+                       updated_at = NOW()""",
+                (fund_code, fund_name, min_buy, max_buy, daily_limit,
+                 is_suspended, suspend_reason),
+            )
+        conn.commit()
+
+
+def get_fund_limit(fund_code):
+    """获取单个基金的限额信息"""
+    with get_conn() as conn:
+        with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+            cur.execute(
+                "SELECT * FROM ft_fund_limits WHERE fund_code = %s",
+                (fund_code,),
+            )
+            return cur.fetchone()
+
+
+def get_fund_limits(fund_codes=None, min_buy_lte=None, include_suspended=False):
+    """批量获取基金限额信息
+
+    Args:
+        fund_codes: 基金代码列表，None 表示查全部
+        min_buy_lte: 最小买入金额小于等于此值
+        include_suspended: 是否包含暂停申购的基金
+    """
+    with get_conn() as conn:
+        with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+            conditions = []
+            params = []
+
+            if fund_codes:
+                conditions.append("fund_code = ANY(%s)")
+                params.append(fund_codes)
+
+            if min_buy_lte is not None:
+                conditions.append("min_buy <= %s")
+                params.append(min_buy_lte)
+
+            if not include_suspended:
+                conditions.append("(is_suspended = FALSE OR is_suspended IS NULL)")
+
+            where_clause = " AND ".join(conditions) if conditions else "1=1"
+
+            cur.execute(
+                f"""SELECT * FROM ft_fund_limits
+                    WHERE {where_clause}
+                    ORDER BY min_buy ASC, max_buy DESC""",
+                params,
+            )
+            return cur.fetchall()
+
+
+def get_buyable_funds(target_amount, exclude_codes=None):
+    """获取可以凑够目标金额的基金列表
+
+    Args:
+        target_amount: 目标总金额
+        exclude_codes: 排除的基金代码列表
+
+    Returns:
+        list: [{"fund_code", "fund_name", "min_buy", "max_buy", "suggested_amount"}, ...]
+    """
+    with get_conn() as conn:
+        with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+            exclude_clause = ""
+            params = []
+
+            if exclude_codes:
+                exclude_clause = "AND fund_code != ALL(%s)"
+                params.append(exclude_codes)
+
+            cur.execute(
+                f"""SELECT fund_code, fund_name, min_buy, max_buy, daily_limit,
+                           last_checked_at
+                    FROM ft_fund_limits
+                    WHERE (is_suspended = FALSE OR is_suspended IS NULL)
+                      AND max_buy > 0
+                      {exclude_clause}
+                    ORDER BY max_buy DESC, min_buy ASC""",
+                params,
+            )
+            funds = cur.fetchall()
+
+            # 计算建议金额
+            result = []
+            remaining = target_amount
+            for f in funds:
+                if remaining <= 0:
+                    break
+                max_buy = float(f["max_buy"]) if f["max_buy"] else 0
+                min_buy = float(f["min_buy"]) if f["min_buy"] else 0
+
+                if max_buy <= 0:
+                    continue
+
+                suggested = min(remaining, max_buy)
+                if suggested < min_buy:
+                    continue
+
+                result.append({
+                    "fund_code": f["fund_code"],
+                    "fund_name": f["fund_name"],
+                    "min_buy": min_buy,
+                    "max_buy": max_buy,
+                    "suggested_amount": suggested,
+                    "last_checked_at": f["last_checked_at"],
+                })
+                remaining -= suggested
+
+            return result, remaining
+
+
+def mark_fund_suspended(fund_code, reason=None):
+    """标记基金暂停申购"""
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """INSERT INTO ft_fund_limits (fund_code, is_suspended, suspend_reason, last_checked_at)
+                   VALUES (%s, TRUE, %s, NOW())
+                   ON CONFLICT (fund_code) DO UPDATE SET
+                       is_suspended = TRUE,
+                       suspend_reason = EXCLUDED.suspend_reason,
+                       last_checked_at = NOW(),
+                       updated_at = NOW()""",
+                (fund_code, reason),
+            )
+        conn.commit()
+
+
+def get_fund_limits_summary():
+    """获取限额统计摘要"""
+    with get_conn() as conn:
+        with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+            cur.execute(
+                """SELECT
+                       COUNT(*) as total,
+                       COUNT(*) FILTER (WHERE is_suspended = TRUE) as suspended,
+                       COUNT(*) FILTER (WHERE min_buy <= 10) as min_buy_10,
+                       COUNT(*) FILTER (WHERE min_buy <= 100) as min_buy_100,
+                       COUNT(*) FILTER (WHERE max_buy >= 1000) as max_buy_1000,
+                       SUM(max_buy) FILTER (WHERE is_suspended = FALSE OR is_suspended IS NULL) as total_available
+                   FROM ft_fund_limits"""
+            )
+            return cur.fetchone()
 
 
 # ==================== CLI ====================

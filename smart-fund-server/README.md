@@ -80,26 +80,20 @@ smart-fund-server/
 ### 日常部署（改代码后）
 
 ```bash
-# 同步代码 + 同步 Skills + 自动重启（最常用，改了代码后必须用这个）
+# 同步代码 + 自动重启（最常用）
 ./deploy.sh
 
 # 只同步代码不重启（改了非 Python 文件时）
 ./deploy.sh --sync-only
 
-# 只重启不同步（远程直接改了代码时，⚠️ 本地改了代码不要用这个！）
+# 只重启不同步（远程直接改了代码时）
 ./deploy.sh --restart
-
-# 只同步 Skills（prompts/SKILL.md 等）
-./deploy.sh --skills
 ```
-
-**⚠️ 常见错误**：本地修改了 Python 代码后只执行 `./deploy.sh --restart`，这样只会重启服务而不会同步代码，导致新代码不生效。**改了代码后必须用 `./deploy.sh`（不带参数）进行完整部署。**
 
 部署脚本会自动：
 1. 通过 rsync 同步本地代码到远程（排除 `__pycache__`、`images/*`、`server.log`、`.git`）
-2. 通过 rsync 同步 Claude Skills（prompts、SKILL.md）到远程
-3. 通过 systemctl 重启服务
-4. 等待 2 秒后调用 `/health` 验证启动成功
+2. 通过 systemctl 重启服务
+3. 等待 2 秒后调用 `/health` 验证启动成功
 
 ### 手动部署（如果 deploy.sh 不可用）
 
@@ -185,22 +179,10 @@ ssh -p 2210 yuyangruan@119.23.227.187
 
 ## 注意事项
 
-1. **改了代码后必须完整部署** — 执行 `./deploy.sh`（不带参数），而不是 `./deploy.sh --restart`。`--restart` 只重启不同步代码！
-2. **不要在服务端直接改代码** — 下次 `deploy.sh` 会用 `rsync --delete` 覆盖远程改动
-3. **`auth_cache.json` 不会被同步覆盖** — rsync 会同步此文件，但 Token 由客户端推送更新，部署后需要重新 `refresh-token`
-4. **`config.json` 会被同步** — 本地修改基金池/风控参数后部署即可生效
-5. **`images/` 目录不同步** — 远程的截图文件不会被删除
-6. **`server.log` 不同步** — 日志只在远程存在，通过 `--logs` 查看
-7. **WSL2 的 SSH key 路径特殊** — deploy.sh 会自动从 `/mnt/c/Users/阮雨阳/.ssh/id_rsa` 复制到 `/tmp/` 并修正权限
-8. **服务由 systemd 守护** — kill 进程后会自动重启（`Restart=always`），必须用 `systemctl stop` 停止
-
-### deploy.sh 命令速查
-
-| 场景 | 命令 |
-|------|------|
-| 改了 Python/Skills 代码 | `./deploy.sh` |
-| 只改了 prompts/SKILL.md | `./deploy.sh --skills` + `./deploy.sh --restart` |
-| 远程手动改了代码要重启 | `./deploy.sh --restart` |
-| 先看看代码差异不重启 | `./deploy.sh --sync-only` |
-| 排查问题看日志 | `./deploy.sh --logs` |
-| 查看运行状态 | `./deploy.sh --status` |
+1. **不要在服务端直接改代码** — 下次 `deploy.sh` 会用 `rsync --delete` 覆盖远程改动
+2. **`auth_cache.json` 不会被同步覆盖** — rsync 会同步此文件，但 Token 由客户端推送更新，部署后需要重新 `refresh-token`
+3. **`config.json` 会被同步** — 本地修改基金池/风控参数后部署即可生效
+4. **`images/` 目录不同步** — 远程的截图文件不会被删除
+5. **`server.log` 不同步** — 日志只在远程存在，通过 `--logs` 查看
+6. **WSL2 的 SSH key 路径特殊** — deploy.sh 会自动从 `/mnt/c/Users/阮雨阳/.ssh/id_rsa` 复制到 `/tmp/` 并修正权限
+7. **服务由 systemd 守护** — kill 进程后会自动重启（`Restart=always`），必须用 `systemctl stop` 停止

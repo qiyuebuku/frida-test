@@ -48,9 +48,10 @@ class THSFundClient:
             import requests
             self.proxy_session = requests.Session()
 
-            # 初始化认证管理器（持久化认证参数，降低对 WebView 的依赖）
-            from auth_manager import AuthManager
-            self.auth_manager = AuthManager(jsbridge_url=f"{self.proxy_url}/auth")
+        # 无论哪种模式，都加载 auth_cache.json 中的缓存认证参数
+        # 这样当 Zygisk 返回不完整数据时（如 App 未运行），可以使用缓存的 key1/key2
+        # key1/key2 是设备标识，不会变化；只有 key5（JWT token）需要刷新
+        self._load_auth_cache()
 
         # 从配置文件读取交易密码
         self._load_trade_password()
@@ -59,6 +60,65 @@ class THSFundClient:
         await self._client.aclose()
         if hasattr(self, 'proxy_session'):
             self.proxy_session.close()
+
+    def _load_auth_cache(self):
+        """从 auth_cache.json 加载认证参数到 TRADE_AUTH（仅在 use_jsbridge=False 时调用）"""
+        from pathlib import Path
+        cache_file = Path(__file__).parent / "auth_cache.json"
+
+        if not cache_file.exists():
+            print(f"⚠️  认证缓存文件不存在: {cache_file}")
+            print(f"   请先运行: python auth_manager.py auto-refresh")
+            return
+
+        try:
+            with open(cache_file, "r", encoding="utf-8") as f:
+                data = json.load(f)
+                auth = data.get("auth", {})
+
+                # 更新 TRADE_AUTH 类变量
+                self.TRADE_AUTH["key1"] = auth.get("key1", "")
+                self.TRADE_AUTH["key2"] = auth.get("key2", "")
+                self.TRADE_AUTH["key3"] = auth.get("key3", "")
+                self.TRADE_AUTH["key4"] = auth.get("key4", "auth")
+                self.TRADE_AUTH["key5"] = auth.get("key5", "")
+                self.TRADE_AUTH["userId"] = auth.get("userId", "")
+                self.TRADE_AUTH["sessionId"] = auth.get("sessionId", "")
+
+                # ✅ 新增：加载 cookie（从 auth_cache.json 动态加载，不再使用硬编码）
+                self.TRADE_COOKIE = auth.get("cookie", "")
+
+                # 记录文件修改时间，用于检测更新
+                self._auth_cache_mtime = cache_file.stat().st_mtime
+                self._auth_cache_file = cache_file
+
+                print(f"✅ 已从缓存加载认证参数")
+                print(f"   key1: {self.TRADE_AUTH['key1'][:16]}...")
+                print(f"   key3: {self.TRADE_AUTH['key3']}")
+                print(f"   cookie: {len(self.TRADE_COOKIE)} 字符" if self.TRADE_COOKIE else "   cookie: 未加载")
+        except Exception as e:
+            print(f"⚠️  加载认证缓存失败: {e}")
+
+    def reload_auth_if_updated(self) -> bool:
+        """检查认证缓存是否更新，如果有更新则重新加载
+
+        Returns:
+            True 表示重新加载了认证参数，False 表示无需更新
+        """
+        if not hasattr(self, '_auth_cache_file') or not hasattr(self, '_auth_cache_mtime'):
+            # 首次调用或未初始化
+            return False
+
+        try:
+            current_mtime = self._auth_cache_file.stat().st_mtime
+            if current_mtime > self._auth_cache_mtime:
+                print(f"🔄 检测到认证缓存更新，重新加载...")
+                self._load_auth_cache()
+                return True
+        except Exception as e:
+            print(f"⚠️  检查认证缓存更新失败: {e}")
+
+        return False
 
     def _load_trade_password(self):
         """从 config.json 读取交易密码"""
@@ -78,7 +138,12 @@ class THSFundClient:
             print(f"警告: 从配置文件读取交易密码失败: {e}")
 
     def _refresh_trade_auth(self) -> dict:
-        """获取交易认证参数（优先使用缓存，过期时才刷新）
+        """获取交易认证参数
+
+        策略：
+        1. 优先使用缓存的 auth_cache.json（如果 token 未过期）
+        2. 缓存无效或即将过期时，尝试刷新（Zygisk → 密码登录）
+        3. 刷新成功后返回新的认证参数
 
         Returns:
             认证参数字典 {"key1", "key2", "key3", "key4", "key5", "userId", "sessionId"}
@@ -86,112 +151,199 @@ class THSFundClient:
         Raises:
             RuntimeError: 认证参数获取失败
         """
-        if not self.use_jsbridge:
-            raise RuntimeError("未启用 JSBridge 模式，无法获取认证参数")
+        # 检查文件更新
+        self.reload_auth_if_updated()
 
-        # 使用认证管理器获取参数（自动处理缓存和刷新）
-        auth = self.auth_manager.get_auth()
+        # 检查缓存的 token 是否有效
+        cache_valid = self._is_cache_valid()
+        need_refresh = self._should_refresh_token()
 
-        if auth and auth.get("key5"):
-            # 如果 key3 (custId) 为空，尝试从 key5 的 JWT payload 中提取 cId
-            if not auth.get("key3"):
-                try:
-                    import base64
-                    key5 = auth["key5"]
-                    if "." in key5:
-                        # JWT 格式: header.payload
-                        header_b64 = key5.split('.')[0]
-                        header = json.loads(base64.b64decode(header_b64))
-                        cid = header.get("cId")
-                        if cid:
-                            auth["key3"] = cid
-                            print(f"✅ 从 key5 JWT 中提取 custId: {cid}")
-                except Exception as e:
-                    print(f"⚠️ 从 key5 提取 custId 失败: {e}")
+        # 如果缓存有效且不需要刷新，直接使用缓存
+        if cache_valid and not need_refresh:
+            if self.TRADE_AUTH.get("key1") and self.TRADE_AUTH.get("key5"):
+                return self.TRADE_AUTH.copy()
 
-            return auth
+        # 需要刷新或缓存无效，触发自动刷新
+        self._auto_refresh_token_sync()
 
-        # 认证参数获取失败，抛出异常
+        # 刷新后重新检查缓存
+        self.reload_auth_if_updated()
+        if self.TRADE_AUTH.get("key1") and self.TRADE_AUTH.get("key5"):
+            return self.TRADE_AUTH.copy()
+
+        # 刷新失败
         raise RuntimeError(
             "认证参数获取失败！\n"
             "可能原因：\n"
-            "1. 认证缓存已过期且 JSBridge 不可用（app 未运行）\n"
-            "2. 首次使用且未进行认证刷新\n"
+            "1. Zygisk 不可用（手机未连接或 App 未运行）\n"
+            "2. 密码登录失败（检查 config.json 中的账号密码）\n"
             "解决方法：\n"
-            "1. 运行 python auth_manager.py auto-refresh 自动刷新认证\n"
-            "2. 确保同花顺 app 正在运行"
+            "1. 连接手机并打开同花顺 App\n"
+            "2. 或检查 config.json 中的 trade_account 和 trade_password"
         )
+
+    def _is_cache_valid(self) -> bool:
+        """检查缓存的 token 是否还在有效期内
+
+        Returns:
+            True 表示缓存有效，False 表示已过期
+        """
+        try:
+            from pathlib import Path
+            import time
+
+            cache_file = Path(__file__).parent / "auth_cache.json"
+            if not cache_file.exists():
+                return False
+
+            with open(cache_file, "r", encoding="utf-8") as f:
+                data = json.load(f)
+                expires_at = data.get("expires_at")
+
+                if not expires_at:
+                    # 无过期时间信息，假设有效
+                    return True
+
+                now = int(time.time())
+                return now < expires_at
+
+        except Exception:
+            return False
+
+    def _update_auth_cache(self, auth: dict):
+        """更新 auth_cache.json"""
+        try:
+            from pathlib import Path
+            import time
+
+            cache_file = Path(__file__).parent / "auth_cache.json"
+
+            cache_data = {
+                "auth": {
+                    "key1": auth.get("key1", ""),
+                    "key2": auth.get("key2", ""),
+                    "key3": auth.get("key3", ""),
+                    "key4": auth.get("key4", "auth"),
+                    "key5": auth.get("key5", ""),
+                    "userId": auth.get("userId", ""),
+                    "sessionId": auth.get("sessionId", ""),
+                    "cookie": auth.get("cookie", ""),
+                    "account": auth.get("key3", ""),
+                },
+                "expires_at": auth.get("expires_at"),
+                "last_sync": int(time.time()),
+                "sync_source": "zygisk_auto"
+            }
+
+            with open(cache_file, "w", encoding="utf-8") as f:
+                json.dump(cache_data, f, indent=2, ensure_ascii=False)
+
+            # 重新加载到内存
+            self._load_auth_cache()
+
+        except Exception as e:
+            print(f"⚠️ 更新认证缓存失败: {e}")
 
     def _call_jsbridge_sync(self, method: str, url: str, params: dict = None,
                             headers: dict = None, need_token: bool = False,
-                            k5_type: str = "normal", timeout: int = 40) -> dict:
-        """同步方式调用JSBridge代理（用于交易API）
+                            k5_type: str = "normal", timeout: int = 40,
+                            _retry_count: int = 0) -> dict:
+        """通过 Zygisk Proxy 发送请求（不依赖 WebView）
 
         Args:
             method: HTTP方法（GET/POST）
             url: 请求URL
-            params: 请求参数
+            params: 请求参数（GET 时作为 query，POST 时作为 body）
             headers: 请求头
-            need_token: 是否需要K5 Token自动注入
-            k5_type: K5加密类型（normal/none）
+            need_token: 是否需要K5 Token自动注入（已废弃，认证参数通过 params 传递）
+            k5_type: K5加密类型（已废弃）
             timeout: 超时时间
+            _retry_count: 内部重试计数（用于 LT99 自动重试）
 
         Returns:
             API响应数据
         """
         import json as json_lib
 
-        request_data = {
-            "handler": "clientRequestHX",
-            "data": {
-                "method": method,
-                "url": url,
-                "params": params or {},
-                "K5type": k5_type,
-                "needToken": need_token,
-                "Header": headers or {},
-                "requestType": "guomiSSL"
-            }
-        }
-
         try:
-            # 调试输出
-            import json as json_debug
-            print(f"🔍 JSBridge 请求: {json_debug.dumps(request_data, ensure_ascii=False, indent=2)}")
+            # 添加额外的请求头（用于 /jsbridge 端点）
+            # 注意：对于 rs 服务，Header 应该是空对象
+            jsbridge_headers = headers if headers else {}
 
+            # 构造 JSBridge 请求格式
+            # 重要：无论 GET 还是 POST，参数都放在 params 对象中（不是 URL query）
+            jsbridge_data = {
+                "handler": "clientRequestHX",
+                "data": {
+                    "method": method.upper(),
+                    "url": url,  # URL 中不包含 query 参数
+                    "params": params or {},  # 参数放在 params 对象中
+                    "K5type": k5_type,
+                    "needToken": need_token,
+                    "Header": jsbridge_headers,
+                    "requestType": "guomiSSL"
+                }
+            }
+
+            print(f"🔍 JSBridge 请求: {json_lib.dumps(jsbridge_data, ensure_ascii=False)}")
+
+            # 通过 /jsbridge 端点发送请求（通过 WebView JSBridge）
             response = self.proxy_session.post(
                 f"{self.proxy_url}/jsbridge",
-                json=request_data,
+                json=jsbridge_data,
                 timeout=timeout
             )
-            response.raise_for_status()
 
-            # 调试输出响应
             print(f"🔍 JSBridge 响应: {response.text[:500]}")
 
-            # 解析响应
+            response.raise_for_status()
+
+            # 解析 JSBridge 响应
             result = response.json()
             if isinstance(result, str):
                 result = json_lib.loads(result)
 
+            # JSBridge 响应格式: {"success": true, "data": {"errorCode": 0, "result": {...}}}
             if not result.get("success"):
-                error_msg = result.get("error", "Unknown error")
-                raise Exception(f"JSBridge调用失败: {error_msg}")
+                raise Exception(f"JSBridge 请求失败: {result}")
 
-            # JSBridge 返回格式: {"success": true, "data": {"errorCode": 0, "result": {...}}}
             data = result.get("data", {})
-
-            # 检查同花顺 API 的 errorCode（0=成功，非0=失败）
             error_code = data.get("errorCode")
-            if error_code is not None and error_code != 0:
-                error_msg = data.get("message", f"API错误 (errorCode: {error_code})")
-                raise Exception(f"同花顺API错误: {error_msg}")
 
-            # 返回 result 字段（真正的数据）
-            return data.get("result", data)
+            # errorCode: 0 表示成功
+            if error_code != 0:
+                raise Exception(f"JSBridge 错误码: {error_code}")
+
+            # 获取实际的 API 响应
+            api_result = data.get("result", {})
+
+            # 检测 LT99 错误码（单点登录被踢出）
+            api_code = api_result.get("code", "")
+            if api_code == "LT99" and _retry_count < 1:
+                print(f"⚠️ 检测到 LT99 错误（账号在其他设备登录），尝试刷新 Token 后重试...")
+                # 刷新 token
+                self._auto_refresh_token_sync()
+                # 更新 params 中的认证参数
+                if params:
+                    new_auth = self._refresh_trade_auth()
+                    params.update({
+                        "key1": new_auth.get("key1", ""),
+                        "key2": new_auth.get("key2", ""),
+                        "key3": new_auth.get("key3", ""),
+                        "key4": new_auth.get("key4", "auth"),
+                        "key5": new_auth.get("key5", ""),
+                    })
+                # 递归重试
+                return self._call_jsbridge_sync(
+                    method, url, params, headers, need_token, k5_type, timeout,
+                    _retry_count=_retry_count + 1
+                )
+
+            # 返回 result 字段（实际的 API 响应）
+            return api_result
 
         except Exception as e:
-            raise Exception(f"JSBridge请求失败: {e}")
+            raise Exception(f"Proxy请求失败: {e}")
 
     async def _get(self, url: str, params: Optional[dict] = None) -> dict:
         resp = await self._client.get(url, params=params)
@@ -1352,6 +1504,53 @@ class THSFundClient:
         },
     }
 
+    async def search_fund(self, keyword: str, limit: int = 20) -> dict:
+        """搜索基金（使用东方财富 API）
+
+        Args:
+            keyword: 搜索关键词（如 "标普500"、"纳斯达克"）
+            limit: 返回数量限制
+
+        Returns:
+            {
+                "status_code": 0,
+                "data": [
+                    {"code": "007722", "name": "天弘标普500发起(QDII-FOF)C", "type": "指数型-海外股票", ...}
+                ]
+            }
+        """
+        url = f"https://fundsuggest.eastmoney.com/FundSearch/api/FundSearchAPI.ashx?m=1&key={keyword}"
+
+        try:
+            async with httpx.AsyncClient(timeout=10.0) as client:
+                resp = await client.get(url, headers={
+                    "User-Agent": "Mozilla/5.0 (Linux; Android 11) AppleWebKit/537.36"
+                })
+                data = resp.json()
+
+                if data.get("ErrCode") != 0:
+                    return {"status_code": -1, "status_msg": data.get("ErrMsg", "搜索失败"), "data": []}
+
+                results = []
+                for item in data.get("Datas", [])[:limit]:
+                    fund_info = item.get("FundBaseInfo", {}) or {}
+                    results.append({
+                        "code": item.get("CODE", ""),
+                        "name": item.get("NAME", ""),
+                        "type": fund_info.get("FTYPE", ""),
+                        "company": fund_info.get("JJGS", ""),
+                        "manager": fund_info.get("JJJL", ""),
+                        "nav": fund_info.get("DWJZ"),
+                        "nav_date": fund_info.get("FSRQ", ""),
+                        "min_buy": fund_info.get("MINSG"),
+                        "can_buy": fund_info.get("ISBUY", "") != "0",
+                    })
+
+                return {"status_code": 0, "status_msg": "Success", "data": results}
+
+        except Exception as e:
+            return {"status_code": -1, "status_msg": str(e), "data": []}
+
     async def get_fund_ranking(self, sort_type: str = "year", sort: str = "DESC",
                                limit: int = 30, offset: int = 0,
                                fund_type: str = None, fund_company: str = None,
@@ -1385,13 +1584,19 @@ class THSFundClient:
                 "isRankConfig": True,
             })
 
-        # 基金类型过滤
+        # 基金类型过滤（使用 l2code 字段，支持多个代码逗号分隔）
         if fund_type:
-            filter_list.append({
-                "filterField": "fundType",
-                "innerJoinType": "OR",
-                "filterTypeList": [{"filterValue": fund_type, "filterSymbol": "EQUAL"}],
-            })
+            # 如果包含逗号，使用 IN 匹配多个类型
+            if "," in fund_type:
+                filter_list.append({
+                    "filterField": "l2code",
+                    "filterTypeList": [{"filterValue": fund_type, "filterSymbol": "IN"}],
+                })
+            else:
+                filter_list.append({
+                    "filterField": "l2code",
+                    "filterTypeList": [{"filterValue": fund_type, "filterSymbol": "EQUAL"}],
+                })
 
         # 基金公司过滤
         if fund_company:
@@ -1499,15 +1704,8 @@ class THSFundClient:
     # 交易密码（明文），从 config.json 读取或通过 update_trade_password() 设置
     TRADE_PASSWORD = ""
 
-    TRADE_COOKIE = (
-        "user_status=0; "
-        "user=MDpteF82OTAzNTkxMDM6Ok5vbmU6NTAwOjcwMDM1OTEwMzo3LDExMTExMTExMTExLDQwOzQ0LDExLDQwOzYsMSw0MDs1LDEsNDA7MSwxMDEsNDA7MiwxLDQwOzMsMSw0MDs1LDEsNDA7OCwwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMSw0MDsxMDIsMSw0MDoxNjo6OjY5MDM1OTEwMzoxNzcyMzc0MjgxOjo6MTY5NDEzNDgwMDoyNjc4NDAwOjA6MTgzMWNjZTFhYTA1NDMzZjNjOTU2NmJjZTI1NWE5ZTZkOjow; "
-        "userid=690359103; "
-        "u_name=mx_690359103; "
-        "sess_tk=eyJ0eXAiOiJKV1QiLCJhbGciOiJFUzI1NiIsImtpZCI6InNlc3NfdGtfMSIsImJ0eSI6InNlc3NfdGsifQ"
-        ".eyJqdGkiOiI2ZDllNWEyNWNlNmI1NmM5ZjMzMzU0YTAxYWNlMWM4MzEiLCJpYXQiOjE3NzI0Mzk1MTcsImV4cCI6MTc3MzkyODgwMCwic3ViIjoiNjkwMzU5MTAzIiwiaXNzIjoidXBhc3MuMTBqcWthLmNvbS5jbiIsImF1ZCI6IjIwMjMwODA0OTA3NTEyOTIiLCJhY3QiOiJvZmMiLCJjdWhzIjoiODgyZWUyNWI2OWQzNzJlOTY3MzEyZTQ0MWY1MmE1NDYzOTBiZDIxYzBmYzIzYzQyYWE4YjMzMmJkMGRjNWJlMyJ9"
-        ".Z2vnV8SE6vcnRKCQZXZg9_iUOWSu5tgaD9J43mi3gWO5pziwMOLZNxfiKsSTQMQN6Il2K-qUMjoi8vshkeWgqA"
-    )
+    # 交易 Cookie（从 auth_cache.json 动态加载，不再硬编码）
+    TRADE_COOKIE = ""
 
     TRADE_HEADERS = {
         "User-Agent": "Hexin_Gphone/11.47.03 (Royal Flush) innerversion/G037.08.194.1.32 hxtheme/0 GphoneIjiJinSDK/V7.39.01 ifOperator/145",
@@ -1515,9 +1713,22 @@ class THSFundClient:
     }
 
     def _trade_auth_params(self) -> dict:
-        """构建交易 API 的 URL 认证参数"""
+        """构建交易 API 的 URL 认证参数（每次都从文件读取最新的）"""
         # 从缓存读取认证参数
-        auth = self._refresh_trade_auth() if self.use_jsbridge else {}
+        if self.use_jsbridge:
+            auth = self._refresh_trade_auth()
+        else:
+            # 直接HTTP模式：每次都检查文件是否有更新
+            # 1. 检查文件是否被外部更新（如 server.py 后台任务）
+            self.reload_auth_if_updated()
+
+            # 2. 检测token是否即将过期（每次调用时检测）
+            if self._should_refresh_token():
+                print("⚠️ Token即将过期，触发自动刷新...")
+                self._auto_refresh_token_sync()
+
+            auth = self.TRADE_AUTH
+
         return {
             "key1": auth.get("key1", ""),
             "key2": auth.get("key2", ""),
@@ -1525,6 +1736,307 @@ class THSFundClient:
             "key3": auth.get("key3", ""),
             "key4": auth.get("key4", "auth"),
         }
+
+    def _should_refresh_token(self) -> bool:
+        """检查是否需要刷新token（轻量级检测）
+
+        Returns:
+            True 表示需要刷新，False 表示不需要
+        """
+        try:
+            from pathlib import Path
+            import time
+
+            cache_file = Path(__file__).parent / "auth_cache.json"
+            if not cache_file.exists():
+                return True  # 缓存不存在，需要刷新
+
+            # 读取缓存的过期时间
+            with open(cache_file, "r", encoding="utf-8") as f:
+                import json
+                data = json.load(f)
+                expires_at = data.get("expires_at")
+
+                if not expires_at:
+                    return False  # 无过期时间，暂不刷新
+
+                # 检查是否即将过期（提前3天）
+                now = int(time.time())
+                buffer_seconds = 3 * 24 * 3600  # 3天
+                return now + buffer_seconds >= expires_at
+
+        except Exception as e:
+            # 检测失败，保守起见不刷新（避免频繁触发）
+            return False
+
+    def _login_by_password(self) -> Optional[dict]:
+        """使用密码登录获取 token（会踢掉手机端）
+
+        Returns:
+            {"key1": ..., "key5": ..., ...} 或 None（登录失败）
+        """
+        try:
+            import hashlib
+            from pathlib import Path
+
+            # 从配置文件读取账号密码
+            config_file = Path(__file__).parent / "config.json"
+            if not config_file.exists():
+                print("⚠️ 配置文件不存在，无法使用密码登录")
+                return None
+
+            with open(config_file, "r", encoding="utf-8") as f:
+                config = json.load(f)
+
+            # 从 config.json 读取账号和密码
+            account = config.get("trade_account")
+            if not account:
+                print("⚠️ 配置文件中未设置 trade_account，无法使用密码登录")
+                return None
+
+            password = config.get("trade_password")
+            if not password:
+                print("⚠️ 配置文件中未设置 trade_password，无法使用密码登录")
+                return None
+
+            # 计算密码 MD5
+            password_md5 = hashlib.md5(password.encode()).hexdigest().upper()
+
+            # 读取设备信息（优先从缓存读取，如果为空则使用默认值）
+            device_id = self.TRADE_AUTH.get("key1") or "7246091a5f126b63"
+            device_sign = self.TRADE_AUTH.get("key2") or "2293a78f6581c12bbb334759458d4de3"
+
+            # 构造登录请求
+            url = "https://trade.5ifund.com/rz/account/login/noauth/v1/result/safe/check"
+
+            headers = {
+                "token": "-1",
+                "custId": "-1",
+                "source": "SDK",
+                "Content-Type": "application/x-www-form-urlencoded",
+                "User-Agent": "Hexin_Gphone/11.48.03 (Royal Flush) innerversion/G037.08.194.1.32 hxtheme/0 GphoneIjiJinSDK/V7.39.01 ifOperator/145",
+                "Client-Referer": "",
+                "Host": "trade.5ifund.com",
+                "Connection": "Keep-Alive",
+                "Accept-Encoding": "gzip",
+            }
+
+            data = {
+                "key1": device_id,
+                "uId": device_id,
+                "key2": device_sign,
+                "password": password_md5,
+                "ipAddress": "null",
+                "thsUserId": "690359103",
+                "device": "OnePlus PLQ110",
+                "deviceName": "OnePlus ",
+                "account": account,
+                "loginSource": "SDK",
+                "operator": "145",
+            }
+
+            import requests
+            response = requests.post(url, headers=headers, data=data, timeout=10)
+            response.raise_for_status()
+
+            result = response.json()
+
+            # 检查登录结果
+            if result.get("code") != "0000":
+                error_msg = result.get("message", "未知错误")
+                print(f"⚠️ 密码登录失败: {error_msg}")
+                return None
+
+            # 提取认证参数
+            data_field = result.get("data", {})
+            key3 = data_field.get("key3") or data_field.get("custId") or account
+            key4 = data_field.get("key4", "auth")
+            key5 = data_field.get("key5")
+
+            if not key5:
+                print(f"⚠️ 登录响应中未找到 key5")
+                return None
+
+            # 提取 cookie
+            cookie = ""
+            if "Set-Cookie" in response.headers:
+                cookie = response.headers["Set-Cookie"]
+
+            # 解析 JWT 获取过期时间
+            import base64
+            import time as time_module
+
+            def decode_jwt_exp(jwt_token: str) -> Optional[int]:
+                """解析同花顺 JWT 获取过期时间（格式: header.signature，exp 在 header 中）"""
+                try:
+                    parts = jwt_token.split(".")
+                    if not parts:
+                        return None
+                    # 同花顺的 JWT 是 header.signature 格式，exp 在 header（第一部分）中
+                    header_b64 = parts[0]
+                    padding = 4 - len(header_b64) % 4
+                    if padding != 4:
+                        header_b64 += "=" * padding
+                    decoded = base64.urlsafe_b64decode(header_b64)
+                    header_data = json.loads(decoded)
+                    exp = header_data.get("exp")
+                    # exp 是毫秒时间戳，转换为秒
+                    if exp and exp > 10000000000:
+                        exp = exp // 1000
+                    return exp
+                except Exception:
+                    return None
+
+            expires_at = decode_jwt_exp(key5)
+
+            print("✅ 密码登录成功（⚠️ 手机端已被踢下线）")
+
+            return {
+                "key1": device_id,
+                "key2": device_sign,
+                "key3": key3,
+                "key4": key4,
+                "key5": key5,
+                "userId": key3,
+                "sessionId": "",
+                "cookie": cookie,
+                "expires_at": expires_at,
+            }
+
+        except Exception as e:
+            print(f"⚠️ 密码登录异常: {e}")
+            return None
+
+    def _fetch_token_from_zygisk(self) -> Optional[dict]:
+        """从 Zygisk 获取 token（通过 http://localhost:18900/auth）
+
+        Returns:
+            {"key1": ..., "key5": ..., ...} 或 None（获取失败）
+        """
+        try:
+            import requests
+            import base64
+            import time
+
+            # 从 Zygisk HTTP 服务获取 token
+            response = requests.get(f"{self.proxy_url}/auth", timeout=2)
+            data = response.json()
+
+            if not data.get("available") or not data.get("key5"):
+                return None
+
+            # 解析 JWT 获取过期时间
+            def decode_jwt_exp(jwt_token: str) -> Optional[int]:
+                try:
+                    parts = jwt_token.split(".")
+                    if len(parts) < 2:
+                        return None
+                    payload = parts[1]
+                    padding = 4 - len(payload) % 4
+                    if padding != 4:
+                        payload += "=" * padding
+                    decoded = base64.urlsafe_b64decode(payload)
+                    import json as json_mod
+                    payload_data = json_mod.loads(decoded)
+                    return payload_data.get("exp")
+                except Exception:
+                    return None
+
+            expires_at = decode_jwt_exp(data.get("key5"))
+
+            # 如果 Zygisk 返回的 key1/key2/key3 为空，优先使用缓存值，其次使用默认值
+            # key1/key2 是设备固定值，不会变化，可以使用硬编码的默认值
+            DEFAULT_KEY1 = "7246091a5f126b63"
+            DEFAULT_KEY2 = "2293a78f6581c12bbb334759458d4de3"
+
+            key1 = data.get("key1", "") or self.TRADE_AUTH.get("key1", "") or DEFAULT_KEY1
+            key2 = data.get("key2", "") or self.TRADE_AUTH.get("key2", "") or DEFAULT_KEY2
+            key3 = data.get("key3", "") or self.TRADE_AUTH.get("key3", "")
+
+            # 只要有 key5（JWT token）就认为成功，key1/key2 使用默认值
+            # 不再因为 key1/key2 为空而返回 None
+
+            # 如果 key3 还是空的，尝试从 key5 JWT 中提取 cId
+            if not key3:
+                try:
+                    jwt_parts = data.get("key5", "").split(".")
+                    if jwt_parts:
+                        import json as json_mod
+                        payload = jwt_parts[0]
+                        padding = 4 - len(payload) % 4
+                        if padding != 4:
+                            payload += "=" * padding
+                        decoded = base64.urlsafe_b64decode(payload)
+                        jwt_data = json_mod.loads(decoded)
+                        key3 = jwt_data.get("cId", "")
+                except Exception:
+                    pass
+
+            return {
+                "key1": key1,
+                "key2": key2,
+                "key3": key3,
+                "key4": data.get("key4", "") or self.TRADE_AUTH.get("key4", "auth"),
+                "key5": data.get("key5", ""),
+                "userId": data.get("userId", "") or key3,
+                "sessionId": data.get("sessionId", ""),
+                "cookie": data.get("cookie", "") or self.TRADE_AUTH.get("cookie", ""),
+                "expires_at": expires_at,
+            }
+        except Exception as e:
+            print(f"⚠️ 从 Zygisk 获取 token 失败: {e}")
+            return None
+
+    def _auto_refresh_token_sync(self):
+        """同步刷新 token（降级策略：Zygisk 优先 → 密码登录兜底）"""
+        try:
+            from pathlib import Path
+
+            # 策略 1: 优先从 Zygisk 获取（不会踢掉手机端）
+            print("🔄 尝试从 Zygisk 获取 token...")
+            token_data = self._fetch_token_from_zygisk()
+            sync_source = "zygisk_auto"  # 默认认为是 Zygisk
+
+            # 策略 2: 如果 Zygisk 失败，使用密码登录（会踢掉手机端）
+            if not token_data:
+                print("⚠️ Zygisk 未捕获到 token，尝试使用密码登录...")
+                token_data = self._login_by_password()
+                sync_source = "password_auto"  # 标记为密码登录
+
+            if token_data:
+                # 保存到 auth_cache.json
+                cache_file = Path(__file__).parent / "auth_cache.json"
+
+                # sync_source 已经在上面根据实际来源设置
+
+                cache_data = {
+                    "auth": {
+                        "key1": token_data["key1"],
+                        "key2": token_data["key2"],
+                        "key3": token_data["key3"],
+                        "key4": token_data["key4"],
+                        "key5": token_data["key5"],
+                        "userId": token_data.get("userId", ""),
+                        "sessionId": token_data.get("sessionId", ""),
+                        "cookie": token_data.get("cookie", ""),
+                        "account": token_data["key3"],
+                    },
+                    "expires_at": token_data.get("expires_at"),
+                    "last_sync": int(__import__("time").time()),
+                    "sync_source": sync_source
+                }
+
+                with open(cache_file, "w", encoding="utf-8") as f:
+                    json.dump(cache_data, f, indent=2, ensure_ascii=False)
+
+                print(f"✅ Token 自动刷新成功（来源: {sync_source}）")
+                # 重新加载认证参数
+                self._load_auth_cache()
+            else:
+                print("❌ 所有刷新方式都失败，继续使用当前 token")
+
+        except Exception as e:
+            print(f"⚠️ 自动刷新异常: {e}")
 
     def _trade_cookie_header(self) -> dict:
         """构建交易 API 的 Cookie 头"""
@@ -1541,17 +2053,25 @@ class THSFundClient:
         如果启用JSBridge，将通过代理调用；否则直接HTTP请求
         """
         if self.use_jsbridge:
-            # 通过JSBridge代理调用
+            # 通过 Zygisk Proxy 代理调用（不依赖 WebView）
             import asyncio
             loop = asyncio.get_event_loop()
 
-            # 刷新认证参数（确保 key3 等参数可用，用于构造 URL）
+            # 刷新认证参数
             auth = await loop.run_in_executor(None, self._refresh_trade_auth)
 
-            # GET 请求：仅传递业务参数，让 JSBridge 自动注入认证头
-            params = extra_params.copy() if extra_params else {}
+            # GET 请求：合并认证参数和业务参数
+            params = {
+                "key1": auth.get("key1", ""),
+                "key2": auth.get("key2", ""),
+                "key5": auth.get("key5", ""),
+                "key3": auth.get("key3", ""),
+                "key4": auth.get("key4", "auth"),
+            }
+            if extra_params:
+                params.update(extra_params)
 
-            # JSBridge调用是同步的，需要在executor中运行
+            # 通过代理发送请求
             result = await loop.run_in_executor(
                 None,
                 self._call_jsbridge_sync,
@@ -1559,12 +2079,12 @@ class THSFundClient:
                 f"{self.TRADE_BASE_URL}{path}",
                 params,
                 None,  # headers
-                True,  # needToken=True，让 JSBridge 自动注入认证参数
+                False,  # need_token（已废弃）
                 k5_type
             )
             return result
         else:
-            # 直接HTTP请求（旧方式）
+            # 直接HTTP请求
             params = self._trade_auth_params()
             if extra_params:
                 params.update(extra_params)
@@ -1574,7 +2094,25 @@ class THSFundClient:
                 headers=self._trade_cookie_header(),
             )
             resp.raise_for_status()
-            return resp.json()
+            result = resp.json()
+
+            # 检测 LT99 错误（SSO 被踢）
+            if result.get("code") == "LT99":
+                print(f"⚠️ 检测到 LT99 错误，尝试刷新 Token...")
+                self._auto_refresh_token_sync()
+                # 重试请求
+                params = self._trade_auth_params()
+                if extra_params:
+                    params.update(extra_params)
+                resp = await self._client.get(
+                    f"{self.TRADE_BASE_URL}{path}",
+                    params=params,
+                    headers=self._trade_cookie_header(),
+                )
+                resp.raise_for_status()
+                result = resp.json()
+
+            return result
 
     async def _trade_post_form(self, path: str, data: dict, extra_headers: dict = None, k5_type: str = "none") -> dict:
         """交易 API POST 请求（form-encoded body）
@@ -1610,13 +2148,28 @@ class THSFundClient:
             )
             return result
         else:
-            # 直接HTTP请求（旧方式）
-            headers = self._trade_cookie_header()
+            # 直接HTTP请求
+            # 修复：根据官方格式，/rs/ 路径的 key1-key5 必须在 Body 中，不是 URL Query！
+            # 添加认证参数到 data
+            auth = self._trade_auth_params()
+            full_data = {**auth, **data}  # 合并认证参数和业务参数
+
+            # 构建 Headers（符合官方格式）
+            headers = {
+                "Cache-Control": "max-age=60",
+                "User-Agent": "Hexin_Gphone/11.48.03 (Royal Flush) innerversion/G037.08.194.1.32 hxtheme/0 GphoneIjiJinSDK/V7.39.01 ifOperator/145",
+                "Client-Referer": "",
+                # 额外添加（第二次请求才有，但加上更安全）
+                "custId": auth.get("key3", ""),
+                "token": auth.get("key5", ""),
+                "source": "SDK",
+            }
             if extra_headers:
                 headers.update(extra_headers)
+
             resp = await self._client.post(
                 f"{self.TRADE_BASE_URL}{path}",
-                data=data,
+                data=full_data,  # 所有参数（包括 key1-key5）都在 Body
                 headers=headers,
             )
             resp.raise_for_status()
@@ -1724,20 +2277,81 @@ class THSFundClient:
             )
             return result
         else:
-            # 旧方式：使用18900的/proxy端点
-            payload = {
-                "url": f"{self.TRADE_BASE_URL}{path}",
-                "method": method,
+            # 直接HTTP模式：绕过18900代理，直接调用API
+            # 修复：根据官方格式，/rz/ 路径的认证完全依赖 Headers，不需要 key1-key5 在 URL Query
+
+            # 处理URL查询参数（仅保留原始业务参数）
+            url_path = path
+            query_params = {}
+            if '?' in path:
+                url_path, query_string = path.split('?', 1)
+                for pair in query_string.split('&'):
+                    if '=' in pair:
+                        k, v = pair.split('=', 1)
+                        query_params[k] = v
+
+            # 构建 Headers（符合官方格式）
+            auth = self.TRADE_AUTH
+            headers = {
+                "cookie": self.TRADE_COOKIE,
+                "User-Agent": "Hexin_Gphone/11.48.03 (Royal Flush) innerversion/G037.08.194.1.32 hxtheme/0 GphoneIjiJinSDK/V7.39.01 ifOperator/145",
+                "custId": auth.get("key3", ""),
+                "token": auth.get("key5", ""),
+                "source": "SDK",
+                "Accept": "application/json, text/plain, */*",
+                "Client-Referer": "",
             }
-            if body is not None:
-                payload["body"] = body
             if content_type:
-                payload["content_type"] = content_type
-            resp = await self._client.post(
-                self.TRADE_PROXY_URL,
-                json=payload,
-                timeout=15.0,
-            )
+                headers["Content-Type"] = content_type
+            # 添加 referer（可选，但官方有）
+            # headers["referer"] = "https://trade.5ifund.com/hxapp/ifundBuyInit/dist/index.html"
+
+            # 发起HTTP请求
+            url = f"{self.TRADE_BASE_URL}{url_path}"
+
+            if method.upper() == "GET":
+                resp = await self._client.get(
+                    url,
+                    params=query_params if query_params else None,  # 只传递业务参数
+                    headers=headers,
+                    timeout=15.0,
+                )
+            else:  # POST
+                # 解析body
+                if body and content_type == "application/x-www-form-urlencoded":
+                    # form-encoded格式
+                    body_data = {}
+                    for pair in body.split('&'):
+                        if '=' in pair:
+                            k, v = pair.split('=', 1)
+                            body_data[k] = v
+                    resp = await self._client.post(
+                        url,
+                        params=query_params if query_params else None,
+                        data=body_data,  # 业务参数在Body（不包含 key1-key5）
+                        headers=headers,
+                        timeout=15.0,
+                    )
+                elif body and content_type == "application/json":
+                    # JSON格式
+                    import json as json_lib
+                    body_data = json_lib.loads(body) if isinstance(body, str) else body
+                    resp = await self._client.post(
+                        url,
+                        params=query_params if query_params else None,
+                        json=body_data,  # 业务参数在Body（不包含 key1-key5）
+                        headers=headers,
+                        timeout=15.0,
+                    )
+                else:
+                    # 其他格式或无Body
+                    resp = await self._client.post(
+                        url,
+                        params=query_params if query_params else None,
+                        headers=headers,
+                        timeout=15.0,
+                    )
+
             resp.raise_for_status()
             return resp.json()
 
@@ -1766,6 +2380,9 @@ class THSFundClient:
 
     @property
     def trade_cust_id(self) -> str:
+        """获取交易客户ID（每次都检查文件更新）"""
+        if not self.use_jsbridge:
+            self.reload_auth_if_updated()
         return self.TRADE_AUTH["key3"]
 
     async def buy_fund(self, fund_code: str, amount: float, use_wallet: bool = True,
@@ -2057,17 +2674,16 @@ class THSFundClient:
             start_date = (now - timedelta(days=30)).strftime("%Y%m%d")
 
         # 确保 custId 可用（需要先刷新认证参数）
-        if self.use_jsbridge:
-            import asyncio
-            loop = asyncio.get_event_loop()
-            auth = await loop.run_in_executor(None, self._refresh_trade_auth)
-            cust_id = auth.get("key3", "")
-        else:
-            cust_id = self.trade_cust_id
+        import asyncio
+        loop = asyncio.get_event_loop()
+        auth = await loop.run_in_executor(None, self._refresh_trade_auth)
+        cust_id = auth.get("key3", "") or self.trade_cust_id
 
         return await self._trade_get(
             f"/rs/query/v1/currentHistoryInfo/{cust_id}",
             extra_params={
+                # 根据官方格式，key3 和 key4 不应该是空字符串
+                # 它们会被 _trade_get 自动添加，这里不需要覆盖
                 "opType": op_type,
                 "productType": "all",
                 "startDate": start_date,

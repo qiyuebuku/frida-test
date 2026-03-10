@@ -1,6 +1,8 @@
 package com.yuyang.thshook;
 
 import android.app.Application;
+import android.os.Handler;
+import android.os.Looper;
 import android.util.Log;
 
 import java.io.BufferedReader;
@@ -64,6 +66,68 @@ public class MainHook {
     private static volatile Object stockDatabase = null;
     // 股票账户 fund_key（AES加密）
     private static final String STOCK_FUND_KEY = "7qZ1IO8msos2SsiJgFqWREwrMVnGfXlV974+tulFq0k=";
+
+    // XHR Hook JavaScript - 注入到 WebView 捕获所有 AJAX 请求
+    private static final String XHR_HOOK_SCRIPT =
+        "(function() {" +
+        "    if (window.__XHR_HOOKED__) return;" +
+        "    window.__XHR_HOOKED__ = true;" +
+        "    " +
+        "    var originalOpen = XMLHttpRequest.prototype.open;" +
+        "    var originalSend = XMLHttpRequest.prototype.send;" +
+        "    var originalSetRequestHeader = XMLHttpRequest.prototype.setRequestHeader;" +
+        "    " +
+        "    XMLHttpRequest.prototype.open = function(method, url, async, user, password) {" +
+        "        this._method = method;" +
+        "        this._url = url;" +
+        "        this._requestHeaders = {};" +
+        "        this._startTime = Date.now();" +
+        "        return originalOpen.apply(this, arguments);" +
+        "    };" +
+        "    " +
+        "    XMLHttpRequest.prototype.setRequestHeader = function(header, value) {" +
+        "        this._requestHeaders[header] = value;" +
+        "        return originalSetRequestHeader.apply(this, arguments);" +
+        "    };" +
+        "    " +
+        "    XMLHttpRequest.prototype.send = function(body) {" +
+        "        var xhr = this;" +
+        "        " +
+        "        var requestInfo = {" +
+        "            method: xhr._method," +
+        "            url: xhr._url," +
+        "            headers: xhr._requestHeaders," +
+        "            body: body || null," +
+        "            timestamp: xhr._startTime" +
+        "        };" +
+        "        " +
+        "        if (xhr._url && (xhr._url.indexOf('trade.5ifund.com') > -1 || xhr._url.indexOf('/fund/') > -1)) {" +
+        "            console.log('[XHR_HOOK_REQUEST] ' + JSON.stringify(requestInfo));" +
+        "        }" +
+        "        " +
+        "        xhr.addEventListener('load', function() {" +
+        "            if (xhr._url && (xhr._url.indexOf('trade.5ifund.com') > -1 || xhr._url.indexOf('/fund/') > -1)) {" +
+        "                var responseInfo = {" +
+        "                    url: xhr._url," +
+        "                    status: xhr.status," +
+        "                    statusText: xhr.statusText," +
+        "                    responseText: xhr.responseText.substring(0, 10000)," +
+        "                    responseHeaders: xhr.getAllResponseHeaders()," +
+        "                    duration: Date.now() - xhr._startTime" +
+        "                };" +
+        "                console.log('[XHR_HOOK_RESPONSE] ' + JSON.stringify(responseInfo));" +
+        "            }" +
+        "        });" +
+        "        " +
+        "        xhr.addEventListener('error', function() {" +
+        "            console.log('[XHR_HOOK_ERROR] ' + xhr._url);" +
+        "        });" +
+        "        " +
+        "        return originalSend.apply(this, arguments);" +
+        "    };" +
+        "    " +
+        "    console.log('[XHR_HOOK] Initialized');" +
+        "})();";
 
     public static void entry(ClassLoader classLoader, String pineSoPath) {
         Log.i(TAG, "MainHook.entry() called");
@@ -181,6 +245,9 @@ public class MainHook {
 
         try { hookWTBuyConfirmClient(cl); Log.i(TAG, "hookWTBuyConfirmClient done"); }
         catch (Throwable e) { Log.e(TAG, "hookWTBuyConfirmClient failed", e); }
+
+        try { hookClientRequestHX(cl); Log.i(TAG, "hookClientRequestHX done"); }
+        catch (Throwable e) { Log.e(TAG, "hookClientRequestHX failed", e); }
 
         try { hookActivityAndClicks(); Log.i(TAG, "hookActivityAndClicks done"); }
         catch (Throwable e) { Log.e(TAG, "hookActivityAndClicks failed", e); }
@@ -1176,11 +1243,36 @@ public class MainHook {
         Pine.hook(loadUrl, new MethodHook() {
             @Override
             public void beforeCall(Pine.CallFrame callFrame) {
+                final Object webView = callFrame.thisObject;
                 String url = (String) callFrame.args[0];
                 Log.i(TAG, "WebView.loadUrl → " + url);
+
+                // 保存 WebView 引用
+                if (webView != null) {
+                    latestWebView = webView;
+                }
+
+                // 如果是 fund 页面，延迟注入 XHR Hook
+                if (url != null && (url.contains("trade.5ifund.com") || url.contains("/fund/"))) {
+                    new Handler(Looper.getMainLooper()).postDelayed(new Runnable() {
+                        @Override
+                        public void run() {
+                            try {
+                                Log.i(TAG, "Injecting XHR Hook into fund page...");
+                                Method evalJs = webView.getClass().getDeclaredMethod("evaluateJavascript",
+                                        String.class, Class.forName("android.webkit.ValueCallback"));
+                                evalJs.invoke(webView, XHR_HOOK_SCRIPT, null);
+                                Log.i(TAG, "✓ XHR Hook injected");
+                            } catch (Throwable e) {
+                                Log.e(TAG, "Failed to inject XHR Hook", e);
+                            }
+                        }
+                    }, 1000); // 延迟 1 秒等待页面加载
+                }
             }
         });
 
+        // Hook postUrl
         try {
             Method postUrl = webViewClass.getDeclaredMethod("postUrl", String.class, byte[].class);
             Pine.hook(postUrl, new MethodHook() {
@@ -1188,6 +1280,74 @@ public class MainHook {
                 public void beforeCall(Pine.CallFrame callFrame) {
                     String url = (String) callFrame.args[0];
                     Log.i(TAG, "WebView.postUrl → " + url);
+                }
+            });
+        } catch (Throwable e) { /* ignore */ }
+
+        // Hook loadData - 可能基金页面用这个加载
+        try {
+            Method loadData = webViewClass.getDeclaredMethod("loadData", String.class, String.class, String.class);
+            Pine.hook(loadData, new MethodHook() {
+                @Override
+                public void beforeCall(Pine.CallFrame callFrame) {
+                    final Object webView = callFrame.thisObject;
+                    String data = (String) callFrame.args[0];
+                    Log.i(TAG, "WebView.loadData → [" + data.length() + " chars]");
+
+                    if (webView != null) {
+                        latestWebView = webView;
+                    }
+
+                    // 延迟注入 XHR Hook（基金页面可能在这里加载）
+                    new Handler(Looper.getMainLooper()).postDelayed(new Runnable() {
+                        @Override
+                        public void run() {
+                            try {
+                                Log.i(TAG, "Injecting XHR Hook (after loadData)...");
+                                Method evalJs = webView.getClass().getDeclaredMethod("evaluateJavascript",
+                                        String.class, Class.forName("android.webkit.ValueCallback"));
+                                evalJs.invoke(webView, XHR_HOOK_SCRIPT, null);
+                                Log.i(TAG, "✓ XHR Hook injected (loadData)");
+                            } catch (Throwable e) {
+                                Log.e(TAG, "Failed to inject XHR Hook (loadData)", e);
+                            }
+                        }
+                    }, 2000); // 延迟 2 秒
+                }
+            });
+        } catch (Throwable e) { /* ignore */ }
+
+        // Hook loadDataWithBaseURL - 更常用的方法
+        try {
+            Method loadDataWithBaseURL = webViewClass.getDeclaredMethod("loadDataWithBaseURL",
+                    String.class, String.class, String.class, String.class, String.class);
+            Pine.hook(loadDataWithBaseURL, new MethodHook() {
+                @Override
+                public void beforeCall(Pine.CallFrame callFrame) {
+                    final Object webView = callFrame.thisObject;
+                    String baseUrl = (String) callFrame.args[0];
+                    String data = (String) callFrame.args[1];
+                    Log.i(TAG, "WebView.loadDataWithBaseURL → baseUrl=" + baseUrl + " [" + data.length() + " chars]");
+
+                    if (webView != null) {
+                        latestWebView = webView;
+                    }
+
+                    // 延迟注入 XHR Hook
+                    new Handler(Looper.getMainLooper()).postDelayed(new Runnable() {
+                        @Override
+                        public void run() {
+                            try {
+                                Log.i(TAG, "Injecting XHR Hook (after loadDataWithBaseURL)...");
+                                Method evalJs = webView.getClass().getDeclaredMethod("evaluateJavascript",
+                                        String.class, Class.forName("android.webkit.ValueCallback"));
+                                evalJs.invoke(webView, XHR_HOOK_SCRIPT, null);
+                                Log.i(TAG, "✓ XHR Hook injected (loadDataWithBaseURL)");
+                            } catch (Throwable e) {
+                                Log.e(TAG, "Failed to inject XHR Hook (loadDataWithBaseURL)", e);
+                            }
+                        }
+                    }, 2000); // 延迟 2 秒
                 }
             });
         } catch (Throwable e) { /* ignore */ }
@@ -1530,7 +1690,14 @@ public class MainHook {
                 try {
                     Object jsInterface = callFrame.args[0];
                     String name = (String) callFrame.args[1];
-                    Log.i(TAG, "WebView.addJavascriptInterface: name=" + name + " class=" + jsInterface.getClass().getName());
+                    String className = jsInterface.getClass().getName();
+                    Log.i(TAG, "WebView.addJavascriptInterface: name=" + name + " class=" + className);
+
+                    // 如果是 ClientRequestHX，深度 Hook 所有方法
+                    if (className.contains("ClientRequestHX")) {
+                        Log.i(TAG, "=== Detected ClientRequestHX! Deep hooking all methods ===");
+                        deepHookClientRequestHX(jsInterface);
+                    }
 
                     // 枚举所有带 @JavascriptInterface 注解的方法
                     for (Method m : jsInterface.getClass().getDeclaredMethods()) {
@@ -1553,9 +1720,20 @@ public class MainHook {
                                                 } else if (arg instanceof String) {
                                                     String s = (String) arg;
 
-                                                    // 特殊处理 onActionEvent 中的 clientRequestHX，提取认证参数
-                                                    if (m.getName().equals("onActionEvent") && s.contains("clientRequestHX") && s.contains("trade.5ifund.com")) {
-                                                        extractAuthFromJSBridge(s);
+                                                    // 特殊处理 onActionEvent 中的 clientRequestHX
+                                                    if (m.getName().equals("onActionEvent") && s.contains("clientRequestHX")) {
+                                                        // 尝试拦截并用 Native HTTP 处理
+                                                        String result = interceptClientRequestHX(s, frame.thisObject);
+                                                        if (result != null) {
+                                                            // 成功拦截，阻止原始方法执行
+                                                            Log.i(TAG, ">>> INTERCEPTED clientRequestHX, handled natively");
+                                                            frame.setResult(null);
+                                                            return;
+                                                        }
+                                                        // 提取认证参数（如果没有拦截）
+                                                        if (s.contains("trade.5ifund.com")) {
+                                                            extractAuthFromJSBridge(s);
+                                                        }
                                                     }
 
                                                     // 捕获购买相关的JSBridge调用
@@ -3272,5 +3450,388 @@ public class MainHook {
             Log.e(TAG, "callJSBridge failed", e);
             return "{\"success\":false,\"error\":\"" + e.getMessage() + "\",\"stack\":\"" + Log.getStackTraceString(e) + "\"}";
         }
+    }
+
+    /**
+     * 深度 Hook ClientRequestHX 实例的所有方法
+     * 目标：追踪它如何发起 HTTP 请求，找到真实的请求方法
+     */
+    private static void deepHookClientRequestHX(Object clientRequestInstance) {
+        try {
+            Class<?> clientRequestClass = clientRequestInstance.getClass();
+            Log.i(TAG, "=== Deep hooking ClientRequestHX instance ===");
+            Log.i(TAG, "Class: " + clientRequestClass.getName());
+
+            // 列出所有方法
+            Method[] allMethods = clientRequestClass.getDeclaredMethods();
+            Log.i(TAG, "Total methods: " + allMethods.length);
+
+            for (Method method : allMethods) {
+                Class<?>[] paramTypes = method.getParameterTypes();
+                StringBuilder paramStr = new StringBuilder();
+                for (int i = 0; i < paramTypes.length; i++) {
+                    if (i > 0) paramStr.append(", ");
+                    paramStr.append(paramTypes[i].getSimpleName());
+                }
+                Log.i(TAG, "  " + method.getName() + "(" + paramStr.toString() + ") -> " + method.getReturnType().getSimpleName());
+
+                // Hook 所有方法
+                try {
+                    method.setAccessible(true);
+                    Pine.hook(method, new MethodHook() {
+                        @Override
+                        public void beforeCall(Pine.CallFrame callFrame) {
+                            StringBuilder log = new StringBuilder();
+                            log.append("ClientRequestHX.").append(method.getName()).append("(");
+
+                            if (callFrame.args != null && callFrame.args.length > 0) {
+                                for (int i = 0; i < callFrame.args.length; i++) {
+                                    if (i > 0) log.append(", ");
+                                    Object arg = callFrame.args[i];
+                                    if (arg == null) {
+                                        log.append("null");
+                                    } else {
+                                        String argStr = arg.toString();
+                                        if (argStr.length() > 200) {
+                                            argStr = argStr.substring(0, 200) + "...[" + argStr.length() + "]";
+                                        }
+                                        log.append(argStr);
+                                    }
+                                }
+                            }
+                            log.append(")");
+                            Log.i(TAG, log.toString());
+
+                            // 打印调用堆栈，找出调用链
+                            if (method.getName().contains("request") || method.getName().contains("execute")
+                                || method.getName().contains("send") || method.getName().contains("call")) {
+                                Log.i(TAG, "  [STACK TRACE]:");
+                                StackTraceElement[] stack = Thread.currentThread().getStackTrace();
+                                for (int i = 0; i < Math.min(15, stack.length); i++) {
+                                    StackTraceElement e = stack[i];
+                                    if (e.getClassName().contains("hexin") || e.getClassName().contains("okhttp")
+                                        || e.getClassName().contains("http")) {
+                                        Log.i(TAG, "    -> " + e.getClassName() + "." + e.getMethodName() + ":" + e.getLineNumber());
+                                    }
+                                }
+                            }
+                        }
+
+                        @Override
+                        public void afterCall(Pine.CallFrame callFrame) {
+                            Object result = callFrame.getResult();
+                            if (result != null) {
+                                String resultStr = result.toString();
+                                if (resultStr.length() > 500) {
+                                    resultStr = resultStr.substring(0, 500) + "...[" + resultStr.length() + "]";
+                                }
+                                Log.i(TAG, "  ClientRequestHX." + method.getName() + " -> " + resultStr);
+                            }
+                        }
+                    });
+                } catch (Throwable e) {
+                    Log.w(TAG, "Failed to hook method: " + method.getName() + " - " + e.getMessage());
+                }
+            }
+
+            Log.i(TAG, "=== ClientRequestHX deep hooks installed ===");
+
+        } catch (Throwable e) {
+            Log.e(TAG, "Failed to deep hook ClientRequestHX", e);
+        }
+    }
+
+    /**
+     * Hook ClientRequestHX 类（从 ClassLoader 加载）
+     * 这个方法在 installAllHooks() 中调用，但通常会失败，因为 ClientRequestHX 在 WebView ClassLoader 中
+     * 真正的 Hook 发生在 deepHookClientRequestHX() 中
+     */
+    private static void hookClientRequestHX(ClassLoader cl) throws Throwable {
+        Log.i(TAG, "Attempting to hook ClientRequestHX from main ClassLoader (may fail)");
+        try {
+            Class<?> clientRequestClass = cl.loadClass("com.hexin.android.bank.hxminiapp.js.ClientRequestHX");
+            Log.i(TAG, "Found ClientRequestHX in main ClassLoader!");
+            // 如果找到了，也可以 Hook，但这种情况很少
+        } catch (ClassNotFoundException e) {
+            Log.i(TAG, "ClientRequestHX not in main ClassLoader (expected, will hook when WebView loads)");
+        }
+    }
+
+    /**
+     * 拦截 clientRequestHX 调用，用 Native HTTP 库处理请求
+     * 返回 non-null 表示成功拦截，null 表示继续原流程
+     */
+    private static String interceptClientRequestHX(String jsonStr, Object jsBridgeInstance) {
+        try {
+            // 记录完整的 JSBridge 调用数据
+            Log.i(TAG, ">>> clientRequestHX called with: " + jsonStr.substring(0, Math.min(500, jsonStr.length())));
+
+            // 暂时禁用拦截，让原始 JSBridge 处理
+            return null;
+
+            /* DISABLED FOR DEBUGGING - START
+            // 必须先检查 WebView 是否可用，否则响应无法返回
+            if (latestWebView == null) {
+                Log.i(TAG, ">>> latestWebView is null, skip interception");
+                return null; // 不拦截，让原始 JSBridge 处理
+            }
+
+            Log.i(TAG, ">>> Attempting to intercept clientRequestHX");
+
+            // 解析 JSON：[{"handlerName":"clientRequestHX","data":{...},"callbackId":"cb_..."}]
+            if (!jsonStr.startsWith("[")) return null;
+
+            // 提取第一个对象
+            int firstBrace = jsonStr.indexOf('{');
+            int lastBrace = jsonStr.lastIndexOf('}');
+            if (firstBrace < 0 || lastBrace < 0) return null;
+
+            String requestJson = jsonStr.substring(firstBrace, lastBrace + 1);
+
+            // 提取 handlerName
+            String handlerName = extractJsonString(requestJson, "handlerName");
+            if (!"clientRequestHX".equals(handlerName)) return null;
+
+            // 提取 callbackId
+            String callbackId = extractJsonString(requestJson, "callbackId");
+            if (callbackId == null || callbackId.isEmpty()) {
+                Log.w(TAG, "No callbackId found");
+                return null;
+            }
+
+            // 提取 data 对象
+            String dataJson = extractJsonObject(requestJson, "data");
+            if (dataJson == null) {
+                Log.w(TAG, "No data object found");
+                return null;
+            }
+
+            // 从 data 中提取请求参数
+            String method = extractJsonString(dataJson, "method");
+            String url = extractJsonString(dataJson, "url");
+
+            if (url == null || url.isEmpty()) {
+                Log.w(TAG, "No URL found");
+                return null;
+            }
+
+            Log.i(TAG, ">>> Intercepted: " + method + " " + url);
+
+            // 在新线程中发起 Native HTTP 请求
+            final Object webView = latestWebView;
+            new Thread(() -> {
+                try {
+                    String responseData = executeNativeHttpRequest(method, url, dataJson);
+
+                    // 构造响应 JSON
+                    String response = "{\"responseId\":\"" + callbackId + "\",\"responseData\":" + responseData + "}";
+
+                    // 通过 evaluateJavascript 返回给 H5
+                    if (webView != null) {
+                        String jsCode = "javascript:(function(){" +
+                                "if(window.WebViewJavascriptBridge && " +
+                                "typeof window.WebViewJavascriptBridge._handleMessageFromObjC === 'function'){" +
+                                "window.WebViewJavascriptBridge._handleMessageFromObjC('" +
+                                response.replace("'", "\\'").replace("\n", "\\n") + "');" +
+                                "}})();";
+
+                        // 在主线程执行
+                        new android.os.Handler(android.os.Looper.getMainLooper()).post(() -> {
+                            try {
+                                java.lang.reflect.Method evalMethod = webView.getClass().getMethod(
+                                        "evaluateJavascript", String.class,
+                                        Class.forName("android.webkit.ValueCallback"));
+                                evalMethod.invoke(webView, jsCode, null);
+                                Log.i(TAG, ">>> Response delivered via evaluateJavascript");
+                            } catch (Exception e) {
+                                Log.e(TAG, "Failed to deliver response", e);
+                            }
+                        });
+                    }
+                } catch (Exception e) {
+                    Log.e(TAG, "Native HTTP request failed", e);
+                }
+            }).start();
+
+            return "intercepted"; // 返回 non-null 表示已拦截
+            DISABLED FOR DEBUGGING - END */
+        } catch (Exception e) {
+            Log.e(TAG, "interceptClientRequestHX failed", e);
+            return null;
+        }
+    }
+
+    /**
+     * 使用 Native HTTP 库执行请求
+     */
+    private static String executeNativeHttpRequest(String method, String url, String dataJson) throws Exception {
+        Log.i(TAG, ">>> Executing native HTTP: " + method + " " + url);
+
+        // 提取 params
+        String paramsJson = extractJsonObject(dataJson, "params");
+
+        // 提取 Header
+        String headerJson = extractJsonObject(dataJson, "Header");
+
+        // 优先使用 OkHttp
+        if (domainClients.size() > 0) {
+            return executeWithOkHttp(method, url, paramsJson, headerJson);
+        } else {
+            return executeWithHttpURLConnection(method, url, paramsJson, headerJson);
+        }
+    }
+
+    /**
+     * 使用 OkHttp 执行请求
+     */
+    private static String executeWithOkHttp(String method, String url, String paramsJson, String headerJson) throws Exception {
+        // 获取任意一个 OkHttpClient（优先 trade.5ifund.com 域名的）
+        Object client = null;
+        for (Object c : domainClients.values()) {
+            client = c;
+            break;
+        }
+        if (client == null) {
+            throw new Exception("No OkHttpClient available");
+        }
+
+        ClassLoader cl = client.getClass().getClassLoader();
+        Class<?> requestBuilderClass = cl.loadClass("okhttp3.Request$Builder");
+        Class<?> requestClass = cl.loadClass("okhttp3.Request");
+        Class<?> responseClass = cl.loadClass("okhttp3.Response");
+        Class<?> requestBodyClass = cl.loadClass("okhttp3.RequestBody");
+        Class<?> mediaTypeClass = cl.loadClass("okhttp3.MediaType");
+
+        // 创建 Request.Builder
+        Object builder = requestBuilderClass.getDeclaredConstructor().newInstance();
+        java.lang.reflect.Method urlMethod = requestBuilderClass.getMethod("url", String.class);
+        builder = urlMethod.invoke(builder, url);
+
+        // 添加 Headers
+        if (headerJson != null && !headerJson.isEmpty()) {
+            // TODO: 解析 Header JSON 并添加
+        }
+
+        // 构造请求
+        if ("POST".equalsIgnoreCase(method) && paramsJson != null && !paramsJson.isEmpty()) {
+            // 创建 RequestBody
+            java.lang.reflect.Method parseMethod = mediaTypeClass.getMethod("parse", String.class);
+            Object mediaType = parseMethod.invoke(null, "application/json; charset=utf-8");
+
+            java.lang.reflect.Method createMethod = requestBodyClass.getMethod("create",
+                    mediaTypeClass, String.class);
+            Object body = createMethod.invoke(null, mediaType, paramsJson);
+
+            java.lang.reflect.Method postMethod = requestBuilderClass.getMethod("post", requestBodyClass);
+            builder = postMethod.invoke(builder, body);
+        } else {
+            java.lang.reflect.Method getMethod = requestBuilderClass.getMethod("get");
+            builder = getMethod.invoke(builder);
+        }
+
+        // 构建 Request
+        java.lang.reflect.Method buildMethod = requestBuilderClass.getMethod("build");
+        Object request = buildMethod.invoke(builder);
+
+        // 执行请求
+        java.lang.reflect.Method newCallMethod = client.getClass().getMethod("newCall", requestClass);
+        Object call = newCallMethod.invoke(client, request);
+
+        java.lang.reflect.Method executeMethod = call.getClass().getMethod("execute");
+        Object response = executeMethod.invoke(call);
+
+        // 读取响应
+        java.lang.reflect.Method bodyMethod = responseClass.getMethod("body");
+        Object responseBody = bodyMethod.invoke(response);
+
+        java.lang.reflect.Method stringMethod = responseBody.getClass().getMethod("string");
+        String responseStr = (String) stringMethod.invoke(responseBody);
+
+        Log.i(TAG, ">>> Native HTTP response: " + responseStr.substring(0, Math.min(500, responseStr.length())));
+
+        return responseStr;
+    }
+
+    /**
+     * 使用 HttpURLConnection 执行请求
+     */
+    private static String executeWithHttpURLConnection(String method, String url, String paramsJson, String headerJson) throws Exception {
+        Log.i(TAG, ">>> Using HttpURLConnection");
+
+        java.net.URL urlObj = new java.net.URL(url);
+        java.net.HttpURLConnection conn = (java.net.HttpURLConnection) urlObj.openConnection();
+
+        conn.setRequestMethod(method);
+        conn.setConnectTimeout(30000);
+        conn.setReadTimeout(30000);
+
+        // 添加默认 Headers
+        conn.setRequestProperty("User-Agent", "Mozilla/5.0");
+        conn.setRequestProperty("Accept", "application/json");
+
+        // 从 WebView CookieManager 中读取 Cookie
+        try {
+            Class<?> cookieManagerClass = Class.forName("android.webkit.CookieManager");
+            java.lang.reflect.Method getInstance = cookieManagerClass.getMethod("getInstance");
+            Object cookieManager = getInstance.invoke(null);
+            java.lang.reflect.Method getCookie = cookieManagerClass.getMethod("getCookie", String.class);
+            String cookies = (String) getCookie.invoke(cookieManager, url);
+            if (cookies != null && !cookies.isEmpty()) {
+                conn.setRequestProperty("Cookie", cookies);
+                Log.i(TAG, ">>> Added Cookie: " + cookies.substring(0, Math.min(100, cookies.length())));
+            } else {
+                Log.w(TAG, ">>> No cookies found for: " + url);
+            }
+        } catch (Exception e) {
+            Log.e(TAG, ">>> Failed to get cookies: " + e.getMessage());
+        }
+
+        // 解析并添加自定义 Headers
+        if (headerJson != null && !headerJson.isEmpty()) {
+            Log.i(TAG, ">>> Adding custom headers from: " + headerJson);
+            String[] headerPairs = headerJson.replace("{", "").replace("}", "").split(",");
+            for (String pair : headerPairs) {
+                int colonIdx = pair.indexOf(":");
+                if (colonIdx > 0) {
+                    String key = pair.substring(0, colonIdx).trim();
+                    String value = pair.substring(colonIdx + 1).trim();
+                    // 去掉引号
+                    if (key.startsWith("\"") && key.endsWith("\"")) key = key.substring(1, key.length() - 1);
+                    if (value.startsWith("\"") && value.endsWith("\"")) value = value.substring(1, value.length() - 1);
+                    if (!key.isEmpty() && !value.isEmpty()) {
+                        conn.setRequestProperty(key, value);
+                        Log.i(TAG, ">>> Added header: " + key + " = " + value.substring(0, Math.min(50, value.length())));
+                    }
+                }
+            }
+        }
+
+        if ("POST".equalsIgnoreCase(method) && paramsJson != null && !paramsJson.isEmpty()) {
+            conn.setDoOutput(true);
+            conn.setRequestProperty("Content-Type", "application/json; charset=utf-8");
+
+            java.io.OutputStream os = conn.getOutputStream();
+            os.write(paramsJson.getBytes("UTF-8"));
+            os.flush();
+            os.close();
+        }
+
+        int responseCode = conn.getResponseCode();
+        Log.i(TAG, ">>> Response code: " + responseCode);
+
+        java.io.InputStream is = (responseCode < 400) ? conn.getInputStream() : conn.getErrorStream();
+        java.io.BufferedReader reader = new java.io.BufferedReader(new java.io.InputStreamReader(is, "UTF-8"));
+        StringBuilder sb = new StringBuilder();
+        String line;
+        while ((line = reader.readLine()) != null) {
+            sb.append(line);
+        }
+        reader.close();
+        conn.disconnect();
+
+        String responseStr = sb.toString();
+        Log.i(TAG, ">>> HttpURLConnection response: " + responseStr.substring(0, Math.min(500, responseStr.length())));
+
+        return responseStr;
     }
 }

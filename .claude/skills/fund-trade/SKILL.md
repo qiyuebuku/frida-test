@@ -6,7 +6,7 @@ user-invocable: true
 
 # 基金智能交易 Skill
 
-## 参数解析
+## 命令列表
 
 ```bash
 /fund-trade <command> [options]
@@ -14,7 +14,6 @@ user-invocable: true
 
 | 命令 | 说明 |
 |------|------|
-| `init` | 安装依赖 + 建表 + 生成默认 config.json |
 | `run` | **核心命令**：采集数据+新闻 → Claude 分析决策 → 执行交易 |
 | `run --dry` | 模拟运行，只看决策不执行交易 |
 | `select [偏股\|偏债\|指数]` | AI 从排行榜选基金，推荐加入池 |
@@ -25,488 +24,67 @@ user-invocable: true
 | `lessons` | 查看经验知识库 |
 | `config` | 查看/修改基金池和风控参数 |
 | `alipay [文件路径]` | **支付宝持仓管理**：解析 OCR 文本 → 分析 → 手动操作建议 |
+| `ocr-analyze [action]` | **截屏持仓分析**：从 sa_ocr_records 读取 OCR 数据 → 市场分析 → 持仓建议 |
 
 ---
 
 ## 前置条件
 
-1. **zygisk hook 模块已安装**：在 KernelSU 中安装 `thshook_zygisk.zip` 模块
-2. **同花顺 API 服务端已启动**：`cd /home/yuyang/frida-test/ths/api && python server.py`（监听 8900 端口）
-3. **PostgreSQL 已运行**：127.0.0.1:5432，dbname=jettask
-4. **同花顺 App 可用**：启动 App 后，zygisk hook 会自动注入并启动 HTTP 服务器（18900端口）
-5. **adb 连接正常**：需要通过 `adb forward tcp:18900 tcp:18900` 访问手机的服务
-
-**三层架构说明**：
-```
-Client 层: fund-trade/client.py (7K)
-    ↓ HTTP (localhost:8900)
-Server 层: ths/api/server.py (43K) + ths_fund_client.py (178K)
-    ↓ HTTP (localhost:18900, via adb forward)
-Hook 层: zygisk hook 模块 (Java/Kotlin, 运行在手机)
-    ↓ 注入到同花顺 App，启动 HTTP 服务器 (0.0.0.0:18900)
-    ↓ 通过 WebView JSBridge 获取认证参数
-同花顺 App
-```
-
-- **Client 层**（`.claude/skills/fund-trade/`）：轻量级 HTTP 客户端，仅负责请求转发
-- **Server 层**（`/home/yuyang/frida-test/ths/api/`）：包含所有业务逻辑、API 调用、数据库操作
-- **Hook 层**（`/home/yuyang/frida-test/ths/zygisk/`）：zygisk hook 模块注入到同花顺 App，启动 HTTP 服务器，实时获取认证参数
-
----
-
-## 命令调用说明
-
-**重要**：新架构下，所有业务逻辑在 Server 层，有两种调用方式：
-
-### 方式 1：通过 client.py（推荐用于交易、风控、量化、复盘）
-
-```bash
-cd /home/yuyang/frida-test/.claude/skills/fund-trade
-python client.py <command> [args]
-```
-
-支持的命令：
-- `buy`, `sell`, `position`, `orders` - 交易相关
-- `snapshot`, `preflight` - 风控相关
-- `evaluate` - 量化信号
-- `review` - 决策复盘
-
-### 方式 2：直接调用 Server 层脚本（用于数据采集、数据库操作）
-
-```bash
-# 数据库操作
-cd /home/yuyang/frida-test/ths/api
-python fund_db.py <command>
-
-# 数据采集
-cd /home/yuyang/frida-test/ths/api
-python -c "from ths_fund_client import THSFundClient; import asyncio; ..."
-```
-
-**重要说明 - 命令执行路径**：
-
-1. **通过 client.py 调用**（✅ 推荐，所有功能已封装成 HTTP API）：
-   ```bash
-   # 在 fund-trade/ 目录下执行
-   cd /home/yuyang/frida-test/.claude/skills/fund-trade
-   python client.py <command>
-   ```
-
-   **支持的命令分类**：
-   - **交易**：`buy`, `sell`, `position`, `orders`
-   - **风控**：`snapshot`, `preflight`
-   - **量化**：`evaluate`
-   - **复盘**：`review`, `create-reviews`, `pending-reviews`, `review-stats`, `lessons`
-   - **决策**：`today-decisions`, `recent-decisions`, `watch-streaks`
-   - **数据采集**：`scan`, `scan-summary`, `sync`
-   - **账户信息**：`account-overview`, `wallet-info`, `wallet-home`
-
-2. **直接调用 HTTP API**（对于未封装到 client.py 的功能）：
-   ```bash
-   # 示例：获取市场数据
-   curl http://localhost:8900/api/market/overview
-   curl http://localhost:8900/api/market/hot_board
-   curl http://localhost:8900/api/fund/<code>/holdings
-   ```
-
-3. **文档中的简化写法**：
-   - `python client.py xxx` 表示在 fund-trade/ 目录下执行
-   - `curl http://localhost:8900/api/xxx` 表示直接调用 HTTP API
-   - 实际使用时需要确保 server.py 正在运行（8900端口）
+1. **服务端已部署**：`http://119.23.227.187:8900`（远程公网，通过 frp 映射）
+2. **PostgreSQL 已运行**：远程服务器 127.0.0.1:5432，dbname=jettask
+3. **认证参数已配置**：`auth_cache.json` 中包含有效的认证 token（通过 `python client.py refresh-token` 刷新）
 
 ---
 
 ## 命令分发逻辑
 
-### `/fund-trade init`
+### `/fund-trade run` （核心命令，Step 0 到 Step 7）
 
+**这是交互式命令，Claude 自身作为决策引擎。**
+
+#### Step 0: 服务检查 + 前置检查
+
+**0a. 服务连通性检查**：
 ```bash
-# 1. 安装 Python 依赖
-pip install psycopg2-binary requests fastapi uvicorn aiohttp
-
-# 2. 初始化数据库（建表）
-cd /home/yuyang/frida-test/ths/api
-python -c "from fund_db import init_db; init_db()"
-
-# 3. 安装 zygisk hook 模块（手机端）
-# 在 KernelSU 中安装 /home/yuyang/frida-test/ths/zygisk/thshook_zygisk.zip
-# 模块安装后，同花顺 App 启动时会自动注入 hook 并启动 HTTP 服务器（18900端口）
-
-# 4. 启动 FastAPI 服务器（PC 端）
-cd /home/yuyang/frida-test/ths/api
-nohup python server.py > /tmp/fund-server.log 2>&1 &
-
-# 5. 设置 adb forward（PC 端）
-/mnt/d/123pan/Downloads/一加Ace6/adb命令行/adb.exe -s 3B15BJ00GZL00000 forward tcp:18900 tcp:18900
-
-# 6. 启动同花顺 App（手机端）
-/mnt/d/123pan/Downloads/一加Ace6/adb命令行/adb.exe -s 3B15BJ00GZL00000 shell monkey -p com.hexin.plat.android -c android.intent.category.LAUNCHER 1
+curl -s --noproxy '*' --connect-timeout 3 http://119.23.227.187:8900/health
 ```
 
-然后：
-1. 确认 `.claude/skills/fund-trade/config.json` 存在（基金池为空，需用户添加或通过 select 推荐）
-2. 配置交易密码（存 `config.json` 的 `trade_password` 字段）：
-   ```json
-   {
-     "server_url": "http://localhost:8900",
-     "trade_password": "你的同花顺交易密码",
-     "timeout": 60
-   }
-   ```
-
----
-
-### `/fund-trade run` （核心命令，8 步流程：Step -1 到 Step 6）
-
-**这是交互式命令，Claude 自身作为决策引擎。** 按以下步骤执行：
-
-#### Step -1: 重启 API 服务端（确保使用最新代码）
-
-**重要：每次启动 skill 时必须重启服务端，避免运行旧代码。**
-
+如果服务不可用，通过部署脚本重启：
 ```bash
-# 1. 杀掉旧的 uvicorn 进程
-echo "正在重启 API 服务端..."
-ps aux | grep "uvicorn.*server:app" | grep -v grep | awk '{print $2}' | xargs -r kill -9
-
-# 2. 等待端口释放
-sleep 2
-
-# 3. 启动新的服务端（使用最新代码）
-cd /home/yuyang/frida-test/ths/api
-nohup python -m uvicorn server:app --host 0.0.0.0 --port 8900 > /tmp/fund-server.log 2>&1 &
-
-# 4. 等待服务启动
-sleep 3
-
-# 5. 验证服务端是否正常启动
-echo "验证服务端状态..."
-SERVER_STATUS=$(curl -s http://localhost:8900/docs 2>&1 | head -c 20)
-if [ -z "$SERVER_STATUS" ]; then
-    echo "❌ 服务端启动失败，查看日志："
-    tail -20 /tmp/fund-server.log
-    exit 1
-else
-    echo "✅ API 服务端已重启 (端口 8900)"
-fi
+cd /home/yuyang/frida-test/smart-fund-server && bash deploy.sh --restart
 ```
 
-#### Step 0: 连通性检查 + 持仓同步 + 待确认订单检查
-
-**0a. JSBridge 连通性检查和自动修复**（非 `--dry` 模式必须检查）：
-
-**重要：必须在第一时间检查 JSBridge (18900端口) 是否联通，如果不联通则自动启动同花顺 App。**
-
-**架构说明**：
-- **手机端**：zygisk hook 模块（Java/Kotlin 实现）注入到同花顺 App，启动 HTTP 服务器监听 0.0.0.0:18900，提供 JSBridge 接口
-- **PC 端**：通过 `adb forward tcp:18900 tcp:18900` 将 PC 的 18900 映射到手机的 18900，`ths_fund_client.py` 访问 http://localhost:18900
-
-**检查和修复流程**（按顺序执行）：
-
+**0b. 前置检查**：
 ```bash
-ADB="/mnt/d/123pan/Downloads/一加Ace6/adb命令行/adb.exe"
-DEVICE="3B15BJ00GZL00000"
-
-# 1. 设置 adb forward（映射 PC:18900 -> 手机:18900）
-echo "设置 adb forward..."
-$ADB -s $DEVICE forward tcp:18900 tcp:18900
-
-# 2. 测试 JSBridge 连通性和 WebView 可用性（⚠️ 必须 --noproxy '*'）
-echo "测试 JSBridge 连通性..."
-JSBRIDGE_RESPONSE=$(curl -s --noproxy '*' --connect-timeout 3 http://127.0.0.1:18900/auth 2>&1)
-
-# 2a. 检查是否连通（返回了 JSON）
-if [ -z "$JSBRIDGE_RESPONSE" ] || echo "$JSBRIDGE_RESPONSE" | grep -q "Connection refused\|Failed to connect"; then
-    echo "⚠️ JSBridge 不可达，开始自动修复..."
-# 2b. 检查 WebView 是否可用（返回的 JSON 中 available=true）
-elif ! echo "$JSBRIDGE_RESPONSE" | grep -q '"available":true'; then
-    echo "⚠️ JSBridge 连通但 WebView 不可用（App 可能在非交易页面）"
-    echo "JSBridge 响应: $JSBRIDGE_RESPONSE"
-
-    # 截图查看当前页面
-    echo "正在截图查看 App 当前页面..."
-    $ADB -s $DEVICE exec-out screencap -p > /tmp/ths_screenshot_before.png 2>&1
-
-    # 尝试导航到交易页面（点击底部"交易"按钮）
-    echo "尝试导航到交易页面..."
-    # 同花顺底部导航栏"交易"按钮的大致坐标（根据1080x2412分辨率估算）
-    # 从左到右依次是：自选、行情、交易、资讯、我的
-    # 交易按钮大约在屏幕底部中央，坐标约 (540, 2300)
-    $ADB -s $DEVICE shell input tap 540 2300
-
-    echo "等待页面加载..."
-    sleep 3
-
-    # 再次截图确认
-    $ADB -s $DEVICE exec-out screencap -p > /tmp/ths_screenshot_after.png 2>&1
-
-    # 重新测试 JSBridge
-    echo "重新测试 JSBridge..."
-    JSBRIDGE_RESPONSE=$(curl -s --noproxy '*' --connect-timeout 5 http://127.0.0.1:18900/auth 2>&1)
-
-    if ! echo "$JSBRIDGE_RESPONSE" | grep -q '"available":true'; then
-        echo "❌ 导航后 WebView 仍不可用"
-        echo "当前 JSBridge 响应: $JSBRIDGE_RESPONSE"
-        echo ""
-        echo "请手动操作："
-        echo "  1. 在手机上打开同花顺 App"
-        echo "  2. 点击底部的【交易】标签"
-        echo "  3. 进入【持仓】或【基金】页面"
-        echo "  4. 保持在该页面，不要切换"
-        echo ""
-        echo "截图已保存："
-        echo "  - 导航前: /tmp/ths_screenshot_before.png"
-        echo "  - 导航后: /tmp/ths_screenshot_after.png"
-        exit 1
-    else
-        echo "✅ WebView 已可用（导航成功）"
-    fi
-
-else
-    # 3. 检查同花顺 App 是否运行（不一定要在前台）
-    echo "检查同花顺 App 是否运行..."
-    APP_RUNNING=$($ADB -s $DEVICE shell ps | grep com.hexin.plat.android | wc -l)
-
-    if [ "$APP_RUNNING" -eq "0" ]; then
-        echo "同花顺 App 未运行，正在启动..."
-
-        # 4. 启动同花顺 App（zygisk hook 会随 App 启动自动注入，HTTP 服务器会自动启动）
-        $ADB -s $DEVICE shell monkey -p com.hexin.plat.android -c android.intent.category.LAUNCHER 1
-
-        echo "等待 App 和 JSBridge 启动..."
-        sleep 10
-
-        # 导航到交易页面
-        echo "导航到交易页面..."
-        $ADB -s $DEVICE shell input tap 540 2300
-        sleep 3
-
-        # 5. 重新测试 JSBridge 和 WebView
-        echo "重新测试 JSBridge..."
-        JSBRIDGE_RESPONSE=$(curl -s --noproxy '*' --connect-timeout 5 http://127.0.0.1:18900/auth 2>&1)
-
-        if ! echo "$JSBRIDGE_RESPONSE" | grep -q '"available":true'; then
-            echo "❌ 启动 App 后 WebView 仍不可用"
-            echo "当前 JSBridge 响应: $JSBRIDGE_RESPONSE"
-            echo ""
-            echo "可能原因："
-            echo "   1. zygisk hook 模块未启用（检查 KernelSU 模块）"
-            echo "   2. zygisk hook 注入失败或 HTTP 服务器启动失败"
-            echo "   3. App 的 WebView 未完全初始化"
-            echo ""
-            echo "建议手动检查："
-            echo "   - 检查 KernelSU 模块: adb shell su -c 'ksud module list'"
-            echo "   - 检查 18900 端口: adb shell netstat -tuln | grep 18900"
-            echo "   - 查看 hook 日志: adb logcat | grep -iE 'thshook|zygisk'"
-
-            # 截图查看当前状态
-            echo ""
-            echo "正在截图查看 App 当前状态..."
-            $ADB -s $DEVICE exec-out screencap -p > /tmp/ths_screenshot.png 2>&1
-            # 使用 Read 工具查看截图，判断 App 是否正常加载
-
-            # 如果是 --auto 模式，退出；否则询问用户
-            if [ "$AUTO_MODE" = "true" ]; then
-                echo "❌ 自动模式下 JSBridge 修复失败，退出"
-                exit 1
-            fi
-        else
-            echo "✅ JSBridge 已连通，WebView 可用（App 启动后）"
-        fi
-    else
-        echo "⚠️ 同花顺 App 已在运行，但 JSBridge 不响应"
-        echo "可能原因：zygisk hook 未生效或 HTTP 服务器启动失败"
-        echo ""
-        echo "尝试重启 App（重新触发 zygisk 注入）..."
-
-        # 强制停止并重新启动（重新触发 zygisk 注入）
-        $ADB -s $DEVICE shell am force-stop com.hexin.plat.android
-        sleep 2
-        $ADB -s $DEVICE shell monkey -p com.hexin.plat.android -c android.intent.category.LAUNCHER 1
-        echo "等待 App 和 HTTP 服务器重新启动..."
-        sleep 10
-
-        # 导航到交易页面
-        echo "导航到交易页面..."
-        $ADB -s $DEVICE shell input tap 540 2300
-        sleep 3
-
-        # 重新测试
-        JSBRIDGE_RESPONSE=$(curl -s --noproxy '*' --connect-timeout 5 http://127.0.0.1:18900/auth 2>&1)
-        if ! echo "$JSBRIDGE_RESPONSE" | grep -q '"available":true'; then
-            echo "❌ 重启 App 后 WebView 仍不可用，需要手动排查"
-            echo "当前 JSBridge 响应: $JSBRIDGE_RESPONSE"
-            echo ""
-
-            # 截图查看 App 状态
-            echo "正在截图查看 App 状态..."
-            $ADB -s $DEVICE exec-out screencap -p > /tmp/ths_screenshot.png 2>&1
-            # 使用 Read 工具查看截图
-
-            # 检查 18900 端口是否在监听
-            echo ""
-            echo "检查手机 18900 端口状态:"
-            $ADB -s $DEVICE shell netstat -tuln | grep 18900 || echo "端口未监听"
-
-            if [ "$AUTO_MODE" = "true" ]; then
-                echo "❌ 自动模式下 JSBridge 修复失败，退出"
-                exit 1
-            fi
-        else
-            echo "✅ JSBridge 已连通，WebView 可用（重启 App 后）"
-        fi
-    fi
-fi
-
-# 6. 验证 server.py 可达（⚠️ 必须 --noproxy '*'）
-echo ""
-echo "验证 server.py (8900端口)..."
-SERVER_RESPONSE=$(curl -s --noproxy '*' --connect-timeout 3 http://127.0.0.1:8900/health 2>&1)
-if echo "$SERVER_RESPONSE" | grep -q "ok"; then
-    echo "✅ server.py 连通正常"
-else
-    echo "❌ server.py (8900端口) 不可达，请检查服务是否启动"
-    echo "启动命令: cd /home/yuyang/frida-test/ths/api && python server.py"
-fi
-```
-
-**重要说明**：
-- **WSL2 环境**：所有 curl 命令必须加 `--noproxy '*'`，否则会被 http_proxy 代理拦截返回 502
-- **架构理解**：zygisk hook 模块（Java/Kotlin）运行在**手机端**，注入到同花顺 App 后启动 HTTP 服务器监听 18900 端口
-- **自动启动**：启动同花顺 App 后，zygisk hook 会自动注入，HTTP 服务器会自动启动
-- **等待时间**：启动 App 后需等待 10 秒让 App 完全加载并让 HTTP 服务器启动
-- **自动模式**：如果是 `--auto` 模式且修复失败，直接退出；否则可以询问用户是否继续
-
-**如果上述自动修复失败，手动检查步骤**：
-
-```bash
-ADB="/mnt/d/123pan/Downloads/一加Ace6/adb命令行/adb.exe"
-DEVICE="3B15BJ00GZL00000"
-
-# 1. 检查 adb 连接
-$ADB devices
-
-# 2. 检查端口转发是否设置
-$ADB -s $DEVICE forward --list | grep 18900
-
-# 3. 检查同花顺 App 是否运行
-$ADB -s $DEVICE shell ps | grep com.hexin.plat.android
-
-# 4. 检查手机上 18900 端口是否在监听（说明 HTTP 服务器已启动）
-$ADB -s $DEVICE shell netstat -tuln | grep 18900
-# 或者
-$ADB -s $DEVICE shell ss -tuln | grep 18900
-
-# 5. 如果端口未监听，检查 zygisk 模块是否启用
-$ADB -s $DEVICE shell su -c "ksud module list"
-# 查看模块列表中是否包含 thshook 或类似名称
-
-# 6. 手动启动同花顺（会触发 zygisk 注入和 HTTP 服务器启动）
-$ADB -s $DEVICE shell monkey -p com.hexin.plat.android -c android.intent.category.LAUNCHER 1
-
-# 7. 强制重启 App（重新触发 zygisk 注入）
-$ADB -s $DEVICE shell am force-stop com.hexin.plat.android
-sleep 2
-$ADB -s $DEVICE shell monkey -p com.hexin.plat.android -c android.intent.category.LAUNCHER 1
-
-# 8. 查看日志（zygisk hook 和 HTTP 服务器的输出）
-$ADB -s $DEVICE logcat | grep -iE "thshook|zygisk|JSBridge"
-# 或者查看 tag 为 ThsHook 的日志
-$ADB -s $DEVICE logcat -s ThsHook:*
-
-# 9. 从 PC 测试 JSBridge 连通性
-curl -s --noproxy '*' --connect-timeout 5 http://127.0.0.1:18900/health
-
-# 10. 如果 curl 失败，检查是否被代理拦截
-echo $http_proxy
-echo $HTTP_PROXY
-# 如果有设置，使用 --noproxy '*' 或临时取消代理
-```
-
-**0b. 持仓同步 + 前置检查**：
-
-```bash
-# 通过轻量级客户端调用服务端
 cd /home/yuyang/frida-test/.claude/skills/fund-trade
 python client.py preflight
 ```
 
-sync 从同花顺真实账户同步持仓数据到 ft_positions，确保：
-- 已确认的持仓：同步市值、份额、成本、收益率
-- 待确认的买入：记入成本（份额暂为 0），避免被误判为"空仓"
-- 已全部赎回的基金：自动从 ft_positions 移除
-
-检查项：
-- 是否交易日（周一至周五）
-- 是否触发熔断（组合总亏损超过阈值）
-
-**注意**：即使过了交易截止时间（14:50），仍可执行交易。订单会在次日确认，如果市场风向变化可以撤销。
-
-如果 `can_trade=false` 且原因是熔断 → 告知用户原因，停止执行（`--dry` 模式可跳过连通性检查）。
-
-**0c. 待确认订单检查（重要！）**：
-
-检查是否有昨日/更早下单但尚未确认的订单：
-
-```bash
-cd /home/yuyang/frida-test/.claude/skills/fund-trade
-python client.py orders
-```
-
-如果有"处理中 [可撤]"的订单（`endFlag == "0" and processStatus == "1"`）：
-
-1. 获取该订单对应基金的**昨日决策理由**（从 `ft_pending_decisions` 或 `ft_decisions` 表）
-2. 与**今日市场概览**（Step 1）对比，判断市场风向是否变化
-3. 决策逻辑：
-   - **风向未变**（利好/利空因素仍在）→ 不撤销，让订单自然确认
-   - **风向逆转**（昨日利好变利空，或出现重大风险）→ 撤销订单：
-     ```bash
-     cd /home/yuyang/frida-test/.claude/skills/fund-trade
-     python client.py cancel <订单号>
-     ```
-   - 撤销后记录原因到 `ft_pending_decisions`（更新 cancel_reason）
-
-**示例决策**：
-- 昨日买入理由："AI 政策利好"，今日 AI 板块大跌 -3%+ 或出现利空政策 → 撤销
-- 昨日买入理由："黄金避险"，今日中东局势缓和、金价暴跌 → 撤销
-- 昨日买入理由："超跌反弹"，今日继续下跌但无新利空 → 不撤销（坚持左侧试仓逻辑）
+检查项：是否交易日、是否触发熔断。如果非交易日或已熔断，停止执行。
 
 #### Step 0.5: 自动复盘昨日决策
 
 ```bash
-cd /home/yuyang/frida-test/.claude/skills/fund-trade
 python client.py create-reviews
 python client.py pending-reviews
 ```
 
 如果有待复盘的决策：
-1. 采集相关基金最新净值（从 fund_api scan 缓存获取）
-2. 获取已有经验知识库：
-   ```bash
-   cd /home/yuyang/frida-test/.claude/skills/fund-trade
-   python client.py lessons
-   ```
-3. 读取 `/home/yuyang/frida-test/.claude/skills/fund-trade/prompts/review_decision.md` 模板，填入 pending_reviews + nav_data + existing_lessons
+1. 采集相关基金最新净值
+2. 获取已有经验知识库：`python client.py lessons`
+3. 读取 `prompts/review_decision.md` 模板
 4. Claude 对比决策日净值 vs T+1/T+2 净值，判定 outcome
-5. 将复盘结果写入 ft_reviews（调用 fund_db.py）
-6. 如果提炼出新经验，写入 ft_lessons（调用 fund_db.py）
-7. 如果验证了已有经验，更新可信度
-   - 验证 5+ 次且成功率 < 30% 的经验会被**自动废弃**
-8. 如果需要修正已有经验，创建新版本
-   - 旧经验标记为 `revised`，新经验继承分类和行业信息，confidence 重置为 low
-9. 向用户简要汇报复盘结果（正确/错误/平局数量 + 经验更新情况）
+5. 将复盘结果写入数据库
+6. 如果提炼出新经验，写入 ft_lessons
+7. 验证 5+ 次且成功率 < 30% 的经验会被**自动废弃**
 
-如果没有待复盘的决策，跳过此步。
-
-#### Step 1: 概览扫描 (Stage 1)
-
-**重要**：所有脚本输出到临时文件，**不要用 `2>&1`**（会把 stderr 警告混入 JSON 导致解析失败），**不要 pipe 内联解析**（数据量大容易出错）。
+#### Step 1: 概览扫描
 
 ```bash
-# 可以并行执行这 3 个命令（互不依赖）
+# 可以并行执行这 3 个命令
 python client.py evaluate > /tmp/ft_signals.json
 python client.py snapshot > /tmp/ft_snapshot.json
-# 注意：news-overview 暂时还需要通过 ths_fund_client 调用，建议封装后使用
+curl -s http://119.23.227.187:8900/api/news_overview > /tmp/ft_news.json
 ```
 
 执行完后用 Read 工具读取这 3 个文件。Claude 读取概览后：
@@ -514,156 +92,133 @@ python client.py snapshot > /tmp/ft_snapshot.json
 2. 板块涨跌 vs 基金池行业交叉匹配
 3. 输出"深入计划"（列出最多 6 个定向查询方向及理由）
 
-#### Step 2: 定向深入 (Stage 2)
+#### Step 2: 定向深入
 
 根据深入计划，动态调用新闻和市场 API（每次 1 个方向）：
-
-```bash
-# 示例（Claude 根据 Step 1 动态决定具体调用哪些）
-# 新闻主题
-curl http://localhost:8900/api/news_themes
-
-# 滚动快讯
-curl http://localhost:8900/api/news_feed
-
-# 热点板块
-curl http://localhost:8900/api/market/hot_board
-
-# 基金资讯
-curl http://localhost:8900/api/fund/<code>/news
-
-# 盘中异动
-curl http://localhost:8900/api/market/stock_changes
-```
 
 **可用模式**：
 | 模式 | 用法 | 说明 |
 |------|------|------|
-| `themes` | `news-drill themes` | 新闻主题列表 |
-| `theme` | `news-drill theme <id>` | 主题下的文章列表 |
-| `article` | `news-drill article <seq>` | 文章全文 |
-| `topic` | `news-drill topic <code>` | 话题详情 |
-| `headlines` | `news-drill headlines` | 推荐头条 |
-| `flash` | `news-drill flash <tag>` | 快讯 (a股/重要/公告/期货/异动/港股/美股) |
-| `fund-news` | `news-drill fund-news <code>` | 基金相关新闻 |
-| `changes` | `news-drill changes` | 大盘异动 |
-| `hot-board` | `news-drill hot-board [sort]` | 热门板块 |
-| `dragon-tiger` | `news-drill dragon-tiger` | 龙虎榜 |
+| `themes` | `python client.py news_themes` | 新闻主题列表 |
+| `headlines` | `python client.py headlines` | 推荐头条 |
+| `flash` | `python client.py flash_news` | 快讯分类 |
+| `news_feed` | `python client.py news_feed` | 滚动快讯 |
+| `fund-news` | `python client.py <code> news` | 基金相关新闻 |
+| `hot-board` | `python client.py hot_board` | 热门板块 |
+| `dragon-tiger` | `python client.py dragon_tiger` | 龙虎榜 |
+| `stock_changes` | `python client.py stock_changes` | 个股异动 |
 
 **约束**：最多 6 次调用，每次后评估"信息是否足够"。
-完成后撰写"结构化摘要"（500 字以内）：
-- 今日核心事件及其对基金池各行业的影响方向
-- 关键板块的资金流向和异动
-- 需要特别关注的风险或机会
+完成后撰写"结构化摘要"（500 字以内）。
 
 #### Step 2.5: 基金级消息深挖（强制！）
 
-**A股是消息市场、政策市场，消息对决策至关重要。** 在做决策前，必须对基金池中的每只基金进行消息分析。
+**A股是消息市场、政策市场，消息对决策至关重要。**
 
-对基金池中的每只基金，执行以下命令（可并行）：
-
+对基金池中的每只基金，执行（可并行）：
 ```bash
-# 1. 基金相关新闻（必须）
-python .claude/skills/fund-trade/client.py <code> news
-
-# 2. 基金公告（检查是否有重大公告：经理变更、分红、限购等）
-python .claude/skills/fund-trade/client.py <code> announcements --count 5
-
-# 3. 重仓股信息（用于关联板块/个股消息）
-python .claude/skills/fund-trade/client.py <code> holdings
+python client.py <code> news
+python client.py <code> announcements --count 5
+python client.py <code> holdings
 ```
 
 **分析要点**：
-1. **基金自身消息**：是否有基金经理变更、规模限购、分红公告等重大事件
-2. **重仓股关联**：
-   - 重仓股所属行业（如 AI、新能源、医药）今日是否有政策/消息面变化
-   - 重仓股是否有个股公告（业绩预告、重大合同、股权变动）
-   - 参考 Step 2 的板块消息，判断重仓股所在板块的资金流向
-3. **消息→决策映射**：每条重要消息必须在后续决策中体现权重。如果某基金有利好消息却结论观望，必须解释为什么
+1. **基金自身消息**：是否有基金经理变更、规模限购、分红公告
+2. **重仓股关联**：重仓股所属行业今日是否有政策/消息面变化
+3. **消息→决策映射**：每条重要消息必须在后续决策中体现权重
 
-**输出**：为每只基金撰写一段消息分析摘要（3-5 句），附加到 `{drill_findings}` 中：
-```
-## 个基消息分析
-### 006888 华安科技动力
-- 近期新闻：xxx
-- 重仓股动态：前三大持仓为 xxx（AI板块），今日 AI 板块利好消息 xxx
-- 消息面评估：偏多/中性/偏空
+**输出**：为每只基金撰写一段消息分析摘要（3-5 句）。
 
-### 022365 永赢科技智选
-...
-```
-
-#### Step 3: 量化信号 + 风控 + scan
-
-读取 Step 1 已生成的 signals/snapshot，执行 scan-summary（精简版）：
+#### Step 3: 量化信号 + scan
 
 ```bash
-# 使用 scan-summary（推荐，~2KB）而不是 scan（~150KB）
 python client.py scan-summary > /tmp/ft_scan.json
 ```
 
-scan-summary 输出 `{"funds": [...]}` 格式，每只基金包含：
-- 基本信息：`code`, `name`, `type`, `nav`, `rate`（今日涨跌）, `risk`
+scan-summary 输出每只基金包含：
+- 基本信息：`code`, `name`, `type`, `nav`, `rate`（今日涨跌）
 - 排名：`rank_month`, `rank_year`, `yield_month`, `yield_year`
 - 回撤：`drawdown_1y`, `drawdown_rank`
 - 购买限制：`min_buy`, `max_buy`, `can_buy`
-- 持仓：`stock_pct`, `top3_holdings`
 
-**重要：检查 `buy_limits` 字段**，在决策前必须检查：
-- `min_buy`: 最低起购额（如 002207 要求 1000 元起购）
-- `max_buy`: 单日限购额（如 012922 QDII 限购 50 元/天）
-- `can_buy`: 是否可购买（暂停申购的基金为 false）
+**重要：检查购买限制**，买入金额必须在 `[min_buy, max_buy]` 范围内。
 
-决策时，买入金额必须在 `[min_buy, max_buy]` 范围内，否则会失败。如果限购金额过低，需要考虑分多日建仓。
+**限额自动追踪**：每次买入初始化会自动将限额信息（`min_buy`、`max_buy`）保存到数据库，可通过 `python client.py limits` 查看。对于 QDII 基金，每日限额通常只有 10-500 元，需要分散到多只基金才能完成目标投资额度。
 
-#### Step 3.5: 按需补充（在 Step 4 决策过程中可用）
+#### Step 3.5: 按需补充
 
 深度数据按需调用，最多 3 次：
+```bash
+python client.py <code> holdings        # 前十大持仓
+python client.py <code> pe_percentile   # PE百分位（估值）
+python client.py yesterday_limit        # 昨日涨停今日表现
+python client.py currency               # 货币风向
+python client.py capital_flow           # 资金流向
+```
+
+#### Step 3.6: 待确认订单检查（重要！）
 
 ```bash
-# 前十大持仓
-curl http://localhost:8900/api/fund/<code>/holdings
-
-# PE百分位（估值）
-curl http://localhost:8900/api/fund/<code>/holdings/pe_percentile
-
-# 昨日涨停今日表现
-curl http://localhost:8900/api/market/yesterday_limit
-
-# 货币风向
-curl http://localhost:8900/api/market/currency
-
-# 资金流向
-curl http://localhost:8900/api/market/capital_flow
+python client.py orders
 ```
+
+如果有"处理中 [可撤]"的订单（`endFlag == "0" and processStatus == "1"`）：
+
+1. 获取该订单对应基金的**昨日决策理由**（从今日决策记录或历史决策查询）
+2. 结合前面采集的**全部市场信息**，判断市场风向是否变化
+3. **决策逻辑**：
+   - **风向未变**（利好/利空因素仍在）→ 不撤销，让订单自然确认
+   - **风向逆转**（昨日利好变利空，或出现重大风险）→ **必须撤销**：
+     ```bash
+     python client.py cancel <订单号>
+     ```
+
+**撤销示例**：
+- 昨日买入理由："AI 政策利好"，今日 AI 板块大跌 -3%+ 或出现利空政策 → **撤销**
+- 昨日买入理由："黄金避险"，今日中东局势缓和、金价暴跌 → **撤销**
+- 昨日买入理由："港股科技反弹"，今日美股暴跌、港股低开 -2%+ → **撤销**
+
+**不撤销示例**：
+- 昨日买入理由："超跌反弹"，今日继续下跌但无新利空 → 不撤销（坚持左侧试仓逻辑）
+- 昨日买入理由："QDII DCA 建仓"，今日美股下跌 -1% → 不撤销（DCA 策略不择时）
+- 昨日买入理由："地缘冲突避险"，今日地缘局势持续紧张 → 不撤销（逻辑未变）
+
+**⚠️ 撤销后必须记录原因**：在决策汇总中说明为何撤销该订单。
 
 #### Step 4: Claude 综合决策（核心！）
 
-读取 `.claude/skills/fund-trade/prompts/daily_decision.md` 模板，将以下数据填入：
-- `{overview_data}` ← `/tmp/ft_overview.json`（Stage 1 概览原始数据）
-- `{drill_findings}` ← Claude 在 Step 2 后自行撰写的结构化摘要（自然语言分析，不是 JSON dump）
-- `{fund_news_analysis}` ← Claude 在 Step 2.5 撰写的个基消息分析（每只基金的消息面评估）
+读取 `prompts/daily_decision.md` 模板，将以下数据填入：
+- `{overview_data}` ← `/tmp/ft_overview.json`
+- `{drill_findings}` ← Step 2 后撰写的结构化摘要
+- `{fund_news_analysis}` ← Step 2.5 撰写的个基消息分析
 - `{fund_signals}` ← `/tmp/ft_signals.json`
 - `{risk_snapshot}` ← `/tmp/ft_snapshot.json`
-- `{allocation}` ← config.json 的 allocation 字段（核心/卫星/对冲目标比例）
-- `{strategy}` ← config.json 的 strategy 字段（建仓/加仓/止盈策略参数）
-- `{user_profile}` ← config.json 的 user_profile 字段（用户偏好）
-- `{cash_management}` ← config.json 的 cash_management 字段
-- `{today_operations}` ← 执行 `python client.py today-decisions` 获取今日已执行的操作
-- `{recent_decisions}` ← 执行 `python client.py recent-decisions 5 true` 获取最近5天决策（不含今日）
-- `{lessons}` ← 执行 `python client.py lessons` 获取经验知识库
-- watch_streaks（填入决策 JSON 的 `watch_streak` 字段）← 执行 `python client.py watch-streaks` 获取各基金连续观望天数
+- `{allocation}` ← config.json 的 allocation 字段
+- `{strategy}` ← config.json 的 strategy 字段
+- `{today_operations}` ← `python client.py today-decisions`
+- `{recent_decisions}` ← `python client.py recent-decisions --count 5`
+- `{lessons}` ← `python client.py lessons`
+- `{watch_streaks}` ← `python client.py watch-streaks`
 
-scan-summary 数据可直接读取（~2KB），包含每只基金的关键决策信息（净值、涨跌、排名、回撤、购买限制）。
-
-**Claude 阅读全部信息后，按照 prompt 模板做出决策**，输出 JSON 格式（注意新增字段 `market_phase`, `risk_bias`, `watch_streak`）：
+**输出决策 JSON**：
 ```json
 {
   "date": "YYYY-MM-DD",
   "market_phase": "趋势上行|震荡企稳|趋势下行|恐慌出清",
   "risk_bias": "偏进攻(怕踏空)|均衡|偏防守(怕亏损)",
   "decisions": [
-    {"fund_code": "006888", "fund_name": "...", "action": "buy|sell|hold|watch", "amount": 500, "sell_pct": null, "phase": "左侧试仓|...", "reason": "...", "confidence": "high|medium|low", "watch_streak": 0, "referenced_lesson_ids": []}
+    {
+      "fund_code": "006888",
+      "fund_name": "...",
+      "action": "buy|sell|hold|watch",
+      "amount": 500,
+      "sell_pct": null,
+      "phase": "左侧试仓|...",
+      "reason": "...",
+      "confidence": "high|medium|low",
+      "watch_streak": 0,
+      "referenced_lesson_ids": []
+    }
   ],
   "market_view": "...",
   "risk_notes": "..."
@@ -672,166 +227,131 @@ scan-summary 数据可直接读取（~2KB），包含每只基金的关键决策
 
 #### Step 5: 风控校验
 
-将 Step 4 的决策 JSON 传给风控：
 ```bash
-# 通过客户端调用服务端检查决策
-curl -X POST http://localhost:8900/api/risk/check -H "Content-Type: application/json" -d '<决策JSON>'
+curl -X POST http://119.23.227.187:8900/api/risk/check -H "Content-Type: application/json" -d '<决策JSON>'
 ```
 
-如果有被拦截的决策 → Claude 查看原因，决定是否调整决策。
+如果有被拦截的决策 → Claude 查看原因，决定是否调整。
 
 #### Step 6: 保存决策 + 执行交易
 
-**6a. 保存所有决策到 ft_decisions**（无论是否执行交易，所有决策都必须记录，供复盘系统使用）：
+**6a. 保存所有决策到 ft_decisions**（无论是否执行交易，所有决策都必须记录）：
 
-对 Step 4 决策 JSON 中的每一条 decision，通过 client.py 保存：
-
-```python
-from fund_trade_client import FundTradeClient
-client = FundTradeClient()
-
-# buy 决策示例（需传 amount）
-decision = {
-    "fund_code": "022365",
-    "fund_name": "永赢科技智选混合发起C",
+对 Step 4 决策 JSON 中的每一条 decision，通过 API 保存：
+```bash
+curl -X POST http://119.23.227.187:8900/api/decisions/save \
+  -H "Content-Type: application/json" \
+  -d '{
+    "fund_code": "015945",
+    "fund_name": "易方达国防军工混合C",
     "action": "buy",
-    "reason": "左侧试仓：企稳信号+AI双重催化",
+    "amount": 500,
+    "reason": "...",
     "confidence": "high",
-    "market_view": "震荡企稳，科技有望领涨",
-    "amount": 625,          # buy 时必填
-    "risk_notes": "地缘风险仍存，保留70%现金",
-    "referenced_lesson_ids": [3, 7]
-}
-client.save_decision(decision)
-
-# hold/watch 决策示例（amount 和 sell_pct 可省略）
-decision = {
-    "fund_code": "002207",
-    "fund_name": "大成景阳领先混合C",
-    "action": "hold",
-    "reason": "逻辑仍在，继续持有",
-    "confidence": "medium",
-    "market_view": "震荡企稳"
-}
-client.save_decision(decision)
+    "market_view": "...",
+    "referenced_lesson_ids": [1, 3]
+  }'
 ```
 
-**重要**：hold 和 watch 决策也必须保存！复盘系统需要回顾所有决策（包括"不动"的决策）。amount/sell_pct 对于非交易决策可省略。
+**6b. 执行交易**（**核心！必须主动执行**）：
 
-**6b. 执行交易**：
+**⚠️⚠️⚠️ 重要：对于 buy/sell/cancel 决策，Claude 必须主动调用交易命令！不能只是输出建议！⚠️⚠️⚠️**
 
 如果是 `--dry` 模式，跳过交易执行，只展示决策结果。
 
 **交易截止时间处理**：
 - **14:50 前**：订单当日确认（T+1 到账），直接执行
 - **14:50 后**：订单次日确认（T+2 到账），**需要用户确认后才执行**！
-  - 次日 15:00 前可撤销，利用 Step 0c 的待确认订单检查机制
-  - 如果市场风向变化，次日运行时会自动撤销
 
-**⚠️ 14:50 后执行交易前必须确认**：
+**⚠️ 14:50 后执行交易前必须确认**：使用 `AskUserQuestion` 工具询问用户是否继续执行。
 
-如果当前时间 > 14:50 且有 buy/sell 决策，使用 `AskUserQuestion` 工具询问用户：
+---
 
-```
-问题：已过交易截止时间 (14:50)，以下订单将在明日确认，是否继续执行？
+**策略 1: 买入 (buy)**
 
-选项：
-1. 确认执行（订单明日确认，如市场变化可撤销）
-2. 暂不执行（仅保存决策，不下单）
-
-待执行交易：
-- 015945 易方达军工C：买入 500 元
-- ...
-```
-
-- 用户选择"确认执行" → 继续执行交易
-- 用户选择"暂不执行" → 跳过交易执行，只保存决策到 ft_decisions
-
-**6b-1. 保存买入决策到 ft_pending_decisions**（用于次日判断是否撤销）：
-
-对于 buy/sell 决策，在执行交易前保存决策信息：
-```python
-from fund_trade_client import FundTradeClient
-client = FundTradeClient()
-
-decision = {
-    "fund_code": "015945",
-    "fund_name": "易方达军工C",
-    "action": "buy",
-    "reason": "左侧试仓：地缘紧张+行业分散",
-    "confidence": "medium",
-    "market_view": "趋势上行第2日，科技/军工轮动",
-    "market_phase": "趋势上行",
-    "amount": 500,
-    "risk_notes": "中东局势不确定"
-}
-client.save_pending_decision(decision)
-```
-
-**6b-2. 最低起购额检查**：在执行 buy 前，先通过 proxy 查询基金的 minBuy：
-```bash
-# 查询基金最低起购额（通过 server.py 的 buy_fund Step 1 init 接口）
-curl -s --noproxy '*' -X POST http://127.0.0.1:18900/proxy \
-  -H "Content-Type: application/json" \
-  -d '{"url":"https://trade.5ifund.com/rz/trade/dubbo/subscribe/init","method":"POST","body":"fundCode=<code>","content_type":"application/x-www-form-urlencoded"}'
-# 检查返回的 data.minBuy 字段，如果决策金额 < minBuy，需要调整金额到 minBuy
-```
-如果决策金额 < minBuy，将金额上调到 minBuy（并在日志中记录调整原因）。
-
-交易执行（密码配置在 `config.json` 的 `trade_password` 字段）：
 ```bash
 cd /home/yuyang/frida-test/.claude/skills/fund-trade
-
-# 买入
-python client.py buy <code> <amount> "reason text"
-
-# 卖出
-python client.py sell <code> <pct> "reason text"
+python client.py buy 015945 --amount 500
 ```
 
-**注意**：client.py 会自动从 `config.json` 读取 `trade_password` 并发送给服务端。
+- 必须带 `--amount` 参数指定金额
+- 金额不能低于基金最低起购额（通常 10-1000 元不等）
+- QDII 基金通常有每日限额（10-500 元），超额会失败
+- 成功后返回订单号 `order_no`
 
-**6b-3. 交易执行后更新 pending 状态**：
+---
 
-交易成功后（获得订单号），更新 ft_pending_decisions：
-```python
-from fund_trade_client import FundTradeClient
-client = FundTradeClient()
+**策略 2: 卖出 (sell)**
 
-# 如果订单已确认（当日 14:50 前下单），标记为 executed
-client.execute_pending_decision(pending_id)
+```bash
+# 全部赎回
+python client.py sell 015945 --all
 
-# 如果订单待确认（14:50 后下单），保持 pending 状态，等次日 Step 0c 检查
-# 不做任何操作
+# 部分赎回（按百分比）
+python client.py sell 015945 --percent 50
 ```
+
+- `--all` 全部赎回
+- `--percent N` 赎回 N% 的份额
+- 注意赎回费率：通常持有 < 7 天收取 1.5% 惩罚性赎回费
+
+---
+
+**策略 3: 撤销订单 (cancel)**
+
+```bash
+# 查看待确认订单
+python client.py orders
+
+# 撤销指定订单
+python client.py cancel 00000000002785670428
+```
+
+**何时撤销**：
+- 昨日下单后市场风向逆转（如昨日买入科技，今日科技暴跌 -3%+）
+- 出现重大利空消息（政策变化、黑天鹅事件）
+- 发现决策错误（重复下单、金额错误）
+
+**撤销窗口**：
+- 14:50 前下单 → 当日 15:00 前可撤
+- 14:50 后下单 → 次日 15:00 前可撤
+
+---
+
+**策略 4: 持有/观望 (hold/watch)**
+
+- **hold**：已有持仓，继续持有不动
+- **watch**：关注但不操作（可能等待更好的入场点）
+
+这两种决策**不执行交易命令**，但必须保存到 ft_decisions 供复盘系统使用。
+
+---
+
+**执行后检查**：
+- 检查命令输出是否包含订单号（`order_no`）
+- 如果失败，分析错误原因并决定是否重试
+- 交易成功后，订单会自动记录到 ft_decisions 表的 `order_no` 和 `executed_at` 字段
 
 #### Step 7: 记录 + 汇总
 
-```bash
-echo '{"decisions_count": N, "trades_count": M, "summary": "..."}' | python .claude/skills/fund-trade/fund_db.py log-run
-```
-
-**向用户输出今日操作汇总**：市场观点、每只基金的决策和理由、实际执行的交易、风控拦截的交易。
+向用户输出今日操作汇总：市场观点、每只基金的决策和理由、实际执行的交易、风控拦截的交易。
 
 ---
 
 ### `/fund-trade select [类型]`
 
-**重要：本系统必须选 C 类基金（免申购费），绝不选 A 类。选基前必须分析现有持仓和用户偏好。**
+**重要：本系统必须选 C 类基金（免申购费），绝不选 A 类。**
 
 #### Phase 0: 了解用户偏好（首次或 user_profile 为空时）
 
 如果 `config.json` 的 `user_profile.risk_tolerance` 为 null，**必须先跟用户沟通**，了解：
-1. **风险承受能力**：高/中/低？能接受多大的浮亏？（如 -20%/-10%/-5%）
-2. **偏好行业**：科技/消费/医药/新能源/金融/周期？有没有特别看好或回避的？
+1. **风险承受能力**：高/中/低？能接受多大的浮亏？
+2. **偏好行业**：科技/消费/医药/新能源/金融/周期？
 3. **投资周期**：短线波段（1-4周）/ 中线趋势（1-3月）/ 混合？
-4. **资产配置意向**：
-   - 核心仓位比例（稳健底仓：宽基+优质主动）想占多少？默认 70%
-   - 卫星仓位比例（进攻型：行业/主题）想占多少？默认 20%
-   - 对冲仓位比例（防守型：黄金/固收+/QDII）想占多少？默认 10%
+4. **资产配置意向**：核心/卫星/对冲目标比例
 5. **总资金量**：确认 total_capital 是否准确
 
-使用 `AskUserQuestion` 工具询问，然后将结果保存到 `config.json` 的 `user_profile` 和 `allocation`。
+使用 `AskUserQuestion` 工具询问，然后保存到 `config.json`。
 
 #### Phase 1: 持仓同步 + 诊断
 
@@ -840,41 +360,25 @@ python client.py sync
 python client.py snapshot
 ```
 
-分析当前持仓：
-- 各基金的行业分布（从缓存的 holdings 数据获取）
-- 核心/卫星/对冲的实际仓位 vs 目标比例
-- 行业集中度、风格集中度、基金经理重叠
+分析当前持仓：行业分布、核心/卫星/对冲的实际仓位 vs 目标比例。
 
 #### Phase 2: 数据采集
 
 ```bash
-python client.py ranking year
-# market 数据可通过 /api/market/overview 获取
+python client.py ranking  # 默认近一年涨幅排行
+python client.py market_overview
 ```
 
 #### Phase 3: 智能筛选
 
-读取 `.claude/skills/fund-trade/prompts/select_fund.md` 模板，填入：
-- `{user_profile}` ← config.json 的 user_profile
-- `{allocation}` ← config.json 的 allocation（目标配置比例）
-- `{positions}` ← Phase 1 的持仓诊断结果
-- `{ranking_data}` ← Phase 2 的排行数据
-- `{market_data}` ← Phase 2 的市场数据
-
-Claude 按照**配置缺位优先级**筛选：
+读取 `prompts/select_fund.md` 模板，按**配置缺位优先级**筛选：
 - 先诊断组合缺什么（核心不足？卫星不足？对冲为零？）
 - 按缺位补齐，**只考虑 C 类基金**
 - 确保与现有持仓行业互补
-- 如果排行榜中某只基金是 A 类，搜索其 C 类份额
 
 #### Phase 4: 确认加入
 
-向用户展示：
-- 持仓诊断结果（当前配置 vs 目标配置）
-- 推荐的 3-5 只基金及理由
-- 每只基金建议的仓位占比
-
-询问用户确认后，更新 `config.json` 的 `fund_pool`。
+向用户展示推荐的 3-5 只基金及理由，确认后更新 `config.json` 的 `fund_pool`。
 
 ---
 
@@ -882,58 +386,44 @@ Claude 按照**配置缺位优先级**筛选：
 
 1. 采集该基金全维度数据：
    ```bash
-   python client.py scan          # 基金扫描
-   # news 和 market 可通过对应的 API 获取
+   python client.py <code> all
    ```
 2. 获取量化信号：
    ```bash
    python client.py evaluate
    ```
-3. 读取 `.claude/skills/fund-trade/prompts/analyze_fund.md` 模板
+3. 读取 `prompts/analyze_fund.md` 模板
 4. Claude 输出该基金的全面分析报告
 
 ---
 
 ### `/fund-trade market`
 
-1. 采集市场概览（通过 API）：
-   ```bash
-   # 大盘总览
-   curl http://localhost:8900/api/market/overview
+```bash
+python client.py market_overview
+python client.py sector_rank
+python client.py capital_flow
+python client.py hot_board
+```
 
-   # 板块涨跌排行
-   curl http://localhost:8900/api/market/sector_ranking
-
-   # 资金流向
-   curl http://localhost:8900/api/market/capital_flow
-
-   # 热点板块
-   curl http://localhost:8900/api/market/hot_board
-   ```
-2. 分析市场数据，输出：
-   - 大盘走势判断（强/弱/震荡）
-   - 资金流向分析
-   - 板块涨跌 TOP 10
-   - 重要快讯解读
-   - 热门文章关键事件
-   - 对基金投资的影响
+分析市场数据，输出：
+- 大盘走势判断（强/弱/震荡）
+- 资金流向分析
+- 板块涨跌 TOP 10
+- 重要快讯解读
+- 对基金投资的影响
 
 ---
 
 ### `/fund-trade review`
 
-1. 获取持仓和信号：
-   ```bash
-   python client.py snapshot
-   python client.py evaluate
-   # market 数据通过 API 获取
-   ```
-2. 获取历史交易和决策记录：
-   ```bash
-   python client.py recent-decisions 30
-   ```
-3. 读取 `.claude/skills/fund-trade/prompts/portfolio_review.md` 模板
-4. Claude 输出持仓审视报告 + 调仓建议
+```bash
+python client.py snapshot
+python client.py evaluate
+python client.py recent-decisions --count 30
+```
+
+读取 `prompts/portfolio_review.md` 模板，输出持仓审视报告 + 调仓建议。
 
 ---
 
@@ -941,75 +431,23 @@ Claude 按照**配置缺位优先级**筛选：
 
 手动触发决策复盘（正常情况下 `run` 命令会自动执行 Step 0.5 复盘）。
 
-1. 创建待复盘记录：
-   ```bash
-   cd /home/yuyang/frida-test/.claude/skills/fund-trade
-   python client.py create-reviews
-   ```
-2. 获取待复盘决策：
-   ```bash
-   cd /home/yuyang/frida-test/.claude/skills/fund-trade
-   python client.py pending-reviews
-   ```
-3. 采集相关基金最新净值数据（确保 scan 缓存可用）：
-   ```bash
-   cd /home/yuyang/frida-test/.claude/skills/fund-trade
-   python client.py scan
-   ```
-4. 读取 `.claude/skills/fund-trade/prompts/review_decision.md` 模板，填入：
-   - `{pending_reviews}` ← 步骤 2 的输出
-   - `{nav_data}` ← 步骤 3 中各基金的最新净值
-   - `{decision_context}` ← 决策日的市场数据（如有缓存）
-5. Claude 分析每条决策的 T+1/T+2 净值变化，判定 outcome
-6. 将复盘结果通过 client.py 写入数据库：
-   ```python
-   from fund_trade_client import FundTradeClient
-   client = FundTradeClient()
+```bash
+python client.py create-reviews
+python client.py pending-reviews
+python client.py scan-summary  # 获取最新净值
+```
 
-   # 更新复盘结果
-   review_data = {
-       "nav_at_decision": ...,
-       "nav_t1": ...,
-       "nav_t2": ...,
-       "change_t1_pct": ...,
-       "change_t2_pct": ...,
-       "outcome": "correct",
-       "review_notes": "..."
-   }
-   client.update_review(review_id, review_data)
-
-   # 保存经验教训
-   lesson = {
-       "category": "policy",
-       "trigger_pattern": "...",
-       "expected_outcome": "...",
-       "actual_outcome": "...",
-       "lesson_text": "...",
-       "related_sectors": ["科技"],
-       "source_review_ids": [review_id]
-   }
-   client.save_lesson(lesson)
-
-   # 标记经验已提取
-   client.mark_lesson_extracted(review_id)
-   ```
-7. 获取复盘统计并向用户汇报：
-   ```bash
-   cd /home/yuyang/frida-test/.claude/skills/fund-trade
-   python client.py review-stats
-   ```
+读取 `prompts/review_decision.md` 模板，分析 T+1/T+2 净值变化，判定 outcome，更新经验知识库。
 
 ---
 
 ### `/fund-trade lessons`
 
-查看经验知识库。
-
 ```bash
-python .claude/skills/fund-trade/fund_db.py lessons
+python client.py lessons
 ```
 
-Claude 阅读后按类别汇总展示：
+按类别汇总展示：
 - 政策类经验（policy）
 - 技术指标类经验（technical）
 - 市场情绪类经验（sentiment）
@@ -1017,13 +455,13 @@ Claude 阅读后按类别汇总展示：
 - 择时类经验（timing）
 - 风控类经验（risk）
 
-每条经验展示：触发模式、教训、可信度（low/medium/high）、验证次数/成功次数。
+每条经验展示：触发模式、教训、可信度、验证次数/成功次数。
 
 ---
 
 ### `/fund-trade config`
 
-读取并展示 `.claude/skills/fund-trade/config.json`：
+读取并展示 `config.json`：
 - 基金池列表
 - 风控参数
 - 服务器地址
@@ -1037,268 +475,229 @@ Claude 阅读后按类别汇总展示：
 
 **支付宝基金持仓管理** - 解析 OCR 文本，分析持仓，给出手动操作建议。
 
-这些基金在支付宝中持有，**无法通过程序自动交易**，所有操作需用户手动执行。
+这些基金在支付宝中持有，**无法通过程序自动交易**。
 
 默认读取文件：`data/支付宝持仓.txt`
 
 #### Step 1: 读取并解析 OCR 文本
 
 Claude 直接读取 OCR 文本文件（使用 Read 工具），用 LLM 自身能力解析出每只基金的：
-- 基金名称
-- 当前市值
-- 持有收益（金额和百分比）
-- 昨日收益
-- 分类（进阶类/稳健类）
+- 基金名称、当前市值、持有收益、昨日收益、分类
 
-**重要**：OCR 文本格式不固定（每次截图和识别结果可能不同），不要用正则解析，由 Claude 直接理解文本内容提取数据。
-
-解析完成后，将持仓数据整理为 JSON 格式的列表，每个条目包含：
-```json
-{
-  "fund_name": "天弘标普500(QDII-FOF)C",
-  "fund_code": "007722",
-  "current_value": 62152.29,
-  "total_cost": 55500.0,
-  "total_profit": 6652.29,
-  "profit_rate": 11.99,
-  "daily_pnl": -9.13,
-  "category": "进阶类"
-}
-```
+**重要**：OCR 文本格式不固定，由 Claude 直接理解文本内容提取数据。
 
 #### Step 2: 解析基金代码
 
-使用映射文件解析基金名称为代码：
 ```bash
-python .claude/skills/fund-trade/fund_db.py alipay-resolve '<["基金名1", "基金名2", ...]>'
+python fund_db.py alipay-resolve '<["基金名1", "基金名2", ...]>'
 ```
 
-如果有未解析的基金名称，通过 web 搜索找到基金代码后添加映射：
+如有未解析的基金名称，通过 web 搜索后添加映射：
 ```bash
-python .claude/skills/fund-trade/fund_db.py alipay-map "基金名称" "基金代码"
+python fund_db.py alipay-map "基金名称" "基金代码"
 ```
 
-#### Step 3: 保存持仓快照到数据库
-
-将解析后的持仓数据保存到 `ft_alipay_positions` 表，用于长期追踪：
+#### Step 3: 保存持仓快照
 
 ```bash
-echo '<JSON数据>' | python .claude/skills/fund-trade/fund_db.py alipay-save
-```
-
-JSON 格式（可包含 `holdings` 数组和可选的 `snapshot_date`）：
-```json
-{
-  "holdings": [
-    {"fund_name": "...", "fund_code": "007722", "current_value": 62152.29, "total_cost": 55500, "total_profit": 6652.29, "profit_rate": 11.99, "daily_pnl": -9.13, "category": "进阶类"}
-  ],
-  "snapshot_date": "2026-03-04"
-}
+echo '<JSON数据>' | python fund_db.py alipay-save
 ```
 
 #### Step 4: 获取历史数据对比（可选）
 
-如果数据库中有之前的快照，获取历史数据用于对比：
 ```bash
-python .claude/skills/fund-trade/fund_db.py alipay-positions           # 最新持仓
-python .claude/skills/fund-trade/fund_db.py alipay-positions 2026-03-01 # 指定日期
-python .claude/skills/fund-trade/fund_db.py alipay-dates               # 所有快照日期
-python .claude/skills/fund-trade/fund_db.py alipay-history "天弘标普500(QDII-FOF)C" 30  # 单基金30天历史
-python .claude/skills/fund-trade/fund_db.py alipay-decisions           # 最近的操作建议记录
+python fund_db.py alipay-positions           # 最新持仓
+python fund_db.py alipay-positions 2026-03-01 # 指定日期
+python fund_db.py alipay-history "天弘标普500(QDII-FOF)C" 30  # 单基金30天历史
 ```
 
-#### Step 5: 获取市场数据（需 server.py 运行）
+#### Step 5: 获取市场数据
 
-通过 client.py 获取基金市场数据辅助分析（评分、估值、回撤、RSI 等）：
 ```bash
-python .claude/skills/fund-trade/client.py <基金代码> detail     # 基金详情+评分
-python .claude/skills/fund-trade/client.py <基金代码> drawdown   # 回撤数据
-python .claude/skills/fund-trade/client.py <基金代码> rsi        # RSI指标
-python .claude/skills/fund-trade/client.py <基金代码> valuation  # 指数估值百分位
-python .claude/skills/fund-trade/client.py <基金代码> holdings   # 重仓持股
-```
-
-获取市场整体数据：
-```bash
-# 大盘总览
-curl http://localhost:8900/api/market/overview
-
-# 板块涨跌排行
-curl http://localhost:8900/api/market/sector_ranking
-
-# 热门板块
-curl http://localhost:8900/api/market/hot_board
-
-# 资金流向
-curl http://localhost:8900/api/market/capital_flow
+python client.py <基金代码> detail
+python client.py <基金代码> drawdown
+python client.py <基金代码> rsi
+python client.py <基金代码> valuation
+python client.py market_overview
 ```
 
 #### Step 6: 综合分析 + 操作建议
 
-读取 `.claude/skills/fund-trade/prompts/alipay_review.md` 模板，填入：
-- `{holdings_data}` ← Step 1 解析的持仓数据
-- `{market_data}` ← Step 5 的市场数据（如有）
-- `{user_profile}` ← config.json 的 user_profile
-
-Claude 按照模板进行分析，重点关注：
+读取 `prompts/alipay_review.md` 模板，重点关注：
 
 1. **结构性问题**（最重要）：
-   - 同一标的（如纳斯达克100）持有多只基金 → 建议合并
+   - 同一标的持有多只基金 → 建议合并
    - A类和C类同时持有 → 建议统一
    - 小额碎片持仓 → 建议清理
    - 美股集中度过高 → 建议分散
 
 2. **按标的分组分析**：标普500、纳斯达克100、A股宽基、A股行业、日本、商品、债券
 
-3. **具体操作清单**：按优先级排序的操作建议（赎回/减仓/加仓/调整定投）
+3. **具体操作清单**：按优先级排序的操作建议
 
 #### Step 7: 保存操作建议
 
-将重要的操作建议记录到 `ft_alipay_decisions` 表：
-```python
-import fund_db
-fund_db.save_alipay_decision(
-    fund_name="XXX",
-    fund_code="007722",
-    action="sell",        # buy/sell/hold/clear/adjust
-    sell_pct=100,         # 卖出比例
-    reason="同标的基金过多，合并为规模最大的一只",
-    confidence="high",
-    market_view="..."
-)
+将重要的操作建议记录到 `ft_alipay_decisions` 表。
+
+---
+
+### `/fund-trade ocr-analyze [action]`
+
+**截屏持仓分析** - 从 `sa_ocr_records` 表读取 OCR 数据 → 采集市场行情 → 综合分析持仓。只分析不交易。
+
+默认 action 为 `fund_holdings`。执行时读取详细流程文档：`prompts/ocr_analyze_flow.md`
+
+---
+
+## client.py 命令速查
+
+详细命令列表见 README.md。
+
+### 交易
+```bash
+python client.py buy 006888 --amount 100
+python client.py sell 006888 --all
+python client.py orders
+python client.py cancel <订单号>
+```
+
+### 风控/量化
+```bash
+python client.py preflight
+python client.py snapshot
+python client.py evaluate
+```
+
+### 数据同步
+```bash
+python client.py sync
+python client.py scan-summary
+```
+
+### 决策管理
+```bash
+python client.py today-decisions
+python client.py recent-decisions --count 5
+python client.py watch-streaks
+```
+
+### 复盘
+```bash
+python client.py create-reviews
+python client.py pending-reviews
+python client.py lessons
+```
+
+### 限额管理
+```bash
+python client.py limits                    # 查看所有已记录的基金限额
+python client.py limits-summary            # 限额统计摘要
+python client.py limits-plan --amount 2000 # 智能分配购买计划
+```
+
+**注意**：限额信息在每次买入初始化时自动保存，无需手动维护。
+
+### OCR 记录查询
+```bash
+python client.py ocr-records --count 10            # 查看最近10条OCR记录
+python client.py ocr-records fund_holdings          # 按action筛选
+python client.py ocr-latest                         # 最新一条OCR记录（全文）
+python client.py ocr-latest fund_holdings           # 最新一条持仓截图OCR
+python client.py ocr-latest --count 3               # 最新3条
+```
+
+### 基金查询
+```bash
+# 综合信息
+python client.py 006888                        # 全部信息（all）
+python client.py 006888 detail                 # 综合详情
+python client.py 006888 product                # 产品详情（投资理念、风险特征）
+
+# 净值与收益
+python client.py 006888 nav                    # 历史净值（默认近一年）
+python client.py 006888 nav --period month     # 近一月净值
+python client.py 006888 nav --count 30         # 显示30条
+python client.py 006888 realtime               # 实时估值走势
+python client.py 006888 rank                   # 阶段涨幅排名
+python client.py 006888 year_return            # 年度收益率
+python client.py 006888 drawdown               # 最大回撤
+python client.py 006888 stability              # 收益稳定度
+
+# 持仓信息
+python client.py 006888 holdings               # 前十大持仓
+python client.py 006888 hold_overview          # 持仓概览
+python client.py 006888 position               # 持仓变动追踪
+python client.py 006888 profit                 # 盈亏贡献
+python client.py 006888 style                  # 投资风格偏好
+python client.py 006888 asset                  # 资产配置
+python client.py 006888 valuation              # 持仓股估值
+python client.py 006888 pe_percentile          # 持仓股估值百分位
+
+# 基金经理与公司
+python client.py 006888 manager                # 基金经理档案
+
+# 交易相关
+python client.py 006888 trade_rule             # 交易规则费率
+python client.py 006888 rsi                    # RSI买卖指标
+
+# 规模与持有人
+python client.py 006888 scale_change           # 规模变动历史
+python client.py 006888 holder_ratio           # 机构持仓比例
+python client.py 006888 dividend               # 分红历史
+
+# 资讯与公告
+python client.py 006888 news                   # 基金相关资讯
+python client.py 006888 announcements          # 基金公告
+
+# 分析工具
+python client.py 006888 nav_technical          # 净值技术面分析
+python client.py 006888 market                 # 大盘环境
+python client.py 006888 fund_flow              # 基金申赎资金流
+python client.py 006888 compare                # 同类基金对比
+```
+
+### 市场数据
+```bash
+python client.py market_overview
+python client.py hot_board
+python client.py sector_rank
+python client.py hotlist
+python client.py headlines
+python client.py news_feed
+```
+
+### 基金排行与筛选
+```bash
+python client.py ranking                       # 默认近一年涨幅排行
+python client.py ranking --fund-type qdii      # QDII 基金排行（美股/海外）
+python client.py ranking --fund-type stock     # 股票型基金排行
+python client.py ranking --fund-type mixed     # 混合型基金排行
+python client.py ranking --fund-type bond      # 债券型基金排行
+python client.py ranking --fund-type index     # 指数型基金排行
+python client.py ranking --sort-type month     # 按近一月涨幅排行
+python client.py ranking --board 涨幅榜        # 预设排行榜
+python client.py screen                        # 查看可用筛选策略
+python client.py screen --strategy fund0001    # 年年正收益
+python client.py search 标普500                # 基金搜索（按名称关键词）
+python client.py search 纳斯达克 --count 20    # 基金搜索，返回20条
+python client.py search 医疗                   # 搜索医疗相关基金
 ```
 
 ---
 
-## 架构说明
-
-```
-用户: /fund-trade run
-        │
-        ▼
-┌──────────────────────────────────────────────────────┐
-│              Claude Code（LLM 决策引擎）                │
-│  1. 通过 client.py 调用服务端 API                        │
-│  2. 采集数据、新闻、计算量化信号、风控检查                  │
-│  3. 读取全部信息，综合分析                                │
-│  4. 做出买入/卖出/持有决策                                │
-│  5. 通过 client.py 执行交易                              │
-└──────────────────┬──────────────────────────────────┘
-                   │ HTTP
-                   ▼
-┌──────────────────────────────────────────────────────┐
-│        Client 层: client.py (轻量级 HTTP 客户端)         │
-│        - 请求转发，无业务逻辑                             │
-└──────────────────┬──────────────────────────────────┘
-                   │ HTTP (localhost:8900)
-                   ▼
-┌──────────────────────────────────────────────────────┐
-│        Server 层: ths/api/ (业务逻辑层)                 │
-│        - server.py: FastAPI 服务器                      │
-│        - ths_fund_client.py: 同花顺 API 包装 (104方法)   │
-│        - fund_db.py: 数据库操作                         │
-│        - risk_manager.py: 风控管理                      │
-│        - indicators.py: 量化指标                        │
-│        - review_decision_executor.py: 决策复盘          │
-└──────────────────┬──────────────────────────────────┘
-                   │ HTTP (localhost:18900)
-                   ▼
-┌──────────────────────────────────────────────────────┐
-│        Hook 层: ths/zygisk/ (手机端)                  │
-│        - zygisk hook 模块注入到同花顺 App              │
-│        - HTTP 服务器 (0.0.0.0:18900)                 │
-│        - 通过 WebView JSBridge 实时获取认证参数        │
-│          (K5, version, timestamp)                    │
-│        - 代理所有同花顺 API 请求                       │
-└──────────────────┬──────────────────────────────────┘
-                   │ 注入到同花顺 App
-                   ▼
-            同花顺 App (手机端)
-```
-
-**核心理念**：
-- LLM 通过轻量级客户端调用 API，读新闻、看数据、做决策
-- Server 层处理所有业务逻辑（风控、量化、交易）
-- Hook 层（zygisk）提供实时认证，无需硬编码 token
-- 数据库（PostgreSQL）持久化所有数据
-
-## 工具脚本说明
-
-### Server 层（ths/api/）
-
-| 脚本 | 功能 | 说明 |
-|------|------|------|
-| `server.py` | FastAPI 服务器 | 监听 8900 端口，提供所有 API 接口 |
-| `ths_fund_client.py` | 同花顺 API 包装层 | 104 个方法，封装所有同花顺 API 调用 |
-| `fund_db.py` | 数据库层 | 11张表 CRUD + 支付宝映射 |
-| `risk_manager.py` | 风控管理 | 风控硬约束检查 |
-| `indicators.py` | 量化指标 | 计算量化信号 |
-| `review_decision_executor.py` | 决策复盘 | 执行决策复盘逻辑 |
-
-### Hook 层（ths/zygisk/）
-
-| 文件 | 功能 | 说明 |
-|------|------|------|
-| `thshook_zygisk.zip` | KernelSU 模块 | zygisk hook 模块安装包 |
-| `magisk/dex/classes.dex` | HTTP 服务器 | Java/Kotlin 代码，监听 18900 端口，实时获取 App 认证参数 |
-| `magisk/zygisk/arm64-v8a.so` | zygisk 原生库 | 注入到同花顺 App 的原生库 |
-
-**注意**：虽然目录名是 `magisk/`，但模块兼容 KernelSU（KernelSU 兼容 Magisk 模块格式）
-
-### Client 层（fund-trade/）
-
-| 脚本 | 功能 | 说明 |
-|------|------|------|
-| `client.py` | 轻量级 HTTP 客户端 | 7K 代码，仅负责请求转发 |
-| `agent_cron.sh` | 定时任务包装脚本 | cron job 使用 |
-
-### 通过 client.py 调用的主要 API
-
-| API 类型 | 命令示例 | 说明 |
-|---------|---------|------|
-| **交易** | `python client.py buy 008087 100` | 买入基金 |
-| | `python client.py sell 008087 50` | 卖出基金 |
-| | `python client.py position` | 查询持仓 |
-| | `python client.py orders 7 5` | 查询订单 |
-| **风控** | `python client.py snapshot` | 风控快照 |
-| | `python client.py preflight` | 交易前置检查 |
-| **量化** | `python client.py evaluate` | 计算量化信号 |
-| **复盘** | `python client.py review 30 7` | 执行决策复盘 |
-
 ## 用法示例
 
 ```bash
-# 初始化
-/fund-trade init
-
-# AI 选基入池
-/fund-trade select 偏股
-
-# 查看市场
-/fund-trade market
-
-# 单基分析
-/fund-trade analyze 006888
-
-# 每日交易（模拟）
-/fund-trade run --dry
-
-# 每日交易（实际执行）
-/fund-trade run
-
-# 持仓审视
-/fund-trade review
-
-# 决策复盘
-/fund-trade retrospect
-
-# 查看经验知识库
-/fund-trade lessons
-
-# 查看/修改配置
-/fund-trade config
-
-# 支付宝持仓管理
-/fund-trade alipay
-/fund-trade alipay /path/to/ocr_text.txt
+/fund-trade select 偏股    # AI 选基入池
+/fund-trade market         # 查看市场
+/fund-trade analyze 006888 # 单基分析
+/fund-trade run --dry      # 模拟交易
+/fund-trade run            # 实际执行
+/fund-trade review         # 持仓审视
+/fund-trade retrospect     # 决策复盘
+/fund-trade lessons        # 经验知识库
+/fund-trade config         # 配置管理
+/fund-trade alipay         # 支付宝持仓
+/fund-trade ocr-analyze    # 截屏持仓分析（默认 fund_holdings）
+/fund-trade ocr-analyze ocr # 分析最近一次文字识别结果
 ```

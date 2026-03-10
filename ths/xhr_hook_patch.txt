@@ -1,0 +1,203 @@
+========================================
+MainHook.java - XHR Hook 补丁
+========================================
+
+功能：注入 JS 代码到 WebView，Hook XMLHttpRequest，捕获所有 AJAX 请求
+
+========================================
+Step 1: 在类常量区域添加 XHR_HOOK_SCRIPT
+位置：第 66 行之后（STOCK_FUND_KEY 之后）
+========================================
+
+    // XHR Hook JavaScript - 注入到 WebView 捕获所有 AJAX 请求
+    private static final String XHR_HOOK_SCRIPT =
+        "(function() {" +
+        "    if (window.__XHR_HOOKED__) return;" +  // 防止重复注入
+        "    window.__XHR_HOOKED__ = true;" +
+        "    " +
+        "    var originalOpen = XMLHttpRequest.prototype.open;" +
+        "    var originalSend = XMLHttpRequest.prototype.send;" +
+        "    var originalSetRequestHeader = XMLHttpRequest.prototype.setRequestHeader;" +
+        "    " +
+        "    XMLHttpRequest.prototype.open = function(method, url, async, user, password) {" +
+        "        this._method = method;" +
+        "        this._url = url;" +
+        "        this._requestHeaders = {};" +
+        "        this._startTime = Date.now();" +
+        "        return originalOpen.apply(this, arguments);" +
+        "    };" +
+        "    " +
+        "    XMLHttpRequest.prototype.setRequestHeader = function(header, value) {" +
+        "        this._requestHeaders[header] = value;" +
+        "        return originalSetRequestHeader.apply(this, arguments);" +
+        "    };" +
+        "    " +
+        "    XMLHttpRequest.prototype.send = function(body) {" +
+        "        var xhr = this;" +
+        "        " +
+        "        var requestInfo = {" +
+        "            method: xhr._method," +
+        "            url: xhr._url," +
+        "            headers: xhr._requestHeaders," +
+        "            body: body || null," +
+        "            timestamp: xhr._startTime" +
+        "        };" +
+        "        " +
+        "        if (xhr._url && (xhr._url.indexOf('trade.5ifund.com') > -1 || xhr._url.indexOf('/fund/') > -1)) {" +
+        "            console.log('[XHR_HOOK_REQUEST] ' + JSON.stringify(requestInfo));" +
+        "        }" +
+        "        " +
+        "        xhr.addEventListener('load', function() {" +
+        "            if (xhr._url && (xhr._url.indexOf('trade.5ifund.com') > -1 || xhr._url.indexOf('/fund/') > -1)) {" +
+        "                var responseInfo = {" +
+        "                    url: xhr._url," +
+        "                    status: xhr.status," +
+        "                    statusText: xhr.statusText," +
+        "                    responseText: xhr.responseText.substring(0, 10000)," +  // 限制长度
+        "                    responseHeaders: xhr.getAllResponseHeaders()," +
+        "                    duration: Date.now() - xhr._startTime" +
+        "                };" +
+        "                console.log('[XHR_HOOK_RESPONSE] ' + JSON.stringify(responseInfo));" +
+        "            }" +
+        "        });" +
+        "        " +
+        "        xhr.addEventListener('error', function() {" +
+        "            console.log('[XHR_HOOK_ERROR] ' + xhr._url);" +
+        "        });" +
+        "        " +
+        "        return originalSend.apply(this, arguments);" +
+        "    };" +
+        "    " +
+        "    console.log('[XHR_HOOK] Initialized');" +
+        "})();";
+
+========================================
+Step 2: 修改 hookWebViewRequests() 方法
+位置：第 1175 行开始
+========================================
+
+将现有的 hookWebViewRequests() 方法完全替换为：
+
+    /**
+     * Hook WebViewClient.shouldInterceptRequest 捕获 WebView 内所有网络请求 URL
+     * 注入 XHR Hook JS 捕获 WebView 内部的 AJAX 请求
+     */
+    private static void hookWebViewRequests() throws Throwable {
+        Class<?> webViewClass = Class.forName("android.webkit.WebView");
+
+        // Hook loadUrl - 在加载 fund 页面时注入 XHR Hook
+        Method loadUrl = webViewClass.getDeclaredMethod("loadUrl", String.class);
+        Pine.hook(loadUrl, new MethodHook() {
+            @Override
+            public void beforeCall(Pine.CallFrame callFrame) {
+                final Object webView = callFrame.thisObject;
+                String url = (String) callFrame.args[0];
+                Log.i(TAG, "WebView.loadUrl → " + url);
+
+                // 保存 WebView 引用
+                if (webView != null) {
+                    latestWebView = webView;
+                }
+
+                // 如果是 fund 页面，延迟注入 XHR Hook
+                if (url != null && (url.contains("trade.5ifund.com") || url.contains("/fund/"))) {
+                    new Handler(Looper.getMainLooper()).postDelayed(new Runnable() {
+                        @Override
+                        public void run() {
+                            try {
+                                Log.i(TAG, "Injecting XHR Hook into fund page...");
+                                Method evalJs = webView.getClass().getDeclaredMethod("evaluateJavascript",
+                                        String.class, Class.forName("android.webkit.ValueCallback"));
+                                evalJs.invoke(webView, XHR_HOOK_SCRIPT, null);
+                                Log.i(TAG, "✓ XHR Hook injected");
+                            } catch (Throwable e) {
+                                Log.e(TAG, "Failed to inject XHR Hook", e);
+                            }
+                        }
+                    }, 1000); // 延迟 1 秒等待页面加载
+                }
+            }
+        });
+
+        // Hook postUrl
+        try {
+            Method postUrl = webViewClass.getDeclaredMethod("postUrl", String.class, byte[].class);
+            Pine.hook(postUrl, new MethodHook() {
+                @Override
+                public void beforeCall(Pine.CallFrame callFrame) {
+                    String url = (String) callFrame.args[0];
+                    Log.i(TAG, "WebView.postUrl → " + url);
+                }
+            });
+        } catch (Throwable e) { /* ignore */ }
+
+        // Hook evaluateJavascript - 记录所有 JS 执行
+        try {
+            Method evalJs = webViewClass.getDeclaredMethod("evaluateJavascript", String.class,
+                    Class.forName("android.webkit.ValueCallback"));
+            Pine.hook(evalJs, new MethodHook() {
+                private final AtomicInteger evalCounter = new AtomicInteger(0);
+                @Override
+                public void beforeCall(Pine.CallFrame callFrame) {
+                    Object webView = callFrame.thisObject;
+                    if (webView != null) {
+                        latestWebView = webView;
+                    }
+
+                    String js = (String) callFrame.args[0];
+                    if (js.length() < 500) {
+                        Log.i(TAG, "WebView.evalJS → " + js);
+                    } else {
+                        int idx = evalCounter.incrementAndGet();
+                        Log.i(TAG, "WebView.evalJS #" + idx + " [" + js.length() + " chars]");
+                    }
+                }
+            });
+        } catch (Throwable e) { /* ignore */ }
+
+        // Hook shouldInterceptRequest - 记录所有资源请求
+        Class<?> webViewClientClass = Class.forName("android.webkit.WebViewClient");
+        Class<?> webResourceRequestClass = Class.forName("android.webkit.WebResourceRequest");
+        Method shouldIntercept = webViewClientClass.getDeclaredMethod(
+                "shouldInterceptRequest", webViewClass, webResourceRequestClass);
+        Pine.hook(shouldIntercept, new MethodHook() {
+            @Override
+            public void beforeCall(Pine.CallFrame callFrame) {
+                try {
+                    Object request = callFrame.args[1];
+                    Method getUrl = request.getClass().getMethod("getUrl");
+                    Object uri = getUrl.invoke(request);
+                    String url = uri.toString();
+                    if (!url.endsWith(".js") && !url.endsWith(".css") && !url.endsWith(".png")
+                            && !url.endsWith(".jpg") && !url.endsWith(".gif") && !url.endsWith(".woff")
+                            && !url.endsWith(".ttf") && !url.contains(".ico")
+                            && !url.startsWith("data:")) {
+                        Log.i(TAG, "WebView.intercept → " + url);
+                    }
+                } catch (Throwable e) { /* ignore */ }
+            }
+        });
+    }
+
+========================================
+Step 3: 在 imports 区域添加 Handler
+位置：文件顶部 import 区域
+========================================
+
+import android.os.Handler;
+import android.os.Looper;
+
+========================================
+使用说明
+========================================
+
+应用这个补丁后，WebView 中的所有 XMLHttpRequest 调用都会被捕获。
+捕获的日志格式：
+
+[XHR_HOOK_REQUEST] {"method":"POST","url":"https://trade.5ifund.com/...","headers":{...},"body":"..."}
+[XHR_HOOK_RESPONSE] {"url":"https://...","status":200,"responseText":"...","duration":123}
+
+通过 logcat 查看：
+adb logcat | grep "XHR_HOOK"
+
+或者使用改进的 capture_fund_requests.py 自动解析。

@@ -1,13 +1,16 @@
 {
   "auth": {
-    "key1": "",
-    "key2": "",
-    "key3": "",
+    "key1": "7246091a5f126b63",
+    "key2": "2293a78f6581c12bbb334759458d4de3",
+    "key3": "100113970166",
     "key4": "auth",
-    "key5": "eyJjSWQiOiIxMDAxMTM5NzAxNjYiLCJleHAiOjE3NzUzNjI1MTE5MzksInNvdSI6IlNESyIsInR5cGUiOiJQV0QiLCJ2IjoiMS4wIn0=.Z0N0MldsYkpqNnJnVGt6TEhRQXJDLzNRMGdLRkFldGFBU2tsWjZGLzkzemxZbW1MMkxOb24wV1ZIWDAwWEtWNmU4VXoxWVJGSUYyQlFOOVdTS0pxL0FhRE16aWVoUzBCZlVuUVA3VkdDbVZhVDNaYTZicEVCTG54VU1GczNhTTZyNUIxaEZZNjEyVjBpaWNkOW9SallMcm55UVptMGRPS2FXNWNNRXdTUU44PQ==",
-    "userId": "",
-    "sessionId": ""
+    "key5": "eyJjSWQiOiIxMDAxMTM5NzAxNjYiLCJleHAiOjE3NzU1NDY2MjY2MzYsInNvdSI6IlNESyIsInR5cGUiOiJQV0QiLCJ2IjoiMS4wIn0=.ZkZUVkVxelRWVWc3UytNQ3UvQldjR2RlWHliOHlFTlpxZm13cUtrRk9uUjVDMTVRcWIzRGU4NjdjdnNTMTRNUXMvKzZSMysyV3ZETUJ4ZGNIcTZzNnhlMWIrTG13TE8zcWlLRi9RdWc5S08vS2orZStIUFBqN3hzWjF0eWFITjRxWWUrbEk4OXBwREViUlZKTXdsY09hRmRQR3o0MXFQcWxub1daM1JLSGhvPQ==",
+    "userId": "100113970166",
+    "sessionId": "",
+    "cookie": "",
+    "account": "100113970166"
   },
-  "cached_at": 1772878473,
-  "expires_at": 1775362511
+  "expires_at": null,
+  "last_sync": 1772956969,
+  "sync_source": "zygisk_auto"
 }

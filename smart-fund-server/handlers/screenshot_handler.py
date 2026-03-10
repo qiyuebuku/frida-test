@@ -7,6 +7,7 @@ import time
 from pathlib import Path
 
 from services.ocr_service import OCRService
+from services.llm_service import LLMService
 from services import db
 
 logger = logging.getLogger(__name__)
@@ -18,6 +19,7 @@ IMAGES_DIR.mkdir(exist_ok=True)
 class ScreenshotHandler:
     def __init__(self):
         self.ocr = OCRService(os.getenv("OCR_URL", "http://119.23.227.187:8675/glmocr/parse"))
+        self.llm = LLMService()
 
     async def process(self, data: dict, client_id: str = None) -> dict:
         action = data.get("action", "ocr")
@@ -70,7 +72,8 @@ class ScreenshotHandler:
             return {"text": result_text, "auto_copy": True}
 
         elif action == "chat_reply":
-            return {"text": result_text, "auto_copy": True}
+            reply = await self.llm.analyze_chat(text)
+            return {"reply": reply, "auto_copy": True}
 
         elif action == "table":
             return {"text": result_text, "format": "markdown"}
@@ -131,7 +134,8 @@ class ScreenshotHandler:
         # 5. 最终结果
         result_text = structured_data if structured_data else text
         if action == "chat_reply":
-            result_data = {"text": result_text, "auto_copy": True}
+            reply = await self.llm.analyze_chat(text)
+            result_data = {"reply": reply, "auto_copy": True}
         elif action == "table":
             result_data = {"text": result_text, "format": "markdown"}
         else:
