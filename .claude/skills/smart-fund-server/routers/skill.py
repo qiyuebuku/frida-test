@@ -68,7 +68,7 @@ async def run_skill(name: str, request: Request):
     if not command:
         raise HTTPException(404, f"Skill '{name}' 中不存在命令 '{command_id}'")
 
-    image_base64 = data.get("imageBase64", "")
+    image_base64 = data.get("imageBase64", "") or data.get("image_base64", "")
     client_id = data.get("client_id", request.headers.get("X-Client-Id", "android"))
 
     # 保存截图
