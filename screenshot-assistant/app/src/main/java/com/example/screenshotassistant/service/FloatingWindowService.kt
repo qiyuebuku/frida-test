@@ -25,6 +25,7 @@ import com.example.screenshotassistant.MainActivity
 import com.example.screenshotassistant.R
 import com.example.screenshotassistant.ScreenshotAssistantApp
 import com.example.screenshotassistant.capture.ActionConfig
+import com.example.screenshotassistant.capture.ActionConfigStore
 import com.example.screenshotassistant.capture.Actions
 import com.example.screenshotassistant.capture.CaptureType
 import com.example.screenshotassistant.capture.ImageStitcher
@@ -66,12 +67,16 @@ class FloatingWindowService : Service() {
     private var initialTouchY = 0f
     private var isMoving = false
     private var ballParams: WindowManager.LayoutParams? = null
+    private var pendingShowRunnable: Runnable? = null
+    private val showHandler = Handler(Looper.getMainLooper())
 
     override fun onCreate() {
         super.onCreate()
         instance = this
         windowManager = getSystemService(WINDOW_SERVICE) as WindowManager
         createFloatingBall()
+        // 初始隐藏，由无障碍服务根据前台 App 白名单决定是否显示
+        floatingView.visibility = View.INVISIBLE
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -185,7 +190,38 @@ class FloatingWindowService : Service() {
     }
 
     fun showFloatingBall() {
+        // 尊重白名单：如果当前前台 App 不在白名单中，不显示
+        val a11y = ScreenAssistAccessibilityService.instance
+        val currentPkg = a11y?.lastForegroundPackage
+        if (currentPkg != null && ActionConfigStore.shouldHideInApp(this, currentPkg)) {
+            return
+        }
         floatingView.visibility = View.VISIBLE
+    }
+
+    /** 前台 App 切换时由无障碍服务调用 */
+    fun onForegroundAppChanged(packageName: String) {
+        val shouldHide = ActionConfigStore.shouldHideInApp(this, packageName)
+        Log.d(TAG, "onForegroundAppChanged: pkg=$packageName, shouldHide=$shouldHide, currentVis=${floatingView.visibility == View.VISIBLE}")
+
+        if (shouldHide) {
+            if (floatingView.visibility == View.VISIBLE) {
+                // 悬浮球当前可见 → 立即隐藏 + 取消待执行的显示
+                pendingShowRunnable?.let { showHandler.removeCallbacks(it) }
+                pendingShowRunnable = null
+                floatingView.visibility = View.INVISIBLE
+            }
+            // 悬浮球当前已隐藏 → 不取消待执行的显示（过渡动画中的 launcher 抖动）
+        } else {
+            // 重置显示延迟（以最后一次非 launcher 事件为准）
+            pendingShowRunnable?.let { showHandler.removeCallbacks(it) }
+            val runnable = Runnable {
+                pendingShowRunnable = null
+                floatingView.visibility = View.VISIBLE
+            }
+            pendingShowRunnable = runnable
+            showHandler.postDelayed(runnable, 600)
+        }
     }
 
     // endregion
@@ -201,7 +237,7 @@ class FloatingWindowService : Service() {
     }
 
     private fun showMenu() {
-        val actions = Actions.ALL
+        val actions = ActionConfigStore.getEnabled(this)
         val columns = 3
         val btnSize = dp(72)
         val gap = dp(8)
@@ -643,14 +679,19 @@ class FloatingWindowService : Service() {
             return
         }
 
+        // 获取用户自定义配置
+        val config = ActionConfigStore.get(this, action.id) ?: action
+
         // 重型任务使用异步任务 API（提交即返回）
-        val isHeavyTask = action.captureType == CaptureType.LONG_SCROLL ||
+        val isHeavyTask = config.processingMode == "async_task" ||
+                action.captureType == CaptureType.LONG_SCROLL ||
                 action.id == "fund_holdings" || action.id == "full_page"
 
         if (isHeavyTask) {
             showStatus("正在提交任务...", 10000)
             serviceScope.launch(Dispatchers.IO) {
-                val taskId = httpClient.createTask(bitmap, action.id)
+                val taskId = httpClient.createTask(bitmap, action.id,
+                    systemPrompt = config.systemPrompt, rules = config.rules)
                 withContext(Dispatchers.Main) {
                     if (taskId != null) {
                         showStatus("✓ 任务已提交 #$taskId，可在任务页查看进度", 3000)

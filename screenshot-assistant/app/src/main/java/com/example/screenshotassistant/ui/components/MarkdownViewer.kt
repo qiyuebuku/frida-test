@@ -5,31 +5,65 @@ import android.webkit.WebViewClient
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.viewinterop.AndroidView
 
 @Composable
 fun MarkdownViewer(markdown: String, modifier: Modifier = Modifier) {
     val isDark = isSystemInDarkTheme()
-    val html = remember(markdown, isDark) { wrapMarkdownHtml(markdown, isDark) }
+    val currentMarkdown = rememberUpdatedState(markdown)
+
+    // 初始 HTML 模板（含 JS 增量更新函数）
+    val initialHtml = remember(isDark) { buildShellHtml(isDark) }
 
     AndroidView(
         factory = { context ->
             WebView(context).apply {
-                webViewClient = WebViewClient()
-                settings.javaScriptEnabled = false
+                // 标记页面是否已加载完成
+                tag = false // pageReady flag
+                webViewClient = object : WebViewClient() {
+                    override fun onPageFinished(view: WebView?, url: String?) {
+                        super.onPageFinished(view, url)
+                        view?.tag = true
+                        // 页面加载完成，立即推送当前内容
+                        val md = currentMarkdown.value
+                        if (md.isNotBlank()) {
+                            val html = markdownToHtml(md)
+                            val escaped = escapeForJs(html)
+                            view?.evaluateJavascript("updateContent('$escaped')", null)
+                        }
+                    }
+                }
+                settings.javaScriptEnabled = true
                 settings.defaultTextEncodingName = "utf-8"
+                isHorizontalScrollBarEnabled = false
                 setBackgroundColor(0)
+                loadDataWithBaseURL(null, initialHtml, "text/html", "utf-8", null)
             }
         },
         update = { webView ->
-            webView.loadDataWithBaseURL(null, html, "text/html", "utf-8", null)
+            // 只在页面已加载完成后才用 JS 更新
+            if (webView.tag == true) {
+                val md = currentMarkdown.value
+                val html = markdownToHtml(md)
+                val escaped = escapeForJs(html)
+                webView.evaluateJavascript("updateContent('$escaped')", null)
+            }
         },
         modifier = modifier
     )
 }
 
-private fun wrapMarkdownHtml(markdown: String, isDark: Boolean): String {
+private fun escapeForJs(html: String): String {
+    return html
+        .replace("\\", "\\\\")
+        .replace("'", "\\'")
+        .replace("\n", "\\n")
+        .replace("\r", "")
+}
+
+private fun buildShellHtml(isDark: Boolean): String {
     val textColor = if (isDark) "#e0e0e0" else "#1a1a1a"
     val bgColor = if (isDark) "#1a1a1a" else "#ffffff"
     val codeBg = if (isDark) "#2d2d2d" else "#f5f5f5"
@@ -37,9 +71,6 @@ private fun wrapMarkdownHtml(markdown: String, isDark: Boolean): String {
     val linkColor = if (isDark) "#82b1ff" else "#1976d2"
     val blockquoteBorder = if (isDark) "#555" else "#ccc"
     val blockquoteBg = if (isDark) "#252525" else "#f9f9f9"
-
-    // Simple markdown to HTML conversion
-    val htmlContent = markdownToHtml(markdown)
 
     return """
     <!DOCTYPE html>
@@ -49,7 +80,7 @@ private fun wrapMarkdownHtml(markdown: String, isDark: Boolean): String {
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
-        body {
+        html, body {
             font-family: -apple-system, system-ui, sans-serif;
             font-size: 14px;
             line-height: 1.6;
@@ -57,6 +88,10 @@ private fun wrapMarkdownHtml(markdown: String, isDark: Boolean): String {
             background: $bgColor;
             padding: 16px;
             word-wrap: break-word;
+            overflow-wrap: break-word;
+            word-break: break-word;
+            max-width: 100vw;
+            overflow-x: hidden;
         }
         h1 { font-size: 20px; margin: 16px 0 8px; }
         h2 { font-size: 17px; margin: 14px 0 6px; }
@@ -75,20 +110,28 @@ private fun wrapMarkdownHtml(markdown: String, isDark: Boolean): String {
             background: $codeBg;
             padding: 12px;
             border-radius: 6px;
-            overflow-x: auto;
+            overflow-x: hidden;
+            white-space: pre-wrap;
+            word-wrap: break-word;
+            word-break: break-all;
             margin: 8px 0;
         }
-        pre code { padding: 0; background: none; }
+        pre code { padding: 0; background: none; white-space: pre-wrap; word-break: break-all; }
+        .table-wrap {
+            overflow-x: auto;
+            -webkit-overflow-scrolling: touch;
+            margin: 8px 0;
+        }
         table {
             border-collapse: collapse;
-            width: 100%;
-            margin: 8px 0;
             font-size: 13px;
+            white-space: nowrap;
         }
         th, td {
             border: 1px solid $borderColor;
             padding: 6px 10px;
             text-align: left;
+            white-space: nowrap;
         }
         th { background: $codeBg; font-weight: 600; }
         blockquote {
@@ -103,12 +146,20 @@ private fun wrapMarkdownHtml(markdown: String, isDark: Boolean): String {
         em { font-style: italic; }
     </style>
     </head>
-    <body>$htmlContent</body>
+    <body>
+    <div id="content"></div>
+    <script>
+    function updateContent(html) {
+        document.getElementById('content').innerHTML = html;
+        window.scrollTo(0, document.body.scrollHeight);
+    }
+    </script>
+    </body>
     </html>
     """.trimIndent()
 }
 
-private fun markdownToHtml(md: String): String {
+internal fun markdownToHtml(md: String): String {
     val lines = md.lines()
     val sb = StringBuilder()
     var inCodeBlock = false
@@ -151,7 +202,7 @@ private fun markdownToHtml(md: String): String {
             val cells = trimmed.trim('|').split("|").map { it.trim() }
             if (cells.all { it.matches(Regex("[-:]+")) }) continue // separator row
             if (!inTable) {
-                sb.append("<table>")
+                sb.append("<div class=\"table-wrap\"><table>")
                 inTable = true
                 sb.append("<tr>")
                 cells.forEach { sb.append("<th>").append(inlineMarkdown(it)).append("</th>") }
@@ -163,7 +214,7 @@ private fun markdownToHtml(md: String): String {
             }
             continue
         }
-        if (inTable) { sb.append("</table>"); inTable = false }
+        if (inTable) { sb.append("</table></div>"); inTable = false }
 
         // Headers
         when {
@@ -216,7 +267,7 @@ private fun closeList(
 ): Triple<Boolean, Boolean, Boolean> {
     if (inList) sb.append("</ul>")
     if (inOrderedList) sb.append("</ol>")
-    if (inTable) sb.append("</table>")
+    if (inTable) sb.append("</table></div>")
     return Triple(false, false, false)
 }
 

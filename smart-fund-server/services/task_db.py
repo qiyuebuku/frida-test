@@ -26,6 +26,9 @@ CREATE TABLE IF NOT EXISTS sa_tasks (
 
     client_id     VARCHAR(100),
     error_msg     TEXT,
+    partial_result TEXT,
+    tool_calls    JSONB,
+    config        JSONB,
     created_at    TIMESTAMP DEFAULT NOW(),
     started_at    TIMESTAMP,
     completed_at  TIMESTAMP,
@@ -48,27 +51,38 @@ TYPE_LABELS = {
 }
 
 
+ALTER_TABLE_SQL = """
+ALTER TABLE sa_tasks ADD COLUMN IF NOT EXISTS partial_result TEXT;
+ALTER TABLE sa_tasks ADD COLUMN IF NOT EXISTS tool_calls JSONB;
+ALTER TABLE sa_tasks ADD COLUMN IF NOT EXISTS config JSONB;
+"""
+
+
 def init_task_tables():
     with get_conn() as conn:
         with conn.cursor() as cur:
             cur.execute(CREATE_TABLE_SQL)
+            cur.execute(ALTER_TABLE_SQL)
         conn.commit()
     print("[DB] sa_tasks table ready", flush=True)
 
 
 def create_task(task_type: str, input_type: str = None, image_path: str = None,
-                client_id: str = None, title: str = None) -> int:
+                client_id: str = None, title: str = None, config: dict = None) -> int:
+    import json
     if not title:
         label = TYPE_LABELS.get(task_type, task_type)
         title = f"{label} {datetime.now().strftime('%m-%d %H:%M')}"
 
+    config_json = json.dumps(config, ensure_ascii=False) if config else None
+
     with get_conn() as conn:
         with conn.cursor() as cur:
             cur.execute("""
-                INSERT INTO sa_tasks (task_type, input_type, image_path, client_id, title)
-                VALUES (%s, %s, %s, %s, %s)
+                INSERT INTO sa_tasks (task_type, input_type, image_path, client_id, title, config)
+                VALUES (%s, %s, %s, %s, %s, %s)
                 RETURNING id
-            """, (task_type, input_type, image_path, client_id, title))
+            """, (task_type, input_type, image_path, client_id, title, config_json))
             task_id = cur.fetchone()[0]
         conn.commit()
     return task_id
@@ -80,9 +94,10 @@ def update_task(task_id: int, **kwargs):
     import json
     sets = []
     vals = []
+    json_fields = {"result_data", "tool_calls", "config"}
     for k, v in kwargs.items():
         sets.append(f"{k} = %s")
-        if k == "result_data" and isinstance(v, dict):
+        if k in json_fields and isinstance(v, (dict, list)):
             vals.append(json.dumps(v, ensure_ascii=False))
         else:
             vals.append(v)

@@ -71,7 +71,7 @@ sync_skills() {
     echo "📦 同步 Claude Skills..."
     ssh_cmd "mkdir -p ${SKILL_REMOTE}/prompts ${SKILL_REMOTE}/data"
 
-    # 同步 prompts 和 SKILL.md
+    # 同步 SKILL.md + prompts + docs
     rsync -avz \
         --exclude='__pycache__' \
         --exclude='*.pyc' \
@@ -82,18 +82,40 @@ sync_skills() {
         "${SKILL_LOCAL}/prompts/" \
         "${REMOTE_USER}@${REMOTE_HOST}:${SKILL_REMOTE}/"
 
+    # 同步 docs 目录（使用说明等文档）
+    ssh_cmd "mkdir -p ${SKILL_REMOTE}/docs"
+    rsync -avz \
+        -e "ssh -p ${REMOTE_PORT} -i ${SSH_KEY_TMP} -o StrictHostKeyChecking=no" \
+        "${SKILL_LOCAL}/docs/" \
+        "${REMOTE_USER}@${REMOTE_HOST}:${SKILL_REMOTE}/docs/"
+
     # 同步 prompts 目录内容
     rsync -avz \
         -e "ssh -p ${REMOTE_PORT} -i ${SSH_KEY_TMP} -o StrictHostKeyChecking=no" \
         "${SKILL_LOCAL}/prompts/" \
         "${REMOTE_USER}@${REMOTE_HOST}:${SKILL_REMOTE}/prompts/"
 
-    # 创建符号链接（client.py / fund_db.py / config.json → smart-fund-server）
+    # 复制 client.py 实体文件（本地是符号链接，跟踪到实际文件）
+    local CLIENT_PY_REAL
+    CLIENT_PY_REAL="$(readlink -f "${SKILL_LOCAL}/client.py" 2>/dev/null || echo "${SKILL_LOCAL}/client.py")"
+    if [ -f "$CLIENT_PY_REAL" ]; then
+        rsync -avz \
+            -e "ssh -p ${REMOTE_PORT} -i ${SSH_KEY_TMP} -o StrictHostKeyChecking=no" \
+            "$CLIENT_PY_REAL" \
+            "${REMOTE_USER}@${REMOTE_HOST}:${SKILL_REMOTE}/client.py"
+    fi
+
+    # 创建符号链接（fund_db.py / config.json → smart-fund-server）
     ssh_cmd "
         cd ${SKILL_REMOTE}
-        ln -sf ${REMOTE_DIR}/client.py client.py 2>/dev/null || true
         ln -sf ${REMOTE_DIR}/services/fund_db.py fund_db.py 2>/dev/null || true
         ln -sf ${REMOTE_DIR}/config.json config.json 2>/dev/null || true
+    "
+
+    # 确保远程 python 指向 conda 环境（client.py 需要 httpx 等依赖）
+    ssh_cmd "
+        echo '${REMOTE_PASS}' | sudo -S mkdir -p /usr/local/bin 2>/dev/null
+        echo '${REMOTE_PASS}' | sudo -S ln -sf ${CONDA_BASE}/envs/${CONDA_ENV}/bin/python /usr/local/bin/python 2>/dev/null || true
     "
     echo "✅ Skills 同步完成"
 }

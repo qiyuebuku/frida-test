@@ -1,204 +1,161 @@
-# 05 - fund-trade Skill 远端部署方案
+# 05 - 远端部署方案
 
-## 一、问题
-
-`claude -p` 需要在远端服务器（119.23.227.187）上执行，但 fund-trade skill 目前只存在于本地：
+## 一、当前状态（v1 已完成）
 
 ```
 本地:  /home/yuyang/frida-test/.claude/skills/fund-trade/
 远端:  /home/yuyangruan/claude-skills/fund-trade/  ← 已部署 ✅
 ```
 
-`claude -p` 要能使用 skill，需要：
-1. 远端安装 Claude Code CLI ✅
-2. fund-trade skill 文件部署到远端 ✅
-3. `client.py` 和 `prompts/` 等依赖文件同步 ✅
+远端环境：
+- Claude Code 2.1.71 ✅
+- API 代理 `api.z.ai`（GLM 模型映射）✅
+- fund-trade skill + 8 个 prompts + 符号链接 ✅
 
-## 二、远端环境准备
+---
 
-### 2.1 Claude Code CLI ✅
+## 二、v2 需要的远端变更
 
-远端已安装 Claude Code 2.1.71：
+### 2.1 新增文件部署
 
-```bash
-$ claude --version
-2.1.71 (Claude Code)
-```
-
-> **注意**：远端使用 API 代理（`api.z.ai`），通过环境变量配置在 `~/.claude/settings.json` 中，
-> 模型映射为 GLM 系列（haiku→glm-4.5-air, sonnet→glm-4.7, opus→glm-5）。
-
-### 2.2 Skill 目录结构 ✅
-
-远端实际部署路径：
+v2 新增 `services/event_bus.py`，需要同步到远端：
 
 ```
-/home/yuyangruan/
-├── smart-fund-server/                  # API 服务
-│   ├── client.py                       # 基金 API 客户端
-│   ├── config.json                     # 基金池配置
-│   ├── services/
-│   │   ├── fund_db.py                  # 基金数据库
-│   │   ├── task_db.py                  # 异步任务数据库
-│   │   ├── task_executor.py            # 后台任务执行器
-│   │   └── scheduler.py               # 定时任务调度器
-│   └── main.py                         # FastAPI 入口
-├── claude-skills/
-│   └── fund-trade/
-│       ├── SKILL.md                    # Skill 定义（22KB）
-│       ├── client.py → ../smart-fund-server/client.py          # 符号链接
-│       ├── fund_db.py → ../smart-fund-server/services/fund_db.py
-│       ├── config.json → ../smart-fund-server/config.json
-│       ├── prompts/                    # 分析模板（8个）
-│       │   ├── daily_decision.md       # 每日决策模板
-│       │   ├── ocr_analyze.md          # OCR 持仓分析
-│       │   ├── ocr_analyze_flow.md     # OCR 分析流程
-│       │   ├── portfolio_review.md     # 持仓审视
-│       │   ├── review_decision.md      # 决策复盘
-│       │   ├── select_fund.md          # 选基模板
-│       │   ├── analyze_fund.md         # 单基分析
-│       │   └── alipay_review.md        # 支付宝持仓
-│       └── data/                       # 数据文件
-└── .claude/
-    └── settings.json                   # Claude Code 全局配置
+/home/yuyangruan/smart-fund-server/
+├── services/
+│   ├── event_bus.py          ← 新增：内存事件总线
+│   ├── task_executor.py      ← 修改：stream-json 解析 + emit 事件
+│   ├── task_db.py            ← 修改：新增 partial_result / tool_calls 字段
+│   ├── fund_db.py
+│   ├── scheduler.py
+│   └── ...
+├── routers/
+│   └── __init__.py           ← 修改：新增 SSE 端点 /api/tasks/{id}/stream
+├── main.py
+└── ...
 ```
 
-### 2.3 远端 client.py 的 API_BASE 调整
+这些文件通过现有 `deploy.sh` 的 `sync_code()` 自动同步，**无需额外操作**。
 
-远端 client.py 连接的是 localhost（同一台机器），通过环境变量覆盖：
+### 2.2 claude -p 调用方式变更
 
-```python
-# task_executor.py 中设置
-env = os.environ.copy()
-env["FUND_API_BASE"] = "http://127.0.0.1:8900"
-```
-
-采用**方案 A**（环境变量），在 `task_executor.py` 的 `_run_claude()` 和 `_run_claude_with_progress()` 中自动设置。
-
-## 三、部署同步脚本 ✅
-
-`deploy.sh` 中的 `sync_skills()` 函数（实际代码）：
-
-```bash
-# deploy.sh 中的实际实现
-SKILL_LOCAL="/home/yuyang/frida-test/.claude/skills/fund-trade"
-SKILL_REMOTE="/home/${REMOTE_USER}/claude-skills/fund-trade"
-
-sync_skills() {
-    echo "📦 同步 Claude Skills..."
-    ssh_cmd "mkdir -p ${SKILL_REMOTE}/prompts ${SKILL_REMOTE}/data"
-
-    # 同步 SKILL.md 和 prompts 目录
-    rsync -avz \
-        --exclude='__pycache__' --exclude='*.pyc' \
-        --exclude='test_*.py'   --exclude='*.bak' \
-        -e "ssh -p ${REMOTE_PORT} -i ${SSH_KEY_TMP} -o StrictHostKeyChecking=no" \
-        "${SKILL_LOCAL}/SKILL.md" \
-        "${SKILL_LOCAL}/prompts/" \
-        "${REMOTE_USER}@${REMOTE_HOST}:${SKILL_REMOTE}/"
-
-    # 单独同步 prompts 子目录
-    rsync -avz \
-        -e "ssh -p ${REMOTE_PORT} -i ${SSH_KEY_TMP} -o StrictHostKeyChecking=no" \
-        "${SKILL_LOCAL}/prompts/" \
-        "${REMOTE_USER}@${REMOTE_HOST}:${SKILL_REMOTE}/prompts/"
-
-    # 创建符号链接
-    ssh_cmd "
-        cd ${SKILL_REMOTE}
-        ln -sf ${REMOTE_DIR}/client.py client.py 2>/dev/null || true
-        ln -sf ${REMOTE_DIR}/services/fund_db.py fund_db.py 2>/dev/null || true
-        ln -sf ${REMOTE_DIR}/config.json config.json 2>/dev/null || true
-    "
-    echo "✅ Skills 同步完成"
-}
-```
-
-**同步触发方式**：
-
-| 命令 | 说明 |
-|------|------|
-| `deploy.sh` | 默认流程（sync_code + sync_skills + restart） |
-| `deploy.sh --skills` | 仅同步 skills |
-
-## 四、claude -p 调用方式
-
-### 4.1 TaskExecutor 中的实际调用
-
-`task_executor.py` 实现了两种调用模式：
-
-**同步调用**（短任务，如结构化）：
+**v1（短任务，不变）**：
 ```python
 def _run_claude(self, prompt: str, timeout: int = 120) -> str | None:
-    env = os.environ.copy()
-    env["FUND_API_BASE"] = "http://127.0.0.1:8900"
-
     result = subprocess.run(
         ["claude", "-p", prompt,
          "--allowedTools", "Bash,Read,Glob,Grep",
          "--output-format", "text"],
         capture_output=True, text=True, timeout=timeout,
-        cwd=SKILL_DIR if Path(SKILL_DIR).exists() else None,
-        env=env
+        cwd=SKILL_DIR, env=env
     )
     return result.stdout.strip() if result.returncode == 0 else None
 ```
 
-**异步调用 + 进度估算**（长任务，如持仓分析/交易决策）：
+**v2（长任务，改为 stream-json）**：
 ```python
-def _run_claude_with_progress(self, task_id, prompt,
-                              timeout=600, progress_range=(35, 90),
-                              messages=None) -> str | None:
+def _run_claude_streaming(self, task_id: int, prompt: str,
+                          timeout: int = 600, ...) -> str | None:
     process = subprocess.Popen(
         ["claude", "-p", prompt,
          "--allowedTools", "Bash,Read,Glob,Grep",
-         "--output-format", "text"],
-        stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+         "--output-format", "stream-json", "--verbose"],  # ← 关键变更
+        stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+        text=True, bufsize=1,   # 行缓冲，逐行读取
         cwd=SKILL_DIR, env=env
     )
-    # 每 3 秒按时间线性插值估算进度并写入 DB
-    while process.poll() is None:
-        elapsed = time.time() - start_time
-        ratio = min(1.0, elapsed / estimate_total)
-        pct = int(start_pct + (end_pct - start_pct) * ratio)
-        self._progress(task_id, pct, msg)
-        time.sleep(3)
-    return process.stdout.read().strip()
+    # 逐行读取 JSONL → 解析事件 → emit 到 EventBus + 写 DB
+    for line in process.stdout:
+        event = json.loads(line)
+        # ... 解析 tool_use / text / result 事件
 ```
 
-### 4.2 各任务类型的实际 Prompt
-
-**持仓分析**（`_handle_fund_holdings`）：
-```python
-analysis_prompt = f"""请执行基金持仓分析。
-
-已有 OCR 结构化数据：
-{data_desc}
-
-分析步骤：
-1. 执行 `python client.py market_overview` 采集市场环境
-2. 执行 `python client.py hot_board` 查看热门板块
-3. 执行 `curl -s --noproxy '*' http://127.0.0.1:8900/api/news_overview` 获取新闻
-4. 对持仓中的基金，执行 `python client.py <代码> detail` 和 `python client.py <代码> rank`
-5. 综合分析持仓配置、行业分布、风险点
-6. 给出操作建议（加仓/减仓/持有）
-
-输出完整的 Markdown 分析报告。只输出最终的 Markdown 报告。"""
+**前置验证**：
+```bash
+# 远端必须验证 stream-json 模式可用
+ssh remote 'claude -p "回复OK" --output-format stream-json --verbose 2>/dev/null | head -5'
 ```
 
-**每日交易决策**（`_handle_skill_command`）：
-```python
-"请执行 /fund-trade run 的完整流程，输出今日操作汇总报告。"
+> **注意**：`stream-json` 需要 `--verbose` 参数配合使用，Claude Code 2.1.71+ 支持。
+
+### 2.3 数据库 DDL
+
+```sql
+-- 新增字段（在远端 PostgreSQL 执行）
+ALTER TABLE sa_tasks ADD COLUMN IF NOT EXISTS partial_result TEXT;
+ALTER TABLE sa_tasks ADD COLUMN IF NOT EXISTS tool_calls JSONB;
+ALTER TABLE sa_tasks ADD COLUMN IF NOT EXISTS config JSONB;  -- 任务配置（自定义提示词/规则）
 ```
 
-**持仓审视**：
-```python
-"请执行 /fund-trade review 的完整流程，输出持仓审视报告。"
+### 2.4 远端目录结构（v2 完整）
+
+```
+/home/yuyangruan/
+├── smart-fund-server/
+│   ├── main.py
+│   ├── routers/
+│   │   └── __init__.py              # +SSE 端点 /api/tasks/{id}/stream
+│   ├── services/
+│   │   ├── event_bus.py             # 新增：TaskEventBus
+│   │   ├── task_executor.py         # 改造：_run_claude_streaming()
+│   │   ├── task_db.py               # 改造：partial_result / tool_calls / config
+│   │   ├── fund_db.py
+│   │   ├── scheduler.py
+│   │   └── ocr_service.py
+│   └── handlers/
+│       └── screenshot_handler.py
+├── claude-skills/
+│   └── fund-trade/
+│       ├── SKILL.md
+│       ├── client.py → ../smart-fund-server/client.py
+│       ├── fund_db.py → ../smart-fund-server/services/fund_db.py
+│       ├── config.json → ../smart-fund-server/config.json
+│       └── prompts/ (8个模板)
+└── .claude/
+    └── settings.json
 ```
 
-## 五、远端 Claude Code 配置
+---
 
-### `~/.claude/settings.json`（实际配置）
+## 三、部署同步脚本
+
+### 现有流程（不变）
+
+```bash
+# deploy.sh 的默认流程
+deploy.sh              # sync_code + sync_skills + restart
+deploy.sh --skills     # 仅同步 skills
+deploy.sh --restart    # 仅重启服务
+```
+
+`sync_code()` 会 rsync 整个 `smart-fund-server/` 目录，新增的 `event_bus.py` 自动包含。
+
+### v2 部署额外步骤
+
+首次 v2 部署时需要：
+
+```bash
+# 1. 同步代码（包含 event_bus.py + 修改后的 task_executor.py / task_db.py / routers）
+deploy.sh
+
+# 2. 执行 DDL（远端 PostgreSQL）
+ssh remote 'psql -U jettask -d jettask -c "
+    ALTER TABLE sa_tasks ADD COLUMN IF NOT EXISTS partial_result TEXT;
+    ALTER TABLE sa_tasks ADD COLUMN IF NOT EXISTS tool_calls JSONB;
+    ALTER TABLE sa_tasks ADD COLUMN IF NOT EXISTS config JSONB;
+"'
+
+# 3. 验证 stream-json 模式
+ssh remote 'claude -p "回复OK" --output-format stream-json --verbose 2>/dev/null | head -3'
+```
+
+后续迭代只需 `deploy.sh` 即可。
+
+---
+
+## 四、远端 Claude Code 配置
+
+### `~/.claude/settings.json`（不变）
 
 ```json
 {
@@ -211,38 +168,49 @@ analysis_prompt = f"""请执行基金持仓分析。
     "ANTHROPIC_DEFAULT_SONNET_MODEL": "glm-4.7",
     "ANTHROPIC_DEFAULT_OPUS_MODEL": "glm-5"
   },
-  "permissions": {
-    "allow": [],
-    "deny": []
-  },
+  "permissions": { "allow": [], "deny": [] },
   "model": "opus",
   "skipDangerousModePermissionPrompt": true
 }
 ```
 
 **要点**：
-- 使用 API 代理 `api.z.ai`，非原生 Anthropic API
-- 模型映射：opus → glm-5, sonnet → glm-4.7, haiku → glm-4.5-air
-- `skipDangerousModePermissionPrompt: true` — 允许 `claude -p` 无需确认执行命令
-- 超时 300 万毫秒（50 分钟），满足长任务需求
-- permissions 为空，`claude -p` 通过 `--allowedTools` 参数按需授权
+- API 代理 `api.z.ai` → GLM 模型（opus→glm-5, sonnet→glm-4.7）
+- 超时 50 分钟，满足长任务
+- `--allowedTools` 参数按需授权
 
-## 六、验证清单
+### stream-json 兼容性
 
-- [x] 远端 `claude --version` → `2.1.71 (Claude Code)` ✅
-- [x] 远端 `claude -p "回复OK"` → 返回 `OK` ✅
-- [x] 远端 skill 目录存在，SKILL.md + 8 个 prompts 已同步 ✅
-- [x] 远端符号链接正确（client.py → smart-fund-server/client.py 等） ✅
-- [x] `deploy.sh` 能正确同步 skills 文件 ✅
-- [x] 重启服务后 skill 文件仍在（非临时目录） ✅
-- [x] 端到端测试：App 创建 fund_review 任务 → claude -p 执行 → 返回 Markdown 报告 ✅
-  - 测试时间：2026-03-10 17:32
-  - 耗时：约 5 分钟
-  - 结果：生成完整持仓审视报告（含 portfolio_summary + logic_review + 操作建议）
+`--output-format stream-json --verbose` 在 API 代理模式下的行为：
+- 事件格式与原生 Anthropic API 相同（`type: system/assistant/result`）
+- tool_use / tool_result 事件正常输出
+- **需要验证**：GLM 模型通过代理时 stream-json 是否正常工作
 
-## 七、注意事项
+---
 
-1. **SKILL_DIR 环境变量**：`task_executor.py` 通过 `os.getenv("SKILL_DIR", "/home/yuyangruan/claude-skills/fund-trade")` 配置，如需修改工作目录可通过环境变量覆盖
-2. **并发限制**：`TaskExecutor` 使用 `Semaphore(2)` 限制最多 2 个 claude -p 并发
-3. **超时保护**：同步调用 120s，异步调用 600s（10 分钟），超时自动 kill
-4. **服务重启恢复**：当前不会恢复重启前正在处理的任务，需手动标记为 failed 或重新创建
+## 五、验证清单
+
+### v1 已验证 ✅
+- [x] 远端 Claude Code 2.1.71 可用
+- [x] `claude -p "回复OK"` → 返回 OK
+- [x] skill 目录 + 8 个 prompts + 符号链接正确
+- [x] 端到端：App 创建 fund_review → claude -p 执行 → Markdown 报告
+
+### v2 待验证
+- [ ] `claude -p --output-format stream-json --verbose` 在远端正常输出 JSONL
+- [ ] stream-json 事件包含 tool_use（Bash 工具调用）
+- [ ] DDL 执行成功（partial_result / tool_calls / config 字段）
+- [ ] SSE 端点 `/api/tasks/{id}/stream` 能持续推送事件
+- [ ] App 端 SSE 客户端能实时接收并渲染
+- [ ] 断线重连后能通过 `GET /api/tasks/{id}` 恢复中间状态
+
+---
+
+## 六、注意事项
+
+1. **SKILL_DIR**：`os.getenv("SKILL_DIR", "/home/yuyangruan/claude-skills/fund-trade")`
+2. **并发限制**：`Semaphore(2)`，最多 2 个 claude -p 并发
+3. **超时**：短任务 120s，长任务 600s（stream-json 模式下通过 for-line 循环内检查）
+4. **服务重启恢复**：不自动恢复，中断的任务需手动处理
+5. **EventBus 内存**：每个任务的事件列表在任务完成后清理，不持久化
+6. **stream-json 降级**：如果远端 stream-json 不可用，`_run_claude_streaming` 自动降级为 `_run_claude_with_progress`（时间估算模式）

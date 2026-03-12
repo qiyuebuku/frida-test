@@ -15,7 +15,7 @@ import java.io.ByteArrayOutputStream
 import java.io.InputStreamReader
 import java.util.concurrent.TimeUnit
 
-class HttpClient(private val serverUrl: String) {
+class HttpClient(val serverUrl: String) {
 
     companion object {
         private const val TAG = "HttpClient"
@@ -161,13 +161,16 @@ class HttpClient(private val serverUrl: String) {
     /**
      * 创建异步任务（截图发送到服务端异步处理）
      */
-    fun createTask(bitmap: Bitmap, action: String): Int? {
+    fun createTask(bitmap: Bitmap, action: String,
+                   systemPrompt: String? = null, rules: String? = null): Int? {
         return try {
             val base64 = bitmapToBase64(bitmap)
             val json = JSONObject().apply {
                 put("imageBase64", base64)
                 put("action", action)
                 put("client_id", "android")
+                if (!systemPrompt.isNullOrBlank()) put("system_prompt", systemPrompt)
+                if (!rules.isNullOrBlank()) put("rules", rules)
             }
             postTask(json)
         } catch (e: Exception) {

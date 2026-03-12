@@ -56,7 +56,7 @@ cd /home/yuyang/frida-test/.claude/skills/fund-trade
 
 # 并行执行
 python client.py market_overview > /tmp/ft_ocr_market.json
-curl -s --noproxy '*' http://119.23.227.187:8900/api/news_overview > /tmp/ft_ocr_news.json
+python client.py news_overview > /tmp/ft_ocr_news.json
 python client.py hot_board > /tmp/ft_ocr_hotboard.json
 ```
 

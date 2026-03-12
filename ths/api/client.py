@@ -1,295 +1,12 @@
-"""同花顺基金 API 客户端 - 调用本地 API 服务获取数据
+"""同花顺基金 API 客户端 - 调用远程 API 服务获取数据
 
-用法:
-  python client.py <基金代码> [命令] [选项]
-
-命令列表:
-  all            获取全部信息（默认）
-  detail         基金综合详情（净值、涨幅、经理、规模、夏普、年化等）
-  product        产品详情（投资理念、业绩基准、风险特征、分红拆分等）
-  rank           阶段涨幅排名（近一周/月/季/半年/1-5年，含同类排名）
-  year_return    年度收益率及同类排名
-  drawdown       最大回撤（近半年/一年/三年/成立以来，含同类排名）
-  stability      收益稳定度（日/周/月/季/年，含胜率、均值、同类对比）
-  hold_overview  持仓概览（股票仓位、主要行业、持仓集中度）
-  holdings       前十大持仓（股票代码、名称、占净值比、期间涨幅）
-  profit         盈亏贡献（各持仓股票的占净值比和贡献率）
-  style          投资风格偏好（科技/周期/消费/制造/金融/医疗/军工 各季度占比）
-  asset          资产配置（股票/债券/存款/其他 各季度占比）
-  nav            历史净值走势（支持近一年/一月/今年以来）
-  realtime       实时估值分时走势（每分钟更新）
-  manager        基金经理档案（简历、诊断评分、历年收益、行业偏好、管理基金列表）
-  rsi            RSI 买卖指标（买入区间上下限）
-  trade_rule     交易规则与费率（买入/卖出规则、申赎费率、管理费、定投费率）
-  scale_change   规模变动历史（季度净资产、申购赎回金额、份额变动）
-  holder_ratio   机构持仓比例历史（半年度机构持有占比变化）
-  dividend       分红历史（分红明细、拆分记录）
-  valuation      持仓股估值（前十大持仓的 PE/PB/市值/ROE）
-  position       持仓变动追踪（对比相邻两个季度的前十大持仓变化）
-  announcements  基金公告（支持分类筛选和分页，含 PDF 下载链接）
-  news           基金相关资讯（标题、来源、链接）
-  compare        同类基金横向对比（自动发现同赛道基金或手动指定）
-  pe_percentile  持仓股估值百分位（当前PE/PB在近N年的历史分位）
-  nav_technical  净值技术面分析（RSI14/均线/偏离度/信号）
-  market         大盘与行业环境（沪深300趋势/北向资金活跃度）
-  fund_flow      基金申赎资金流趋势（季度净申赎/机构占比变化）
-
-  === 基金排行与筛选（不需要基金代码） ===
-  ranking        基金排行（同花顺原生数据，支持多种排序/预设排行榜/自定义筛选）
-  screen         策略筛选（年年正收益/三年翻倍/机构偏爱等预设策略）
-  companies      基金公司列表
-
-  === 认证管理（不需要基金代码） ===
-  refresh-token  刷新认证 token（优先 Zygisk，失败则密码登录）
-  auth-status    查看认证状态（过期时间、剩余有效期）
-
-  === 交易账户（不需要基金代码） ===
-  account        账户总览（总资产、累计盈亏、当日盈亏、风险等级）
-  positions      基金持仓列表（持仓基金明细、市值、收益）
-  wallet         活期宝/钱包（货币基金收益、可用余额）
-  autoinvest     定投计划（定投汇总、计划列表）
-  trade_binding  账户绑定信息（客户ID、姓名、身份证号）
-  trade_all      全部交易数据一次性汇总
-
-  === 基金交易（不需要基金代码） ===
-  buy            买入基金（buy <基金代码> --amount <金额>）
-  sell           赎回基金（sell <基金代码> --all 或 --shares <份额>）
-  order          查询交易订单（order <订单号>）
-  orders         交易订单列表（近30天所有订单，标注可撤状态）
-  cancel         撤销订单（cancel <订单号>）
-  set_password   设置交易密码（明文或MD5均可）
-
-  === 热榜命令（不需要基金代码） ===
-  hotlist        市场热榜（个股/概念/行业/ETF 热度排名）
-  hotlist_topics 热榜话题（同花顺社区热门讨论话题，--topic N 查看详情）
-  hotlist_posts  热门文章（热门资讯/分析文章）
-  headlines      推荐头条（首页推荐tab置顶的重要新闻/专题，--detail N 查看详情）
-  news_themes    新闻主题分类（资讯tab的主题标签列表，如小金属、算力租赁等）
-  theme_articles 主题文章列表（指定主题的最新动态，--theme TZ-11385）
-  flash_news     快讯分类（A股/重要/公告/期货/异动/港股/美股，--tag 选分类，--detail N 看详情）
-  market_overview A股大盘总览（指数行情/涨跌家数/成交额/资金流向/涨跌停/大小盘对比）
-  market_changes 大盘异动（板块异动时间线+竞价异动，同花顺数据源）
-  stock_changes  个股异动（火箭发射/竞价上涨/大笔买入/封涨停等22种，--change-type 选类型）
-  yesterday_limit 昨日涨停今日表现（涨跌幅/振幅/连板数/封板时间/行业）
-  stock_rank     个股涨跌幅排行（涨幅/跌幅/成交额/换手率榜，--sort 选排序）
-  sector_rank    板块涨跌排行（概念/行业板块涨跌幅榜，--sector-type 选类型）
-  hot_board      热点板块（今日涨幅/资金流入/5日涨幅 TOP N，--hot-sort 选排序）
-  dragon_tiger   龙虎榜（个股明细/活跃营业部游资/机构买卖，--dt-tab 选维度）
-  ths_dragon_tiger 同花顺游资龙虎榜（一线游资/知名游资/机构/跟风高手标签，--ths-dt-tab 选维度）
-  capital_flow   资金流向（大盘主力资金净流入/北向资金成交额，--cf-tab 选维度）
-  currency       货币风向（美元/离岸人民币汇率走势 / Shibor利率+LPR变化，--currency-tab 选维度）
-  news_feed      滚动快讯（财经要闻实时滚动，每页20条，支持翻页）
-
-  === 个股查询（stock_xxx <股票代码>） ===
-  stock_quote    个股实时行情（支持批量，逗号分隔，腾讯数据源）
-  stock_kline    个股K线数据（日K/周K/月K，前复权，--stock-period 选周期）
-  stock_flow     个股资金流向（主力/超大单/大单/中单/小单，--stock-days 选天数）
-  stock_valuation 个股估值历史（PE_TTM/PB历史数据，--years 选年数）
-  stock_financial 个股财务数据（EPS/营收/净利/ROE/毛利率/分红方案）
-
-选项:
-  --count N      显示条数，默认 10（适用于 stability/nav/announcements/news）
-  --period P     净值走势周期: year/month/nowyear（适用于 nav）
-  --time-type T  盈亏贡献周期: threeMonth/halfYear/year（适用于 profit）
-  --cat C        公告分类: all/report/dividend/change/operation/other（适用于 announcements）
-  --page N       页码，默认 1（适用于 announcements/news_feed）
-  --with CODES   对比基金代码，逗号分隔（适用于 compare）
-  --years N      估值百分位回溯年数，默认 3（适用于 pe_percentile）
-  --market M     热榜市场: a=A股, hk=港股, us=美股（适用于 hotlist）
-  --topic N      查看第 N 个话题的详细内容（适用于 hotlist_topics）
-  --detail N     查看第 N 条的详细内容（适用于 headlines/theme_articles）
-  --theme ID     主题ID，如 TZ-11385（适用于 theme_articles）
-  --tag TAG      快讯分类: a股/重要/公告/期货/异动/港股/美股 或数字ID（适用于 flash_news）
-  --seq N        快讯翻页游标，传上一页最后一条的seq（适用于 flash_news）
-  --change-type  异动类型: all/竞价/拉升/跳水/大单/涨停/跌停/火箭发射...（适用于 stock_changes）
-  --sort S       排序方式: rise/fall/volume/turnover/turnover_rate（适用于 stock_rank）
-  --sector-type  板块类型: concept=概念/industry=行业（适用于 sector_rank/hot_board）
-  --hot-sort S   热点板块排序: rise=今日涨幅/flow=资金流入/5day=5日涨幅（适用于 hot_board）
-  --dt-tab T     龙虎榜维度: stock=个股明细/dept=活跃营业部/org=机构买卖（适用于 dragon_tiger）
-  --dt-days N    龙虎榜回溯天数，默认 3（适用于 dragon_tiger）
-  --ths-dt-tab T 同花顺龙虎榜: youzi=游资/jigou=机构/gfgs=跟风高手/all=全部（适用于 ths_dragon_tiger）
-  --cf-tab T     资金流向: market=大盘资金/north=北向资金（适用于 capital_flow）
-  --cf-days N    资金流向回溯天数，默认 20（适用于 capital_flow）
-  --currency-tab 货币风向: usdcny=美元/离岸人民币/shibor=Shibor利率+LPR（适用于 currency）
-  --currency-days 货币风向回溯天数，默认 120（适用于 currency）
-  --stock-period P K线周期: day=日K/week=周K/month=月K（适用于 stock_kline）
-  --stock-days N 个股资金流回溯天数，默认 20（适用于 stock_flow）
-  --sort-type S  排行排序字段: year/hyear/tmonth/month/week/sharpeYear/maxDrawDownYear（适用于 ranking/screen）
-  --ranking-sort 排行排序方向: DESC=降序/ASC=升序（适用于 ranking）
-  --board NAME   排行榜名称: 涨幅榜/反弹榜/人气榜/加仓榜/超额榜（适用于 ranking）
-  --strategy KEY 筛选策略 key: fund0001=年年正收益/fund0002=三年翻倍等（适用于 screen）
-  --min-scale N  最小规模（元），如 100000000=10亿（适用于 ranking）
-  --offset N     翻页偏移量（适用于 ranking）
-  --amount N     买入金额（元）（适用于 buy）
-  --no-wallet    不使用活期宝支付（适用于 buy）
-  --shares N     赎回份额数量（适用于 sell）
-  --all          全部赎回（适用于 sell，默认行为）
-
-示例:
-  python client.py 006888                                      # 获取全部信息
-  python client.py 006888 holdings                             # 前十大持仓
-  python client.py 006888 nav --period month --count 30        # 近一月净值，显示30条
-  python client.py 006888 profit --time-type year              # 近一年盈亏贡献
-  python client.py 006888 stability --count 20                 # 收益稳定度，每组显示20期
-  python client.py 006888 announcements --cat report           # 业绩报告公告
-  python client.py 006888 announcements --cat change --page 2  # 变更公告第2页
-  python client.py 006888 announcements --count 20             # 全部公告显示20条
-  python client.py 006888 news --count 15                      # 相关资讯显示15条
-  python client.py 006888 compare                              # 自动发现同赛道基金对比
-  python client.py 006888 compare --with 022364,018956         # 手动指定对比基金
-  python client.py 006888 pe_percentile                        # 持仓股估值百分位（近3年）
-  python client.py 006888 pe_percentile --years 5              # 近5年估值百分位
-
-  # 热榜命令（不需要基金代码）
-  python client.py hotlist                                      # A股/概念/行业/ETF 热榜
-  python client.py hotlist --market hk                          # 港股热榜
-  python client.py hotlist --market us --count 20               # 美股热榜前20名
-  python client.py hotlist_topics                               # 同花顺社区热门话题
-  python client.py hotlist_topics --topic 1                     # 查看第1个话题详情（投票/讨论）
-  python client.py hotlist_topics --topic 2 --count 5           # 查看第2个话题，显示5条讨论
-  python client.py hotlist_posts                                # 热门文章
-  python client.py hotlist_posts --count 5                      # 热门文章前5条
-  python client.py news_themes                                  # 新闻主题分类列表（19个热门板块）
-  python client.py theme_articles --theme TZ-11385              # 小金属主题文章列表
-  python client.py theme_articles --theme TZ-11385 --detail 2   # 小金属第2篇文章全文
-  python client.py theme_articles --theme TZ-11907 --count 20   # 人形机器人主题前20篇
-  python client.py theme_articles --theme TZ-669 --page 2       # 有色金属主题第2页
-  python client.py flash_news                                   # 查看快讯分类列表
-  python client.py flash_news --tag 重要                         # 重要快讯
-  python client.py flash_news --tag 期货 --count 20              # 期货快讯前20条
-  python client.py flash_news --tag 62857 --detail 3             # 第3条重要快讯详情
-  python client.py flash_news --tag a股 --seq 674998305          # A股快讯翻页（加载更早的）
-  python client.py market_overview                                # A股大盘总览（指数/涨跌/资金/涨跌停）
-  python client.py market_overview --count 5                      # 涨跌停列表只显示前5只
-  python client.py stock_rank                                     # A股涨幅榜前20
-  python client.py stock_rank --sort fall                         # A股跌幅榜
-  python client.py stock_rank --sort turnover --count 30          # 成交额榜前30
-  python client.py stock_rank --sort turnover_rate                # 换手率榜
-  python client.py sector_rank                                    # 概念板块涨跌排行
-  python client.py sector_rank --sector-type industry             # 行业板块涨跌排行
-  python client.py hot_board                                      # 概念板块今日涨幅 TOP 10
-  python client.py hot_board --hot-sort flow                      # 概念板块资金流入 TOP 10
-  python client.py hot_board --hot-sort 5day                      # 概念板块5日涨幅 TOP 10
-  python client.py hot_board --sector-type industry               # 行业板块今日涨幅 TOP 10
-  python client.py hot_board --sector-type industry --hot-sort flow  # 行业板块资金流入
-  python client.py dragon_tiger                                     # 龙虎榜个股明细（近3日）
-  python client.py dragon_tiger --dt-tab dept                       # 活跃营业部（游资/敢死队）
-  python client.py dragon_tiger --dt-tab org                        # 机构买卖明细
-  python client.py dragon_tiger --dt-days 7 --count 50              # 近7日龙虎榜前50
-  python client.py ths_dragon_tiger                                  # 同花顺游资龙虎榜（一线+知名游资）
-  python client.py ths_dragon_tiger --ths-dt-tab jigou               # 机构专用席位
-  python client.py ths_dragon_tiger --ths-dt-tab all                 # 全部（含所有标签）
-  python client.py capital_flow                                      # 大盘资金净流入（主力/大单/超大单）
-  python client.py capital_flow --cf-tab north                       # 北向资金成交额
-  python client.py capital_flow --cf-days 30                         # 近30个交易日
-  python client.py currency                                         # 美元/离岸人民币汇率走势
-  python client.py currency --currency-tab shibor                   # Shibor利率+LPR变化
-  python client.py currency --currency-days 60                      # 近60个交易日
-  python client.py market_changes                                # 大盘异动（板块异动+竞价异动）
-  python client.py market_changes --count 50                     # 显示更多条
-  python client.py stock_changes                                 # 全部个股异动
-  python client.py stock_changes --change-type 竞价               # 竞价异动
-  python client.py stock_changes --change-type 拉升               # 火箭发射+快速反弹
-  python client.py stock_changes --change-type 大单               # 大笔买入/卖出+大买盘/卖盘
-  python client.py stock_changes --change-type 涨停               # 封涨停+打开涨停
-  python client.py stock_changes --change-type 火箭发射            # 单个具体类型
-  python client.py stock_changes --change-type 大笔买入 --count 30 # 大笔买入前30条
-  python client.py yesterday_limit                               # 昨日涨停今日表现
-  python client.py yesterday_limit --count 30                    # 显示前30只
-  python client.py headlines                                    # 推荐头条（置顶重要新闻）
-  python client.py headlines --detail 1                         # 查看第1条头条详细内容
-  python client.py headlines --detail 2                         # 查看第2条头条详细内容
-  python client.py news_feed                                    # 滚动快讯（最新20条）
-  python client.py news_feed --page 2                           # 滚动快讯第2页
-
-  # 基金排行与筛选（同花顺原生数据）
-  python client.py ranking                                       # 默认：近一年涨幅排行 TOP 30
-  python client.py ranking --sort-type month                     # 近一月涨幅排行
-  python client.py ranking --sort-type sharpeYear                # 夏普比率排行
-  python client.py ranking --sort-type maxDrawDownYear --ranking-sort ASC  # 最小回撤排行
-  python client.py ranking --board 涨幅榜                        # 使用预设排行榜
-  python client.py ranking --board 反弹榜                        # 反弹榜
-  python client.py ranking --count 50                            # 显示50只
-  python client.py ranking --min-scale 100000000                 # 规模>10亿
-  python client.py ranking --count 30 --offset 30               # 第二页（翻页）
-  python client.py screen                                        # 列出所有可用筛选策略
-  python client.py screen --strategy fund0001                    # 年年正收益
-  python client.py screen --strategy fund0002                    # 三年翻倍
-  python client.py screen --strategy fund0011                    # 机构偏爱
-  python client.py companies                                     # 基金公司列表
-
-当前已覆盖的决策维度（10 大类 35+ 指标）
-  维度: 基本面
-  覆盖情况: 基金评分、夏普比率、年化收益、最大回撤、阶段排名、收益稳定度
-  数据来源: detail/rank/drawdown/stability
-  ────────────────────────────────────────
-  维度: 估值
-  覆盖情况: 持仓股 PE/PB/ROE + 近N年历史百分位
-  数据来源: valuation/pe_percentile
-  ────────────────────────────────────────
-  维度: 持仓
-  覆盖情况: 前十大持仓、行业分布、风格偏好、季度持仓变动、盈亏贡献
-  数据来源: holdings/style/position/profit
-  ────────────────────────────────────────
-  维度: 择时
-  覆盖情况: RSI(14)、MA5/20/60、均线偏离度、金叉死叉信号
-  数据来源: nav_technical/rsi
-  ────────────────────────────────────────
-  维度: 宏观环境
-  覆盖情况:
-  沪深300+创业板指趋势、北向资金活跃度、融资融券余额、国债ETF(利率代理)
-  数据来源: market
-  ────────────────────────────────────────
-  维度: 资金流
-  覆盖情况: 季度净申赎、机构占比变化趋势
-  数据来源: fund_flow/holder_ratio/scale_change
-  ────────────────────────────────────────
-  维度: 基金经理
-  覆盖情况: 从业年限、历史收益、雷达图诊断、行业偏好、代表基金
-  数据来源: manager
-  ────────────────────────────────────────
-  维度: 交易成本
-  覆盖情况: 申赎费率、管理费、托管费、确认时间
-  数据来源: trade_rule
-  ────────────────────────────────────────
-  维度: 同类对比
-  覆盖情况: 自动发现同赛道基金、多维横向对比
-  数据来源: compare/similar
-  ────────────────────────────────────────
-  维度: 货币风向
-  覆盖情况: USD/CNY中间价走势(CFETS)、离岸人民币OHLC(push2his)、Shibor隔夜/1周/1月/3月、LPR 1年/5年
-  数据来源: currency
-  ────────────────────────────────────────
-  维度: 市场热点
-  覆盖情况: 推荐头条、滚动快讯、个股热度排名(A/港/美)、概念/行业热榜、ETF热榜、社区话题、热门文章
-  数据来源: headlines/news_feed/hotlist/hotlist_topics/hotlist_posts
-
-  如果以 006888（华安媒体互联网A）为例的决策逻辑
-
-  基于 all 命令输出的完整数据，一个职业投资人可以形成如下决策链：
-
-  1. 值不值得买？ — 看 rank（阶段排名）、year_return（年度收益）、drawdown
-  （回撤控制）、stability（胜率）→ 判断基金的alpha能力
-  2. 现在贵不贵？ — 看 pe_percentile（持仓股估值百分位）→
-  如果多数重仓股PE处于历史80%以上，估值偏贵
-  3. 什么时候买？ — 看 nav_technical（RSI/均线信号）→
-  RSI<30超卖区间考虑建仓，RSI>70超买区间考虑减仓
-  4. 大环境支持吗？ — 看 market（沪深300/创业板趋势、融资融券、国债利率）+
-   currency（汇率走势、Shibor利率、LPR变化）→
-   大盘多头+融资余额上升+利率下行+人民币升值=有利于成长股基金
-  5. 聪明钱怎么做？ — 看 fund_flow（净申赎）+ holder_ratio（机构占比）→
-  机构在撤退要警惕
-  6. 买谁更好？ — 看 compare（同类对比）→ 同赛道是否有更优选择
-  7. 市场在追什么？ — 看 headlines（推荐头条）+ hotlist（热度排名）+ news_feed（快讯）→
-  判断基金持仓是否在当前市场热点赛道上，重大事件是否影响持仓板块
+认证流程: Hook(Zygisk) 自动捕获 token 并直推服务端，服务端 token 快过期时自动密码登录续期。
 """
 
 import argparse
-import base64
 import hashlib
 import json
 import os
-import subprocess
 import sys
 import time
 
@@ -300,11 +17,6 @@ for _k in ("http_proxy", "https_proxy", "HTTP_PROXY", "HTTPS_PROXY", "all_proxy"
     os.environ.pop(_k, None)
 
 API_BASE = "http://119.23.227.187:8900"
-ZYGISK_URL = "http://localhost:18900"
-SERVER_DIR = "/home/yuyang/frida-test/smart-fund-server"
-
-DEFAULT_KEY1 = "7246091a5f126b63"
-DEFAULT_KEY2 = "2293a78f6581c12bbb334759458d4de3"
 
 _client = httpx.Client(timeout=60)
 
@@ -2568,6 +2280,39 @@ def cmd_news_feed(args):
         print(f"      {dt}{tag_str}{stock_str}")
 
 
+def cmd_news_overview(args):
+    """新闻概览（重要快讯 + A股快讯 + 滚动快讯 聚合）"""
+    from datetime import datetime
+
+    count = getattr(args, "count", 10)
+    d = get(f"/api/news_overview?limit={count}")
+    data = d.get("data", {})
+
+    for category, label in [("important", "重要快讯"), ("a_stock", "A股快讯"), ("feed", "滚动快讯")]:
+        section = data.get(category, {})
+        items = section.get("items", [])
+        if section.get("error"):
+            print(f"\n【{label}】获取失败: {section['error']}")
+            continue
+        print(f"\n{'='*50}")
+        print(f"  【{label}】 共 {section.get('count', len(items))} 条")
+        print(f"{'='*50}")
+        for i, a in enumerate(items[:count], 1):
+            ts = int(a.get("ctime", 0))
+            dt = datetime.fromtimestamp(ts).strftime("%m-%d %H:%M") if ts else ""
+            title = a.get("title", "")
+            digest = a.get("digest", "")
+            stocks = [s.get("name", "") for s in a.get("stock", []) if s.get("name")]
+            stock_str = f"  相关: {', '.join(stocks[:3])}" if stocks else ""
+
+            print(f"  {i:2d}. {title}")
+            if digest and digest != title:
+                print(f"      {digest[:120]}")
+            print(f"      {dt}{stock_str}")
+        if not items:
+            print("  暂无数据")
+
+
 def cmd_flash_news(args):
     """快讯分类（A股/重要/公告/期货/异动/港股/美股）"""
     import re
@@ -3333,6 +3078,40 @@ def cmd_wallet_home(args):
         print(json.dumps(data.get("data", {}), indent=2, ensure_ascii=False))
     else:
         print(f"❌ 获取钱包首页失败: {data.get('detail', '未知错误')}")
+
+
+def cmd_save_decision(args):
+    """保存决策到 ft_decisions（接受 JSON 字符串）"""
+    raw = args.extra_arg
+    if not raw:
+        print("用法: python client.py save-decision '<JSON>'")
+        return
+    try:
+        payload = json.loads(raw)
+    except Exception as e:
+        print(f"JSON 解析失败: {e}")
+        return
+    data = post("/api/decisions/save", json_data=payload)
+    if data.get("status") == "success":
+        print(f"决策保存成功: {payload.get('fund_code', '')} {payload.get('action', '')}")
+    else:
+        print(f"保存失败: {data.get('detail', data.get('message', '未知错误'))}")
+
+
+def cmd_risk_check(args):
+    """风控校验（接受 JSON 字符串）"""
+    raw = args.extra_arg
+    if not raw:
+        print("用法: python client.py risk-check '<JSON>'")
+        return
+    try:
+        payload = json.loads(raw)
+    except Exception as e:
+        print(f"JSON 解析失败: {e}")
+        return
+    data = post("/api/risk/check", json_data=payload)
+    import json as json_module
+    print(json_module.dumps(data, indent=2, ensure_ascii=False))
 
 
 def cmd_today_decisions(args):
@@ -4369,265 +4148,21 @@ def cmd_all(args):
     cmd_compare(args)
 
 
-def _decode_jwt_exp(jwt_token: str):
-    """解析同花顺 JWT 获取过期时间
-
-    同花顺 JWT 格式特殊：header.signature，exp 可能在 header（第一部分）或 payload（第二部分）中。
-    尝试两种解析方式。
-    """
-    for part_idx in (1, 0):  # 优先尝试 payload（标准），再尝试 header（同花顺特殊格式）
-        try:
-            parts = jwt_token.split(".")
-            if len(parts) <= part_idx:
-                continue
-            segment = parts[part_idx]
-            padding = 4 - len(segment) % 4
-            if padding != 4:
-                segment += "=" * padding
-            decoded = base64.urlsafe_b64decode(segment)
-            data = json.loads(decoded)
-            exp = data.get("exp")
-            if exp is not None:
-                # exp 是毫秒时间戳，转换为秒
-                if exp > 10000000000:
-                    exp = exp // 1000
-                return exp
-        except Exception:
-            continue
-    return None
-
-
-def _ensure_adb_forward():
-    """确保 ADB 端口转发已建立（手机 18900 -> 本地 18900）"""
-    config_file = os.path.join(SERVER_DIR, "config.json")
-    adb_path = "/mnt/d/123pan/Downloads/一加Ace6/adb命令行/adb.exe"
-    adb_device = "3B15BJ00GZL00000"
-    if os.path.exists(config_file):
-        try:
-            with open(config_file, "r", encoding="utf-8") as f:
-                cfg = json.load(f)
-            adb_path = cfg.get("adb_path", adb_path)
-            adb_device = cfg.get("adb_device", adb_device)
-        except Exception:
-            pass
-    try:
-        subprocess.run(
-            [adb_path, "-s", adb_device, "forward", "tcp:18900", "tcp:18900"],
-            capture_output=True, timeout=5
-        )
-    except Exception as e:
-        print(f"ADB 端口转发失败: {e}")
-
-
-def _fetch_token_from_zygisk():
-    """从 Zygisk 获取 token（先建立 ADB 端口转发，再通过 http://localhost:18900/auth）"""
-    _ensure_adb_forward()
-    try:
-        resp = httpx.get(f"{ZYGISK_URL}/auth", timeout=3)
-        data = resp.json()
-
-        if not data.get("available") or not data.get("key5"):
-            return None
-
-        expires_at = _decode_jwt_exp(data.get("key5", ""))
-
-        key1 = data.get("key1", "") or DEFAULT_KEY1
-        key2 = data.get("key2", "") or DEFAULT_KEY2
-        key3 = data.get("key3", "")
-
-        # 如果 key3 为空，尝试从 key5 JWT 中提取 cId
-        if not key3:
-            try:
-                jwt_parts = data.get("key5", "").split(".")
-                if jwt_parts:
-                    payload = jwt_parts[0]
-                    padding = 4 - len(payload) % 4
-                    if padding != 4:
-                        payload += "=" * padding
-                    decoded = base64.urlsafe_b64decode(payload)
-                    jwt_data = json.loads(decoded)
-                    key3 = jwt_data.get("cId", "")
-            except Exception:
-                pass
-
-        return {
-            "key1": key1,
-            "key2": key2,
-            "key3": key3,
-            "key4": data.get("key4", "") or "auth",
-            "key5": data.get("key5", ""),
-            "userId": data.get("userId", "") or key3,
-            "sessionId": data.get("sessionId", ""),
-            "cookie": data.get("cookie", ""),
-            "expires_at": expires_at,
-        }
-    except Exception as e:
-        print(f"从 Zygisk 获取 token 失败: {e}")
-        return None
-
-
-def _login_by_password():
-    """使用密码登录获取 token（会踢掉手机端）"""
-    try:
-        config_file = os.path.join(SERVER_DIR, "config.json")
-        if not os.path.exists(config_file):
-            print("配置文件不存在，无法使用密码登录")
-            return None
-
-        with open(config_file, "r", encoding="utf-8") as f:
-            config = json.load(f)
-
-        account = config.get("trade_account")
-        if not account:
-            print("配置文件中未设置 trade_account，无法使用密码登录")
-            return None
-
-        password = config.get("trade_password")
-        if not password:
-            print("配置文件中未设置 trade_password，无法使用密码登录")
-            return None
-
-        password_md5 = hashlib.md5(password.encode()).hexdigest().upper()
-
-        device_id = DEFAULT_KEY1
-        device_sign = DEFAULT_KEY2
-
-        url = "https://trade.5ifund.com/rz/account/login/noauth/v1/result/safe/check"
-
-        headers = {
-            "token": "-1",
-            "custId": "-1",
-            "source": "SDK",
-            "Content-Type": "application/x-www-form-urlencoded",
-            "User-Agent": "Hexin_Gphone/11.48.03 (Royal Flush) innerversion/G037.08.194.1.32 hxtheme/0 GphoneIjiJinSDK/V7.39.01 ifOperator/145",
-            "Client-Referer": "",
-            "Host": "trade.5ifund.com",
-            "Connection": "Keep-Alive",
-            "Accept-Encoding": "gzip",
-        }
-
-        form_data = {
-            "key1": device_id,
-            "uId": device_id,
-            "key2": device_sign,
-            "password": password_md5,
-            "ipAddress": "null",
-            "thsUserId": "690359103",
-            "device": "OnePlus PLQ110",
-            "deviceName": "OnePlus ",
-            "account": account,
-            "loginSource": "SDK",
-            "operator": "145",
-        }
-
-        resp = httpx.post(url, headers=headers, data=form_data, timeout=10)
-        resp.raise_for_status()
-
-        result = resp.json()
-
-        if result.get("code") != "0000":
-            error_msg = result.get("message", "未知错误")
-            print(f"密码登录失败: {error_msg}")
-            return None
-
-        data_field = result.get("data", {})
-        key3 = data_field.get("key3") or data_field.get("custId") or account
-        key4 = data_field.get("key4", "auth")
-        key5 = data_field.get("key5")
-
-        if not key5:
-            print("登录响应中未找到 key5")
-            return None
-
-        cookie = ""
-        if "set-cookie" in resp.headers:
-            cookie = resp.headers["set-cookie"]
-
-        expires_at = _decode_jwt_exp(key5)
-
-        print("密码登录成功（手机端已被踢下线）")
-
-        return {
-            "key1": device_id,
-            "key2": device_sign,
-            "key3": key3,
-            "key4": key4,
-            "key5": key5,
-            "userId": key3,
-            "sessionId": "",
-            "cookie": cookie,
-            "expires_at": expires_at,
-        }
-
-    except Exception as e:
-        print(f"密码登录异常: {e}")
-        return None
-
-
 def cmd_refresh_token(args):
-    """刷新认证 token：优先 Zygisk，失败则密码登录"""
-    # 1. 尝试 Zygisk
-    print("尝试从 Zygisk 获取 token ...")
-    token_data = _fetch_token_from_zygisk()
-    source = "zygisk"
-
-    # 2. 失败则密码登录
-    if not token_data:
-        print("Zygisk 获取失败，尝试密码登录 ...")
-        token_data = _login_by_password()
-        source = "password_login"
-
-    if not token_data:
-        print("所有获取方式均失败，无法刷新 token")
-        return
-
-    # 3. 保存到本地 auth_cache.json
-    cache_file = os.path.join(SERVER_DIR, "auth_cache.json")
-    cache_data = {
-        "auth": {
-            "key1": token_data["key1"],
-            "key2": token_data["key2"],
-            "key3": token_data["key3"],
-            "key4": token_data["key4"],
-            "key5": token_data["key5"],
-            "userId": token_data["userId"],
-            "sessionId": token_data["sessionId"],
-            "cookie": token_data["cookie"],
-            "account": token_data["key3"],
-        },
-        "expires_at": token_data["expires_at"],
-        "last_sync": int(time.time()),
-        "sync_source": source,
-    }
-
-    with open(cache_file, "w", encoding="utf-8") as f:
-        json.dump(cache_data, f, indent=2, ensure_ascii=False)
-    print(f"已保存到 {cache_file}")
-
-    # 4. 推送到服务器
+    """刷新认证 token：调用服务端密码登录接口"""
+    print("调用服务端密码登录刷新 token ...")
     try:
-        resp = _client.post(f"{API_BASE}/api/auth/refresh", json=cache_data)
-        if resp.status_code == 200:
-            print(f"已推送到服务器 (来源: {source})")
+        resp = _client.post(f"{API_BASE}/api/auth/login")
+        resp.raise_for_status()
+        result = resp.json()
+        if result.get("status") == "success":
+            print(f"刷新成功")
+            print(f"账户: {result.get('account', '')}")
+            print(f"过期时间: {result.get('expires_at', '未知')}")
         else:
-            print(f"推送到服务器失败: HTTP {resp.status_code}")
+            print(f"刷新失败: {result.get('message', '未知错误')}")
     except Exception as e:
-        print(f"推送到服务器异常: {e}（本地缓存已保存，服务器会在下次请求时自动加载）")
-
-    # 5. 显示 token 信息
-    expires_at = token_data.get("expires_at")
-    if expires_at:
-        from datetime import datetime
-        expires_str = datetime.fromtimestamp(expires_at).strftime("%Y-%m-%d %H:%M:%S")
-        remaining = expires_at - int(time.time())
-        remaining_days = remaining // (24 * 3600)
-        remaining_hours = (remaining % (24 * 3600)) // 3600
-        print(f"账户: {token_data['key3']}")
-        print(f"过期时间: {expires_str}")
-        print(f"剩余有效期: {remaining_days}天{remaining_hours}小时")
-    else:
-        print(f"账户: {token_data['key3']}")
-        print("过期时间: 未知")
+        print(f"刷新失败: {e}")
 
 
 def cmd_auth_status(args):
@@ -4637,31 +4172,7 @@ def cmd_auth_status(args):
         resp.raise_for_status()
         result = resp.json()
     except httpx.ConnectError:
-        # 服务器未启动，直接读本地缓存
-        cache_file = os.path.join(SERVER_DIR, "auth_cache.json")
-        if not os.path.exists(cache_file):
-            print("认证缓存不存在（服务器未启动，本地缓存也不存在）")
-            return
-        with open(cache_file, "r", encoding="utf-8") as f:
-            data = json.load(f)
-        expires_at = data.get("expires_at")
-        if expires_at:
-            from datetime import datetime
-            now = int(time.time())
-            remaining = expires_at - now
-            remaining_days = remaining // (24 * 3600)
-            is_expired = now >= expires_at
-            expires_str = datetime.fromtimestamp(expires_at).strftime("%Y-%m-%d %H:%M:%S")
-            status = "已过期" if is_expired else "有效"
-            print(f"状态: {status}")
-            print(f"过期时间: {expires_str}")
-            if not is_expired:
-                remaining_hours = (remaining % (24 * 3600)) // 3600
-                print(f"剩余有效期: {remaining_days}天{remaining_hours}小时")
-        else:
-            print("状态: 未知（无过期时间）")
-        print(f"同步来源: {data.get('sync_source', '未知')}")
-        print("(注: 服务器未启动，数据来自本地缓存)")
+        print("无法连接服务器，请确认服务端已启动")
         return
 
     if result.get("status") != "success":
@@ -4839,7 +4350,7 @@ def main():
 """,
     )
     # 热榜命令不需要基金代码，用 nargs="?" 让 code 可选
-    HOTLIST_CMDS = {"hotlist", "hotlist_topics", "hotlist_posts", "headlines", "news_feed", "news_themes", "theme_articles", "flash_news", "market_overview", "stock_rank", "sector_rank", "hot_board", "dragon_tiger", "ths_dragon_tiger", "capital_flow", "currency", "yesterday_limit", "stock_changes", "market_changes", "ranking", "screen", "companies", "account", "positions", "wallet", "autoinvest", "trade_binding", "trade_all", "buy", "sell", "order", "set_password", "orders", "cancel", "stock_quote", "stock_kline", "stock_flow", "stock_valuation", "stock_financial", "sync", "snapshot", "preflight", "evaluate", "scan-summary", "account-overview", "wallet-info", "wallet-home", "today-decisions", "recent-decisions", "watch-streaks", "create-reviews", "pending-reviews", "review-stats", "lessons", "limits", "limits-summary", "limits-plan", "refresh-token", "auth-status", "ocr-records", "ocr-latest"}
+    HOTLIST_CMDS = {"hotlist", "hotlist_topics", "hotlist_posts", "headlines", "news_feed", "news_overview", "news_themes", "theme_articles", "flash_news", "market_overview", "stock_rank", "sector_rank", "hot_board", "dragon_tiger", "ths_dragon_tiger", "capital_flow", "currency", "yesterday_limit", "stock_changes", "market_changes", "ranking", "screen", "companies", "account", "positions", "wallet", "autoinvest", "trade_binding", "trade_all", "buy", "sell", "order", "set_password", "orders", "cancel", "stock_quote", "stock_kline", "stock_flow", "stock_valuation", "stock_financial", "sync", "snapshot", "preflight", "evaluate", "scan-summary", "account-overview", "wallet-info", "wallet-home", "today-decisions", "recent-decisions", "watch-streaks", "create-reviews", "pending-reviews", "review-stats", "lessons", "limits", "limits-summary", "limits-plan", "refresh-token", "auth-status", "ocr-records", "ocr-latest", "save-decision", "risk-check"}
     ALL_CHOICES = ["all", "detail", "product", "rank", "year_return", "drawdown", "stability",
                    "hold_overview", "holdings", "valuation", "position", "profit", "style", "asset",
                    "nav", "realtime", "manager", "rsi",
@@ -4847,7 +4358,7 @@ def main():
                    "announcements", "news", "compare", "pe_percentile",
                    "nav_technical", "market", "fund_flow",
                    "hotlist", "hotlist_topics", "hotlist_posts", "headlines", "news_feed",
-                   "news_themes", "theme_articles", "flash_news", "market_overview",
+                   "news_overview", "news_themes", "theme_articles", "flash_news", "market_overview",
                    "stock_rank", "sector_rank", "hot_board", "dragon_tiger", "ths_dragon_tiger",
                    "capital_flow", "currency", "yesterday_limit", "stock_changes", "market_changes",
                    "ranking", "screen", "search", "companies",
@@ -4861,6 +4372,7 @@ def main():
                    "limits", "limits-summary", "limits-plan",
                    "refresh-token", "auth-status",
                    "ocr-records", "ocr-latest",
+                   "save-decision", "risk-check",
                    "fund_holdings", "full_page", "table"]
 
     parser.add_argument("code", nargs="?", default=None, help="基金代码（热榜命令可省略）")
@@ -4952,7 +4464,8 @@ def main():
     # 第二个位置参数不在 ALL_CHOICES 中会导致 argparse 报错，需要提前挪走
     _argv = sys.argv[1:]
     _CMD_WITH_ARG = {"buy", "sell", "order", "set_password", "cancel", "search",
-                     "stock_quote", "stock_kline", "stock_flow", "stock_valuation", "stock_financial"}
+                     "stock_quote", "stock_kline", "stock_flow", "stock_valuation", "stock_financial",
+                     "save-decision", "risk-check"}
     _extra_cmd_arg = None
     _extra_amount = None  # 用于 "buy <code> <amount>" 格式
     if (len(_argv) >= 2
@@ -5054,6 +4567,7 @@ def main():
         "news_themes": cmd_news_themes,
         "theme_articles": cmd_theme_articles,
         "news_feed": cmd_news_feed,
+        "news_overview": cmd_news_overview,
         "flash_news": cmd_flash_news,
         "market_overview": cmd_market_overview,
         "stock_rank": cmd_stock_rank,
@@ -5095,6 +4609,8 @@ def main():
         "account-overview": cmd_account_overview,
         "wallet-info": cmd_wallet_info,
         "wallet-home": cmd_wallet_home,
+        "save-decision": cmd_save_decision,
+        "risk-check": cmd_risk_check,
         "today-decisions": cmd_today_decisions,
         "recent-decisions": cmd_recent_decisions,
         "watch-streaks": cmd_watch_streaks,

@@ -10,7 +10,7 @@ from services import fund_db
 from services import db as ocr_db
 from services import task_db
 from services.scheduler import scheduler
-from routers import router, set_client
+from routers import router, set_client, start_auth_auto_refresh
 
 client: THSFundClient = None
 
@@ -35,6 +35,9 @@ async def lifespan(app: FastAPI):
     # 启动定时任务调度器
     scheduler.start()
     print("✅ 定时任务调度器已启动")
+
+    # 启动 auth token 自动刷新后台任务
+    await start_auth_auto_refresh()
 
     yield
 

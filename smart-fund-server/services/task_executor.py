@@ -13,6 +13,7 @@ from pathlib import Path
 from services import task_db
 from services import db as ocr_db
 from services.ocr_service import OCRService
+from services.event_bus import event_bus
 
 logger = logging.getLogger(__name__)
 
@@ -68,12 +69,21 @@ class TaskExecutor:
             if current and current["status"] == "processing":
                 task_db.update_task(task_id,
                     status="completed", progress=100, progress_msg=None,
+                    partial_result=None,
                     completed_at=datetime.now(), duration_sec=elapsed
                 )
+                event_bus.emit(task_id, {
+                    "type": "done", "status": "completed",
+                    "result": current.get("result"),
+                })
 
         except Exception as e:
             logger.exception(f"Task {task_id} failed")
-            task_db.update_task(task_id, status="failed", error_msg=str(e)[:500])
+            error_msg = str(e)[:500]
+            task_db.update_task(task_id, status="failed", error_msg=error_msg)
+            event_bus.emit(task_id, {
+                "type": "done", "status": "failed", "error_msg": error_msg,
+            })
         finally:
             self._semaphore.release()
 
@@ -194,17 +204,11 @@ OCR 文本：
 - 操作建议（按优先级排序）
 
 只输出最终的 Markdown 报告。"""
+        analysis_prompt = self._apply_custom_prompt(analysis_prompt, task)
 
-        # 启动 claude -p 并用时间估算更新进度
-        report = self._run_claude_with_progress(task_id, analysis_prompt,
-            timeout=600, progress_range=(40, 90),
-            messages=[
-                (40, "正在采集市场数据..."),
-                (50, "正在分析基金详情..."),
-                (60, "正在分析持仓配置..."),
-                (75, "正在生成操作建议..."),
-                (85, "正在整理分析报告..."),
-            ]
+        # 启动 claude -p 流式输出
+        report = self._run_claude_streaming(task_id, analysis_prompt,
+            timeout=600, progress_range=(40, 90), estimated_tools=20
         )
 
         if not report:
@@ -218,6 +222,27 @@ OCR 文本：
             summary=summary, result=report,
             completed_at=datetime.now()
         )
+
+    def _get_custom_config(self, task: dict) -> tuple[str | None, str | None]:
+        """从 task.config 中读取自定义 system_prompt 和 rules"""
+        config = task.get("config")
+        if not config:
+            return None, None
+        if isinstance(config, str):
+            try:
+                config = json.loads(config)
+            except json.JSONDecodeError:
+                return None, None
+        return config.get("system_prompt"), config.get("rules")
+
+    def _apply_custom_prompt(self, default_prompt: str, task: dict) -> str:
+        """将自定义提示词和规则拼接到默认 prompt"""
+        system_prompt, rules = self._get_custom_config(task)
+        if system_prompt:
+            default_prompt = f"{system_prompt}\n\n{default_prompt}"
+        if rules:
+            default_prompt = f"{default_prompt}\n\n额外规则：\n{rules}"
+        return default_prompt
 
     def _handle_chat_reply(self, task: dict):
         """智能回复：OCR → claude -p 生成回复"""
@@ -246,6 +271,7 @@ OCR 文本：
 3. **简短回复**：...
 
 只输出 Markdown 格式的回复建议。"""
+        prompt = self._apply_custom_prompt(prompt, task)
 
         result = self._run_claude(prompt, timeout=120)
         if not result:
@@ -269,16 +295,10 @@ OCR 文本：
             "fund_review": "请执行 /fund-trade review 的完整流程，输出持仓审视报告。",
         }
         prompt = cmd_map.get(task_type, f"执行 {task_type}")
+        prompt = self._apply_custom_prompt(prompt, task)
 
-        report = self._run_claude_with_progress(task_id, prompt,
-            timeout=600, progress_range=(5, 90),
-            messages=[
-                (5, "正在初始化..."),
-                (20, "正在采集数据..."),
-                (40, "正在分析..."),
-                (60, "正在生成决策..."),
-                (80, "正在整理报告..."),
-            ]
+        report = self._run_claude_streaming(task_id, prompt,
+            timeout=600, progress_range=(5, 90), estimated_tools=30
         )
 
         if not report:
@@ -354,11 +374,288 @@ OCR 文本：
             logger.warning(f"claude -p error: {e}")
             return None
 
+    # 工具命令 → 可读描述的映射
+    TOOL_DISPLAY_MAP = {
+        "market_overview": "采集市场环境数据",
+        "hot_board": "查看热门板块",
+        "news_overview": "获取新闻快讯",
+        "sector_rank": "查看板块排名",
+        "headlines": "获取推荐头条",
+        "flash_news": "获取快讯",
+        "evaluate": "计算量化信号",
+        "snapshot": "获取持仓快照",
+        "scan-summary": "扫描基金概况",
+    }
+
+    def _text_step_display(self, text: str) -> str | None:
+        """从 Claude 文本输出中提取第一行有意义的内容作为步骤标题"""
+        for line in text.split("\n"):
+            line = line.strip()
+            if not line:
+                continue
+            # 去掉 markdown 格式
+            clean = line.lstrip("#").strip().strip("*").strip()
+            if len(clean) > 3:
+                return clean[:80]
+        return None
+
+    def _tool_display(self, tool_name: str, tool_input: dict) -> str:
+        """将工具调用转为可读描述"""
+        if tool_name == "Bash":
+            cmd = tool_input.get("command", "")
+            # python client.py <code> <action>
+            if "client.py" in cmd:
+                parts = cmd.split()
+                idx = next((i for i, p in enumerate(parts) if p.endswith("client.py")), -1)
+                if idx >= 0:
+                    args = parts[idx + 1:]
+                    # 命令映射
+                    for key, desc in self.TOOL_DISPLAY_MAP.items():
+                        if key in args:
+                            return desc
+                    # 基金代码 + 动作
+                    if len(args) >= 2 and args[0].isdigit():
+                        action_map = {"detail": "基金详情", "rank": "排名数据",
+                                      "holdings": "持仓信息", "news": "相关资讯",
+                                      "nav": "历史净值", "rsi": "RSI 指标"}
+                        desc = action_map.get(args[1], args[1])
+                        return f"查询 {args[0]} {desc}"
+                    if args:
+                        return f"执行 {' '.join(args[:3])}"
+            if "news_overview" in cmd or "news" in cmd:
+                return "获取新闻快讯"
+            if "curl" in cmd:
+                return "请求外部数据"
+            return f"执行命令"
+        elif tool_name == "Read":
+            path = tool_input.get("file_path", "")
+            fname = path.split("/")[-1] if "/" in path else path
+            return f"读取 {fname}"
+        elif tool_name in ("Glob", "Grep"):
+            return "搜索文件"
+        return tool_name
+
+    def _tool_detail(self, tool_name: str, tool_input: dict) -> str:
+        """将工具调用的输入转为可读详情文本"""
+        if tool_name == "Bash":
+            return tool_input.get("command", "")
+        elif tool_name == "Read":
+            return tool_input.get("file_path", "")
+        elif tool_name == "Glob":
+            return tool_input.get("pattern", "")
+        elif tool_name == "Grep":
+            return tool_input.get("pattern", "")
+        return json.dumps(tool_input, ensure_ascii=False)[:500] if tool_input else ""
+
+    def _run_claude_streaming(self, task_id: int, prompt: str,
+                              timeout: int = 600,
+                              progress_range: tuple = (35, 90),
+                              estimated_tools: int = 20) -> str | None:
+        """启动 claude -p 并实时解析 stream-json 事件，推送到 EventBus"""
+        env = os.environ.copy()
+        env["FUND_API_BASE"] = "http://127.0.0.1:8900"
+
+        start_pct, end_pct = progress_range
+        try:
+            process = subprocess.Popen(
+                ["claude", "-p", prompt,
+                 "--allowedTools", "Bash,Read,Glob,Grep",
+                 "--output-format", "stream-json", "--verbose"],
+                stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                text=True, bufsize=1,
+                cwd=SKILL_DIR if Path(SKILL_DIR).exists() else None,
+                env=env
+            )
+
+            tool_calls = []
+            partial_text = []
+            tool_count = 0
+            last_db_write = time.time()
+            start_time = time.time()
+            # tool_use_id → tool_calls 列表索引，用于关联 tool_result
+            tool_id_map = {}
+
+            for line in process.stdout:
+                line = line.strip()
+                if not line:
+                    continue
+
+                if time.time() - start_time > timeout:
+                    process.kill()
+                    logger.warning(f"claude -p streaming killed after {timeout}s")
+                    event_bus.emit(task_id, {"type": "done", "status": "failed",
+                                             "error_msg": f"处理超时（{timeout}s）"})
+                    return None
+
+                try:
+                    event = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+
+                event_type = event.get("type")
+
+                if event_type == "assistant":
+                    content_list = event.get("message", {}).get("content", [])
+                    for block in content_list:
+                        block_type = block.get("type")
+
+                        if block_type == "text":
+                            text = block.get("text", "")
+                            if text:
+                                partial_text.append(text)
+                                total_len = sum(len(t) for t in partial_text)
+                                pct = max(start_pct, min(end_pct, int(end_pct - 5)))
+                                event_bus.emit(task_id, {
+                                    "type": "text_delta",
+                                    "text": text,
+                                    "total_len": total_len,
+                                    "progress": pct,
+                                })
+                                # 有意义的文本也作为步骤记录
+                                stripped = text.strip()
+                                if len(stripped) > 10:
+                                    display = self._text_step_display(stripped)
+                                    if display:
+                                        text_entry = {
+                                            "tool": "_text",
+                                            "display": display,
+                                            "detail": stripped,
+                                            "output": None,
+                                            "at": round(time.time() - start_time, 1),
+                                        }
+                                        tool_calls.append(text_entry)
+                                        event_bus.emit(task_id, {
+                                            "type": "tool_call",
+                                            "tool": "_text",
+                                            "display": display,
+                                            "detail": stripped,
+                                            "progress": pct,
+                                            "is_text": True,
+                                        })
+
+                        elif block_type == "tool_use":
+                            tool_name = block.get("name", "")
+                            tool_input = block.get("input", {})
+                            tool_use_id = block.get("id", "")
+                            # 跳过 Claude 内部工具（对用户无意义）
+                            if tool_name in ("ToolSearch", "Skill", "TodoWrite"):
+                                if tool_use_id:
+                                    tool_id_map[tool_use_id] = -1  # 标记为跳过
+                                continue
+                            tool_count += 1
+
+                            # Bash 的 description 字段比自动推断更准确
+                            if tool_name == "Bash" and tool_input.get("description"):
+                                display = tool_input["description"]
+                            else:
+                                display = self._tool_display(tool_name, tool_input)
+                            detail = self._tool_detail(tool_name, tool_input)
+
+                            tool_entry = {
+                                "tool": tool_name,
+                                "display": display,
+                                "detail": detail,
+                                "output": None,
+                                "at": round(time.time() - start_time, 1),
+                            }
+                            tool_calls.append(tool_entry)
+                            if tool_use_id:
+                                tool_id_map[tool_use_id] = len(tool_calls) - 1
+
+                            pct = min(end_pct - 5,
+                                      start_pct + int((end_pct - start_pct) * tool_count / estimated_tools))
+                            self._progress(task_id, pct, display)
+                            event_bus.emit(task_id, {
+                                "type": "tool_call",
+                                "tool": tool_name,
+                                "display": display,
+                                "detail": detail,
+                                "progress": pct,
+                            })
+
+                elif event_type == "user":
+                    # 捕获 tool_result，关联到对应的 tool_call
+                    content_list = event.get("message", {}).get("content", [])
+                    for block in content_list:
+                        if block.get("type") == "tool_result":
+                            tool_use_id = block.get("tool_use_id", "")
+                            result_content = block.get("content", "")
+                            is_error = block.get("is_error", False)
+                            # content 可能是数组（如 ToolSearch 返回），需转为字符串
+                            if isinstance(result_content, list):
+                                parts = []
+                                for item in result_content:
+                                    if isinstance(item, dict):
+                                        if item.get("type") == "text":
+                                            parts.append(item.get("text", ""))
+                                        else:
+                                            parts.append(json.dumps(item, ensure_ascii=False))
+                                    elif isinstance(item, str):
+                                        parts.append(item)
+                                result_content = "\n".join(parts) if parts else ""
+                            elif not isinstance(result_content, str):
+                                result_content = str(result_content) if result_content else ""
+                            idx = tool_id_map.get(tool_use_id)
+                            if idx is not None and idx >= 0 and idx < len(tool_calls):
+                                tool_calls[idx]["output"] = result_content
+                                if is_error:
+                                    tool_calls[idx]["is_error"] = True
+                                # 推送 tool_result 事件给客户端
+                                event_bus.emit(task_id, {
+                                    "type": "tool_result",
+                                    "tool": tool_calls[idx]["tool"],
+                                    "display": tool_calls[idx]["display"],
+                                    "output": result_content,
+                                    "is_error": is_error,
+                                })
+
+                elif event_type == "result":
+                    final_result = event.get("result", "")
+                    task_db.update_task(task_id, partial_result=None, tool_calls=tool_calls)
+                    event_bus.emit(task_id, {
+                        "type": "done",
+                        "status": "completed",
+                        "result": final_result,
+                    })
+                    return final_result
+
+                # 定期写 DB
+                now = time.time()
+                if now - last_db_write >= 3:
+                    accumulated = "".join(partial_text)
+                    if accumulated or tool_calls:
+                        task_db.update_task(task_id,
+                            partial_result=accumulated if accumulated else None,
+                            tool_calls=tool_calls if tool_calls else None,
+                        )
+                    last_db_write = now
+
+            # 进程结束但没收到 result 事件
+            process.wait()
+            if process.returncode != 0:
+                stderr = process.stderr.read()
+                logger.warning(f"claude -p streaming failed (rc={process.returncode}): {stderr[:300]}")
+                return None
+
+            result = "".join(partial_text).strip()
+            # 去掉与最终 result 重复的末尾 _text 步骤
+            while (tool_calls and tool_calls[-1].get("tool") == "_text"
+                   and tool_calls[-1].get("detail", "").strip() in result):
+                tool_calls.pop()
+            return result or None
+
+        except FileNotFoundError:
+            logger.warning("claude command not found")
+            return None
+        except Exception as e:
+            logger.warning(f"claude -p streaming error: {e}")
+            return None
+
     def _run_claude_with_progress(self, task_id: int, prompt: str,
                                   timeout: int = 600,
                                   progress_range: tuple = (35, 90),
                                   messages: list = None) -> str | None:
-        """启动 claude -p 子进程，同时按时间估算更新进度"""
+        """降级方案：时间估算进度（stream-json 不可用时使用）"""
         env = os.environ.copy()
         env["FUND_API_BASE"] = "http://127.0.0.1:8900"
 
@@ -378,7 +675,7 @@ OCR 文本：
             )
 
             start_time = time.time()
-            estimate_total = timeout * 0.5  # 预估用一半超时时间
+            estimate_total = timeout * 0.5
 
             while process.poll() is None:
                 elapsed = time.time() - start_time

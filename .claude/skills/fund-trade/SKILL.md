@@ -28,6 +28,12 @@ user-invocable: true
 
 ---
 
+## 重要约束
+
+- **所有与服务端的交互必须通过 `python client.py` 命令**，禁止用 curl 直接请求 API（健康检查除外）
+- **不要直接读取 client.py**（文件超过 60K tokens 会超出限制），查看可用命令请读取 `docs/CLIENT_USAGE.md`
+- 需要了解 client.py 的命令用法时，执行 `python client.py --help` 或读取 `docs/CLIENT_USAGE.md`
+
 ## 前置条件
 
 1. **服务端已部署**：`http://119.23.227.187:8900`（远程公网，通过 frp 映射）
@@ -84,7 +90,7 @@ python client.py pending-reviews
 # 可以并行执行这 3 个命令
 python client.py evaluate > /tmp/ft_signals.json
 python client.py snapshot > /tmp/ft_snapshot.json
-curl -s http://119.23.227.187:8900/api/news_overview > /tmp/ft_news.json
+python client.py news_overview > /tmp/ft_news.json
 ```
 
 执行完后用 Read 工具读取这 3 个文件。Claude 读取概览后：
@@ -228,7 +234,7 @@ python client.py orders
 #### Step 5: 风控校验
 
 ```bash
-curl -X POST http://119.23.227.187:8900/api/risk/check -H "Content-Type: application/json" -d '<决策JSON>'
+python client.py risk-check '<决策JSON>'
 ```
 
 如果有被拦截的决策 → Claude 查看原因，决定是否调整。
@@ -237,20 +243,9 @@ curl -X POST http://119.23.227.187:8900/api/risk/check -H "Content-Type: applica
 
 **6a. 保存所有决策到 ft_decisions**（无论是否执行交易，所有决策都必须记录）：
 
-对 Step 4 决策 JSON 中的每一条 decision，通过 API 保存：
+对 Step 4 决策 JSON 中的每一条 decision，通过 client.py 保存：
 ```bash
-curl -X POST http://119.23.227.187:8900/api/decisions/save \
-  -H "Content-Type: application/json" \
-  -d '{
-    "fund_code": "015945",
-    "fund_name": "易方达国防军工混合C",
-    "action": "buy",
-    "amount": 500,
-    "reason": "...",
-    "confidence": "high",
-    "market_view": "...",
-    "referenced_lesson_ids": [1, 3]
-  }'
+python client.py save-decision '{"fund_code":"015945","fund_name":"易方达国防军工混合C","action":"buy","amount":500,"reason":"...","confidence":"high","market_view":"...","referenced_lesson_ids":[1,3]}'
 ```
 
 **6b. 执行交易**（**核心！必须主动执行**）：

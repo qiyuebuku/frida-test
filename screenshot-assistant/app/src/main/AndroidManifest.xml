@@ -17,6 +17,9 @@
     <!-- 通知 -->
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 
+    <!-- 查询已安装应用列表（悬浮球黑名单功能） -->
+    <uses-permission android:name="android.permission.QUERY_ALL_PACKAGES" />
+
     <application
         android:name=".ScreenshotAssistantApp"
         android:allowBackup="true"

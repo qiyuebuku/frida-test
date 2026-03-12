@@ -1,20 +1,29 @@
 package com.example.screenshotassistant.ui.screens
 
+import android.content.Intent
+import android.provider.Settings
+import android.widget.Toast
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.FilterList
+import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import com.example.screenshotassistant.data.TaskItem
 import com.example.screenshotassistant.network.HttpClient
+import com.example.screenshotassistant.service.ScreenAssistAccessibilityService
 import com.example.screenshotassistant.ui.components.TaskCard
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -25,6 +34,10 @@ fun TaskListScreen(onTaskClick: (Int) -> Unit) {
     var isLoading by remember { mutableStateOf(true) }
     var filterExpanded by remember { mutableStateOf(false) }
     var selectedFilter by remember { mutableStateOf<String?>(null) }
+    var serverConnected by remember { mutableStateOf(false) }
+    var a11yConnected by remember { mutableStateOf(ScreenAssistAccessibilityService.instance != null) }
+
+    val context = LocalContext.current
 
     val filterOptions = listOf(
         null to "全部",
@@ -38,7 +51,10 @@ fun TaskListScreen(onTaskClick: (Int) -> Unit) {
     // 加载和轮询
     LaunchedEffect(selectedFilter) {
         while (true) {
+            a11yConnected = ScreenAssistAccessibilityService.instance != null
             withContext(Dispatchers.IO) {
+                val healthy = HttpClient.instance?.healthCheck() == true
+                serverConnected = healthy
                 HttpClient.instance?.getTasks(
                     taskType = selectedFilter,
                     limit = 50
@@ -48,12 +64,12 @@ fun TaskListScreen(onTaskClick: (Int) -> Unit) {
                 }
             }
             isLoading = false
-            delay(3000)
+            delay(5000)
         }
     }
 
     Column(modifier = Modifier.fillMaxSize()) {
-        // 标题栏
+        // 标题栏 + 服务状态
         Row(
             modifier = Modifier
                 .fillMaxWidth()
@@ -61,8 +77,100 @@ fun TaskListScreen(onTaskClick: (Int) -> Unit) {
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically
         ) {
-            Text("任务列表", style = MaterialTheme.typography.headlineMedium)
+            Text("截屏助手", style = MaterialTheme.typography.headlineMedium)
 
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Box(
+                    modifier = Modifier
+                        .size(8.dp)
+                        .clip(CircleShape)
+                        .background(
+                            if (serverConnected) MaterialTheme.colorScheme.primary
+                            else MaterialTheme.colorScheme.error
+                        )
+                )
+                Spacer(modifier = Modifier.width(6.dp))
+                Text(
+                    if (serverConnected) "已连接" else "未连接",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = if (serverConnected) MaterialTheme.colorScheme.primary
+                            else MaterialTheme.colorScheme.error
+                )
+            }
+        }
+
+        // 无障碍服务警告
+        if (!a11yConnected) {
+            Card(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp, vertical = 4.dp),
+                colors = CardDefaults.cardColors(
+                    containerColor = MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.5f)
+                )
+            ) {
+                Row(
+                    modifier = Modifier.padding(12.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Icon(Icons.Default.Warning, contentDescription = null,
+                        tint = MaterialTheme.colorScheme.error, modifier = Modifier.size(20.dp))
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text("无障碍服务未开启", style = MaterialTheme.typography.bodySmall,
+                        modifier = Modifier.weight(1f))
+                    TextButton(onClick = {
+                        context.startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
+                    }) {
+                        Text("去开启")
+                    }
+                }
+            }
+        }
+
+        // AI 分析按钮条
+        Card(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 16.dp, vertical = 4.dp)
+        ) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(8.dp),
+                horizontalArrangement = Arrangement.SpaceEvenly
+            ) {
+                AiActionButton(
+                    label = "每日决策",
+                    icon = Icons.Default.TrendingUp,
+                    enabled = serverConnected,
+                    onClick = {
+                        createCommandTask(context, "fund_trade_run", onTaskClick)
+                    }
+                )
+                AiActionButton(
+                    label = "持仓审视",
+                    icon = Icons.Default.Assessment,
+                    enabled = serverConnected,
+                    onClick = {
+                        createCommandTask(context, "fund_review", onTaskClick)
+                    }
+                )
+            }
+        }
+
+        // 筛选行
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 16.dp, vertical = 4.dp),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text(
+                "任务列表",
+                style = MaterialTheme.typography.titleMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
             Box {
                 IconButton(onClick = { filterExpanded = true }) {
                     Icon(Icons.Default.FilterList, contentDescription = "筛选")
@@ -110,7 +218,6 @@ fun TaskListScreen(onTaskClick: (Int) -> Unit) {
                 )
             }
         } else {
-            // 按日期分组
             val grouped = tasks.groupBy { it.createdAt.take(10) }
 
             LazyColumn(
@@ -137,6 +244,41 @@ fun TaskListScreen(onTaskClick: (Int) -> Unit) {
     }
 }
 
+@Composable
+private fun AiActionButton(
+    label: String,
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    enabled: Boolean,
+    onClick: () -> Unit
+) {
+    FilledTonalButton(
+        onClick = onClick,
+        enabled = enabled,
+        modifier = Modifier.width(140.dp)
+    ) {
+        Icon(icon, contentDescription = null, modifier = Modifier.size(18.dp))
+        Spacer(modifier = Modifier.width(6.dp))
+        Text(label)
+    }
+}
+
+private fun createCommandTask(
+    context: android.content.Context,
+    taskType: String,
+    onTaskClick: (Int) -> Unit
+) {
+    kotlinx.coroutines.CoroutineScope(Dispatchers.IO).launch {
+        val taskId = HttpClient.instance?.createCommandTask(taskType)
+        withContext(Dispatchers.Main) {
+            if (taskId != null) {
+                onTaskClick(taskId)
+            } else {
+                Toast.makeText(context, "任务创建失败", Toast.LENGTH_SHORT).show()
+            }
+        }
+    }
+}
+
 private fun formatDateGroup(date: String): String {
     if (date.length < 10) return date
     val today = java.time.LocalDate.now().toString()
@@ -144,6 +286,6 @@ private fun formatDateGroup(date: String): String {
     return when (date) {
         today -> "今天"
         yesterday -> "昨天"
-        else -> date.substring(5) // "MM-DD"
+        else -> date.substring(5)
     }
 }

