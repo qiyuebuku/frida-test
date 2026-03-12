@@ -6,6 +6,8 @@ import org.json.JSONObject
 data class TaskItem(
     val id: Int,
     val taskType: String,
+    val skillName: String?,
+    val commandId: String?,
     val status: String,
     val progress: Int,
     val progressMsg: String?,
@@ -71,6 +73,8 @@ data class TaskItem(
             return TaskItem(
                 id = json.optInt("id"),
                 taskType = json.optString("task_type", ""),
+                skillName = json.optNullableString("skill_name"),
+                commandId = json.optNullableString("command_id"),
                 status = json.optString("status", "pending"),
                 progress = json.optInt("progress", 0),
                 progressMsg = json.optNullableString("progress_msg"),

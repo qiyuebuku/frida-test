@@ -11,6 +11,7 @@ import androidx.activity.compose.setContent
 import androidx.compose.foundation.layout.*
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ListAlt
+import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -75,21 +76,23 @@ class MainActivity : ComponentActivity() {
     }
 }
 
-private enum class Screen { TASKS, SETTINGS }
-private enum class SubScreen { NONE, TASK_DETAIL, TASK_CONFIG, MENU_CONFIG }
+private enum class Screen { SKILLS, TASKS, SETTINGS }
+private enum class SubScreen { NONE, TASK_DETAIL, TASK_CONFIG, MENU_CONFIG, SKILL_DETAIL }
 
 @Composable
 private fun AppNavigation() {
-    var currentScreen by remember { mutableStateOf(Screen.TASKS) }
+    var currentScreen by remember { mutableStateOf(Screen.SKILLS) }
     var subScreen by remember { mutableStateOf(SubScreen.NONE) }
     var detailTaskId by remember { mutableStateOf<Int?>(null) }
     var configActionId by remember { mutableStateOf<String?>(null) }
+    var detailSkillName by remember { mutableStateOf<String?>(null) }
 
     // 拦截系统返回键，子页面时返回上一层而不是退出 App
     BackHandler(enabled = subScreen != SubScreen.NONE) {
         subScreen = SubScreen.NONE
         detailTaskId = null
         configActionId = null
+        detailSkillName = null
     }
 
     // 子页面（覆盖在 tab 之上）
@@ -118,12 +121,31 @@ private fun AppNavigation() {
             )
             return
         }
+        SubScreen.SKILL_DETAIL -> {
+            if (detailSkillName != null) {
+                SkillDetailScreen(
+                    skillName = detailSkillName!!,
+                    onBack = { subScreen = SubScreen.NONE; detailSkillName = null },
+                    onTaskClick = {
+                        detailTaskId = it
+                        subScreen = SubScreen.TASK_DETAIL
+                    }
+                )
+                return
+            }
+        }
         SubScreen.NONE -> { /* fall through to tabs */ }
     }
 
     Scaffold(
         bottomBar = {
             NavigationBar {
+                NavigationBarItem(
+                    icon = { Icon(Icons.Default.Folder, contentDescription = "项目") },
+                    label = { Text("项目") },
+                    selected = currentScreen == Screen.SKILLS,
+                    onClick = { currentScreen = Screen.SKILLS }
+                )
                 NavigationBarItem(
                     icon = { Icon(Icons.AutoMirrored.Filled.ListAlt, contentDescription = "任务") },
                     label = { Text("任务") },
@@ -141,6 +163,12 @@ private fun AppNavigation() {
     ) { padding ->
         Box(modifier = Modifier.padding(padding)) {
             when (currentScreen) {
+                Screen.SKILLS -> SkillListScreen(
+                    onSkillClick = {
+                        detailSkillName = it
+                        subScreen = SubScreen.SKILL_DETAIL
+                    }
+                )
                 Screen.TASKS -> TaskListScreen(
                     onTaskClick = {
                         detailTaskId = it

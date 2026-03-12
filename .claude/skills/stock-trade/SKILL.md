@@ -1,7 +1,38 @@
 ---
 name: stock-trade
-description: 股票智能交易 - 基于同花顺 WebView JSBridge 的 A 股交易接口
+display_name: 股票交易
+icon: show_chart
+description: 基于同花顺 WebView JSBridge 的 A 股交易接口
+category: finance
 user-invocable: true
+commands:
+  - id: status
+    name: 账户状态
+    description: 查看资产、持仓、可用资金
+    input: none
+    executor: claude
+    estimated_time: 30
+
+  - id: positions
+    name: 持仓详情
+    description: 查看当前持仓股票明细
+    input: none
+    executor: claude
+    estimated_time: 30
+
+  - id: orders
+    name: 委托查询
+    description: 查看今日和历史委托单
+    input: none
+    executor: claude
+    estimated_time: 30
+
+  - id: history
+    name: 历史成交
+    description: 查看历史成交记录
+    input: none
+    executor: claude
+    estimated_time: 30
 ---
 
 # 股票智能交易 Skill

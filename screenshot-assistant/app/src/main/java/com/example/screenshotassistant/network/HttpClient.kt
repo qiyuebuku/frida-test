@@ -8,6 +8,8 @@ import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
 import org.json.JSONObject
+import com.example.screenshotassistant.data.SkillDetail
+import com.example.screenshotassistant.data.SkillProject
 import com.example.screenshotassistant.data.TaskItem
 import org.json.JSONArray
 import java.io.BufferedReader
@@ -221,6 +223,7 @@ class HttpClient(val serverUrl: String) {
     fun getTasks(
         status: String? = null,
         taskType: String? = null,
+        skillName: String? = null,
         limit: Int = 20,
         offset: Int = 0
     ): Pair<List<TaskItem>, Int>? {
@@ -228,6 +231,7 @@ class HttpClient(val serverUrl: String) {
             val url = StringBuilder("$serverUrl/api/tasks?limit=$limit&offset=$offset")
             if (status != null) url.append("&status=$status")
             if (taskType != null) url.append("&task_type=$taskType")
+            if (skillName != null) url.append("&skill_name=$skillName")
 
             val request = Request.Builder().url(url.toString()).get().build()
             val response = client.newCall(request).execute()
@@ -266,6 +270,91 @@ class HttpClient(val serverUrl: String) {
             } else null
         } catch (e: Exception) {
             Log.e(TAG, "Get task error", e)
+            null
+        }
+    }
+
+    /**
+     * 获取所有 Skill 项目列表
+     */
+    fun getSkills(): List<SkillProject>? {
+        return try {
+            val request = Request.Builder()
+                .url("$serverUrl/api/skills")
+                .get()
+                .build()
+            val response = client.newCall(request).execute()
+
+            if (response.isSuccessful) {
+                val respJson = JSONObject(response.body?.string() ?: "{}")
+                val data = respJson.optJSONArray("data") ?: return emptyList()
+                (0 until data.length()).map { SkillProject.fromJson(data.getJSONObject(it)) }
+            } else null
+        } catch (e: Exception) {
+            Log.e(TAG, "Get skills error", e)
+            null
+        }
+    }
+
+    /**
+     * 获取单个 Skill 详情（含命令列表）
+     */
+    fun getSkillDetail(skillName: String): SkillDetail? {
+        return try {
+            val request = Request.Builder()
+                .url("$serverUrl/api/skills/$skillName")
+                .get()
+                .build()
+            val response = client.newCall(request).execute()
+
+            if (response.isSuccessful) {
+                val respJson = JSONObject(response.body?.string() ?: "{}")
+                val data = respJson.optJSONObject("data") ?: return null
+                SkillDetail.fromJson(data)
+            } else null
+        } catch (e: Exception) {
+            Log.e(TAG, "Get skill detail error", e)
+            null
+        }
+    }
+
+    /**
+     * 触发 Skill 命令执行
+     */
+    fun runSkillCommand(
+        skillName: String,
+        commandId: String,
+        args: Map<String, Any>? = null,
+        imageBase64: String? = null,
+        inputData: String? = null,
+    ): Int? {
+        return try {
+            val json = JSONObject().apply {
+                put("command_id", commandId)
+                put("client_id", "android")
+                if (args != null) put("args", JSONObject(args))
+                if (imageBase64 != null) put("image_base64", imageBase64)
+                if (inputData != null) put("input_data", inputData)
+            }
+            val body = json.toString().toRequestBody("application/json".toMediaType())
+            val request = Request.Builder()
+                .url("$serverUrl/api/skills/$skillName/run")
+                .post(body)
+                .build()
+
+            Log.d(TAG, "Running skill command: $skillName/$commandId")
+            val response = client.newCall(request).execute()
+
+            if (response.isSuccessful) {
+                val respJson = JSONObject(response.body?.string() ?: "{}")
+                val taskId = respJson.optInt("task_id", -1)
+                if (taskId > 0) taskId else null
+            } else {
+                Log.e(TAG, "Run skill command failed: ${response.code}")
+                null
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Run skill command error", e)
             null
         }
     }

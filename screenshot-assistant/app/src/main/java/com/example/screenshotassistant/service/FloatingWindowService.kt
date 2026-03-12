@@ -28,6 +28,8 @@ import com.example.screenshotassistant.capture.ActionConfig
 import com.example.screenshotassistant.capture.ActionConfigStore
 import com.example.screenshotassistant.capture.Actions
 import com.example.screenshotassistant.capture.CaptureType
+import com.example.screenshotassistant.capture.FloatingAction
+import com.example.screenshotassistant.capture.FloatingMenuManager
 import com.example.screenshotassistant.capture.ImageStitcher
 import com.example.screenshotassistant.network.CommandHandler
 import com.example.screenshotassistant.network.HttpClient
@@ -77,6 +79,10 @@ class FloatingWindowService : Service() {
         createFloatingBall()
         // 初始隐藏，由无障碍服务根据前台 App 白名单决定是否显示
         floatingView.visibility = View.INVISIBLE
+        // 后台加载 Skill 命令到悬浮菜单缓存
+        serviceScope.launch(Dispatchers.IO) {
+            FloatingMenuManager.refreshFromServer(this@FloatingWindowService)
+        }
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -237,12 +243,96 @@ class FloatingWindowService : Service() {
     }
 
     private fun showMenu() {
-        val actions = ActionConfigStore.getEnabled(this)
-        val columns = 3
-        val btnSize = dp(72)
-        val gap = dp(8)
+        showFirstLevelMenu()
+    }
+
+    /**
+     * 第一级菜单：快捷操作 + 截屏方式选择
+     */
+    private fun showFirstLevelMenu() {
         val padding = dp(12)
-        val rows = (actions.size + columns - 1) / columns
+
+        val container = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(padding, padding, padding, padding)
+            background = GradientDrawable().apply {
+                setColor(Color.parseColor("#E0202030"))
+                cornerRadius = dp(16).toFloat()
+            }
+            elevation = dp(8).toFloat()
+        }
+
+        // 快捷操作区
+        val quickActions = FloatingMenuManager.getQuickActions(this)
+        if (quickActions.isNotEmpty()) {
+            val quickRow = LinearLayout(this).apply {
+                orientation = LinearLayout.HORIZONTAL
+                gravity = Gravity.CENTER_HORIZONTAL
+            }
+            for (qa in quickActions) {
+                quickRow.addView(createMenuCell(qa.icon, qa.displayName, dp(72)) {
+                    dismissMenu()
+                    executeQuickAction(qa.skillName, qa.commandId, qa.captureType)
+                })
+            }
+            container.addView(quickRow)
+
+            // 分隔线
+            container.addView(View(this).apply {
+                layoutParams = LinearLayout.LayoutParams(
+                    LinearLayout.LayoutParams.MATCH_PARENT, dp(1)
+                ).apply { setMargins(0, dp(6), 0, dp(6)) }
+                setBackgroundColor(Color.parseColor("#30FFFFFF"))
+            })
+        }
+
+        // 截屏方式选择
+        container.addView(TextView(this).apply {
+            text = "截屏方式"
+            setTextColor(Color.parseColor("#AAAAAA"))
+            textSize = 11f
+            gravity = Gravity.CENTER
+            setPadding(0, 0, 0, dp(4))
+        })
+
+        val captureRow = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_HORIZONTAL
+        }
+        captureRow.addView(createMenuCell("📷", "截图", dp(72)) {
+            dismissMenu()
+            startCaptureAndShowCommands("normal")
+        })
+        captureRow.addView(createMenuCell("📜", "长截图", dp(72)) {
+            dismissMenu()
+            startCaptureAndShowCommands("long_scroll")
+        })
+        captureRow.addView(createMenuCell("✋", "手动长截", dp(72)) {
+            dismissMenu()
+            startCaptureAndShowCommands("manual_scroll")
+        })
+        container.addView(captureRow)
+
+        // 关闭按钮
+        container.addView(TextView(this).apply {
+            text = "✕"
+            setTextColor(Color.parseColor("#AAAAAA"))
+            textSize = 16f
+            gravity = Gravity.CENTER
+            setPadding(0, dp(6), 0, dp(2))
+            setOnClickListener { dismissMenu() }
+        })
+
+        showMenuView(container)
+    }
+
+    /**
+     * 第二级菜单：截屏完成后选择 Skill 功能
+     */
+    private fun showSecondLevelMenu(captureType: String, bitmap: Bitmap) {
+        val actions = FloatingMenuManager.getActionsForCaptureType(this, captureType)
+        val grouped = actions.groupBy { it.skillDisplayName }
+        val padding = dp(12)
 
         val container = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
@@ -255,74 +345,95 @@ class FloatingWindowService : Service() {
         }
 
         container.addView(TextView(this).apply {
-            text = "选择操作"
+            text = "选择处理方式"
             setTextColor(Color.WHITE)
             textSize = 14f
             gravity = Gravity.CENTER
-            setPadding(0, 0, 0, dp(8))
+            setPadding(0, 0, 0, dp(6))
         })
 
-        for (row in 0 until rows) {
-            val rowLayout = LinearLayout(this).apply {
-                orientation = LinearLayout.HORIZONTAL
-                gravity = Gravity.CENTER_HORIZONTAL
-            }
-            for (col in 0 until columns) {
-                val idx = row * columns + col
-                if (idx >= actions.size) break
-                val action = actions[idx]
+        for ((skillName, skillActions) in grouped) {
+            // Skill 组标题
+            container.addView(TextView(this).apply {
+                text = "── $skillName ──"
+                setTextColor(Color.parseColor("#80FFFFFF"))
+                textSize = 10f
+                gravity = Gravity.CENTER
+                setPadding(0, dp(4), 0, dp(2))
+            })
 
-                val cell = LinearLayout(this).apply {
-                    orientation = LinearLayout.VERTICAL
-                    gravity = Gravity.CENTER
-                    background = GradientDrawable().apply {
-                        setColor(Color.parseColor("#40FFFFFF"))
-                        cornerRadius = dp(10).toFloat()
-                    }
-                    setPadding(dp(4), dp(8), dp(4), dp(8))
-                    layoutParams = LinearLayout.LayoutParams(btnSize, btnSize).apply {
-                        setMargins(gap / 2, gap / 2, gap / 2, gap / 2)
-                    }
-                    isClickable = true
-                    isFocusable = true
-                    setOnClickListener {
-                        dismissMenu()
-                        executeAction(action)
-                    }
+            val columns = 3
+            val rows = (skillActions.size + columns - 1) / columns
+            for (row in 0 until rows) {
+                val rowLayout = LinearLayout(this).apply {
+                    orientation = LinearLayout.HORIZONTAL
+                    gravity = Gravity.CENTER_HORIZONTAL
                 }
-
-                cell.addView(TextView(this).apply {
-                    text = getActionIcon(action.id)
-                    textSize = 22f
-                    gravity = Gravity.CENTER
-                })
-                cell.addView(TextView(this).apply {
-                    text = action.name
-                    setTextColor(Color.WHITE)
-                    textSize = 10f
-                    gravity = Gravity.CENTER
-                    maxLines = 1
-                    setPadding(0, dp(2), 0, 0)
-                })
-
-                rowLayout.addView(cell)
+                for (col in 0 until columns) {
+                    val idx = row * columns + col
+                    if (idx >= skillActions.size) break
+                    val action = skillActions[idx]
+                    rowLayout.addView(createMenuCell(action.icon, action.displayName, dp(72)) {
+                        dismissMenu()
+                        FloatingMenuManager.recordUsage(this@FloatingWindowService, action.skillName, action.commandId, captureType)
+                        executeSkillAction(action, bitmap)
+                    })
+                }
+                container.addView(rowLayout)
             }
-            container.addView(rowLayout)
         }
 
+        // 关闭按钮
         container.addView(TextView(this).apply {
-            text = "✕"
+            text = "✕ 取消"
             setTextColor(Color.parseColor("#AAAAAA"))
-            textSize = 16f
+            textSize = 14f
             gravity = Gravity.CENTER
-            setPadding(0, dp(6), 0, dp(2))
+            setPadding(0, dp(8), 0, dp(2))
             setOnClickListener { dismissMenu() }
         })
 
+        showMenuView(container)
+    }
+
+    private fun createMenuCell(icon: String, label: String, size: Int, onClick: () -> Unit): LinearLayout {
+        val gap = dp(8)
+        return LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            gravity = Gravity.CENTER
+            background = GradientDrawable().apply {
+                setColor(Color.parseColor("#40FFFFFF"))
+                cornerRadius = dp(10).toFloat()
+            }
+            setPadding(dp(4), dp(8), dp(4), dp(8))
+            layoutParams = LinearLayout.LayoutParams(size, size).apply {
+                setMargins(gap / 2, gap / 2, gap / 2, gap / 2)
+            }
+            isClickable = true
+            isFocusable = true
+            setOnClickListener { onClick() }
+
+            addView(TextView(this@FloatingWindowService).apply {
+                text = icon
+                textSize = 22f
+                gravity = Gravity.CENTER
+            })
+            addView(TextView(this@FloatingWindowService).apply {
+                text = label
+                setTextColor(Color.WHITE)
+                textSize = 10f
+                gravity = Gravity.CENTER
+                maxLines = 1
+                setPadding(0, dp(2), 0, 0)
+            })
+        }
+    }
+
+    private fun showMenuView(container: View) {
         val screenWidth = resources.displayMetrics.widthPixels
         val ballX = ballParams?.x ?: 0
         val ballY = ballParams?.y ?: 200
-        val menuWidth = columns * (btnSize + gap) + padding * 2
+        val menuWidth = dp(260)
         val menuX = if (ballX < screenWidth / 2) ballX + dp(60) else ballX - menuWidth
 
         val menuParams = WindowManager.LayoutParams(
@@ -360,19 +471,6 @@ class FloatingWindowService : Service() {
         menuBackdrop = null
         menuView?.let { try { windowManager.removeView(it) } catch (_: Exception) {} }
         menuView = null
-    }
-
-    private fun getActionIcon(id: String): String {
-        return when (id) {
-            "ocr" -> "🔤"
-            "chat_reply" -> "💬"
-            "table" -> "📊"
-            "search" -> "🔍"
-            "fund_holdings" -> "📈"
-            "full_page" -> "📄"
-            "manual_scroll" -> "✋"
-            else -> "📱"
-        }
     }
 
     // endregion
@@ -429,6 +527,138 @@ class FloatingWindowService : Service() {
             statusView?.let { try { windowManager.removeView(it) } catch (_: Exception) {} }
             statusView = null
         }
+    }
+
+    // endregion
+
+    // region Skill 化执行
+
+    /**
+     * 快捷操作：一键截屏 + 执行绑定的 Skill 命令
+     */
+    private fun executeQuickAction(skillName: String, commandId: String, captureType: String) {
+        val cType = when (captureType) {
+            "long_scroll" -> CaptureType.LONG_SCROLL
+            "manual_scroll" -> CaptureType.MANUAL_SCROLL
+            else -> CaptureType.NORMAL
+        }
+
+        // 构造一个兼容的 ActionConfig 用于截屏流程
+        val action = ActionConfig(
+            id = commandId, name = commandId, icon = "",
+            captureType = cType, description = "",
+        )
+
+        // 记录使用
+        FloatingMenuManager.recordUsage(this, skillName, commandId, captureType)
+
+        // 设置截屏后的回调
+        pendingSkillAction = Pair(skillName, commandId)
+
+        when (cType) {
+            CaptureType.NORMAL -> {
+                hideFloatingBall()
+                dismissStatus()
+                serviceScope.launch {
+                    delay(150)
+                    val bitmap = ScreenAssistAccessibilityService.instance?.takeScreenshot()
+                    showFloatingBall()
+                    if (bitmap != null) {
+                        executeSkillWithBitmap(skillName, commandId, bitmap)
+                    } else {
+                        showStatus("✗ 截屏失败", 3000)
+                    }
+                }
+            }
+            else -> startScrollCapture(action)
+        }
+    }
+
+    /**
+     * 第一级菜单选择截屏方式后：执行截屏，完成后弹出第二级菜单
+     */
+    private fun startCaptureAndShowCommands(captureType: String) {
+        pendingCaptureType = captureType
+
+        when (captureType) {
+            "normal" -> {
+                hideFloatingBall()
+                dismissStatus()
+                serviceScope.launch {
+                    delay(150)
+                    val bitmap = ScreenAssistAccessibilityService.instance?.takeScreenshot()
+                    showFloatingBall()
+                    if (bitmap != null) {
+                        pendingBitmap = bitmap
+                        showSecondLevelMenu(captureType, bitmap)
+                    } else {
+                        showStatus("✗ 截屏失败", 3000)
+                    }
+                }
+            }
+            "long_scroll" -> {
+                // 自动滚动截屏，截完后弹出命令选择
+                val action = ActionConfig(
+                    id = "_capture", name = "截屏", icon = "",
+                    captureType = CaptureType.LONG_SCROLL, description = "",
+                )
+                pendingSkillAction = null  // 截完后弹菜单而非直接执行
+                startScrollCapture(action)
+            }
+            "manual_scroll" -> {
+                val action = ActionConfig(
+                    id = "_capture", name = "截屏", icon = "",
+                    captureType = CaptureType.MANUAL_SCROLL, description = "",
+                )
+                pendingSkillAction = null
+                startScrollCapture(action)
+            }
+        }
+    }
+
+    /**
+     * 通过 Skill API 执行命令（截图类）
+     */
+    private fun executeSkillAction(action: FloatingAction, bitmap: Bitmap) {
+        executeSkillWithBitmap(action.skillName, action.commandId, bitmap)
+    }
+
+    private fun executeSkillWithBitmap(skillName: String, commandId: String, bitmap: Bitmap) {
+        val httpClient = HttpClient.instance
+        if (httpClient == null) {
+            showStatus("✗ 服务未连接", 3000)
+            return
+        }
+
+        showStatus("正在提交任务...", 10000)
+        serviceScope.launch(Dispatchers.IO) {
+            val base64 = bitmapToBase64(bitmap)
+            val taskId = httpClient.runSkillCommand(
+                skillName = skillName,
+                commandId = commandId,
+                imageBase64 = base64,
+            )
+            withContext(Dispatchers.Main) {
+                if (taskId != null) {
+                    showStatus("✓ 任务已提交 #$taskId", 3000)
+                } else {
+                    showStatus("✗ 任务提交失败", 3000)
+                }
+            }
+        }
+    }
+
+    // 待执行的 skill action（快捷操作或长截图完成后）
+    private var pendingSkillAction: Pair<String, String>? = null
+    // 待处理的截屏类型（两级菜单流程）
+    private var pendingCaptureType: String? = null
+    // 待处理的截图（普通截图后弹二级菜单时暂存）
+    private var pendingBitmap: Bitmap? = null
+
+    private fun bitmapToBase64(bitmap: Bitmap): String {
+        val stream = java.io.ByteArrayOutputStream()
+        bitmap.compress(Bitmap.CompressFormat.JPEG, 85, stream)
+        return android.util.Base64.encodeToString(stream.toByteArray(), android.util.Base64.NO_WRAP)
     }
 
     // endregion
@@ -912,27 +1142,49 @@ class FloatingWindowService : Service() {
 
         val screenshots = captureScreenshots.toList()
         val action = captureAction
+        val skillAction = pendingSkillAction
+        val captType = pendingCaptureType
 
         dismissCapturePanel()
         showFloatingBall()
+
+        pendingSkillAction = null
+        pendingCaptureType = null
 
         if (screenshots.isEmpty() || action == null) {
             showStatus("✗ 没有截取到内容", 2000)
             return
         }
 
+        val processResult: (Bitmap) -> Unit = { bitmap ->
+            when {
+                // 快捷操作：直接执行绑定的 Skill 命令
+                skillAction != null -> {
+                    executeSkillWithBitmap(skillAction.first, skillAction.second, bitmap)
+                }
+                // 两级菜单流程：截屏后弹出命令选择
+                captType != null -> {
+                    pendingBitmap = bitmap
+                    showSecondLevelMenu(captType, bitmap)
+                }
+                // 兼容旧流程
+                else -> {
+                    sendOrSave(bitmap, action)
+                }
+            }
+        }
+
         if (screenshots.size == 1) {
-            sendOrSave(screenshots[0], action)
+            processResult(screenshots[0])
             return
         }
 
         showStatus("正在拼接 ${screenshots.size} 张截图...", 10000)
         serviceScope.launch(Dispatchers.Default) {
             val result = com.example.screenshotassistant.capture.ImageStitcher.stitch(screenshots)
-            // 保存到相册
             saveToGallery(result, "long_screenshot_${System.currentTimeMillis()}")
             withContext(Dispatchers.Main) {
-                sendOrSave(result, action)
+                processResult(result)
             }
         }
     }

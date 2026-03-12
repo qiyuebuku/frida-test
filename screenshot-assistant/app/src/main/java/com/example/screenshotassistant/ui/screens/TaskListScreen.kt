@@ -17,6 +17,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
+import com.example.screenshotassistant.data.SkillProject
 import com.example.screenshotassistant.data.TaskItem
 import com.example.screenshotassistant.network.HttpClient
 import com.example.screenshotassistant.service.ScreenAssistAccessibilityService
@@ -33,30 +34,25 @@ fun TaskListScreen(onTaskClick: (Int) -> Unit) {
     var total by remember { mutableStateOf(0) }
     var isLoading by remember { mutableStateOf(true) }
     var filterExpanded by remember { mutableStateOf(false) }
-    var selectedFilter by remember { mutableStateOf<String?>(null) }
+    var selectedSkillFilter by remember { mutableStateOf<String?>(null) }
     var serverConnected by remember { mutableStateOf(false) }
     var a11yConnected by remember { mutableStateOf(ScreenAssistAccessibilityService.instance != null) }
+    var skills by remember { mutableStateOf<List<SkillProject>>(emptyList()) }
 
     val context = LocalContext.current
 
-    val filterOptions = listOf(
-        null to "全部",
-        "fund_holdings" to "持仓分析",
-        "chat_reply" to "智能回复",
-        "ocr" to "文字识别",
-        "fund_trade_run" to "交易决策",
-        "fund_review" to "持仓审视"
-    )
-
     // 加载和轮询
-    LaunchedEffect(selectedFilter) {
+    LaunchedEffect(selectedSkillFilter) {
         while (true) {
             a11yConnected = ScreenAssistAccessibilityService.instance != null
             withContext(Dispatchers.IO) {
                 val healthy = HttpClient.instance?.healthCheck() == true
                 serverConnected = healthy
+                if (skills.isEmpty()) {
+                    HttpClient.instance?.getSkills()?.let { skills = it }
+                }
                 HttpClient.instance?.getTasks(
-                    taskType = selectedFilter,
+                    skillName = selectedSkillFilter,
                     limit = 50
                 )?.let { (list, count) ->
                     tasks = list
@@ -179,17 +175,31 @@ fun TaskListScreen(onTaskClick: (Int) -> Unit) {
                     expanded = filterExpanded,
                     onDismissRequest = { filterExpanded = false }
                 ) {
-                    filterOptions.forEach { (type, label) ->
+                    DropdownMenuItem(
+                        text = {
+                            Text(
+                                "全部",
+                                color = if (selectedSkillFilter == null) MaterialTheme.colorScheme.primary
+                                else MaterialTheme.colorScheme.onSurface
+                            )
+                        },
+                        onClick = {
+                            selectedSkillFilter = null
+                            filterExpanded = false
+                            isLoading = true
+                        }
+                    )
+                    skills.forEach { skill ->
                         DropdownMenuItem(
                             text = {
                                 Text(
-                                    label,
-                                    color = if (selectedFilter == type) MaterialTheme.colorScheme.primary
+                                    skill.displayName,
+                                    color = if (selectedSkillFilter == skill.name) MaterialTheme.colorScheme.primary
                                     else MaterialTheme.colorScheme.onSurface
                                 )
                             },
                             onClick = {
-                                selectedFilter = type
+                                selectedSkillFilter = skill.name
                                 filterExpanded = false
                                 isLoading = true
                             }
