@@ -29,22 +29,8 @@ commands:
     description: 从截图识别持仓数据，采集市场行情，综合分析
     input: screenshot
     capture_types: [normal, long_scroll]
-    executor: pipeline
+    executor: claude
     estimated_time: 120
-    pipeline:
-      - step: ocr
-        handler: ocr_service
-        description: OCR 识别截图文字
-      - step: structure
-        handler: fund_parser
-        description: 解析持仓数据结构
-      - step: store
-        handler: db_save
-        description: 保存到数据库
-      - step: analyze
-        handler: llm_call
-        description: Claude 综合分析
-        prompt_template: prompts/ocr_analyze.md
 
   - id: analyze
     name: 单基深度分析

@@ -1,6 +1,7 @@
 """智能基金服务 - 合并同花顺基金 API + 截屏助手 OCR"""
 
 from contextlib import asynccontextmanager
+from pathlib import Path
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -9,6 +10,7 @@ from services.ths_fund_client import THSFundClient
 from services import fund_db
 from services import db as ocr_db
 from services import task_db
+from services import skill_registry as sr
 from services.scheduler import scheduler
 from routers import router, set_client, start_auth_auto_refresh
 
@@ -35,6 +37,12 @@ async def lifespan(app: FastAPI):
     # 启动定时任务调度器
     scheduler.start()
     print("✅ 定时任务调度器已启动")
+
+    # 初始化 SkillRegistry
+    import os
+    skills_dir = os.getenv("SKILLS_DIR", str(Path(__file__).parent.parent))
+    sr.skill_registry = sr.SkillRegistry(skills_dir)
+    print(f"✅ SkillRegistry 已初始化 (skills_dir={skills_dir})")
 
     # 启动 auth token 自动刷新后台任务
     await start_auth_auto_refresh()

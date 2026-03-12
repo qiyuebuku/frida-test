@@ -14,6 +14,7 @@ from services import task_db
 from services import db as ocr_db
 from services.ocr_service import OCRService
 from services.event_bus import event_bus
+import services.handlers as handlers
 
 logger = logging.getLogger(__name__)
 
@@ -51,17 +52,21 @@ class TaskExecutor:
             task_db.update_task(task_id, status="processing", started_at=datetime.now())
             start_time = time.time()
 
-            task_type = task["task_type"]
-            if task_type == "fund_holdings":
-                self._handle_fund_holdings(task)
-            elif task_type == "chat_reply":
-                self._handle_chat_reply(task)
-            elif task_type in ("fund_trade_run", "fund_review"):
-                self._handle_skill_command(task)
-            elif task_type == "full_page":
-                self._handle_full_page(task)
+            skill_name = task.get("skill_name") or ""
+            command_id = task.get("command_id") or task.get("task_type", "")
+
+            # 路径 1：executor=claude → 通用 claude 执行
+            if self._is_claude_command(skill_name, command_id):
+                self._execute_claude(task, skill_name, command_id)
             else:
-                self._handle_simple_ocr(task)
+                # 路径 2：查 handler 注册表
+                handler = handlers.get_handler(skill_name, command_id)
+                if not handler:
+                    raise ValueError(
+                        f"未注册 handler: ({skill_name}, {command_id})。"
+                        f"如果需要 Claude 执行，请在 SKILL.md 中标记 executor: claude"
+                    )
+                handler(self, task)
 
             elapsed = int(time.time() - start_time)
             # 检查是否已被标记为 failed（handler 内部可能已标记）
@@ -164,64 +169,49 @@ OCR 文本：
 
         return structured
 
-    # ==================== 任务处理器 ====================
+    # ==================== Skill claude 执行 ====================
 
-    def _handle_fund_holdings(self, task: dict):
-        """持仓分析：OCR → 结构化 → claude -p 深度分析"""
+    def _is_claude_command(self, skill_name: str, command_id: str) -> bool:
+        """检查 SKILL.md 中该命令是否标记为 executor: claude"""
+        import services.skill_registry as sr
+        if not sr.skill_registry or not skill_name:
+            return False
+        skill = sr.skill_registry.get_skill(skill_name)
+        if not skill:
+            return False
+        command = skill.get_command(command_id)
+        return command is not None and command.executor == "claude"
+
+    def _execute_claude(self, task: dict, skill_name: str, command_id: str):
+        """通用 claude 执行：在 skill 目录下 claude -p"""
+        import services.skill_registry as sr
+        skill = sr.skill_registry.get_skill(skill_name)
+        command = skill.get_command(command_id)
         task_id = task["id"]
+        config = task.get("config") or {}
+        if isinstance(config, str):
+            config = json.loads(config)
 
-        # Stage 2: OCR
-        raw_text, markdown, ocr_id = self._do_ocr(
-            task_id, task["image_path"], "fund_holdings", task.get("client_id")
-        )
+        prompt = f"执行命令: {command.name}\n{command.description}"
+        if config.get("args"):
+            prompt += f"\n参数: {' '.join(f'{k} {v}' for k, v in config['args'].items())}"
+        if config.get("input_data"):
+            prompt += f"\n输入: {config['input_data']}"
+        prompt = self._apply_custom_prompt(prompt, task)
 
-        # Stage 3: 结构化（立即写入 DB）
-        structured = self._do_structurize(task_id, ocr_id, raw_text, markdown)
-
-        # Stage 4: 深度分析
-        self._progress(task_id, 40, "正在采集市场数据...")
-
-        data_desc = json.dumps(structured, ensure_ascii=False, indent=2) if structured else (markdown or raw_text)
-
-        analysis_prompt = f"""请执行基金持仓分析。
-
-已有 OCR 结构化数据：
-{data_desc}
-
-分析步骤：
-1. 执行 `python client.py market_overview` 采集市场环境
-2. 执行 `python client.py hot_board` 查看热门板块
-3. 执行 `curl -s --noproxy '*' http://127.0.0.1:8900/api/news_overview` 获取新闻
-4. 对持仓中的基金，执行 `python client.py <代码> detail` 和 `python client.py <代码> rank` 获取详情
-5. 综合分析持仓配置、行业分布、风险点
-6. 给出操作建议（加仓/减仓/持有）
-
-输出完整的 Markdown 分析报告，包含：
-- 持仓全貌（总资产、基金数量、收益）
-- 配置分析（各类资产占比）
-- 市场关联（热点与持仓的关联）
-- 风险提示
-- 操作建议（按优先级排序）
-
-只输出最终的 Markdown 报告。"""
-        analysis_prompt = self._apply_custom_prompt(analysis_prompt, task)
-
-        # 启动 claude -p 流式输出
-        report = self._run_claude_streaming(task_id, analysis_prompt,
-            timeout=600, progress_range=(40, 90), estimated_tools=20
-        )
+        report = self._run_claude_streaming(task_id, prompt,
+            cwd=skill.path, timeout=600, progress_range=(5, 90), estimated_tools=30)
 
         if not report:
-            task_db.update_task(task_id, status="failed", error_msg="Claude 分析超时或失败")
+            task_db.update_task(task_id, status="failed", error_msg="执行超时或失败")
             return
 
-        # Stage 5: 写入结果
         summary = self._extract_summary(report)
         task_db.update_task(task_id,
-            status="completed", progress=100, progress_msg=None,
-            summary=summary, result=report,
-            completed_at=datetime.now()
-        )
+            status="completed", progress=100, summary=summary,
+            result=report, completed_at=datetime.now())
+
+    # ==================== 自定义配置 ====================
 
     def _get_custom_config(self, task: dict) -> tuple[str | None, str | None]:
         """从 task.config 中读取自定义 system_prompt 和 rules"""
@@ -243,106 +233,6 @@ OCR 文本：
         if rules:
             default_prompt = f"{default_prompt}\n\n额外规则：\n{rules}"
         return default_prompt
-
-    def _handle_chat_reply(self, task: dict):
-        """智能回复：OCR → claude -p 生成回复"""
-        task_id = task["id"]
-
-        raw_text, markdown, ocr_id = self._do_ocr(
-            task_id, task["image_path"], "chat_reply", task.get("client_id")
-        )
-
-        self._progress(task_id, 40, "正在生成回复建议...")
-
-        prompt = f"""分析以下聊天截图内容，给出 3 个回复建议。
-
-聊天内容：
-{markdown or raw_text}
-
-输出格式：
-# 智能回复建议
-
-## 对话摘要
-（一句话总结对方说了什么）
-
-## 推荐回复
-1. **正式回复**：...
-2. **轻松回复**：...
-3. **简短回复**：...
-
-只输出 Markdown 格式的回复建议。"""
-        prompt = self._apply_custom_prompt(prompt, task)
-
-        result = self._run_claude(prompt, timeout=120)
-        if not result:
-            task_db.update_task(task_id, status="failed", error_msg="生成回复失败")
-            return
-
-        summary = self._extract_summary(result, max_len=100)
-        task_db.update_task(task_id,
-            status="completed", progress=100, progress_msg=None,
-            summary=summary, result=result,
-            completed_at=datetime.now()
-        )
-
-    def _handle_skill_command(self, task: dict):
-        """执行 fund-trade skill 命令（run/review）"""
-        task_id = task["id"]
-        task_type = task["task_type"]
-
-        cmd_map = {
-            "fund_trade_run": "请执行 /fund-trade run 的完整流程，输出今日操作汇总报告。",
-            "fund_review": "请执行 /fund-trade review 的完整流程，输出持仓审视报告。",
-        }
-        prompt = cmd_map.get(task_type, f"执行 {task_type}")
-        prompt = self._apply_custom_prompt(prompt, task)
-
-        report = self._run_claude_streaming(task_id, prompt,
-            timeout=600, progress_range=(5, 90), estimated_tools=30
-        )
-
-        if not report:
-            task_db.update_task(task_id, status="failed", error_msg="Skill 执行超时或失败")
-            return
-
-        summary = self._extract_summary(report)
-        task_db.update_task(task_id,
-            status="completed", progress=100, progress_msg=None,
-            summary=summary, result=report,
-            completed_at=datetime.now()
-        )
-
-    def _handle_full_page(self, task: dict):
-        """完整页面：仅 OCR"""
-        task_id = task["id"]
-        raw_text, markdown, ocr_id = self._do_ocr(
-            task_id, task["image_path"], "full_page", task.get("client_id")
-        )
-
-        result_text = markdown or raw_text
-        summary = result_text[:200] if result_text else "（空白页面）"
-
-        task_db.update_task(task_id,
-            status="completed", progress=100, progress_msg=None,
-            summary=summary, result=result_text,
-            completed_at=datetime.now()
-        )
-
-    def _handle_simple_ocr(self, task: dict):
-        """简单 OCR（兜底）"""
-        task_id = task["id"]
-        raw_text, markdown, ocr_id = self._do_ocr(
-            task_id, task["image_path"], task["task_type"], task.get("client_id")
-        )
-
-        result_text = markdown or raw_text
-        summary = result_text[:200] if result_text else ""
-
-        task_db.update_task(task_id,
-            status="completed", progress=100, progress_msg=None,
-            summary=summary, result=result_text,
-            completed_at=datetime.now()
-        )
 
     # ==================== Claude 工具方法 ====================
 
@@ -450,10 +340,15 @@ OCR 文本：
     def _run_claude_streaming(self, task_id: int, prompt: str,
                               timeout: int = 600,
                               progress_range: tuple = (35, 90),
-                              estimated_tools: int = 20) -> str | None:
+                              estimated_tools: int = 20,
+                              cwd: str = None) -> str | None:
         """启动 claude -p 并实时解析 stream-json 事件，推送到 EventBus"""
         env = os.environ.copy()
         env["FUND_API_BASE"] = "http://127.0.0.1:8900"
+
+        # 确定工作目录：优先使用传入的 cwd，否则使用默认 SKILL_DIR
+        work_dir = cwd or SKILL_DIR
+        work_dir = work_dir if Path(work_dir).exists() else None
 
         start_pct, end_pct = progress_range
         try:
@@ -463,7 +358,7 @@ OCR 文本：
                  "--output-format", "stream-json", "--verbose"],
                 stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                 text=True, bufsize=1,
-                cwd=SKILL_DIR if Path(SKILL_DIR).exists() else None,
+                cwd=work_dir,
                 env=env
             )
 

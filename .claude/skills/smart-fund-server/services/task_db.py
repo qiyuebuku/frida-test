@@ -55,6 +55,9 @@ ALTER_TABLE_SQL = """
 ALTER TABLE sa_tasks ADD COLUMN IF NOT EXISTS partial_result TEXT;
 ALTER TABLE sa_tasks ADD COLUMN IF NOT EXISTS tool_calls JSONB;
 ALTER TABLE sa_tasks ADD COLUMN IF NOT EXISTS config JSONB;
+ALTER TABLE sa_tasks ADD COLUMN IF NOT EXISTS skill_name VARCHAR(64);
+ALTER TABLE sa_tasks ADD COLUMN IF NOT EXISTS command_id VARCHAR(64);
+CREATE INDEX IF NOT EXISTS idx_sa_tasks_skill ON sa_tasks(skill_name);
 """
 
 
@@ -68,7 +71,8 @@ def init_task_tables():
 
 
 def create_task(task_type: str, input_type: str = None, image_path: str = None,
-                client_id: str = None, title: str = None, config: dict = None) -> int:
+                client_id: str = None, title: str = None, config: dict = None,
+                skill_name: str = None, command_id: str = None) -> int:
     import json
     if not title:
         label = TYPE_LABELS.get(task_type, task_type)
@@ -79,10 +83,10 @@ def create_task(task_type: str, input_type: str = None, image_path: str = None,
     with get_conn() as conn:
         with conn.cursor() as cur:
             cur.execute("""
-                INSERT INTO sa_tasks (task_type, input_type, image_path, client_id, title, config)
-                VALUES (%s, %s, %s, %s, %s, %s)
+                INSERT INTO sa_tasks (task_type, input_type, image_path, client_id, title, config, skill_name, command_id)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
                 RETURNING id
-            """, (task_type, input_type, image_path, client_id, title, config_json))
+            """, (task_type, input_type, image_path, client_id, title, config_json, skill_name, command_id))
             task_id = cur.fetchone()[0]
         conn.commit()
     return task_id
@@ -118,6 +122,7 @@ def get_task(task_id: int) -> dict | None:
 
 
 def list_tasks(status: str = None, task_type: str = None,
+               skill_name: str = None,
                limit: int = 20, offset: int = 0) -> tuple[list[dict], int]:
     """返回 (任务列表, 总数)"""
     where = []
@@ -128,6 +133,9 @@ def list_tasks(status: str = None, task_type: str = None,
     if task_type:
         where.append("task_type = %s")
         params.append(task_type)
+    if skill_name:
+        where.append("skill_name = %s")
+        params.append(skill_name)
 
     where_sql = f"WHERE {' AND '.join(where)}" if where else ""
 
@@ -139,7 +147,8 @@ def list_tasks(status: str = None, task_type: str = None,
             cur.execute(f"""
                 SELECT id, task_type, status, progress, progress_msg,
                        title, summary, image_path, error_msg,
-                       client_id, created_at, started_at, completed_at, duration_sec
+                       client_id, skill_name, command_id,
+                       created_at, started_at, completed_at, duration_sec
                 FROM sa_tasks
                 {where_sql}
                 ORDER BY created_at DESC
