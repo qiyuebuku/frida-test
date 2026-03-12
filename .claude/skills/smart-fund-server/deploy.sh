@@ -1,10 +1,10 @@
 #!/bin/bash
-# 自动化部署脚本 - 将 smart-fund-server 部署到远程服务器
+# 自动化部署脚本 - 通过 git 同步 skills 仓库（含 smart-fund-server）
 #
 # 用法:
-#   ./deploy.sh              # 同步代码并重启服务
-#   ./deploy.sh --init       # 首次部署（创建 conda 环境、安装 PG、建库）
-#   ./deploy.sh --sync-only  # 只同步代码，不重启
+#   ./deploy.sh              # git pull + 重启服务
+#   ./deploy.sh --init       # 首次部署（clone 仓库、创建 conda 环境、安装 PG、建库）
+#   ./deploy.sh --sync-only  # 只 git pull，不重启
 #   ./deploy.sh --restart    # 只重启服务
 #   ./deploy.sh --status     # 查看服务状态
 #   ./deploy.sh --logs       # 查看最近日志
@@ -17,17 +17,21 @@ REMOTE_HOST="119.23.227.187"
 REMOTE_PORT="2210"
 REMOTE_USER="yuyangruan"
 REMOTE_PASS="199848"
-REMOTE_DIR="/home/${REMOTE_USER}/smart-fund-server"
 CONDA_ENV="smart-fund"
 CONDA_BASE="/home/${REMOTE_USER}/anaconda3"
 SERVICE_NAME="smart-fund-server"
 
+# git 仓库
+SKILLS_REPO="git@github.com:qiyuebuku/skills.git"
+SKILLS_REMOTE="/home/${REMOTE_USER}/claude-skills"
+
+# 远程路径（均在 git 仓库内）
+REMOTE_DIR="${SKILLS_REMOTE}/smart-fund-server"
+SKILL_REMOTE="${SKILLS_REMOTE}/fund-trade"
+
 # SSH key（WSL2 路径）
 SSH_KEY="/mnt/c/Users/阮雨阳/.ssh/id_rsa"
 SSH_KEY_TMP="/tmp/deploy_key_smart_fund"
-
-# 本地项目目录
-LOCAL_DIR="$(cd "$(dirname "$0")" && pwd)"
 
 # ==================== 工具函数 ====================
 setup_ssh_key() {
@@ -45,54 +49,31 @@ sudo_cmd() {
     ssh_cmd "echo '${REMOTE_PASS}' | sudo -S $*"
 }
 
-# ==================== 同步代码 ====================
+# ==================== 同步代码（git pull） ====================
 sync_code() {
-    echo "📦 同步代码到远程服务器..."
-    rsync -avz --delete \
-        --exclude='__pycache__' \
-        --exclude='*.pyc' \
-        --exclude='images/*' \
-        --exclude='server.log' \
-        --exclude='.git' \
-        -e "ssh -p ${REMOTE_PORT} -i ${SSH_KEY_TMP} -o StrictHostKeyChecking=no" \
-        "${LOCAL_DIR}/" \
-        "${REMOTE_USER}@${REMOTE_HOST}:${REMOTE_DIR}/"
-
-    # 确保 images 目录存在
-    ssh_cmd "mkdir -p ${REMOTE_DIR}/images"
-    echo "✅ 代码同步完成"
-}
-
-# ==================== 同步 Claude Skills ====================
-SKILLS_REPO="git@github.com:qiyuebuku/skills.git"
-SKILLS_REMOTE="/home/${REMOTE_USER}/claude-skills"
-SKILLS_REMOTE_LOCAL="/home/yuyang/frida-test/.claude/skills"
-SKILL_REMOTE="${SKILLS_REMOTE}/fund-trade"
-
-sync_skills() {
-    echo "📦 同步 Claude Skills（via git）..."
-
-    # clone 或 pull（如果目录存在但不是 git 仓库，先清理再 clone）
+    echo "📦 同步代码（git pull）..."
     ssh_cmd "
         if [ -d '${SKILLS_REMOTE}/.git' ]; then
-            cd '${SKILLS_REMOTE}' && git pull --ff-only
+            cd '${SKILLS_REMOTE}' && git fetch origin && git reset --hard origin/main
         else
             rm -rf '${SKILLS_REMOTE}'
             git clone '${SKILLS_REPO}' '${SKILLS_REMOTE}'
         fi
     "
 
-    # client.py 在仓库中是指向本地路径的符号链接，远程不可用，需要复制实际文件覆盖
-    local CLIENT_PY_REAL
-    CLIENT_PY_REAL="$(readlink -f "${SKILLS_REMOTE_LOCAL}/fund-trade/client.py" 2>/dev/null)"
-    if [ -f "$CLIENT_PY_REAL" ]; then
+    # 创建运行时目录 + 同步 config.json（敏感文件不入 git，首次需复制）
+    ssh_cmd "mkdir -p ${REMOTE_DIR}/images"
+    local LOCAL_DIR
+    LOCAL_DIR="$(cd "$(dirname "$0")" && pwd)"
+    if ! ssh_cmd "test -f ${REMOTE_DIR}/config.json"; then
+        echo "📋 远程缺少 config.json，同步本地配置..."
         rsync -az \
             -e "ssh -p ${REMOTE_PORT} -i ${SSH_KEY_TMP} -o StrictHostKeyChecking=no" \
-            "$CLIENT_PY_REAL" \
-            "${REMOTE_USER}@${REMOTE_HOST}:${SKILL_REMOTE}/client.py"
+            "${LOCAL_DIR}/config.json" \
+            "${REMOTE_USER}@${REMOTE_HOST}:${REMOTE_DIR}/config.json"
     fi
 
-    # 创建符号链接（fund_db.py / config.json → smart-fund-server）+ data 目录
+    # fund-trade 符号链接（fund_db.py / config.json 指向同仓库内的 smart-fund-server）
     ssh_cmd "
         cd ${SKILL_REMOTE}
         mkdir -p data
@@ -100,12 +81,12 @@ sync_skills() {
         ln -sf ${REMOTE_DIR}/config.json config.json 2>/dev/null || true
     "
 
-    # 确保远程 python 指向 conda 环境（client.py 需要 httpx 等依赖）
+    # 确保远程 python 指向 conda 环境
     ssh_cmd "
         echo '${REMOTE_PASS}' | sudo -S mkdir -p /usr/local/bin 2>/dev/null
         echo '${REMOTE_PASS}' | sudo -S ln -sf ${CONDA_BASE}/envs/${CONDA_ENV}/bin/python /usr/local/bin/python 2>/dev/null || true
     "
-    echo "✅ Skills 同步完成"
+    echo "✅ 代码同步完成"
 }
 
 # ==================== 重启服务 ====================
@@ -156,28 +137,28 @@ remote_test() {
 init_deploy() {
     echo "🚀 首次部署初始化..."
 
-    # 1. 创建 conda 环境
+    # 1. clone 仓库
+    sync_code
+
+    # 2. 创建 conda 环境
     echo "📦 创建 conda 环境 ${CONDA_ENV}..."
     ssh_cmd "${CONDA_BASE}/bin/conda create -n ${CONDA_ENV} python=3.12 -y 2>&1 | tail -3" || echo "(环境可能已存在)"
 
-    # 2. 安装 Python 依赖
+    # 3. 安装 Python 依赖
     echo "📦 安装 Python 依赖..."
     ssh_cmd "${CONDA_BASE}/envs/${CONDA_ENV}/bin/pip install fastapi uvicorn httpx psycopg2-binary pydantic 2>&1 | tail -3"
 
-    # 3. 安装 PostgreSQL
+    # 4. 安装 PostgreSQL
     echo "📦 安装 PostgreSQL..."
     sudo_cmd "apt-get install -y postgresql postgresql-contrib 2>&1 | tail -3" || echo "(PG 可能已安装)"
     sudo_cmd "systemctl start postgresql" 2>/dev/null
     sudo_cmd "systemctl enable postgresql" 2>/dev/null
 
-    # 4. 创建数据库和用户
+    # 5. 创建数据库和用户
     echo "📦 创建数据库..."
     sudo_cmd "-u postgres psql -c \"CREATE USER jettask WITH PASSWORD '123456';\"" 2>/dev/null || echo "(用户可能已存在)"
     sudo_cmd "-u postgres psql -c \"CREATE DATABASE jettask OWNER jettask;\"" 2>/dev/null || echo "(数据库可能已存在)"
     sudo_cmd "-u postgres psql -c \"GRANT ALL PRIVILEGES ON DATABASE jettask TO jettask;\"" 2>/dev/null
-
-    # 5. 同步代码
-    sync_code
 
     # 6. 测试导入
     echo "🧪 测试导入..."
@@ -237,13 +218,9 @@ main() {
         --test)
             remote_test
             ;;
-        --skills)
-            sync_skills
-            ;;
         *)
-            # 默认：同步 + 重启
+            # 默认：git pull + 重启
             sync_code
-            sync_skills
             restart_service
             echo ""
             echo "🎉 部署完成！"
