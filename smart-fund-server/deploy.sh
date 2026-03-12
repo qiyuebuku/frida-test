@@ -61,8 +61,17 @@ sync_code() {
         fi
     "
 
-    # 创建运行时目录
+    # 创建运行时目录 + 同步 config.json（敏感文件不入 git，首次需复制）
     ssh_cmd "mkdir -p ${REMOTE_DIR}/images"
+    local LOCAL_DIR
+    LOCAL_DIR="$(cd "$(dirname "$0")" && pwd)"
+    if ! ssh_cmd "test -f ${REMOTE_DIR}/config.json"; then
+        echo "📋 远程缺少 config.json，同步本地配置..."
+        rsync -az \
+            -e "ssh -p ${REMOTE_PORT} -i ${SSH_KEY_TMP} -o StrictHostKeyChecking=no" \
+            "${LOCAL_DIR}/config.json" \
+            "${REMOTE_USER}@${REMOTE_HOST}:${REMOTE_DIR}/config.json"
+    fi
 
     # fund-trade 符号链接（fund_db.py / config.json 指向同仓库内的 smart-fund-server）
     ssh_cmd "
