@@ -1,3 +1,12 @@
 __pycache__/
 *.pyc
 *.bak
+
+# smart-fund-server 运行时/敏感文件
+smart-fund-server/server.log
+smart-fund-server/images/
+smart-fund-server/auth_cache.json
+smart-fund-server/config.json
+
+# fund-trade 敏感文件
+fund-trade/config.json
