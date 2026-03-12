@@ -11,7 +11,8 @@ from pathlib import Path
 
 from fastapi import APIRouter, HTTPException, Query, Body
 
-from routers._utils import safe_call, client
+import routers._utils as _utils
+from routers._utils import safe_call
 from routers._models import (
     BuyFundRequest, SellFundRequest, CancelOrderRequest,
     TradeAuthUpdate, TradePasswordUpdate,
@@ -166,8 +167,8 @@ def _save_auth_cache(cache_data: dict):
     cache_data.setdefault("last_sync", int(time.time()))
     with open(cache_file, "w", encoding="utf-8") as f:
         json.dump(cache_data, f, indent=2, ensure_ascii=False)
-    if client:
-        client.reload_auth_if_updated()
+    if _utils.client:
+        _utils.client.reload_auth_if_updated()
 
 
 # ---------- 后台自动刷新 ----------
@@ -309,25 +310,25 @@ async def auth_login():
 @router.get("/api/trade/overview", summary="账户总览", tags=["交易账户"])
 async def trade_overview():
     """账户总览（总资产、累计盈亏、当日盈亏、风险等级等）"""
-    return await safe_call(client.get_account_overview())
+    return await safe_call(_utils.client.get_account_overview())
 
 
 @router.get("/api/trade/positions", summary="基金持仓", tags=["交易账户"])
 async def trade_positions():
     """基金持仓列表（持仓基金明细、市值、收益等）"""
-    return await safe_call(client.get_fund_positions())
+    return await safe_call(_utils.client.get_fund_positions())
 
 
 @router.get("/api/trade/wallet", summary="活期宝", tags=["交易账户"])
 async def trade_wallet():
     """活期宝/超级T+0（货币基金收益、可用余额等）"""
-    return await safe_call(client.get_wallet_info())
+    return await safe_call(_utils.client.get_wallet_info())
 
 
 @router.get("/api/trade/wallet/home", summary="钱包首页", tags=["交易账户"])
 async def trade_wallet_home():
     """钱包首页（活期宝余额、冻结金额、累计收益等）"""
-    return await safe_call(client.get_wallet_home())
+    return await safe_call(_utils.client.get_wallet_home())
 
 
 @router.get("/api/trade/autoinvest/list", summary="定投计划列表", tags=["交易账户"])
@@ -336,31 +337,31 @@ async def trade_autoinvest_list(
     status: str = Query("N", description="状态: N=全部, 1=执行中, 2=暂停"),
 ):
     """定投计划列表"""
-    return await safe_call(client.get_auto_invest_list(page_size, status))
+    return await safe_call(_utils.client.get_auto_invest_list(page_size, status))
 
 
 @router.get("/api/trade/autoinvest/summary", summary="定投汇总", tags=["交易账户"])
 async def trade_autoinvest_summary():
     """定投汇总（总金额、下次执行日期、正常/暂停计划数等）"""
-    return await safe_call(client.get_auto_invest_summary())
+    return await safe_call(_utils.client.get_auto_invest_summary())
 
 
 @router.get("/api/trade/binding", summary="账户绑定信息", tags=["交易账户"])
 async def trade_binding():
     """账户绑定信息（客户ID、姓名、身份证号等）"""
-    return await safe_call(client.get_account_binding())
+    return await safe_call(_utils.client.get_account_binding())
 
 
 @router.get("/api/trade/all", summary="全部交易数据", tags=["交易账户"])
 async def trade_all():
     """一次性获取所有交易账户数据"""
-    return await safe_call(client.get_trade_account_all())
+    return await safe_call(_utils.client.get_trade_account_all())
 
 
 @router.post("/api/trade/auth", summary="更新交易认证", tags=["交易账户"])
 async def trade_auth_update(req: TradeAuthUpdate = Body(...)):
     """更新交易认证参数（token 过期后需要从 Hook 重新捕获）"""
-    client.update_trade_auth(
+    _utils.client.update_trade_auth(
         key1=req.key1, key2=req.key2, key3=req.key3, key5=req.key5,
         user_id=req.user_id, session_id=req.session_id, cookie=req.cookie,
     )
@@ -372,7 +373,7 @@ async def trade_auth_update(req: TradeAuthUpdate = Body(...)):
 @router.post("/api/trade/password", summary="设置交易密码", tags=["基金交易"])
 async def trade_password_update(req: TradePasswordUpdate):
     """设置交易密码（明文）"""
-    client.update_trade_password(req.password)
+    _utils.client.update_trade_password(req.password)
     return {"status": "ok", "message": "交易密码已设置"}
 
 
@@ -381,7 +382,7 @@ async def trade_buy(req: BuyFundRequest):
     """买入基金（完整流程：初始化->检查->下单）"""
     # Step 0: 买入初始化，检查 maxBuy
     try:
-        init_resp = await client._proxy_request(
+        init_resp = await _utils.client._proxy_request(
             "/rz/trade/dubbo/subscribe/init",
             body=f"fundCode={req.fund_code}",
             content_type="application/x-www-form-urlencoded",
@@ -451,7 +452,7 @@ async def trade_buy(req: BuyFundRequest):
         raise HTTPException(status_code=500, detail=f"买入初始化失败: {e}")
 
     # 调用同花顺 API 买入
-    result = await safe_call(client.buy_fund(req.fund_code, req.amount, req.use_wallet, req.password))
+    result = await safe_call(_utils.client.buy_fund(req.fund_code, req.amount, req.use_wallet, req.password))
 
     # 解析结果
     order_no = result.get("app_sheet_serial_no") or result.get("appSheetSerialNo")
@@ -507,7 +508,7 @@ async def trade_buy(req: BuyFundRequest):
 @router.get("/api/trade/order/{order_no}", summary="查询订单", tags=["基金交易"])
 async def trade_order_detail(order_no: str):
     """查询交易订单详情"""
-    return await safe_call(client.get_order_detail(order_no))
+    return await safe_call(_utils.client.get_order_detail(order_no))
 
 
 @router.get("/api/trade/orders", summary="订单列表", tags=["基金交易"])
@@ -520,7 +521,7 @@ async def trade_order_list(
     """查询交易订单列表"""
     end_date = datetime.now().strftime("%Y%m%d")
     start_date = (datetime.now() - timedelta(days=days)).strftime("%Y%m%d")
-    raw_result = await safe_call(client.get_order_list(start_date, end_date, op_type, limit, offset))
+    raw_result = await safe_call(_utils.client.get_order_list(start_date, end_date, op_type, limit, offset))
 
     return {
         "status": "success",
@@ -532,10 +533,10 @@ async def trade_order_list(
 async def trade_sell(req: SellFundRequest):
     """赎回基金（完整流程：获取持仓->初始化->提交赎回）"""
     share_vol_str = f"{req.share_vol:.2f}" if req.share_vol else None
-    return await safe_call(client.sell_fund(req.fund_code, share_vol_str, req.sell_all, req.password))
+    return await safe_call(_utils.client.sell_fund(req.fund_code, share_vol_str, req.sell_all, req.password))
 
 
 @router.post("/api/trade/cancel", summary="撤销订单", tags=["基金交易"])
 async def trade_cancel(req: CancelOrderRequest):
     """撤销交易订单"""
-    return await safe_call(client.cancel_order(req.order_no, req.password))
+    return await safe_call(_utils.client.cancel_order(req.order_no, req.password))

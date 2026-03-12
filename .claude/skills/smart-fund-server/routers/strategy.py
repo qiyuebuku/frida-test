@@ -6,7 +6,8 @@ from io import StringIO
 
 from fastapi import APIRouter, HTTPException, Query, Body
 
-from routers._utils import safe_call, client
+import routers._utils as _utils
+from routers._utils import safe_call
 from services import fund_db
 
 router = APIRouter()
@@ -525,7 +526,7 @@ async def plan_buy(
 async def sync_positions():
     """从同花顺同步持仓到本地数据库"""
     try:
-        positions_data = await client.get_fund_positions()
+        positions_data = await _utils.client.get_fund_positions()
 
         synced_count = 0
         result = positions_data.get("result", {})
@@ -556,7 +557,7 @@ async def sync_positions():
 async def get_account_overview():
     """获取账户总览（总资产、收益等）"""
     try:
-        overview = await client.get_account_overview()
+        overview = await _utils.client.get_account_overview()
         return {
             "status": "success",
             "data": overview
@@ -569,7 +570,7 @@ async def get_account_overview():
 async def get_wallet_info():
     """获取钱包余额信息"""
     try:
-        wallet = await client.get_wallet_info()
+        wallet = await _utils.client.get_wallet_info()
         return {
             "status": "success",
             "data": wallet
@@ -582,7 +583,7 @@ async def get_wallet_info():
 async def get_wallet_home():
     """获取钱包首页完整信息"""
     try:
-        home = await client.get_wallet_home()
+        home = await _utils.client.get_wallet_home()
         return {
             "status": "success",
             "data": home
@@ -601,7 +602,7 @@ async def scan_all_funds():
         funds_data = []
         for code in fund_codes:
             try:
-                detail = await client.get_fund_detail(code)
+                detail = await _utils.client.get_fund_detail(code)
                 funds_data.append(detail)
             except:
                 continue
@@ -625,8 +626,8 @@ async def scan_funds_summary():
         funds_summary = []
         for code in fund_codes:
             try:
-                base = await client.get_fund_base(code)
-                info = await client.get_fund_info(code)
+                base = await _utils.client.get_fund_base(code)
+                info = await _utils.client.get_fund_info(code)
 
                 base_data = base.get("data", {})
                 info_data = info.get("data", {})
