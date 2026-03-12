@@ -54,7 +54,7 @@ sync_code() {
     echo "📦 同步代码（git pull）..."
     ssh_cmd "
         if [ -d '${SKILLS_REMOTE}/.git' ]; then
-            cd '${SKILLS_REMOTE}' && git pull --ff-only
+            cd '${SKILLS_REMOTE}' && git fetch origin && git reset --hard origin/main
         else
             rm -rf '${SKILLS_REMOTE}'
             git clone '${SKILLS_REPO}' '${SKILLS_REMOTE}'
