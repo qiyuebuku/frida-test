@@ -189,7 +189,7 @@ OCR 文本：
 
         result = self._run_claude_streaming(task_id, prompt,
             timeout=600, progress_range=(22, 35), estimated_tools=2,
-            emit_done=False)
+            emit_done=False, model="claude-haiku-4-5-20251001")
         if not result:
             self._emit_step(task_id, "结构化跳过", "Claude 未返回结果", progress=35)
             return None
@@ -386,7 +386,8 @@ OCR 文本：
                               progress_range: tuple = (35, 90),
                               estimated_tools: int = 20,
                               cwd: str = None,
-                              emit_done: bool = True) -> str | None:
+                              emit_done: bool = True,
+                              model: str = None) -> str | None:
         """启动 claude -p 并实时解析 stream-json 事件，推送到 EventBus"""
         env = os.environ.copy()
         env["FUND_API_BASE"] = "http://127.0.0.1:8900"
@@ -397,10 +398,13 @@ OCR 文本：
 
         start_pct, end_pct = progress_range
         try:
+            cmd = ["claude", "-p", prompt,
+                   "--allowedTools", "Bash,Read,Glob,Grep",
+                   "--output-format", "stream-json", "--verbose"]
+            if model:
+                cmd.extend(["--model", model])
             process = subprocess.Popen(
-                ["claude", "-p", prompt,
-                 "--allowedTools", "Bash,Read,Glob,Grep",
-                 "--output-format", "stream-json", "--verbose"],
+                cmd,
                 stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                 text=True, bufsize=1,
                 cwd=work_dir,
