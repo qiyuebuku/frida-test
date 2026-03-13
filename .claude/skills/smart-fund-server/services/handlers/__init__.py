@@ -22,3 +22,4 @@ def get_handler(skill_name: str, command_id: str):
 from services.handlers import ocr  # noqa: F401, E402
 from services.handlers import chat_reply  # noqa: F401, E402
 from services.handlers import fund_holdings  # noqa: F401, E402
+from services.handlers import portfolio_analyze  # noqa: F401, E402

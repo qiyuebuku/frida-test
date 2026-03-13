@@ -26,10 +26,9 @@ commands:
 
   - id: ocr-analyze
     name: 截屏持仓分析
-    description: 从截图识别持仓数据，采集市场行情，综合分析
+    description: 基于截图持仓数据，采集公开市场行情，综合分析配置与风险
     input: screenshot
     capture_types: [normal, long_scroll]
-    executor: claude
     estimated_time: 120
 
   - id: analyze
@@ -64,28 +63,6 @@ commands:
 
 # 基金智能交易 Skill
 
-## 命令列表
-
-```bash
-/fund-trade <command> [options]
-```
-
-| 命令 | 说明 |
-|------|------|
-| `run` | **核心命令**：采集数据+新闻 → Claude 分析决策 → 执行交易 |
-| `run --dry` | 模拟运行，只看决策不执行交易 |
-| `select [偏股\|偏债\|指数]` | AI 从排行榜选基金，推荐加入池 |
-| `analyze <基金代码>` | 单基金深度分析 |
-| `market` | 当前市场环境分析 |
-| `review` | 持仓绩效审视 + 调仓建议 |
-| `retrospect` | 决策复盘：回顾历史决策 + 提炼经验知识库 |
-| `lessons` | 查看经验知识库 |
-| `config` | 查看/修改基金池和风控参数 |
-| `alipay [文件路径]` | **支付宝持仓管理**：解析 OCR 文本 → 分析 → 手动操作建议 |
-| `ocr-analyze [action]` | **截屏持仓分析**：从 sa_ocr_records 读取 OCR 数据 → 市场分析 → 持仓建议 |
-
----
-
 ## 重要约束
 
 - **所有与服务端的交互必须通过 `python client.py` 命令**，禁止用 curl 直接请求 API（健康检查除外）
@@ -110,17 +87,17 @@ commands:
 
 **0a. 服务连通性检查**：
 ```bash
-curl -s --noproxy '*' --connect-timeout 3 http://119.23.227.187:8900/health
+cd /home/yuyang/frida-test/.claude/skills/fund-trade
+python client.py health
 ```
 
 如果服务不可用，通过部署脚本重启：
 ```bash
-cd /home/yuyang/frida-test/smart-fund-server && bash deploy.sh --restart
+cd /home/yuyang/frida-test/.claude/skills/smart-fund-server && bash deploy.sh --restart
 ```
 
 **0b. 前置检查**：
 ```bash
-cd /home/yuyang/frida-test/.claude/skills/fund-trade
 python client.py preflight
 ```
 
