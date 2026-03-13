@@ -188,7 +188,7 @@ OCR 文本：
 {markdown or raw_text}"""
 
         result = self._run_claude_streaming(task_id, prompt,
-            timeout=60, progress_range=(22, 35), estimated_tools=2,
+            timeout=180, progress_range=(22, 35), estimated_tools=2,
             emit_done=False)
         if not result:
             self._emit_step(task_id, "结构化跳过", "Claude 未返回结果", progress=35)
