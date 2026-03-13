@@ -24,11 +24,10 @@ commands:
     executor: claude
     estimated_time: 180
 
-  - id: ocr-analyze
-    name: 截屏持仓分析
-    description: 基于截图持仓数据，采集公开市场行情，综合分析配置与风险
-    input: screenshot
-    capture_types: [normal, long_scroll]
+  - id: portfolio-analyze
+    name: 通用持仓分析
+    description: 基于截图或自有持仓数据，结合公开市场行情，综合分析配置与风险
+    input: none
     estimated_time: 120
 
   - id: analyze
@@ -571,11 +570,11 @@ python client.py market_overview
 
 ---
 
-### `/fund-trade ocr-analyze [action]`
+### `/fund-trade portfolio-analyze`
 
-**截屏持仓分析** - 从 `sa_ocr_records` 表读取 OCR 数据 → 采集市场行情 → 综合分析持仓。只分析不交易。
+**通用持仓分析** - 自动获取持仓数据（优先截图 OCR，没有则用同花顺持仓） → 采集公开市场行情 → 综合分析。只分析不交易。
 
-默认 action 为 `fund_holdings`。执行时读取详细流程文档：`prompts/ocr_analyze_flow.md`
+由 handler pipeline 自动执行，无需手动操作。
 
 ---
 
@@ -728,6 +727,5 @@ python client.py search 医疗                   # 搜索医疗相关基金
 /fund-trade lessons        # 经验知识库
 /fund-trade config         # 配置管理
 /fund-trade alipay         # 支付宝持仓
-/fund-trade ocr-analyze    # 截屏持仓分析（默认 fund_holdings）
-/fund-trade ocr-analyze ocr # 分析最近一次文字识别结果
+/fund-trade portfolio-analyze  # 通用持仓分析
 ```

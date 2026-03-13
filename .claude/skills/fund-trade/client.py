@@ -2997,6 +2997,20 @@ def cmd_snapshot(args):
         print(f"❌ 获取风控快照失败: {data.get('detail', '未知错误')}")
 
 
+def cmd_health(args):
+    """服务健康检查"""
+    try:
+        data = get("/health")
+        if data.get("status") == "ok":
+            print("✅ 服务正常")
+        else:
+            print(f"⚠️ 服务异常: {data}")
+            sys.exit(1)
+    except Exception as e:
+        print(f"❌ 服务不可用: {e}")
+        sys.exit(1)
+
+
 def cmd_preflight(args):
     """交易前置检查"""
     import json
@@ -4390,8 +4404,8 @@ def main():
 """,
     )
     # 热榜命令不需要基金代码，用 nargs="?" 让 code 可选
-    HOTLIST_CMDS = {"hotlist", "hotlist_topics", "hotlist_posts", "headlines", "news_feed", "news_overview", "news_themes", "theme_articles", "flash_news", "market_overview", "stock_rank", "sector_rank", "hot_board", "dragon_tiger", "ths_dragon_tiger", "capital_flow", "currency", "yesterday_limit", "stock_changes", "market_changes", "ranking", "screen", "companies", "account", "positions", "wallet", "autoinvest", "trade_binding", "trade_all", "buy", "sell", "order", "set_password", "orders", "cancel", "stock_quote", "stock_kline", "stock_flow", "stock_valuation", "stock_financial", "sync", "snapshot", "preflight", "evaluate", "scan-summary", "account-overview", "wallet-info", "wallet-home", "today-decisions", "recent-decisions", "watch-streaks", "create-reviews", "pending-reviews", "review-stats", "save-review", "lessons", "limits", "limits-summary", "limits-plan", "refresh-token", "auth-status", "ocr-records", "ocr-latest", "save-decision", "risk-check"}
-    ALL_CHOICES = ["all", "detail", "product", "rank", "year_return", "drawdown", "stability",
+    HOTLIST_CMDS = {"health", "hotlist", "hotlist_topics", "hotlist_posts", "headlines", "news_feed", "news_overview", "news_themes", "theme_articles", "flash_news", "market_overview", "stock_rank", "sector_rank", "hot_board", "dragon_tiger", "ths_dragon_tiger", "capital_flow", "currency", "yesterday_limit", "stock_changes", "market_changes", "ranking", "screen", "companies", "account", "positions", "wallet", "autoinvest", "trade_binding", "trade_all", "buy", "sell", "order", "set_password", "orders", "cancel", "stock_quote", "stock_kline", "stock_flow", "stock_valuation", "stock_financial", "sync", "snapshot", "preflight", "evaluate", "scan-summary", "account-overview", "wallet-info", "wallet-home", "today-decisions", "recent-decisions", "watch-streaks", "create-reviews", "pending-reviews", "review-stats", "save-review", "lessons", "limits", "limits-summary", "limits-plan", "refresh-token", "auth-status", "ocr-records", "ocr-latest", "save-decision", "risk-check"}
+    ALL_CHOICES = ["all", "health", "detail", "product", "rank", "year_return", "drawdown", "stability",
                    "hold_overview", "holdings", "valuation", "position", "profit", "style", "asset",
                    "nav", "realtime", "manager", "rsi",
                    "trade_rule", "scale_change", "holder_ratio", "dividend",
@@ -4654,6 +4668,7 @@ def main():
         "stock_financial": cmd_stock_financial,
         "sync": cmd_sync,
         "snapshot": cmd_snapshot,
+        "health": cmd_health,
         "preflight": cmd_preflight,
         "evaluate": cmd_evaluate,
         "scan-summary": cmd_scan_summary,
