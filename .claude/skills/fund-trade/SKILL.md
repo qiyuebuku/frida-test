@@ -27,7 +27,8 @@ commands:
   - id: portfolio-analyze
     name: 通用持仓分析
     description: 基于截图持仓数据，结合公开市场行情，综合分析配置与风险
-    input: none
+    input: text
+    executor: claude
     estimated_time: 120
 
   - id: analyze
@@ -567,6 +568,49 @@ python client.py market_overview
 #### Step 7: 保存操作建议
 
 将重要的操作建议记录到 `ft_alipay_decisions` 表。
+
+---
+
+### `/fund-trade portfolio-analyze`
+
+**通用持仓分析** - 只分析不交易，不查经验知识库，不复盘，不执行买卖操作。
+
+#### 输入数据
+
+持仓数据通过命令输入传入（通常是 OCR 结构化后的 JSON 或文本）。
+如果没有传入输入数据，则从数据库读取最新的 OCR 记录：
+```bash
+python client.py ocr-latest fund_holdings
+```
+
+**优先使用结构化数据**（`structured_data` 字段），仅当其为空时回退到 `raw_text`/`markdown_text`。
+
+#### Step 1: 市场环境采集
+
+```bash
+python client.py market_overview
+python client.py news_overview
+python client.py hot_board
+```
+
+#### Step 2: 基金级数据补充
+
+对持仓中识别到的**有基金代码的基金**，批量查询详情（最多 10 只）：
+```bash
+python client.py <code> detail
+python client.py <code> rank
+```
+
+#### Step 3: 综合分析
+
+读取 `prompts/portfolio_analyze.md` 模板格式，输出分析报告。
+
+分析维度：
+1. **持仓全貌**：总资产、基金数量、收益情况
+2. **配置分析**：按类型（QDII/A股/债券/商品）分组，计算占比
+3. **风险提示**：集中度过高、单一市场风险、汇率风险
+4. **市场关联**：当前市场热点与持仓的关联性
+5. **操作建议**：哪些基金建议加仓/减仓/持有，附理由
 
 ---
 
