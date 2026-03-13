@@ -121,15 +121,17 @@ class TaskExecutor:
 
     def _do_structurize(self, task_id: int, ocr_id: int, raw_text: str, markdown: str):
         """用 claude -p 结构化 OCR 文本，立即写入 sa_ocr_records，返回 structured dict"""
-        self._progress(task_id, 22, "正在结构化持仓数据...")
+        self._progress(task_id, 22, "正在结构化数据...")
 
-        prompt = f"""请将以下 OCR 识别的基金持仓文本转换为 JSON 格式。
+        prompt = f"""请将以下 OCR 识别的文本转换为结构化 JSON。
 
-OCR 文本：
-{markdown or raw_text}
+根据内容自动判断数据类型，提取关键字段。输出严格的 JSON（不要 markdown 代码块包裹）。
 
-输出严格的 JSON（不要 markdown 代码块包裹）：
+常见场景示例：
+
+1. 基金/股票持仓截图：
 {{
+  "data_type": "fund_holdings",
   "total_assets": 数字或null,
   "total_profit": 数字或null,
   "daily_pnl": 数字或null,
@@ -143,7 +145,12 @@ OCR 文本：
       "profit_rate": 小数或null
     }}
   ]
-}}"""
+}}
+
+2. 其他类型数据：根据内容自行设计合理的 JSON 结构，顶层必须包含 "data_type" 字段标识数据类型（如 "table"、"receipt"、"invoice"、"chat_record" 等），其余字段根据实际内容提取。
+
+OCR 文本：
+{markdown or raw_text}"""
 
         result = self._run_claude(prompt, timeout=60)
         if not result:
@@ -160,8 +167,7 @@ OCR 文本：
 
         # ★ 立即写入 sa_ocr_records
         structured_str = json.dumps(structured, ensure_ascii=False)
-        flat_data = json.dumps(self._flatten_holdings(structured), ensure_ascii=False)
-        ocr_db.update_ocr_structured_data(ocr_id, structured_str, flat_data)
+        ocr_db.update_ocr_structured_data(ocr_id, structured_str, structured_str)
 
         # 同步更新 sa_tasks.result_data（阶段性结果）
         task_db.update_task(task_id, result_data=structured)
@@ -612,18 +618,6 @@ OCR 文本：
             return json.loads(json_str)
         except json.JSONDecodeError:
             return None
-
-    def _flatten_holdings(self, data: dict) -> dict:
-        """扁平化持仓数据"""
-        flat = {
-            "total_assets": data.get("total_assets"),
-            "total_profit": data.get("total_profit"),
-            "daily_pnl": data.get("daily_pnl"),
-        }
-        holdings = data.get("holdings", [])
-        flat["holdings"] = holdings
-        flat["holdings_count"] = len(holdings)
-        return flat
 
     def _extract_summary(self, markdown: str, max_len: int = 200) -> str:
         """从 Markdown 报告中提取摘要"""
