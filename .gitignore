@@ -38,21 +38,11 @@ qidian/novel_kb/*
 .claude/skills/fund-trade/.env
 
 # smart-fund-server 运行时/敏感文件
-smart-fund-server/server.log
-smart-fund-server/images/
-smart-fund-server/auth_cache.json
-smart-fund-server/config.json
+.claude/skills/smart-fund-server/server.log
+.claude/skills/smart-fund-server/images/
+.claude/skills/smart-fund-server/auth_cache.json
+.claude/skills/smart-fund-server/config.json
 
 # fund-trade 敏感文件
-fund-trade/config.json
+.claude/skills/fund-trade/config.json
 
-# Skill directories are at root level, not under .claude/skills/
-.claude/skills/fund-trade/
-.claude/skills/novel-kb/
-.claude/skills/novel-write/
-.claude/skills/reverse-app-skill/
-.claude/skills/scrape-docs/
-.claude/skills/screenshot/
-.claude/skills/smart-fund-server/
-.claude/skills/stock-trade/
-.claude/skills/world-swarm/

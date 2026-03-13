@@ -25,9 +25,9 @@ SERVICE_NAME="smart-fund-server"
 SKILLS_REPO="git@github.com:qiyuebuku/skills.git"
 SKILLS_REMOTE="/home/${REMOTE_USER}/claude-skills"
 
-# 远程路径（均在 git 仓库根目录下）
-REMOTE_DIR="${SKILLS_REMOTE}/smart-fund-server"
-SKILL_REMOTE="${SKILLS_REMOTE}/fund-trade"
+# 远程路径（均在 .claude/skills/ 子目录下）
+REMOTE_DIR="${SKILLS_REMOTE}/.claude/skills/smart-fund-server"
+SKILL_REMOTE="${SKILLS_REMOTE}/.claude/skills/fund-trade"
 
 # SSH key（WSL2 路径）
 SSH_KEY="/mnt/c/Users/阮雨阳/.ssh/id_rsa"
