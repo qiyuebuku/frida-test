@@ -1,7 +1,65 @@
 ---
 name: fund-trade
-description: 基金智能交易 - LLM 决策引擎 + 量化信号 + 风控硬约束
+display_name: 基金智能交易
+icon: trending_up
+description: LLM 决策引擎 + 量化信号 + 风控硬约束
+category: finance
 user-invocable: true
+commands:
+  - id: run
+    name: 每日交易决策
+    description: 采集数据+新闻 → Claude 分析决策 → 执行交易
+    input: none
+    executor: claude
+    estimated_time: 300
+    args:
+      - name: "--dry"
+        description: 模拟运行，只看决策不执行交易
+        required: false
+
+  - id: review
+    name: 持仓绩效审视
+    description: 持仓审视 + 调仓建议
+    input: none
+    executor: claude
+    estimated_time: 180
+
+  - id: ocr-analyze
+    name: 截屏持仓分析
+    description: 从截图识别持仓数据，采集市场行情，综合分析
+    input: screenshot
+    capture_types: [normal, long_scroll]
+    executor: claude
+    estimated_time: 120
+
+  - id: analyze
+    name: 单基深度分析
+    description: 单只基金全维度分析报告
+    input: text
+    executor: claude
+    estimated_time: 60
+    args:
+      - name: fund_code
+        description: 基金代码
+        required: true
+
+  - id: market
+    name: 市场环境分析
+    description: 大盘走势、资金流向、板块涨跌、快讯解读
+    input: none
+    executor: claude
+    estimated_time: 60
+
+  - id: select
+    name: AI 选基入池
+    description: 从排行榜智能筛选基金，推荐加入基金池
+    input: text
+    executor: claude
+    estimated_time: 120
+    args:
+      - name: type
+        description: "基金类型：偏股/偏债/指数"
+        required: false
 ---
 
 # 基金智能交易 Skill

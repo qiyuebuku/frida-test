@@ -45,3 +45,14 @@ smart-fund-server/config.json
 
 # fund-trade 敏感文件
 fund-trade/config.json
+
+# Skill directories are at root level, not under .claude/skills/
+.claude/skills/fund-trade/
+.claude/skills/novel-kb/
+.claude/skills/novel-write/
+.claude/skills/reverse-app-skill/
+.claude/skills/scrape-docs/
+.claude/skills/screenshot/
+.claude/skills/smart-fund-server/
+.claude/skills/stock-trade/
+.claude/skills/world-swarm/

@@ -3233,6 +3233,46 @@ def cmd_review_stats(args):
         print(f"❌ 获取统计失败: {data.get('detail', '未知错误')}")
 
 
+def cmd_save_review(args):
+    """保存复盘结果（通过 review_id 或 fund_code+decision_date 定位）"""
+    import json as json_module
+
+    review_id = getattr(args, 'review_id', None)
+    fund_code = getattr(args, 'fund_code', None) or args.code
+    decision_date = getattr(args, 'decision_date', None)
+    outcome = getattr(args, 'outcome', None)
+    notes = getattr(args, 'notes', None)
+
+    # 如果没有 review_id，通过 pending reviews 查找
+    if not review_id and fund_code and decision_date:
+        pending = get("/api/review/pending")
+        if pending.get("status") == "success":
+            reviews = pending.get("data", [])
+            if isinstance(reviews, dict):
+                reviews = reviews.get("reviews", [])
+            for r in reviews:
+                if (r.get("fund_code") == fund_code
+                        and r.get("decision_date", "")[:10] == decision_date[:10]):
+                    review_id = r.get("id")
+                    break
+
+    if not review_id:
+        print(f"❌ 未找到匹配的复盘记录: fund={fund_code}, date={decision_date}")
+        sys.exit(1)
+
+    body = {}
+    if outcome:
+        body["outcome"] = outcome
+    if notes:
+        body["review_notes"] = notes
+
+    data = post(f"/api/review/update/{review_id}", body)
+    if data.get("status") == "success":
+        print(f"✅ 复盘结果已保存 (review_id={review_id})")
+    else:
+        print(f"❌ 保存失败: {data.get('detail', '未知错误')}")
+
+
 def cmd_lessons(args):
     """经验知识库"""
     import json as json_module
@@ -4350,7 +4390,7 @@ def main():
 """,
     )
     # 热榜命令不需要基金代码，用 nargs="?" 让 code 可选
-    HOTLIST_CMDS = {"hotlist", "hotlist_topics", "hotlist_posts", "headlines", "news_feed", "news_overview", "news_themes", "theme_articles", "flash_news", "market_overview", "stock_rank", "sector_rank", "hot_board", "dragon_tiger", "ths_dragon_tiger", "capital_flow", "currency", "yesterday_limit", "stock_changes", "market_changes", "ranking", "screen", "companies", "account", "positions", "wallet", "autoinvest", "trade_binding", "trade_all", "buy", "sell", "order", "set_password", "orders", "cancel", "stock_quote", "stock_kline", "stock_flow", "stock_valuation", "stock_financial", "sync", "snapshot", "preflight", "evaluate", "scan-summary", "account-overview", "wallet-info", "wallet-home", "today-decisions", "recent-decisions", "watch-streaks", "create-reviews", "pending-reviews", "review-stats", "lessons", "limits", "limits-summary", "limits-plan", "refresh-token", "auth-status", "ocr-records", "ocr-latest", "save-decision", "risk-check"}
+    HOTLIST_CMDS = {"hotlist", "hotlist_topics", "hotlist_posts", "headlines", "news_feed", "news_overview", "news_themes", "theme_articles", "flash_news", "market_overview", "stock_rank", "sector_rank", "hot_board", "dragon_tiger", "ths_dragon_tiger", "capital_flow", "currency", "yesterday_limit", "stock_changes", "market_changes", "ranking", "screen", "companies", "account", "positions", "wallet", "autoinvest", "trade_binding", "trade_all", "buy", "sell", "order", "set_password", "orders", "cancel", "stock_quote", "stock_kline", "stock_flow", "stock_valuation", "stock_financial", "sync", "snapshot", "preflight", "evaluate", "scan-summary", "account-overview", "wallet-info", "wallet-home", "today-decisions", "recent-decisions", "watch-streaks", "create-reviews", "pending-reviews", "review-stats", "save-review", "lessons", "limits", "limits-summary", "limits-plan", "refresh-token", "auth-status", "ocr-records", "ocr-latest", "save-decision", "risk-check"}
     ALL_CHOICES = ["all", "detail", "product", "rank", "year_return", "drawdown", "stability",
                    "hold_overview", "holdings", "valuation", "position", "profit", "style", "asset",
                    "nav", "realtime", "manager", "rsi",
@@ -4368,7 +4408,7 @@ def main():
                    "sync", "snapshot", "preflight", "evaluate", "scan-summary",
                    "account-overview", "wallet-info", "wallet-home",
                    "today-decisions", "recent-decisions", "watch-streaks",
-                   "create-reviews", "pending-reviews", "review-stats", "lessons",
+                   "create-reviews", "pending-reviews", "review-stats", "save-review", "lessons",
                    "limits", "limits-summary", "limits-plan",
                    "refresh-token", "auth-status",
                    "ocr-records", "ocr-latest",
@@ -4455,6 +4495,17 @@ def main():
                         help="赎回份额数量 (适用于 sell)")
     parser.add_argument("--all", dest="sell_all", action="store_true", default=False,
                         help="全部赎回 (适用于 sell)")
+    # save-review 参数
+    parser.add_argument("--review-id", type=int, default=None,
+                        help="复盘记录ID (适用于 save-review)")
+    parser.add_argument("--decision-date", default=None,
+                        help="决策日期 YYYY-MM-DD (适用于 save-review，与 --fund-code 配合定位)")
+    parser.add_argument("--fund-code", default=None,
+                        help="基金代码 (适用于 save-review)")
+    parser.add_argument("--outcome", default=None,
+                        help="复盘结果: positive/negative/neutral (适用于 save-review)")
+    parser.add_argument("--notes", default=None,
+                        help="复盘备注 (适用于 save-review)")
     parser.add_argument("--stock-period", default="day", choices=["day", "week", "month"],
                         help="K线周期: day=日K, week=周K, month=月K (适用于 stock_kline)")
     parser.add_argument("--stock-days", type=int, default=20,
@@ -4617,6 +4668,7 @@ def main():
         "create-reviews": cmd_create_reviews,
         "pending-reviews": cmd_pending_reviews,
         "review-stats": cmd_review_stats,
+        "save-review": cmd_save_review,
         "lessons": cmd_lessons,
         "limits": cmd_limits,
         "limits-summary": cmd_limits_summary,
