@@ -387,6 +387,8 @@ async def trade_buy(req: BuyFundRequest):
             body=f"fundCode={req.fund_code}",
             content_type="application/x-www-form-urlencoded",
         )
+        if init_resp is None:
+            raise HTTPException(400, "买入初始化失败: 交易认证参数未设置，请先通过 Hook 捕获交易 key")
         # _proxy_request 已经解析好了 result 层，直接取 data
         init_data = init_resp.get("data", init_resp)
 

@@ -312,7 +312,7 @@ async def fund_ranking(req: FundRankingRequest = Body(...)):
     # 如果指定了排行榜名称，从配置中获取对应参数
     if req.board:
         try:
-            config = await client.get_rank_board_config()
+            config = await _utils.client.get_rank_board_config()
             board_list = config.get("data", {}).get("rankList", [])
             for item in board_list:
                 if item.get("name") == req.board or item.get("key") == req.board:

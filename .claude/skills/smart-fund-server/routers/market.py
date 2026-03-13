@@ -260,9 +260,9 @@ async def news_overview(limit: int = Query(10, description="每类新闻的条�
     try:
         # 并发获取三类新闻
         important_news, a_stock_news, feed_news = await asyncio.gather(
-            client.get_flash_news_list(tag_id=62857, seq=0),  # 重要
-            client.get_flash_news_list(tag_id=21101, seq=0),  # A股
-            client.get_news_feed(page=1),  # 滚动快讯
+            _utils.client.get_flash_news_list(tag_id=62857, seq=0),  # 重要
+            _utils.client.get_flash_news_list(tag_id=21101, seq=0),  # A股
+            _utils.client.get_news_feed(page=1),  # 滚动快讯
             return_exceptions=True
         )
 
