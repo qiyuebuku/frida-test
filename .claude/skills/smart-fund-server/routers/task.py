@@ -106,6 +106,30 @@ async def stream_task(task_id: int):
 
     async def event_stream():
         try:
+            # 回放已有的 tool_calls（解决 SSE 连接前发出的步骤丢失问题）
+            existing_calls = task.get("tool_calls")
+            if existing_calls:
+                calls = existing_calls if isinstance(existing_calls, list) else json.loads(existing_calls)
+                for tc in calls:
+                    replay_event = {
+                        "type": "tool_call",
+                        "tool": tc.get("tool", ""),
+                        "display": tc.get("display", ""),
+                        "detail": tc.get("detail", ""),
+                        "progress": 0,
+                        "is_text": tc.get("tool") in ("_step", "_text"),
+                    }
+                    yield f"data: {json.dumps(replay_event, ensure_ascii=False)}\n\n"
+                    # 如果有 output，也回放 tool_result
+                    if tc.get("output"):
+                        result_event = {
+                            "type": "tool_result",
+                            "display": tc.get("display", ""),
+                            "output": tc.get("output", ""),
+                            "is_error": tc.get("is_error", False),
+                        }
+                        yield f"data: {json.dumps(result_event, ensure_ascii=False)}\n\n"
+
             while True:
                 try:
                     event = await asyncio.get_event_loop().run_in_executor(

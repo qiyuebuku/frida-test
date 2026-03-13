@@ -82,9 +82,17 @@ class TaskExecutor:
                     partial_result=None,
                     completed_at=datetime.now(), duration_sec=elapsed
                 )
+                current = task_db.get_task(task_id)
+
+            # 始终发送 done 事件，确保 SSE 客户端收到终态
+            # （对于已通过 _run_claude_streaming 发送过 done 的任务，
+            #   SSE 客户端已断开，重复发送无害）
+            if current:
                 event_bus.emit(task_id, {
-                    "type": "done", "status": "completed",
+                    "type": "done",
+                    "status": current.get("status", "completed"),
                     "result": current.get("result"),
+                    "error_msg": current.get("error_msg"),
                 })
 
         except Exception as e:
