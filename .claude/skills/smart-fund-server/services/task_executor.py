@@ -22,7 +22,7 @@ logger = logging.getLogger(__name__)
 SYNC_TASK_TYPES = {"ocr", "table", "search"}
 
 # claude -p 工作目录（远端 skill 所在位置）
-SKILL_DIR = os.getenv("SKILL_DIR", "/home/yuyangruan/claude-skills/fund-trade")
+SKILL_DIR = os.getenv("SKILL_DIR", "/home/yuyangruan/claude-skills/.claude/skills/fund-trade")
 
 OCR_URL = os.getenv("OCR_URL", "http://119.23.227.187:8675/glmocr/parse")
 
