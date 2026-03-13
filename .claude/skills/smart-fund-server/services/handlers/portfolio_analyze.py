@@ -1,8 +1,7 @@
-"""通用持仓分析 handler：采集持仓+市场数据 → claude -p 综合分析
+"""通用持仓分析 handler：截图持仓 + 公开市场数据 → claude -p 综合分析
 
-支持两种数据来源：
-- 截图持仓（OCR 记录） — 可以是任何人的持仓截图
-- 同花顺持仓（自己的） — 通过 sync 同步的实时持仓
+分析截图中的持仓数据（可以是任何人的），结合公开市场行情给出分析。
+自己的持仓由 run/review 等命令负责，不在此处理。
 """
 
 import os
@@ -34,27 +33,20 @@ def _run_client(*args, timeout=30) -> str | None:
 
 @register("fund-trade", "portfolio-analyze")
 def handle_portfolio_analyze(executor, task: dict):
-    """通用持仓分析：截图持仓或自有持仓 + 公开市场数据 → 综合分析"""
+    """通用持仓分析：截图持仓 + 公开市场数据 → 综合分析"""
     task_id = task["id"]
-    input_data = task.get("input_data") or ""
 
-    # Stage 1: 获取持仓数据
-    # 优先用截图 OCR 数据，没有则用自己的同花顺持仓
-    executor._progress(task_id, 5, "正在获取持仓数据...")
+    # Stage 1: 从 OCR 记录读取截图持仓数据
+    executor._progress(task_id, 5, "正在读取截图持仓数据...")
 
     ocr_data = _run_client("ocr-latest", "fund_holdings")
-    own_positions = _run_client("positions")
 
-    if ocr_data:
-        holdings_section = f"## 截图持仓数据\n{ocr_data}"
-        source = "screenshot"
-    elif own_positions and "无持仓" not in own_positions:
-        holdings_section = f"## 同花顺持仓\n{own_positions}"
-        source = "own"
-    else:
+    if not ocr_data or "无OCR记录" in ocr_data:
         task_db.update_task(task_id, status="failed",
-                           error_msg="无持仓数据：请先截图持仓或同步同花顺持仓")
+                           error_msg="无截图持仓数据，请先在截屏助手中触发持仓截图")
         return
+
+    holdings_section = f"## 截图持仓数据\n{ocr_data}"
 
     # Stage 2: 采集公开市场数据
     executor._progress(task_id, 20, "正在采集市场数据...")

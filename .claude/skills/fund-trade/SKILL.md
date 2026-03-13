@@ -26,7 +26,7 @@ commands:
 
   - id: portfolio-analyze
     name: 通用持仓分析
-    description: 基于截图或自有持仓数据，结合公开市场行情，综合分析配置与风险
+    description: 基于截图持仓数据，结合公开市场行情，综合分析配置与风险
     input: none
     estimated_time: 120
 
