@@ -577,13 +577,12 @@ python client.py market_overview
 
 #### 输入数据
 
-持仓数据通过命令输入传入（通常是 OCR 结构化后的 JSON 或文本）。
-如果没有传入输入数据，则从数据库读取最新的 OCR 记录：
-```bash
-python client.py ocr-latest fund_holdings
-```
+输入为 `structured_data`（结构化 JSON），包含基金名称、金额、收益等字段。
 
-**优先使用结构化数据**（`structured_data` 字段），仅当其为空时回退到 `raw_text`/`markdown_text`。
+**注意**：输入数据中可能缺少基金代码，只有基金名称。此时需要通过名称搜索获取代码：
+```bash
+python client.py search <基金名称关键词>
+```
 
 #### Step 1: 市场环境采集
 

@@ -28,7 +28,11 @@ def handle_fund_holdings(executor, task: dict):
     # Stage 4: 调用 /fund-trade portfolio-analyze skill 分析
     executor._progress(task_id, 40, "启动 Claude 分析...")
 
-    data_desc = json.dumps(structured, ensure_ascii=False, indent=2) if structured else (markdown or raw_text)
+    if not structured:
+        task_db.update_task(task_id, status="failed", error_msg="结构化数据为空，无法分析")
+        return
+
+    data_desc = json.dumps(structured, ensure_ascii=False, indent=2)
 
     prompt = f"/fund-trade portfolio-analyze\n\n{data_desc}"
     prompt = executor._apply_custom_prompt(prompt, task)
