@@ -188,7 +188,8 @@ OCR 文本：
 {markdown or raw_text}"""
 
         result = self._run_claude_streaming(task_id, prompt,
-            timeout=60, progress_range=(22, 35), estimated_tools=2)
+            timeout=60, progress_range=(22, 35), estimated_tools=2,
+            emit_done=False)
         if not result:
             self._emit_step(task_id, "结构化跳过", "Claude 未返回结果", progress=35)
             return None
@@ -384,7 +385,8 @@ OCR 文本：
                               timeout: int = 600,
                               progress_range: tuple = (35, 90),
                               estimated_tools: int = 20,
-                              cwd: str = None) -> str | None:
+                              cwd: str = None,
+                              emit_done: bool = True) -> str | None:
         """启动 claude -p 并实时解析 stream-json 事件，推送到 EventBus"""
         env = os.environ.copy()
         env["FUND_API_BASE"] = "http://127.0.0.1:8900"
@@ -550,11 +552,12 @@ OCR 文本：
                 elif event_type == "result":
                     final_result = event.get("result", "")
                     task_db.update_task(task_id, partial_result=None, tool_calls=tool_calls)
-                    event_bus.emit(task_id, {
-                        "type": "done",
-                        "status": "completed",
-                        "result": final_result,
-                    })
+                    if emit_done:
+                        event_bus.emit(task_id, {
+                            "type": "done",
+                            "status": "completed",
+                            "result": final_result,
+                        })
                     return final_result
 
                 # 定期写 DB
