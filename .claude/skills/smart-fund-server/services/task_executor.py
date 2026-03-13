@@ -33,6 +33,9 @@ class TaskExecutor:
     def __init__(self):
         self._semaphore = threading.Semaphore(self.MAX_CONCURRENT)
         self._ocr = OCRService(OCR_URL)
+        # 任务级别的 tool_calls 累积器（跨多次 _run_claude_streaming 调用）
+        self._task_tool_calls: dict[int, list] = {}
+        self._task_start_times: dict[int, float] = {}
 
     def submit(self, task_id: int):
         thread = threading.Thread(target=self._run, args=(task_id,), daemon=True)
@@ -51,6 +54,8 @@ class TaskExecutor:
 
             task_db.update_task(task_id, status="processing", started_at=datetime.now())
             start_time = time.time()
+            self._task_tool_calls[task_id] = []
+            self._task_start_times[task_id] = start_time
 
             skill_name = task.get("skill_name") or ""
             command_id = task.get("command_id") or task.get("task_type", "")
@@ -90,16 +95,44 @@ class TaskExecutor:
                 "type": "done", "status": "failed", "error_msg": error_msg,
             })
         finally:
+            self._task_tool_calls.pop(task_id, None)
+            self._task_start_times.pop(task_id, None)
             self._semaphore.release()
 
     def _progress(self, task_id: int, progress: int, msg: str):
         task_db.update_task(task_id, progress=progress, progress_msg=msg)
 
+    def _emit_step(self, task_id: int, display: str, detail: str = "",
+                   progress: int = None, output: str = None):
+        """发射一个处理步骤事件（出现在处理步骤列表中）"""
+        start_time = self._task_start_times.get(task_id, time.time())
+        tool_calls = self._task_tool_calls.get(task_id, [])
+        entry = {
+            "tool": "_step",
+            "display": display,
+            "detail": detail,
+            "output": output,
+            "at": round(time.time() - start_time, 1),
+        }
+        tool_calls.append(entry)
+        event_bus.emit(task_id, {
+            "type": "tool_call",
+            "tool": "_step",
+            "display": display,
+            "detail": detail,
+            "progress": progress,
+            "is_text": True,
+        })
+        if progress:
+            self._progress(task_id, progress, display)
+        # 同步写入 DB
+        task_db.update_task(task_id, tool_calls=tool_calls)
+
     # ==================== OCR 公共步骤 ====================
 
     def _do_ocr(self, task_id: int, image_path: str, action: str, client_id: str = None):
         """执行 OCR 并保存到 sa_ocr_records，返回 (raw_text, markdown, ocr_id)"""
-        self._progress(task_id, 5, "正在 OCR 识别...")
+        self._emit_step(task_id, "OCR 识别中...", f"图片: {image_path}", progress=5)
 
         loop = asyncio.new_event_loop()
         try:
@@ -115,13 +148,15 @@ class TaskExecutor:
             image_path=image_path, client_id=client_id
         )
         task_db.update_task(task_id, ocr_record_id=ocr_id)
-        self._progress(task_id, 20, "OCR 识别完成")
+        self._emit_step(task_id, "OCR 识别完成",
+                        f"识别 {len(raw_text)} 字符", progress=20,
+                        output=f"原文 {len(raw_text)} 字符，Markdown {len(markdown)} 字符")
 
         return raw_text, markdown, ocr_id
 
     def _do_structurize(self, task_id: int, ocr_id: int, raw_text: str, markdown: str):
-        """用 claude -p 结构化 OCR 文本，立即写入 sa_ocr_records，返回 structured dict"""
-        self._progress(task_id, 22, "正在结构化数据...")
+        """用 claude -p 流式结构化 OCR 文本，写入 sa_ocr_records，返回 structured dict"""
+        self._emit_step(task_id, "数据结构化中...", "AI 提取关键字段", progress=22)
 
         prompt = f"""请将以下 OCR 识别的文本转换为结构化 JSON。
 
@@ -152,26 +187,28 @@ class TaskExecutor:
 OCR 文本：
 {markdown or raw_text}"""
 
-        result = self._run_claude(prompt, timeout=60)
+        result = self._run_claude_streaming(task_id, prompt,
+            timeout=60, progress_range=(22, 35), estimated_tools=2)
         if not result:
-            self._progress(task_id, 35, "结构化跳过，继续分析...")
+            self._emit_step(task_id, "结构化跳过", "Claude 未返回结果", progress=35)
             return None
 
         # 解析 JSON
         structured = self._extract_json(result)
         if not structured:
-            # 原文当作结构化结果保存
             ocr_db.update_ocr_structured_data(ocr_id, result, None)
-            self._progress(task_id, 35, "结构化完成")
+            self._emit_step(task_id, "结构化完成", "未能解析为 JSON", progress=35)
             return None
 
-        # ★ 立即写入 sa_ocr_records
+        # 写入 sa_ocr_records
         structured_str = json.dumps(structured, ensure_ascii=False)
         ocr_db.update_ocr_structured_data(ocr_id, structured_str, structured_str)
 
         # 同步更新 sa_tasks.result_data（阶段性结果）
         task_db.update_task(task_id, result_data=structured)
-        self._progress(task_id, 35, "数据结构化完成，开始深度分析...")
+        self._emit_step(task_id, "数据结构化完成",
+                        f"提取 {len(structured)} 个字段", progress=35,
+                        output=structured_str[:500])
 
         return structured
 
@@ -368,7 +405,7 @@ OCR 文本：
                 env=env
             )
 
-            tool_calls = []
+            tool_calls = self._task_tool_calls.get(task_id, [])
             partial_text = []
             tool_count = 0
             last_db_write = time.time()

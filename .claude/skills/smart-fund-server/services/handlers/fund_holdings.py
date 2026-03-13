@@ -26,7 +26,7 @@ def handle_fund_holdings(executor, task: dict):
     structured = executor._do_structurize(task_id, ocr_id, raw_text, markdown)
 
     # Stage 4: 调用 /fund-trade portfolio-analyze skill 分析
-    executor._progress(task_id, 40, "启动 Claude 分析...")
+    executor._emit_step(task_id, "启动深度分析", "调用 /fund-trade portfolio-analyze", progress=40)
 
     if not structured:
         task_db.update_task(task_id, status="failed", error_msg="结构化数据为空，无法分析")

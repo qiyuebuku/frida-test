@@ -165,21 +165,3 @@ async def get_latest_ocr(
     if count == 1 and records:
         return {"status": "success", "data": records[0]}
     return {"status": "success", "data": records}
-
-
-@router.post("/api/screenshot", summary="截图处理（SSE流式）", tags=["截图"])
-async def process_screenshot(request: Request):
-    """接收截图并进行 OCR + AI 结构化处理，通过 SSE 推送进度"""
-    from handlers.screenshot_handler import ScreenshotHandler
-
-    data = await request.json()
-    client_id = request.headers.get("X-Client-Id", "android")
-    handler = ScreenshotHandler()
-
-    async def event_stream():
-        async for event in handler.process_stream(data, client_id=client_id):
-            event_type = event.get("event", "message")
-            event_data = json.dumps(event.get("data", {}), ensure_ascii=False)
-            yield f"event: {event_type}\ndata: {event_data}\n\n"
-
-    return StreamingResponse(event_stream(), media_type="text/event-stream")
