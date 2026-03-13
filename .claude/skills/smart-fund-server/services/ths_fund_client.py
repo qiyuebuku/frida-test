@@ -50,19 +50,19 @@ class THSFundClient:
     def _load_auth_cache(self):
         """从 auth_cache.json 加载认证参数到 TRADE_AUTH"""
         from pathlib import Path
-        cache_file = Path(__file__).parent.parent / "auth_cache.json"
+        self._auth_cache_file = Path(__file__).parent.parent / "auth_cache.json"
 
-        if not cache_file.exists():
-            print(f"⚠️  认证缓存文件不存在: {cache_file}")
+        if not self._auth_cache_file.exists():
+            print(f"⚠️  认证缓存文件不存在: {self._auth_cache_file}")
             print(f"   请在本地运行 client.py refresh-token 刷新后推送到服务器")
+            self._auth_cache_mtime = 0
             return
 
         try:
-            with open(cache_file, "r", encoding="utf-8") as f:
+            with open(self._auth_cache_file, "r", encoding="utf-8") as f:
                 data = json.load(f)
                 auth = data.get("auth", {})
 
-                # 更新 TRADE_AUTH 类变量
                 self.TRADE_AUTH["key1"] = auth.get("key1", "")
                 self.TRADE_AUTH["key2"] = auth.get("key2", "")
                 self.TRADE_AUTH["key3"] = auth.get("key3", "")
@@ -71,12 +71,9 @@ class THSFundClient:
                 self.TRADE_AUTH["userId"] = auth.get("userId", "")
                 self.TRADE_AUTH["sessionId"] = auth.get("sessionId", "")
 
-                # ✅ 新增：加载 cookie（从 auth_cache.json 动态加载，不再使用硬编码）
                 self.TRADE_COOKIE = auth.get("cookie", "")
 
-                # 记录文件修改时间，用于检测更新
-                self._auth_cache_mtime = cache_file.stat().st_mtime
-                self._auth_cache_file = cache_file
+                self._auth_cache_mtime = self._auth_cache_file.stat().st_mtime
 
                 print(f"✅ 已从缓存加载认证参数")
                 print(f"   key1: {self.TRADE_AUTH['key1'][:16]}...")
@@ -84,18 +81,13 @@ class THSFundClient:
                 print(f"   cookie: {len(self.TRADE_COOKIE)} 字符" if self.TRADE_COOKIE else "   cookie: 未加载")
         except Exception as e:
             print(f"⚠️  加载认证缓存失败: {e}")
+            self._auth_cache_mtime = 0
 
     def reload_auth_if_updated(self) -> bool:
-        """检查认证缓存是否更新，如果有更新则重新加载
-
-        Returns:
-            True 表示重新加载了认证参数，False 表示无需更新
-        """
-        if not hasattr(self, '_auth_cache_file') or not hasattr(self, '_auth_cache_mtime'):
-            # 首次调用或未初始化
-            return False
-
+        """检查认证缓存是否更新（含从无到有），如果有更新则重新加载"""
         try:
+            if not self._auth_cache_file.exists():
+                return False
             current_mtime = self._auth_cache_file.stat().st_mtime
             if current_mtime > self._auth_cache_mtime:
                 print(f"🔄 检测到认证缓存更新，重新加载...")
@@ -103,7 +95,6 @@ class THSFundClient:
                 return True
         except Exception as e:
             print(f"⚠️  检查认证缓存更新失败: {e}")
-
         return False
 
     def _load_trade_password(self):
@@ -1657,6 +1648,7 @@ class THSFundClient:
     async def _proxy_request(self, path: str, method: str = "POST",
                              body: str = None, content_type: str = None) -> dict:
         """直接调用 /rz/ 路径的 API（需要 App 级认证 Headers）"""
+        self.reload_auth_if_updated()
         # 处理URL查询参数
         url_path = path
         query_params = {}
