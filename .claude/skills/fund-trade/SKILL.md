@@ -572,9 +572,9 @@ python client.py market_overview
 
 ### `/fund-trade portfolio-analyze`
 
-**通用持仓分析** - 自动获取持仓数据（优先截图 OCR，没有则用同花顺持仓） → 采集公开市场行情 → 综合分析。只分析不交易。
+**通用持仓分析** - 从截屏助手 OCR 记录读取持仓数据 → 采集公开市场行情 → 综合分析。只分析不交易。
 
-由 handler pipeline 自动执行，无需手动操作。
+handler 固定步骤仅读取 OCR 数据，市场数据采集与综合分析由 claude 根据 `prompts/portfolio_analyze_flow.md` 自主执行。
 
 ---
 
