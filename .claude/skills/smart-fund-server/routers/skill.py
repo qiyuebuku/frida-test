@@ -1,6 +1,7 @@
 """Skill API 路由：4 个端点"""
 
 import base64
+import logging
 import time
 from pathlib import Path
 
@@ -9,6 +10,8 @@ from fastapi import APIRouter, HTTPException, Query, Request
 from services import task_db
 from services.task_executor import executor
 import services.skill_registry as sr
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
@@ -109,6 +112,37 @@ async def run_skill(name: str, request: Request):
         "task_id": task_id,
         "message": f"任务已提交: {command.name}"
     }
+
+
+@router.post("/api/tasks/{task_id}/stop", summary="停止任务", tags=["任务"])
+async def stop_task(task_id: int):
+    """强制停止正在执行的任务"""
+    task = task_db.get_task(task_id)
+    if not task:
+        raise HTTPException(404, f"任务 {task_id} 不存在")
+    if task["status"] not in ("processing", "pending"):
+        raise HTTPException(400, "任务不在执行中")
+    stopped = executor.force_stop(task_id)
+    return {"status": "success", "stopped": stopped}
+
+
+@router.post("/api/tasks/{task_id}/message", summary="发送追问", tags=["任务"])
+async def send_message(task_id: int, request: Request):
+    """向任务发送追问消息，支持会话恢复"""
+    data = await request.json()
+    message = data.get("message", "").strip()
+    if not message:
+        raise HTTPException(400, "消息不能为空")
+    task = task_db.get_task(task_id)
+    if not task:
+        raise HTTPException(404, f"任务 {task_id} 不存在")
+    logger.info(f"[message] task_id={task_id} status={task['status']} session_id={task.get('session_id')} message={message[:80]}")
+    if not task.get("session_id") and task["status"] not in ("processing", "pending"):
+        logger.warning(f"[message] task_id={task_id} 拒绝追问: 无session且非processing/pending")
+        raise HTTPException(400, "该任务不支持追问（无 session）")
+    result = executor.queue_message(task_id, message)
+    logger.info(f"[message] task_id={task_id} queue_message结果: {result}")
+    return {"status": "success", **result}
 
 
 @router.post("/api/skills/reload", summary="重新扫描 Skills", tags=["Skill"])

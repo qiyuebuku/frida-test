@@ -48,71 +48,51 @@ class THSFundClient:
         await self._client.aclose()
 
     def _load_auth_cache(self):
-        """从 auth_cache.json 加载认证参数到 TRADE_AUTH"""
-        from pathlib import Path
-        self._auth_cache_file = Path(__file__).parent.parent / "auth_cache.json"
-
-        if not self._auth_cache_file.exists():
-            print(f"⚠️  认证缓存文件不存在: {self._auth_cache_file}")
-            print(f"   请在本地运行 client.py refresh-token 刷新后推送到服务器")
-            self._auth_cache_mtime = 0
-            return
-
+        """从 ft_config 加载认证参数到 TRADE_AUTH"""
+        from services import fund_db
         try:
-            with open(self._auth_cache_file, "r", encoding="utf-8") as f:
-                data = json.load(f)
-                auth = data.get("auth", {})
+            data = fund_db.get_auth()
+            auth = data.get("auth", {})
 
-                self.TRADE_AUTH["key1"] = auth.get("key1", "")
-                self.TRADE_AUTH["key2"] = auth.get("key2", "")
-                self.TRADE_AUTH["key3"] = auth.get("key3", "")
-                self.TRADE_AUTH["key4"] = auth.get("key4", "auth")
-                self.TRADE_AUTH["key5"] = auth.get("key5", "")
-                self.TRADE_AUTH["userId"] = auth.get("userId", "")
-                self.TRADE_AUTH["sessionId"] = auth.get("sessionId", "")
+            self.TRADE_AUTH["key1"] = auth.get("key1", "")
+            self.TRADE_AUTH["key2"] = auth.get("key2", "")
+            self.TRADE_AUTH["key3"] = auth.get("key3", "")
+            self.TRADE_AUTH["key4"] = auth.get("key4", "auth")
+            self.TRADE_AUTH["key5"] = auth.get("key5", "")
+            self.TRADE_AUTH["userId"] = auth.get("userId", "")
+            self.TRADE_AUTH["sessionId"] = auth.get("sessionId", "")
 
-                self.TRADE_COOKIE = auth.get("cookie", "")
+            self.TRADE_COOKIE = auth.get("cookie", "")
 
-                self._auth_cache_mtime = self._auth_cache_file.stat().st_mtime
-
-                print(f"✅ 已从缓存加载认证参数")
+            if self.TRADE_AUTH.get("key1"):
+                print(f"✅ 已从数据库加载认证参数")
                 print(f"   key1: {self.TRADE_AUTH['key1'][:16]}...")
                 print(f"   key3: {self.TRADE_AUTH['key3']}")
                 print(f"   cookie: {len(self.TRADE_COOKIE)} 字符" if self.TRADE_COOKIE else "   cookie: 未加载")
+            else:
+                print(f"⚠️  数据库中无认证信息，请推送 token")
         except Exception as e:
-            print(f"⚠️  加载认证缓存失败: {e}")
-            self._auth_cache_mtime = 0
+            print(f"⚠️  加载认证信息失败: {e}")
+
+    def reload_auth(self):
+        """外部调用：重新从数据库加载认证信息"""
+        self._load_auth_cache()
 
     def reload_auth_if_updated(self) -> bool:
-        """检查认证缓存是否更新（含从无到有），如果有更新则重新加载"""
-        try:
-            if not self._auth_cache_file.exists():
-                return False
-            current_mtime = self._auth_cache_file.stat().st_mtime
-            if current_mtime > self._auth_cache_mtime:
-                print(f"🔄 检测到认证缓存更新，重新加载...")
-                self._load_auth_cache()
-                return True
-        except Exception as e:
-            print(f"⚠️  检查认证缓存更新失败: {e}")
-        return False
+        """兼容旧调用：直接重新加载"""
+        self._load_auth_cache()
+        return True
 
     def _load_trade_password(self):
-        """从 config.json 读取交易密码"""
-        from pathlib import Path
-        config_file = Path(__file__).parent.parent / "config.json"
-
-        if not config_file.exists():
-            return
-
+        """从 ft_config 读取交易密码"""
+        from services import fund_db
         try:
-            with open(config_file, "r", encoding="utf-8") as f:
-                config = json.load(f)
-                password = config.get("trade_password", "")
-                if password:
-                    self.TRADE_PASSWORD = password
+            config = fund_db.get_config()
+            password = config.get("trade_password", "")
+            if password:
+                self.TRADE_PASSWORD = password
         except Exception as e:
-            print(f"警告: 从配置文件读取交易密码失败: {e}")
+            print(f"警告: 读取交易密码失败: {e}")
 
     def _refresh_trade_auth(self) -> dict:
         """获取交易认证参数（仅从本地缓存读取，不连接手机）
@@ -135,41 +115,23 @@ class THSFundClient:
         )
 
     def _is_cache_valid(self) -> bool:
-        """检查缓存的 token 是否还在有效期内
-
-        Returns:
-            True 表示缓存有效，False 表示已过期
-        """
+        """检查数据库中的 token 是否还在有效期内"""
         try:
-            from pathlib import Path
             import time
-
-            cache_file = Path(__file__).parent.parent / "auth_cache.json"
-            if not cache_file.exists():
-                return False
-
-            with open(cache_file, "r", encoding="utf-8") as f:
-                data = json.load(f)
-                expires_at = data.get("expires_at")
-
-                if not expires_at:
-                    # 无过期时间信息，假设有效
-                    return True
-
-                now = int(time.time())
-                return now < expires_at
-
+            from services import fund_db
+            data = fund_db.get_auth()
+            expires_at = data.get("expires_at")
+            if not expires_at:
+                return True  # 无过期时间，假设有效
+            return int(time.time()) < expires_at
         except Exception:
             return False
 
     def _update_auth_cache(self, auth: dict):
-        """更新 auth_cache.json"""
+        """更新认证信息到数据库"""
         try:
-            from pathlib import Path
             import time
-
-            cache_file = Path(__file__).parent.parent / "auth_cache.json"
-
+            from services import fund_db
             cache_data = {
                 "auth": {
                     "key1": auth.get("key1", ""),
@@ -180,21 +142,15 @@ class THSFundClient:
                     "userId": auth.get("userId", ""),
                     "sessionId": auth.get("sessionId", ""),
                     "cookie": auth.get("cookie", ""),
-                    "account": auth.get("key3", ""),
                 },
                 "expires_at": auth.get("expires_at"),
                 "last_sync": int(time.time()),
                 "sync_source": "zygisk_auto"
             }
-
-            with open(cache_file, "w", encoding="utf-8") as f:
-                json.dump(cache_data, f, indent=2, ensure_ascii=False)
-
-            # 重新加载到内存
+            fund_db.save_auth(cache_data)
             self._load_auth_cache()
-
         except Exception as e:
-            print(f"⚠️ 更新认证缓存失败: {e}")
+            print(f"⚠️ 更新认证信息失败: {e}")
 
     async def _get(self, url: str, params: Optional[dict] = None) -> dict:
         resp = await self._client.get(url, params=params)
@@ -1759,7 +1715,7 @@ class THSFundClient:
         import hashlib
         pwd_plain = password or self.TRADE_PASSWORD
         if not pwd_plain:
-            raise ValueError("未设置交易密码，请在 config.json 中配置或通过参数传入")
+            raise ValueError("未设置交易密码，请在 ft_config 中配置或通过参数传入")
 
         # 转换为 MD5
         pwd = hashlib.md5(pwd_plain.encode()).hexdigest().upper()
@@ -1903,7 +1859,7 @@ class THSFundClient:
         import hashlib
         pwd_plain = password or self.TRADE_PASSWORD
         if not pwd_plain:
-            raise ValueError("未设置交易密码，请在 config.json 中配置或通过参数传入")
+            raise ValueError("未设置交易密码，请在 ft_config 中配置或通过参数传入")
 
         # 转换为 MD5
         pwd = hashlib.md5(pwd_plain.encode()).hexdigest().upper()
@@ -2037,7 +1993,7 @@ class THSFundClient:
         import hashlib
         pwd_plain = password or self.TRADE_PASSWORD
         if not pwd_plain:
-            raise ValueError("未设置交易密码，请在 config.json 中配置或通过参数传入")
+            raise ValueError("未设置交易密码，请在 ft_config 中配置或通过参数传入")
 
         # 转换为 MD5
         pwd = hashlib.md5(pwd_plain.encode()).hexdigest().upper()

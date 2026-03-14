@@ -8,12 +8,9 @@ from datetime import date, datetime
 
 from services import fund_db
 
-CONFIG_PATH = os.path.join(os.path.dirname(os.path.dirname(__file__)), "config.json")
-
 
 def load_config():
-    with open(CONFIG_PATH, "r", encoding="utf-8") as f:
-        return json.load(f)
+    return fund_db.get_config()
 
 
 def _decimal_default(obj):

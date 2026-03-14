@@ -16,7 +16,7 @@ commands:
     name: 智能回复
     description: 分析聊天截图，生成多种风格的回复建议
     input: screenshot
-    capture_types: [normal]
+    capture_types: [normal, long_scroll, manual_scroll]
     estimated_time: 15
 
   - id: table

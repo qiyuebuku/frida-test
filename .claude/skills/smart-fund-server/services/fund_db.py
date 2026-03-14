@@ -11,7 +11,6 @@ import psycopg2
 import psycopg2.extras
 
 PROJECT_ROOT = Path(__file__).parent.parent
-CONFIG_PATH = str(PROJECT_ROOT / "config.json")
 
 DB_CONFIG = {
     "host": "127.0.0.1",
@@ -242,6 +241,48 @@ CREATE TABLE IF NOT EXISTS ft_fund_limits (
     updated_at TIMESTAMP DEFAULT NOW()
 );
 CREATE INDEX IF NOT EXISTS idx_ft_fund_limits_code ON ft_fund_limits(fund_code);
+
+-- 统一配置表（合并 config.json + auth_cache.json）
+CREATE TABLE IF NOT EXISTS ft_config (
+    id INT PRIMARY KEY DEFAULT 1 CHECK (id = 1),  -- 单行表
+    -- 基金池 & 资金
+    fund_pool JSONB DEFAULT '[]'::jsonb,
+    total_capital NUMERIC(12,2) DEFAULT 20000,
+    -- 风控参数
+    max_single_position_pct NUMERIC(5,2) DEFAULT 30,
+    max_daily_buy_amount NUMERIC(12,2) DEFAULT 10000,
+    stop_loss_pct NUMERIC(5,2) DEFAULT -20,
+    take_profit_pct NUMERIC(5,2) DEFAULT 50,
+    min_trade_amount NUMERIC(12,2) DEFAULT 10,
+    max_fund_count INT DEFAULT 10,
+    min_cash_reserve NUMERIC(12,2) DEFAULT 1000,
+    cooldown_days INT DEFAULT 1,
+    reverse_cooldown_days INT DEFAULT 7,
+    min_hold_days INT DEFAULT 7,
+    circuit_breaker_loss_pct NUMERIC(5,2) DEFAULT -10,
+    circuit_breaker_loss_days INT DEFAULT 5,
+    trade_cutoff_time VARCHAR(10) DEFAULT '14:50',
+    -- 交易账户
+    trade_account VARCHAR(50) DEFAULT '',
+    trade_password VARCHAR(100) DEFAULT '',
+    -- 支付宝基金映射
+    alipay_fund_map JSONB DEFAULT '{}'::jsonb,
+    -- 认证信息（原 auth_cache.json）
+    auth_key1 VARCHAR(100) DEFAULT '',
+    auth_key2 VARCHAR(100) DEFAULT '',
+    auth_key3 VARCHAR(100) DEFAULT '',
+    auth_key4 VARCHAR(20) DEFAULT 'auth',
+    auth_key5 TEXT DEFAULT '',
+    auth_user_id VARCHAR(50) DEFAULT '',
+    auth_session_id VARCHAR(200) DEFAULT '',
+    auth_cookie TEXT DEFAULT '',
+    auth_expires_at BIGINT,
+    auth_last_sync BIGINT,
+    auth_sync_source VARCHAR(50) DEFAULT '',
+    updated_at TIMESTAMP DEFAULT NOW()
+);
+-- 确保有且仅有一行
+INSERT INTO ft_config (id) VALUES (1) ON CONFLICT DO NOTHING;
 """
 
 
@@ -254,7 +295,9 @@ def init_tables():
         with conn.cursor() as cur:
             cur.execute(CREATE_TABLES_SQL)
         conn.commit()
-    print("✓ 13 张表创建完成 (ft_cache, ft_market_cache, ft_signals, ft_decisions, ft_trades, ft_positions, ft_run_log, ft_reviews, ft_lessons, ft_alipay_positions, ft_alipay_decisions, ft_pending_decisions, ft_fund_limits)")
+    print("✓ 14 张表创建完成 (ft_cache, ft_market_cache, ft_signals, ft_decisions, ft_trades, ft_positions, ft_run_log, ft_reviews, ft_lessons, ft_alipay_positions, ft_alipay_decisions, ft_pending_decisions, ft_fund_limits, ft_config)")
+    # 从 config.json / auth_cache.json 迁移数据（首次）
+    _migrate_config_files()
 
 
 # ==================== 缓存 ====================
@@ -676,30 +719,186 @@ def get_alipay_recent_decisions(days=7):
             return rows
 
 
+# ==================== 统一配置 (ft_config) ====================
+
+def get_config() -> dict:
+    """读取完整配置（返回兼容 config.json 格式的 dict）"""
+    with get_conn() as conn:
+        with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+            cur.execute("SELECT * FROM ft_config WHERE id=1")
+            row = cur.fetchone()
+    if not row:
+        return {}
+    # 组装为兼容旧格式的 dict
+    return {
+        "fund_pool": row["fund_pool"] or [],
+        "total_capital": float(row["total_capital"] or 20000),
+        "risk": {
+            "max_single_position_pct": float(row["max_single_position_pct"] or 30),
+            "max_daily_buy_amount": float(row["max_daily_buy_amount"] or 10000),
+            "stop_loss_pct": float(row["stop_loss_pct"] or -20),
+            "take_profit_pct": float(row["take_profit_pct"] or 50),
+            "min_trade_amount": float(row["min_trade_amount"] or 10),
+            "max_fund_count": int(row["max_fund_count"] or 10),
+            "min_cash_reserve": float(row["min_cash_reserve"] or 1000),
+            "cooldown_days": int(row["cooldown_days"] or 1),
+            "reverse_cooldown_days": int(row["reverse_cooldown_days"] or 7),
+            "min_hold_days": int(row["min_hold_days"] or 7),
+            "circuit_breaker_loss_pct": float(row["circuit_breaker_loss_pct"] or -10),
+            "circuit_breaker_loss_days": int(row["circuit_breaker_loss_days"] or 5),
+            "trade_cutoff_time": row["trade_cutoff_time"] or "14:50",
+        },
+        "trade_account": row["trade_account"] or "",
+        "trade_password": row["trade_password"] or "",
+        "alipay_fund_map": row["alipay_fund_map"] or {},
+    }
+
+
+def update_config(**kwargs):
+    """更新配置字段（只更新传入的字段）"""
+    if not kwargs:
+        return
+    # 允许的列名
+    allowed = {
+        "fund_pool", "total_capital",
+        "max_single_position_pct", "max_daily_buy_amount", "stop_loss_pct",
+        "take_profit_pct", "min_trade_amount", "max_fund_count", "min_cash_reserve",
+        "cooldown_days", "reverse_cooldown_days", "min_hold_days",
+        "circuit_breaker_loss_pct", "circuit_breaker_loss_days", "trade_cutoff_time",
+        "trade_account", "trade_password", "alipay_fund_map",
+    }
+    sets = []
+    vals = []
+    for k, v in kwargs.items():
+        if k not in allowed:
+            continue
+        if k in ("fund_pool", "alipay_fund_map"):
+            sets.append(f"{k} = %s::jsonb")
+            vals.append(json.dumps(v, ensure_ascii=False))
+        else:
+            sets.append(f"{k} = %s")
+            vals.append(v)
+    if not sets:
+        return
+    sets.append("updated_at = NOW()")
+    sql = f"UPDATE ft_config SET {', '.join(sets)} WHERE id = 1"
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute(sql, vals)
+        conn.commit()
+
+
+def get_auth() -> dict:
+    """读取认证信息（返回兼容 auth_cache.json 格式）"""
+    with get_conn() as conn:
+        with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+            cur.execute("""SELECT auth_key1, auth_key2, auth_key3, auth_key4, auth_key5,
+                           auth_user_id, auth_session_id, auth_cookie,
+                           auth_expires_at, auth_last_sync, auth_sync_source
+                           FROM ft_config WHERE id=1""")
+            row = cur.fetchone()
+    if not row:
+        return {}
+    return {
+        "auth": {
+            "key1": row["auth_key1"] or "",
+            "key2": row["auth_key2"] or "",
+            "key3": row["auth_key3"] or "",
+            "key4": row["auth_key4"] or "auth",
+            "key5": row["auth_key5"] or "",
+            "userId": row["auth_user_id"] or "",
+            "sessionId": row["auth_session_id"] or "",
+            "cookie": row["auth_cookie"] or "",
+            "account": row["auth_key3"] or "",
+        },
+        "expires_at": int(row["auth_expires_at"]) if row["auth_expires_at"] else None,
+        "last_sync": int(row["auth_last_sync"]) if row["auth_last_sync"] else None,
+        "sync_source": row["auth_sync_source"] or "",
+    }
+
+
+def save_auth(cache_data: dict):
+    """保存认证信息到 ft_config"""
+    import time as _time
+    auth = cache_data.get("auth", {})
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""UPDATE ft_config SET
+                auth_key1=%s, auth_key2=%s, auth_key3=%s, auth_key4=%s, auth_key5=%s,
+                auth_user_id=%s, auth_session_id=%s, auth_cookie=%s,
+                auth_expires_at=%s, auth_last_sync=%s, auth_sync_source=%s,
+                updated_at=NOW()
+                WHERE id=1""",
+                (auth.get("key1", ""), auth.get("key2", ""), auth.get("key3", ""),
+                 auth.get("key4", "auth"), auth.get("key5", ""),
+                 auth.get("userId", ""), auth.get("sessionId", ""), auth.get("cookie", ""),
+                 cache_data.get("expires_at"),
+                 cache_data.get("last_sync", int(_time.time())),
+                 cache_data.get("sync_source", "")))
+        conn.commit()
+
+
+def _migrate_config_files():
+    """首次迁移：从 config.json 和 auth_cache.json 导入到 ft_config"""
+    # 检查是否已有数据（auth_key1 不为空说明已迁移过）
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute("SELECT trade_account FROM ft_config WHERE id=1")
+            row = cur.fetchone()
+            if row and row[0]:
+                return  # 已有数据，跳过
+
+    # 导入 config.json
+    config_file = PROJECT_ROOT / "config.json"
+    if config_file.exists():
+        try:
+            with open(config_file, "r", encoding="utf-8") as f:
+                cfg = json.load(f)
+            risk = cfg.get("risk", {})
+            update_config(
+                fund_pool=cfg.get("fund_pool", []),
+                total_capital=cfg.get("total_capital", 20000),
+                max_single_position_pct=risk.get("max_single_position_pct", 30),
+                max_daily_buy_amount=risk.get("max_daily_buy_amount", 10000),
+                stop_loss_pct=risk.get("stop_loss_pct", -20),
+                take_profit_pct=risk.get("take_profit_pct", 50),
+                min_trade_amount=risk.get("min_trade_amount", 10),
+                max_fund_count=risk.get("max_fund_count", 10),
+                min_cash_reserve=risk.get("min_cash_reserve", 1000),
+                cooldown_days=risk.get("cooldown_days", 1),
+                reverse_cooldown_days=risk.get("reverse_cooldown_days", 7),
+                min_hold_days=risk.get("min_hold_days", 7),
+                circuit_breaker_loss_pct=risk.get("circuit_breaker_loss_pct", -10),
+                circuit_breaker_loss_days=risk.get("circuit_breaker_loss_days", 5),
+                trade_cutoff_time=risk.get("trade_cutoff_time", "14:50"),
+                trade_account=cfg.get("trade_account", ""),
+                trade_password=cfg.get("trade_password", ""),
+                alipay_fund_map=cfg.get("alipay_fund_map", {}),
+            )
+            print("✅ 已从 config.json 迁移配置到 ft_config")
+        except Exception as e:
+            print(f"⚠️ 迁移 config.json 失败: {e}")
+
+    # 导入 auth_cache.json
+    auth_file = PROJECT_ROOT / "auth_cache.json"
+    if auth_file.exists():
+        try:
+            with open(auth_file, "r", encoding="utf-8") as f:
+                auth_data = json.load(f)
+            save_auth(auth_data)
+            print("✅ 已从 auth_cache.json 迁移认证到 ft_config")
+        except Exception as e:
+            print(f"⚠️ 迁移 auth_cache.json 失败: {e}")
+
+
 # ==================== 支付宝基金代码映射 ====================
 
-def _load_config():
-    with open(CONFIG_PATH, "r", encoding="utf-8") as f:
-        return json.load(f)
-
-
-def _save_config(config):
-    with open(CONFIG_PATH, "w", encoding="utf-8") as f:
-        json.dump(config, f, ensure_ascii=False, indent=2)
-    # 尾部换行
-    with open(CONFIG_PATH, "a") as f:
-        f.write("\n")
-
-
 def load_alipay_fund_map():
-    config = _load_config()
-    return config.get("alipay_fund_map", {})
+    return get_config().get("alipay_fund_map", {})
 
 
 def save_alipay_fund_map(fund_map):
-    config = _load_config()
-    config["alipay_fund_map"] = fund_map
-    _save_config(config)
+    update_config(alipay_fund_map=fund_map)
 
 
 def alipay_map_add(name, code):

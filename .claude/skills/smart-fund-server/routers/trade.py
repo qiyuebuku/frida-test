@@ -51,16 +51,12 @@ def _decode_jwt_exp(jwt_token: str):
 
 
 def _get_auth_expires_at():
-    """读取 auth_cache.json 中的过期时间，返回 (expires_at, is_expired)"""
-    cache_file = Path(__file__).parent.parent / "auth_cache.json"
-    if not cache_file.exists():
-        return None, True
+    """从 ft_config 读取过期时间，返回 (expires_at, is_expired)"""
     try:
-        with open(cache_file, "r", encoding="utf-8") as f:
-            data = json.load(f)
+        data = fund_db.get_auth()
         expires_at = data.get("expires_at")
         if not expires_at:
-            return None, False  # 无过期信息，假设有效
+            return None, not bool(data.get("auth", {}).get("key1"))
         return expires_at, int(time.time()) >= expires_at
     except Exception:
         return None, True
@@ -74,18 +70,11 @@ async def _login_by_password():
     """
     import httpx
 
-    config_file = Path(__file__).parent.parent / "config.json"
-    if not config_file.exists():
-        logger.warning("config.json 不存在，无法使用密码登录")
-        return None
-
-    with open(config_file, "r", encoding="utf-8") as f:
-        config = json.load(f)
-
+    config = fund_db.get_config()
     account = config.get("trade_account")
     password = config.get("trade_password")
     if not account or not password:
-        logger.warning("config.json 中未设置 trade_account 或 trade_password")
+        logger.warning("ft_config 中未设置 trade_account 或 trade_password")
         return None
 
     password_md5 = hashlib.md5(password.encode()).hexdigest().upper()
@@ -162,13 +151,11 @@ async def _login_by_password():
 
 
 def _save_auth_cache(cache_data: dict):
-    """保存认证数据到 auth_cache.json 并刷新内存"""
-    cache_file = Path(__file__).parent.parent / "auth_cache.json"
+    """保存认证数据到 ft_config 并刷新内存"""
     cache_data.setdefault("last_sync", int(time.time()))
-    with open(cache_file, "w", encoding="utf-8") as f:
-        json.dump(cache_data, f, indent=2, ensure_ascii=False)
+    fund_db.save_auth(cache_data)
     if _utils.client:
-        _utils.client.reload_auth_if_updated()
+        _utils.client.reload_auth()
 
 
 # ---------- 后台自动刷新 ----------
@@ -218,17 +205,11 @@ async def _auth_auto_refresh_loop():
 
 @router.get("/api/auth/status", summary="认证状态", tags=["交易账户"])
 async def auth_status():
-    """查看认证参数缓存状态"""
+    """查看认证参数状态"""
     try:
-        cache_file = Path(__file__).parent.parent / "auth_cache.json"
-        if not cache_file.exists():
-            return {
-                "status": "error",
-                "message": "认证缓存不存在"
-            }
-
-        with open(cache_file, "r", encoding="utf-8") as f:
-            data = json.load(f)
+        data = fund_db.get_auth()
+        if not data.get("auth", {}).get("key1"):
+            return {"status": "error", "message": "认证信息不存在"}
 
         expires_at = data.get("expires_at")
         if expires_at:
@@ -259,7 +240,7 @@ async def auth_status():
 
 @router.post("/api/auth/refresh", summary="推送认证Token", tags=["交易账户"])
 async def auth_refresh(body: dict = Body(...)):
-    """从 Hook 或客户端推送 token 数据并保存到 auth_cache.json"""
+    """从 Hook 或客户端推送 token 数据并保存到数据库"""
     try:
         auth = body.get("auth")
         if not isinstance(auth, dict) or not auth.get("key1") or not auth.get("key5"):
@@ -287,10 +268,10 @@ async def auth_refresh(body: dict = Body(...)):
 
 @router.post("/api/auth/login", summary="密码登录获取Token", tags=["交易账户"])
 async def auth_login():
-    """服务端直接使用 config.json 中的账号密码登录获取 token（会踢掉手机端）"""
+    """服务端使用数据库中的账号密码登录获取 token（会踢掉手机端）"""
     result = await _login_by_password()
     if not result:
-        raise HTTPException(status_code=500, detail="密码登录失败，请检查 config.json 中的 trade_account/trade_password")
+        raise HTTPException(status_code=500, detail="密码登录失败，请检查 ft_config 中的 trade_account/trade_password")
 
     _save_auth_cache(result)
 

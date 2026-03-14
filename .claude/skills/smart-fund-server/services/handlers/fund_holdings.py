@@ -26,8 +26,6 @@ def handle_fund_holdings(executor, task: dict):
     structured = executor._do_structurize(task_id, ocr_id, raw_text, markdown)
 
     # Stage 4: 调用 /fund-trade portfolio-analyze skill 分析
-    executor._emit_step(task_id, "启动深度分析", "调用 /fund-trade portfolio-analyze", progress=40)
-
     if not structured:
         task_db.update_task(task_id, status="failed", error_msg="结构化数据为空，无法分析")
         return
@@ -37,9 +35,12 @@ def handle_fund_holdings(executor, task: dict):
     prompt = f"/fund-trade portfolio-analyze\n\n{data_desc}"
     prompt = executor._apply_custom_prompt(prompt, task)
 
+    executor._emit_step(task_id, "启动深度分析", "调用 /fund-trade portfolio-analyze",
+                        progress=40, output=prompt)
+
     report = executor._run_claude_streaming(task_id, prompt,
-        timeout=600, progress_range=(40, 90), estimated_tools=20
-    )
+        timeout=600, progress_range=(40, 90), estimated_tools=20,
+        emit_done=False)
 
     if not report:
         task_db.update_task(task_id, status="failed", error_msg="Claude 分析超时或失败")

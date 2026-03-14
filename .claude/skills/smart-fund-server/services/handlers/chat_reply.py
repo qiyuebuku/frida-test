@@ -16,9 +16,15 @@ def handle_chat_reply(executor, task: dict):
         task_id, task["image_path"], "chat_reply", task.get("client_id")
     )
 
-    executor._progress(task_id, 40, "正在生成回复建议...")
+    # 构建 prompt，将用户自定义提示词作为回复风格要求
+    system_prompt, rules = executor._get_custom_config(task)
+    style_hint = ""
+    if system_prompt:
+        style_hint = f"\n\n回复风格要求：{system_prompt}"
+    if rules:
+        style_hint += f"\n额外规则：{rules}"
 
-    prompt = f"""分析以下聊天截图内容，给出 3 个回复建议。
+    prompt = f"""分析以下聊天截图内容，给出 3 个回复建议。{style_hint}
 
 聊天内容：
 {markdown or raw_text}
@@ -30,14 +36,18 @@ def handle_chat_reply(executor, task: dict):
 （一句话总结对方说了什么）
 
 ## 推荐回复
-1. **正式回复**：...
-2. **轻松回复**：...
-3. **简短回复**：...
+1. **回复1**：...
+2. **回复2**：...
+3. **回复3**：...
 
 只输出 Markdown 格式的回复建议。"""
-    prompt = executor._apply_custom_prompt(prompt, task)
 
-    result = executor._run_claude(prompt, timeout=120)
+    executor._emit_step(task_id, "智能回复", "AI 分析聊天内容并生成回复建议",
+                        progress=25, output=prompt)
+
+    result = executor._run_claude_streaming(task_id, prompt,
+        timeout=120, progress_range=(25, 90), estimated_tools=2,
+        model="haiku", emit_done=False)
     if not result:
         task_db.update_task(task_id, status="failed", error_msg="生成回复失败")
         return

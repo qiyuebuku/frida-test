@@ -57,6 +57,8 @@ ALTER TABLE sa_tasks ADD COLUMN IF NOT EXISTS tool_calls JSONB;
 ALTER TABLE sa_tasks ADD COLUMN IF NOT EXISTS config JSONB;
 ALTER TABLE sa_tasks ADD COLUMN IF NOT EXISTS skill_name VARCHAR(64);
 ALTER TABLE sa_tasks ADD COLUMN IF NOT EXISTS command_id VARCHAR(64);
+ALTER TABLE sa_tasks ADD COLUMN IF NOT EXISTS session_id VARCHAR(64);
+ALTER TABLE sa_tasks ADD COLUMN IF NOT EXISTS messages JSONB DEFAULT '[]';
 CREATE INDEX IF NOT EXISTS idx_sa_tasks_skill ON sa_tasks(skill_name);
 """
 
@@ -98,7 +100,7 @@ def update_task(task_id: int, **kwargs):
     import json
     sets = []
     vals = []
-    json_fields = {"result_data", "tool_calls", "config"}
+    json_fields = {"result_data", "tool_calls", "config", "messages"}
     for k, v in kwargs.items():
         sets.append(f"{k} = %s")
         if k in json_fields and isinstance(v, (dict, list)):

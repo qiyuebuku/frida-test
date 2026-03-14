@@ -234,8 +234,8 @@ python client.py orders
 - `{fund_news_analysis}` ← Step 2.5 撰写的个基消息分析
 - `{fund_signals}` ← `/tmp/ft_signals.json`
 - `{risk_snapshot}` ← `/tmp/ft_snapshot.json`
-- `{allocation}` ← config.json 的 allocation 字段
-- `{strategy}` ← config.json 的 strategy 字段
+- `{allocation}` ← `python client.py config` 中的 allocation 信息
+- `{strategy}` ← `python client.py config` 中的 strategy 信息
 - `{today_operations}` ← `python client.py today-decisions`
 - `{recent_decisions}` ← `python client.py recent-decisions --count 5`
 - `{lessons}` ← `python client.py lessons`
@@ -374,14 +374,14 @@ python client.py cancel 00000000002785670428
 
 #### Phase 0: 了解用户偏好（首次或 user_profile 为空时）
 
-如果 `config.json` 的 `user_profile.risk_tolerance` 为 null，**必须先跟用户沟通**，了解：
+如果用户偏好未知，**必须先跟用户沟通**，了解：
 1. **风险承受能力**：高/中/低？能接受多大的浮亏？
 2. **偏好行业**：科技/消费/医药/新能源/金融/周期？
 3. **投资周期**：短线波段（1-4周）/ 中线趋势（1-3月）/ 混合？
 4. **资产配置意向**：核心/卫星/对冲目标比例
 5. **总资金量**：确认 total_capital 是否准确
 
-使用 `AskUserQuestion` 工具询问，然后保存到 `config.json`。
+使用 `AskUserQuestion` 工具询问。
 
 #### Phase 1: 持仓同步 + 诊断
 
@@ -408,7 +408,7 @@ python client.py market_overview
 
 #### Phase 4: 确认加入
 
-向用户展示推荐的 3-5 只基金及理由，确认后更新 `config.json` 的 `fund_pool`。
+向用户展示推荐的 3-5 只基金及理由，确认后通过 API 更新 `fund_pool`。
 
 ---
 
@@ -491,13 +491,16 @@ python client.py lessons
 
 ### `/fund-trade config`
 
-读取并展示 `config.json`：
+通过 API 读取并展示配置：
 - 基金池列表
 - 风控参数
-- 服务器地址
 - 总资产设置
 
-用户可要求修改参数，Claude 直接编辑 config.json。
+```bash
+python client.py config
+```
+
+用户可要求修改参数，通过 API 更新数据库中的配置。
 
 ---
 

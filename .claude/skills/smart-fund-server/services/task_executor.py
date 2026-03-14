@@ -1,9 +1,17 @@
-"""后台异步任务执行器 - 每个任务在独立线程中运行"""
+"""后台异步任务执行器 - 全部基于 tmux 控制 Claude CLI 交互模式
 
+核心架构：
+- 所有 Claude 调用都通过 tmux 持久会话（支持追问、中途插入消息）
+- 不同 model 使用不同 tmux 会话（model 变化时自动切换）
+- 每个任务一个 tmux session，完成后保留用于追问，30 分钟无活动自动清理
+"""
+
+import atexit
 import asyncio
 import json
 import logging
 import os
+import re
 import subprocess
 import threading
 import time
@@ -26,6 +34,258 @@ SKILL_DIR = os.getenv("SKILL_DIR", "/home/yuyangruan/claude-skills/.claude/skill
 
 OCR_URL = os.getenv("OCR_URL", "http://119.23.227.187:8675/glmocr/parse")
 
+# tmux 会话名前缀
+SESSION_PREFIX = "sa_claude_"
+# Claude CLI 输入提示符
+PROMPT_CHAR = "❯"
+# 会话清理超时（秒）
+SESSION_IDLE_TIMEOUT = 1800  # 30 分钟
+
+
+# ==================== tmux 辅助函数 ====================
+
+def _tmux(*args) -> str:
+    """执行 tmux 命令，返回 stdout"""
+    try:
+        result = subprocess.run(
+            ["tmux"] + list(args),
+            capture_output=True, text=True, timeout=10
+        )
+        return result.stdout
+    except Exception:
+        return ""
+
+
+def _is_noise(line: str) -> bool:
+    """判断是否为 Claude CLI TUI 噪音行
+
+    过滤规则：
+    1. TUI 边框装饰（╭╰╮╯ 等，但保留 │ 因为 Markdown 表格也用）
+    2. thinking / spinner 指示器（随机动词…）
+    3. 工具调用行（● ToolName(...)）和输出前缀（⎿）
+    4. 折叠提示（… +N lines (ctrl+o to expand)）
+    5. 状态栏、启动信息、控制提示
+    6. 完成标记（✻ Baked for ...）
+    """
+    stripped = line.strip()
+    if not stripped:
+        return True
+    if stripped in (PROMPT_CHAR, '>', '↑', '?', '? for shortcuts'):
+        return True
+    # TUI 边框（保留 │ 用于 Markdown 表格）
+    if any(c in stripped for c in '╭╰╮╯▐▛▜▘▝'):
+        return True
+    if stripped.startswith('─' * 5):
+        return True
+    # thinking / spinner 指示器: "前缀 + 大写动词…"
+    if re.match(r'^.\s+[A-Z][a-z]+…', stripped):
+        return True
+    if re.match(r'^[A-Z][a-z]+…(\s|$)', stripped):
+        return True
+    # 完成标记: "✻ Baked for 1m 55s"
+    if re.match(r'^.\s+(Baked|Cooked|Done) for ', stripped):
+        return True
+    # 注意：● 前缀行（工具调用、Claude 思考状态）和 ⎿ 前缀行（工具输出）不在此过滤
+    # 因为 _parse_tmux_tool_line 需要看到 ● ToolName(...) 才能创建 tool_call 步骤
+    # ⎿ 行包含工具执行结果，需要关联到最近的 tool_call
+    # 这些行最终由 _clean_result 后处理清理
+    # 折叠提示: "… +N lines (ctrl+o to expand)"
+    if re.match(r'^…\s*\+\d+\s+lines?\s*\(ctrl\+o', stripped):
+        return True
+    # prompt 回显: "❯ 执行命令: ..."
+    if stripped.startswith(PROMPT_CHAR):
+        return True
+    # 状态栏 / 启动信息 / TUI 提示
+    noise_patterns = [
+        'medium · /effort', 'Claude Code v', 'Welcome back',
+        'Opus 4.6', 'Sonnet', 'glm-', 'API Usage',
+        '~/frida-test', '~/…/', '~/smart-fund',
+        'Checking for update', 'MCP server',
+        "What's new", 'Added ', 'Recent activity',
+        'No recent activity', 'Tips for getting',
+        'Run /init', '/release-notes', '/resume for more',
+        'Opus now defaults', '⧉ In ', 'ctrl+g',
+        '? for shortcu', 'Brewed for', 'for shortcuts',
+        '◐', '◑', '◒', '◓',
+        'esc to interrupt', 'esc to cancel', 'Esc to cancel',
+        'Tab to amend', 'Enter to confirm',
+        'has switched from npm', 'claude install',
+        'Do you want to proceed',
+        'Yes, and don\'t ask again',
+        'This command requires approval',
+        '⏵⏵ bypass permissions',
+        'shift+tab to cycle',
+    ]
+    return any(p in stripped for p in noise_patterns)
+
+
+def _extract_content(screen: str) -> list[str]:
+    """从 tmux 屏幕输出中提取有意义的文本行"""
+    lines = []
+    for line in screen.split('\n'):
+        stripped = line.strip()
+        if not _is_noise(stripped) and stripped:
+            lines.append(stripped)
+    return lines
+
+
+def _is_thinking(screen: str) -> bool:
+    """检查 Claude 是否正在 thinking/执行工具（用于判断循环是否可以结束）"""
+    lines = screen.strip().split('\n')
+    for line in lines[-10:]:
+        stripped = line.strip()
+        if '(ctrl+o' in stripped:
+            continue
+        if stripped.startswith('●') or stripped.startswith('⎿'):
+            if 'Running…' in stripped or 'Waiting…' in stripped:
+                return True
+            continue
+        # thinking spinner: "前缀 + 大写动词…" 如 "✻ Synthesizing… (34s"
+        if re.search(r'[A-Z][a-z]+…', stripped):
+            return True
+    return False
+
+
+def _is_at_prompt(screen: str) -> bool:
+    """检查 Claude CLI 是否显示输入提示符 ❯
+
+    只要底部5行有 ❯（排除选择菜单行）就认为可以发送消息。
+    即使 Claude 在 thinking，CLI 也接受输入并排队处理。
+    """
+    lines = screen.strip().split('\n')
+
+    for line in lines[-5:]:
+        stripped = line.strip()
+        if PROMPT_CHAR in stripped:
+            after = stripped.split(PROMPT_CHAR, 1)[1].strip()
+            # 排除对话框选择行：❯ 后跟 "数字." 格式
+            if re.match(r'^\d+\.', after):
+                continue
+            return True
+
+    return False
+
+
+# ==================== tmux 会话管理 ====================
+
+class ClaudeTmuxSession:
+    """管理单个 tmux Claude CLI 交互会话"""
+
+    def __init__(self, task_id: int, cwd: str = None, model: str = None,
+                 session_id: str = None, resume_session_id: str = None):
+        self.task_id = task_id
+        self.model = model
+        # 生成或使用已有的 Claude session ID（用于 --resume 恢复）
+        import uuid
+        self.claude_session_id = session_id or str(uuid.uuid4())
+        # session name 包含 model 信息，避免不同 model 冲突
+        suffix = f"_{model}" if model else ""
+        self.session_name = f"{SESSION_PREFIX}{task_id}{suffix}"
+        self._known_lines: set[str] = set()
+        self.ready = False
+        self.has_pending_input = False  # 是否有刚转发的用户消息待处理
+
+        # 清理同名旧 session
+        subprocess.run(
+            ["tmux", "kill-session", "-t", self.session_name],
+            capture_output=True, timeout=5
+        )
+
+        # 构建启动命令（跳过权限确认，自动化场景无需交互审批）
+        if resume_session_id:
+            # 恢复模式：使用 --resume 恢复之前的会话
+            claude_cmd = f"claude --dangerously-skip-permissions --resume {resume_session_id}"
+            self.claude_session_id = resume_session_id
+            logger.info(f"[tmux] 恢复会话 session_id={resume_session_id}")
+        else:
+            claude_cmd = f"claude --dangerously-skip-permissions --session-id {self.claude_session_id}"
+        if model:
+            claude_cmd += f" --model {model}"
+        if cwd and Path(cwd).exists():
+            claude_cmd = f"cd {cwd} && {claude_cmd}"
+
+        # 创建 tmux session，启动 claude 交互模式
+        _tmux("new-session", "-d", "-s", self.session_name,
+              "-x", "200", "-y", "50", claude_cmd)
+        _tmux("set-option", "-t", self.session_name, "history-limit", "10000")
+
+        logger.info(f"[tmux] 启动会话 {self.session_name} (model={model or 'default'}, claude_session={self.claude_session_id[:8]}...)")
+
+        # 等待 Claude CLI 初始化（提示符出现）
+        if self._wait_for_prompt(timeout=30):
+            screen = self.capture(-500)
+            self._known_lines = set(_extract_content(screen))
+            self.ready = True
+            logger.info(f"[tmux] 会话 {self.session_name} 就绪")
+        else:
+            logger.warning(f"[tmux] 会话 {self.session_name} 等待提示符超时")
+
+    def capture(self, start_line: int = 0) -> str:
+        """捕获 tmux 窗格的纯文本内容"""
+        try:
+            result = subprocess.run(
+                ["tmux", "capture-pane", "-t", self.session_name,
+                 "-p", "-S", str(start_line)],
+                capture_output=True, text=True, timeout=10
+            )
+            return result.stdout
+        except Exception:
+            return ""
+
+    def _wait_for_prompt(self, timeout: int = 30) -> bool:
+        """等待提示符出现，自动处理信任确认等阻塞对话框"""
+        start = time.time()
+        while time.time() - start < timeout:
+            screen = self.capture()
+            # 检测信任确认对话框（首次访问工作目录时弹出）
+            if "trust this folder" in screen.lower() or "Enter to confirm" in screen:
+                logger.info(f"[tmux] 检测到信任确认对话框，自动确认")
+                _tmux("send-keys", "-t", self.session_name, "Enter")
+                time.sleep(2)
+                continue
+            if _is_at_prompt(screen):
+                return True
+            time.sleep(0.5)
+        return False
+
+    def mark(self):
+        """记录当前屏幕状态（后续 get_new_lines 基于此做 diff）"""
+        screen = self.capture(-500)
+        self._known_lines = set(_extract_content(screen))
+
+    def send(self, text: str, is_followup: bool = False):
+        """发送文本到 Claude（自动按 Enter）"""
+        _tmux("send-keys", "-t", self.session_name, text, "Enter")
+        if is_followup:
+            self.has_pending_input = True
+
+    def send_ctrl_c(self):
+        """发送 Ctrl+C 中断"""
+        _tmux("send-keys", "-t", self.session_name, "C-c")
+
+    def get_new_lines(self) -> list[str]:
+        """获取自上次 mark/check 以来的新内容行"""
+        screen = self.capture(-500)
+        current = _extract_content(screen)
+        new = [l for l in current if l not in self._known_lines]
+        self._known_lines.update(current)
+        return new
+
+    def is_at_prompt(self) -> bool:
+        """Claude 是否在等待输入"""
+        screen = self.capture()
+        return _is_at_prompt(screen)
+
+    def close(self):
+        """关闭 tmux 会话"""
+        logger.info(f"[tmux] 关闭会话 {self.session_name}")
+        subprocess.run(
+            ["tmux", "kill-session", "-t", self.session_name],
+            capture_output=True, timeout=5
+        )
+
+
+# ==================== 任务执行器 ====================
 
 class TaskExecutor:
     MAX_CONCURRENT = 2
@@ -33,9 +293,110 @@ class TaskExecutor:
     def __init__(self):
         self._semaphore = threading.Semaphore(self.MAX_CONCURRENT)
         self._ocr = OCRService(OCR_URL)
-        # 任务级别的 tool_calls 累积器（跨多次 _run_claude_streaming 调用）
+        # 任务级别的 tool_calls 累积器（跨多次调用）
         self._task_tool_calls: dict[int, list] = {}
         self._task_start_times: dict[int, float] = {}
+        # 待处理的追问消息队列
+        self._pending_messages: dict[int, list[str]] = {}
+        self._message_lock = threading.Lock()
+        # tmux 会话管理
+        self._tmux_sessions: dict[int, ClaudeTmuxSession] = {}
+        self._session_last_active: dict[int, float] = {}
+        self._tmux_lock = threading.Lock()
+        # tmux 可用性检查（不可用直接报错）
+        self._check_tmux()
+        # 启动会话清理线程
+        cleanup = threading.Thread(target=self._cleanup_sessions_loop, daemon=True)
+        cleanup.start()
+        # 退出时清理所有会话
+        atexit.register(self._cleanup_all_sessions)
+
+    @staticmethod
+    def _check_tmux():
+        """检查 tmux 是否可用，不可用直接报错"""
+        try:
+            r = subprocess.run(["tmux", "-V"], capture_output=True, timeout=5)
+            if r.returncode == 0:
+                logger.info(f"[tmux] 可用: {r.stdout.strip()}")
+                return
+        except Exception:
+            pass
+        raise RuntimeError(
+            "tmux 未安装或不可用，TaskExecutor 依赖 tmux 控制 Claude CLI。"
+            "请先安装: apt install tmux"
+        )
+
+    def _cleanup_sessions_loop(self):
+        """后台线程：清理超时的 tmux 会话"""
+        while True:
+            time.sleep(300)  # 每 5 分钟检查一次
+            now = time.time()
+            to_remove = []
+            with self._tmux_lock:
+                for task_id, last_active in self._session_last_active.items():
+                    if now - last_active > SESSION_IDLE_TIMEOUT:
+                        to_remove.append(task_id)
+            for task_id in to_remove:
+                with self._tmux_lock:
+                    session = self._tmux_sessions.pop(task_id, None)
+                    self._session_last_active.pop(task_id, None)
+                if session:
+                    logger.info(f"[tmux] 清理过期会话 task_id={task_id}")
+                    session.close()
+
+    def _cleanup_all_sessions(self):
+        """退出时清理所有 tmux 会话"""
+        with self._tmux_lock:
+            for session in self._tmux_sessions.values():
+                try:
+                    session.close()
+                except Exception:
+                    pass
+            self._tmux_sessions.clear()
+            self._session_last_active.clear()
+
+    def _send_to_tmux_directly(self, task_id: int, message: str):
+        """当 session 对象不在内存时（如服务重启），直接通过 tmux 命令发送消息"""
+        # 尝试所有可能的 session name 格式
+        for session_name in [f"{SESSION_PREFIX}{task_id}", f"{SESSION_PREFIX}{task_id}_sonnet",
+                             f"{SESSION_PREFIX}{task_id}_haiku", f"{SESSION_PREFIX}{task_id}_opus"]:
+            try:
+                # 检查 session 是否存在
+                r = subprocess.run(["tmux", "has-session", "-t", session_name],
+                                   capture_output=True, timeout=5)
+                if r.returncode == 0:
+                    _tmux("send-keys", "-t", session_name, message, "Enter")
+                    logger.info(f"[tmux] 直接转发消息到 {session_name}: {message[:50]}")
+                    return
+            except Exception as e:
+                logger.warning(f"[tmux] 转发失败 {session_name}: {e}")
+        logger.warning(f"[tmux] task_id={task_id} 无法找到活跃的 tmux 会话")
+
+    def _get_or_create_session(self, task_id: int, cwd: str = None,
+                               model: str = None,
+                               resume_session_id: str = None) -> ClaudeTmuxSession:
+        """获取或创建任务的 tmux 会话
+
+        如果已有会话且 model 相同 → 复用
+        如果 model 不同 → 关闭旧会话，创建新会话
+        如果提供 resume_session_id → 使用 --resume 恢复之前的 Claude 会话
+        """
+        with self._tmux_lock:
+            session = self._tmux_sessions.get(task_id)
+            if session and session.ready:
+                if session.model == model:
+                    self._session_last_active[task_id] = time.time()
+                    return session
+                # model 不同，关闭旧会话
+                session.close()
+            # 创建新会话（可能是 resume 模式）
+            session = ClaudeTmuxSession(task_id, cwd=cwd, model=model,
+                                        resume_session_id=resume_session_id)
+            self._tmux_sessions[task_id] = session
+            self._session_last_active[task_id] = time.time()
+            # 将 claude_session_id 写入数据库
+            task_db.update_task(task_id, session_id=session.claude_session_id)
+            return session
 
     def submit(self, task_id: int):
         thread = threading.Thread(target=self._run, args=(task_id,), daemon=True)
@@ -84,15 +445,67 @@ class TaskExecutor:
                 )
                 current = task_db.get_task(task_id)
 
-            # 始终发送 done 事件，确保 SSE 客户端收到终态
-            # （对于已通过 _run_claude_streaming 发送过 done 的任务，
-            #   SSE 客户端已断开，重复发送无害）
+            # 初始化 messages 数组：确保开头有 user/assistant 消息对
+            if current and current.get("session_id"):
+                existing_messages = current.get("messages") or []
+                user_content = (current.get("title") or
+                                current.get("command_id") or
+                                current.get("task_type") or "任务")
+                created_at = current.get("created_at", "")
+                if hasattr(created_at, "isoformat"):
+                    created_at = created_at.isoformat()
+                else:
+                    created_at = str(created_at)
+                initial_pair = [
+                    {"role": "user", "content": user_content,
+                     "created_at": created_at},
+                    {"role": "assistant", "content": current.get("result") or "",
+                     "created_at": datetime.now().isoformat()}
+                ]
+                # 如果已有消息（如追问），插在初始消息对之后
+                if existing_messages:
+                    # 过滤掉可能重复的初始消息
+                    has_initial = any(m.get("content") == user_content and m.get("role") == "user"
+                                     for m in existing_messages)
+                    if not has_initial:
+                        messages = initial_pair + existing_messages
+                    else:
+                        messages = existing_messages
+                else:
+                    messages = initial_pair
+                task_db.update_task(task_id, messages=messages)
+
+            # 处理排队的追问消息
+            with self._message_lock:
+                pending = self._pending_messages.pop(task_id, [])
+            logger.info(f"[_run] task_id={task_id} streaming结束后检查pending消息数={len(pending)}")
+            if pending:
+                for msg in pending:
+                    messages = task_db.get_task(task_id).get("messages") or []
+                    messages.append({"role": "user", "content": msg,
+                                     "created_at": datetime.now().isoformat()})
+                    task_db.update_task(task_id, messages=messages)
+
+                    self._task_tool_calls[task_id] = []
+                    result = self._run_claude_streaming(
+                        task_id, msg, timeout=600,
+                        progress_range=(0, 90), estimated_tools=20,
+                        emit_done=False)
+                    if result:
+                        messages = task_db.get_task(task_id).get("messages") or []
+                        messages.append({"role": "assistant", "content": result,
+                                         "created_at": datetime.now().isoformat()})
+                        task_db.update_task(task_id, result=result, messages=messages)
+                current = task_db.get_task(task_id)
+
+            # 发送 done 事件（包含 tool_calls，避免前端丢失步骤）
             if current:
                 event_bus.emit(task_id, {
                     "type": "done",
                     "status": current.get("status", "completed"),
                     "result": current.get("result"),
                     "error_msg": current.get("error_msg"),
+                    "tool_calls": current.get("tool_calls"),
                 })
 
         except Exception as e:
@@ -102,6 +515,163 @@ class TaskExecutor:
             event_bus.emit(task_id, {
                 "type": "done", "status": "failed", "error_msg": error_msg,
             })
+        finally:
+            self._task_tool_calls.pop(task_id, None)
+            self._task_start_times.pop(task_id, None)
+            # 注意：不清理 tmux 会话，保留用于追问
+            self._semaphore.release()
+
+    def force_stop(self, task_id: int) -> bool:
+        """强制停止正在运行的任务"""
+        with self._tmux_lock:
+            session = self._tmux_sessions.get(task_id)
+        if session:
+            session.send_ctrl_c()
+            time.sleep(1)
+            task_db.update_task(task_id, status="stopped", error_msg="用户手动停止",
+                               completed_at=datetime.now())
+            event_bus.emit(task_id, {"type": "done", "status": "stopped",
+                                     "error_msg": "用户手动停止"})
+            return True
+        return False
+
+    def queue_message(self, task_id: int, message: str) -> dict:
+        """向任务发送追问消息
+
+        - 任务执行中 → 放入 _pending_messages，由 _run_claude_streaming 循环
+          在 Claude 回到提示符时自动发送（避免在 TUI 忙碌时发 send-keys 导致 Enter 被吞）
+        - 任务已完成 → 启动 submit_followup（用 --resume 恢复会话）
+        """
+        task = task_db.get_task(task_id)
+        if not task:
+            raise ValueError("Task not found")
+
+        logger.info(f"[queue_message] task_id={task_id} status={task['status']} message={message[:80]}")
+
+        if task["status"] in ("processing", "pending"):
+            # 放入待发送队列，由 _run_claude_streaming 循环在提示符出现时发送
+            with self._message_lock:
+                self._pending_messages.setdefault(task_id, []).append(message)
+            logger.info(f"[queue_message] task_id={task_id} 消息已加入待发送队列，等待提示符出现后发送")
+            # 记录到 DB
+            messages = task.get("messages") or []
+            messages.append({"role": "user", "content": message,
+                             "created_at": datetime.now().isoformat()})
+            task_db.update_task(task_id, messages=messages)
+            event_bus.emit(task_id, {"type": "message_queued", "content": message})
+            return {"queued": True}
+        else:
+            # 任务已完成/停止，立即启动追问
+            logger.info(f"[queue_message] task_id={task_id} 任务已完成，启动 submit_followup")
+            self.submit_followup(task_id, message)
+            return {"queued": False}
+
+    def submit_followup(self, task_id: int, message: str):
+        """提交追问，复用或新建 tmux 会话"""
+        task = task_db.get_task(task_id)
+        if not task:
+            raise ValueError("Task not found")
+
+        # 追加用户消息
+        messages = task.get("messages") or []
+        messages.append({"role": "user", "content": message,
+                         "created_at": datetime.now().isoformat()})
+        # 不清除 result，保留上次结果供 UI 展示
+        task_db.update_task(task_id, messages=messages, status="processing",
+                           progress=0, partial_result=None)
+        event_bus.emit(task_id, {"type": "status_change", "status": "processing"})
+
+        thread = threading.Thread(target=self._run_followup, args=(task_id,), daemon=True)
+        thread.start()
+
+    def _run_followup(self, task_id: int):
+        """追问执行线程"""
+        acquired = self._semaphore.acquire(timeout=300)
+        if not acquired:
+            task_db.update_task(task_id, status="completed", error_msg="服务器繁忙")
+            return
+        try:
+            self._task_tool_calls[task_id] = []
+            self._task_start_times[task_id] = time.time()
+
+            # 检查是否有现有 tmux 会话
+            has_existing_session = task_id in self._tmux_sessions
+            # 检查数据库中是否有 Claude session_id（可用于 --resume 恢复）
+            task = task_db.get_task(task_id)
+            db_session_id = task.get("session_id")
+
+            while True:
+                task = task_db.get_task(task_id)
+                messages = task.get("messages") or []
+
+                last_user_msg = None
+                for m in reversed(messages):
+                    if m.get("role") == "user":
+                        last_user_msg = m["content"]
+                        break
+                if not last_user_msg:
+                    break
+
+                prompt = last_user_msg
+
+                # 获取 skill 路径（如果有）
+                skill_name = task.get("skill_name")
+                cwd = None
+                if skill_name:
+                    import services.skill_registry as sr
+                    if sr.skill_registry:
+                        skill = sr.skill_registry.get_skill(skill_name)
+                        if skill:
+                            cwd = skill.path
+
+                # 如果没有内存中的 session 但有 DB 中的 session_id，用 --resume 恢复
+                resume_id = None
+                if not has_existing_session and db_session_id:
+                    resume_id = db_session_id
+                    logger.info(f"[followup] task_id={task_id} 将使用 --resume {db_session_id[:8]}... 恢复会话")
+
+                result = self._run_claude_streaming(
+                    task_id, prompt, timeout=600,
+                    progress_range=(0, 90), estimated_tools=20,
+                    emit_done=False, cwd=cwd,
+                    resume_session_id=resume_id)
+
+                # 后续轮次已有会话，不再需要 resume
+                has_existing_session = True
+                db_session_id = None
+
+                if result:
+                    messages = task_db.get_task(task_id).get("messages") or []
+                    messages.append({"role": "assistant", "content": result,
+                                     "created_at": datetime.now().isoformat()})
+                    task_db.update_task(task_id, messages=messages, result=result)
+
+                # 检查更多待处理消息
+                with self._message_lock:
+                    pending = self._pending_messages.pop(task_id, [])
+                if not pending:
+                    break
+
+                for msg in pending:
+                    messages = task_db.get_task(task_id).get("messages") or []
+                    messages.append({"role": "user", "content": msg,
+                                     "created_at": datetime.now().isoformat()})
+                    task_db.update_task(task_id, messages=messages)
+                    event_bus.emit(task_id, {"type": "message_queued", "content": msg})
+
+            task_db.update_task(task_id, status="completed", progress=100,
+                               completed_at=datetime.now())
+            current = task_db.get_task(task_id)
+            event_bus.emit(task_id, {
+                "type": "done", "status": "completed",
+                "result": current.get("result") if current else None,
+                "tool_calls": current.get("tool_calls") if current else None,
+            })
+        except Exception as e:
+            logger.exception(f"Follow-up task {task_id} failed")
+            task_db.update_task(task_id, status="completed", error_msg=str(e)[:500])
+            event_bus.emit(task_id, {"type": "done", "status": "failed",
+                                     "error_msg": str(e)[:500]})
         finally:
             self._task_tool_calls.pop(task_id, None)
             self._task_start_times.pop(task_id, None)
@@ -123,17 +693,19 @@ class TaskExecutor:
             "at": round(time.time() - start_time, 1),
         }
         tool_calls.append(entry)
-        event_bus.emit(task_id, {
+        event_data = {
             "type": "tool_call",
             "tool": "_step",
             "display": display,
             "detail": detail,
             "progress": progress,
             "is_text": True,
-        })
+        }
+        if output:
+            event_data["output"] = output
+        event_bus.emit(task_id, event_data)
         if progress:
             self._progress(task_id, progress, display)
-        # 同步写入 DB
         task_db.update_task(task_id, tool_calls=tool_calls)
 
     # ==================== OCR 公共步骤 ====================
@@ -156,16 +728,19 @@ class TaskExecutor:
             image_path=image_path, client_id=client_id
         )
         task_db.update_task(task_id, ocr_record_id=ocr_id)
+        ocr_output_parts = []
+        if markdown:
+            ocr_output_parts.append("## 结构化内容\n\n" + markdown)
+        if raw_text:
+            ocr_output_parts.append("## 纯文本\n\n" + raw_text)
         self._emit_step(task_id, "OCR 识别完成",
                         f"识别 {len(raw_text)} 字符", progress=20,
-                        output=f"原文 {len(raw_text)} 字符，Markdown {len(markdown)} 字符")
+                        output="\n\n---\n\n".join(ocr_output_parts) or "")
 
         return raw_text, markdown, ocr_id
 
     def _do_structurize(self, task_id: int, ocr_id: int, raw_text: str, markdown: str):
-        """用 claude -p 流式结构化 OCR 文本，写入 sa_ocr_records，返回 structured dict"""
-        self._emit_step(task_id, "数据结构化中...", "AI 提取关键字段", progress=22)
-
+        """用 tmux Claude 会话结构化 OCR 文本，写入 sa_ocr_records，返回 structured dict"""
         prompt = f"""请将以下 OCR 识别的文本转换为结构化 JSON。
 
 根据内容自动判断数据类型，提取关键字段。输出严格的 JSON（不要 markdown 代码块包裹）。
@@ -195,6 +770,9 @@ class TaskExecutor:
 OCR 文本：
 {markdown or raw_text}"""
 
+        self._emit_step(task_id, "数据结构化", "AI 提取关键字段",
+                        progress=22, output=prompt)
+
         result = self._run_claude_streaming(task_id, prompt,
             timeout=600, progress_range=(22, 35), estimated_tools=2,
             emit_done=False, model="haiku")
@@ -202,18 +780,14 @@ OCR 文本：
             self._emit_step(task_id, "结构化跳过", "Claude 未返回结果", progress=35)
             return None
 
-        # 解析 JSON
         structured = self._extract_json(result)
         if not structured:
             ocr_db.update_ocr_structured_data(ocr_id, result, None)
             self._emit_step(task_id, "结构化完成", "未能解析为 JSON", progress=35)
             return None
 
-        # 写入 sa_ocr_records
         structured_str = json.dumps(structured, ensure_ascii=False)
         ocr_db.update_ocr_structured_data(ocr_id, structured_str, structured_str)
-
-        # 同步更新 sa_tasks.result_data（阶段性结果）
         task_db.update_task(task_id, result_data=structured)
         self._emit_step(task_id, "数据结构化完成",
                         f"提取 {len(structured)} 个字段", progress=35,
@@ -235,7 +809,7 @@ OCR 文本：
         return command is not None and command.executor == "claude"
 
     def _execute_claude(self, task: dict, skill_name: str, command_id: str):
-        """通用 claude 执行：在 skill 目录下 claude -p"""
+        """通用 claude 执行：在 skill 目录下通过 tmux 交互"""
         import services.skill_registry as sr
         skill = sr.skill_registry.get_skill(skill_name)
         command = skill.get_command(command_id)
@@ -251,8 +825,12 @@ OCR 文本：
             prompt += f"\n输入: {config['input_data']}"
         prompt = self._apply_custom_prompt(prompt, task)
 
+        self._emit_step(task_id, f"执行 {command.name}", command.description,
+                        progress=5, output=prompt)
+
         report = self._run_claude_streaming(task_id, prompt,
-            cwd=skill.path, timeout=600, progress_range=(5, 90), estimated_tools=30)
+            cwd=skill.path, timeout=600, progress_range=(5, 90), estimated_tools=30,
+            emit_done=False)
 
         if not report:
             task_db.update_task(task_id, status="failed", error_msg="执行超时或失败")
@@ -286,35 +864,7 @@ OCR 文本：
             default_prompt = f"{default_prompt}\n\n额外规则：\n{rules}"
         return default_prompt
 
-    # ==================== Claude 工具方法 ====================
-
-    def _run_claude(self, prompt: str, timeout: int = 120) -> str | None:
-        """调用 claude -p，返回输出文本"""
-        env = os.environ.copy()
-        env["FUND_API_BASE"] = "http://127.0.0.1:8900"
-
-        try:
-            result = subprocess.run(
-                ["claude", "-p", prompt,
-                 "--allowedTools", "Bash,Read,Glob,Grep",
-                 "--output-format", "text"],
-                capture_output=True, text=True, timeout=timeout,
-                cwd=SKILL_DIR if Path(SKILL_DIR).exists() else None,
-                env=env
-            )
-            if result.returncode != 0:
-                logger.warning(f"claude -p failed (rc={result.returncode}): {result.stderr[:300]}")
-                return None
-            return result.stdout.strip()
-        except subprocess.TimeoutExpired:
-            logger.warning(f"claude -p timed out ({timeout}s)")
-            return None
-        except FileNotFoundError:
-            logger.warning("claude command not found")
-            return None
-        except Exception as e:
-            logger.warning(f"claude -p error: {e}")
-            return None
+    # ==================== Claude tmux 调用 ====================
 
     # 工具命令 → 可读描述的映射
     TOOL_DISPLAY_MAP = {
@@ -330,32 +880,34 @@ OCR 文本：
     }
 
     def _text_step_display(self, text: str) -> str | None:
-        """从 Claude 文本输出中提取第一行有意义的内容作为步骤标题"""
+        """从 Claude 文本中提取简短的步骤标题（不超过 30 字符）"""
         for line in text.split("\n"):
             line = line.strip()
             if not line:
                 continue
-            # 去掉 markdown 格式
             clean = line.lstrip("#").strip().strip("*").strip()
-            if len(clean) > 3:
-                return clean[:80]
+            if len(clean) <= 3:
+                continue
+            # 截取第一个句号/逗号/分号前的短语作为标题
+            for sep in ('。', '，', '；', '、', '：', '，', '. ', ', '):
+                idx = clean.find(sep)
+                if 3 < idx <= 30:
+                    return clean[:idx]
+            return clean[:30]
         return None
 
     def _tool_display(self, tool_name: str, tool_input: dict) -> str:
         """将工具调用转为可读描述"""
         if tool_name == "Bash":
             cmd = tool_input.get("command", "")
-            # python client.py <code> <action>
             if "client.py" in cmd:
                 parts = cmd.split()
                 idx = next((i for i, p in enumerate(parts) if p.endswith("client.py")), -1)
                 if idx >= 0:
                     args = parts[idx + 1:]
-                    # 命令映射
                     for key, desc in self.TOOL_DISPLAY_MAP.items():
                         if key in args:
                             return desc
-                    # 基金代码 + 动作
                     if len(args) >= 2 and args[0].isdigit():
                         action_map = {"detail": "基金详情", "rank": "排名数据",
                                       "holdings": "持仓信息", "news": "相关资讯",
@@ -368,7 +920,7 @@ OCR 文本：
                 return "获取新闻快讯"
             if "curl" in cmd:
                 return "请求外部数据"
-            return f"执行命令"
+            return "执行命令"
         elif tool_name == "Read":
             path = tool_input.get("file_path", "")
             fname = path.split("/")[-1] if "/" in path else path
@@ -395,275 +947,424 @@ OCR 文本：
                               estimated_tools: int = 20,
                               cwd: str = None,
                               emit_done: bool = True,
-                              model: str = None) -> str | None:
-        """启动 claude -p 并实时解析 stream-json 事件，推送到 EventBus"""
-        env = os.environ.copy()
-        env["FUND_API_BASE"] = "http://127.0.0.1:8900"
+                              model: str = None,
+                              resume_session_id: str = None) -> str | None:
+        """通过 tmux 发送 prompt 到 Claude CLI 交互模式，实时推送新内容
 
-        # 确定工作目录：优先使用传入的 cwd，否则使用默认 SKILL_DIR
-        work_dir = cwd or SKILL_DIR
-        work_dir = work_dir if Path(work_dir).exists() else None
+        - 所有 Claude 调用统一走 tmux
+        - model 不同时自动切换会话（如 haiku 用独立会话）
+        - resume_session_id: 使用 --resume 恢复之前的 Claude 会话
+        """
+        session = self._get_or_create_session(task_id, cwd=cwd, model=model,
+                                               resume_session_id=resume_session_id)
+        if not session.ready:
+            raise RuntimeError(
+                f"tmux 会话 {session.session_name} 未就绪，Claude CLI 启动失败")
 
         start_pct, end_pct = progress_range
-        try:
-            cmd = ["claude", "-p", prompt,
-                   "--allowedTools", "Bash,Read,Glob,Grep",
-                   "--output-format", "stream-json", "--verbose"]
-            if model:
-                cmd.extend(["--model", model])
-            process = subprocess.Popen(
-                cmd,
-                stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                text=True, bufsize=1,
-                cwd=work_dir,
-                env=env
-            )
+        tool_calls = self._task_tool_calls.get(task_id, [])
+        task_start_time = self._task_start_times.get(task_id, time.time())
 
-            tool_calls = self._task_tool_calls.get(task_id, [])
-            partial_text = []
-            tool_count = 0
-            last_db_write = time.time()
-            start_time = time.time()
-            # tool_use_id → tool_calls 列表索引，用于关联 tool_result
-            tool_id_map = {}
+        # 记录发送前的屏幕状态
+        session.mark()
+        # 把 prompt 本身也加入已知行（避免把问题回显当作回答）
+        for line in prompt.split('\n'):
+            stripped = line.strip()
+            if stripped:
+                session._known_lines.add(stripped)
 
-            for line in process.stdout:
-                line = line.strip()
-                if not line:
-                    continue
+        # 发送 prompt
+        session.send(prompt)
 
-                if time.time() - start_time > timeout:
-                    process.kill()
-                    logger.warning(f"claude -p streaming killed after {timeout}s")
-                    event_bus.emit(task_id, {"type": "done", "status": "failed",
-                                             "error_msg": f"处理超时（{timeout}s）"})
-                    return None
+        # 轮询等待回答
+        accumulated_lines: list[str] = []
+        printed_set: set[str] = set()  # 已推送过的行（去重）
+        start = time.time()
+        idle_count = 0
+        last_content = ""
+        last_db_write = time.time()
+        last_raw_screen = ""  # 用于检测原始屏幕变化
 
-                try:
-                    event = json.loads(line)
-                except json.JSONDecodeError:
-                    continue
+        while time.time() - start < timeout:
+            time.sleep(1)
 
-                event_type = event.get("type")
+            # 捕获原始屏幕
+            raw_screen = session.capture(-500)
 
-                if event_type == "assistant":
-                    content_list = event.get("message", {}).get("content", [])
-                    for block in content_list:
-                        block_type = block.get("type")
+            # 原始屏幕有变化时，打印差异（不做任何过滤）
+            if raw_screen != last_raw_screen:
+                # 计算新增行
+                old_lines = set(last_raw_screen.split('\n'))
+                raw_new = [l for l in raw_screen.split('\n') if l not in old_lines]
+                if raw_new:
+                    for rl in raw_new:
+                        stripped_rl = rl.strip()
+                        if stripped_rl:  # 跳过纯空行
+                            logger.info(f"[tmux-raw] {stripped_rl}")
+                last_raw_screen = raw_screen
 
-                        if block_type == "text":
-                            text = block.get("text", "")
-                            if text:
-                                partial_text.append(text)
-                                total_len = sum(len(t) for t in partial_text)
-                                pct = max(start_pct, min(end_pct, int(end_pct - 5)))
-                                event_bus.emit(task_id, {
-                                    "type": "text_delta",
-                                    "text": text,
-                                    "total_len": total_len,
-                                    "progress": pct,
-                                })
-                                # 有意义的文本也作为步骤记录
-                                stripped = text.strip()
-                                if len(stripped) > 10:
-                                    display = self._text_step_display(stripped)
-                                    if display:
-                                        text_entry = {
-                                            "tool": "_text",
-                                            "display": display,
-                                            "detail": stripped,
-                                            "output": None,
-                                            "at": round(time.time() - start_time, 1),
-                                        }
-                                        tool_calls.append(text_entry)
-                                        event_bus.emit(task_id, {
-                                            "type": "tool_call",
-                                            "tool": "_text",
-                                            "display": display,
-                                            "detail": stripped,
-                                            "progress": pct,
-                                            "is_text": True,
-                                        })
+            # 检测阻塞对话框（权限确认、信任确认）并自动确认
+            if "Do you want to proceed" in raw_screen or "requires approval" in raw_screen:
+                logger.info(f"[tmux] 检测到权限确认对话框，自动确认")
+                _tmux("send-keys", "-t", session.session_name, "Enter")
+                time.sleep(1)
+                continue
+            if "trust this folder" in raw_screen.lower() or "Enter to confirm" in raw_screen:
+                logger.info(f"[tmux] 检测到信任确认对话框，自动确认")
+                _tmux("send-keys", "-t", session.session_name, "Enter")
+                time.sleep(1)
+                continue
+            # 检测交互式选择菜单（checkbox/select picker），按 Esc 跳过
+            if "Enter to select" in raw_screen and "Esc to cancel" in raw_screen:
+                logger.info(f"[tmux] 检测到交互式选择菜单，按 Esc 跳过")
+                _tmux("send-keys", "-t", session.session_name, "Escape")
+                time.sleep(1)
+                continue
 
-                        elif block_type == "tool_use":
-                            tool_name = block.get("name", "")
-                            tool_input = block.get("input", {})
-                            tool_use_id = block.get("id", "")
-                            # 跳过 Claude 内部工具（对用户无意义）
-                            if tool_name in ("ToolSearch", "Skill", "TodoWrite"):
-                                if tool_use_id:
-                                    tool_id_map[tool_use_id] = -1  # 标记为跳过
-                                continue
-                            tool_count += 1
+            new_lines = session.get_new_lines()
 
-                            # Bash 的 description 字段比自动推断更准确
-                            if tool_name == "Bash" and tool_input.get("description"):
-                                display = tool_input["description"]
-                            else:
-                                display = self._tool_display(tool_name, tool_input)
-                            detail = self._tool_detail(tool_name, tool_input)
+            if new_lines:
+                idle_count = 0
 
-                            tool_entry = {
-                                "tool": tool_name,
-                                "display": display,
-                                "detail": detail,
-                                "output": None,
-                                "at": round(time.time() - start_time, 1),
-                            }
-                            tool_calls.append(tool_entry)
-                            if tool_use_id:
-                                tool_id_map[tool_use_id] = len(tool_calls) - 1
+                for line in new_lines:
+                    if line in printed_set:
+                        continue
+                    accumulated_lines.append(line)
+                    printed_set.add(line)
 
-                            pct = min(end_pct - 5,
-                                      start_pct + int((end_pct - start_pct) * tool_count / estimated_tools))
-                            self._progress(task_id, pct, display)
-                            event_bus.emit(task_id, {
-                                "type": "tool_call",
-                                "tool": tool_name,
-                                "display": display,
-                                "detail": detail,
-                                "progress": pct,
-                            })
+                # 推送 text_delta 事件
+                new_text = "\n".join(new_lines)
+                total_len = sum(len(l) for l in accumulated_lines)
+                pct = min(end_pct - 5,
+                          start_pct + int((end_pct - start_pct) * min(1.0, total_len / 2000)))
+                event_bus.emit(task_id, {
+                    "type": "text_delta",
+                    "text": new_text,
+                    "total_len": total_len,
+                    "progress": pct,
+                })
 
-                elif event_type == "user":
-                    # 捕获 tool_result，关联到对应的 tool_call
-                    content_list = event.get("message", {}).get("content", [])
-                    for block in content_list:
-                        if block.get("type") == "tool_result":
-                            tool_use_id = block.get("tool_use_id", "")
-                            result_content = block.get("content", "")
-                            is_error = block.get("is_error", False)
-                            # content 可能是数组（如 ToolSearch 返回），需转为字符串
-                            if isinstance(result_content, list):
-                                parts = []
-                                for item in result_content:
-                                    if isinstance(item, dict):
-                                        if item.get("type") == "text":
-                                            parts.append(item.get("text", ""))
-                                        else:
-                                            parts.append(json.dumps(item, ensure_ascii=False))
-                                    elif isinstance(item, str):
-                                        parts.append(item)
-                                result_content = "\n".join(parts) if parts else ""
-                            elif not isinstance(result_content, str):
-                                result_content = str(result_content) if result_content else ""
-                            idx = tool_id_map.get(tool_use_id)
-                            if idx is not None and idx >= 0 and idx < len(tool_calls):
-                                tool_calls[idx]["output"] = result_content
-                                if is_error:
-                                    tool_calls[idx]["is_error"] = True
-                                # 推送 tool_result 事件给客户端
+                # 尝试检测工具调用和有意义的文本步骤
+                pending_text = []  # 累积文本行，合并为一个步骤
+                for line in new_lines:
+                    tool_info = self._parse_tmux_tool_line(line)
+                    if tool_info:
+                        logger.info(f"[tmux-debug] 检测到工具调用: {tool_info['tool']} → {tool_info['display']}")
+                        # 先 flush 累积的文本
+                        self._flush_text_step(
+                            pending_text, tool_calls, task_id,
+                            task_start_time, pct)
+                        pending_text = []
+                        entry = {
+                            "tool": tool_info["tool"],
+                            "display": tool_info["display"],
+                            "detail": tool_info["detail"],
+                            "output": None,
+                            "at": round(time.time() - task_start_time, 1),
+                        }
+                        tool_calls.append(entry)
+                        event_bus.emit(task_id, {
+                            "type": "tool_call",
+                            "tool": tool_info["tool"],
+                            "display": tool_info["display"],
+                            "detail": tool_info["detail"],
+                            "progress": pct,
+                        })
+                        self._progress(task_id, pct, tool_info["display"])
+                    else:
+                        stripped = line.strip()
+                        # ⎿ 前缀行 → 关联到最近一个 tool_call 的 output
+                        if stripped.startswith('⎿') and tool_calls:
+                            output_text = stripped.lstrip('⎿').strip()
+                            if output_text:
+                                prev = tool_calls[-1].get("output") or ""
+                                tool_calls[-1]["output"] = (prev + output_text + "\n").strip()
                                 event_bus.emit(task_id, {
                                     "type": "tool_result",
-                                    "tool": tool_calls[idx]["tool"],
-                                    "display": tool_calls[idx]["display"],
-                                    "output": result_content,
-                                    "is_error": is_error,
+                                    "display": tool_calls[-1]["display"],
+                                    "output": output_text,
+                                    "is_error": False,
                                 })
+                        # 只将 Claude 的自然语言文本（含中文）作为步骤候选
+                        elif len(stripped) > 10 and self._is_claude_text(stripped):
+                            # 去掉 ● 前缀，保留纯文本
+                            text = stripped
+                            if text.startswith('●'):
+                                text = text[len('●'):].strip()
+                            pending_text.append(text)
+                # flush 本轮剩余文本
+                self._flush_text_step(
+                    pending_text, tool_calls, task_id,
+                    task_start_time, pct)
+            else:
+                idle_count += 1
 
-                elif event_type == "result":
-                    final_result = event.get("result", "")
-                    task_db.update_task(task_id, partial_result=None, tool_calls=tool_calls)
-                    if emit_done:
-                        event_bus.emit(task_id, {
-                            "type": "done",
-                            "status": "completed",
-                            "result": final_result,
-                        })
-                    return final_result
+            # 有提示符时，立即检查并发送排队消息（不管 Claude 是否在 thinking）
+            if session.is_at_prompt():
+                with self._message_lock:
+                    pending = self._pending_messages.get(task_id, [])
+                if pending:
+                    with self._message_lock:
+                        pending = self._pending_messages.pop(task_id, [])
+                    # 先保存当前回复到 messages
+                    raw_result = "\n".join(accumulated_lines).strip()
+                    if raw_result:
+                        result = self._clean_result(raw_result)
+                        messages = task_db.get_task(task_id).get("messages") or []
+                        messages.append({"role": "assistant", "content": result,
+                                         "created_at": datetime.now().isoformat()})
+                        task_db.update_task(task_id, messages=messages, result=result,
+                                           tool_calls=tool_calls if tool_calls else None)
 
-                # 定期写 DB
-                now = time.time()
-                if now - last_db_write >= 3:
-                    accumulated = "".join(partial_text)
-                    if accumulated or tool_calls:
-                        task_db.update_task(task_id,
-                            partial_result=accumulated if accumulated else None,
-                            tool_calls=tool_calls if tool_calls else None,
-                        )
-                    last_db_write = now
+                    msg = pending[0]
+                    if len(pending) > 1:
+                        with self._message_lock:
+                            self._pending_messages[task_id] = pending[1:]
+                    logger.info(f"[streaming] task_id={task_id} 发送排队消息: {msg[:50]}")
+                    event_bus.emit(task_id, {"type": "status_change", "status": "processing"})
+                    session.send(msg)
+                    # 重置状态，继续监听新回复
+                    session.mark()
+                    accumulated_lines.clear()
+                    tool_calls.clear()
+                    idle_count = 0
+                    last_content = ""
+                    last_db_write = time.time()
+                    continue
 
-            # 进程结束但没收到 result 事件
-            process.wait()
-            if process.returncode != 0:
-                stderr = process.stderr.read()
-                logger.warning(f"claude -p streaming failed (rc={process.returncode}): {stderr[:300]}")
-                return None
+            # 检测回答结束：屏幕稳定 + 无 thinking 指示器
+            content = "\n".join(accumulated_lines)
+            if content == last_content:
+                if idle_count >= 2 and session.is_at_prompt() and not _is_thinking(raw_screen):
+                    break
+            else:
+                last_content = content
 
-            result = "".join(partial_text).strip()
-            # 去掉与最终 result 重复的末尾 _text 步骤
-            while (tool_calls and tool_calls[-1].get("tool") == "_text"
-                   and tool_calls[-1].get("detail", "").strip() in result):
-                tool_calls.pop()
-            return result or None
+            # 定期写 DB
+            now = time.time()
+            if now - last_db_write >= 3:
+                if accumulated_lines or tool_calls:
+                    task_db.update_task(task_id,
+                        partial_result="\n".join(accumulated_lines) if accumulated_lines else None,
+                        tool_calls=tool_calls if tool_calls else None,
+                    )
+                last_db_write = now
 
-        except FileNotFoundError:
-            logger.warning("claude command not found")
+        # 超时检查
+        if time.time() - start >= timeout:
+            logger.warning(f"[tmux] task_id={task_id} 超时 ({timeout}s)")
+            session.send_ctrl_c()
+            event_bus.emit(task_id, {"type": "done", "status": "failed",
+                                     "error_msg": f"处理超时（{timeout}s）"})
             return None
-        except Exception as e:
-            logger.warning(f"claude -p streaming error: {e}")
-            return None
 
-    def _run_claude_with_progress(self, task_id: int, prompt: str,
-                                  timeout: int = 600,
-                                  progress_range: tuple = (35, 90),
-                                  messages: list = None) -> str | None:
-        """降级方案：时间估算进度（stream-json 不可用时使用）"""
-        env = os.environ.copy()
-        env["FUND_API_BASE"] = "http://127.0.0.1:8900"
+        # 提取最终结果并清理 TUI 噪音
+        raw_result = "\n".join(accumulated_lines).strip()
+        result = self._clean_result(raw_result)
 
-        start_pct, end_pct = progress_range
-        if not messages:
-            messages = [(start_pct, "处理中...")]
+        # tool_calls 完整保留（前端从 tool_calls + messages 重建对话流）
+        task_db.update_task(task_id, partial_result=None, tool_calls=tool_calls)
 
-        try:
-            process = subprocess.Popen(
-                ["claude", "-p", prompt,
-                 "--allowedTools", "Bash,Read,Glob,Grep",
-                 "--output-format", "text"],
-                stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                text=True,
-                cwd=SKILL_DIR if Path(SKILL_DIR).exists() else None,
-                env=env
-            )
+        # 更新活跃时间
+        with self._tmux_lock:
+            self._session_last_active[task_id] = time.time()
 
-            start_time = time.time()
-            estimate_total = timeout * 0.5
+        if emit_done:
+            event_bus.emit(task_id, {
+                "type": "done",
+                "status": "completed",
+                "result": result,
+            })
 
-            while process.poll() is None:
-                elapsed = time.time() - start_time
-                if elapsed > timeout:
-                    process.kill()
-                    logger.warning(f"claude -p killed after {timeout}s")
-                    return None
+        return result or None
 
-                ratio = min(1.0, elapsed / estimate_total)
-                pct = int(start_pct + (end_pct - start_pct) * ratio)
-                msg = next((m for p, m in reversed(messages) if pct >= p), messages[0][1])
-                self._progress(task_id, pct, msg)
-                time.sleep(3)
+    @staticmethod
+    def _is_claude_text(line: str) -> bool:
+        """判断是否为 Claude 的自然语言文本（适合作为步骤标题）
 
-            stdout = process.stdout.read()
-            stderr = process.stderr.read()
+        排除：工具输出数据、表头、错误信息
+        ● 前缀的自然语言文本（如 "● 我来执行..."）视为 Claude 文本
+        """
+        stripped = line.strip()
+        # ● 前缀：如果后面跟工具名(... 则不是文本，由 _parse_tmux_tool_line 处理
+        if stripped.startswith('●'):
+            rest = stripped[len('●'):].strip()
+            if re.match(r'\w+\(', rest):
+                return False
+            # ● 后跟自然语言文本（含中文），视为 Claude 的思考/说明
+            stripped = rest
+        # 必须包含中文字符
+        if not re.search(r'[\u4e00-\u9fff]', stripped):
+            return False
+        # 排除数据行
+        if re.match(r'^\d{6}\s', stripped):  # 基金代码开头
+            return False
+        if re.match(r'^[\s]*\d+[\s]+\d+', stripped):  # 数字表格行
+            return False
+        # 排除表头/数据标签行（多个中文词用空格分隔，如 "序号 基金代码 基金名称"）
+        if re.match(r'^[\u4e00-\u9fff]+\s{2,}[\u4e00-\u9fff]+\s{2,}', stripped):
+            return False
+        # 排除键值数据行（如 "基金代码: 022365", "代码 名称 状态"）
+        if re.match(r'^[\u4e00-\u9fff]{2,4}[：:]\s*\S', stripped):
+            return False
+        # 排除错误信息
+        if stripped.startswith(('File ', 'Traceback', 'Error')):
+            return False
+        # 排除日期开头的数据行（如 "2026-03-14 008087 hold ..."）
+        if re.match(r'^\d{4}-\d{2}-\d{2}\s', stripped):
+            return False
+        return True
 
-            if process.returncode != 0:
-                logger.warning(f"claude -p failed (rc={process.returncode}): {stderr[:300]}")
-                return None
+    def _flush_text_step(self, pending_text: list[str], tool_calls: list,
+                         task_id: int, task_start_time: float, pct: int):
+        """将累积的文本行合并为一个步骤"""
+        if not pending_text:
+            return
+        # 取第一行作为标题，全部作为详情
+        display = self._text_step_display(pending_text[0])
+        if not display:
+            return
+        detail = "\n".join(pending_text)
+        text_entry = {
+            "tool": "_text",
+            "display": display,
+            "detail": detail,
+            "output": None,
+            "at": round(time.time() - task_start_time, 1),
+        }
+        tool_calls.append(text_entry)
+        event_bus.emit(task_id, {
+            "type": "tool_call",
+            "tool": "_text",
+            "display": display,
+            "detail": detail,
+            "progress": pct,
+            "is_text": True,
+        })
+        self._progress(task_id, pct, display)
 
-            return stdout.strip()
+    @staticmethod
+    def _parse_tmux_tool_line(line: str) -> dict | None:
+        """尝试从 tmux 输出行中检测 Claude 工具调用
 
-        except FileNotFoundError:
-            logger.warning("claude command not found")
-            return None
-        except Exception as e:
-            logger.warning(f"claude -p error: {e}")
-            return None
+        Claude CLI TUI 中工具调用通常显示为：
+          ⏺ ToolName(param: "value")
+          ● ToolName(...)
+        """
+        stripped = line.strip()
+        for marker in ('⏺', '●', '◆', '▶'):
+            if stripped.startswith(marker):
+                rest = stripped[len(marker):].strip()
+                m = re.match(r'(\w+)\((.*)$', rest)
+                if m:
+                    tool_name = m.group(1)
+                    detail = m.group(2).rstrip(')')
+                    # display 展示工具名+简化参数（如 Bash: python client.py snapshot）
+                    if tool_name == "Bash":
+                        cmd = detail.strip('"').strip("'")
+                        if len(cmd) > 80:
+                            cmd = cmd[:77] + "..."
+                        display = f"Bash: {cmd}" if cmd else "执行命令"
+                    elif tool_name == "Read":
+                        fname = detail.split("/")[-1].strip('"').strip("'")
+                        display = f"Read: {fname}" if fname else "读取文件"
+                    elif tool_name == "Grep":
+                        display = f"Grep: {detail[:60]}" if detail else "搜索内容"
+                    elif tool_name == "Glob":
+                        display = f"Glob: {detail[:60]}" if detail else "搜索文件"
+                    elif tool_name == "Edit":
+                        fname = detail.split("/")[-1].split(",")[0].strip('"').strip("'")
+                        display = f"Edit: {fname}" if fname else "编辑文件"
+                    elif tool_name == "Write":
+                        fname = detail.split("/")[-1].split(",")[0].strip('"').strip("'")
+                        display = f"Write: {fname}" if fname else "写入文件"
+                    else:
+                        display = f"{tool_name}({detail[:50]})" if detail else tool_name
+                    return {"tool": tool_name, "display": display, "detail": detail}
+        return None
+
+    # ==================== 结果后处理 ====================
+
+    @staticmethod
+    def _clean_result(text: str) -> str:
+        """后处理：从混合了 TUI 噪音的原始内容中提取 Claude 的实际回答
+
+        策略：
+        1. 逐行清理明确的噪音（● 前缀、工具名、traceback、⎿ 输出等）
+        2. 如果发现报告起始标记，只保留报告部分
+        """
+        if not text:
+            return text
+
+        lines = text.split('\n')
+        cleaned = []
+        in_traceback = False
+
+        for line in lines:
+            stripped = line.strip()
+
+            if not stripped:
+                if cleaned:
+                    cleaned.append('')
+                continue
+
+            if stripped.startswith('●'):
+                in_traceback = False
+                continue
+
+            if stripped.startswith('⎿'):
+                continue
+
+            if re.match(r'^(Bash|Read|Grep|Glob|Skill|Write|Edit)\(', stripped):
+                continue
+
+            if stripped.startswith('Traceback (most recent call last)'):
+                in_traceback = True
+                continue
+            if in_traceback:
+                if stripped.startswith(('File ', '^')):
+                    continue
+                if re.match(r'^[A-Za-z_]+Error[:(]', stripped):
+                    continue
+                if re.match(r'^[A-Za-z_]+Exception[:(]', stripped):
+                    continue
+                if re.match(r'^requests\.\w+', stripped):
+                    continue
+                if line.startswith(('  ', '\t')):
+                    continue
+                in_traceback = False
+
+            if re.match(r'^={5,}$', stripped):
+                continue
+
+            if re.match(r'^(Reading|Writing)\s+\d+\s+file', stripped):
+                continue
+
+            cleaned.append(stripped)
+
+        result = '\n'.join(cleaned).strip()
+
+        report_markers = [
+            r'📊',
+            r'^#\s',
+            r'^一[、.]',
+        ]
+        for marker in report_markers:
+            m = re.search(marker, result, re.MULTILINE)
+            if m:
+                start = m.start()
+                line_start = result.rfind('\n', 0, start)
+                line_start = line_start + 1 if line_start >= 0 else 0
+                report = result[line_start:].strip()
+                if len(report) > 100:
+                    return report
+
+        return result
 
     # ==================== 辅助方法 ====================
 
     def _extract_json(self, text: str) -> dict | None:
         """从文本中提取 JSON"""
-        import re
         m = re.search(r'```(?:json)?\s*\n?(.*?)\n?```', text, re.DOTALL)
         json_str = m.group(1).strip() if m else text.strip()
         try:
@@ -680,7 +1381,6 @@ OCR 文本：
             line = line.strip()
             if not line or line.startswith("#"):
                 continue
-            # 取有实质内容的行
             if line.startswith("-") or line.startswith("*") or line.startswith(">") or len(line) > 5:
                 clean = line.lstrip("-*> ").strip()
                 if clean:

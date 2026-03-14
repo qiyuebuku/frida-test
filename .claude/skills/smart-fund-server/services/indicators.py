@@ -5,14 +5,11 @@ import json
 import os
 import sys
 
-from services.fund_db import get_cache, save_signal
-
-CONFIG_PATH = os.path.join(os.path.dirname(os.path.dirname(__file__)), "config.json")
+from services.fund_db import get_cache, save_signal, get_config
 
 
 def _load_config():
-    with open(CONFIG_PATH, "r", encoding="utf-8") as f:
-        return json.load(f)
+    return get_config()
 
 
 # ==================== 净值解析 ====================
@@ -508,7 +505,7 @@ def cmd_evaluate():
     fund_pool = [item["code"] if isinstance(item, dict) else item for item in raw_pool]
 
     if not fund_pool:
-        print(json.dumps({"message": "基金池为空，请先在 config.json 中配置 fund_pool"}, ensure_ascii=False))
+        print(json.dumps({"message": "基金池为空，请先在 ft_config 中配置 fund_pool"}, ensure_ascii=False))
         return
 
     result = {}
