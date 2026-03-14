@@ -12,6 +12,7 @@ logging.basicConfig(
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 
 from services.ths_fund_client import THSFundClient
 from services import fund_db
@@ -82,6 +83,13 @@ async def health_check():
 
 
 app.include_router(router)
+
+# 静态文件（xterm.js 等）
+app.mount("/static", StaticFiles(directory=str(Path(__file__).parent / "static")), name="static")
+
+# WebSocket 路由需要直接注册到 app（子 router 中 WebSocket 可能 404）
+from routers.terminal import router as terminal_router
+app.include_router(terminal_router)
 
 
 if __name__ == "__main__":

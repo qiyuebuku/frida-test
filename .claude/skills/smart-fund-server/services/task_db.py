@@ -59,6 +59,7 @@ ALTER TABLE sa_tasks ADD COLUMN IF NOT EXISTS skill_name VARCHAR(64);
 ALTER TABLE sa_tasks ADD COLUMN IF NOT EXISTS command_id VARCHAR(64);
 ALTER TABLE sa_tasks ADD COLUMN IF NOT EXISTS session_id VARCHAR(64);
 ALTER TABLE sa_tasks ADD COLUMN IF NOT EXISTS messages JSONB DEFAULT '[]';
+ALTER TABLE sa_tasks ADD COLUMN IF NOT EXISTS terminal_log TEXT;
 CREATE INDEX IF NOT EXISTS idx_sa_tasks_skill ON sa_tasks(skill_name);
 """
 
@@ -121,6 +122,29 @@ def get_task(task_id: int) -> dict | None:
             cur.execute("SELECT * FROM sa_tasks WHERE id = %s", (task_id,))
             row = cur.fetchone()
             return dict(row) if row else None
+
+
+def save_terminal_log(task_id: int, log: str):
+    """保存终端累积日志到数据库"""
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                "UPDATE sa_tasks SET terminal_log = %s WHERE id = %s",
+                (log, task_id)
+            )
+        conn.commit()
+
+
+def get_terminal_log(task_id: int) -> str | None:
+    """获取终端累积日志"""
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT terminal_log FROM sa_tasks WHERE id = %s",
+                (task_id,)
+            )
+            row = cur.fetchone()
+            return row[0] if row and row[0] else None
 
 
 def list_tasks(status: str = None, task_type: str = None,

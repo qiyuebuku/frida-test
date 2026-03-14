@@ -1,0 +1,197 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<link rel="stylesheet" href="xterm.css">
+<script src="xterm.js"></script>
+<script src="xterm-addon-fit.js"></script>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body { width: 100%; height: 100%; overflow: hidden; background: #1a1a1a; }
+  #terminal { width: 100%; height: 100%; }
+  #status {
+    position: fixed; top: 0; left: 0; right: 0;
+    padding: 4px 12px; font-size: 11px; font-family: monospace;
+    z-index: 10; text-align: center;
+    transition: opacity 0.3s;
+  }
+  #status.connecting { background: #3a3a1a; color: #d4a54e; }
+  #status.connected { background: #1a3a1a; color: #4ec86c; opacity: 0; }
+  #status.error { background: #3a1a1a; color: #e05252; }
+</style>
+</head>
+<body>
+<div id="status" class="connecting">connecting...</div>
+<div id="terminal"></div>
+<script>
+(function() {
+  var params = new URLSearchParams(location.search);
+  var taskId = params.get('task_id') || '0';
+  var wsHost = params.get('host') || location.hostname + ':8900';
+  var wsProtocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
+  var wsUrl = wsProtocol + '//' + wsHost + '/ws/terminal/' + taskId;
+
+  var statusEl = document.getElementById('status');
+  var termEl = document.getElementById('terminal');
+
+  // xterm.js 初始化
+  var term = new Terminal({
+    fontSize: 12,
+    fontFamily: '"Courier New", "DejaVu Sans Mono", monospace',
+    theme: {
+      background: '#1a1a1a',
+      foreground: '#d4d4d4',
+      cursor: '#d4d4d4',
+      cursorAccent: '#1a1a1a',
+      selectionBackground: 'rgba(91, 156, 245, 0.3)',
+      black: '#1a1a1a',
+      red: '#e05252',
+      green: '#4ec86c',
+      yellow: '#d4a54e',
+      blue: '#5b9cf5',
+      magenta: '#c678dd',
+      cyan: '#56b6c2',
+      white: '#d4d4d4',
+      brightBlack: '#5c6370',
+      brightRed: '#e06c75',
+      brightGreen: '#98c379',
+      brightYellow: '#e5c07b',
+      brightBlue: '#61afef',
+      brightMagenta: '#c678dd',
+      brightCyan: '#56b6c2',
+      brightWhite: '#ffffff'
+    },
+    cursorBlink: false,
+    cursorStyle: 'bar',
+    scrollback: 5000,
+    convertEol: true,
+    allowProposedApi: true
+  });
+
+  var fitAddon = new FitAddon.FitAddon();
+  term.loadAddon(fitAddon);
+  term.open(termEl);
+
+  // 延迟 fit 确保容器尺寸正确
+  setTimeout(function() { fitAddon.fit(); }, 100);
+
+  // WebSocket
+  var ws = null;
+  var reconnectTimer = null;
+  var reconnectDelay = 1000;
+  var noReconnect = false;
+
+  function connect() {
+    if (ws && (ws.readyState === WebSocket.CONNECTING || ws.readyState === WebSocket.OPEN)) {
+      return;
+    }
+
+    statusEl.className = 'connecting';
+    statusEl.textContent = 'connecting...';
+    statusEl.style.opacity = '1';
+
+    ws = new WebSocket(wsUrl);
+    ws.binaryType = 'arraybuffer';
+
+    ws.onopen = function() {
+      statusEl.className = 'connected';
+      statusEl.textContent = 'connected';
+      // 2 秒后隐藏状态栏
+      setTimeout(function() { statusEl.style.opacity = '0'; }, 2000);
+      reconnectDelay = 1000;
+
+      // 发送终端尺寸
+      ws.send(JSON.stringify({
+        type: 'resize',
+        cols: term.cols,
+        rows: term.rows
+      }));
+    };
+
+    ws.onmessage = function(event) {
+      if (event.data instanceof ArrayBuffer) {
+        // 二进制：终端数据
+        term.write(new Uint8Array(event.data));
+      } else {
+        // 文本：可能是 JSON 控制消息
+        try {
+          var msg = JSON.parse(event.data);
+          if (msg.type === 'error') {
+            statusEl.className = 'error';
+            statusEl.textContent = msg.message;
+            statusEl.style.opacity = '1';
+            // 终端不可用（tmux 会话不存在），停止重连
+            noReconnect = true;
+            term.write('\r\n\x1b[31m' + msg.message + '\x1b[0m\r\n');
+          }
+        } catch(e) {
+          // 普通文本，直接写入终端
+          term.write(event.data);
+        }
+      }
+    };
+
+    ws.onclose = function() {
+      if (noReconnect) {
+        statusEl.className = 'error';
+        statusEl.textContent = 'terminal unavailable';
+        statusEl.style.opacity = '1';
+        return;
+      }
+      statusEl.className = 'error';
+      statusEl.textContent = 'disconnected, reconnecting...';
+      statusEl.style.opacity = '1';
+      reconnectTimer = setTimeout(function() {
+        reconnectDelay = Math.min(reconnectDelay * 1.5, 10000);
+        connect();
+      }, reconnectDelay);
+    };
+
+    ws.onerror = function() {
+      // onclose 会紧跟触发
+    };
+  }
+
+  // 用户输入 → WebSocket（终端只读模式下此事件不触发）
+  term.onData(function(data) {
+    if (ws && ws.readyState === WebSocket.OPEN) {
+      ws.send(data);
+    }
+  });
+
+  // 窗口大小变化
+  window.addEventListener('resize', function() {
+    fitAddon.fit();
+    if (ws && ws.readyState === WebSocket.OPEN) {
+      ws.send(JSON.stringify({
+        type: 'resize',
+        cols: term.cols,
+        rows: term.rows
+      }));
+    }
+  });
+
+  // Android WebView 可通过 JS 接口调用的方法
+  // 发送用户消息（从底部输入框调用）
+  window.sendTerminalInput = function(text) {
+    if (ws && ws.readyState === WebSocket.OPEN) {
+      ws.send(JSON.stringify({ type: 'input', text: text + '\n' }));
+    }
+  };
+
+  // 获取连接状态
+  window.getTerminalStatus = function() {
+    if (!ws) return 'disconnected';
+    switch (ws.readyState) {
+      case WebSocket.CONNECTING: return 'connecting';
+      case WebSocket.OPEN: return 'connected';
+      default: return 'disconnected';
+    }
+  };
+
+  connect();
+})();
+</script>
+</body>
+</html>
