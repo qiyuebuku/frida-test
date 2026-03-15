@@ -21,7 +21,6 @@ from pathlib import Path
 from services import task_db
 from services import db as ocr_db
 from services.ocr_service import OCRService
-from services.event_bus import event_bus
 import services.handlers as handlers
 
 logger = logging.getLogger(__name__)
@@ -254,8 +253,23 @@ class ClaudeTmuxSession:
         self._known_lines = set(_extract_content(screen))
 
     def send(self, text: str, is_followup: bool = False):
-        """发送文本到 Claude（自动按 Enter）"""
-        _tmux("send-keys", "-t", self.session_name, text, "Enter")
+        """发送文本到 Claude（自动按 Enter）
+
+        使用 tmux load-buffer + paste-buffer 粘贴文本（避免 send-keys 丢失长文本），
+        然后延迟发送 Enter 确保文本已完整输入。
+        """
+        import tempfile
+        with tempfile.NamedTemporaryFile(mode='w', suffix='.txt', delete=False) as f:
+            f.write(text)
+            tmp_path = f.name
+        try:
+            _tmux("load-buffer", tmp_path)
+            _tmux("paste-buffer", "-t", self.session_name)
+            time.sleep(0.5)  # 等待粘贴完成
+            _tmux("send-keys", "-t", self.session_name, "Enter")
+        finally:
+            import os
+            os.unlink(tmp_path)
         if is_followup:
             self.has_pending_input = True
 
@@ -384,10 +398,11 @@ class TaskExecutor:
         with self._tmux_lock:
             session = self._tmux_sessions.get(task_id)
             if session and session.ready:
-                if session.model == model:
+                # 未指定 model 或 model 相同 → 复用（追问时不传 model，直接复用）
+                if model is None or session.model == model:
                     self._session_last_active[task_id] = time.time()
                     return session
-                # model 不同，关闭旧会话
+                # model 明确不同，关闭旧会话
                 session.close()
             # 创建新会话（可能是 resume 模式）
             session = ClaudeTmuxSession(task_id, cwd=cwd, model=model,
@@ -490,7 +505,7 @@ class TaskExecutor:
                     result = self._run_claude_streaming(
                         task_id, msg, timeout=600,
                         progress_range=(0, 90), estimated_tools=20,
-                        emit_done=False)
+                        emit_done=False, skip_expand=True)
                     if result:
                         messages = task_db.get_task(task_id).get("messages") or []
                         messages.append({"role": "assistant", "content": result,
@@ -498,23 +513,10 @@ class TaskExecutor:
                         task_db.update_task(task_id, result=result, messages=messages)
                 current = task_db.get_task(task_id)
 
-            # 发送 done 事件（包含 tool_calls，避免前端丢失步骤）
-            if current:
-                event_bus.emit(task_id, {
-                    "type": "done",
-                    "status": current.get("status", "completed"),
-                    "result": current.get("result"),
-                    "error_msg": current.get("error_msg"),
-                    "tool_calls": current.get("tool_calls"),
-                })
-
         except Exception as e:
             logger.exception(f"Task {task_id} failed")
             error_msg = str(e)[:500]
             task_db.update_task(task_id, status="failed", error_msg=error_msg)
-            event_bus.emit(task_id, {
-                "type": "done", "status": "failed", "error_msg": error_msg,
-            })
         finally:
             self._task_tool_calls.pop(task_id, None)
             self._task_start_times.pop(task_id, None)
@@ -522,16 +524,28 @@ class TaskExecutor:
             self._semaphore.release()
 
     def force_stop(self, task_id: int) -> bool:
-        """强制停止正在运行的任务"""
+        """停止正在运行的任务 - 发送 Escape 并立即更新状态，后台异步捕获展开内容"""
         with self._tmux_lock:
             session = self._tmux_sessions.get(task_id)
         if session:
-            session.send_ctrl_c()
-            time.sleep(1)
+            _tmux("send-keys", "-t", session.session_name, "Escape")
             task_db.update_task(task_id, status="stopped", error_msg="用户手动停止",
                                completed_at=datetime.now())
-            event_bus.emit(task_id, {"type": "done", "status": "stopped",
-                                     "error_msg": "用户手动停止"})
+            # 后台异步：等 Escape 生效后捕获展开内容
+            import threading
+            def _bg_capture():
+                try:
+                    # 等待 Escape 生效
+                    for _ in range(20):
+                        time.sleep(0.2)
+                        screen = session.capture(-50)
+                        if 'Interrupted' in screen or '>' in screen.split('\n')[-1]:
+                            break
+                    self._capture_expanded(task_id, session)
+                    logger.info(f"[force_stop] task_id={task_id} 展开内容捕获完成")
+                except Exception as e:
+                    logger.warning(f"[force_stop] task_id={task_id} 捕获展开内容失败: {e}")
+            threading.Thread(target=_bg_capture, daemon=True).start()
             return True
         return False
 
@@ -548,17 +562,16 @@ class TaskExecutor:
 
         logger.info(f"[queue_message] task_id={task_id} status={task['status']} message={message[:80]}")
 
-        if task["status"] in ("processing", "pending"):
-            # 放入待发送队列，由 _run_claude_streaming 循环在提示符出现时发送
+        has_active_session = task_id in self._tmux_sessions
+        if task["status"] in ("processing", "pending") and has_active_session:
+            # 有活跃会话 → 放入队列，由 _run_claude_streaming 在提示符出现时发送
             with self._message_lock:
                 self._pending_messages.setdefault(task_id, []).append(message)
             logger.info(f"[queue_message] task_id={task_id} 消息已加入待发送队列，等待提示符出现后发送")
-            # 记录到 DB
             messages = task.get("messages") or []
             messages.append({"role": "user", "content": message,
                              "created_at": datetime.now().isoformat()})
             task_db.update_task(task_id, messages=messages)
-            event_bus.emit(task_id, {"type": "message_queued", "content": message})
             return {"queued": True}
         else:
             # 任务已完成/停止，立即启动追问
@@ -576,16 +589,24 @@ class TaskExecutor:
         messages = task.get("messages") or []
         messages.append({"role": "user", "content": message,
                          "created_at": datetime.now().isoformat()})
+        # 检查是否有活跃 tmux 会话
+        has_active_session = task_id in self._tmux_sessions
         # 不清除 result，保留上次结果供 UI 展示
-        task_db.update_task(task_id, messages=messages, status="processing",
-                           progress=0, partial_result=None)
-        event_bus.emit(task_id, {"type": "status_change", "status": "processing"})
+        if has_active_session:
+            # 有活跃会话 → 直接发消息，不需要恢复进度
+            task_db.update_task(task_id, messages=messages, status="processing",
+                               progress=25, partial_result=None)
+        else:
+            # 无活跃会话 → 需要恢复，显示恢复进度
+            task_db.update_task(task_id, messages=messages, status="processing",
+                               progress=5, progress_msg="恢复会话中...",
+                               partial_result=None)
 
         thread = threading.Thread(target=self._run_followup, args=(task_id,), daemon=True)
         thread.start()
 
     def _run_followup(self, task_id: int):
-        """追问执行线程"""
+        """追问执行线程 — 直接复用已有 tmux 会话发消息"""
         acquired = self._semaphore.acquire(timeout=300)
         if not acquired:
             task_db.update_task(task_id, status="completed", error_msg="服务器繁忙")
@@ -594,11 +615,19 @@ class TaskExecutor:
             self._task_tool_calls[task_id] = []
             self._task_start_times[task_id] = time.time()
 
-            # 检查是否有现有 tmux 会话
-            has_existing_session = task_id in self._tmux_sessions
-            # 检查数据库中是否有 Claude session_id（可用于 --resume 恢复）
             task = task_db.get_task(task_id)
             db_session_id = task.get("session_id")
+
+            # 检查是否有现有 tmux 会话可复用
+            with self._tmux_lock:
+                has_existing = task_id in self._tmux_sessions
+
+            if has_existing:
+                logger.info(f"[followup] task_id={task_id} 复用现有 tmux 会话")
+            elif db_session_id:
+                logger.info(f"[followup] task_id={task_id} 无 tmux 会话，将 --resume {db_session_id[:8]}...")
+            else:
+                logger.info(f"[followup] task_id={task_id} 无会话可恢复，创建新会话")
 
             while True:
                 task = task_db.get_task(task_id)
@@ -624,21 +653,19 @@ class TaskExecutor:
                         if skill:
                             cwd = skill.path
 
-                # 如果没有内存中的 session 但有 DB 中的 session_id，用 --resume 恢复
+                # 有现有会话 → 直接发消息（不传 resume）；无会话 → 用 resume 恢复
                 resume_id = None
-                if not has_existing_session and db_session_id:
+                with self._tmux_lock:
+                    has_existing = task_id in self._tmux_sessions
+                if not has_existing and db_session_id:
                     resume_id = db_session_id
-                    logger.info(f"[followup] task_id={task_id} 将使用 --resume {db_session_id[:8]}... 恢复会话")
 
                 result = self._run_claude_streaming(
                     task_id, prompt, timeout=600,
-                    progress_range=(0, 90), estimated_tools=20,
+                    progress_range=(25, 90), estimated_tools=20,
                     emit_done=False, cwd=cwd,
-                    resume_session_id=resume_id)
-
-                # 后续轮次已有会话，不再需要 resume
-                has_existing_session = True
-                db_session_id = None
+                    resume_session_id=resume_id,
+                    skip_expand=True)
 
                 if result:
                     messages = task_db.get_task(task_id).get("messages") or []
@@ -657,21 +684,22 @@ class TaskExecutor:
                     messages.append({"role": "user", "content": msg,
                                      "created_at": datetime.now().isoformat()})
                     task_db.update_task(task_id, messages=messages)
-                    event_bus.emit(task_id, {"type": "message_queued", "content": msg})
 
+            # 追问全部完成后，做一次展开保存完整内容
+            with self._tmux_lock:
+                session = self._tmux_sessions.get(task_id)
+            if session:
+                self._capture_expanded(task_id, session)
+
+            # 检查是否已被用户停止，避免覆盖 stopped 状态
+            current = task_db.get_task(task_id)
+            if not current or current["status"] == "stopped":
+                return
             task_db.update_task(task_id, status="completed", progress=100,
                                completed_at=datetime.now())
-            current = task_db.get_task(task_id)
-            event_bus.emit(task_id, {
-                "type": "done", "status": "completed",
-                "result": current.get("result") if current else None,
-                "tool_calls": current.get("tool_calls") if current else None,
-            })
         except Exception as e:
             logger.exception(f"Follow-up task {task_id} failed")
             task_db.update_task(task_id, status="completed", error_msg=str(e)[:500])
-            event_bus.emit(task_id, {"type": "done", "status": "failed",
-                                     "error_msg": str(e)[:500]})
         finally:
             self._task_tool_calls.pop(task_id, None)
             self._task_start_times.pop(task_id, None)
@@ -682,7 +710,7 @@ class TaskExecutor:
 
     def _emit_step(self, task_id: int, display: str, detail: str = "",
                    progress: int = None, output: str = None):
-        """发射一个处理步骤事件（出现在处理步骤列表中）"""
+        """记录一个处理步骤到 tool_calls"""
         start_time = self._task_start_times.get(task_id, time.time())
         tool_calls = self._task_tool_calls.get(task_id, [])
         entry = {
@@ -693,17 +721,6 @@ class TaskExecutor:
             "at": round(time.time() - start_time, 1),
         }
         tool_calls.append(entry)
-        event_data = {
-            "type": "tool_call",
-            "tool": "_step",
-            "display": display,
-            "detail": detail,
-            "progress": progress,
-            "is_text": True,
-        }
-        if output:
-            event_data["output"] = output
-        event_bus.emit(task_id, event_data)
         if progress:
             self._progress(task_id, progress, display)
         task_db.update_task(task_id, tool_calls=tool_calls)
@@ -832,6 +849,14 @@ OCR 文本：
             cwd=skill.path, timeout=600, progress_range=(5, 90), estimated_tools=30,
             emit_done=False)
 
+        # 检查是否已被用户停止，避免覆盖 stopped 状态
+        current = task_db.get_task(task_id)
+        if current and current["status"] == "stopped":
+            if report:
+                summary = self._extract_summary(report)
+                task_db.update_task(task_id, summary=summary, result=report)
+            return
+
         if not report:
             task_db.update_task(task_id, status="failed", error_msg="执行超时或失败")
             return
@@ -948,7 +973,8 @@ OCR 文本：
                               cwd: str = None,
                               emit_done: bool = True,
                               model: str = None,
-                              resume_session_id: str = None) -> str | None:
+                              resume_session_id: str = None,
+                              skip_expand: bool = False) -> str | None:
         """通过 tmux 发送 prompt 到 Claude CLI 交互模式，实时推送新内容
 
         - 所有 Claude 调用统一走 tmux
@@ -961,7 +987,10 @@ OCR 文本：
             raise RuntimeError(
                 f"tmux 会话 {session.session_name} 未就绪，Claude CLI 启动失败")
 
+        # 会话就绪后，确保 progress >= 25 以触发客户端切换到终端视图
         start_pct, end_pct = progress_range
+        ready_pct = max(start_pct, 25)
+        self._progress(task_id, ready_pct, "Claude CLI 就绪")
         tool_calls = self._task_tool_calls.get(task_id, [])
         task_start_time = self._task_start_times.get(task_id, time.time())
 
@@ -974,6 +1003,7 @@ OCR 文本：
                 session._known_lines.add(stripped)
 
         # 发送 prompt
+        logger.info(f"[tmux] task_id={task_id} 发送消息到 Claude CLI: {prompt[:80]}")
         session.send(prompt)
 
         # 轮询等待回答
@@ -981,9 +1011,10 @@ OCR 文本：
         printed_set: set[str] = set()  # 已推送过的行（去重）
         start = time.time()
         idle_count = 0
+        has_real_output = False  # 是否已收到真正的输出（防止刚启动就误判完成）
         last_content = ""
         last_db_write = time.time()
-        last_raw_screen = ""  # 用于检测原始屏幕变化
+        last_raw_screen = session.capture(-500)  # 初始化为当前屏幕，避免首次 capture 把历史全当新内容
 
         while time.time() - start < timeout:
             time.sleep(1)
@@ -1025,6 +1056,7 @@ OCR 文本：
 
             if new_lines:
                 idle_count = 0
+                has_real_output = True
 
                 for line in new_lines:
                     if line in printed_set:
@@ -1037,13 +1069,6 @@ OCR 文本：
                 total_len = sum(len(l) for l in accumulated_lines)
                 pct = min(end_pct - 5,
                           start_pct + int((end_pct - start_pct) * min(1.0, total_len / 2000)))
-                event_bus.emit(task_id, {
-                    "type": "text_delta",
-                    "text": new_text,
-                    "total_len": total_len,
-                    "progress": pct,
-                })
-
                 # 尝试检测工具调用和有意义的文本步骤
                 pending_text = []  # 累积文本行，合并为一个步骤
                 for line in new_lines:
@@ -1063,13 +1088,6 @@ OCR 文本：
                             "at": round(time.time() - task_start_time, 1),
                         }
                         tool_calls.append(entry)
-                        event_bus.emit(task_id, {
-                            "type": "tool_call",
-                            "tool": tool_info["tool"],
-                            "display": tool_info["display"],
-                            "detail": tool_info["detail"],
-                            "progress": pct,
-                        })
                         self._progress(task_id, pct, tool_info["display"])
                     else:
                         stripped = line.strip()
@@ -1079,12 +1097,6 @@ OCR 文本：
                             if output_text:
                                 prev = tool_calls[-1].get("output") or ""
                                 tool_calls[-1]["output"] = (prev + output_text + "\n").strip()
-                                event_bus.emit(task_id, {
-                                    "type": "tool_result",
-                                    "display": tool_calls[-1]["display"],
-                                    "output": output_text,
-                                    "is_error": False,
-                                })
                         # 只将 Claude 的自然语言文本（含中文）作为步骤候选
                         elif len(stripped) > 10 and self._is_claude_text(stripped):
                             # 去掉 ● 前缀，保留纯文本
@@ -1121,21 +1133,21 @@ OCR 文本：
                         with self._message_lock:
                             self._pending_messages[task_id] = pending[1:]
                     logger.info(f"[streaming] task_id={task_id} 发送排队消息: {msg[:50]}")
-                    event_bus.emit(task_id, {"type": "status_change", "status": "processing"})
                     session.send(msg)
                     # 重置状态，继续监听新回复
                     session.mark()
                     accumulated_lines.clear()
                     tool_calls.clear()
                     idle_count = 0
+                    has_real_output = False
                     last_content = ""
                     last_db_write = time.time()
                     continue
 
-            # 检测回答结束：屏幕稳定 + 无 thinking 指示器
+            # 检测回答结束：屏幕稳定 + 无 thinking 指示器 + 必须已有真正输出
             content = "\n".join(accumulated_lines)
             if content == last_content:
-                if idle_count >= 2 and session.is_at_prompt() and not _is_thinking(raw_screen):
+                if has_real_output and idle_count >= 2 and session.is_at_prompt() and not _is_thinking(raw_screen):
                     break
             else:
                 last_content = content
@@ -1154,9 +1166,14 @@ OCR 文本：
         if time.time() - start >= timeout:
             logger.warning(f"[tmux] task_id={task_id} 超时 ({timeout}s)")
             session.send_ctrl_c()
-            event_bus.emit(task_id, {"type": "done", "status": "failed",
-                                     "error_msg": f"处理超时（{timeout}s）"})
             return None
+
+        # 展开工具输出（Ctrl+O），捕获完整内容存到 terminal_log_expanded
+        logger.info(f"[tmux] task_id={task_id} 回答完成, tool_calls={len(tool_calls)}个, session={session.session_name}")
+        if not skip_expand:
+            self._capture_expanded(task_id, session)
+        else:
+            logger.info(f"[tmux] task_id={task_id} 跳过展开（追问模式）")
 
         # 提取最终结果并清理 TUI 噪音
         raw_result = "\n".join(accumulated_lines).strip()
@@ -1168,13 +1185,6 @@ OCR 文本：
         # 更新活跃时间
         with self._tmux_lock:
             self._session_last_active[task_id] = time.time()
-
-        if emit_done:
-            event_bus.emit(task_id, {
-                "type": "done",
-                "status": "completed",
-                "result": result,
-            })
 
         return result or None
 
@@ -1233,15 +1243,88 @@ OCR 文本：
             "at": round(time.time() - task_start_time, 1),
         }
         tool_calls.append(text_entry)
-        event_bus.emit(task_id, {
-            "type": "tool_call",
-            "tool": "_text",
-            "display": display,
-            "detail": detail,
-            "progress": pct,
-            "is_text": True,
-        })
         self._progress(task_id, pct, display)
+
+    def _capture_expanded(self, task_id: int, session: 'ClaudeTmuxSession'):
+        """发送 Ctrl+O 展开工具输出，捕获完整内容存到 terminal_log_expanded，再折叠回去"""
+        from routers.terminal import _expanding_tasks
+
+        # 检查是否有折叠块
+        before_screen = session.capture(-5000)
+        collapsed_count = before_screen.count('ctrl+o')
+        if collapsed_count == 0:
+            logger.info(f"[tmux] task_id={task_id} 无折叠块，跳过展开")
+            return
+
+        # 标记展开中，SSE 暂停推送避免 thinking 内容闪现
+        _expanding_tasks.add(task_id)
+        try:
+            logger.info(f"[tmux] task_id={task_id} 检测到 {collapsed_count} 个折叠块，发送 Ctrl+O 展开")
+            _tmux("send-keys", "-t", session.session_name, "C-o")
+
+            # 轮询等待展开生效（最多 5 秒）
+            expanded_screen = before_screen
+            collapsed_after = collapsed_count
+            for _ in range(25):
+                time.sleep(0.2)
+                expanded_screen = session.capture(-5000)
+                collapsed_after = expanded_screen.count('ctrl+o')
+                if collapsed_after < collapsed_count:
+                    break
+            logger.info(f"[tmux] task_id={task_id} Ctrl+O 后折叠块: {collapsed_after} (之前 {collapsed_count})")
+
+            if collapsed_after >= collapsed_count:
+                # C-o 没生效，尝试 literal 方式
+                logger.warning(f"[tmux] task_id={task_id} C-o 未生效，尝试 literal \\x0f")
+                _tmux("send-keys", "-t", session.session_name, "-l", "\x0f")
+                for _ in range(25):
+                    time.sleep(0.2)
+                    expanded_screen = session.capture(-5000)
+                    collapsed_after = expanded_screen.count('ctrl+o')
+                    if collapsed_after < collapsed_count:
+                        break
+                logger.info(f"[tmux] task_id={task_id} literal 后折叠块: {collapsed_after}")
+
+            # 从 DB 读取已保存的历史（terminal_log 含 saved_prefix + ANSI），
+            # 去重后拼接当前展开内容，确保历史消息不丢失且不重复
+            try:
+                from routers.terminal import _strip_ansi
+                existing_log = task_db.get_terminal_log(task_id) or ""
+                if existing_log:
+                    expanded_lines = expanded_screen.strip().split('\n')
+                    existing_lines = existing_log.strip().split('\n')
+                    # 找展开内容的第一个非空行在历史中的位置
+                    # 注意：existing_lines 含 ANSI 转义码，expanded_lines 是纯文本，需要去 ANSI 后比较
+                    first_line = ""
+                    for el in expanded_lines[:10]:
+                        if el.strip():
+                            first_line = el.strip()
+                            break
+                    cut_at = len(existing_lines)
+                    if first_line:
+                        for i, hl in enumerate(existing_lines):
+                            if _strip_ansi(hl).strip() == first_line:
+                                cut_at = i
+                                break
+                    history_prefix = existing_lines[:cut_at]
+                    if history_prefix:
+                        full_expanded = '\n'.join(history_prefix) + '\n' + '─' * 60 + '\n' + expanded_screen
+                    else:
+                        full_expanded = expanded_screen
+                else:
+                    full_expanded = expanded_screen
+                task_db.update_task(task_id, terminal_log_expanded=full_expanded)
+                logger.info(f"[tmux] task_id={task_id} 展开内容已保存 ({len(full_expanded)} 字符)")
+            except Exception as e:
+                logger.warning(f"[tmux] task_id={task_id} 保存展开内容失败: {e}")
+
+            # 立即折叠回去
+            if collapsed_after < collapsed_count:
+                logger.info(f"[tmux] task_id={task_id} 发送 Ctrl+O 折叠回去")
+                _tmux("send-keys", "-t", session.session_name, "C-o")
+                time.sleep(0.3)
+        finally:
+            _expanding_tasks.discard(task_id)
 
     @staticmethod
     def _parse_tmux_tool_line(line: str) -> dict | None:

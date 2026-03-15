@@ -82,7 +82,8 @@ sync_code() {
 # ==================== 重启服务 ====================
 restart_service() {
     echo "🔄 重启服务..."
-    sudo_cmd "systemctl restart ${SERVICE_NAME}"
+    # 已配置 sudoers 免密，直接 sudo（不需要 echo password）
+    ssh_cmd "sudo systemctl restart ${SERVICE_NAME}"
     sleep 2
 
     local status

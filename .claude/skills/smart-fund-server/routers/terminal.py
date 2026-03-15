@@ -16,6 +16,9 @@ logger = logging.getLogger(__name__)
 
 SESSION_PREFIX = "sa_claude_"
 
+# 正在展开折叠块的任务集合，SSE 期间跳过推送避免闪现 thinking 内容
+_expanding_tasks: set[int] = set()
+
 
 def _find_tmux_session(task_id: int) -> str | None:
     for suffix in ["", "_sonnet", "_haiku", "_opus"]:
@@ -32,13 +35,13 @@ def _find_tmux_session(task_id: int) -> str | None:
     return None
 
 
-def _capture_pane(session_name: str) -> str:
+def _capture_pane(session_name: str, ansi: bool = True) -> str:
     """捕获 tmux 全部 scrollback（-S - 从头开始）"""
     try:
-        r = subprocess.run(
-            ["tmux", "capture-pane", "-t", session_name, "-p", "-e", "-S", "-"],
-            capture_output=True, timeout=5
-        )
+        cmd = ["tmux", "capture-pane", "-t", session_name, "-p", "-S", "-"]
+        if ansi:
+            cmd.insert(-2, "-e")  # -e 输出 ANSI escape
+        r = subprocess.run(cmd, capture_output=True, timeout=5)
         return r.stdout.decode("utf-8", errors="replace")
     except Exception:
         return ""
@@ -55,12 +58,22 @@ def _strip_lines(raw: str) -> list[str]:
 
 
 def _detect_screen_clear(old_lines: list[str], new_lines: list[str]) -> bool:
-    """检测是否发生了屏幕清除：新内容大幅缩短且首行不同"""
+    """检测是否发生了屏幕清除：新内容大幅缩短且首行不同
+
+    排除 TUI 重新渲染的情况：如果新内容包含大量旧内容行，说明是重绘而非清屏。
+    """
     if not old_lines:
         return False
     if len(new_lines) < len(old_lines) * 0.5 and len(old_lines) > 10:
-        # 内容大幅缩短，且首行不同 → 屏幕被清除
+        # 内容大幅缩短，且首行不同
         if new_lines and old_lines and new_lines[0] != old_lines[0]:
+            # 检查是否是 TUI 重新渲染（新内容包含旧内容的很多行）
+            old_set = set(l.strip() for l in old_lines if l.strip())
+            new_set = set(l.strip() for l in new_lines if l.strip())
+            if old_set:
+                overlap = len(old_set & new_set) / len(old_set)
+                if overlap > 0.3:
+                    return False  # TUI 重绘，不是真正的清屏
             return True
     return False
 
@@ -83,6 +96,22 @@ _ANSI_BASIC_FG = {
     90: "#5c6370", 91: "#e06c75", 92: "#98c379", 93: "#e5c07b",
     94: "#61afef", 95: "#c678dd", 96: "#56b6c2", 97: "#ffffff",
 }
+
+
+import re
+# 匹配所有常见 ANSI 转义序列：CSI、OSC、字符集选择等
+_ANSI_RE = re.compile(r'''
+    \x1b\[[0-9;]*[a-zA-Z]  |  # CSI sequences: \e[...m, \e[...H etc.
+    \x1b\][^\x07]*\x07      |  # OSC sequences: \e]...\a
+    \x1b\][^\x1b]*\x1b\\    |  # OSC sequences: \e]...\e\\
+    \x1b[()][0-9A-Za-z]     |  # Character set: \e(B, \e)0 etc.
+    \x1b[#=>\[\]^_]         |  # Various single char escapes
+    \x1b[A-Za-z]               # Two char escapes: \eM etc.
+''', re.VERBOSE)
+
+def _strip_ansi(text: str) -> str:
+    """去除 ANSI 转义序列，返回纯文本"""
+    return _ANSI_RE.sub('', text)
 
 
 def _ansi_to_html(text: str) -> str:
@@ -180,25 +209,32 @@ def _ansi_to_html(text: str) -> str:
     return ''.join(result)
 
 
-# ==================== SSE 流（累积模式） ====================
+
+
 
 async def _sse_generator(task_id: int, request: Request):
-    """SSE 生成器：显示全量 scrollback + 屏幕清除时保留旧内容，持久化到数据库"""
-    last_html = ""
-    no_session_count = 0
-    saved_prefix: list[str] = []  # 屏幕清除前保存的内容
-    last_scrollback: list[str] = []  # 上次捕获的 scrollback
-    last_db_save = time.time()
+    """SSE 生成器：行级增量推送
 
-    # 从数据库加载已有历史
+    比较新旧 HTML 行，只推送变化的尾部。
+    F = 全量替换，D<行号> = 从该行开始替换。
+    """
+    no_session_count = 0
+    saved_prefix: list[str] = []
+    last_scrollback: list[str] = []
+    last_db_save = time.time()
+    has_db_history = False
+    waiting_sent = False
+    last_change_time = time.time()
+    last_raw_snapshot = ""
+    last_html_lines: list[str] = []  # 上次推送的 HTML 行
+
+    db_history_lines: list[str] = []  # 仅用于无 tmux 时显示，不参与保存
+
     try:
         existing = task_db.get_terminal_log(task_id)
         if existing:
-            saved_prefix = existing.split('\n')
-            html = _ansi_to_html(existing)
-            encoded = html.replace('\n', '⏎')
-            yield f"data: {encoded}\n\n"
-            last_html = html
+            db_history_lines = existing.split('\n')
+            has_db_history = True
     except Exception as e:
         logger.warning(f"加载终端历史失败: {e}")
 
@@ -210,59 +246,82 @@ async def _sse_generator(task_id: int, request: Request):
             session_name = _find_tmux_session(task_id)
             if not session_name:
                 no_session_count += 1
-                if not saved_prefix:
-                    html = '<span style="color:#d4a54e">等待终端启动...</span>'
-                    if html != last_html:
-                        yield f"data: {html}\n\n"
-                        last_html = html
-                if no_session_count > 60:
-                    await asyncio.sleep(3)
-                else:
-                    await asyncio.sleep(1)
+                if not waiting_sent:
+                    if has_db_history:
+                        # 有历史记录，先推送历史内容
+                        hist_html = '\n'.join(_ansi_to_html(l) for l in db_history_lines)
+                        encoded = hist_html.replace('\n', '⏎')
+                        yield f"data: F{encoded}\n\n"
+                    else:
+                        yield f"data: F<span style=\"color:#d4a54e\">等待终端启动...</span>\n\n"
+                    waiting_sent = True
+                await asyncio.sleep(3 if no_session_count > 60 else 1)
                 continue
 
             no_session_count = 0
-            raw = await asyncio.to_thread(_capture_pane, session_name)
 
-            if not raw.strip():
+            if task_id in _expanding_tasks:
                 await asyncio.sleep(0.5)
                 continue
 
-            scrollback = _strip_lines(raw)
+            raw_ansi = await asyncio.to_thread(_capture_pane, session_name, True)
+            if not raw_ansi.strip():
+                await asyncio.sleep(0.5)
+                continue
 
-            if scrollback != last_scrollback:
-                # 检测屏幕清除
-                if _detect_screen_clear(last_scrollback, scrollback):
-                    # 保存旧的 scrollback 到前缀
+            ansi_lines = _strip_lines(raw_ansi)
+            now = time.time()
+
+            if raw_ansi != last_raw_snapshot:
+                last_change_time = now
+                # 检测屏幕清除 → 保存旧内容到 prefix
+                if last_scrollback and _detect_screen_clear(last_scrollback, ansi_lines):
                     if saved_prefix:
                         saved_prefix.append('─' * 60)
                     saved_prefix.extend(last_scrollback)
                     saved_prefix.append('─' * 60)
 
-                last_scrollback = scrollback[:]
+                new_html_lines = [_ansi_to_html(l) for l in ansi_lines]
 
-                # 显示内容 = 保存的前缀 + 当前 scrollback
-                if saved_prefix:
-                    all_lines = saved_prefix + scrollback
+                # 双端比较：找首尾相同部分，只发中间变化的行
+                diff_start = 0
+                min_len = min(len(last_html_lines), len(new_html_lines))
+                while diff_start < min_len and last_html_lines[diff_start] == new_html_lines[diff_start]:
+                    diff_start += 1
+
+                # 从尾部找相同行
+                diff_end_old = len(last_html_lines)
+                diff_end_new = len(new_html_lines)
+                while diff_end_old > diff_start and diff_end_new > diff_start \
+                        and last_html_lines[diff_end_old - 1] == new_html_lines[diff_end_new - 1]:
+                    diff_end_old -= 1
+                    diff_end_new -= 1
+
+                if diff_start > 0 and diff_start >= len(last_html_lines) * 0.5:
+                    # D 增量：替换 lines[start:end_old] 为 new[start:end_new]
+                    delta_lines = new_html_lines[diff_start:diff_end_new]
+                    delta_html = '\n'.join(delta_lines)
+                    encoded = delta_html.replace('\n', '⏎')
+                    payload = f"data: D{diff_start}-{diff_end_old}⏎{encoded}\n\n"
+                    logger.info(f"[SSE] task={task_id} D{diff_start}-{diff_end_old} {len(payload)/1024:.1f}KB (变化{len(delta_lines)}行/{len(new_html_lines)}行)")
                 else:
-                    all_lines = scrollback
-
-                all_raw = '\n'.join(all_lines)
-                html = _ansi_to_html(all_raw)
-
-                if html != last_html:
-                    encoded = html.replace('\n', '⏎')
-                    yield f"data: {encoded}\n\n"
-                    last_html = html
+                    # 全量推送
+                    full_html = '\n'.join(new_html_lines)
+                    encoded = full_html.replace('\n', '⏎')
+                    payload = f"data: F{encoded}\n\n"
+                    logger.info(f"[SSE] task={task_id} F {len(payload)/1024:.1f}KB ({len(ansi_lines)}行)")
+                yield payload
+                last_html_lines = new_html_lines
+                last_scrollback = ansi_lines[:]
+                last_raw_snapshot = raw_ansi
+                changed = True
+            else:
+                changed = False
 
             # 每 10 秒持久化到数据库
-            now = time.time()
             if now - last_db_save > 10 and (saved_prefix or last_scrollback):
                 try:
-                    if saved_prefix:
-                        full = saved_prefix + last_scrollback
-                    else:
-                        full = last_scrollback
+                    full = (saved_prefix + last_scrollback) if saved_prefix else last_scrollback
                     await asyncio.to_thread(
                         task_db.save_terminal_log,
                         task_id, '\n'.join(full)
@@ -271,15 +330,20 @@ async def _sse_generator(task_id: int, request: Request):
                     logger.warning(f"保存终端日志失败: {e}")
                 last_db_save = now
 
-            await asyncio.sleep(0.5)
+            # 有变化时立即再次检查（不 sleep），无变化时动态间隔
+            if changed:
+                continue
+            idle = now - last_change_time
+            if idle < 2:
+                await asyncio.sleep(0.02)
+            elif idle < 10:
+                await asyncio.sleep(0.3)
+            else:
+                await asyncio.sleep(2.0)
     finally:
-        # 断开时最终保存
         if saved_prefix or last_scrollback:
             try:
-                if saved_prefix:
-                    full = saved_prefix + last_scrollback
-                else:
-                    full = last_scrollback
+                full = (saved_prefix + last_scrollback) if saved_prefix else last_scrollback
                 task_db.save_terminal_log(task_id, '\n'.join(full))
             except Exception as e:
                 logger.warning(f"最终保存终端日志失败: {e}")
@@ -347,17 +411,40 @@ body {{
     }}
   }});
 
+  var lines = [];
+
+  function render() {{
+    contentEl.innerHTML = lines.join('\\n');
+    var newHeight = document.body.scrollHeight;
+    if (!userScrolled && newHeight > lastScrollHeight) {{
+      window.scrollTo(0, newHeight);
+    }}
+    lastScrollHeight = newHeight;
+  }}
+
   function connect() {{
     var es = new EventSource(streamUrl);
 
     es.onmessage = function(event) {{
-      var html = event.data.replace(/⏎/g, '\\n');
-      contentEl.innerHTML = html;
-      var newHeight = document.body.scrollHeight;
-      if (!userScrolled && newHeight > lastScrollHeight) {{
-        window.scrollTo(0, newHeight);
+      var raw = event.data;
+      var type = raw.charAt(0);
+      if (type === 'D') {{
+        // D<start>-<end>⏎<delta> — 替换 lines[start:end]，保留 end 之后的行
+        var rest = raw.substring(1);
+        var sepIdx = rest.indexOf('⏎');
+        var range = rest.substring(0, sepIdx);
+        var deltaHtml = rest.substring(sepIdx + 1);
+        var deltaLines = deltaHtml.split('⏎');
+        var parts = range.split('-');
+        var start = parseInt(parts[0]);
+        var end = parseInt(parts[1]);
+        lines = lines.slice(0, start).concat(deltaLines).concat(lines.slice(end));
+      }} else {{
+        // F<全量> — 完整替换
+        var html = raw.substring(1);
+        lines = html.split('⏎');
       }}
-      lastScrollHeight = newHeight;
+      render();
     }};
 
     es.onerror = function() {{
@@ -369,6 +456,47 @@ body {{
   connect();
 }})();
 </script>
+</body>
+</html>"""
+
+
+@router.get("/terminal/{task_id}/expanded", response_class=HTMLResponse)
+async def terminal_expanded(task_id: int):
+    """返回展开后的终端内容（静态 HTML，从 terminal_log_expanded 字段读取）"""
+    task = task_db.get_task(task_id)
+    if not task or not task.get("terminal_log_expanded"):
+        return HTMLResponse(
+            STATIC_PAGE_TEMPLATE.format(content='<span style="color:#d4a54e">暂无展开内容</span>'),
+            status_code=200
+        )
+    html_content = _ansi_to_html(task["terminal_log_expanded"])
+    return HTMLResponse(STATIC_PAGE_TEMPLATE.format(content=html_content))
+
+
+STATIC_PAGE_TEMPLATE = """<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<style>
+body {{
+  margin: 0; padding: 0;
+  background: #1a1a1a;
+  font-family: "Courier New", "DejaVu Sans Mono", monospace;
+  font-size: 10px; line-height: 1.25;
+  overflow-x: auto; overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+}}
+#content {{
+  padding: 4px 6px;
+  color: #d4d4d4;
+  white-space: pre;
+  overflow-x: auto;
+}}
+</style>
+</head>
+<body>
+<div id="content">{content}</div>
 </body>
 </html>"""
 

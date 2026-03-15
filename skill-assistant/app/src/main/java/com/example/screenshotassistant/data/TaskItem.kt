@@ -41,7 +41,9 @@ data class TaskItem(
     val completedAt: String?,
     val durationSec: Int?,
     val sessionId: String?,
-    val messages: List<ConversationMessage>
+    val messages: List<ConversationMessage>,
+    val hasExpandedLog: Boolean,
+    val hasTerminalLog: Boolean
 ) {
     val typeLabel: String
         get() = title ?: TYPE_LABELS[taskType] ?: taskType
@@ -52,7 +54,12 @@ data class TaskItem(
     val isStopped: Boolean get() = status == "stopped"
     val canResume: Boolean get() = sessionId != null && !isProcessing
 
+    /** 是否有终端会话（非纯 OCR 任务） */
+    val hasTerminal: Boolean get() = hasTerminalLog || taskType !in SYNC_TASK_TYPES
+
     companion object {
+        private val SYNC_TASK_TYPES = setOf("ocr", "table", "search")
+
         val TYPE_LABELS = mapOf(
             "fund_holdings" to "持仓分析",
             "chat_reply" to "智能回复",
@@ -127,7 +134,9 @@ data class TaskItem(
                 durationSec = if (json.has("duration_sec") && !json.isNull("duration_sec"))
                     json.optInt("duration_sec") else null,
                 sessionId = json.optNullableString("session_id"),
-                messages = parseMessages(json)
+                messages = parseMessages(json),
+                hasExpandedLog = json.optNullableString("terminal_log_expanded") != null,
+                hasTerminalLog = json.optNullableString("terminal_log") != null
             )
         }
     }

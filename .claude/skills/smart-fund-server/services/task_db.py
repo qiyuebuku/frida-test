@@ -60,6 +60,7 @@ ALTER TABLE sa_tasks ADD COLUMN IF NOT EXISTS command_id VARCHAR(64);
 ALTER TABLE sa_tasks ADD COLUMN IF NOT EXISTS session_id VARCHAR(64);
 ALTER TABLE sa_tasks ADD COLUMN IF NOT EXISTS messages JSONB DEFAULT '[]';
 ALTER TABLE sa_tasks ADD COLUMN IF NOT EXISTS terminal_log TEXT;
+ALTER TABLE sa_tasks ADD COLUMN IF NOT EXISTS terminal_log_expanded TEXT;
 CREATE INDEX IF NOT EXISTS idx_sa_tasks_skill ON sa_tasks(skill_name);
 """
 

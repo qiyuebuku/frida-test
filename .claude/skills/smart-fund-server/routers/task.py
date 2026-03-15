@@ -1,17 +1,12 @@
 """任务路由：异步任务 + 截图处理 + OCR"""
 
-import asyncio
 import base64
-import json
 import time
-import queue as _queue
 from pathlib import Path
 
 from fastapi import APIRouter, HTTPException, Query, Request
-from starlette.responses import StreamingResponse
 
 from services import task_db as _task_db
-from services.event_bus import event_bus as _event_bus
 
 router = APIRouter()
 
@@ -81,93 +76,6 @@ async def get_task(task_id: int):
     if not task:
         raise HTTPException(status_code=404, detail=f"任务 {task_id} 不存在")
     return {"status": "success", "data": task}
-
-
-@router.get("/api/tasks/{task_id}/stream", summary="任务实时事件流(SSE)", tags=["任务"])
-async def stream_task(task_id: int):
-    """SSE 端点，实时推送任务执行事件（tool_call / text_delta / done）"""
-    task = _task_db.get_task(task_id)
-    if not task:
-        raise HTTPException(status_code=404, detail=f"任务 {task_id} 不存在")
-
-    # 任务已完成/失败，先回放步骤再返回终态
-    if task["status"] in ("completed", "failed"):
-        async def done_stream():
-            # 先回放 tool_calls（和进行中任务逻辑一致）
-            existing_calls = task.get("tool_calls")
-            if existing_calls:
-                calls = existing_calls if isinstance(existing_calls, list) else json.loads(existing_calls)
-                for tc in calls:
-                    replay_event = {
-                        "type": "tool_call",
-                        "tool": tc.get("tool", ""),
-                        "display": tc.get("display", ""),
-                        "detail": tc.get("detail", ""),
-                        "progress": 0,
-                        "is_text": tc.get("tool") in ("_step", "_text"),
-                    }
-                    yield f"data: {json.dumps(replay_event, ensure_ascii=False)}\n\n"
-                    if tc.get("output"):
-                        result_event = {
-                            "type": "tool_result",
-                            "display": tc.get("display", ""),
-                            "output": tc.get("output", ""),
-                            "is_error": tc.get("is_error", False),
-                        }
-                        yield f"data: {json.dumps(result_event, ensure_ascii=False)}\n\n"
-            # 再发 done
-            event = {
-                "type": "done",
-                "status": task["status"],
-                "result": task.get("result"),
-                "error_msg": task.get("error_msg"),
-                "tool_calls": task.get("tool_calls"),
-            }
-            yield f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
-        return StreamingResponse(done_stream(), media_type="text/event-stream")
-
-    q = _event_bus.subscribe(task_id)
-
-    async def event_stream():
-        try:
-            # 回放已有的 tool_calls（解决 SSE 连接前发出的步骤丢失问题）
-            existing_calls = task.get("tool_calls")
-            if existing_calls:
-                calls = existing_calls if isinstance(existing_calls, list) else json.loads(existing_calls)
-                for tc in calls:
-                    replay_event = {
-                        "type": "tool_call",
-                        "tool": tc.get("tool", ""),
-                        "display": tc.get("display", ""),
-                        "detail": tc.get("detail", ""),
-                        "progress": 0,
-                        "is_text": tc.get("tool") in ("_step", "_text"),
-                    }
-                    yield f"data: {json.dumps(replay_event, ensure_ascii=False)}\n\n"
-                    # 如果有 output，也回放 tool_result
-                    if tc.get("output"):
-                        result_event = {
-                            "type": "tool_result",
-                            "display": tc.get("display", ""),
-                            "output": tc.get("output", ""),
-                            "is_error": tc.get("is_error", False),
-                        }
-                        yield f"data: {json.dumps(result_event, ensure_ascii=False)}\n\n"
-
-            while True:
-                try:
-                    event = await asyncio.get_event_loop().run_in_executor(
-                        None, lambda: q.get(timeout=1)
-                    )
-                    yield f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
-                    if event.get("type") == "done":
-                        break
-                except _queue.Empty:
-                    yield ": heartbeat\n\n"
-        finally:
-            _event_bus.unsubscribe(task_id, q)
-
-    return StreamingResponse(event_stream(), media_type="text/event-stream")
 
 
 # ==================== 截图处理 ====================

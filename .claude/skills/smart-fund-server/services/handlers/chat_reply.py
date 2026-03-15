@@ -42,9 +42,6 @@ def handle_chat_reply(executor, task: dict):
 
 只输出 Markdown 格式的回复建议。"""
 
-    executor._emit_step(task_id, "智能回复", "AI 分析聊天内容并生成回复建议",
-                        progress=25, output=prompt)
-
     result = executor._run_claude_streaming(task_id, prompt,
         timeout=120, progress_range=(25, 90), estimated_tools=2,
         model="haiku", emit_done=False)

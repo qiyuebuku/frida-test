@@ -11,7 +11,10 @@ import android.webkit.WebView
 import android.webkit.WebViewClient
 import android.widget.Toast
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -49,6 +52,14 @@ private val CliText = Color(0xFFD4D4D4)
 private val CliBg = Color(0xFF1A1A1A)
 private val CliSurfaceDim = Color(0xFF232323)
 
+private val STATUS_LABELS = mapOf(
+    "processing" to "处理中",
+    "pending" to "等待中",
+    "completed" to "已完成",
+    "failed" to "失败",
+    "stopped" to "已停止"
+)
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun TaskDetailScreen(taskId: Int, onBack: () -> Unit) {
@@ -57,6 +68,8 @@ fun TaskDetailScreen(taskId: Int, onBack: () -> Unit) {
 
     var inputText by remember { mutableStateOf("") }
     var isSending by remember { mutableStateOf(false) }
+    var isStopping by remember { mutableStateOf(false) }
+    var isExpanded by remember { mutableStateOf(false) }
 
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -71,17 +84,33 @@ fun TaskDetailScreen(taskId: Int, onBack: () -> Unit) {
         isLoading = false
     }
 
-    // 轮询任务状态（处理中时每 3 秒刷新）
+    // 轮询任务状态（处理中每 1.5 秒刷新）
     LaunchedEffect(taskId, task?.isProcessing) {
         if (task?.isProcessing != true) return@LaunchedEffect
         while (true) {
-            delay(3000)
             withContext(Dispatchers.IO) {
                 HttpClient.instance?.getTask(taskId)?.let { loaded ->
                     withContext(Dispatchers.Main) { task = loaded }
                 }
             }
             if (task?.isProcessing != true) break
+            delay(1500)
+        }
+    }
+
+    // 任务结束后，若无展开数据则额外轮询等待后台捕获完成
+    LaunchedEffect(task?.isProcessing, task?.hasExpandedLog) {
+        val t = task ?: return@LaunchedEffect
+        if (t.isProcessing || t.hasExpandedLog) return@LaunchedEffect
+        // 任务已结束但还没有展开数据，轮询等待
+        repeat(5) {
+            delay(2000)
+            withContext(Dispatchers.IO) {
+                HttpClient.instance?.getTask(taskId)?.let { loaded ->
+                    withContext(Dispatchers.Main) { task = loaded }
+                }
+            }
+            if (task?.hasExpandedLog == true) return@LaunchedEffect
         }
     }
 
@@ -89,17 +118,12 @@ fun TaskDetailScreen(taskId: Int, onBack: () -> Unit) {
         containerColor = CliBg,
         bottomBar = {
             val t = task
-            if (t != null) {
+            if (t != null && !isExpanded && t.hasTerminal) {
                 CliBottomBar(
                     task = t,
                     inputText = inputText,
                     onInputChange = { inputText = it },
                     isSending = isSending,
-                    onStop = {
-                        scope.launch(Dispatchers.IO) {
-                            HttpClient.instance?.stopTask(taskId)
-                        }
-                    },
                     onSend = {
                         val msg = inputText.trim()
                         if (msg.isNotEmpty()) {
@@ -123,7 +147,34 @@ fun TaskDetailScreen(taskId: Int, onBack: () -> Unit) {
             }
         },
         topBar = {
-            CliTopBar(task = task, onBack = onBack)
+            CliTopBar(
+                task = task,
+                onBack = onBack,
+                isExpanded = isExpanded,
+                onToggleExpand = { isExpanded = !isExpanded },
+                isStopping = isStopping,
+                onStop = {
+                    isStopping = true
+                    scope.launch(Dispatchers.IO) {
+                        HttpClient.instance?.stopTask(taskId)
+                        // 立即刷新 task 数据，确保 status 已更新
+                        HttpClient.instance?.getTask(taskId)?.let { loaded ->
+                            withContext(Dispatchers.Main) {
+                                task = loaded
+                                isStopping = false
+                            }
+                        } ?: withContext(Dispatchers.Main) { isStopping = false }
+                    }
+                },
+                onCopy = {
+                    val text = task?.result ?: task?.summary ?: ""
+                    if (text.isNotBlank()) {
+                        val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                        clipboard.setPrimaryClip(ClipData.newPlainText("result", text))
+                        Toast.makeText(context, "已复制到剪贴板", Toast.LENGTH_SHORT).show()
+                    }
+                }
+            )
         }
     ) { padding ->
         if (isLoading) {
@@ -146,21 +197,36 @@ fun TaskDetailScreen(taskId: Int, onBack: () -> Unit) {
             return@Scaffold
         }
 
-        // 终端 WebView
+        val t = task!!
         val serverUrl = HttpClient.instance?.serverUrl ?: ""
         val wsHost = serverUrl
             .removePrefix("http://")
             .removePrefix("https://")
             .trimEnd('/')
 
-        TerminalWebView(
-            taskId = taskId,
-            wsHost = wsHost,
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(padding)
-                .background(CliBg)
-        )
+        when {
+            // 有终端会话的任务 → 显示终端 WebView
+            t.hasTerminal -> {
+                val terminalPath = if (isExpanded) "/terminal/$taskId/expanded" else "/terminal/$taskId"
+                TerminalWebView(
+                    url = "http://$wsHost$terminalPath",
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .padding(padding)
+                        .background(CliBg)
+                )
+            }
+            // 3. 纯 OCR 任务（无终端）→ 显示结果文本
+            else -> {
+                ResultTextView(
+                    result = t.result ?: t.summary ?: "处理中...",
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .padding(padding)
+                        .background(CliBg)
+                )
+            }
+        }
     }
 }
 
@@ -170,79 +236,135 @@ fun TaskDetailScreen(taskId: Int, onBack: () -> Unit) {
 @Composable
 private fun CliTopBar(
     task: TaskItem?,
-    onBack: () -> Unit
+    onBack: () -> Unit,
+    isExpanded: Boolean,
+    onToggleExpand: () -> Unit,
+    isStopping: Boolean = false,
+    onStop: () -> Unit,
+    onCopy: () -> Unit
 ) {
-    TopAppBar(
-        colors = TopAppBarDefaults.topAppBarColors(
-            containerColor = CliBg,
-            titleContentColor = CliText
-        ),
-        title = {
-            if (task != null) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Box(
-                        modifier = Modifier
-                            .size(8.dp)
-                            .clip(CircleShape)
-                            .background(
-                                when {
-                                    task.isProcessing -> CliBlue
-                                    task.isCompleted -> CliGreen
-                                    task.isFailed -> CliRed
-                                    task.isStopped -> CliYellow
-                                    else -> CliDimText
-                                }
+    Column(modifier = Modifier.background(CliBg)) {
+        TopAppBar(
+            colors = TopAppBarDefaults.topAppBarColors(
+                containerColor = CliBg,
+                titleContentColor = CliText
+            ),
+            title = {
+                if (task != null) {
+                    Column {
+                        // 主标题行：标题文字
+                        Text(
+                            task.typeLabel,
+                            fontSize = 16.sp,
+                            fontWeight = FontWeight.Bold,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            color = CliText
+                        )
+                        // 副信息行：状态圆点 + 状态文字 + 时间 + 耗时 + 进度%
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier.padding(top = 2.dp)
+                        ) {
+                            Box(
+                                modifier = Modifier
+                                    .size(6.dp)
+                                    .clip(CircleShape)
+                                    .background(
+                                        when {
+                                            task.isProcessing -> CliBlue
+                                            task.isCompleted -> CliGreen
+                                            task.isFailed -> CliRed
+                                            task.isStopped -> CliYellow
+                                            else -> CliDimText
+                                        }
+                                    )
                             )
-                    )
-                    Spacer(modifier = Modifier.width(8.dp))
-                    Text(
-                        task.typeLabel,
-                        fontSize = 14.sp,
-                        fontWeight = FontWeight.Medium,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                        modifier = Modifier.weight(1f, fill = false)
-                    )
-                    Spacer(modifier = Modifier.width(8.dp))
-                    Text(
-                        buildString {
-                            append(extractTime(task.createdAt))
-                            if (task.durationSec != null) append(" ${formatDuration(task.durationSec)}")
-                            if (task.isProcessing) append(" ${task.progress}%")
-                        },
-                        fontSize = 11.sp,
-                        color = CliDimText
-                    )
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Text(
+                                buildString {
+                                    append(STATUS_LABELS[task.status] ?: task.status)
+                                    append("  ")
+                                    append(extractTime(task.createdAt))
+                                    if (task.durationSec != null) {
+                                        append("  ${formatDuration(task.durationSec)}")
+                                    }
+                                    if (task.isProcessing) {
+                                        append("  ${task.progress}%")
+                                    }
+                                },
+                                fontSize = 11.sp,
+                                color = CliDimText,
+                                maxLines = 1
+                            )
+                        }
+                    }
+                } else {
+                    Text("任务详情", fontSize = 16.sp, fontWeight = FontWeight.Bold)
                 }
-            } else {
-                Text("任务详情", fontSize = 14.sp)
-            }
-        },
-        navigationIcon = {
-            IconButton(onClick = onBack, modifier = Modifier.size(36.dp)) {
-                Icon(
-                    Icons.AutoMirrored.Filled.ArrowBack,
-                    contentDescription = "返回",
-                    tint = CliDimText,
-                    modifier = Modifier.size(18.dp)
-                )
-            }
-        },
-        actions = {
-            val t = task
-            if (t != null && !t.result.isNullOrBlank()) {
-                val ctx = LocalContext.current
-                IconButton(onClick = { copyToClipboard(ctx, t.result) }) {
+            },
+            navigationIcon = {
+                IconButton(onClick = onBack, modifier = Modifier.size(40.dp)) {
                     Icon(
-                        Icons.Default.ContentCopy,
-                        contentDescription = "复制",
+                        Icons.AutoMirrored.Filled.ArrowBack,
+                        contentDescription = "返回",
                         tint = CliDimText,
-                        modifier = Modifier.size(18.dp)
+                        modifier = Modifier.size(20.dp)
                     )
                 }
+            },
+            actions = {
+                // 纯 OCR 任务完成后显示复制按钮
+                if (task != null && !task.hasTerminal && !task.result.isNullOrBlank()) {
+                    IconButton(onClick = onCopy) {
+                        Icon(
+                            Icons.Default.ContentCopy,
+                            contentDescription = "复制",
+                            tint = CliDimText,
+                            modifier = Modifier.size(20.dp)
+                        )
+                    }
+                }
+                if (task != null && task.hasExpandedLog && !task.isProcessing) {
+                    IconButton(onClick = onToggleExpand) {
+                        Icon(
+                            if (isExpanded) Icons.Default.UnfoldLess else Icons.Default.UnfoldMore,
+                            contentDescription = if (isExpanded) "折叠" else "展开",
+                            tint = if (isExpanded) CliBlue else CliDimText,
+                            modifier = Modifier.size(22.dp)
+                        )
+                    }
+                }
+                if (task != null && (task.isProcessing || isStopping)) {
+                    IconButton(onClick = onStop, enabled = !isStopping) {
+                        if (isStopping) {
+                            CircularProgressIndicator(
+                                modifier = Modifier.size(18.dp),
+                                color = CliYellow,
+                                strokeWidth = 2.dp
+                            )
+                        } else {
+                            Icon(
+                                Icons.Default.Stop,
+                                contentDescription = "停止",
+                                tint = CliRed,
+                                modifier = Modifier.size(22.dp)
+                            )
+                        }
+                    }
+                }
             }
+        )
+        // 进度条紧贴标题栏底部
+        if (task != null && task.isProcessing) {
+            LinearProgressIndicator(
+                progress = { task.progress / 100f },
+                modifier = Modifier.fillMaxWidth().height(2.dp),
+                color = CliBlue,
+                trackColor = CliSurfaceDim,
+            )
         }
-    )
+    }
 }
 
 
@@ -253,83 +375,58 @@ private fun CliBottomBar(
     inputText: String,
     onInputChange: (String) -> Unit,
     isSending: Boolean,
-    onStop: () -> Unit,
     onSend: () -> Unit
 ) {
     Surface(color = CliSurfaceDim, tonalElevation = 0.dp) {
-        Column {
-            Row(
-                modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 6.dp),
-                verticalAlignment = Alignment.CenterVertically
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 4.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            androidx.compose.foundation.text.BasicTextField(
+                value = inputText,
+                onValueChange = onInputChange,
+                modifier = Modifier
+                    .weight(1f)
+                    .background(Color.Transparent, RoundedCornerShape(8.dp))
+                    .border(1.dp, CliDimText.copy(alpha = 0.3f), RoundedCornerShape(8.dp))
+                    .padding(horizontal = 10.dp, vertical = 6.dp),
+                maxLines = 3,
+                enabled = !isSending,
+                textStyle = LocalTextStyle.current.copy(color = CliText, fontSize = 13.sp),
+                cursorBrush = androidx.compose.ui.graphics.SolidColor(CliBlue),
+                decorationBox = { innerTextField ->
+                    Box {
+                        if (inputText.isEmpty()) {
+                            Text(
+                                if (task.isProcessing) "发送消息（将排队等待处理）" else "追问...",
+                                color = CliDimText,
+                                fontSize = 12.sp
+                            )
+                        }
+                        innerTextField()
+                    }
+                }
+            )
+            Spacer(modifier = Modifier.width(4.dp))
+            IconButton(
+                onClick = onSend,
+                enabled = inputText.isNotBlank() && !isSending,
+                modifier = Modifier.size(32.dp)
             ) {
-                Text(
-                    "❯",
-                    color = CliBlue,
-                    fontSize = 16.sp,
-                    fontWeight = FontWeight.Bold,
-                    fontFamily = FontFamily.Monospace,
-                    modifier = Modifier.padding(end = 8.dp)
-                )
-                OutlinedTextField(
-                    value = inputText,
-                    onValueChange = onInputChange,
-                    modifier = Modifier.weight(1f),
-                    placeholder = {
-                        Text(
-                            if (task.isProcessing) "发送消息（将排队等待处理）" else "追问...",
-                            color = CliDimText,
-                            fontSize = 12.sp
-                        )
-                    },
-                    maxLines = 3,
-                    enabled = !isSending,
-                    textStyle = LocalTextStyle.current.copy(color = CliText, fontSize = 13.sp),
-                    colors = OutlinedTextFieldDefaults.colors(
-                        focusedBorderColor = CliBlue.copy(alpha = 0.5f),
-                        unfocusedBorderColor = CliDimText.copy(alpha = 0.3f),
-                        cursorColor = CliBlue
-                    ),
-                    shape = RoundedCornerShape(8.dp)
-                )
-                Spacer(modifier = Modifier.width(4.dp))
-                IconButton(
-                    onClick = onSend,
-                    enabled = inputText.isNotBlank() && !isSending,
-                    modifier = Modifier.size(36.dp)
-                ) {
-                    if (isSending) {
-                        CircularProgressIndicator(
-                            modifier = Modifier.size(18.dp),
-                            color = CliBlue,
-                            strokeWidth = 2.dp
-                        )
-                    } else {
-                        Icon(
-                            Icons.AutoMirrored.Filled.Send,
-                            contentDescription = "发送",
-                            tint = if (inputText.isNotBlank()) CliBlue else CliDimText.copy(alpha = 0.3f),
-                            modifier = Modifier.size(18.dp)
-                        )
-                    }
+                if (isSending) {
+                    CircularProgressIndicator(
+                        modifier = Modifier.size(16.dp),
+                        color = CliBlue,
+                        strokeWidth = 2.dp
+                    )
+                } else {
+                    Icon(
+                        Icons.AutoMirrored.Filled.Send,
+                        contentDescription = "发送",
+                        tint = if (inputText.isNotBlank()) CliBlue else CliDimText.copy(alpha = 0.3f),
+                        modifier = Modifier.size(16.dp)
+                    )
                 }
-            }
-            // 停止按钮（处理中显示，完成后占位保持高度一致）
-            if (task.isProcessing) {
-                Row(
-                    modifier = Modifier.fillMaxWidth().padding(bottom = 4.dp),
-                    horizontalArrangement = Arrangement.Center
-                ) {
-                    TextButton(
-                        onClick = onStop,
-                        colors = ButtonDefaults.textButtonColors(contentColor = CliRed.copy(alpha = 0.7f))
-                    ) {
-                        Icon(Icons.Default.Stop, contentDescription = null, modifier = Modifier.size(14.dp))
-                        Spacer(modifier = Modifier.width(4.dp))
-                        Text("停止", fontSize = 12.sp)
-                    }
-                }
-            } else {
-                Spacer(modifier = Modifier.height(36.dp))
             }
         }
     }
@@ -343,10 +440,29 @@ private fun extractTime(timestamp: String): String {
     return regex.find(timestamp)?.groupValues?.get(1) ?: timestamp.takeLast(8).take(5)
 }
 
-private fun copyToClipboard(context: Context, text: String) {
-    val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-    clipboard.setPrimaryClip(ClipData.newPlainText("task_result", text))
-    Toast.makeText(context, "已复制到剪贴板", Toast.LENGTH_SHORT).show()
+
+// ==================== 结果文本视图（纯 OCR 任务） ====================
+
+@Composable
+private fun ResultTextView(
+    result: String,
+    modifier: Modifier = Modifier
+) {
+    androidx.compose.foundation.text.selection.SelectionContainer {
+        Column(
+            modifier = modifier
+                .verticalScroll(rememberScrollState())
+                .padding(12.dp)
+        ) {
+            Text(
+                text = result,
+                color = CliText,
+                fontSize = 13.sp,
+                fontFamily = FontFamily.Monospace,
+                lineHeight = 18.sp,
+            )
+        }
+    }
 }
 
 
@@ -355,38 +471,39 @@ private fun copyToClipboard(context: Context, text: String) {
 @SuppressLint("SetJavaScriptEnabled")
 @Composable
 private fun TerminalWebView(
-    taskId: Int,
-    wsHost: String,
+    url: String,
     modifier: Modifier = Modifier
 ) {
-    AndroidView(
-        factory = { ctx ->
-            WebView(ctx).apply {
-                settings.javaScriptEnabled = true
-                settings.domStorageEnabled = true
-                settings.allowFileAccess = true
-                settings.allowContentAccess = true
-                settings.mediaPlaybackRequiresUserGesture = false
-                settings.cacheMode = android.webkit.WebSettings.LOAD_NO_CACHE
-                setBackgroundColor(android.graphics.Color.parseColor("#1a1a1a"))
+    // key(url) 确保 URL 变化时重建 WebView
+    key(url) {
+        AndroidView(
+            factory = { ctx ->
+                WebView(ctx).apply {
+                    settings.javaScriptEnabled = true
+                    settings.domStorageEnabled = true
+                    settings.allowFileAccess = true
+                    settings.allowContentAccess = true
+                    settings.mediaPlaybackRequiresUserGesture = false
+                    settings.cacheMode = android.webkit.WebSettings.LOAD_NO_CACHE
+                    setBackgroundColor(android.graphics.Color.parseColor("#1a1a1a"))
 
-                webViewClient = object : WebViewClient() {
-                    override fun onPageFinished(view: WebView?, url: String?) {
-                        super.onPageFinished(view, url)
-                        Log.i("TerminalWV", "Page loaded: $url")
+                    webViewClient = object : WebViewClient() {
+                        override fun onPageFinished(view: WebView?, url: String?) {
+                            super.onPageFinished(view, url)
+                            Log.i("TerminalWV", "Page loaded: $url")
+                        }
                     }
-                }
-                webChromeClient = object : WebChromeClient() {
-                    override fun onConsoleMessage(msg: ConsoleMessage?): Boolean {
-                        Log.i("TerminalWV", "${msg?.messageLevel()}: ${msg?.message()} [${msg?.sourceId()}:${msg?.lineNumber()}]")
-                        return true
+                    webChromeClient = object : WebChromeClient() {
+                        override fun onConsoleMessage(msg: ConsoleMessage?): Boolean {
+                            Log.i("TerminalWV", "${msg?.messageLevel()}: ${msg?.message()} [${msg?.sourceId()}:${msg?.lineNumber()}]")
+                            return true
+                        }
                     }
-                }
 
-                val url = "http://$wsHost/terminal/$taskId"
-                loadUrl(url)
-            }
-        },
-        modifier = modifier
-    )
+                    loadUrl(url)
+                }
+            },
+            modifier = modifier
+        )
+    }
 }
