@@ -11,6 +11,11 @@
 - 渐进式探索发现注入点（广泛 Hook → 日志分析 → 精准注入）
 - 每次逆向后自动积累经验到知识库，实现自我迭代
 
+**为什么选 Zygisk？** 大部分安全加固（360/梆梆/腾讯乐固）的检测目标是 Frida 和 Xposed，
+几乎没有 App 会检测 Zygisk 注入——它在 Zygote fork 时注入，比 App 的任何代码都先执行，
+且 DEX 完全内存加载、SO 加载后立即删除，不留特征痕迹。
+详见 **knowledge/zygisk-guide.md**。
+
 ## 环境信息
 
 - **Root 方案**: SuKiSU Ultra + Zygisk
