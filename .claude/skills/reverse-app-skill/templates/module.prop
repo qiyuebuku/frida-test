@@ -1,0 +1,6 @@
+id=MODULE_ID
+name=MODULE_NAME Hook
+version=v1.0
+versionCode=1
+author=yuyang
+description=Zygisk hook module for TARGET_PACKAGE

@@ -1,0 +1,3 @@
+[submodule "reverse-app-skill"]
+	path = reverse-app-skill
+	url = git@github.com:qiyuebuku/skills.git
