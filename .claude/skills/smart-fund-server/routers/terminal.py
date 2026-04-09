@@ -1,23 +1,27 @@
-"""终端镜像：服务端累积 ANSI → HTML，通过 SSE 实时推送，持久化到数据库"""
+"""终端镜像：服务端累积 ANSI → HTML，通过 WebSocket 实时推送，持久化到数据库"""
 
 import asyncio
 import logging
+import re
 import subprocess
 import time
+import zlib
 
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 from fastapi.responses import HTMLResponse
-from starlette.responses import StreamingResponse
 
-from services import task_db
+from services.db import task_db
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
 
 SESSION_PREFIX = "sa_claude_"
 
-# 正在展开折叠块的任务集合，SSE 期间跳过推送避免闪现 thinking 内容
+# 正在展开折叠块的任务集合，推送期间跳过避免闪现 thinking 内容
 _expanding_tasks: set[int] = set()
+
+# 已尝试恢复会话的任务集合（全局，防止多个 WS 连接重复触发）
+_resume_attempted_tasks: set[int] = set()
 
 
 def _find_tmux_session(task_id: int) -> str | None:
@@ -65,15 +69,13 @@ def _detect_screen_clear(old_lines: list[str], new_lines: list[str]) -> bool:
     if not old_lines:
         return False
     if len(new_lines) < len(old_lines) * 0.5 and len(old_lines) > 10:
-        # 内容大幅缩短，且首行不同
         if new_lines and old_lines and new_lines[0] != old_lines[0]:
-            # 检查是否是 TUI 重新渲染（新内容包含旧内容的很多行）
             old_set = set(l.strip() for l in old_lines if l.strip())
             new_set = set(l.strip() for l in new_lines if l.strip())
             if old_set:
                 overlap = len(old_set & new_set) / len(old_set)
                 if overlap > 0.3:
-                    return False  # TUI 重绘，不是真正的清屏
+                    return False
             return True
     return False
 
@@ -97,16 +99,14 @@ _ANSI_BASIC_FG = {
     94: "#61afef", 95: "#c678dd", 96: "#56b6c2", 97: "#ffffff",
 }
 
-
-import re
-# 匹配所有常见 ANSI 转义序列：CSI、OSC、字符集选择等
+# 匹配所有常见 ANSI 转义序列
 _ANSI_RE = re.compile(r'''
-    \x1b\[[0-9;]*[a-zA-Z]  |  # CSI sequences: \e[...m, \e[...H etc.
-    \x1b\][^\x07]*\x07      |  # OSC sequences: \e]...\a
-    \x1b\][^\x1b]*\x1b\\    |  # OSC sequences: \e]...\e\\
-    \x1b[()][0-9A-Za-z]     |  # Character set: \e(B, \e)0 etc.
-    \x1b[#=>\[\]^_]         |  # Various single char escapes
-    \x1b[A-Za-z]               # Two char escapes: \eM etc.
+    \x1b\[[0-9;]*[a-zA-Z]  |
+    \x1b\][^\x07]*\x07      |
+    \x1b\][^\x1b]*\x1b\\    |
+    \x1b[()][0-9A-Za-z]     |
+    \x1b[#=>\[\]^_]         |
+    \x1b[A-Za-z]
 ''', re.VERBOSE)
 
 def _strip_ansi(text: str) -> str:
@@ -209,14 +209,14 @@ def _ansi_to_html(text: str) -> str:
     return ''.join(result)
 
 
+# ==================== WebSocket 推送 ====================
 
+async def _ws_loop(task_id: int, ws: WebSocket):
+    """WebSocket 推送循环：行级增量，zlib 压缩二进制帧
 
-
-async def _sse_generator(task_id: int, request: Request):
-    """SSE 生成器：行级增量推送
-
-    比较新旧 HTML 行，只推送变化的尾部。
-    F = 全量替换，D<行号> = 从该行开始替换。
+    协议（二进制帧，zlib 压缩后发送）：
+      F<html>          — 全量替换
+      D<start>-<end>⏎<html>  — 替换 lines[start:end]，保留 end 之后的行
     """
     no_session_count = 0
     saved_prefix: list[str] = []
@@ -224,11 +224,12 @@ async def _sse_generator(task_id: int, request: Request):
     last_db_save = time.time()
     has_db_history = False
     waiting_sent = False
+    _cached_session_id = None
     last_change_time = time.time()
     last_raw_snapshot = ""
-    last_html_lines: list[str] = []  # 上次推送的 HTML 行
+    last_html_lines: list[str] = []
 
-    db_history_lines: list[str] = []  # 仅用于无 tmux 时显示，不参与保存
+    db_history_lines: list[str] = []
 
     try:
         existing = task_db.get_terminal_log(task_id)
@@ -240,22 +241,57 @@ async def _sse_generator(task_id: int, request: Request):
 
     try:
         while True:
-            if await request.is_disconnected():
-                break
-
             session_name = _find_tmux_session(task_id)
             if not session_name:
                 no_session_count += 1
                 if not waiting_sent:
                     if has_db_history:
-                        # 有历史记录，先推送历史内容
                         hist_html = '\n'.join(_ansi_to_html(l) for l in db_history_lines)
-                        encoded = hist_html.replace('\n', '⏎')
-                        yield f"data: F{encoded}\n\n"
+                        await _ws_send(ws, f"F{hist_html}")
                     else:
-                        yield f"data: F<span style=\"color:#d4a54e\">等待终端启动...</span>\n\n"
+                        await _ws_send(ws, 'F<span style="color:#d4a54e">等待终端启动...</span>')
                     waiting_sent = True
-                await asyncio.sleep(3 if no_session_count > 60 else 1)
+
+                # 首次找不到 tmux 时检查任务状态
+                if no_session_count == 1:
+                    task = task_db.get_task(task_id)
+                    task_status = task.get("status", "") if task else ""
+                    _cached_session_id = task.get("session_id") if task else None
+                    # 已完成/失败的任务：显示 DB 历史，不自动恢复
+                    if task_status not in ("processing", "pending"):
+                        if not has_db_history:
+                            if _cached_session_id:
+                                await _ws_send(ws, 'F<span style="color:#8b8b8b">会话已结束，发送消息可恢复对话</span>')
+                            else:
+                                await _ws_send(ws, 'F<span style="color:#8b8b8b">终端日志不可用（会话已结束）</span>')
+                        break
+
+                # 仅 processing/pending 且有 session_id 但无 tmux，3 秒后自动 resume（全局仅尝试一次）
+                if no_session_count == 3 and _cached_session_id and task_id not in _resume_attempted_tasks:
+                    _resume_attempted_tasks.add(task_id)
+                    # 在 DB 历史末尾追加恢复提示，不覆盖历史内容
+                    if has_db_history:
+                        resume_hint = '\n<span style="color:#d4a54e">正在恢复会话...</span>'
+                        hist_html = '\n'.join(_ansi_to_html(l) for l in db_history_lines)
+                        await _ws_send(ws, f"F{hist_html}{resume_hint}")
+                    else:
+                        await _ws_send(ws, 'F<span style="color:#d4a54e">正在恢复会话...</span>')
+
+                    # 后台执行恢复，不阻塞 WS 推送循环
+                    async def _do_resume(_tid=task_id, _sid=_cached_session_id):
+                        try:
+                            from services.task_executor import executor as _executor
+                            await asyncio.to_thread(
+                                _executor._get_or_create_session,
+                                _tid, resume_session_id=_sid
+                            )
+                            logger.info(f"[terminal] 自动恢复会话成功 task_id={_tid}")
+                        except Exception as e:
+                            logger.warning(f"[terminal] 自动恢复会话失败 task_id={_tid}: {e}")
+
+                    asyncio.create_task(_do_resume())
+
+                await asyncio.sleep(3 if no_session_count > 10 else 1)
                 continue
 
             no_session_count = 0
@@ -274,7 +310,6 @@ async def _sse_generator(task_id: int, request: Request):
 
             if raw_ansi != last_raw_snapshot:
                 last_change_time = now
-                # 检测屏幕清除 → 保存旧内容到 prefix
                 if last_scrollback and _detect_screen_clear(last_scrollback, ansi_lines):
                     if saved_prefix:
                         saved_prefix.append('─' * 60)
@@ -283,13 +318,12 @@ async def _sse_generator(task_id: int, request: Request):
 
                 new_html_lines = [_ansi_to_html(l) for l in ansi_lines]
 
-                # 双端比较：找首尾相同部分，只发中间变化的行
+                # 双端比较
                 diff_start = 0
                 min_len = min(len(last_html_lines), len(new_html_lines))
                 while diff_start < min_len and last_html_lines[diff_start] == new_html_lines[diff_start]:
                     diff_start += 1
 
-                # 从尾部找相同行
                 diff_end_old = len(last_html_lines)
                 diff_end_new = len(new_html_lines)
                 while diff_end_old > diff_start and diff_end_new > diff_start \
@@ -298,19 +332,16 @@ async def _sse_generator(task_id: int, request: Request):
                     diff_end_new -= 1
 
                 if diff_start > 0 and diff_start >= len(last_html_lines) * 0.5:
-                    # D 增量：替换 lines[start:end_old] 为 new[start:end_new]
                     delta_lines = new_html_lines[diff_start:diff_end_new]
                     delta_html = '\n'.join(delta_lines)
-                    encoded = delta_html.replace('\n', '⏎')
-                    payload = f"data: D{diff_start}-{diff_end_old}⏎{encoded}\n\n"
-                    logger.info(f"[SSE] task={task_id} D{diff_start}-{diff_end_old} {len(payload)/1024:.1f}KB (变化{len(delta_lines)}行/{len(new_html_lines)}行)")
+                    msg = f"D{diff_start}-{diff_end_old}\n{delta_html}"
+                    label = f"D{diff_start}-{diff_end_old} ({len(delta_lines)}行/{len(new_html_lines)}行)"
+                    await _ws_send(ws, msg, task_id, label)
                 else:
-                    # 全量推送
                     full_html = '\n'.join(new_html_lines)
-                    encoded = full_html.replace('\n', '⏎')
-                    payload = f"data: F{encoded}\n\n"
-                    logger.info(f"[SSE] task={task_id} F {len(payload)/1024:.1f}KB ({len(ansi_lines)}行)")
-                yield payload
+                    msg = f"F{full_html}"
+                    await _ws_send(ws, msg, task_id, f"F ({len(ansi_lines)}行)")
+
                 last_html_lines = new_html_lines
                 last_scrollback = ansi_lines[:]
                 last_raw_snapshot = raw_ansi
@@ -330,7 +361,7 @@ async def _sse_generator(task_id: int, request: Request):
                     logger.warning(f"保存终端日志失败: {e}")
                 last_db_save = now
 
-            # 有变化时立即再次检查（不 sleep），无变化时动态间隔
+            # 有变化时立即再次检查，无变化时动态间隔
             if changed:
                 continue
             idle = now - last_change_time
@@ -349,18 +380,74 @@ async def _sse_generator(task_id: int, request: Request):
                 logger.warning(f"最终保存终端日志失败: {e}")
 
 
-@router.get("/terminal/{task_id}/stream")
-async def terminal_stream(task_id: int, request: Request):
-    """SSE 终端内容流"""
-    return StreamingResponse(
-        _sse_generator(task_id, request),
-        media_type="text/event-stream",
-        headers={
-            "Cache-Control": "no-cache",
-            "Connection": "keep-alive",
-            "X-Accel-Buffering": "no",
-        }
-    )
+async def _ws_send(ws: WebSocket, text: str, task_id: int = 0, label: str = ""):
+    """小于 512B 直接文本发送，大于则 zlib 压缩二进制发送"""
+    raw = text.encode('utf-8')
+    if len(raw) < 512:
+        await ws.send_text(text)
+        if label:
+            logger.info(f"[WS] task={task_id} {label} {len(raw)}B (text)")
+    else:
+        compressed = zlib.compress(raw, level=1)
+        await ws.send_bytes(compressed)
+        if label:
+            logger.info(f"[WS] task={task_id} {label} {len(raw)/1024:.1f}KB→{len(compressed)/1024:.1f}KB (zlib)")
+
+
+def _resize_tmux(task_id: int, cols: int):
+    """调整 tmux pane 宽度"""
+    session_name = _find_tmux_session(task_id)
+    if session_name:
+        try:
+            subprocess.run(
+                ["tmux", "resize-window", "-t", session_name, "-x", str(cols)],
+                capture_output=True, timeout=5
+            )
+            logger.info(f"[WS] task={task_id} resize tmux → {cols} cols")
+        except Exception as e:
+            logger.warning(f"[WS] task={task_id} resize 失败: {e}")
+
+
+async def _ws_recv_loop(task_id: int, ws: WebSocket):
+    """监听客户端消息（屏幕旋转时发送新列数）"""
+    import json
+    try:
+        while True:
+            msg = await ws.receive_text()
+            try:
+                data = json.loads(msg)
+                if "cols" in data:
+                    cols = max(40, min(int(data["cols"]), 300))
+                    await asyncio.to_thread(_resize_tmux, task_id, cols)
+            except Exception:
+                pass
+    except WebSocketDisconnect:
+        pass
+    except Exception:
+        pass
+
+
+@router.websocket("/terminal/{task_id}/ws")
+async def terminal_ws(task_id: int, ws: WebSocket):
+    """WebSocket 终端内容流
+
+    客户端随时可发送 {"cols": N} 调整终端宽度（连接时 + 屏幕旋转时）
+    """
+    await ws.accept()
+    try:
+        # 推送循环和接收循环并发运行，任一结束则全部取消
+        push_task = asyncio.create_task(_ws_loop(task_id, ws))
+        recv_task = asyncio.create_task(_ws_recv_loop(task_id, ws))
+        done, pending = await asyncio.wait(
+            [push_task, recv_task],
+            return_when=asyncio.FIRST_COMPLETED
+        )
+        for t in pending:
+            t.cancel()
+    except WebSocketDisconnect:
+        pass
+    except Exception as e:
+        logger.warning(f"[WS] task={task_id} 异常: {e}")
 
 
 # ==================== 页面 ====================
@@ -371,8 +458,8 @@ PAGE_TEMPLATE = """<!DOCTYPE html>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
 <style>
+* {{ margin: 0; padding: 0; }}
 body {{
-  margin: 0; padding: 0;
   background: #1a1a1a;
   font-family: "Courier New", "DejaVu Sans Mono", monospace;
   font-size: 10px; line-height: 1.25;
@@ -388,69 +475,194 @@ body {{
   margin-top: auto;
   overflow-x: auto;
 }}
+.L {{
+  contain: content;
+  min-height: 12px;
+}}
 </style>
 </head>
 <body>
+<script src="https://cdn.jsdelivr.net/npm/pako@2.1.0/dist/pako.min.js"></script>
 <div id="content"><span style="color:#d4a54e">connecting...</span></div>
 <script>
 (function() {{
-  var contentEl = document.getElementById('content');
+  var C = document.getElementById('content');
   var taskId = '{task_id}';
-  var streamUrl = location.origin + '/terminal/' + taskId + '/stream';
-  var userScrolled = false;
-  var lastScrollHeight = 0;
+  var wsProto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+  var wsUrl = wsProto + '//' + location.host + '/terminal/' + taskId + '/ws';
+  var autoScroll = true;  // 是否自动跟随底部
+  var userScrolling = false; // 用户正在手动滚动（触摸中）
+  var touchY = 0;         // 触摸起始 Y
+  var els = [];           // DOM 行元素数组
+  var ready = false;      // 首次消息前为 false
+  var queue = [];         // 消息队列
+  var rafId = 0;
 
   document.body.style.minHeight = window.innerHeight + 'px';
 
-  window.addEventListener('touchstart', function() {{
-    userScrolled = true;
-  }});
-  window.addEventListener('scrollend', function() {{
-    if ((window.innerHeight + window.scrollY) >= (document.body.scrollHeight - 50)) {{
-      userScrolled = false;
-    }}
-  }});
-
-  var lines = [];
-
-  function render() {{
-    contentEl.innerHTML = lines.join('\\n');
-    var newHeight = document.body.scrollHeight;
-    if (!userScrolled && newHeight > lastScrollHeight) {{
-      window.scrollTo(0, newHeight);
-    }}
-    lastScrollHeight = newHeight;
+  function isAtBottom() {{
+    return (window.innerHeight + window.scrollY) >= (document.body.scrollHeight - 60);
   }}
 
-  function connect() {{
-    var es = new EventSource(streamUrl);
+  // 记录触摸起始位置
+  window.addEventListener('touchstart', function(e) {{
+    touchY = e.touches[0].clientY;
+    userScrolling = true;
+  }}, {{ passive: true }});
 
-    es.onmessage = function(event) {{
-      var raw = event.data;
-      var type = raw.charAt(0);
-      if (type === 'D') {{
-        // D<start>-<end>⏎<delta> — 替换 lines[start:end]，保留 end 之后的行
-        var rest = raw.substring(1);
-        var sepIdx = rest.indexOf('⏎');
-        var range = rest.substring(0, sepIdx);
-        var deltaHtml = rest.substring(sepIdx + 1);
-        var deltaLines = deltaHtml.split('⏎');
-        var parts = range.split('-');
-        var start = parseInt(parts[0]);
-        var end = parseInt(parts[1]);
-        lines = lines.slice(0, start).concat(deltaLines).concat(lines.slice(end));
-      }} else {{
-        // F<全量> — 完整替换
-        var html = raw.substring(1);
-        lines = html.split('⏎');
+  // 用户向上滑动超过 10px → 禁用自动滚动
+  window.addEventListener('touchmove', function(e) {{
+    var dy = e.touches[0].clientY - touchY;
+    if (dy > 10) {{
+      autoScroll = false;
+    }}
+  }}, {{ passive: true }});
+
+  // 触摸结束后延迟检查（等惯性滚动停止）
+  window.addEventListener('touchend', function() {{
+    setTimeout(function() {{
+      userScrolling = false;
+      if (isAtBottom()) autoScroll = true;
+    }}, 500);
+  }}, {{ passive: true }});
+
+  function scroll() {{
+    if (autoScroll && !userScrolling) window.scrollTo(0, document.body.scrollHeight);
+  }}
+
+  // ---- 全量替换 ----
+  function applyFull(html) {{
+    if (!ready) {{ C.innerHTML = ''; els = []; ready = true; }}
+    var lines = html.split('\\n');
+    var n = lines.length;
+    // 复用已有 DOM 节点
+    var i = 0;
+    for (; i < n && i < els.length; i++) {{
+      if (els[i]._h !== lines[i]) {{ els[i].innerHTML = lines[i]; els[i]._h = lines[i]; }}
+    }}
+    // 多余的删除
+    if (els.length > n) {{
+      for (var r = els.length - 1; r >= n; r--) C.removeChild(els[r]);
+      els.length = n;
+    }}
+    // 不够的追加
+    if (i < n) {{
+      var frag = document.createDocumentFragment();
+      for (; i < n; i++) {{
+        var el = document.createElement('div');
+        el.className = 'L';
+        el.innerHTML = lines[i];
+        el._h = lines[i];
+        frag.appendChild(el);
+        els.push(el);
       }}
-      render();
+      C.appendChild(frag);
+    }}
+  }}
+
+  // ---- 增量替换 lines[start:end] ----
+  function applyDelta(start, end, html) {{
+    var lines = html.split('\\n');
+    var removeCount = end - start;
+    var addCount = lines.length;
+
+    if (removeCount === addCount) {{
+      // 同数量：直接原地更新 innerHTML，零 DOM 增删
+      for (var i = 0; i < addCount; i++) {{
+        var el = els[start + i];
+        if (el._h !== lines[i]) {{ el.innerHTML = lines[i]; el._h = lines[i]; }}
+      }}
+    }} else {{
+      // 数量不同：删旧插新
+      var removed = els.splice(start, removeCount);
+      for (var r = 0; r < removed.length; r++) C.removeChild(removed[r]);
+      var beforeEl = els[start] || null;
+      var frag = document.createDocumentFragment();
+      var inserted = [];
+      for (var j = 0; j < addCount; j++) {{
+        var el = document.createElement('div');
+        el.className = 'L';
+        el.innerHTML = lines[j];
+        el._h = lines[j];
+        frag.appendChild(el);
+        inserted.push(el);
+      }}
+      C.insertBefore(frag, beforeEl);
+      Array.prototype.splice.apply(els, [start, 0].concat(inserted));
+    }}
+  }}
+
+  // ---- RAF 批量渲染 ----
+  function flush() {{
+    rafId = 0;
+    var q = queue;
+    queue = [];
+    for (var i = 0; i < q.length; i++) {{
+      var m = q[i];
+      if (m.t === 'F') {{
+        applyFull(m.d);
+      }} else {{
+        applyDelta(m.s, m.e, m.d);
+      }}
+    }}
+    scroll();
+  }}
+
+  function enqueue(msg) {{
+    queue.push(msg);
+    if (!rafId) rafId = requestAnimationFrame(flush);
+  }}
+
+  // ---- 测量字符宽度，计算列数 ----
+  function measureCols() {{
+    var span = document.createElement('span');
+    span.style.cssText = 'position:absolute;visibility:hidden;white-space:pre;font:10px "Courier New","DejaVu Sans Mono",monospace';
+    span.textContent = 'MMMMMMMMMM';
+    document.body.appendChild(span);
+    var charW = span.offsetWidth / 10;
+    document.body.removeChild(span);
+    var viewW = window.innerWidth - 12; // 减去 padding
+    return Math.floor(viewW / charW);
+  }}
+
+  // ---- WebSocket ----
+  function connect() {{
+    var ws = new WebSocket(wsUrl);
+    ws.binaryType = 'arraybuffer';
+
+    ws.onopen = function() {{
+      var cols = measureCols();
+      ws.send(JSON.stringify({{ cols: cols }}));
+      // 监听屏幕旋转/窗口大小变化，重新发送列数
+      var lastCols = cols;
+      window.addEventListener('resize', function() {{
+        var newCols = measureCols();
+        if (newCols !== lastCols && ws.readyState === 1) {{
+          ws.send(JSON.stringify({{ cols: newCols }}));
+          lastCols = newCols;
+        }}
+      }});
     }};
 
-    es.onerror = function() {{
-      es.close();
-      setTimeout(connect, 2000);
+    ws.onmessage = function(ev) {{
+      var text;
+      if (typeof ev.data === 'string') {{
+        text = ev.data;
+      }} else {{
+        text = pako.inflate(new Uint8Array(ev.data), {{ to: 'string' }});
+      }}
+      var type = text.charAt(0);
+      if (type === 'D') {{
+        var nl = text.indexOf('\\n');
+        var parts = text.substring(1, nl).split('-');
+        enqueue({{ t: 'D', s: parseInt(parts[0]), e: parseInt(parts[1]), d: text.substring(nl + 1) }});
+      }} else {{
+        enqueue({{ t: 'F', d: text.substring(1) }});
+      }}
     }};
+
+    ws.onclose = function() {{ setTimeout(connect, 2000); }};
+    ws.onerror = function() {{ ws.close(); }};
   }}
 
   connect();
@@ -503,5 +715,5 @@ body {{
 
 @router.get("/terminal/{task_id}", response_class=HTMLResponse)
 async def terminal_page(task_id: int):
-    """返回终端镜像页面（SSE 实时更新）"""
+    """返回终端镜像页面（WebSocket 实时更新）"""
     return HTMLResponse(PAGE_TEMPLATE.format(task_id=task_id))

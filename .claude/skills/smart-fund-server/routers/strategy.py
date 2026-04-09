@@ -8,7 +8,7 @@ from fastapi import APIRouter, HTTPException, Query, Body
 
 import routers._utils as _utils
 from routers._utils import safe_call
-from services import fund_db
+from services.db import fund_db
 
 router = APIRouter()
 
@@ -18,7 +18,7 @@ router = APIRouter()
 @router.get("/api/risk/snapshot", summary="风控快照", tags=["风控模块"])
 async def risk_snapshot():
     """输出当前持仓/仓位/可用资金/各基金风控状态"""
-    from services import risk_manager
+    from services.trade import risk_manager
 
     old_stdout = sys.stdout
     sys.stdout = StringIO()
@@ -41,7 +41,7 @@ async def risk_snapshot():
 @router.post("/api/risk/check", summary="校验决策", tags=["风控模块"])
 async def risk_check(decisions: dict = Body(...)):
     """校验 LLM 决策是否违反硬约束"""
-    from services import risk_manager
+    from services.trade import risk_manager
 
     old_stdout = sys.stdout
     sys.stdout = StringIO()
@@ -59,7 +59,7 @@ async def risk_check(decisions: dict = Body(...)):
 @router.get("/api/risk/preflight", summary="交易前置检查", tags=["风控模块"])
 async def risk_preflight():
     """交易前置检查：交易时间、交易日、熔断机制"""
-    from services import risk_manager
+    from services.trade import risk_manager
 
     old_stdout = sys.stdout
     sys.stdout = StringIO()
@@ -84,7 +84,7 @@ async def risk_preflight():
 @router.post("/api/indicators/evaluate", summary="计算量化信号", tags=["量化信号"])
 async def evaluate_indicators():
     """对基金池中每只基金计算量化信号"""
-    from services import indicators
+    from services.trade import indicators
 
     old_stdout = sys.stdout
     sys.stdout = StringIO()
@@ -109,7 +109,7 @@ async def evaluate_indicators():
 @router.post("/api/review/execute", summary="执行决策复盘", tags=["决策复盘"])
 async def execute_review(limit: int = Query(30, description="复盘数量"), days_back: int = Query(7, description="回溯天数")):
     """执行待复盘决策的复盘，返回复盘统计结果"""
-    from services import review_decision_executor
+    from services.trade import review_decision_executor
 
     try:
         result = review_decision_executor.execute_decision_review(limit, days_back)
@@ -526,7 +526,7 @@ async def plan_buy(
 async def sync_positions():
     """从同花顺同步持仓到本地数据库"""
     try:
-        positions_data = await _utils.client.get_fund_positions()
+        positions_data = await _utils.trade.get_fund_positions()
 
         synced_count = 0
         result = positions_data.get("result", {})
@@ -557,7 +557,7 @@ async def sync_positions():
 async def get_account_overview():
     """获取账户总览（总资产、收益等）"""
     try:
-        overview = await _utils.client.get_account_overview()
+        overview = await _utils.trade.get_account_overview()
         return {
             "status": "success",
             "data": overview
@@ -570,7 +570,7 @@ async def get_account_overview():
 async def get_wallet_info():
     """获取钱包余额信息"""
     try:
-        wallet = await _utils.client.get_wallet_info()
+        wallet = await _utils.trade.get_wallet_info()
         return {
             "status": "success",
             "data": wallet
@@ -583,7 +583,7 @@ async def get_wallet_info():
 async def get_wallet_home():
     """获取钱包首页完整信息"""
     try:
-        home = await _utils.client.get_wallet_home()
+        home = await _utils.trade.get_wallet_home()
         return {
             "status": "success",
             "data": home
@@ -592,17 +592,39 @@ async def get_wallet_home():
         raise HTTPException(status_code=500, detail=f"获取钱包首页失败: {e}")
 
 
+@router.get("/api/config", summary="获取配置", tags=["配置管理"])
+async def get_config():
+    """获取完整配置（基金池、风控参数、资金设置等）"""
+    try:
+        config = fund_db.get_config()
+        return {"status": "success", "data": config}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"获取配置失败: {e}")
+
+
+@router.post("/api/config", summary="更新配置", tags=["配置管理"])
+async def update_config(data: dict = Body(...)):
+    """更新配置字段（只更新传入的字段）"""
+    try:
+        fund_db.update_config(**data)
+        config = fund_db.get_config()
+        return {"status": "success", "data": config}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"更新配置失败: {e}")
+
+
 @router.get("/api/funds/scan", summary="基金扫描（完整版）", tags=["基金数据"])
 async def scan_all_funds():
     """扫描基金池中所有基金的详细数据（完整版，数据量大）"""
     try:
-        positions = fund_db.get_positions()
-        fund_codes = [p["fund_code"] for p in positions]
+        config = fund_db.get_config()
+        raw_pool = config.get("fund_pool", [])
+        fund_codes = [item["code"] if isinstance(item, dict) else item for item in raw_pool]
 
         funds_data = []
         for code in fund_codes:
             try:
-                detail = await _utils.client.get_fund_detail(code)
+                detail = await _utils.ths.get_fund_detail(code)
                 funds_data.append(detail)
             except:
                 continue
@@ -620,14 +642,15 @@ async def scan_all_funds():
 async def scan_funds_summary():
     """扫描基金池中所有基金的关键数据（精简版，约2KB）"""
     try:
-        positions = fund_db.get_positions()
-        fund_codes = [p["fund_code"] for p in positions]
+        config = fund_db.get_config()
+        raw_pool = config.get("fund_pool", [])
+        fund_codes = [item["code"] if isinstance(item, dict) else item for item in raw_pool]
 
         funds_summary = []
         for code in fund_codes:
             try:
-                base = await _utils.client.get_fund_base(code)
-                info = await _utils.client.get_fund_info(code)
+                base = await _utils.ths.get_fund_base(code)
+                info = await _utils.ths.get_fund_info(code)
 
                 base_data = base.get("data", {})
                 info_data = info.get("data", {})

@@ -46,3 +46,6 @@ qidian/novel_kb/*
 # fund-trade 敏感文件
 .claude/skills/fund-trade/config.json
 
+# 采集的文档（体积大）
+scraped_docs/
+

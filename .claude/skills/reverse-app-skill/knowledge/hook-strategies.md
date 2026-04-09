@@ -133,6 +133,48 @@ ServerSocket server = new ServerSocket(18900);
 // 返回 JSON 响应
 ```
 
+## 策略 8: WebView Cookie DB 直读（认证参数提取）
+
+**适用场景**: App 使用 WebView 访问 Web 服务，认证 Token 存储在 WebView 的 Cookie 数据库中（SQLite）
+**安全等级**: 极高（只读数据库，不 Hook 任何方法）
+
+```java
+// Cookie DB 路径探测（路径因 WebView 版本/设备而异）
+String[] candidatePaths = {
+    "/data/data/<pkg>/app_webview/Default/Cookies",
+    "/data/data/<pkg>/app_webview_<pkg>/Default/Cookies",
+};
+String dbPath = null;
+for (String p : candidatePaths) {
+    if (new java.io.File(p).exists()) { dbPath = p; break; }
+}
+
+// 只读打开 + SQL 查询
+SQLiteDatabase db = SQLiteDatabase.openDatabase(dbPath, null, OPEN_READONLY);
+Cursor c = db.rawQuery(
+    "SELECT value FROM cookies WHERE host_key=? AND name=?",
+    new String[]{".target-domain.com", "token_name"});
+if (c.moveToFirst()) {
+    String tokenValue = c.getString(0);
+    // 上报到服务端
+}
+c.close();
+db.close();
+```
+
+**关键注意**:
+- 必须用 `OPEN_READONLY` 打开，避免锁死 WebView 的数据库
+- Cookie DB 路径不固定，必须做路径探测（见 pitfalls #15）
+- 延迟读取：App 启动后 WebView 需要时间初始化和写入 Cookie，建议延迟 15-30 秒
+- 定期轮询：Token 可能会被 App 更新，建议每 30 分钟重读一次
+- 适合提取 session token、hexin-v、CSRF token 等 WebView 级别的认证参数
+- **不适用于 HttpOnly cookie**：WebView Cookie DB 包含所有 cookie（含 HttpOnly）
+
+**对比 OkHttp Interceptor 方式的优势**:
+- 不依赖特定的 HTTP 请求被触发（DB 中始终有值）
+- 不需要 OkHttp interceptor hook 成功（360加固下常失败）
+- 可以一次读取所有 cookie 字段（而非逐个从请求 header 提取）
+
 ## 选择决策树
 
 ```
@@ -154,4 +196,8 @@ ServerSocket server = new ServerSocket(18900);
 需要 PC 端远程控制？
 ├─ YES → 策略 6: LocalSocket RPC
 │        或 策略 7: HTTP 代理服务器
+│
+需要提取 WebView 的 session/token？
+├─ YES → 策略 8: WebView Cookie DB 直读
+│        （OkHttp interceptor 失败或 token 不经过 OkHttp 时的首选方案）
 ```

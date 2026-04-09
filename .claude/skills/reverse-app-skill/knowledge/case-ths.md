@@ -53,6 +53,56 @@ Body: {
 2. 获取序列号: POST `/rz/trade/dubbo/buy/getTradeInfoSeq`
 3. 提交: POST `/rz/trade/dubbo/buy`
 
+## 问财 (iwencai) 接口逆向
+
+### 目标
+问财自然语言选股 API，实现完全脱离手机的服务端调用。
+
+### 认证机制
+- **API**: `POST https://www.iwencai.com/customized/chart/get-robot-data`
+- **认证**: Cookie 中的 `v=` 字段（hexin-v token，60 字符 base64url）
+- **存储位置**: WebView Cookie DB（SQLite），路径不固定：
+  - `app_webview/Default/Cookies`
+  - `app_webview_<包名>/Default/Cookies`
+- **有效期**: ~31 天（与 sess_tk JWT 同步）
+
+### 反爬机制（极严格）
+1. **Token 级验证码锁定**: 短时间连续请求触发 captcha，绑定 token 而非 IP，不可自动恢复
+2. **Frida 检测**: attach 超时，spawn 模式下 360 加固阻止 Java bridge
+3. **360 加固**: OkHttp interceptor 需要延迟重试才能注入
+
+### 成功方案
+**策略 8 (Cookie DB 直读)** — 不依赖 OkHttp interceptor，直接从 SQLite 读取全部 cookie：
+
+```java
+// CookieDbWatcher: 延迟 15s 启动 + 每 30 分钟轮询
+SQLiteDatabase db = SQLiteDatabase.openDatabase(dbPath, null, OPEN_READONLY);
+Cursor c = db.rawQuery(
+    "SELECT value FROM cookies WHERE host_key='.10jqka.com.cn' AND name=?",
+    new String[]{"v"});
+// 读取后上报到服务端
+```
+
+**频率控制**: 服务端每次请求间隔 ≥60 秒，防止触发验证码
+
+### Token 刷新（当被验证码锁定时）
+```bash
+# 1. 删除 WebView Cookie DB（强制 App 重新获取全新 token）
+adb shell "su -c 'rm /data/data/com.hexin.plat.android/app_webview*/Default/Cookies'"
+# 2. 重启 App → CookieDbWatcher 自动读取新 token 并上报
+adb shell "am force-stop com.hexin.plat.android && am start ..."
+```
+
+### 失败方案记录
+| 方案 | 结果 | 原因 |
+|------|------|------|
+| 直接 HTTP + v token | ❌ | 连续请求触发验证码 |
+| OkHttp 代理转发 | ❌ | 代理请求也触发验证码 |
+| Frida attach | ❌ | 反 Frida 检测 |
+| Frida spawn (patched) | ❌ | strongR-frida 无 Java bridge |
+| Frida spawn (原版) | ❌ | 360 加固阻止 Java bridge |
+| **Cookie DB 直读 + 频率控制** | **✅** | 不触发任何检测 |
+
 ## Python 工具
 - `api/server.py` — FastAPI 服务 (8900 端口)
 - `api/ths_fund_client.py` — 异步 API 客户端

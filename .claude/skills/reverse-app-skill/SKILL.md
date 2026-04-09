@@ -1,3 +1,58 @@
+---
+name: reverse-app
+display_name: Android 逆向工程
+icon: bug_report
+description: Zygisk + Pine ART Hook 渐进式逆向框架，支持 360/梆梆/腾讯乐固等主流加固
+category: security
+commands:
+  - id: init
+    name: 初始化逆向项目
+    description: 从模板创建新 App 的 Zygisk Hook 项目骨架
+    input: text
+    executor: claude
+    estimated_time: 60
+    args:
+      - name: package_name
+        description: 目标 App 包名（如 com.example.app）
+        required: true
+      - name: tag
+        description: 项目简称（用于目录名和 TAG，如 ths/qidian）
+        required: true
+
+  - id: analyze
+    name: APK 静态分析
+    description: 解包 APK → 识别加固 → jadx 反编译 → 字符串搜索 → 输出分析报告
+    input: text
+    executor: claude
+    estimated_time: 120
+    args:
+      - name: apk_path
+        description: APK 文件路径
+        required: true
+
+  - id: build-deploy
+    name: 编译部署
+    description: 编译 Java Hook + Zygisk C++ → 推送到手机 → 重启 App → 观察日志
+    input: text
+    executor: claude
+    estimated_time: 120
+    args:
+      - name: app_dir
+        description: 项目目录名（如 ths/qidian）
+        required: true
+
+  - id: log
+    name: 日志监控
+    description: 启动 logcat 过滤并实时分析 Hook 输出
+    input: text
+    executor: claude
+    estimated_time: 60
+    args:
+      - name: tag
+        description: logcat 过滤 TAG（如 THSHook/QDHook）
+        required: true
+---
+
 # Reverse App Skill — Android 逆向工程通用 Skill
 
 ## 概述
@@ -195,18 +250,66 @@ unzip -l <app.apk> | grep '\.so$'
 | 无特征 SO | 未加固 | ⭐ |
 
 ```bash
-# 3. DEX 反编译（jadx）— 只是看代码，不修改任何东西
-jadx -d <output_dir> <app.apk> --show-bad-code
+# 3. 解包 APK，获取完整 AndroidManifest.xml
+apktool d <app.apk> -o <apktool_output>
+# 查看 Application 类、入口 Activity、Service、权限等
+cat <apktool_output>/AndroidManifest.xml
 
-# 4. 正常使用 App，观察行为
+# 4. DEX 反编译（jadx）— 只是看代码，不修改任何东西
+jadx -d <output_dir> <app.apk> --show-bad-code
+```
+
+**Phase 0.1: DEX 静态分析**（详见 **knowledge/static-analysis-guide.md**）
+
+反编译后进行系统性的代码搜索，**在写任何 Hook 之前先搞清楚要 Hook 什么**：
+
+```bash
+cd <jadx_output>
+
+# 搜 API 域名/路径 → 定位网络请求代码
+grep -rn "api\.\|/api/\|https://" --include="*.java" | head -30
+
+# 搜加密关键词 → 定位加密逻辑
+grep -rn "Cipher\|SecretKey\|encrypt\|decrypt\|AES\|RSA" --include="*.java"
+
+# 搜网络框架 → 确认使用 OkHttp/Retrofit/Volley
+grep -rn "OkHttpClient\|Retrofit\|Interceptor" --include="*.java"
+
+# 搜 WebView/JSBridge → 定位 Hybrid 通信
+grep -rn "addJavascriptInterface\|@JavascriptInterface\|JsBridge" --include="*.java"
+
+# 搜认证相关 → 定位 Token/签名机制
+grep -rn "token\|sign\|auth\|session" --include="*.java" -i | head -20
+```
+
+**注意**：加固 App 的 DEX 是加密的，jadx 看到的可能是壳代码。此时先跳过深度分析，
+在 Phase 1-3 动态 Hook 获得信息后，再 dump 脱壳 DEX 做二次静态分析。
+
+```bash
+# 5. 正常使用 App，观察行为
 # 截屏记录 App 界面和流程
 adb exec-out screencap -p > /tmp/screenshot.png
 ```
 
 **Phase 0 产出**：
 - 包名、版本、加固类型
+- AndroidManifest 关键信息（Application 类、入口 Activity）
 - App 主要功能和页面流程
 - 初步判断目标数据在哪里（API/本地数据库/WebView）
+- 网络库类型（OkHttp/Retrofit/其他）
+- 加密方式（如能从未混淆代码中发现）
+- **候选 Hook 目标列表**（类名 + 方法名）
+
+### 首要任务：将重复操作脚本化
+
+拿到一个新 App 后，在写任何 Hook 代码之前，先把"打开 App → 导航到目标页面 → 触发请求"这类重复操作写成 AutoJS 脚本。后续每次编译部署 Hook 后，直接运行脚本触发 App 行为，专注于日志分析。
+
+**工作流**：
+1. **探索阶段**：用截屏 + UIAutomator 摸清 UI 坐标和控件结构
+2. **编写 AutoJS 脚本**：基于 `templates/autojs_template.js` 模板，把重复操作固化为脚本
+3. **后续直接运行**：每次修改 Hook 后，一键运行脚本触发操作，专注看日志
+
+详见 **knowledge/autojs-guide.md**。
 
 ### Phase 1: 最小注入测试（只验证注入通道）
 
@@ -355,6 +458,9 @@ Object emptyInterceptor = Proxy.newProxyInstance(cl,
    ```
    验证 → App 存活？继续。
 
+**每次修改 Hook 后的验证流程**：编译 → 部署 → 运行 AutoJS 脚本触发操作 → 分析日志。
+   不要手动重复导航步骤，用脚本一键完成，把精力集中在日志分析上。
+
 5. **第五轮**（可选）：增加 Cipher Hook
    - 先只 Hook `Cipher.getInstance` 记录算法名
    - 再 Hook `Cipher.init` 记录密钥
@@ -374,6 +480,88 @@ Object emptyInterceptor = Proxy.newProxyInstance(cl,
 4. 实现特定的业务功能（数据提取、自动化操作等）
 
 **同样遵循最小步骤原则**：每次只新增一个功能点，验证后再继续。
+
+### Phase 5.1: WebView Cookie DB 读取（认证参数提取的备选方案）
+
+当目标数据需要 WebView 的 session/token（如 hexin-v、CSRF token 等），且 OkHttp interceptor 方案不可靠时（360 加固下常见），可以直接读取 WebView 的 Cookie 数据库：
+
+```java
+// 路径探测（路径因 WebView 版本/设备/App 更新而异）
+String[] paths = {
+    "/data/data/<pkg>/app_webview/Default/Cookies",
+    "/data/data/<pkg>/app_webview_<pkg>/Default/Cookies",
+};
+for (String p : paths) {
+    if (new java.io.File(p).exists()) { dbPath = p; break; }
+}
+
+// 只读打开，避免锁死 WebView
+SQLiteDatabase db = SQLiteDatabase.openDatabase(dbPath, null, OPEN_READONLY);
+Cursor c = db.rawQuery("SELECT value FROM cookies WHERE host_key=? AND name=?",
+    new String[]{".target-domain.com", "token_name"});
+```
+
+**关键注意**：
+- 延迟启动：App 启动后 WebView 需要 15-30 秒初始化并写入 Cookie
+- 定期轮询：Token 可能被 App 更新，建议每 30 分钟重读
+- Cookie DB 路径不固定，必须做路径探测
+- 参见 `knowledge/hook-strategies.md` 策略 8 和 `knowledge/pitfalls.md` #15
+
+### Phase 5.2: installAllHooks 重试机制（360 加固必备）
+
+360 加固的 App 在 Zygote fork 时 ClassLoader 不包含 App 类（尚未解壳）。
+`installAllHooks` 需要支持重试——关键 hook 失败时允许后续的延迟线程重新调用：
+
+```java
+private static volatile boolean okHttpHooked = false;
+
+private static synchronized void installAllHooks(ClassLoader cl) {
+    // 允许重入：关键 hook 未成功时，接受新的 classLoader 重试
+    if (hooksInstalled && okHttpHooked) return;
+    boolean firstRun = !hooksInstalled;
+    hooksInstalled = true;
+
+    // 关键 hook — 允许重试
+    if (!okHttpHooked) {
+        try { injectInterceptor(cl); okHttpHooked = true; }
+        catch (Throwable e) { /* will retry */ }
+    }
+    // 其他 hook — 只执行一次
+    if (firstRun) { ... }
+}
+```
+
+参见 `knowledge/pitfalls.md` #14。
+
+### Phase 5.3: Web API 反爬绕过（当目标是 Web 接口而非 App 时）
+
+当逆向目标是 Web API 而非 App 内部逻辑时（例如采集网站数据），按以下流程渐进式突破：
+
+```
+Step 1: 直接 curl/httpx 请求
+  ├─ 成功 → 无反爬，直接用
+  └─ 失败（403/400/验证码） ↓
+
+Step 2: curl_cffi + impersonate="chrome120"（TLS 指纹绕过）
+  ├─ 成功 → TLS 指纹是关键壁垒
+  └─ 失败 ↓
+
+Step 3: 浏览器访问 → 检查是否有 WAF 挑战页
+  ├─ 有（aliyun_waf/cloudflare）→ 需要浏览器执行 JS ↓
+  └─ 无 → 检查 headers/签名/加密参数
+
+Step 4: Playwright context.cookies() 获取完整 cookie（含 httpOnly）
+  + curl_cffi 复用 cookie 请求
+  ├─ 成功 → httpOnly cookie 是关键壁垒
+  └─ 失败 → 可能有请求签名/动态参数，需深入分析
+```
+
+**关键工具：**
+- `curl_cffi`：模拟 Chrome TLS 指纹（`pip install curl_cffi`）
+- Playwright `context.cookies()`：获取 httpOnly cookie
+- `api-explorer`（spy 服务）：浏览器内探索 + cookie 导出
+
+详见 `knowledge/web-anti-crawl.md`。
 
 ### Phase 6: 崩溃排查流程（当 App 闪退时）
 
@@ -558,7 +746,9 @@ knowledge/
 ├── case-yanyan.md            # 案例：盐言故事（梆梆加固）
 ├── case-xhs.md               # 案例：小红书（腾讯乐固）
 ├── case-ths.md               # 案例：同花顺（360加固+基金交易）
-└── case-wechat.md            # 案例：微信（WCDB数据库解密）
+├── case-wechat.md            # 案例：微信（WCDB数据库解密）
+├── autojs-guide.md           # AutoJS 自动化指南（UI 操作脚本化）
+└── static-analysis-guide.md  # DEX 静态分析指南（jadx 使用方法论）
 ```
 
 ## 自我迭代规则

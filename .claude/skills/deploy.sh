@@ -35,7 +35,7 @@ SSH_KEY="/mnt/c/Users/阮雨阳/.ssh/id_rsa"
 SSH_KEY_TMP="/tmp/deploy_key_skills"
 
 # rsync 排除列表
-EXCLUDES="--exclude=__pycache__ --exclude=*.pyc --exclude=images/ --exclude=server.log --exclude=.git --exclude=deploy.sh --exclude=data/"
+EXCLUDES="--exclude=__pycache__ --exclude=*.pyc --exclude=images/ --exclude=server.log --exclude=.git --exclude=deploy.sh --exclude=data/ --exclude=scraped_docs/ --exclude=output/"
 
 # ==================== 工具函数 ====================
 setup_ssh_key() {
@@ -132,7 +132,7 @@ init_deploy() {
 
     # 3. 安装 Python 依赖
     echo "📦 安装 Python 依赖..."
-    ssh_cmd "${CONDA_BASE}/envs/${CONDA_ENV}/bin/pip install fastapi uvicorn httpx psycopg2-binary pydantic 2>&1 | tail -3"
+    ssh_cmd "${CONDA_BASE}/envs/${CONDA_ENV}/bin/pip install fastapi uvicorn httpx psycopg2-binary pydantic html2text 2>&1 | tail -3"
 
     # 4. 安装 PostgreSQL
     echo "📦 安装 PostgreSQL..."

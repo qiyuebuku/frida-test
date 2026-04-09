@@ -80,3 +80,39 @@
 - **原因**: 我们已手动 System.load()，Pine 默认的 libLoader 会再次加载
 - **方案**: `PineConfig.libLoader = () -> {};`
 - **适用范围**: 所有 Zygisk + Pine 项目
+
+### 14. installAllHooks 的 hooksInstalled 标志导致重试被跳过
+- **现象**: OkHttp interceptor 注入失败后，延迟线程获取到正确的 ClassLoader 也不再尝试
+- **原因**: `installAllHooks` 首次调用时 `hooksInstalled=true` 被立即设置，但 OkHttp 类还不存在（360加固延迟解壳）。后续调用被 `if (hooksInstalled) return` 跳过
+- **方案**: 将关键 hook 的成功状态单独追踪（如 `okHttpHooked`），条件改为 `if (hooksInstalled && okHttpHooked) return`，非关键 hook 用 `firstRun` 标志只执行一次
+- **适用范围**: 所有使用 360 加固的 App（ClassLoader 在 Zygote fork 阶段不包含 App 类）
+
+### 15. WebView Cookie DB 路径不固定
+- **现象**: 从固定路径 `app_webview/Default/Cookies` 读取 Cookie DB 失败
+- **原因**: Android WebView 的存储路径会因为 App 更新、WebView 版本变化、多进程模式等原因改变。常见路径有 `app_webview/Default/Cookies` 和 `app_webview_<包名>/Default/Cookies`
+- **方案**: 遍历所有可能路径，或用 `find` 命令动态查找。在 Hook 中实现路径探测逻辑
+- **适用范围**: 所有需要读取 WebView Cookie 的逆向场景
+
+### 16. 反爬 Token 一旦触发验证码就永久失效
+- **现象**: 短时间内连续请求某个 API，第一次成功，后续全部返回验证码(captcha)。换 IP 仍然需要验证码
+- **原因**: 服务端将验证码状态绑定到 token（而非 IP），一旦触发就标记该 token 需要完成验证码才能继续使用
+- **方案**: (1) 严格控制请求频率（至少 60 秒间隔）；(2) 预防而非恢复——token 被锁后只能重新生成；(3) 清除 App 的 Cookie DB 并重启 App 可触发全新 token 生成
+- **适用范围**: 问财(iwencai)等有 token 级验证码锁定机制的服务。**逆向调试阶段切忌连续请求测试**
+
+### 17. document.cookie 拿不到 httpOnly cookie 导致请求失败
+- **现象**: 从浏览器复制 `document.cookie` 发 HTTP 请求，返回 401/403，但浏览器本身请求正常
+- **原因**: 关键认证 cookie（如 `xq_a_token`）标记为 `httpOnly=true`，浏览器 JS 无法访问，但浏览器发请求时会自动携带
+- **方案**: 使用 Playwright `page.context.cookies()` 或 Selenium `driver.get_cookies()` 获取完整 cookie 列表（包含 httpOnly）
+- **适用范围**: 所有使用 httpOnly cookie 做认证的网站（雪球、部分银行/证券网站）
+
+### 18. TLS 指纹被检测导致同样的 cookie + headers 仍然失败
+- **现象**: 完整复制了浏览器的 cookie 和 headers，curl/httpx/requests 发请求仍返回 403 或 WAF 挑战页
+- **原因**: 服务端检测 TLS 握手指纹（cipher suite 顺序、扩展列表等），标准 HTTP 库的指纹与浏览器不同
+- **方案**: 使用 `curl_cffi`（`Session(impersonate="chrome120")`）模拟 Chrome 的 TLS 指纹
+- **适用范围**: 使用 WAF（阿里云/Cloudflare）的网站。**httpx/requests/标准curl 全部有独特指纹会被识别**
+
+### 19. WAF JS 挑战页被误认为"网站不可访问"
+- **现象**: HTTP 请求返回 200 但内容是 HTML 而非预期的 JSON，或返回一小段 JS 代码
+- **原因**: 返回的是 WAF JS 挑战页面（含 `<script>` 和 `<meta name="aliyun_waf_*">`），需要浏览器执行 JS 后才能获得真正的响应
+- **方案**: 识别特征（`aliyun_waf`/`cf-ray`/`challenge.js`），用真实浏览器通过挑战，导出 cookie 后复用
+- **适用范围**: 阿里云 WAF（国内常见）、Cloudflare（国际常见）

@@ -14,33 +14,30 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
-from services.ths_fund_client import THSFundClient
-from services import fund_db
-from services import db as ocr_db
-from services import task_db
-from services import skill_registry as sr
-from services.scheduler import scheduler
-from routers import router, set_client, start_auth_auto_refresh
-
-client: THSFundClient = None
+from services.db import fund_db
+from services.db import ocr_db
+from services.db import task_db
+from services.db import raw_data
+from services.tools import skill_registry as sr
+from services.tools.scheduler import scheduler
+from routers import router, start_auth_auto_refresh
+from routers._utils import init_clients, close_clients
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    global client
-
     # 初始化数据库表
     try:
         fund_db.init_tables()
         ocr_db.init_ocr_tables()
         task_db.init_task_tables()
+        raw_data.init_raw_data_tables()
         print("✅ 数据库表已初始化")
     except Exception as e:
         print(f"⚠️ 数据库表初始化失败: {e}")
 
-    # 初始化同花顺客户端
-    client = THSFundClient()
-    set_client(client)
+    # 初始化所有数据源客户端
+    init_clients()
 
     # 启动定时任务调度器
     scheduler.start()
@@ -58,7 +55,7 @@ async def lifespan(app: FastAPI):
     yield
 
     scheduler.stop()
-    await client.close()
+    await close_clients()
 
 
 app = FastAPI(
@@ -83,6 +80,10 @@ async def health_check():
 
 
 app.include_router(router)
+
+# 浏览器探索服务（camoufox 可选，未安装不影响启动）
+from routers.spy import router as spy_router
+app.include_router(spy_router)
 
 # 静态文件（xterm.js 等）
 app.mount("/static", StaticFiles(directory=str(Path(__file__).parent / "static")), name="static")

@@ -18,9 +18,9 @@ import time
 from datetime import datetime
 from pathlib import Path
 
-from services import task_db
-from services import db as ocr_db
-from services.ocr_service import OCRService
+from services.db import task_db
+from services.db import ocr_db
+from services.tools.ocr_service import OCRService
 import services.handlers as handlers
 
 logger = logging.getLogger(__name__)
@@ -205,7 +205,7 @@ class ClaudeTmuxSession:
 
         # 创建 tmux session，启动 claude 交互模式
         _tmux("new-session", "-d", "-s", self.session_name,
-              "-x", "200", "-y", "50", claude_cmd)
+              "-x", "80", "-y", "50", claude_cmd)
         _tmux("set-option", "-t", self.session_name, "history-limit", "10000")
 
         logger.info(f"[tmux] 启动会话 {self.session_name} (model={model or 'default'}, claude_session={self.claude_session_id[:8]}...)")
@@ -501,7 +501,7 @@ class TaskExecutor:
                                      "created_at": datetime.now().isoformat()})
                     task_db.update_task(task_id, messages=messages)
 
-                    self._task_tool_calls[task_id] = []
+                    # 追问时不清空 tool_calls，保留历史
                     result = self._run_claude_streaming(
                         task_id, msg, timeout=600,
                         progress_range=(0, 90), estimated_tools=20,
@@ -522,6 +522,59 @@ class TaskExecutor:
             self._task_start_times.pop(task_id, None)
             # 注意：不清理 tmux 会话，保留用于追问
             self._semaphore.release()
+
+    def destroy_task(self, task_id: int):
+        """彻底销毁任务：关闭 tmux 会话 + 删除 Claude CLI 会话文件"""
+        # 1. 关闭 tmux 会话
+        with self._tmux_lock:
+            session = self._tmux_sessions.pop(task_id, None)
+            self._session_last_active.pop(task_id, None)
+        if session:
+            session.close()
+            # 2. 删除 Claude CLI 会话文件
+            self._delete_claude_session(session.claude_session_id)
+        else:
+            # 会话可能不在内存中（服务重启后），从 DB 获取 session_id
+            task = task_db.get_task(task_id)
+            if task and task.get("session_id"):
+                self._delete_claude_session(task["session_id"])
+            # 尝试 kill 可能存在的 tmux session
+            for suffix in ["", "_sonnet", "_haiku"]:
+                name = f"{SESSION_PREFIX}{task_id}{suffix}"
+                subprocess.run(["tmux", "kill-session", "-t", name],
+                               capture_output=True, timeout=5)
+        # 3. 清理待发送消息
+        with self._message_lock:
+            self._pending_messages.pop(task_id, None)
+        self._task_tool_calls.pop(task_id, None)
+        self._task_start_times.pop(task_id, None)
+        logger.info(f"[destroy] task_id={task_id} 任务已销毁")
+
+    @staticmethod
+    def _delete_claude_session(session_id: str):
+        """删除 Claude CLI 会话文件（~/.claude/projects/*/sessions/）"""
+        if not session_id:
+            return
+        home = Path.home()
+        # Claude Code 会话文件存储在 ~/.claude/projects/<project-hash>/sessions/<session-id>.jsonl
+        projects_dir = home / ".claude" / "projects"
+        if not projects_dir.exists():
+            return
+        deleted = 0
+        for project_dir in projects_dir.iterdir():
+            if not project_dir.is_dir():
+                continue
+            sessions_dir = project_dir / "sessions"
+            if not sessions_dir.exists():
+                continue
+            for ext in [".jsonl", ".json"]:
+                session_file = sessions_dir / f"{session_id}{ext}"
+                if session_file.exists():
+                    session_file.unlink()
+                    deleted += 1
+                    logger.info(f"[destroy] 删除会话文件: {session_file}")
+        if deleted == 0:
+            logger.debug(f"[destroy] 未找到会话文件 session_id={session_id[:8]}...")
 
     def force_stop(self, task_id: int) -> bool:
         """停止正在运行的任务 - 发送 Escape 并立即更新状态，后台异步捕获展开内容"""
@@ -612,7 +665,9 @@ class TaskExecutor:
             task_db.update_task(task_id, status="completed", error_msg="服务器繁忙")
             return
         try:
-            self._task_tool_calls[task_id] = []
+            # 追问时保留已有 tool_calls 历史，不清空
+            if task_id not in self._task_tool_calls:
+                self._task_tool_calls[task_id] = []
             self._task_start_times[task_id] = time.time()
 
             task = task_db.get_task(task_id)
@@ -647,7 +702,7 @@ class TaskExecutor:
                 skill_name = task.get("skill_name")
                 cwd = None
                 if skill_name:
-                    import services.skill_registry as sr
+                    import services.tools.skill_registry as sr
                     if sr.skill_registry:
                         skill = sr.skill_registry.get_skill(skill_name)
                         if skill:
@@ -816,7 +871,7 @@ OCR 文本：
 
     def _is_claude_command(self, skill_name: str, command_id: str) -> bool:
         """检查 SKILL.md 中该命令是否标记为 executor: claude"""
-        import services.skill_registry as sr
+        import services.tools.skill_registry as sr
         if not sr.skill_registry or not skill_name:
             return False
         skill = sr.skill_registry.get_skill(skill_name)
@@ -825,9 +880,21 @@ OCR 文本：
         command = skill.get_command(command_id)
         return command is not None and command.executor == "claude"
 
+    @staticmethod
+    def _read_skill_body(skill_path: str) -> str:
+        """读取 SKILL.md 中 frontmatter 之后的正文部分"""
+        md_path = Path(skill_path) / "SKILL.md"
+        if not md_path.exists():
+            return ""
+        text = md_path.read_text(encoding="utf-8")
+        # 跳过 frontmatter（--- ... ---）
+        m = re.match(r"^---\s*\n.*?\n---\s*\n?", text, re.DOTALL)
+        body = text[m.end():] if m else text
+        return body.strip()
+
     def _execute_claude(self, task: dict, skill_name: str, command_id: str):
         """通用 claude 执行：在 skill 目录下通过 tmux 交互"""
-        import services.skill_registry as sr
+        import services.tools.skill_registry as sr
         skill = sr.skill_registry.get_skill(skill_name)
         command = skill.get_command(command_id)
         task_id = task["id"]
@@ -835,12 +902,44 @@ OCR 文本：
         if isinstance(config, str):
             config = json.loads(config)
 
-        prompt = f"执行命令: {command.name}\n{command.description}"
+        # 构建 prompt：注入 SKILL.md 正文，避免 Claude 自己去读
+        skill_body = self._read_skill_body(skill.path)
+        args_str = ""
         if config.get("args"):
-            prompt += f"\n参数: {' '.join(f'{k} {v}' for k, v in config['args'].items())}"
-        if config.get("input_data"):
-            prompt += f"\n输入: {config['input_data']}"
-        prompt = self._apply_custom_prompt(prompt, task)
+            args_str = "\n".join(f"- {k}: {v}" for k, v in config["args"].items())
+        input_str = config.get("input_data", "")
+
+        # 创建任务专属输出目录
+        output_dir = Path(skill.path) / "output" / str(task_id)
+        output_dir.mkdir(parents=True, exist_ok=True)
+
+        parts = [f"# 任务: {command.name}"]
+        parts.append(f"## 输出目录\n所有产出文件必须放到: `{output_dir}`\n命令行中用 `--output {output_dir}` 或手动将结果写入此目录。")
+        if args_str:
+            parts.append(f"## 参数\n{args_str}")
+        if input_str:
+            parts.append(f"## 输入\n{input_str}")
+        if skill_body:
+            parts.append(f"## Skill 知识库（直接参考，不要再读 SKILL.md）\n\n{skill_body}")
+
+        # 用户自定义规则（优先级最高）
+        _, user_rules = self._get_custom_config(task)
+        req_lines = [
+            "- 直接按上述知识库执行，不要先读 SKILL.md 或源码来了解结构",
+            "- **必须使用 Skill 知识库中指定的工具/脚本**，禁止自己写脚本替代（如手写 curl+python 转换 HTML）",
+            "- 减少解释性文字，专注执行",
+            "- 遇到问题时直接修复，不要反复描述问题",
+            f"- **所有产出文件必须输出到 `{output_dir}`**，不要输出到其他位置",
+        ]
+        if user_rules:
+            req_lines.insert(0, f"- **用户额外要求（必须遵守）**: {user_rules}")
+        parts.append(f"## 执行要求\n" + "\n".join(req_lines))
+
+        prompt = "\n\n".join(parts)
+        # system_prompt 仍走 _apply_custom_prompt，但 rules 已在上面处理
+        system_prompt, _ = self._get_custom_config(task)
+        if system_prompt:
+            prompt = f"{system_prompt}\n\n{prompt}"
 
         self._emit_step(task_id, f"执行 {command.name}", command.description,
                         progress=5, output=prompt)
@@ -1134,10 +1233,9 @@ OCR 文本：
                             self._pending_messages[task_id] = pending[1:]
                     logger.info(f"[streaming] task_id={task_id} 发送排队消息: {msg[:50]}")
                     session.send(msg)
-                    # 重置状态，继续监听新回复
+                    # 重置状态，继续监听新回复（tool_calls 保留历史，不清空）
                     session.mark()
                     accumulated_lines.clear()
-                    tool_calls.clear()
                     idle_count = 0
                     has_real_output = False
                     last_content = ""
@@ -1179,7 +1277,6 @@ OCR 文本：
         raw_result = "\n".join(accumulated_lines).strip()
         result = self._clean_result(raw_result)
 
-        # tool_calls 完整保留（前端从 tool_calls + messages 重建对话流）
         task_db.update_task(task_id, partial_result=None, tool_calls=tool_calls)
 
         # 更新活跃时间

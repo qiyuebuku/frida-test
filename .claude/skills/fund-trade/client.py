@@ -22,15 +22,29 @@ _client = httpx.Client(timeout=60)
 
 
 def get(path: str) -> dict:
-    resp = _client.get(f"{API_BASE}{path}")
-    resp.raise_for_status()
-    return resp.json()
+    try:
+        resp = _client.get(f"{API_BASE}{path}")
+        resp.raise_for_status()
+        return resp.json()
+    except httpx.HTTPStatusError as e:
+        print(f"[API错误] {path} → HTTP {e.response.status_code}")
+        raise
+    except httpx.RequestError as e:
+        print(f"[网络错误] {path} → {e}")
+        raise
 
 
 def post(path: str, json_data: dict) -> dict:
-    resp = _client.post(f"{API_BASE}{path}", json=json_data)
-    resp.raise_for_status()
-    return resp.json()
+    try:
+        resp = _client.post(f"{API_BASE}{path}", json=json_data)
+        resp.raise_for_status()
+        return resp.json()
+    except httpx.HTTPStatusError as e:
+        print(f"[API错误] {path} → HTTP {e.response.status_code}")
+        raise
+    except httpx.RequestError as e:
+        print(f"[网络错误] {path} → {e}")
+        raise
 
 
 def fmt_pct(v) -> str:
@@ -3094,6 +3108,51 @@ def cmd_wallet_home(args):
         print(f"❌ 获取钱包首页失败: {data.get('detail', '未知错误')}")
 
 
+def cmd_config(args):
+    """查看/管理配置（基金池、风控参数、资金设置）"""
+    import json
+    data = get("/api/config")
+    if data.get("status") != "success":
+        print(f"❌ 获取配置失败: {data.get('detail', '未知错误')}")
+        return
+
+    config = data.get("data", {})
+
+    print(f"\n{'=' * 50}")
+    print(f"  基金交易配置")
+    print(f"{'=' * 50}\n")
+
+    # 基金池
+    fund_pool = config.get("fund_pool", [])
+    print(f"【基金池】({len(fund_pool)} 只)")
+    for item in fund_pool:
+        if isinstance(item, dict):
+            print(f"  {item.get('code', '')}  {item.get('name', '')}  "
+                  f"角色:{item.get('role', '')}  行业:{item.get('sector', '')}")
+        else:
+            print(f"  {item}")
+
+    # 资金
+    print(f"\n【资金设置】")
+    print(f"  总资金: {config.get('total_capital', 0):,.0f} 元")
+
+    # 风控
+    risk = config.get("risk", {})
+    print(f"\n【风控参数】")
+    print(f"  单只仓位上限: {risk.get('max_single_position_pct', 0)}%")
+    print(f"  单日买入上限: {risk.get('max_daily_buy_amount', 0):,.0f} 元")
+    print(f"  止损线: {risk.get('stop_loss_pct', 0)}%")
+    print(f"  止盈线: {risk.get('take_profit_pct', 0)}%")
+    print(f"  最小交易金额: {risk.get('min_trade_amount', 0)} 元")
+    print(f"  最大持仓基金数: {risk.get('max_fund_count', 0)}")
+    print(f"  最低现金储备: {risk.get('min_cash_reserve', 0):,.0f} 元")
+    print(f"  冷却天数: {risk.get('cooldown_days', 0)} 天")
+    print(f"  反向冷却天数: {risk.get('reverse_cooldown_days', 0)} 天")
+    print(f"  最短持有天数: {risk.get('min_hold_days', 0)} 天")
+    print(f"  熔断止损: {risk.get('circuit_breaker_loss_pct', 0)}% / {risk.get('circuit_breaker_loss_days', 0)} 天")
+    print(f"  交易截止时间: {risk.get('trade_cutoff_time', '14:50')}")
+
+
 def cmd_save_decision(args):
     """保存决策到 ft_decisions（接受 JSON 字符串）"""
     raw = args.extra_arg
@@ -3718,16 +3777,16 @@ def cmd_orders(args):
     print("-" * 110)
 
     for i, o in enumerate(orders, 1):
-        fund_code = o.get("fundCode", "")
-        fund_name = o.get("fundName", "")
+        fund_code = o.get("fundCode") or ""
+        fund_name = o.get("fundName") or ""
         # 截断过长的基金名称
         if len(fund_name) > 14:
             fund_name = fund_name[:13] + "…"
-        total_fee = o.get("totalFee", "0")
-        op_type = o.get("opTypeSecondMsg") or o.get("opTypeOneMsg", "")
-        accept_time = o.get("acceptTime", "")
-        end_flag = o.get("endFlag", "")
-        process_status = o.get("processStatus", "")
+        total_fee = str(o.get("totalFee") or "0")
+        op_type = o.get("opTypeSecondMsg") or o.get("opTypeOneMsg") or ""
+        accept_time = o.get("acceptTime") or ""
+        end_flag = o.get("endFlag") or ""
+        process_status = o.get("processStatus") or ""
         final_status = o.get("finalStatus", "")
         confirm_flag = o.get("confirmFlag", "")
 
@@ -4117,6 +4176,14 @@ def cmd_compare(args):
     print("=" * (14 + col_width * len(cols)))
 
 
+def _safe_run(label: str, fn, *a, **kw):
+    """安全执行子命令，捕获异常打印一行错误而非 traceback"""
+    try:
+        fn(*a, **kw)
+    except Exception as e:
+        print(f"  ⚠ {label} 获取失败: {e}")
+
+
 def cmd_all(args):
     """获取全部信息"""
     print("=" * 50)
@@ -4124,52 +4191,52 @@ def cmd_all(args):
     print("=" * 50)
 
     print("\n【基本信息】")
-    cmd_detail(args)
+    _safe_run("基本信息", cmd_detail, args)
 
     print("\n【产品详情】")
-    cmd_product(args)
+    _safe_run("产品详情", cmd_product, args)
 
     print("\n【阶段排名】")
-    cmd_rank(args)
+    _safe_run("阶段排名", cmd_rank, args)
 
     print("\n【年度收益】")
-    cmd_year_return(args)
+    _safe_run("年度收益", cmd_year_return, args)
 
     print("\n【最大回撤】")
-    cmd_drawdown(args)
+    _safe_run("最大回撤", cmd_drawdown, args)
 
     print("\n【收益稳定度】")
-    cmd_stability(args)
+    _safe_run("收益稳定度", cmd_stability, args)
 
     print("\n【基金经理】")
-    cmd_manager(args)
+    _safe_run("基金经理", cmd_manager, args)
 
     print("\n【持仓概览】")
-    cmd_hold_overview(args)
+    _safe_run("持仓概览", cmd_hold_overview, args)
 
     print("\n【前十大持仓与估值】")
-    cmd_holdings(args, with_valuation=True)
+    _safe_run("前十大持仓与估值", cmd_holdings, args, with_valuation=True)
 
     print("\n【持仓变动】")
-    cmd_position_change(args)
+    _safe_run("持仓变动", cmd_position_change, args)
 
     print("\n【盈亏贡献】")
-    cmd_profit(args)
+    _safe_run("盈亏贡献", cmd_profit, args)
 
     print("\n【投资风格】")
-    cmd_style(args)
+    _safe_run("投资风格", cmd_style, args)
 
     print("\n【资产配置】")
-    cmd_asset(args)
+    _safe_run("资产配置", cmd_asset, args)
 
     print("\n【RSI 指标】")
-    cmd_rsi(args)
+    _safe_run("RSI 指标", cmd_rsi, args)
 
     print("\n【交易规则与费率】")
-    cmd_trade_rule(args)
+    _safe_run("交易规则与费率", cmd_trade_rule, args)
 
     print("\n【规模变动】")
-    cmd_scale_change(args)
+    _safe_run("规模变动", cmd_scale_change, args)
 
     print("\n【机构持仓比例】")
     cmd_holder_ratio(args)
@@ -4327,84 +4394,10 @@ def main():
     parser = argparse.ArgumentParser(
         description="同花顺基金数据查询客户端",
         formatter_class=argparse.RawDescriptionHelpFormatter,
-        epilog="""示例:
-  python client.py 006888                                      # 获取全部信息
-  python client.py 006888 holdings                             # 前十大持仓
-  python client.py 006888 nav --period month --count 30        # 近一月净值
-  python client.py 006888 profit --time-type year              # 近一年盈亏贡献
-  python client.py 006888 announcements --cat report           # 业绩报告公告
-  python client.py 006888 announcements --cat change --page 2  # 变更公告第2页
-  python client.py 006888 news --count 15                      # 相关资讯
-  python client.py 006888 compare                              # 自动发现同赛道基金对比
-  python client.py 006888 compare --with 022364,018956         # 手动指定对比基金
-  python client.py 006888 pe_percentile                        # 持仓股估值百分位（近3年）
-  python client.py 006888 pe_percentile --years 5              # 近5年估值百分位
-  python client.py 006888 nav_technical                        # 净值技术面分析
-  python client.py 006888 market                               # 大盘与行业环境
-  python client.py 006888 fund_flow                            # 资金流向趋势
-  python client.py hotlist                                     # A股个股/概念/行业/ETF热榜
-  python client.py hotlist --market hk                         # 港股热榜
-  python client.py hotlist --count 20                          # 显示前20名
-  python client.py hotlist_topics                              # 热榜话题
-  python client.py hotlist_posts                               # 热门文章
-  python client.py news_themes                                 # 新闻主题分类列表（19个热门板块）
-  python client.py theme_articles --theme TZ-11385             # 小金属主题文章列表
-  python client.py theme_articles --theme TZ-11385 --detail 2  # 小金属第2篇文章全文
-  python client.py theme_articles --theme TZ-11907 --count 20  # 人形机器人主题前20篇
-  python client.py theme_articles --theme TZ-669 --page 2      # 有色金属主题第2页
-  python client.py headlines                                   # 推荐头条
-  python client.py headlines --detail 1                        # 第1条头条详情
-  python client.py flash_news                                  # 查看快讯分类列表
-  python client.py flash_news --tag 重要                        # 重要快讯
-  python client.py flash_news --tag 期货                        # 期货快讯
-  python client.py flash_news --tag 62857 --detail 3            # 第3条重要快讯详情
-  python client.py flash_news --tag a股 --seq 674998305         # A股快讯翻页
-  python client.py news_feed                                   # 滚动快讯
-  python client.py news_feed --page 2                          # 快讯第2页
-  python client.py ranking                                     # 基金排行（近一年涨幅TOP30）
-  python client.py ranking --board 涨幅榜                       # 预设排行榜
-  python client.py ranking --sort-type sharpeYear               # 夏普比率排行
-  python client.py screen                                      # 列出筛选策略
-  python client.py screen --strategy fund0001                  # 年年正收益策略
-  python client.py companies                                   # 基金公司列表
-
-  === 交易账户（不需要基金代码） ===
-  python client.py account                                     # 账户总览（总资产/盈亏/风险等级）
-  python client.py positions                                   # 基金持仓列表
-  python client.py wallet                                      # 活期宝/钱包
-  python client.py autoinvest                                  # 定投计划
-  python client.py trade_binding                               # 账户绑定信息
-  python client.py trade_all                                   # 全部交易数据汇总
-
-  === 基金交易 ===
-  python client.py set_password ruan19980418                       # 预设交易密码（明文）
-  python client.py buy 001668 --amount 10 --password ruan19980418 # 买入时直接传密码
-  python client.py buy 001668 --amount 10                         # 使用预设密码买入
-  python client.py buy 001668 --amount 100 --no-wallet            # 不使用活期宝
-  python client.py order 00000000002768500381                     # 查询订单详情
-  python client.py orders                                         # 查看近30天订单列表
-  python client.py sell 001668 --all                              # 全部赎回
-  python client.py sell 001668 --shares 50                        # 赎回50份
-  python client.py sell 001668 --all --password ruan19980418      # 带密码全部赎回
-  python client.py cancel 00000000002768534282                    # 撤销指定订单
-  python client.py cancel 00000000002768534282 --password xxx     # 带密码撤单
-
-  === 个股查询 ===
-  python client.py stock_quote 600519                               # 贵州茅台实时行情
-  python client.py stock_quote 600519,000001,002594                  # 批量查询行情
-  python client.py stock_kline 600519                                # 贵州茅台日K线（近60条）
-  python client.py stock_kline 600519 --stock-period week --count 20 # 周K线近20条
-  python client.py stock_kline 600519 --stock-period month           # 月K线
-  python client.py stock_flow 600519                                 # 贵州茅台资金流向（近20日）
-  python client.py stock_flow 600519 --stock-days 60                 # 近60日资金流向
-  python client.py stock_valuation 600519                            # 估值历史（近3年PE/PB）
-  python client.py stock_valuation 600519 --years 5 --count 50       # 近5年估值，显示50条
-  python client.py stock_financial 600519                            # 财务数据（近10期）
-  python client.py stock_financial 600519 --count 20                 # 近20期财务数据
-""",
+        epilog="完整命令用法见 docs/CLIENT_USAGE.md",
     )
     # 热榜命令不需要基金代码，用 nargs="?" 让 code 可选
-    HOTLIST_CMDS = {"health", "hotlist", "hotlist_topics", "hotlist_posts", "headlines", "news_feed", "news_overview", "news_themes", "theme_articles", "flash_news", "market_overview", "stock_rank", "sector_rank", "hot_board", "dragon_tiger", "ths_dragon_tiger", "capital_flow", "currency", "yesterday_limit", "stock_changes", "market_changes", "ranking", "screen", "companies", "account", "positions", "wallet", "autoinvest", "trade_binding", "trade_all", "buy", "sell", "order", "set_password", "orders", "cancel", "stock_quote", "stock_kline", "stock_flow", "stock_valuation", "stock_financial", "sync", "snapshot", "preflight", "evaluate", "scan-summary", "account-overview", "wallet-info", "wallet-home", "today-decisions", "recent-decisions", "watch-streaks", "create-reviews", "pending-reviews", "review-stats", "save-review", "lessons", "limits", "limits-summary", "limits-plan", "refresh-token", "auth-status", "ocr-records", "ocr-latest", "save-decision", "risk-check"}
+    HOTLIST_CMDS = {"health", "config", "hotlist", "hotlist_topics", "hotlist_posts", "headlines", "news_feed", "news_overview", "news_themes", "theme_articles", "flash_news", "market_overview", "stock_rank", "sector_rank", "hot_board", "dragon_tiger", "ths_dragon_tiger", "capital_flow", "currency", "yesterday_limit", "stock_changes", "market_changes", "ranking", "screen", "companies", "account", "positions", "wallet", "autoinvest", "trade_binding", "trade_all", "buy", "sell", "order", "set_password", "orders", "cancel", "stock_quote", "stock_kline", "stock_flow", "stock_valuation", "stock_financial", "sync", "snapshot", "preflight", "evaluate", "scan-summary", "account-overview", "wallet-info", "wallet-home", "today-decisions", "recent-decisions", "watch-streaks", "create-reviews", "pending-reviews", "review-stats", "save-review", "lessons", "limits", "limits-summary", "limits-plan", "refresh-token", "auth-status", "ocr-records", "ocr-latest", "save-decision", "risk-check"}
     ALL_CHOICES = ["all", "health", "detail", "product", "rank", "year_return", "drawdown", "stability",
                    "hold_overview", "holdings", "valuation", "position", "profit", "style", "asset",
                    "nav", "realtime", "manager", "rsi",
@@ -4419,6 +4412,7 @@ def main():
                    "account", "positions", "wallet", "autoinvest", "trade_binding", "trade_all",
                    "buy", "sell", "order", "set_password", "orders", "cancel",
                    "stock_quote", "stock_kline", "stock_flow", "stock_valuation", "stock_financial",
+                   "config",
                    "sync", "snapshot", "preflight", "evaluate", "scan-summary",
                    "account-overview", "wallet-info", "wallet-home",
                    "today-decisions", "recent-decisions", "watch-streaks",
@@ -4668,6 +4662,7 @@ def main():
         "stock_financial": cmd_stock_financial,
         "sync": cmd_sync,
         "snapshot": cmd_snapshot,
+        "config": cmd_config,
         "health": cmd_health,
         "preflight": cmd_preflight,
         "evaluate": cmd_evaluate,

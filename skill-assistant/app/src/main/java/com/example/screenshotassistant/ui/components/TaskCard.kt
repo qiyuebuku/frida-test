@@ -1,5 +1,7 @@
 package com.example.screenshotassistant.ui.components
 
+import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
@@ -18,11 +20,16 @@ import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
 import com.example.screenshotassistant.data.TaskItem
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
-fun TaskCard(task: TaskItem, onClick: () -> Unit) {
+fun TaskCard(task: TaskItem, onClick: () -> Unit, onLongClick: (() -> Unit)? = null) {
     Card(
-        onClick = onClick,
-        modifier = Modifier.fillMaxWidth(),
+        modifier = Modifier
+            .fillMaxWidth()
+            .combinedClickable(
+                onClick = onClick,
+                onLongClick = onLongClick
+            ),
         colors = CardDefaults.cardColors(
             containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
         )
@@ -46,6 +53,11 @@ fun TaskCard(task: TaskItem, onClick: () -> Unit) {
             Column(modifier = Modifier.weight(1f)) {
                 // 标题行
                 Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        text = "#${task.id} ",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
                     Text(
                         text = task.title ?: task.typeLabel,
                         style = MaterialTheme.typography.titleSmall,

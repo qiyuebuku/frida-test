@@ -10,6 +10,7 @@ import okhttp3.RequestBody.Companion.toRequestBody
 import org.json.JSONObject
 import com.example.screenshotassistant.data.SkillDetail
 import com.example.screenshotassistant.data.SkillProject
+import com.example.screenshotassistant.data.StepItem
 import com.example.screenshotassistant.data.TaskItem
 import org.json.JSONArray
 import java.io.BufferedReader
@@ -218,20 +219,30 @@ class HttpClient(val serverUrl: String) {
     }
 
     /**
-     * 获取任务列表
+     * 任务列表返回结果
+     */
+    data class TaskListResult(
+        val items: List<TaskItem>,
+        val total: Int,
+        val nextToken: String?
+    )
+
+    /**
+     * 获取任务列表（支持 NextToken 翻页）
      */
     fun getTasks(
         status: String? = null,
         taskType: String? = null,
         skillName: String? = null,
         limit: Int = 20,
-        offset: Int = 0
-    ): Pair<List<TaskItem>, Int>? {
+        nextToken: String? = null
+    ): TaskListResult? {
         return try {
-            val url = StringBuilder("$serverUrl/api/tasks?limit=$limit&offset=$offset")
+            val url = StringBuilder("$serverUrl/api/tasks?limit=$limit")
             if (status != null) url.append("&status=$status")
             if (taskType != null) url.append("&task_type=$taskType")
             if (skillName != null) url.append("&skill_name=$skillName")
+            if (nextToken != null) url.append("&next_token=$nextToken")
 
             val request = Request.Builder().url(url.toString()).get().build()
             val response = client.newCall(request).execute()
@@ -241,14 +252,74 @@ class HttpClient(val serverUrl: String) {
                 val data = respJson.optJSONObject("data") ?: respJson
                 val items = data.optJSONArray("items") ?: JSONArray()
                 val total = data.optInt("total", 0)
+                val newNextToken = if (data.has("next_token") && !data.isNull("next_token"))
+                    data.optString("next_token") else null
                 val tasks = (0 until items.length()).map { i ->
                     TaskItem.fromJson(items.getJSONObject(i))
                 }
-                Pair(tasks, total)
+                TaskListResult(tasks, total, newNextToken)
             } else null
         } catch (e: Exception) {
             Log.e(TAG, "Get tasks error", e)
             null
+        }
+    }
+
+    /**
+     * 任务步骤返回结果
+     */
+    data class TaskStepsResult(
+        val steps: List<StepItem>,
+        val progress: Int,
+        val progressMsg: String?,
+        val status: String
+    )
+
+    /**
+     * 获取任务步骤
+     */
+    fun getTaskSteps(taskId: Int): TaskStepsResult? {
+        return try {
+            val request = Request.Builder()
+                .url("$serverUrl/api/tasks/$taskId/steps")
+                .get()
+                .build()
+            val response = client.newCall(request).execute()
+
+            if (response.isSuccessful) {
+                val respJson = JSONObject(response.body?.string() ?: "{}")
+                val data = respJson.optJSONObject("data") ?: return null
+                val stepsArr = data.optJSONArray("steps") ?: JSONArray()
+                val steps = (0 until stepsArr.length()).map { i ->
+                    StepItem.fromJson(stepsArr.getJSONObject(i))
+                }
+                TaskStepsResult(
+                    steps = steps,
+                    progress = data.optInt("progress", 0),
+                    progressMsg = data.optString("progress_msg", "").ifBlank { null },
+                    status = data.optString("status", "pending")
+                )
+            } else null
+        } catch (e: Exception) {
+            Log.e(TAG, "Get task steps error", e)
+            null
+        }
+    }
+
+    /**
+     * 删除任务
+     */
+    fun deleteTask(taskId: Int): Boolean {
+        return try {
+            val request = Request.Builder()
+                .url("$serverUrl/api/tasks/$taskId")
+                .delete()
+                .build()
+            val response = client.newCall(request).execute()
+            response.isSuccessful
+        } catch (e: Exception) {
+            Log.e(TAG, "Delete task error", e)
+            false
         }
     }
 

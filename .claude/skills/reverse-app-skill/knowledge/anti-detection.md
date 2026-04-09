@@ -44,15 +44,38 @@
 - **绕过**：使用 `Interceptor.replace` 代替 `Interceptor.attach`
 - **Zygisk 方案**：Pine ART Hook 不修改 .text 段，从 ART 层面替换方法入口
 
+### 9. 服务端 Token 级验证码锁定（API 反爬）
+- **检测方式**：服务端监控同一 token 的请求频率，触发后将验证码状态**绑定到 token**（而非 IP/设备）
+- **特征**：API 返回 captcha_url 或 401，换 IP 无效，换设备无效，只有完成验证码或换新 token 才能恢复
+- **绕过**：(1) 严格控制请求频率（≥60 秒间隔），预防而非恢复；(2) token 被锁后删除 App 的 Cookie DB 强制重新生成全新 token
+- **Zygisk 方案**：通过 Cookie DB 直读（策略 8）定期获取最新 token，配合服务端频率控制
+
+### 10. TLS 指纹检测（Web 反爬）
+- **检测方式**：服务端分析 TLS 握手中的 cipher suite 顺序、扩展列表、ALPN 协议，识别客户端是浏览器还是脚本
+- **特征**：同样的 URL + Cookie + Headers，浏览器成功，curl/httpx/requests 返回 403/400
+- **绕过**：使用 `curl_cffi`（`impersonate="chrome120"`）模拟 Chrome 的 TLS 指纹。详见 `knowledge/web-anti-crawl.md`
+
+### 11. httpOnly Cookie + WAF JS 挑战（Web 反爬）
+- **检测方式**：首页返回 WAF JS 挑战页（如阿里云 WAF 的 `aliyun_waf` meta 标签），浏览器执行 JS 后获得 httpOnly cookie
+- **特征**：`document.cookie` 拿不到关键认证 token，复制 cookie 发请求仍 401
+- **绕过**：用 Playwright `context.cookies()` 获取完整 cookie（含 httpOnly），再用 `curl_cffi` 复用。详见 `knowledge/web-anti-crawl.md`
+
 ## 关键原则
 
-1. **Zygisk + Pine 是最通用的方案**：绕过上述全部 8 种检测
+### App 逆向
+1. **Zygisk + Pine 是最通用的方案**：绕过上述 1-9 检测
 2. **Frida 仅用于快速调试**：正式方案必须用 Zygisk
 3. **优先使用 spawn 模式**（`frida -f`）
 4. **避免 Hook 高频函数**（strstr/strcmp/getter 等）不加过滤
 5. **Frida 17 API 变更**：`Module.findExportByName` 已移除，改用 `Process.getModuleByName("libc.so").getExportByName("open")`
 6. **Native 层 Hook 必须在全局作用域**，不能放在 `Java.perform` 内部
 7. **当所有方案都失败时**：放弃注入，改用 mitmproxy + Magisk SSL Pinning Bypass 抓包
+
+### Web 反爬
+8. **逆向调试阶段切忌连续请求**：先确认单次请求成功，再验证频率边界，避免把 token 搞废
+9. **优先 curl_cffi**：大部分 TLS 指纹检测可以绕过，不需要上浏览器
+10. **浏览器只用于获取 cookie**：通过 WAF 挑战后导出 cookie，业务请求用 curl_cffi
+11. **httpOnly cookie 是常见壁垒**：`document.cookie` 拿不到，必须用 `context.cookies()`
 
 ## 实战工具
 
