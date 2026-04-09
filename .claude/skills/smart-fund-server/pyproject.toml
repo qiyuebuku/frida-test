@@ -1,0 +1,16 @@
+[project]
+name = "smart-fund-server"
+version = "2.0.0"
+description = "智能基金服务 — 数据聚合 + 交易决策 + 任务执行"
+requires-python = ">=3.11"
+dependencies = [
+    "fastapi>=0.100",
+    "uvicorn[standard]",
+    "psycopg2-binary",
+    "httpx",
+    "jettask-python",
+    "apscheduler",
+]
+
+[project.optional-dependencies]
+dev = ["pytest", "pytest-asyncio", "httpx"]
