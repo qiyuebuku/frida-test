@@ -206,41 +206,41 @@ class FundFlowAggregator(BaseAggregator):
         self._exec_ddl(DDL)
 
     def _init_sources(self):
-        from src.interfaces.api.routes import _utils
+        from src.infrastructure import clients
 
         self.sources = [
             # 北向资金 — 10 分钟
             SourceDef(
                 "northbound",
-                lambda cp: _utils.eastmoney.get_northbound_recent(page_size=5),
+                lambda cp: clients.eastmoney.get_northbound_recent(page_size=5),
                 600,
                 normalize_northbound,
             ),
             # 板块资金流（新浪，含超大/大/中/小单分项）— 30 分钟
             SourceDef(
                 "sector_flow_sina",
-                lambda cp: _utils.sina.get_sector_money_flow(),
+                lambda cp: clients.sina.get_sector_money_flow(),
                 1800,
                 normalize_sector_flow_sina,
             ),
             # 个股主力资金 — 30 分钟（采集沪深 300 指数 000300 为例）
             SourceDef(
                 "stock_flow",
-                lambda cp: _utils.tencent.get_stock_fund_flow("000300"),
+                lambda cp: clients.tencent.get_stock_fund_flow("000300"),
                 1800,
                 normalize_stock_flow,
             ),
             # 龙虎榜 — 东方财富，盘后（6 小时间隔）
             SourceDef(
                 "dragon_tiger_em",
-                lambda cp: _utils.eastmoney.get_dragon_tiger(),
+                lambda cp: clients.eastmoney.get_dragon_tiger(),
                 21600,
                 normalize_dragon_tiger_em,
             ),
             # 龙虎榜 — 同花顺，盘后（6 小时间隔）
             SourceDef(
                 "dragon_tiger_ths",
-                lambda cp: _utils.ths.get_ths_dragon_tiger(),
+                lambda cp: clients.ths.get_ths_dragon_tiger(),
                 21600,
                 normalize_dragon_tiger_ths,
             ),

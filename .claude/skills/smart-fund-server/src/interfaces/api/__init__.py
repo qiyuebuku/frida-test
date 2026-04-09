@@ -15,7 +15,7 @@ from src.infrastructure.tools import skill_registry as sr
 from src.infrastructure.tools.scheduler import scheduler
 from src.interfaces.api.middleware.error_handler import app_exception_handler
 from src.interfaces.api.routes import router, start_auth_auto_refresh
-from src.interfaces.api.routes._utils import init_clients, close_clients
+from src.infrastructure.clients import init_clients, close_clients
 
 _PROJECT_ROOT = Path(__file__).resolve().parents[3]  # smart-fund-server/
 

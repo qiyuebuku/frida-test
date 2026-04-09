@@ -96,55 +96,55 @@ class MarketAggregator(BaseAggregator):
         self._exec_ddl(DDL)
 
     def _init_sources(self):
-        from src.interfaces.api.routes import _utils
+        from src.infrastructure import clients
 
         self.sources = [
             # 大盘总览 — 2 分钟
             SourceDef(
                 "market_overview",
-                lambda cp: _utils.aggregator.get_market_overview(),
+                lambda cp: clients.aggregator.get_market_overview(),
                 120,
                 normalize_market_overview,
             ),
             # 市场环境 — 5 分钟
             SourceDef(
                 "market_environment",
-                lambda cp: _utils.aggregator.get_market_environment(),
+                lambda cp: clients.aggregator.get_market_environment(),
                 300,
                 normalize_market_environment,
             ),
             # 全球指数 — 5 分钟
             SourceDef(
                 "global_index",
-                lambda cp: _utils.sina.get_global_index(),
+                lambda cp: clients.sina.get_global_index(),
                 300,
                 normalize_global_index,
             ),
             # 国内期货 — 5 分钟
             SourceDef(
                 "futures_domestic",
-                lambda cp: _utils.sina.get_futures(),
+                lambda cp: clients.sina.get_futures(),
                 300,
                 normalize_futures_domestic,
             ),
             # 国际期货 — 5 分钟
             SourceDef(
                 "futures_intl",
-                lambda cp: _utils.tencent.get_intl_futures(),
+                lambda cp: clients.tencent.get_intl_futures(),
                 300,
                 normalize_futures_intl,
             ),
             # 外汇 — 5 分钟
             SourceDef(
                 "forex",
-                lambda cp: _utils.sina.get_forex(),
+                lambda cp: clients.sina.get_forex(),
                 300,
                 normalize_forex,
             ),
             # 板块涨跌排行 — 5 分钟
             SourceDef(
                 "sector_ranking",
-                lambda cp: _utils.sina.get_sector_ranking(),
+                lambda cp: clients.sina.get_sector_ranking(),
                 300,
                 normalize_sector_ranking,
             ),
@@ -227,17 +227,17 @@ class MarketAggregator(BaseAggregator):
 
     async def get_fund_snapshot(self, fund_code: str) -> dict:
         """基金快照（净值+持仓+详情），按需从客户端获取"""
-        from src.interfaces.api.routes import _utils
+        from src.infrastructure import clients
 
         result = {}
         try:
-            detail = await _utils.ths.get_fund_detail(fund_code)
+            detail = await clients.ths.get_fund_detail(fund_code)
             result["detail"] = detail
         except Exception as e:
             logger.debug(f"获取基金详情失败: {e}")
 
         try:
-            base = await _utils.ths.get_fund_base(fund_code)
+            base = await clients.ths.get_fund_base(fund_code)
             result["base"] = base
         except Exception as e:
             logger.debug(f"获取基金基础信息失败: {e}")
@@ -246,23 +246,23 @@ class MarketAggregator(BaseAggregator):
 
     async def get_stock_detail(self, code: str) -> dict:
         """个股详情（行情+估值+行业排名+所属板块）"""
-        from src.interfaces.api.routes import _utils
+        from src.infrastructure import clients
 
         result = {}
         try:
-            quote = await _utils.tencent.get_stock_quote([code])
+            quote = await clients.tencent.get_stock_quote([code])
             result["quote"] = quote
         except Exception as e:
             logger.debug(f"获取行情失败: {e}")
 
         try:
-            rank = await _utils.tencent.get_industry_rank(code)
+            rank = await clients.tencent.get_industry_rank(code)
             result["industry_rank"] = rank
         except Exception as e:
             logger.debug(f"获取行业排名失败: {e}")
 
         try:
-            plates = await _utils.tencent.get_stock_plates(code)
+            plates = await clients.tencent.get_stock_plates(code)
             result["plates"] = plates
         except Exception as e:
             logger.debug(f"获取板块失败: {e}")
@@ -271,5 +271,5 @@ class MarketAggregator(BaseAggregator):
 
     async def get_holdings_valuation(self, fund_code: str) -> dict:
         """基金重仓股估值（代理到 AggregatorClient）"""
-        from src.interfaces.api.routes import _utils
-        return await _utils.aggregator.get_holdings_valuation(fund_code)
+        from src.infrastructure import clients
+        return await clients.aggregator.get_holdings_valuation(fund_code)

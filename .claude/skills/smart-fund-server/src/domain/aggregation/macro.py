@@ -223,7 +223,7 @@ class MacroAggregator(BaseAggregator):
         self._exec_ddl(DDL)
 
     def _init_sources(self):
-        from src.interfaces.api.routes import _utils
+        from src.infrastructure import clients
 
         sources = []
 
@@ -234,8 +234,8 @@ class MacroAggregator(BaseAggregator):
             def make_fetch(mname, rname):
                 async def fetch(cp):
                     if cp:
-                        return await _utils.eastmoney.get_macro_since(rname, cp)
-                    return await getattr(_utils.eastmoney, mname)()
+                        return await clients.eastmoney.get_macro_since(rname, cp)
+                    return await getattr(clients.eastmoney, mname)()
                 return fetch
 
             sources.append(SourceDef(
@@ -248,7 +248,7 @@ class MacroAggregator(BaseAggregator):
         # 人民银行 Shibor + LPR — 日度，1 小时间隔
         sources.append(SourceDef(
             "pboc_shibor_lpr",
-            lambda cp: _utils.pboc.get_currency_data("shibor"),
+            lambda cp: clients.pboc.get_currency_data("shibor"),
             3600,
             normalize_shibor_lpr,
         ))
@@ -256,7 +256,7 @@ class MacroAggregator(BaseAggregator):
         # 人民银行 USD/CNY — 日度，1 小时间隔
         sources.append(SourceDef(
             "pboc_usdcny",
-            lambda cp: _utils.pboc.get_currency_data("usdcny"),
+            lambda cp: clients.pboc.get_currency_data("usdcny"),
             3600,
             normalize_usdcny,
         ))

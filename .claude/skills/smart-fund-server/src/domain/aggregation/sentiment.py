@@ -154,47 +154,47 @@ class SentimentAggregator(BaseAggregator):
         self._exec_ddl(DDL)
 
     def _init_sources(self):
-        from src.interfaces.api.routes import _utils
+        from src.infrastructure import clients
 
         self.sources = [
             # 股吧人气排行 — 30 分钟
             SourceDef(
                 "guba_popularity",
-                lambda cp: _utils.eastmoney.get_guba_popularity(),
+                lambda cp: clients.eastmoney.get_guba_popularity(),
                 1800,
                 normalize_guba_popularity,
             ),
             # 涨停/跌停池 — 盘后（3 小时间隔）
             SourceDef(
                 "limit_pool_up",
-                lambda cp: _utils.ths.get_limit_pool("up"),
+                lambda cp: clients.ths.get_limit_pool("up"),
                 10800,
                 normalize_limit_pool,
             ),
             SourceDef(
                 "limit_pool_down",
-                lambda cp: _utils.ths.get_limit_pool("down"),
+                lambda cp: clients.ths.get_limit_pool("down"),
                 10800,
                 normalize_limit_pool,
             ),
             # 雪球热门话题 — 30 分钟
             SourceDef(
                 "xueqiu_hot_topics",
-                lambda cp: _utils.xueqiu.get_hot_topics(),
+                lambda cp: clients.xueqiu.get_hot_topics(),
                 1800,
                 normalize_xueqiu_hot_topics,
             ),
             # 雪球热股排行 — 30 分钟
             SourceDef(
                 "xueqiu_hot_stocks",
-                lambda cp: _utils.xueqiu.get_hot_stocks(),
+                lambda cp: clients.xueqiu.get_hot_stocks(),
                 1800,
                 normalize_xueqiu_hot_stocks,
             ),
             # 腾讯热门股 — 30 分钟
             SourceDef(
                 "tencent_hot_stocks",
-                lambda cp: _utils.tencent.get_hot_stocks(),
+                lambda cp: clients.tencent.get_hot_stocks(),
                 1800,
                 normalize_tencent_hot_stocks,
             ),

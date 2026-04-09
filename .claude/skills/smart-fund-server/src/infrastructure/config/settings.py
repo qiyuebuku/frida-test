@@ -9,7 +9,7 @@ import os
 # ==================== 数据库 ====================
 
 DB_CONFIG = {
-    "host": os.getenv("DB_HOST", "127.0.0.1"),
+    "host": os.getenv("DB_HOST", "119.23.227.187"),
     "port": int(os.getenv("DB_PORT", "5432")),
     "dbname": os.getenv("DB_NAME", "jettask"),
     "user": os.getenv("DB_USER", "jettask"),
@@ -18,7 +18,7 @@ DB_CONFIG = {
 
 # ==================== Redis ====================
 
-REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379/0")
+REDIS_URL = os.getenv("REDIS_URL", "redis://119.23.227.187:6379/0")
 
 # ==================== 服务 ====================
 

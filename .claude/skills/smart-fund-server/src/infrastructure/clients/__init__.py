@@ -22,4 +22,43 @@ __all__ = [
     "CLSClient",
     "GovClient",
     "XueqiuClient",
+    "init_clients",
+    "close_clients",
+    "ths", "eastmoney", "trade", "sina", "tencent", "pboc",
+    "aggregator", "cls", "gov", "xueqiu",
 ]
+
+# ==================== 客户端实例管理 ====================
+
+ths: THSClient | None = None
+eastmoney: EastmoneyClient | None = None
+trade: TianTianClient | None = None
+sina: SinaClient | None = None
+tencent: TencentClient | None = None
+pboc: PBOCClient | None = None
+aggregator: AggregatorClient | None = None
+cls: CLSClient | None = None
+gov: GovClient | None = None
+xueqiu: XueqiuClient | None = None
+
+
+def init_clients(timeout: float = 10.0):
+    """初始化所有客户端实例"""
+    global ths, eastmoney, trade, sina, tencent, pboc, aggregator, cls, gov, xueqiu
+    ths = THSClient(timeout=timeout)
+    eastmoney = EastmoneyClient(timeout=timeout)
+    trade = TianTianClient(timeout=timeout)
+    sina = SinaClient(timeout=timeout)
+    tencent = TencentClient(timeout=timeout)
+    pboc = PBOCClient(timeout=timeout)
+    cls = CLSClient(timeout=timeout)
+    gov = GovClient(timeout=15.0)
+    xueqiu = XueqiuClient(timeout=15.0)
+    aggregator = AggregatorClient(ths=ths, eastmoney=eastmoney, sina=sina, tencent=tencent)
+
+
+async def close_clients():
+    """关闭所有客户端"""
+    for c in [ths, eastmoney, trade, sina, tencent, pboc, cls, gov, xueqiu]:
+        if c:
+            await c.close()

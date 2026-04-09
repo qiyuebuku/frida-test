@@ -306,69 +306,69 @@ class NewsAggregator(BaseAggregator):
         self._exec_ddl(DDL)
 
     def _init_sources(self):
-        from src.interfaces.api.routes import _utils
+        from src.infrastructure import clients
 
         self.sources = [
             # P0: 财联社快讯 — 3 分钟
             SourceDef(
                 "cls",
-                lambda cp: _utils.cls.get_telegraph_since(cp) if cp else _utils.cls.get_telegraph_list(rn=30),
+                lambda cp: clients.cls.get_telegraph_since(cp) if cp else clients.cls.get_telegraph_list(rn=30),
                 180,
                 normalize_cls,
             ),
             # P0: 政府网站 5 部委 — 3 小时（每个 source 用同一个 normalize）
             SourceDef(
                 "gov",
-                lambda cp: _utils.gov.get_announcements_since("gov_cn", cp) if cp else _utils.gov.get_announcements("gov_cn"),
+                lambda cp: clients.gov.get_announcements_since("gov_cn", cp) if cp else clients.gov.get_announcements("gov_cn"),
                 10800,
                 normalize_gov,
             ),
             # P0: 人民银行公开市场操作 — 24 小时
             SourceDef(
                 "pboc_omo",
-                lambda cp: _utils.pboc.get_omo_announcements_since(cp) if cp else _utils.pboc.get_omo_announcements(),
+                lambda cp: clients.pboc.get_omo_announcements_since(cp) if cp else clients.pboc.get_omo_announcements(),
                 86400,
                 normalize_pboc,
             ),
             # P1: 人民银行货币政策 — 24 小时
             SourceDef(
                 "pboc_monetary",
-                lambda cp: _utils.pboc.get_monetary_policy_since(cp) if cp else _utils.pboc.get_monetary_policy(),
+                lambda cp: clients.pboc.get_monetary_policy_since(cp) if cp else clients.pboc.get_monetary_policy(),
                 86400,
                 normalize_pboc,
             ),
             # P1: 东方财富资讯 — 15 分钟
             SourceDef(
                 "em_news",
-                lambda cp: _utils.eastmoney.get_news_by_keyword_since("A股", cp) if cp else _utils.eastmoney.get_news_by_keyword("A股"),
+                lambda cp: clients.eastmoney.get_news_by_keyword_since("A股", cp) if cp else clients.eastmoney.get_news_by_keyword("A股"),
                 900,
                 normalize_eastmoney_news,
             ),
             # P2: 券商研报 — 2 小时
             SourceDef(
                 "em_reports",
-                lambda cp: _utils.eastmoney.get_research_reports_since(cp) if cp else _utils.eastmoney.get_research_reports(),
+                lambda cp: clients.eastmoney.get_research_reports_since(cp) if cp else clients.eastmoney.get_research_reports(),
                 7200,
                 normalize_eastmoney_reports,
             ),
             # P2: 同花顺滚动快讯 — 30 分钟
             SourceDef(
                 "ths",
-                lambda cp: _utils.ths.get_news_feed(),
+                lambda cp: clients.ths.get_news_feed(),
                 1800,
                 normalize_ths,
             ),
             # P2: 新浪财经 — 1 小时
             SourceDef(
                 "sina",
-                lambda cp: _utils.sina.get_news(),
+                lambda cp: clients.sina.get_news(),
                 3600,
                 normalize_sina,
             ),
             # P2: 雪球 7x24 快讯 — 30 分钟
             SourceDef(
                 "xueqiu",
-                lambda cp: _utils.xueqiu.get_live_news_since(cp) if cp else _utils.xueqiu.get_live_news(),
+                lambda cp: clients.xueqiu.get_live_news_since(cp) if cp else clients.xueqiu.get_live_news(),
                 1800,
                 normalize_xueqiu,
             ),
