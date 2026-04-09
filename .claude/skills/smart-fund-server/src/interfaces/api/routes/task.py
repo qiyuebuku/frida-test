@@ -20,7 +20,7 @@ router = APIRouter()
 @router.post("/api/tasks", summary="创建异步任务", tags=["任务"])
 async def create_task(request: Request):
     """接收截图或命令，创建后台异步任务，立即返回 task_id"""
-    from src.application.orchestrators.task_executor import executor as _executor
+    from src.application.orchestrators.task_orchestrator import executor as _executor
 
     data = await request.json()
     task_type = data.get("task_type", data.get("action", "ocr"))

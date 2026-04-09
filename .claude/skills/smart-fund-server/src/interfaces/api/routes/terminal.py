@@ -280,7 +280,7 @@ async def _ws_loop(task_id: int, ws: WebSocket):
                     # 后台执行恢复，不阻塞 WS 推送循环
                     async def _do_resume(_tid=task_id, _sid=_cached_session_id):
                         try:
-                            from src.application.orchestrators.task_executor import executor as _executor
+                            from src.application.orchestrators.task_orchestrator import executor as _executor
                             await asyncio.to_thread(
                                 _executor._get_or_create_session,
                                 _tid, resume_session_id=_sid

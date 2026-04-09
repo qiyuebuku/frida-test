@@ -6,7 +6,7 @@ import time
 from datetime import datetime, timedelta
 
 from src.infrastructure.db import task_db
-from src.application.orchestrators.task_executor import executor
+from src.application.orchestrators.task_orchestrator import executor
 
 logger = logging.getLogger(__name__)
 

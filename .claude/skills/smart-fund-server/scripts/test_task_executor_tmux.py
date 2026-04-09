@@ -18,11 +18,12 @@ import time
 # 添加项目路径
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from src.application.orchestrators.task_executor import (
+from src.domain.task.models import SESSION_PREFIX, PROMPT_CHAR
+from src.infrastructure.tmux.session import (
     _tmux, _is_noise, _extract_content, _is_at_prompt,
-    ClaudeTmuxSession, SESSION_PREFIX, PROMPT_CHAR,
-    TaskExecutor,
+    ClaudeTmuxSession,
 )
+from src.application.orchestrators.task_orchestrator import TaskExecutor
 
 PASS = 0
 FAIL = 0

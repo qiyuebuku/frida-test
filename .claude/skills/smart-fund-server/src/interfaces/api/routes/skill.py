@@ -8,7 +8,7 @@ from pathlib import Path
 from fastapi import APIRouter, HTTPException, Query, Request
 
 from src.infrastructure.db import task_db
-from src.application.orchestrators.task_executor import executor
+from src.application.orchestrators.task_orchestrator import executor
 import src.infrastructure.tools.skill_registry as sr
 
 logger = logging.getLogger(__name__)
