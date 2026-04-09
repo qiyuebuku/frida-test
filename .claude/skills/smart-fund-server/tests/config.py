@@ -9,12 +9,18 @@
   PYTHONPATH=. python tests/run_all.py
 """
 import sys
+import os
 import json
 import httpx
 
+# 确保项目根目录在 sys.path 中
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
+
+from src.infrastructure.config.settings import SERVICE_BASE_URL
+
 # ============ 服务配置 ============
 
-BASE_URL = "http://119.23.227.187:8900"
+BASE_URL = SERVICE_BASE_URL
 TIMEOUT = 15
 
 # ============ 测试数据 ============

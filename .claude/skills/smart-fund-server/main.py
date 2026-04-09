@@ -14,14 +14,14 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
-from services.db import fund_db
-from services.db import ocr_db
-from services.db import task_db
-from services.db import raw_data
-from services.tools import skill_registry as sr
-from services.tools.scheduler import scheduler
-from routers import router, start_auth_auto_refresh
-from routers._utils import init_clients, close_clients
+from src.infrastructure.db import fund_db
+from src.infrastructure.db import ocr_db
+from src.infrastructure.db import task_db
+from src.infrastructure.db import raw_data
+from src.infrastructure.tools import skill_registry as sr
+from src.infrastructure.tools.scheduler import scheduler
+from src.interfaces.api.routes import router, start_auth_auto_refresh
+from src.interfaces.api.routes._utils import init_clients, close_clients
 
 
 @asynccontextmanager
@@ -82,17 +82,18 @@ async def health_check():
 app.include_router(router)
 
 # 浏览器探索服务（camoufox 可选，未安装不影响启动）
-from routers.spy import router as spy_router
+from src.interfaces.api.routes.spy import router as spy_router
 app.include_router(spy_router)
 
 # 静态文件（xterm.js 等）
 app.mount("/static", StaticFiles(directory=str(Path(__file__).parent / "static")), name="static")
 
 # WebSocket 路由需要直接注册到 app（子 router 中 WebSocket 可能 404）
-from routers.terminal import router as terminal_router
+from src.interfaces.api.routes.terminal import router as terminal_router
 app.include_router(terminal_router)
 
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run("main:app", host="0.0.0.0", port=8900, reload=True)
+    from src.infrastructure.config.settings import SERVER_HOST, SERVER_PORT
+    uvicorn.run("main:app", host=SERVER_HOST, port=SERVER_PORT, reload=True)
