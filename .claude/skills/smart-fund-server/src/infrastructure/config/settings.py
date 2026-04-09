@@ -16,9 +16,16 @@ DB_CONFIG = {
     "password": os.getenv("DB_PASSWORD", "123456"),
 }
 
+# PostgreSQL 连接 URL（供 jettask / SQLAlchemy 使用，独立数据库）
+JETTASK_DB_NAME = os.getenv("JETTASK_DB_NAME", "jettask_queue")
+PG_URL = os.getenv(
+    "PG_URL",
+    f"postgresql+asyncpg://{DB_CONFIG['user']}:{DB_CONFIG['password']}@{DB_CONFIG['host']}:{DB_CONFIG['port']}/{JETTASK_DB_NAME}"
+)
+
 # ==================== Redis ====================
 
-REDIS_URL = os.getenv("REDIS_URL", "redis://119.23.227.187:6379/0")
+REDIS_URL = os.getenv("REDIS_URL", "redis://10.168.1.210:6379/0")
 
 # ==================== 服务 ====================
 

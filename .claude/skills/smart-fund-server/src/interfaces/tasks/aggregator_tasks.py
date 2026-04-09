@@ -5,6 +5,12 @@
 
 from jettask import TaskRouter
 
+from src.infrastructure.clients import init_clients, ths
+
+# 确保客户端已初始化（Worker 进程不经过 FastAPI lifespan）
+if ths is None:
+    init_clients()
+
 from src.domain.aggregation import (
     NewsAggregator, FundFlowAggregator, MacroAggregator,
     SentimentAggregator, MarketAggregator, EventFeedbackAggregator,

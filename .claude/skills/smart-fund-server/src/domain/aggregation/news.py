@@ -263,10 +263,22 @@ def normalize_sina(raw_items: list) -> list[dict]:
     return results
 
 
-def normalize_xueqiu(raw_items: list) -> list[dict]:
-    """雪球快讯 → 统一格式"""
+def normalize_xueqiu(raw_items) -> list[dict]:
+    """雪球快讯 → 统一格式
+
+    get_live_news 返回 {"data": {"items": [...]}, "status_code": 0}
+    get_live_news_since 可能返回同样结构或直接返回列表
+    """
     results = []
-    for item in raw_items:
+    # 解包嵌套结构
+    items = raw_items
+    if isinstance(raw_items, dict):
+        items = raw_items.get("data", {})
+        if isinstance(items, dict):
+            items = items.get("items", [])
+    if not isinstance(items, list):
+        return results
+    for item in items:
         text = item.get("text") or item.get("title") or ""
         if not text:
             continue
