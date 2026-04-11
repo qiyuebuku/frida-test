@@ -11,13 +11,12 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
 from src.interfaces.tasks import app, DB_URL
 
 
-async def main():
+def main():
     print("🕐 启动 Scheduler（按 Schedule 定时发消息到队列）")
     print(f"   db_url: {DB_URL}")
-    # jettask 1.0.19: start_scheduler 是 async 长跑方法
-    await app.start_scheduler()
+    # jettask-rs: start_scheduler 是同步阻塞方法，接收 db_url
+    app.start_scheduler(db_url=DB_URL)
 
 
 if __name__ == "__main__":
-    import asyncio
-    asyncio.run(main())
+    main()

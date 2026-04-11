@@ -10,9 +10,10 @@
 from jettask import Jettask
 from src.infrastructure.config.settings import REDIS_URL, JETTASK_PREFIX, PG_URL
 
-# jettask 1.0.19 API: redis_prefix + pg_url 作为初始化参数
-app = Jettask(redis_url=REDIS_URL, redis_prefix=JETTASK_PREFIX, pg_url=PG_URL)
-DB_URL = PG_URL  # 兼容旧引用
+# jettask-rs (jettask-python) API：Jettask(redis_url=, prefix=)
+# pg_url 在 start_scheduler / start_persist 时单独传入
+app = Jettask(redis_url=REDIS_URL, prefix=JETTASK_PREFIX)
+DB_URL = PG_URL
 
 # 注册任务路由
 from src.interfaces.tasks.aggregator_tasks import router as aggregator_router

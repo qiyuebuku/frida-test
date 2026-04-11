@@ -40,8 +40,12 @@ def main():
 
     print(f"🚀 启动 Worker（并发={args.concurrency}）")
     print(f"   任务: {', '.join(task_names)}")
-    # jettask 1.0.19: app.start(tasks=[...], concurrency=N)
-    app.start(tasks=task_names, concurrency=args.concurrency)
+    # jettask-rs: app.start_worker(task_names=, concurrency=, prefetch=) — 同步阻塞
+    app.start_worker(
+        task_names=task_names,
+        concurrency=args.concurrency,
+        prefetch=100,
+    )
 
 
 if __name__ == "__main__":
