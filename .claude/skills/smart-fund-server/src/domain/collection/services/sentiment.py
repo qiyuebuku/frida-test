@@ -9,7 +9,7 @@ import json
 import logging
 from datetime import date
 
-from src.domain.aggregation.base import BaseAggregator, SourceDef
+from src.domain.collection.services.base import BaseAggregator, SourceDef
 
 logger = logging.getLogger(__name__)
 
@@ -167,7 +167,7 @@ def normalize_guba_posts(raw) -> list[dict]:
 async def _fetch_guba_posts_for_held_stocks(em_client, ths_client, max_stocks: int = 10) -> list:
     """从基金池关注的基金的重仓股拉取股吧帖子（限前 N 只避免请求量过大）"""
     import asyncio as _asyncio
-    from src.domain.aggregation.fund_flow import _fetch_held_stocks
+    from src.domain.collection.services.fund_flow import _fetch_held_stocks
 
     full_codes = await _fetch_held_stocks(ths_client, max_stocks=max_stocks)
     if not full_codes:

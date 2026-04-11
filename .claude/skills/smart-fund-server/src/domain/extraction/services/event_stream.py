@@ -28,7 +28,7 @@ import logging
 import math
 from datetime import datetime, timedelta, timezone
 
-from src.domain.aggregation.base import BaseAggregator
+from src.domain.collection.services.base import BaseAggregator
 from src.infrastructure.clients.embedding import decode_embedding
 
 logger = logging.getLogger(__name__)

@@ -22,7 +22,7 @@ import subprocess
 from datetime import datetime
 from pathlib import Path
 
-from src.domain.aggregation.base import BaseAggregator, SourceDef
+from src.domain.collection.services.base import BaseAggregator, SourceDef
 
 logger = logging.getLogger(__name__)
 
@@ -30,10 +30,11 @@ logger = logging.getLogger(__name__)
 # ==================== 配置 ====================
 
 # event-extract skill 路径
-# 优先环境变量 → 推算（src/domain/aggregation/event_extraction.py 上溯到 .claude/skills/event-extract/SKILL.md）
+# 优先环境变量 → 推算（src/domain/extraction/services/event_extraction.py 上溯到 .claude/skills/event-extract/SKILL.md）
+# parents: [0]=services [1]=extraction [2]=domain [3]=src [4]=smart-fund-server [5]=skills
 import os as _os
 _default_skill = (
-    Path(__file__).resolve().parents[4] / "event-extract" / "SKILL.md"
+    Path(__file__).resolve().parents[5] / "event-extract" / "SKILL.md"
 )
 SKILL_PATH = Path(_os.environ.get("EVENT_EXTRACT_SKILL_PATH", str(_default_skill)))
 

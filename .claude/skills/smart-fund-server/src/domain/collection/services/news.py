@@ -10,7 +10,7 @@ import json
 import logging
 from datetime import datetime, timezone, timedelta
 
-from src.domain.aggregation.base import BaseAggregator, SourceDef
+from src.domain.collection.services.base import BaseAggregator, SourceDef
 
 logger = logging.getLogger(__name__)
 
