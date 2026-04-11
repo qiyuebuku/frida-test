@@ -10,6 +10,8 @@ Environment=HF_HOME=/home/yuyangruan/.cache/huggingface
 Environment=EMBEDDING_MODEL=/home/yuyangruan/models/Qwen3-Embedding-4B
 Environment=EMBEDDING_DEVICE=cuda:1
 Environment=EMBEDDING_DEFAULT_DIM=1024
+Environment=EMBEDDING_HOST=0.0.0.0
+Environment=EMBEDDING_PORT=8901
 ExecStart=/home/yuyangruan/anaconda3/envs/embedding-svc/bin/python service.py
 Restart=always
 RestartSec=5

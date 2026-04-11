@@ -151,4 +151,8 @@ def embed(req: EmbedRequest):
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host="127.0.0.1", port=8901, log_level="info")
+    # 监听 0.0.0.0 以接受内网调用（10.168.1.x）
+    # 公网防火墙必须只放行内网段，不要对公网暴露
+    host = os.environ.get("EMBEDDING_HOST", "0.0.0.0")
+    port = int(os.environ.get("EMBEDDING_PORT", "8901"))
+    uvicorn.run(app, host=host, port=port, log_level="info")

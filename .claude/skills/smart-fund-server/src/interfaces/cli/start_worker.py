@@ -26,13 +26,22 @@ def main():
     args = parser.parse_args()
 
     task_names = [
-        "agg_news", "agg_fund_flow", "agg_macro",
-        "agg_sentiment", "agg_market", "agg_event_feedback",
+        # P0 数据采集
+        "agg_news", "agg_fund_flow",
+        # P1 辅助数据
+        "agg_macro", "agg_sentiment", "agg_market",
+        # AI 处理
+        "agg_event_extraction", "agg_event_stream",
+        # 决策与交易
+        "trade_decision", "trade_execution", "trade_monitor",
+        # 复盘与反馈
+        "agg_event_feedback", "review_decision",
     ]
 
     print(f"🚀 启动 Worker（并发={args.concurrency}）")
     print(f"   任务: {', '.join(task_names)}")
-    app.start_worker(task_names=task_names, concurrency=args.concurrency)
+    # jettask 1.0.19: app.start(tasks=[...], concurrency=N)
+    app.start(tasks=task_names, concurrency=args.concurrency)
 
 
 if __name__ == "__main__":
