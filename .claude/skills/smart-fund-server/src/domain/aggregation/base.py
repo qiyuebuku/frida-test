@@ -54,9 +54,15 @@ class BaseAggregator:
 
     # ==================== 定时任务入口 ====================
 
-    async def tick(self):
-        """串行遍历所有源，到期的才请求，拿到即入库"""
+    async def tick(self) -> dict:
+        """串行遍历所有源，到期的才请求，拿到即入库
+
+        Returns: {sources_run: int, total_saved: int}
+            供事件驱动级联（D.1）判断是否触发下游 task
+        """
         now = time.time()
+        sources_run = 0
+        total_saved = 0
         for src in self.sources:
             if not self._should_fetch(src.name, src.interval, now):
                 continue
@@ -74,10 +80,13 @@ class BaseAggregator:
 
                 saved = self._save(items)
                 self._last_fetch[src.name] = now
+                sources_run += 1
+                total_saved += saved or 0
                 logger.info(f"[{self.data_domain}:{src.name}] 采集 {len(raw)} 条，入库 {saved} 条")
             except Exception as e:
                 # 失败不更新 last_fetch，下次继续尝试
                 logger.warning(f"[{self.data_domain}:{src.name}] 采集失败: {e}")
+        return {"sources_run": sources_run, "total_saved": total_saved}
 
     def _should_fetch(self, name: str, interval: int, now: float) -> bool:
         last = self._last_fetch.get(name, 0)

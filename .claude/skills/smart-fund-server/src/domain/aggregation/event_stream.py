@@ -261,12 +261,12 @@ class EventStreamAggregator(BaseAggregator):
     def _get_checkpoint(self, source_name: str):
         return None
 
-    async def tick(self):
+    async def tick(self) -> dict:
         """主流程：读最近 24h 事件 → 按 industry 分组 → 组内贪心聚类 → 重建 streams"""
         events = _query_recent_events(LOOKBACK_HOURS, MAX_EVENTS_PER_RUN)
         if not events:
             logger.info("[event_stream] 无可聚合事件（需要 ft_events 有 embedding）")
-            return
+            return {"events": 0, "streams": 0, "active": 0}
 
         logger.info(f"[event_stream] 待聚合 {len(events)} 条事件（最近 {LOOKBACK_HOURS}h）")
 
@@ -302,3 +302,4 @@ class EventStreamAggregator(BaseAggregator):
             f"[event_stream] 完成：写入 {total_streams} 条 streams，"
             f"其中活跃 {active_streams} 条"
         )
+        return {"events": len(events), "streams": total_streams, "active": active_streams}

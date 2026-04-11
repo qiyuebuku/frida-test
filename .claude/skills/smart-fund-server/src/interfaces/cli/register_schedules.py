@@ -63,6 +63,32 @@ SCHEDULES = [
         description="事件流聚合 — 每 10 分钟，按 industry 聚类近 24h 事件",
     ),
 
+    # ── 决策任务 ────────────────────────────
+    Schedule(
+        name="trade_decision_5min",
+        queue="trade_decision",
+        interval_seconds=300,
+        description="事件驱动决策 — 每 5 分钟，从 ft_event_streams 打分写 ft_pending_decisions",
+    ),
+    Schedule(
+        name="trade_execution_2min",
+        queue="trade_execution",
+        interval_seconds=120,
+        description="交易执行 — 每 2 分钟扫描 pending 决策（默认 EXEC_DRY_RUN=true）",
+    ),
+    Schedule(
+        name="trade_monitor_5min",
+        queue="trade_monitor",
+        interval_seconds=300,
+        description="持仓监控 — 每 5 分钟，硬止损 + 衰退检测 + 浮盈加仓",
+    ),
+    Schedule(
+        name="review_decision_after_close",
+        queue="review_decision",
+        cron_expression="0 16 * * 1-5",
+        description="决策复盘 — 盘后 16:00，回填 T+1/T+2 收益 + 胜率统计",
+    ),
+
     # ── P2：盘后任务 ──────────────────────────
     Schedule(
         name="agg_event_feedback_after_close",

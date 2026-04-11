@@ -368,7 +368,7 @@ class EventExtractionAggregator(BaseAggregator):
         news_list = _query_unextracted_news(MAX_NEWS_PER_RUN)
         if not news_list:
             logger.info("[event_extraction] 无待抽取新闻")
-            return
+            return {"processed": 0, "saved": 0}
 
         logger.info(f"[event_extraction] 待处理 {len(news_list)} 条新闻")
 
@@ -388,7 +388,7 @@ class EventExtractionAggregator(BaseAggregator):
             logger.info(f"[event_extraction] 预筛选跳过 {len(skipped_ids)} 条")
 
         if not candidates:
-            return
+            return {"processed": 0, "saved": 0}
 
         # 批量抽取
         skill_body = self._get_skill_body()
@@ -457,3 +457,4 @@ class EventExtractionAggregator(BaseAggregator):
         logger.info(
             f"[event_extraction] 完成：处理 {total_processed} 条，入库 {total_saved} 个事件"
         )
+        return {"processed": total_processed, "saved": total_saved}

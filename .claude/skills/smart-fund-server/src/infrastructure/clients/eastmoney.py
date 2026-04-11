@@ -607,9 +607,15 @@ class EastmoneyClient(BaseClient):
 
     @staticmethod
     def _stock_secid(code: str) -> str:
-        """股票代码转东财 secid 格式: 6开头/9开头→1.{code}(沪), 其他→0.{code}(深)"""
+        """股票/ETF 代码转东财 secid 格式
+
+        - 6/9 开头 → 1.{code}(沪股)
+        - 5 开头 → 1.{code}(沪 ETF/LOF, 51xxxx/56xxxx/58xxxx)
+        - 11/15 开头 → 0.{code}(深 ETF, 11xxxx/15xxxx)
+        - 其他 → 0.{code}(深股)
+        """
         code = code.strip()
-        if code.startswith(("6", "9")):
+        if code.startswith(("6", "9", "5")):
             return f"1.{code}"
         return f"0.{code}"
 
