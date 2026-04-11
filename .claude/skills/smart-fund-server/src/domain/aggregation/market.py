@@ -74,6 +74,95 @@ def normalize_forex(raw) -> list[dict]:
     return _wrap_cache("forex", raw, 300)
 
 
+def _calc_cumulative_change(klines: list, days: int) -> float | None:
+    """从 K 线数据计算最近 N 天累计涨跌幅（%）
+
+    klines 是 EM K 线返回的 dict 列表：[{date, open, close, high, low, volume, turnover}, ...]
+    """
+    if not klines or len(klines) < 2:
+        return None
+    try:
+        # 取最近 N+1 条（含今日和 N 天前）
+        recent = klines[-(days + 1):] if len(klines) > days else klines
+        first = recent[0]
+        last = recent[-1]
+        first_close = float(first.get("close") if isinstance(first, dict) else first.split(",")[2])
+        last_close = float(last.get("close") if isinstance(last, dict) else last.split(",")[2])
+        if first_close == 0:
+            return None
+        return round((last_close - first_close) / first_close * 100, 2)
+    except (ValueError, IndexError, AttributeError, TypeError):
+        return None
+
+
+def _strip_market_prefix(code: str) -> str:
+    """去掉 sh/sz/bj 前缀，得到纯数字代码"""
+    if not code:
+        return ""
+    if code[:2] in ("sh", "sz", "bj"):
+        return code[2:]
+    return code
+
+
+async def _enrich_sector_with_change(em_client, sector_data) -> dict:
+    """为每个板块添加 chg_3d / chg_5d 估算（用领涨股代理）"""
+    if not isinstance(sector_data, dict):
+        return sector_data
+    data = sector_data.get("data") or {}
+    if not isinstance(data, dict):
+        return sector_data
+
+    import asyncio as _asyncio
+
+    # 收集所有板块的领涨股代码（去前缀）
+    all_sectors = (data.get("topRise") or []) + (data.get("topFall") or [])
+    lead_codes = []
+    sector_to_code = {}
+    for i, sec in enumerate(all_sectors):
+        if not isinstance(sec, dict):
+            continue
+        lead = sec.get("leadStock") or {}
+        raw_code = lead.get("code") if isinstance(lead, dict) else None
+        pure_code = _strip_market_prefix(raw_code)
+        if pure_code:
+            lead_codes.append(pure_code)
+            sector_to_code[i] = pure_code
+
+    if not lead_codes:
+        return sector_data
+
+    # 并发拉取领涨股的 6 日 K 线
+    tasks = [em_client.get_stock_kline(code, period="101", limit=6) for code in lead_codes]
+    klines_list = await _asyncio.gather(*tasks, return_exceptions=True)
+    code_to_klines = {}
+    for code, kr in zip(lead_codes, klines_list):
+        if isinstance(kr, Exception):
+            continue
+        if isinstance(kr, dict):
+            kdata = kr.get("data") or {}
+            klines = kdata.get("klines") or []
+            code_to_klines[code] = klines
+
+    # 给每个 sector 添加 chg_3d / chg_5d
+    for i, sec in enumerate(all_sectors):
+        if not isinstance(sec, dict):
+            continue
+        code = sector_to_code.get(i)
+        klines = code_to_klines.get(code, []) if code else []
+        sec["chg_3d_proxy"] = _calc_cumulative_change(klines, 3)
+        sec["chg_5d_proxy"] = _calc_cumulative_change(klines, 5)
+        # 过热标记：3 天累计涨幅 > 5%
+        chg_3d = sec.get("chg_3d_proxy")
+        sec["is_overheated"] = chg_3d is not None and chg_3d > 5.0
+    return sector_data
+
+
+async def _fetch_sector_ranking_enriched(sina_client, em_client) -> dict:
+    """先拉板块排行，再为每个板块用领涨股 K 线计算 3d/5d 累计涨幅"""
+    raw = await sina_client.get_sector_ranking()
+    return await _enrich_sector_with_change(em_client, raw)
+
+
 def normalize_sector_ranking(raw) -> list[dict]:
     return _wrap_cache("sector_ranking", raw, 300)
 
@@ -141,10 +230,10 @@ class MarketAggregator(BaseAggregator):
                 300,
                 normalize_forex,
             ),
-            # 板块涨跌排行 — 5 分钟
+            # 板块涨跌排行 — 5 分钟（含 3d/5d 累计涨幅估算 + 过热标记）
             SourceDef(
                 "sector_ranking",
-                lambda cp: clients.sina.get_sector_ranking(),
+                lambda cp: _fetch_sector_ranking_enriched(clients.sina, clients.eastmoney),
                 300,
                 normalize_sector_ranking,
             ),

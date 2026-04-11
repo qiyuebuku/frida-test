@@ -419,15 +419,31 @@ class SinaClient(BaseClient):
             "symbol": symbol, "scale": scale, "count": len(items), "bars": items,
         }}
 
+    SINA_ARTICLE_PATTERNS = [
+        r'<div[^>]*id="artibody"[^>]*>',
+        r'<div[^>]*class="article-content"[^>]*>',
+        r'<div[^>]*class="article"[^>]*>',
+    ]
+
+    @cached(ttl=3600, source="sina", domain="news", frequency="daily",
+            market="a_share", source_name="新浪财经")
+    async def fetch_article_content(self, url: str) -> str:
+        """抓取新浪财经文章正文"""
+        html = await self._fetch_article_html(url, referer="https://finance.sina.com.cn/")
+        return self._extract_article_text(html, self.SINA_ARTICLE_PATTERNS)
+
     @cached(ttl=300, source="sina", domain="news", frequency="realtime",
             market="a_share", source_name="新浪财经")
-    async def get_news(self, num: int = 20, page: int = 1) -> dict:
-        """财经新闻
+    async def get_news(self, num: int = 20, page: int = 1, with_content: bool = True) -> dict:
+        """财经新闻（列表 + 正文）
 
         Args:
             num: 每页条数
             page: 页码
+            with_content: 是否抓取每篇文章的真实正文（并发请求）
         """
+        import asyncio
+
         resp = await self._client.get(
             self.SINA_NEWS_URL,
             params={"pageid": 153, "lid": 2509, "num": num, "page": page},
@@ -437,13 +453,24 @@ class SinaClient(BaseClient):
         data = resp.json()
 
         result = data.get("result", {})
+        raw_items = result.get("data", [])
+
+        # 并发抓取所有文章的正文
+        contents = [""] * len(raw_items)
+        if with_content and raw_items:
+            urls = [item.get("url", "") for item in raw_items]
+            tasks = [self.fetch_article_content(u) for u in urls]
+            results = await asyncio.gather(*tasks, return_exceptions=True)
+            contents = [r if isinstance(r, str) else "" for r in results]
+
         articles = []
-        for item in result.get("data", []):
+        for item, content in zip(raw_items, contents):
             articles.append({
                 "title": item.get("title", ""),
                 "url": item.get("url", ""),
                 "source": item.get("media_name", ""),
-                "summary": item.get("intro", ""),
+                "summary": item.get("intro", ""),     # 列表页摘要（保留）
+                "content": content,                    # 真实正文（新增）
                 "time": item.get("ctime", ""),
             })
 

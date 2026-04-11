@@ -177,7 +177,8 @@ def save_raw(
                 """, (
                     source, method, ph,
                     json.dumps(params, ensure_ascii=False, default=str),
-                    json.dumps(data, ensure_ascii=False, default=str) if not isinstance(data, str) else data,
+                    # 字符串/数字等标量也要 json.dumps 成合法 JSON 字面量（如 "" → "\"\""）
+                    json.dumps(data, ensure_ascii=False, default=str),
                     data_count,
                     now, expires, latency_ms,
                     source_name, data_domain, data_frequency, market,

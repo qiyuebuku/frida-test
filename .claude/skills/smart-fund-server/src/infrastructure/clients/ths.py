@@ -1449,11 +1449,42 @@ class THSClient(BaseClient):
         url = f"{self.NEWS_BASE}/app/flash/flashnews/v1/list"
         return await self._get(url, params={"tagId": tag_id, "seq": seq})
 
+    THS_ARTICLE_PATTERNS = [
+        r'<div[^>]*class="[^"]*main-text[^"]*"[^>]*>',
+        r'<div[^>]*class="[^"]*atc-content[^"]*"[^>]*>',
+        r'<div[^>]*class="[^"]*article[^"]*"[^>]*>',
+    ]
+
+    @cached(source="ths", source_name="同花顺", domain="news", frequency="daily", market="a_share", ttl=3600)
+    async def fetch_article_content(self, url: str) -> str:
+        """抓取同花顺新闻详情页正文"""
+        html = await self._fetch_article_html(url, referer="https://news.10jqka.com.cn/")
+        return self._extract_article_text(html, self.THS_ARTICLE_PATTERNS)
+
     @cached(source="ths", source_name="同花顺", domain="news", frequency="realtime", market="a_share", ttl=300)
-    async def get_news_feed(self, page: int = 1) -> dict:
-        """滚动快讯（财经要闻实时滚动，每页20条）"""
+    async def get_news_feed(self, page: int = 1, with_content: bool = True) -> dict:
+        """滚动快讯（财经要闻实时滚动，每页 20 条）
+
+        Args:
+            page: 页码
+            with_content: 是否并发抓取每条的详情页正文
+        """
+        import asyncio as _asyncio
         url = f"{self.NEWS_BASE}/tapp/news/push/stock/"
-        return await self._get(url, params={"page": page})
+        result = await self._get(url, params={"page": page})
+
+        # 并发抓取正文
+        if with_content and isinstance(result, dict):
+            data = result.get("data", {})
+            items = data.get("list", []) if isinstance(data, dict) else []
+            if items:
+                urls = [item.get("url", "") for item in items]
+                tasks = [self.fetch_article_content(u) for u in urls]
+                contents = await _asyncio.gather(*tasks, return_exceptions=True)
+                for item, c in zip(items, contents):
+                    if isinstance(c, str):
+                        item["content_full"] = c
+        return result
 
     @cached(source="ths", source_name="同花顺", domain="news", frequency="realtime", market="a_share", ttl=300)
     async def get_topic_detail(self, code: str, page: int = 1, page_size: int = 10) -> dict:

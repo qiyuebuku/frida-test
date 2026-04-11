@@ -10,6 +10,13 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
 
 import argparse
+import logging
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+)
+
 from src.interfaces.tasks import app
 
 
@@ -25,7 +32,7 @@ def main():
 
     print(f"🚀 启动 Worker（并发={args.concurrency}）")
     print(f"   任务: {', '.join(task_names)}")
-    app.start(tasks=task_names, concurrency=args.concurrency)
+    app.start_worker(task_names=task_names, concurrency=args.concurrency)
 
 
 if __name__ == "__main__":

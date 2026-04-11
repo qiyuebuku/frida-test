@@ -3,9 +3,14 @@
 每个聚合维度一个队列，Worker -c 1 串行执行，避免同表并发写入。
 """
 
+import logging
+import time
+
 from jettask import TaskRouter
 
 from src.infrastructure.clients import init_clients, ths
+
+logger = logging.getLogger(__name__)
 
 # 确保客户端已初始化（Worker 进程不经过 FastAPI lifespan）
 if ths is None:
@@ -32,13 +37,19 @@ event_feedback = EventFeedbackAggregator()
 @router.task(queue="agg_news", max_retries=2, retry_backoff=True)
 async def agg_news():
     """新闻事件聚合 — 9 源串行，每源独立间隔"""
+    logger.info("[agg_news] 开始执行")
+    t0 = time.time()
     await news.tick()
+    logger.info(f"[agg_news] 完成，耗时 {time.time()-t0:.1f}s")
 
 
 @router.task(queue="agg_fund_flow", max_retries=2, retry_backoff=True)
 async def agg_fund_flow():
     """资金流聚合 — 北向/板块/个股主力/龙虎榜"""
+    logger.info("[agg_fund_flow] 开始执行")
+    t0 = time.time()
     await fund_flow.tick()
+    logger.info(f"[agg_fund_flow] 完成，耗时 {time.time()-t0:.1f}s")
 
 
 # ==================== P1：辅助任务 ====================
@@ -47,19 +58,28 @@ async def agg_fund_flow():
 @router.task(queue="agg_market", max_retries=2, retry_backoff=True)
 async def agg_market():
     """市场数据聚合 — 指数/全球/期货/外汇/板块"""
+    logger.info("[agg_market] 开始执行")
+    t0 = time.time()
     await market.tick()
+    logger.info(f"[agg_market] 完成，耗时 {time.time()-t0:.1f}s")
 
 
 @router.task(queue="agg_sentiment", max_retries=2, retry_backoff=True)
 async def agg_sentiment():
     """情绪舆情聚合 — 股吧/雪球/涨停/热股"""
+    logger.info("[agg_sentiment] 开始执行")
+    t0 = time.time()
     await sentiment.tick()
+    logger.info(f"[agg_sentiment] 完成，耗时 {time.time()-t0:.1f}s")
 
 
 @router.task(queue="agg_macro", max_retries=2, retry_backoff=True)
 async def agg_macro():
     """宏观指标聚合 — CPI/PMI/M2/LPR/Shibor/汇率"""
+    logger.info("[agg_macro] 开始执行")
+    t0 = time.time()
     await macro.tick()
+    logger.info(f"[agg_macro] 完成，耗时 {time.time()-t0:.1f}s")
 
 
 # ==================== P2：盘后任务 ====================
@@ -68,4 +88,7 @@ async def agg_macro():
 @router.task(queue="agg_event_feedback", max_retries=1)
 async def agg_event_feedback():
     """事件反馈回填 — T+1/T+3 市场反应 + 衰退监控"""
+    logger.info("[agg_event_feedback] 开始执行")
+    t0 = time.time()
     await event_feedback.tick()
+    logger.info(f"[agg_event_feedback] 完成，耗时 {time.time()-t0:.1f}s")

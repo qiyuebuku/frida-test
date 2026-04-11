@@ -25,7 +25,7 @@ PG_URL = os.getenv(
 
 # ==================== Redis ====================
 
-REDIS_URL = os.getenv("REDIS_URL", "redis://10.168.1.210:6379/0")
+REDIS_URL = os.getenv("REDIS_URL", "redis://119.23.227.187:6379/0")
 
 # ==================== 服务 ====================
 

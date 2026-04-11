@@ -1142,18 +1142,33 @@ class EastmoneyClient(BaseClient):
 
     # ==================== 新闻资讯 ====================
 
+    EM_ARTICLE_PATTERNS = [
+        r'<div[^>]*id="ContentBody"[^>]*>',
+        r'<div[^>]*class="[^"]*ContentBody[^"]*"[^>]*>',
+        r'<div[^>]*class="[^"]*newsContent[^"]*"[^>]*>',
+        r'<div[^>]*class="[^"]*article-body[^"]*"[^>]*>',
+    ]
+
+    @cached(ttl=3600, source="eastmoney", source_name="东方财富", domain="news", frequency="daily", market="a_share")
+    async def fetch_article_content(self, url: str) -> str:
+        """抓取东方财富文章正文"""
+        html = await self._fetch_article_html(url, referer="https://finance.eastmoney.com/")
+        return self._extract_article_text(html, self.EM_ARTICLE_PATTERNS)
+
     @cached(ttl=300, source="eastmoney", source_name="东方财富", domain="news", frequency="realtime", market="a_share")
-    async def get_news_by_keyword(self, keyword: str, page_size: int = 20) -> list:
+    async def get_news_by_keyword(self, keyword: str, page_size: int = 20, with_content: bool = True) -> list:
         """按关键词搜索东方财富新闻
 
         Args:
             keyword: 搜索关键词（如"AI"、"新能源"）
             page_size: 返回条数
+            with_content: 是否并发抓取每条的详情页正文
 
         Returns:
-            [{title, date, content(摘要), mediaName(来源), url}, ...]
+            [{title, date, content(真实正文), summary(列表页摘要), mediaName(来源), url}, ...]
         """
         import json as _json
+        import asyncio as _asyncio
         param = _json.dumps({
             "uid": "",
             "keyword": keyword,
@@ -1181,6 +1196,17 @@ class EastmoneyClient(BaseClient):
             for key in ("title", "content"):
                 if key in item and item[key]:
                     item[key] = re.sub(r"</?em>", "", item[key])
+            # 原始 content 字段作为 summary 保留
+            item["summary"] = item.get("content", "")
+
+        # 并发抓取正文
+        if with_content and items:
+            urls = [item.get("url", "") for item in items]
+            tasks = [self.fetch_article_content(u) for u in urls]
+            contents = await _asyncio.gather(*tasks, return_exceptions=True)
+            for item, c in zip(items, contents):
+                if isinstance(c, str) and c:
+                    item["content"] = c  # 用真实正文覆盖
         return items
 
     # ==================== 股吧人气榜 ====================

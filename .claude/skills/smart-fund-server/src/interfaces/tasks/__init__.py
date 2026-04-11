@@ -10,7 +10,8 @@
 from jettask import Jettask
 from src.infrastructure.config.settings import REDIS_URL, JETTASK_PREFIX, PG_URL
 
-app = Jettask(redis_url=REDIS_URL, redis_prefix=JETTASK_PREFIX, pg_url=PG_URL)
+app = Jettask(redis_url=REDIS_URL, prefix=JETTASK_PREFIX)
+DB_URL = PG_URL  # start_scheduler / start_persist 时传入
 
 # 注册任务路由
 from src.interfaces.tasks.aggregator_tasks import router as aggregator_router

@@ -20,7 +20,7 @@ CREATE TABLE IF NOT EXISTS ft_sentiment (
     data_type   VARCHAR(32) NOT NULL,
     trade_date  DATE NOT NULL,
     data        JSONB NOT NULL,
-    captured_at TIMESTAMPTZ DEFAULT NOW()
+    created_at  TIMESTAMPTZ DEFAULT NOW()
 );
 
 CREATE INDEX IF NOT EXISTS idx_ft_sentiment_type_date ON ft_sentiment(data_type, trade_date);
@@ -29,6 +29,26 @@ CREATE INDEX IF NOT EXISTS idx_ft_sentiment_type_date ON ft_sentiment(data_type,
 
 def _today() -> str:
     return date.today().isoformat()
+
+
+def _is_empty(data) -> bool:
+    """判断 data 是否为空（空 dict / 空 list / None）"""
+    if data is None:
+        return True
+    if isinstance(data, (dict, list, str)) and len(data) == 0:
+        return True
+    return False
+
+
+def _wrap(data_type: str, data) -> list[dict]:
+    """封装为聚合结果，空数据直接跳过"""
+    if _is_empty(data):
+        return []
+    return [{
+        "data_type": data_type,
+        "trade_date": _today(),
+        "data": data,
+    }]
 
 
 # ==================== Normalize 函数 ====================
@@ -40,100 +60,125 @@ def normalize_guba_popularity(raw) -> list[dict]:
     get_guba_popularity 返回 list: [{sc, rk, rc, hisRc}, ...]
     """
     items = raw if isinstance(raw, list) else []
-    if not items:
-        return []
-    return [{
-        "data_type": "guba_popularity",
-        "trade_date": _today(),
-        "data": items,
-    }]
+    return _wrap("guba_popularity", items)
 
 
 def normalize_limit_pool(raw) -> list[dict]:
     """同花顺涨停/跌停池 → 统一格式
 
-    get_limit_pool 返回 dict: {status_code, data: {...}}
+    get_limit_pool 返回 dict: {status_code, data: {info:[...], date, ...}}
     """
     if not raw:
         return []
     data = raw.get("data", raw) if isinstance(raw, dict) else raw
-    return [{
-        "data_type": "limit_pool",
-        "trade_date": _today(),
-        "data": data,
-    }]
+    # 判断 data 内部是否真的有内容（info 列表非空）
+    if isinstance(data, dict):
+        info = data.get("info") or data.get("list") or data.get("items")
+        if _is_empty(info):
+            return []
+    return _wrap("limit_pool", data)
 
 
 def normalize_xueqiu_hot_topics(raw) -> list[dict]:
     """雪球热门话题 → 统一格式
 
-    get_hot_topics 返回 dict: {status_code, data: {items: [...]}}
+    get_hot_topics 返回 dict: {data: {count, topics:[...]}, status_code}
     """
     if not raw:
         return []
-    data = raw
+    items = None
     if isinstance(raw, dict):
-        data = raw.get("data", raw)
+        data = raw.get("data", {})
         if isinstance(data, dict):
-            data = data.get("items") or data.get("list") or data
-    return [{
-        "data_type": "xueqiu_hot_topics",
-        "trade_date": _today(),
-        "data": data,
-    }]
+            items = data.get("topics") or data.get("items") or data.get("list")
+    return _wrap("xueqiu_hot_topics", items)
 
 
 def normalize_xueqiu_hot_stocks(raw) -> list[dict]:
     """雪球热股排行 → 统一格式
 
-    get_hot_stocks 返回 dict: {status_code, data: {items: [...]}}
+    get_hot_stocks 返回 dict: {data: {count, stocks:[...]}, status_code}
     """
     if not raw:
         return []
-    data = raw
+    items = None
     if isinstance(raw, dict):
-        data = raw.get("data", raw)
+        data = raw.get("data", {})
         if isinstance(data, dict):
-            data = data.get("items") or data.get("stock_list") or data
-    return [{
-        "data_type": "xueqiu_hot_stocks",
-        "trade_date": _today(),
-        "data": data,
-    }]
+            items = data.get("stocks") or data.get("items") or data.get("stock_list")
+    return _wrap("xueqiu_hot_stocks", items)
 
 
 def normalize_tencent_hot_stocks(raw) -> list[dict]:
     """腾讯热门股 → 统一格式
 
-    get_hot_stocks 返回 dict: {status_code, data: {5min:[...], 1hour:[...], ...}}
+    get_hot_stocks 返回 dict: {data: {5min:[...], 1hour:[...]}, status_code}
     """
     if not raw:
         return []
-    data = raw.get("data", raw) if isinstance(raw, dict) else raw
-    return [{
-        "data_type": "tencent_hot_stocks",
-        "trade_date": _today(),
-        "data": data,
-    }]
+    data = None
+    if isinstance(raw, dict):
+        data = raw.get("data")
+        # 如果 data 是 dict 且所有 value 都为空，认为无数据
+        if isinstance(data, dict):
+            has_content = any(not _is_empty(v) for v in data.values())
+            if not has_content:
+                return []
+    return _wrap("tencent_hot_stocks", data)
 
 
 def normalize_guba_posts(raw) -> list[dict]:
     """东方财富股吧帖子 → 统一格式
 
-    get_guba_posts 返回 dict: {status_code, data: {posts: [...]}}
+    支持两种输入：
+    1. 单个 dict：{status_code, data: {code, posts: [...]}}
+    2. dict 列表：[{...}, {...}]（来自 _fetch_guba_posts_for_held_stocks 的批量结果）
+    每只股票生成一条 ft_sentiment 记录（data_type=guba_posts），data 包含股票代码 + 帖子列表
     """
     if not raw:
         return []
-    data = raw
-    if isinstance(raw, dict):
-        data = raw.get("data", raw)
-        if isinstance(data, dict):
-            data = data.get("posts") or data.get("list") or data
+
+    # 列表输入：递归处理每个元素
+    if isinstance(raw, list):
+        results = []
+        for item in raw:
+            results.extend(normalize_guba_posts(item))
+        return results
+
+    if not isinstance(raw, dict):
+        return []
+    data = raw.get("data") or {}
+    if not isinstance(data, dict):
+        return []
+    posts = data.get("posts") or data.get("list") or []
+    if _is_empty(posts):
+        return []
+    code = data.get("code") or ""
     return [{
         "data_type": "guba_posts",
         "trade_date": _today(),
-        "data": data,
+        "data": {
+            "code": code,
+            "count": len(posts),
+            "posts": posts,
+        },
     }]
+
+
+async def _fetch_guba_posts_for_held_stocks(em_client, ths_client, max_stocks: int = 10) -> list:
+    """从基金池关注的基金的重仓股拉取股吧帖子（限前 N 只避免请求量过大）"""
+    import asyncio as _asyncio
+    from src.domain.aggregation.fund_flow import _fetch_held_stocks
+
+    full_codes = await _fetch_held_stocks(ths_client, max_stocks=max_stocks)
+    if not full_codes:
+        return []
+    # 去掉前缀（sh/sz/bj），股吧 API 用纯数字代码
+    pure_codes = [c[2:] if c[:2] in ("sh", "sz", "bj") else c for c in full_codes]
+
+    tasks = [em_client.get_guba_posts(code) for code in pure_codes]
+    results = await _asyncio.gather(*tasks, return_exceptions=True)
+    return [r for r in results if not isinstance(r, Exception) and r]
 
 
 # ==================== 聚合器 ====================
@@ -198,6 +243,13 @@ class SentimentAggregator(BaseAggregator):
                 1800,
                 normalize_tencent_hot_stocks,
             ),
+            # 个股股吧帖子 — 30 分钟（动态从基金池关注的基金重仓股拉取）
+            SourceDef(
+                "guba_posts",
+                lambda cp: _fetch_guba_posts_for_held_stocks(clients.eastmoney, clients.ths),
+                1800,
+                normalize_guba_posts,
+            ),
         ]
 
     def _get_checkpoint(self, source_name: str):
@@ -213,10 +265,13 @@ class SentimentAggregator(BaseAggregator):
         for item in items:
             if not item.get("data_type") or not item.get("trade_date"):
                 continue
+            data = item.get("data")
+            if _is_empty(data):
+                continue
             rows.append((
                 item["data_type"],
                 item["trade_date"],
-                json.dumps(item.get("data", {}), ensure_ascii=False, default=str),
+                json.dumps(data, ensure_ascii=False, default=str),
             ))
         return self._insert_many("ft_sentiment", columns, rows)
 
@@ -240,7 +295,7 @@ class SentimentAggregator(BaseAggregator):
             "ft_sentiment",
             conditions=conditions or None,
             values=values or None,
-            order_by="captured_at DESC",
+            order_by="created_at DESC",
             limit=limit,
         )
 

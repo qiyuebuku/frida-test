@@ -168,7 +168,7 @@ class EventFeedbackAggregator(BaseAggregator):
                         SELECT data->'net_flow' AS net_flow
                         FROM ft_market_flow
                         WHERE data_type = 'northbound' AND trade_date = %s
-                        ORDER BY captured_at DESC LIMIT 1
+                        ORDER BY created_at DESC LIMIT 1
                     """, (trade_date,))
                     row = cur.fetchone()
                     if row and row[0] is not None:

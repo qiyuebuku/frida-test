@@ -88,6 +88,18 @@ class PBOCClient(BaseClient):
 
     # ==================== 通用列表解析 ====================
 
+    PBOC_ARTICLE_PATTERNS = [
+        r'<div[^>]*id="zoom"[^>]*>',
+        r'<div[^>]*class="[^"]*content[^"]*"[^>]*>',
+        r'<div[^>]*class="[^"]*main_r[^"]*"[^>]*>',
+    ]
+
+    @cached(ttl=86400, source="pboc", domain="news", frequency="daily", market="macro", source_name="人民银行")
+    async def get_content(self, url: str) -> str:
+        """抓取人民银行公告详情页正文"""
+        html = await self._fetch_article_html(url, referer="http://www.pbc.gov.cn/")
+        return self._extract_article_text(html, self.PBOC_ARTICLE_PATTERNS)
+
     async def _fetch_pboc_list(self, url: str, path_prefix: str,
                                 limit: int = 20, source_tag: str = "pboc") -> list:
         """通用人民银行列表页解析"""

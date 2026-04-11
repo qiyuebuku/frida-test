@@ -184,6 +184,16 @@ class BaseClient:
         "Cache-Control": "max-age=60",
     }
 
+    # 文章详情页抓取用桌面端 headers
+    ARTICLE_HEADERS = {
+        "User-Agent": (
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+            "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+        ),
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9",
+        "Accept-Language": "zh-CN,zh;q=0.9",
+    }
+
     def __init__(self, timeout: float = 10.0):
         """初始化客户端
 
@@ -195,6 +205,86 @@ class BaseClient:
             timeout=timeout,
             follow_redirects=True,
         )
+
+    async def _fetch_article_html(self, url: str, referer: str = "") -> str:
+        """抓取文章详情页 HTML（强制桌面端 UA）
+
+        自动跳过 PDF/图片/二进制文件等非 HTML 内容。
+        """
+        if not url:
+            return ""
+        # 扩展名预判
+        lower_url = url.lower().split("?")[0]
+        if lower_url.endswith((".pdf", ".doc", ".docx", ".xls", ".xlsx", ".zip",
+                                ".jpg", ".png", ".gif", ".mp4", ".mp3")):
+            return ""
+        headers = dict(self.ARTICLE_HEADERS)
+        if referer:
+            headers["Referer"] = referer
+        try:
+            resp = await self._client.get(url, headers=headers, timeout=15, follow_redirects=True)
+            if resp.status_code != 200:
+                return ""
+            # Content-Type 检查，只处理 html/text
+            ctype = resp.headers.get("content-type", "").lower()
+            if ctype and not any(t in ctype for t in ("html", "text/", "xml")):
+                return ""
+            return resp.text
+        except Exception:
+            return ""
+
+    @staticmethod
+    def _extract_article_text(html: str, start_patterns: list[str]) -> str:
+        """从 HTML 中按 div 嵌套深度配对提取正文纯文本
+
+        Args:
+            html: 完整 HTML
+            start_patterns: 尝试匹配正文 div 的起始正则列表（按优先级排序）
+        Returns:
+            清理后的纯文本（去除 script/style 和 HTML 标签，截断尾巴噪音）
+        """
+        import re as _re
+        if not html:
+            return ""
+        for pattern in start_patterns:
+            start_m = _re.search(pattern, html)
+            if not start_m:
+                continue
+            start = start_m.end()
+            depth = 1
+            i = start
+            end = start
+            while i < len(html) and depth > 0:
+                open_m = _re.search(r'<div[\s>]', html[i:])
+                close_m = _re.search(r'</div>', html[i:])
+                if not close_m:
+                    break
+                if open_m and open_m.start() < close_m.start():
+                    depth += 1
+                    i += open_m.end()
+                else:
+                    depth -= 1
+                    if depth == 0:
+                        end = i + close_m.start()
+                        break
+                    i += close_m.end()
+            body = html[start:end]
+            body = _re.sub(r'<script[^>]*>.*?</script>', '', body, flags=_re.DOTALL)
+            body = _re.sub(r'<style[^>]*>.*?</style>', '', body, flags=_re.DOTALL)
+            text = _re.sub(r'<[^>]+>', '', body)
+            text = _re.sub(r'\s+', ' ', text).strip()
+            # 截断尾巴噪音
+            for marker in (
+                "新浪声明：", ".appendQr_wrap", "责任编辑：", "免责声明：",
+                "点赞+1", "风险提示：", "【 此内容为", "原标题：",
+                "function ", "郑重声明：",
+            ):
+                idx = text.find(marker)
+                if idx > 0:
+                    text = text[:idx].strip()
+            if text:
+                return text[:5000]
+        return ""
 
     async def _get(self, url: str, params: Optional[dict] = None) -> dict:
         resp = await self._client.get(url, params=params)

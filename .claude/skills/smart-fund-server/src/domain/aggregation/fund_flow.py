@@ -20,7 +20,7 @@ CREATE TABLE IF NOT EXISTS ft_market_flow (
     data_type   VARCHAR(32) NOT NULL,
     trade_date  DATE NOT NULL,
     data        JSONB NOT NULL,
-    captured_at TIMESTAMPTZ DEFAULT NOW()
+    created_at  TIMESTAMPTZ DEFAULT NOW()
 );
 
 CREATE INDEX IF NOT EXISTS idx_ft_market_flow_type_date ON ft_market_flow(data_type, trade_date);
@@ -36,20 +36,27 @@ def _today() -> str:
 def normalize_northbound(raw) -> list[dict]:
     """东方财富北向资金 → 统一格式
 
-    get_northbound_recent 返回 dict: {status_code, data: {data: [{TRADE_DATE, DEAL_AMT, ...}]}}
+    get_northbound_recent 返回: {code, result:{data:[{TRADE_DATE, DEAL_AMT, MUTUAL_TYPE}], count, pages}, message, success}
     """
     items_list = []
     if isinstance(raw, dict):
-        inner = raw.get("data", raw)
-        if isinstance(inner, dict):
-            items_list = inner.get("data", [])
-        elif isinstance(inner, list):
-            items_list = inner
+        # 优先 result.data（真实返回），回退 data.data
+        result = raw.get("result") or {}
+        if isinstance(result, dict):
+            items_list = result.get("data") or []
+        if not items_list:
+            data = raw.get("data") or {}
+            if isinstance(data, dict):
+                items_list = data.get("data") or []
+            elif isinstance(data, list):
+                items_list = data
     elif isinstance(raw, list):
         items_list = raw
 
     results = []
     for item in items_list:
+        if not isinstance(item, dict):
+            continue
         trade_date = (item.get("TRADE_DATE") or "")[:10]
         if not trade_date:
             continue
@@ -58,6 +65,7 @@ def normalize_northbound(raw) -> list[dict]:
             "trade_date": trade_date,
             "data": {
                 "net_flow": item.get("DEAL_AMT"),
+                "mutual_type": item.get("MUTUAL_TYPE"),
                 "raw": {k: v for k, v in item.items() if v is not None},
             },
         })
@@ -98,13 +106,16 @@ def normalize_sector_flow_em(raw) -> list[dict]:
 def normalize_sector_flow_sina(raw) -> list[dict]:
     """新浪板块资金流 → 统一格式
 
-    get_sector_money_flow 返回 dict: {status_code, data: [{name, inflows, outflows, net, ...}]}
+    get_sector_money_flow 返回: {data:{type, count, sectors:[{name, bigIn, midIn, bigOut, midOut,
+                                 largeIn, smallIn, largeOut, smallOut, netAmount}]}, status_code}
     """
     items_list = []
     if isinstance(raw, dict):
-        items_list = raw.get("data", [])
-        if isinstance(items_list, dict):
-            items_list = items_list.get("data", [])
+        data = raw.get("data", {})
+        if isinstance(data, dict):
+            items_list = data.get("sectors") or data.get("data") or []
+        elif isinstance(data, list):
+            items_list = data
     elif isinstance(raw, list):
         items_list = raw
 
@@ -117,24 +128,140 @@ def normalize_sector_flow_sina(raw) -> list[dict]:
             "trade_date": _today(),
             "data": {
                 "name": item.get("name") or "",
-                "net_amount": item.get("net") or item.get("net_flow") or 0,
-                "big_in": item.get("big_in") or 0,
-                "big_out": item.get("big_out") or 0,
+                "net_amount": item.get("netAmount") or item.get("net") or 0,
+                "big_in": item.get("bigIn") or 0,
+                "big_out": item.get("bigOut") or 0,
+                "mid_in": item.get("midIn") or 0,
+                "mid_out": item.get("midOut") or 0,
+                "large_in": item.get("largeIn") or 0,
+                "large_out": item.get("largeOut") or 0,
+                "small_in": item.get("smallIn") or 0,
+                "small_out": item.get("smallOut") or 0,
                 "source": "sina",
-                "raw": item,
             },
         })
     return results
 
 
+def _market_prefix(market_id: int | str) -> str:
+    """同花顺 marketid → 腾讯接口前缀
+
+    17 = 上交所主板 → sh
+    33 = 深交所主板/创业板 → sz
+    151 = 北交所 → bj
+    """
+    try:
+        mid = int(market_id) if market_id else 0
+    except (ValueError, TypeError):
+        mid = 0
+    if mid == 17:
+        return "sh"
+    elif mid in (33,):
+        return "sz"
+    elif mid == 151:
+        return "bj"
+    return "sh"  # 默认沪市
+
+
+def _code_with_prefix(sec_code: str, market_id: int | str = None) -> str:
+    """secCode → 带前缀的代码（如 sh600183）"""
+    if not sec_code:
+        return ""
+    if sec_code.startswith(("sh", "sz", "bj")):
+        return sec_code
+    if market_id:
+        return f"{_market_prefix(market_id)}{sec_code}"
+    # 按代码前缀推断
+    if sec_code.startswith("6"):
+        return f"sh{sec_code}"
+    elif sec_code.startswith(("0", "3")):
+        return f"sz{sec_code}"
+    elif sec_code.startswith(("4", "8", "9")):
+        return f"bj{sec_code}"
+    return f"sh{sec_code}"
+
+
+async def _fetch_held_stocks(ths_client, max_funds: int = 6, max_stocks: int = 20) -> list[str]:
+    """从 ft_config.fund_pool 读取关注的基金，调 ths.get_top10_holdings 拿重仓股，去重后返回带前缀的代码列表"""
+    import asyncio as _asyncio
+    from src.infrastructure.db.fund_db import get_config
+
+    config = get_config()
+    fund_pool = config.get("fund_pool") or []
+    fund_codes = [f.get("code") for f in fund_pool if isinstance(f, dict) and f.get("code")][:max_funds]
+    if not fund_codes:
+        return []
+
+    # 并发拉取每只基金的前十大持仓
+    tasks = [ths_client.get_top10_holdings(code) for code in fund_codes]
+    results = await _asyncio.gather(*tasks, return_exceptions=True)
+
+    seen = set()
+    stock_codes = []
+    for r in results:
+        if isinstance(r, Exception) or not isinstance(r, dict):
+            continue
+        data = r.get("data") or {}
+        stocks = data.get("stock") or []
+        for s in stocks:
+            if not isinstance(s, dict):
+                continue
+            sec_code = s.get("secCode") or ""
+            market_id = s.get("marketid")
+            full_code = _code_with_prefix(sec_code, market_id)
+            if full_code and full_code not in seen:
+                seen.add(full_code)
+                stock_codes.append(full_code)
+            if len(stock_codes) >= max_stocks:
+                break
+        if len(stock_codes) >= max_stocks:
+            break
+    return stock_codes
+
+
+async def fetch_stock_flow_dynamic(tencent_client, ths_client) -> list[dict]:
+    """从持仓基金的重仓股动态采集主力资金流"""
+    import asyncio as _asyncio
+
+    codes = await _fetch_held_stocks(ths_client)
+    if not codes:
+        return []
+
+    # 并发拉取所有股票的资金流
+    tasks = [tencent_client.get_stock_fund_flow(code) for code in codes]
+    results = await _asyncio.gather(*tasks, return_exceptions=True)
+    return [r for r in results if not isinstance(r, Exception) and r]
+
+
 def normalize_stock_flow(raw) -> list[dict]:
     """腾讯个股主力资金 → 统一格式
 
-    get_stock_fund_flow 返回 dict: {status_code, data: {today:{...}, minutes:[...], ...}}
+    支持两种输入：
+    1. 单个 dict：{status_code, data: {today:{...}, minutes:[...], ...}}
+    2. dict 列表：[{...}, {...}]（来自 fetch_stock_flow_dynamic 的批量结果）
+    如果 data.today 的所有值都是 0，说明接口返回空（指数或非交易日），跳过
     """
-    if not raw or not isinstance(raw, dict):
+    if not raw:
+        return []
+
+    # 如果是列表，递归处理每个元素
+    if isinstance(raw, list):
+        results = []
+        for item in raw:
+            results.extend(normalize_stock_flow(item))
+        return results
+
+    if not isinstance(raw, dict):
         return []
     data = raw.get("data", raw)
+    if not isinstance(data, dict):
+        return []
+    today = data.get("today") or {}
+    if isinstance(today, dict):
+        # 过滤全 0 的空数据
+        numeric_vals = [v for v in today.values() if isinstance(v, (int, float))]
+        if numeric_vals and all(v == 0 for v in numeric_vals):
+            return []
     return [{
         "data_type": "stock_flow",
         "trade_date": _today(),
@@ -145,45 +272,78 @@ def normalize_stock_flow(raw) -> list[dict]:
 def normalize_dragon_tiger_em(raw) -> list[dict]:
     """东方财富龙虎榜 → 统一格式
 
-    get_dragon_tiger 返回 dict: {status_code, data: {data: [...]}}
+    get_dragon_tiger 返回: {data:{tab:"stock", items:[{code, date, name, close, buyAmt, sellAmt,
+                           netAmt, reason, explain, changeRate, turnoverRate, ...}]}}
     """
     items_list = []
     if isinstance(raw, dict):
-        inner = raw.get("data", raw)
-        if isinstance(inner, dict):
-            items_list = inner.get("data", [])
-        elif isinstance(inner, list):
-            items_list = inner
+        data = raw.get("data", {})
+        if isinstance(data, dict):
+            items_list = data.get("items") or data.get("data") or []
+        elif isinstance(data, list):
+            items_list = data
     elif isinstance(raw, list):
         items_list = raw
 
     results = []
     for item in items_list:
-        trade_date = (item.get("TRADE_DATE") or item.get("tradeDate") or "")[:10] or _today()
+        if not isinstance(item, dict):
+            continue
+        trade_date = (item.get("date") or item.get("TRADE_DATE") or "")[:10] or _today()
         results.append({
             "data_type": "dragon_tiger",
             "trade_date": trade_date,
-            "data": {"source": "eastmoney", "raw": item},
+            "data": {
+                "source": "eastmoney",
+                "code": item.get("code"),
+                "name": item.get("name"),
+                "close": item.get("close"),
+                "change_rate": item.get("changeRate"),
+                "turnover_rate": item.get("turnoverRate"),
+                "buy_amt": item.get("buyAmt"),
+                "sell_amt": item.get("sellAmt"),
+                "net_amt": item.get("netAmt"),
+                "reason": item.get("reason"),
+                "explain": item.get("explain"),
+            },
         })
-    return results if results else []
+    return results
 
 
 def normalize_dragon_tiger_ths(raw) -> list[dict]:
-    """同花顺龙虎榜 → 统一格式"""
+    """同花顺龙虎榜 → 统一格式
+
+    get_ths_dragon_tiger 返回: {data:{tab:"youzi", date:"...", items:[{code, name, chg, days, price,
+                               seats:[{dept, side, buy, sell, net, label}]}]}}
+    """
     items_list = []
+    trade_date = _today()
     if isinstance(raw, dict):
-        items_list = raw.get("data") or raw.get("result") or []
-        if isinstance(items_list, dict):
-            items_list = items_list.get("data", [])
+        data = raw.get("data", {})
+        if isinstance(data, dict):
+            items_list = data.get("items") or data.get("list") or []
+            trade_date = (data.get("date") or trade_date)[:10]
+        elif isinstance(data, list):
+            items_list = data
     elif isinstance(raw, list):
         items_list = raw
 
     results = []
     for item in items_list:
+        if not isinstance(item, dict):
+            continue
         results.append({
             "data_type": "dragon_tiger",
-            "trade_date": _today(),
-            "data": {"source": "ths", "raw": item},
+            "trade_date": trade_date,
+            "data": {
+                "source": "ths",
+                "code": item.get("code"),
+                "name": item.get("name"),
+                "price": item.get("price"),
+                "chg": item.get("chg"),
+                "days": item.get("days"),
+                "seats": item.get("seats", []),
+            },
         })
     return results
 
@@ -223,10 +383,10 @@ class FundFlowAggregator(BaseAggregator):
                 1800,
                 normalize_sector_flow_sina,
             ),
-            # 个股主力资金 — 30 分钟（采集沪深 300 指数 000300 为例）
+            # 个股主力资金 — 30 分钟（动态从基金池关注的基金的重仓股拉取，去重后批量采集）
             SourceDef(
                 "stock_flow",
-                lambda cp: clients.tencent.get_stock_fund_flow("000300"),
+                lambda cp: fetch_stock_flow_dynamic(clients.tencent, clients.ths),
                 1800,
                 normalize_stock_flow,
             ),
@@ -259,10 +419,14 @@ class FundFlowAggregator(BaseAggregator):
         for item in items:
             if not item.get("data_type") or not item.get("trade_date"):
                 continue
+            data = item.get("data")
+            # 过滤空数据：空 dict、空 list、None
+            if data is None or (isinstance(data, (dict, list, str)) and len(data) == 0):
+                continue
             rows.append((
                 item["data_type"],
                 item["trade_date"],
-                json.dumps(item.get("data", {}), ensure_ascii=False, default=str),
+                json.dumps(data, ensure_ascii=False, default=str),
             ))
         return self._insert_many("ft_market_flow", columns, rows)
 
@@ -286,7 +450,7 @@ class FundFlowAggregator(BaseAggregator):
             "ft_market_flow",
             conditions=conditions or None,
             values=values or None,
-            order_by="captured_at DESC",
+            order_by="created_at DESC",
             limit=limit,
         )
 

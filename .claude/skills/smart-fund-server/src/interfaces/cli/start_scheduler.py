@@ -8,14 +8,14 @@ import sys
 from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
 
-import asyncio
-from src.interfaces.tasks import app
+from src.interfaces.tasks import app, DB_URL
 
 
-async def main():
+def main():
     print("🕐 启动 Scheduler（按 Schedule 定时发消息到队列）")
-    await app.start_scheduler()
+    print(f"   db_url: {DB_URL}")
+    app.start_scheduler(db_url=DB_URL)
 
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    main()
