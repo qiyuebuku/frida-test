@@ -17,11 +17,6 @@ import logging
 import os
 from datetime import date, datetime, timedelta, timezone
 
-import psycopg2
-import psycopg2.extras
-
-from src.infrastructure.db.fund_db import get_conn
-
 logger = logging.getLogger(__name__)
 
 
@@ -38,46 +33,15 @@ SELL_PCT_ON_STOP_LOSS = float(os.environ.get("SELL_PCT_ON_STOP_LOSS", "100"))  #
 
 
 def _get_paper_positions() -> list[dict]:
-    """从 ft_trades dry_run 数据聚合虚拟持仓
-
-    一个基金可能有多笔买入，按 fund_code 聚合，amount/shares 累加。
-    没有真实净值时，profit_pct 暂记 0（监控只用 stream 衰退判断）。
-    """
-    with get_conn() as conn:
-        with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
-            cur.execute(
-                """
-                SELECT
-                    fund_code,
-                    MAX(fund_name) AS fund_name,
-                    SUM(CASE WHEN action='buy' THEN amount ELSE -amount END) AS total_cost,
-                    SUM(CASE WHEN action='buy' THEN COALESCE(shares,0) ELSE -COALESCE(shares,0) END) AS shares,
-                    MIN(trade_date) AS first_buy_date,
-                    COUNT(*) FILTER (WHERE action='buy') AS buy_count,
-                    0::float AS profit_pct
-                FROM ft_trades
-                WHERE dry_run = TRUE
-                GROUP BY fund_code
-                HAVING SUM(CASE WHEN action='buy' THEN amount ELSE -amount END) > 0
-                """
-            )
-            return [dict(r) for r in cur.fetchall()]
+    """从 ft_trades dry_run 聚合虚拟持仓 — R2.8 走 TradeRepository"""
+    from src.infrastructure.persistence.repositories import TradeRepositoryImpl
+    return TradeRepositoryImpl().paper_positions()
 
 
 def _get_live_positions() -> list[dict]:
-    """从 ft_positions 读真实持仓"""
-    with get_conn() as conn:
-        with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
-            cur.execute(
-                """
-                SELECT fund_code, fund_name, total_cost, shares, avg_cost,
-                       current_nav, market_value, profit_pct, first_buy_date,
-                       add_count
-                FROM ft_positions
-                WHERE total_cost > 0
-                """
-            )
-            return [dict(r) for r in cur.fetchall()]
+    """从 ft_positions 读真实持仓 — R2.8 走 PositionRepository"""
+    from src.infrastructure.persistence.repositories import PositionRepositoryImpl
+    return PositionRepositoryImpl().find_live_positions()
 
 
 def _get_all_positions() -> list[dict]:
@@ -92,52 +56,17 @@ def _get_all_positions() -> list[dict]:
 
 
 def _fund_to_industries(fund_code: str) -> list[str]:
-    """fund_code 反查它对应的所有"行业关键词"
-
-    返回 industry_name + aliases + keywords 的并集，
-    用于和 ft_event_streams.industry（事件抽取出的原始字符串）做匹配。
-    """
-    with get_conn() as conn:
-        with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
-            cur.execute(
-                """
-                SELECT m.industry_name, m.aliases, m.keywords
-                FROM ft_index_fund f
-                JOIN ft_industry_index i USING (index_code)
-                JOIN ft_industry_mapping m USING (industry_id)
-                WHERE f.fund_code = %s
-                """,
-                (fund_code,),
-            )
-            names: set[str] = set()
-            for r in cur.fetchall():
-                names.add(r["industry_name"])
-                for alias in r.get("aliases") or []:
-                    names.add(alias)
-                for kw in r.get("keywords") or []:
-                    names.add(kw)
-            return list(names)
+    """fund_code 反查所有行业关键词 — R2.8 走 IndustryMappingRepository"""
+    from src.infrastructure.persistence.repositories import (
+        IndustryMappingRepositoryImpl,
+    )
+    return IndustryMappingRepositoryImpl().fund_to_industry_keywords(fund_code)
 
 
 def _latest_stream_state(industries: list[str]) -> dict | None:
-    """取这些 industry 中最新的 stream（按 last_event_at 倒序）"""
-    if not industries:
-        return None
-    with get_conn() as conn:
-        with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
-            cur.execute(
-                """
-                SELECT id, industry, state, momentum, event_count,
-                       avg_strength, last_event_at
-                FROM ft_event_streams
-                WHERE industry = ANY(%s)
-                ORDER BY last_event_at DESC
-                LIMIT 1
-                """,
-                (industries,),
-            )
-            row = cur.fetchone()
-            return dict(row) if row else None
+    """取这些 industry 中最新的 stream — R2.8 走 EventStreamRepository"""
+    from src.infrastructure.persistence.repositories import EventStreamRepositoryImpl
+    return EventStreamRepositoryImpl().find_latest_by_industries(industries)
 
 
 # ==================== 决策写入 ====================
@@ -153,57 +82,20 @@ def _create_monitor_decision(
     related_stream_id: int | None,
     risk_notes: str = "",
 ) -> bool:
-    """从监控产生的决策写入 ft_pending_decisions
-
-    监控决策的 event_stream_id 始终为 NULL（stream 信息只在 reason 中体现），
-    避免与 trade_decision 的开仓决策共享同一幂等键。
-
-    幂等保护：同基金 + 同 action + 同日 不重复写。
-    """
-    try:
-        with get_conn() as conn:
-            with conn.cursor() as cur:
-                # 幂等检查：今日该基金已有相同 action 的 monitor 决策？
-                cur.execute(
-                    """
-                    SELECT 1 FROM ft_pending_decisions
-                    WHERE fund_code = %s
-                      AND action = %s
-                      AND decision_date = CURRENT_DATE
-                      AND decision_source = 'event_driven'
-                      AND event_stream_id IS NULL
-                    LIMIT 1
-                    """,
-                    (fund_code, action),
-                )
-                if cur.fetchone():
-                    return False  # 今日已有同基金同 action 的 monitor 决策
-
-                cur.execute(
-                    """
-                    INSERT INTO ft_pending_decisions (
-                        fund_code, fund_name, action, amount, sell_pct,
-                        reason, confidence, market_view, risk_notes,
-                        status, decision_source, dry_run,
-                        event_stream_id
-                    ) VALUES (
-                        %s, %s, %s, %s, %s,
-                        %s, 'high', '', %s,
-                        'pending', 'event_driven', TRUE,
-                        NULL
-                    )
-                    """,
-                    (
-                        fund_code, fund_name, action, amount, sell_pct,
-                        reason + (f" [related stream#{related_stream_id}]" if related_stream_id else ""),
-                        risk_notes,
-                    ),
-                )
-                conn.commit()
-                return cur.rowcount > 0
-    except Exception as e:
-        logger.warning(f"写监控决策失败: {e}")
-        return False
+    """监控触发的决策 — R2.8 走 PendingDecisionRepository.insert_monitor_decision"""
+    from src.infrastructure.persistence.repositories import (
+        PendingDecisionRepositoryImpl,
+    )
+    return PendingDecisionRepositoryImpl().insert_monitor_decision({
+        "fund_code": fund_code,
+        "fund_name": fund_name,
+        "action": action,
+        "amount": amount,
+        "sell_pct": sell_pct,
+        "reason": reason,
+        "risk_notes": risk_notes,
+        "related_stream_id": related_stream_id,
+    })
 
 
 # ==================== 主流程 ====================

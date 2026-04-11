@@ -19,11 +19,6 @@ import logging
 from datetime import datetime, timezone
 from decimal import Decimal
 
-import psycopg2
-import psycopg2.extras
-
-from src.infrastructure.db.fund_db import get_conn
-
 logger = logging.getLogger(__name__)
 
 
@@ -56,105 +51,51 @@ DEFAULT_DRY_RUN = True
 
 
 def _query_active_streams() -> list[dict]:
-    """读最近活跃的事件流（state in emerging/fermenting/peak）"""
-    with get_conn() as conn:
-        with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
-            cur.execute(
-                """
-                SELECT id, industry, state, momentum, event_ids, event_count,
-                       avg_strength, max_strength, avg_sentiment,
-                       first_event_at, last_event_at
-                FROM ft_event_streams
-                WHERE state IN ('emerging', 'fermenting', 'peak')
-                ORDER BY avg_strength DESC, event_count DESC
-                """
-            )
-            return [dict(r) for r in cur.fetchall()]
+    """读最近活跃的事件流 — R2.8 走 EventStreamRepository"""
+    from src.infrastructure.persistence.repositories import EventStreamRepositoryImpl
+    return EventStreamRepositoryImpl().find_active()
 
 
 def _query_events_by_ids(event_ids: list[int]) -> list[dict]:
-    """读事件细节（用于打分时获取 novelty/certainty）"""
+    """读事件细节 — R2.8 用 ORM 直接 query"""
     if not event_ids:
         return []
-    with get_conn() as conn:
-        with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
-            cur.execute(
-                """
-                SELECT id, title, novelty, certainty, sentiment, impact_strength,
-                       impact_direction, event_time
-                FROM ft_events
-                WHERE id = ANY(%s)
-                """,
-                (event_ids,),
-            )
-            return [dict(r) for r in cur.fetchall()]
+    from sqlalchemy import select
+
+    from src.infrastructure.connections import get_session
+    from src.infrastructure.persistence.models.extraction import Event
+
+    with get_session() as s:
+        rows = s.scalars(
+            select(Event).where(Event.id.in_(event_ids))
+        ).all()
+        return [
+            {
+                "id": r.id,
+                "title": r.title,
+                "novelty": r.novelty,
+                "certainty": r.certainty,
+                "sentiment": r.sentiment,
+                "impact_strength": r.impact_strength,
+                "impact_direction": r.impact_direction,
+                "event_time": r.event_time,
+            }
+            for r in rows
+        ]
 
 
 def _resolve_industry_to_funds(industry_name: str) -> list[dict]:
-    """industry_name → 候选基金列表
-
-    通过模糊匹配 industry_name 到 ft_industry_mapping.industry_name / aliases，
-    再通过 industry_id → index_code → fund_code 拿基金。
-    """
-    with get_conn() as conn:
-        with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
-            # 先精确匹配 industry_name
-            cur.execute(
-                """
-                SELECT industry_id, industry_name, priority
-                FROM ft_industry_mapping
-                WHERE industry_name = %s
-                   OR aliases @> %s::jsonb
-                LIMIT 1
-                """,
-                (industry_name, json.dumps([industry_name], ensure_ascii=False)),
-            )
-            mapping = cur.fetchone()
-            if not mapping:
-                # 模糊匹配 keywords（事件 industry 可能是关键词）
-                cur.execute(
-                    """
-                    SELECT industry_id, industry_name, priority
-                    FROM ft_industry_mapping
-                    WHERE keywords @> %s::jsonb
-                    ORDER BY priority DESC
-                    LIMIT 1
-                    """,
-                    (json.dumps([industry_name], ensure_ascii=False),),
-                )
-                mapping = cur.fetchone()
-            if not mapping:
-                return []
-
-            industry_id = mapping["industry_id"]
-            cur.execute(
-                """
-                SELECT f.fund_code, f.fund_name, f.fund_type, f.fee_rate, f.liquidity_score,
-                       i.index_code, i.index_name, i.weight,
-                       %s::float AS industry_priority
-                FROM ft_industry_index i
-                JOIN ft_index_fund f USING (index_code)
-                WHERE i.industry_id = %s
-                ORDER BY f.liquidity_score DESC, f.fee_rate ASC
-                """,
-                (mapping["priority"], industry_id),
-            )
-            return [dict(r) for r in cur.fetchall()]
+    """industry_name → 候选基金列表 — R2.8 走 IndustryMappingRepository"""
+    from src.infrastructure.persistence.repositories import (
+        IndustryMappingRepositoryImpl,
+    )
+    return IndustryMappingRepositoryImpl().resolve_industry_to_funds(industry_name)
 
 
 def _query_fund_limit(fund_code: str) -> dict | None:
-    with get_conn() as conn:
-        with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
-            cur.execute(
-                """
-                SELECT min_buy, max_buy, daily_limit, is_suspended
-                FROM ft_fund_limits
-                WHERE fund_code = %s
-                """,
-                (fund_code,),
-            )
-            row = cur.fetchone()
-            return dict(row) if row else None
+    """R2.8 走 FundLimitRepository"""
+    from src.infrastructure.persistence.repositories import FundLimitRepositoryImpl
+    return FundLimitRepositoryImpl().get(fund_code)
 
 
 # ==================== 打分 ====================
@@ -276,52 +217,11 @@ def _calc_position(score: float, fund_limit: dict | None) -> float:
 
 
 def _save_decision(decision: dict) -> bool:
-    """写入 ft_pending_decisions
-
-    幂等键: (event_stream_id, fund_code, decision_date) WHERE decision_source='event_driven'
-    冲突时跳过（避免同一流同一日重复打分）。
-    """
-    try:
-        with get_conn() as conn:
-            with conn.cursor() as cur:
-                cur.execute(
-                    """
-                    INSERT INTO ft_pending_decisions (
-                        fund_code, fund_name, action, amount,
-                        reason, confidence, market_view, risk_notes,
-                        status, decision_source, dry_run,
-                        event_stream_id, source_event_ids, score, score_breakdown
-                    ) VALUES (
-                        %s, %s, %s, %s,
-                        %s, %s, %s, %s,
-                        'pending', 'event_driven', %s,
-                        %s, %s, %s, %s
-                    )
-                    ON CONFLICT (event_stream_id, fund_code, decision_date)
-                    WHERE decision_source = 'event_driven'
-                    DO NOTHING
-                    """,
-                    (
-                        decision["fund_code"],
-                        decision["fund_name"],
-                        decision["action"],
-                        decision["amount"],
-                        decision["reason"],
-                        decision["confidence"],
-                        decision["market_view"],
-                        decision["risk_notes"],
-                        decision.get("dry_run", DEFAULT_DRY_RUN),
-                        decision["event_stream_id"],
-                        decision["source_event_ids"],
-                        decision["score"],
-                        json.dumps(decision["score_breakdown"], ensure_ascii=False),
-                    ),
-                )
-                conn.commit()
-                return cur.rowcount > 0
-    except Exception as e:
-        logger.warning(f"写入决策失败: {e}")
-        return False
+    """写入 ft_pending_decisions — R2.8 走 PendingDecisionRepository"""
+    from src.infrastructure.persistence.repositories import (
+        PendingDecisionRepositoryImpl,
+    )
+    return PendingDecisionRepositoryImpl().insert_event_driven(decision)
 
 
 # ==================== 主流程 ====================

@@ -19,11 +19,6 @@ import os
 from datetime import date, datetime, timedelta
 from decimal import Decimal
 
-import psycopg2
-import psycopg2.extras
-
-from src.infrastructure.db.fund_db import get_conn
-
 logger = logging.getLogger(__name__)
 
 
@@ -42,32 +37,9 @@ BUY_WRONG_THRESHOLD = float(os.environ.get("BUY_WRONG_THRESHOLD", "-1.0"))
 
 
 def _query_unreviewed_trades(lookback_days: int = REVIEW_LOOKBACK_DAYS) -> list[dict]:
-    """读 lookback 天内、未复盘的交易（区分 dry_run + live）
-
-    注意：ft_reviews.decision_id 历史上指 ft_decisions.id（LLM 决策），
-    本任务写入时也用 trade.id 但区分 decision_source='event_driven'。
-    LEFT JOIN 必须按 source 过滤，避免与 LLM 决策的 ID 命名空间冲突。
-    """
-    since = (date.today() - timedelta(days=lookback_days)).isoformat()
-    today = date.today().isoformat()
-    with get_conn() as conn:
-        with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
-            cur.execute(
-                """
-                SELECT t.id, t.fund_code, t.fund_name, t.action, t.amount, t.shares,
-                       t.dry_run, t.decision_id, t.trade_date, t.reason
-                FROM ft_trades t
-                LEFT JOIN ft_reviews r
-                  ON r.decision_id = t.id
-                  AND r.decision_source = 'event_driven'
-                WHERE t.trade_date >= %s
-                  AND t.trade_date <= %s::date - INTERVAL '1 day'
-                  AND r.id IS NULL
-                ORDER BY t.trade_date ASC
-                """,
-                (since, today),
-            )
-            return [dict(r) for r in cur.fetchall()]
+    """读 lookback 天内、未复盘的交易 — R2.9 走 ReviewRepository"""
+    from src.infrastructure.persistence.repositories import ReviewRepositoryImpl
+    return ReviewRepositoryImpl().find_unreviewed_trades(lookback_days=lookback_days)
 
 
 # ==================== 净值查询 ====================
@@ -155,94 +127,18 @@ def _judge_outcome(action: str, change_t1: float | None, change_t2: float | None
 
 
 def _save_review(review: dict) -> bool:
-    try:
-        with get_conn() as conn:
-            with conn.cursor() as cur:
-                cur.execute(
-                    """
-                    INSERT INTO ft_reviews (
-                        decision_id, fund_code, decision_date,
-                        decision_action, decision_reason,
-                        nav_at_decision, nav_t1, nav_t2,
-                        change_t1_pct, change_t2_pct,
-                        outcome, review_notes,
-                        decision_source, dry_run
-                    ) VALUES (
-                        %s, %s, %s,
-                        %s, %s,
-                        %s, %s, %s,
-                        %s, %s,
-                        %s, %s,
-                        %s, %s
-                    )
-                    ON CONFLICT (decision_id, fund_code) WHERE decision_id IS NOT NULL
-                    DO UPDATE SET
-                        nav_t1 = EXCLUDED.nav_t1,
-                        nav_t2 = EXCLUDED.nav_t2,
-                        change_t1_pct = EXCLUDED.change_t1_pct,
-                        change_t2_pct = EXCLUDED.change_t2_pct,
-                        outcome = EXCLUDED.outcome,
-                        reviewed_at = NOW()
-                    """,
-                    (
-                        review["decision_id"],
-                        review["fund_code"],
-                        review["decision_date"],
-                        review["decision_action"],
-                        review.get("decision_reason", ""),
-                        review.get("nav_at_decision"),
-                        review.get("nav_t1"),
-                        review.get("nav_t2"),
-                        review.get("change_t1_pct"),
-                        review.get("change_t2_pct"),
-                        review["outcome"],
-                        review.get("review_notes", ""),
-                        review.get("decision_source", "event_driven"),
-                        review.get("dry_run", True),
-                    ),
-                )
-                conn.commit()
-                return True
-    except Exception as e:
-        logger.warning(f"写 ft_reviews 失败: {e}")
-        return False
+    """R2.9 走 ReviewRepository"""
+    from src.infrastructure.persistence.repositories import ReviewRepositoryImpl
+    return ReviewRepositoryImpl().upsert_review(review)
 
 
 # ==================== 胜率统计 ====================
 
 
 def _refresh_winrate_stats() -> dict:
-    """计算最近 30 天的胜率统计，写入 ft_config
-
-    Returns: {total, correct, wrong, neutral, winrate}
-    """
-    with get_conn() as conn:
-        with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
-            cur.execute(
-                """
-                SELECT
-                    COUNT(*) AS total,
-                    COUNT(*) FILTER (WHERE outcome='correct') AS correct,
-                    COUNT(*) FILTER (WHERE outcome='wrong') AS wrong,
-                    COUNT(*) FILTER (WHERE outcome='neutral') AS neutral
-                FROM ft_reviews
-                WHERE decision_date >= CURRENT_DATE - INTERVAL '30 days'
-                  AND outcome != 'pending'
-                  AND decision_source = 'event_driven'
-                """
-            )
-            row = cur.fetchone() or {}
-    total = row.get("total") or 0
-    correct = row.get("correct") or 0
-    decided = (row.get("correct") or 0) + (row.get("wrong") or 0)
-    winrate = correct / decided if decided > 0 else 0.5
-    stats = {
-        "total": total,
-        "correct": correct,
-        "wrong": row.get("wrong") or 0,
-        "neutral": row.get("neutral") or 0,
-        "winrate": round(winrate, 3),
-    }
+    """近 30 天 event_driven 胜率统计 + 写 ft_config — R2.9 走 ReviewRepository"""
+    from src.infrastructure.persistence.repositories import ReviewRepositoryImpl
+    stats = ReviewRepositoryImpl().winrate_stats_30d()
     # 写入 ft_config
     try:
         from src.infrastructure.db import fund_db

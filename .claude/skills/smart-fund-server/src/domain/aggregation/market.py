@@ -11,7 +11,6 @@ import logging
 from datetime import date, datetime
 
 from src.domain.aggregation.base import BaseAggregator, SourceDef
-from src.infrastructure.db.fund_db import get_conn
 
 logger = logging.getLogger(__name__)
 
@@ -245,32 +244,24 @@ class MarketAggregator(BaseAggregator):
     # ==================== 入库 ====================
 
     def _save(self, items: list[dict]) -> int:
-        """写入 ft_market_cache（UPSERT by data_type）"""
+        """写入 ft_market_cache (UPSERT by data_type) — R2.5 改用 MarketCacheRepository"""
         if not items:
             return 0
+        from datetime import timedelta as _td
+        from src.infrastructure.persistence.repositories import MarketCacheRepositoryImpl
+        repo = MarketCacheRepositoryImpl()
         saved = 0
-        try:
-            with get_conn() as conn:
-                with conn.cursor() as cur:
-                    for item in items:
-                        data_type = item.get("data_type")
-                        if not data_type:
-                            continue
-                        ttl = item.get("ttl", 300)
-                        expires_at = datetime.now() + __import__("datetime").timedelta(seconds=ttl)
-                        data_json = json.dumps(item.get("data", {}), ensure_ascii=False, default=str)
-                        cur.execute("""
-                            INSERT INTO ft_market_cache (data_type, data, expires_at, created_at)
-                            VALUES (%s, %s, %s, NOW())
-                            ON CONFLICT (data_type) DO UPDATE SET
-                                data = EXCLUDED.data,
-                                expires_at = EXCLUDED.expires_at,
-                                created_at = NOW()
-                        """, (data_type, data_json, expires_at))
-                        saved += 1
-                conn.commit()
-        except Exception as e:
-            logger.warning(f"ft_market_cache 写入失败: {e}")
+        for item in items:
+            data_type = item.get("data_type")
+            if not data_type:
+                continue
+            ttl = item.get("ttl", 300)
+            expires_at = datetime.now() + _td(seconds=ttl)
+            try:
+                repo.upsert(data_type, item.get("data", {}), expires_at)
+                saved += 1
+            except Exception as e:
+                logger.warning(f"ft_market_cache {data_type} 写入失败: {e}")
         return saved
 
     # ==================== 查询 ====================

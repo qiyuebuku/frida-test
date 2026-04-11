@@ -22,11 +22,7 @@ import subprocess
 from datetime import datetime
 from pathlib import Path
 
-import psycopg2
-import psycopg2.extras
-
 from src.domain.aggregation.base import BaseAggregator, SourceDef
-from src.infrastructure.db.fund_db import get_conn
 
 logger = logging.getLogger(__name__)
 
@@ -232,35 +228,15 @@ async def _call_claude_extract(news_batch: list[dict], skill_body: str) -> list[
 
 
 def _query_unextracted_news(limit: int = MAX_NEWS_PER_RUN) -> list[dict]:
-    """读取未被 AI 抽取过的新闻"""
-    with get_conn() as conn:
-        with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
-            cur.execute(
-                """
-                SELECT id, title, summary, content, source, source_name,
-                       source_reliability, category, url, published_at
-                FROM ft_news
-                WHERE event_extracted = FALSE
-                ORDER BY published_at DESC
-                LIMIT %s
-                """,
-                (limit,),
-            )
-            return [dict(r) for r in cur.fetchall()]
+    """读取未被 AI 抽取过的新闻 — R2.7 走 NewsRepository"""
+    from src.infrastructure.persistence.repositories import NewsRepositoryImpl
+    return NewsRepositoryImpl().find_unextracted(limit=limit)
 
 
 def _mark_extracted(news_ids: list[int]) -> int:
-    """标记新闻为已抽取"""
-    if not news_ids:
-        return 0
-    with get_conn() as conn:
-        with conn.cursor() as cur:
-            cur.execute(
-                "UPDATE ft_news SET event_extracted = TRUE WHERE id = ANY(%s)",
-                (news_ids,),
-            )
-            conn.commit()
-            return cur.rowcount
+    """标记新闻为已抽取 — R2.7 走 NewsRepository"""
+    from src.infrastructure.persistence.repositories import NewsRepositoryImpl
+    return NewsRepositoryImpl().mark_extracted(news_ids)
 
 
 def _save_event(
@@ -270,66 +246,24 @@ def _save_event(
     embedding_blob: bytes | None = None,
     embedding_model: str = "",
 ) -> bool:
-    """写入一个事件到 ft_events"""
+    """写入一个事件到 ft_events — R2.7 走 EventRepository"""
     title = event.get("title") or ""
     event_type = event.get("event_type") or ""
     if not title or not event_type:
         return False
 
     fingerprint = hashlib.sha256(f"{title}|{event_type}".encode()).hexdigest()
-    impact = event.get("impact") or {}
-    entities = event.get("entities") or {}
 
-    try:
-        with get_conn() as conn:
-            with conn.cursor() as cur:
-                cur.execute(
-                    """
-                    INSERT INTO ft_events (
-                        title, summary, event_type, event_subtype,
-                        industries, companies, organizations, regions,
-                        impact_direction, impact_strength, impact_scope, impact_duration,
-                        sentiment, novelty, certainty,
-                        source_news_ids, event_time, fingerprint,
-                        embedding, embedding_model
-                    ) VALUES (
-                        %s, %s, %s, %s,
-                        %s, %s, %s, %s,
-                        %s, %s, %s, %s,
-                        %s, %s, %s,
-                        %s, %s, %s,
-                        %s, %s
-                    )
-                    ON CONFLICT (fingerprint) DO NOTHING
-                    """,
-                    (
-                        title,
-                        event.get("summary") or "",
-                        event_type,
-                        event.get("event_subtype") or "",
-                        json.dumps(entities.get("industries") or [], ensure_ascii=False),
-                        json.dumps(entities.get("companies") or [], ensure_ascii=False),
-                        json.dumps(entities.get("organizations") or [], ensure_ascii=False),
-                        json.dumps(entities.get("regions") or [], ensure_ascii=False),
-                        impact.get("direction") or "neutral",
-                        float(impact.get("strength") or 0),
-                        impact.get("scope") or "",
-                        impact.get("duration") or "",
-                        float(event.get("sentiment") or 0.5),
-                        float(event.get("novelty") or 0.5),
-                        float(event.get("certainty") or 0.5),
-                        source_news_ids,
-                        event_time,
-                        fingerprint,
-                        psycopg2.Binary(embedding_blob) if embedding_blob else None,
-                        embedding_model[:32] if embedding_model else "",
-                    ),
-                )
-                conn.commit()
-                return cur.rowcount > 0
-    except Exception as e:
-        logger.warning(f"写入 ft_events 失败: {e}")
-        return False
+    event_data = {
+        **event,  # 透传 entities/impact/sentiment/novelty/certainty 等
+        "source_news_ids": source_news_ids,
+        "event_time": event_time,
+        "fingerprint": fingerprint,
+    }
+    from src.infrastructure.persistence.repositories import EventRepositoryImpl
+    return EventRepositoryImpl().upsert_event(
+        event_data, embedding_blob=embedding_blob, embedding_model=embedding_model,
+    )
 
 
 # ==================== 聚合器 ====================

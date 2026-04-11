@@ -32,11 +32,6 @@ import os
 from datetime import date, datetime
 from decimal import Decimal
 
-import psycopg2
-import psycopg2.extras
-
-from src.infrastructure.db.fund_db import get_conn
-
 logger = logging.getLogger(__name__)
 
 
@@ -62,41 +57,17 @@ MAX_DECISIONS_PER_TICK = 20
 
 
 def _query_pending_decisions(limit: int = MAX_DECISIONS_PER_TICK) -> list[dict]:
-    """读 pending 状态的事件驱动决策"""
-    with get_conn() as conn:
-        with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
-            cur.execute(
-                """
-                SELECT id, fund_code, fund_name, action, amount, sell_pct,
-                       reason, score, dry_run, event_stream_id, source_event_ids
-                FROM ft_pending_decisions
-                WHERE status = 'pending'
-                  AND decision_source = 'event_driven'
-                  AND action IN ('buy', 'sell')
-                  AND decision_date = CURRENT_DATE
-                ORDER BY score DESC NULLS LAST
-                LIMIT %s
-                """,
-                (limit,),
-            )
-            return [dict(r) for r in cur.fetchall()]
+    """读 pending 状态的事件驱动决策 — R2.8 走 PendingDecisionRepository"""
+    from src.infrastructure.persistence.repositories import (
+        PendingDecisionRepositoryImpl,
+    )
+    return PendingDecisionRepositoryImpl().find_pending_event_driven(limit=limit)
 
 
 def _today_live_buy_total() -> float:
-    """今日已实际买入总额（dry_run=false）"""
-    with get_conn() as conn:
-        with conn.cursor() as cur:
-            cur.execute(
-                """
-                SELECT COALESCE(SUM(amount), 0)
-                FROM ft_trades
-                WHERE trade_date = CURRENT_DATE
-                  AND action = 'buy'
-                  AND dry_run = FALSE
-                """
-            )
-            row = cur.fetchone()
-            return float(row[0]) if row else 0.0
+    """今日已实际买入总额 — R2.8 走 TradeRepository"""
+    from src.infrastructure.persistence.repositories import TradeRepositoryImpl
+    return TradeRepositoryImpl().today_live_buy_total()
 
 
 def _save_trade(
@@ -111,104 +82,42 @@ def _save_trade(
     api_response: dict | None,
     dry_run: bool,
 ) -> int | None:
-    """写 ft_trades 并返回 trade_id"""
-    try:
-        with get_conn() as conn:
-            with conn.cursor() as cur:
-                cur.execute(
-                    """
-                    INSERT INTO ft_trades (
-                        fund_code, fund_name, action, amount, shares,
-                        order_no, reason, api_response, dry_run, decision_id
-                    ) VALUES (
-                        %s, %s, %s, %s, %s,
-                        %s, %s, %s, %s, %s
-                    ) RETURNING id
-                    """,
-                    (
-                        fund_code, fund_name, action, amount, shares,
-                        order_no, reason,
-                        json.dumps(api_response or {}, ensure_ascii=False, default=str),
-                        dry_run, decision_id,
-                    ),
-                )
-                trade_id = cur.fetchone()[0]
-                conn.commit()
-                return trade_id
-    except Exception as e:
-        logger.warning(f"写 ft_trades 失败: {e}")
-        return None
+    """写 ft_trades — R2.8 走 TradeRepository"""
+    from src.infrastructure.persistence.repositories import TradeRepositoryImpl
+    return TradeRepositoryImpl().insert(
+        decision_id=decision_id,
+        fund_code=fund_code,
+        fund_name=fund_name,
+        action=action,
+        amount=amount,
+        shares=shares,
+        order_no=order_no,
+        reason=reason,
+        api_response=api_response,
+        dry_run=dry_run,
+    )
 
 
 def _mark_decision_executed(decision_id: int, order_no: str | None = None):
-    """标记决策已执行"""
-    try:
-        with get_conn() as conn:
-            with conn.cursor() as cur:
-                cur.execute(
-                    """
-                    UPDATE ft_pending_decisions
-                    SET status = 'executed',
-                        executed_at = NOW()
-                    WHERE id = %s
-                    """,
-                    (decision_id,),
-                )
-                conn.commit()
-    except Exception as e:
-        logger.warning(f"更新决策状态失败: {e}")
+    """R2.8 走 PendingDecisionRepository"""
+    from src.infrastructure.persistence.repositories import (
+        PendingDecisionRepositoryImpl,
+    )
+    PendingDecisionRepositoryImpl().mark_executed(decision_id)
 
 
 def _mark_decision_cancelled(decision_id: int, reason: str):
-    try:
-        with get_conn() as conn:
-            with conn.cursor() as cur:
-                cur.execute(
-                    """
-                    UPDATE ft_pending_decisions
-                    SET status = 'cancelled',
-                        cancelled_at = NOW(),
-                        cancel_reason = %s
-                    WHERE id = %s
-                    """,
-                    (reason[:200], decision_id),
-                )
-                conn.commit()
-    except Exception as e:
-        logger.warning(f"取消决策失败: {e}")
+    """R2.8 走 PendingDecisionRepository"""
+    from src.infrastructure.persistence.repositories import (
+        PendingDecisionRepositoryImpl,
+    )
+    PendingDecisionRepositoryImpl().mark_cancelled(decision_id, reason)
 
 
 def _update_position_after_buy(fund_code: str, fund_name: str, amount: float, shares: float):
-    """实盘买入后更新 ft_positions（仅 live 模式调用）"""
-    try:
-        with get_conn() as conn:
-            with conn.cursor() as cur:
-                # 用 ON CONFLICT 增量更新（持仓累加）
-                cur.execute(
-                    """
-                    INSERT INTO ft_positions (
-                        fund_code, fund_name, total_cost, shares, avg_cost,
-                        first_buy_date, add_count, updated_at
-                    ) VALUES (
-                        %s, %s, %s, %s, %s,
-                        CURRENT_DATE, 1, NOW()
-                    )
-                    ON CONFLICT (fund_code) DO UPDATE SET
-                        total_cost = ft_positions.total_cost + EXCLUDED.total_cost,
-                        shares = ft_positions.shares + EXCLUDED.shares,
-                        avg_cost = (ft_positions.total_cost + EXCLUDED.total_cost) /
-                                   NULLIF(ft_positions.shares + EXCLUDED.shares, 0),
-                        add_count = ft_positions.add_count + 1,
-                        updated_at = NOW()
-                    """,
-                    (
-                        fund_code, fund_name, amount, shares,
-                        amount / shares if shares > 0 else 0,
-                    ),
-                )
-                conn.commit()
-    except Exception as e:
-        logger.warning(f"更新持仓失败: {e}")
+    """实盘买入后更新 ft_positions — R2.8 走 PositionRepository"""
+    from src.infrastructure.persistence.repositories import PositionRepositoryImpl
+    PositionRepositoryImpl().upsert_after_buy(fund_code, fund_name, amount, shares)
 
 
 # ==================== 安全闸 ====================

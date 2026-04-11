@@ -12,11 +12,7 @@ import json
 import logging
 from datetime import date, datetime, timedelta
 
-import psycopg2
-import psycopg2.extras
-
 from src.domain.aggregation.base import BaseAggregator, SourceDef
-from src.infrastructure.db.fund_db import get_conn
 
 logger = logging.getLogger(__name__)
 
@@ -130,24 +126,9 @@ class EventFeedbackAggregator(BaseAggregator):
         return filled
 
     def _get_unfilled_events(self, days: int) -> list[dict]:
-        """获取近 N 天未回填市场反应的事件
-
-        ft_events 用 industries (JSONB 数组)，不是 industry。
-        用 event_time（实际事件时间）做时间过滤而非 created_at（入库时间）。
-        """
-        since = _days_ago(days)
-        with get_conn() as conn:
-            with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
-                cur.execute("""
-                    SELECT id, title, industries, event_time, created_at
-                    FROM ft_events
-                    WHERE event_time >= %s
-                      AND sector_change_1d IS NULL
-                      AND event_time < NOW() - INTERVAL '1 day'  -- 至少 T+1 才能回填
-                    ORDER BY event_time DESC
-                    LIMIT 100
-                """, (since,))
-                return [dict(r) for r in cur.fetchall()]
+        """获取近 N 天未回填市场反应的事件 — R2.7 走 EventRepository"""
+        from src.infrastructure.persistence.repositories import EventRepositoryImpl
+        return EventRepositoryImpl().find_unfilled_market_reaction(days=days)
 
     async def _compute_reaction(self, event: dict) -> dict | None:
         """计算单个事件的市场反应
@@ -192,66 +173,19 @@ class EventFeedbackAggregator(BaseAggregator):
         return reaction if reaction else None
 
     def _get_sector_net_inflow(self, industry: str, trade_date: str) -> float | None:
-        """从 ft_market_flow.sector_flow 拿指定日期 + 行业的资金净流入"""
-        try:
-            with get_conn() as conn:
-                with conn.cursor() as cur:
-                    cur.execute("""
-                        SELECT data->>'net_amount'
-                        FROM ft_market_flow
-                        WHERE data_type = 'sector_flow'
-                          AND trade_date = %s
-                          AND data->>'name' = %s
-                        LIMIT 1
-                    """, (trade_date, industry))
-                    row = cur.fetchone()
-                    if row and row[0] is not None:
-                        return float(row[0])
-        except Exception:
-            return None
-        return None
+        """R2.7 走 MarketFlowRepository"""
+        from src.infrastructure.persistence.repositories import MarketFlowRepositoryImpl
+        return MarketFlowRepositoryImpl().get_sector_net_inflow(industry, trade_date)
 
     def _get_northbound_flow_on_date(self, trade_date: str) -> float | None:
-        """从 ft_market_flow 获取指定日期的北向净流入"""
-        try:
-            with get_conn() as conn:
-                with conn.cursor() as cur:
-                    cur.execute("""
-                        SELECT data->'net_flow' AS net_flow
-                        FROM ft_market_flow
-                        WHERE data_type = 'northbound' AND trade_date = %s
-                        ORDER BY created_at DESC LIMIT 1
-                    """, (trade_date,))
-                    row = cur.fetchone()
-                    if row and row[0] is not None:
-                        return float(row[0])
-        except Exception:
-            pass
-        return None
+        """R2.7 走 MarketFlowRepository"""
+        from src.infrastructure.persistence.repositories import MarketFlowRepositoryImpl
+        return MarketFlowRepositoryImpl().get_northbound_net_flow(trade_date)
 
     def _update_event_reaction(self, event_id: int, reaction: dict):
-        """回填事件的市场反应字段（含 feedback_at 时间戳）"""
-        sets = []
-        values = []
-        for field in ("sector_change_1d", "sector_change_3d", "sector_volume_change",
-                       "north_flow_1d", "reaction_delay_minutes"):
-            if field in reaction:
-                sets.append(f"{field} = %s")
-                values.append(reaction[field])
-        if not sets:
-            return
-        sets.append("feedback_at = NOW()")
-        values.append(event_id)
-        try:
-            with get_conn() as conn:
-                with conn.cursor() as cur:
-                    cur.execute(
-                        f"UPDATE ft_events SET {', '.join(sets)} WHERE id = %s",
-                        values,
-                    )
-                conn.commit()
-        except Exception as e:
-            logger.debug(f"回填事件 {event_id} 失败: {e}")
+        """回填事件的市场反应字段(含 feedback_at 时间戳) — R2.7 走 EventRepository"""
+        from src.infrastructure.persistence.repositories import EventRepositoryImpl
+        EventRepositoryImpl().update_market_reaction(event_id, reaction)
 
     # ==================== 2. 事件流衰退监控 ====================
 
@@ -291,8 +225,17 @@ class EventFeedbackAggregator(BaseAggregator):
         return results
 
     async def get_decay_signals(self, industry: str) -> dict:
-        """获取单个行业的衰退监控指标"""
-        result = {
+        """获取单个行业的衰退监控指标 — R2.7 走 ORM"""
+        from datetime import datetime, timedelta, timezone
+
+        from sqlalchemy import func, or_, select
+
+        from src.infrastructure.connections import get_session
+        from src.infrastructure.persistence.models.collection import (
+            MarketFlow, News,
+        )
+
+        result: dict = {
             "news_count_24h": 0,
             "fund_flow_2d": [],
             "sentiment_trend": "unknown",
@@ -300,37 +243,42 @@ class EventFeedbackAggregator(BaseAggregator):
 
         # 1. 新闻密度: ft_news 中含该行业关键词的近 24h 新闻数
         try:
-            with get_conn() as conn:
-                with conn.cursor() as cur:
-                    cur.execute("""
-                        SELECT COUNT(*) FROM ft_news
-                        WHERE (title ILIKE %s OR content ILIKE %s)
-                          AND published_at >= NOW() - INTERVAL '24 hours'
-                    """, (f"%{industry}%", f"%{industry}%"))
-                    row = cur.fetchone()
-                    result["news_count_24h"] = row[0] if row else 0
-        except Exception:
-            pass
+            with get_session() as s:
+                cutoff = datetime.now(timezone.utc) - timedelta(hours=24)
+                pattern = f"%{industry}%"
+                cnt = s.scalar(
+                    select(func.count())
+                    .select_from(News)
+                    .where(
+                        or_(News.title.ilike(pattern), News.content.ilike(pattern)),
+                        News.published_at >= cutoff,
+                    )
+                )
+                result["news_count_24h"] = cnt or 0
+        except Exception as e:
+            logger.debug(f"news_count_24h({industry}) 失败: {e}")
 
-        # 2. 板块资金流: ft_market_flow 中含该行业的近 2 天数据
+        # 2. 板块资金流: ft_market_flow.sector_flow 近 2 天含该行业的数据
         try:
-            with get_conn() as conn:
-                with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
-                    cur.execute("""
+            with get_session() as s:
+                from sqlalchemy import text
+                rows = s.execute(
+                    text("""
                         SELECT data FROM ft_market_flow
                         WHERE data_type = 'sector_flow'
-                          AND trade_date >= %s
-                          AND data::text ILIKE %s
+                          AND trade_date >= :since
+                          AND data::text ILIKE :pat
                         ORDER BY trade_date DESC
                         LIMIT 2
-                    """, (_days_ago(2), f"%{industry}%"))
-                    rows = cur.fetchall()
-                    for row in rows:
-                        data = row["data"]
-                        if isinstance(data, dict):
-                            net = data.get("net_amount") or data.get("net") or 0
-                            result["fund_flow_2d"].append(float(net))
-        except Exception:
-            pass
+                    """),
+                    {"since": _days_ago(2), "pat": f"%{industry}%"},
+                ).fetchall()
+                for row in rows:
+                    data = row[0]
+                    if isinstance(data, dict):
+                        net = data.get("net_amount") or data.get("net") or 0
+                        result["fund_flow_2d"].append(float(net))
+        except Exception as e:
+            logger.debug(f"fund_flow_2d({industry}) 失败: {e}")
 
         return result

@@ -186,15 +186,23 @@ class BaseAggregator:
 
         子类可以重写返回任意 dict 结构（max_id / cursor / 多字段）。
         """
-        max_date = (prev_cp or {}).get("max_trade_date")
+        prev_cp = prev_cp or {}
+        if not isinstance(prev_cp, dict):
+            prev_cp = {}
+        max_date = prev_cp.get("max_trade_date")
+        if not isinstance(max_date, str):
+            max_date = None  # 防御: 旧数据残留可能是 dict / list
         for item in items:
             d = item.get("trade_date") or item.get("published_at")
-            if d:
-                d_str = d if isinstance(d, str) else str(d)
-                d_str = d_str[:10]
-                if not max_date or d_str > max_date:
-                    max_date = d_str
-        return {"max_trade_date": max_date} if max_date else (prev_cp or {})
+            if not d:
+                continue
+            try:
+                d_str = (d if isinstance(d, str) else str(d))[:10]
+            except Exception:
+                continue
+            if not max_date or d_str > max_date:
+                max_date = d_str
+        return {"max_trade_date": max_date} if max_date else prev_cp
 
     async def query(self, **filters) -> list[dict]:
         raise NotImplementedError

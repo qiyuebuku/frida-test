@@ -10,7 +10,6 @@ import logging
 from datetime import date
 
 from src.domain.aggregation.base import BaseAggregator, SourceDef
-from src.infrastructure.db.fund_db import get_conn
 
 logger = logging.getLogger(__name__)
 
@@ -258,22 +257,23 @@ class SentimentAggregator(BaseAggregator):
     # ==================== 入库 ====================
 
     def _save(self, items: list[dict]) -> int:
+        """改造后: 走 SentimentRepository (R2.5)"""
         if not items:
             return 0
-        columns = ["data_type", "trade_date", "data"]
-        rows = []
+        clean = []
         for item in items:
             if not item.get("data_type") or not item.get("trade_date"):
                 continue
             data = item.get("data")
             if _is_empty(data):
                 continue
-            rows.append((
-                item["data_type"],
-                item["trade_date"],
-                json.dumps(data, ensure_ascii=False, default=str),
-            ))
-        return self._insert_many("ft_sentiment", columns, rows)
+            clean.append({
+                "data_type": item["data_type"],
+                "trade_date": item["trade_date"],
+                "data": data,
+            })
+        from src.infrastructure.persistence.repositories import SentimentRepositoryImpl
+        return SentimentRepositoryImpl().upsert_batch(clean)
 
     # ==================== 查询 ====================
 

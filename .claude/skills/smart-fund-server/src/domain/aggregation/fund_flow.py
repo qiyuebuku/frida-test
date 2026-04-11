@@ -10,7 +10,6 @@ import logging
 from datetime import datetime, date
 
 from src.domain.aggregation.base import BaseAggregator, SourceDef
-from src.infrastructure.db.fund_db import get_conn
 
 logger = logging.getLogger(__name__)
 
@@ -504,28 +503,27 @@ class FundFlowAggregator(BaseAggregator):
     # ==================== 入库 ====================
 
     def _save(self, items: list[dict]) -> int:
+        """改造后: 走 MarketFlowRepository (R2.5)
+
+        4 个 partial unique index 的 ON CONFLICT 由 repository 实现处理。
+        """
         if not items:
             return 0
-        columns = ["data_type", "trade_date", "data"]
-        rows = []
+        # 过滤空数据(空 dict、空 list、None)
+        clean = []
         for item in items:
             if not item.get("data_type") or not item.get("trade_date"):
                 continue
             data = item.get("data")
-            # 过滤空数据：空 dict、空 list、None
             if data is None or (isinstance(data, (dict, list, str)) and len(data) == 0):
                 continue
-            rows.append((
-                item["data_type"],
-                item["trade_date"],
-                json.dumps(data, ensure_ascii=False, default=str),
-            ))
-        # ON CONFLICT DO NOTHING：不指定 target，自动匹配 partial unique index
-        # （uq_market_flow_stock / uq_market_flow_sector / uq_market_flow_northbound / uq_market_flow_dragon）
-        return self._insert_many(
-            "ft_market_flow", columns, rows,
-            conflict_clause="ON CONFLICT DO NOTHING",
-        )
+            clean.append({
+                "data_type": item["data_type"],
+                "trade_date": item["trade_date"],
+                "data": data,
+            })
+        from src.infrastructure.persistence.repositories import MarketFlowRepositoryImpl
+        return MarketFlowRepositoryImpl().upsert_batch(clean)
 
     # ==================== 查询 ====================
 

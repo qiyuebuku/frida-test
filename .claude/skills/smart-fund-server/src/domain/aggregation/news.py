@@ -11,7 +11,6 @@ import logging
 from datetime import datetime, timezone, timedelta
 
 from src.domain.aggregation.base import BaseAggregator, SourceDef
-from src.infrastructure.db.fund_db import get_conn
 
 logger = logging.getLogger(__name__)
 
@@ -534,56 +533,23 @@ class NewsAggregator(BaseAggregator):
         ]
 
     # ==================== checkpoint ====================
-
-    def _get_checkpoint(self, source_name: str):
-        """从结果表最新记录推算 checkpoint"""
-        try:
-            with get_conn() as conn:
-                with conn.cursor() as cur:
-                    if source_name == "cls":
-                        # cls 用 ctime（unix 时间戳），从 published_at 转回
-                        cur.execute("""
-                            SELECT EXTRACT(EPOCH FROM published_at)::bigint
-                            FROM ft_news WHERE source = 'cls'
-                            ORDER BY published_at DESC LIMIT 1
-                        """)
-                        row = cur.fetchone()
-                        return int(row[0]) if row else None
-                    elif source_name == "xueqiu":
-                        # xueqiu 用 since_id，无法从 ft_news 推算，返回 None 走全量
-                        return None
-                    else:
-                        # gov/pboc/em 用 since_date
-                        source_filter = source_name
-                        if source_name.startswith("em_"):
-                            source_filter = "eastmoney"
-                        elif source_name.startswith("pboc_"):
-                            source_filter = "pboc"
-                        cur.execute("""
-                            SELECT published_at::date::text
-                            FROM ft_news WHERE source LIKE %s
-                            ORDER BY published_at DESC LIMIT 1
-                        """, (f"{source_filter}%",))
-                        row = cur.fetchone()
-                        return row[0] if row else None
-        except Exception:
-            return None
+    # 旧的 _get_checkpoint 已删除 (R2.3),checkpoint 现在统一由 base.py
+    # 通过 checkpoint_store / CollectionStateRepository 管理
 
     # ==================== 入库 ====================
 
     def _query_today_titles(self) -> list[str]:
         """查询今日已入库的所有标题（用于跨源相似度去重）"""
         try:
-            with get_conn() as conn:
-                with conn.cursor() as cur:
-                    cur.execute("""
-                        SELECT title FROM ft_news
-                        WHERE published_at >= CURRENT_DATE
-                        ORDER BY id DESC LIMIT 2000
-                    """)
-                    return [r[0] for r in cur.fetchall()]
+            return self._news_repo().find_today_titles()
         except Exception:
             return []
+
+    @staticmethod
+    def _news_repo():
+        """懒加载 NewsRepository(避免 module-level import 触发 ORM 初始化)"""
+        from src.infrastructure.persistence.repositories import NewsRepositoryImpl
+        return NewsRepositoryImpl()
 
     @staticmethod
     def _is_similar(a: str, b: str, threshold: float = 0.85) -> bool:
@@ -598,19 +564,21 @@ class NewsAggregator(BaseAggregator):
         return SequenceMatcher(None, a, b).ratio() > threshold
 
     def _save(self, items: list[dict]) -> int:
+        """改造后: 走 NewsRepository.upsert_batch (R2.3)
+
+        相似度去重 + content hash 去重的业务逻辑保留在这里(domain 层职责),
+        repository 只负责"批量入库 + ON CONFLICT 跳过"。
+        """
         if not items:
             return 0
-        columns = [
-            "title", "summary", "content", "source", "source_name", "source_reliability",
-            "category", "url", "tags", "related_stocks", "published_at", "fingerprint",
-        ]
-        # 跨源相似度去重：先拉今日已入库的所有标题，与新条目做相似度比对
+
+        # 跨源相似度去重: 先拉今日已入库的所有标题
         existing_titles = self._query_today_titles()
-        # 批次内按 content hash 去重：同内容的新闻只保留第一条
-        # （处理 sina 编辑把同一发言拆成多篇文章的场景）
+        # 批次内按 content hash 去重
         seen_content_hashes: set[str] = set()
-        seen_titles_in_batch: list[str] = []   # 本批次已处理的标题
-        rows = []
+        seen_titles_in_batch: list[str] = []
+
+        records: list[dict] = []
         for item in items:
             if not item.get("title") or not item.get("published_at"):
                 continue
@@ -636,24 +604,21 @@ class NewsAggregator(BaseAggregator):
                 if content_hash in seen_content_hashes:
                     continue
                 seen_content_hashes.add(content_hash)
-            rows.append((
-                item["title"],
-                summary,
-                content,
-                item["source"],
-                item.get("source_name", ""),
-                item.get("source_reliability", 0.5),
-                item.get("category", ""),
-                item.get("url", ""),
-                json.dumps(item.get("tags", []), ensure_ascii=False),
-                json.dumps(item.get("related_stocks", []), ensure_ascii=False),
-                item["published_at"],
-                item["fingerprint"],
-            ))
-        return self._insert_many(
-            "ft_news", columns, rows,
-            conflict_clause="ON CONFLICT (fingerprint) DO NOTHING",
-        )
+            records.append({
+                "title": title,
+                "summary": summary,
+                "content": content,
+                "source": item["source"],
+                "source_name": item.get("source_name", ""),
+                "source_reliability": item.get("source_reliability", 0.5),
+                "category": item.get("category", ""),
+                "url": item.get("url", ""),
+                "tags": item.get("tags", []),
+                "related_stocks": item.get("related_stocks", []),
+                "published_at": item["published_at"],
+                "fingerprint": item["fingerprint"],
+            })
+        return self._news_repo().upsert_batch(records)
 
     # ==================== 查询 ====================
 

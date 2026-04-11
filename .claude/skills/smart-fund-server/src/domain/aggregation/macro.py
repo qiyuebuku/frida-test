@@ -10,7 +10,6 @@ import logging
 from datetime import date
 
 from src.domain.aggregation.base import BaseAggregator, SourceDef
-from src.infrastructure.db.fund_db import get_conn
 
 logger = logging.getLogger(__name__)
 
@@ -273,8 +272,16 @@ class MacroAggregator(BaseAggregator):
             # 用闭包捕获 method_name
             def make_fetch(mname, rname):
                 async def fetch(cp):
-                    if cp:
-                        return await clients.eastmoney.get_macro_since(rname, cp)
+                    # cp 现在是 dict (R2.10 重构后),需要解出 since_date
+                    since_date = None
+                    if isinstance(cp, dict):
+                        v = cp.get("max_trade_date")
+                        if isinstance(v, str):
+                            since_date = v
+                    elif isinstance(cp, str):  # 向后兼容
+                        since_date = cp
+                    if since_date:
+                        return await clients.eastmoney.get_macro_since(rname, since_date)
                     return await getattr(clients.eastmoney, mname)()
                 return fetch
 
@@ -303,46 +310,17 @@ class MacroAggregator(BaseAggregator):
 
         self.sources = sources
 
-    def _get_checkpoint(self, source_name: str):
-        """从结果表推算 since_date"""
-        try:
-            indicator = source_name.replace("em_", "")
-            with get_conn() as conn:
-                with conn.cursor() as cur:
-                    cur.execute("""
-                        SELECT published_at::text
-                        FROM ft_macro_indicators
-                        WHERE indicator = %s
-                        ORDER BY published_at DESC LIMIT 1
-                    """, (indicator,))
-                    row = cur.fetchone()
-                    return row[0] if row else None
-        except Exception:
-            return None
-
     # ==================== 入库 ====================
+    # 旧的 _get_checkpoint 已删除 (R2.5),checkpoint 由 base.py 通过
+    # CollectionStateRepository 统一管理
 
     def _save(self, items: list[dict]) -> int:
+        """改造后: 走 MacroRepository (R2.5)"""
         if not items:
             return 0
-        columns = ["indicator", "period", "value", "unit", "prev_value", "source", "published_at"]
-        rows = []
-        for item in items:
-            if not item.get("indicator") or not item.get("period"):
-                continue
-            rows.append((
-                item["indicator"],
-                item["period"],
-                item["value"],
-                item.get("unit", ""),
-                item.get("prev_value"),
-                item.get("source", ""),
-                item.get("published_at"),
-            ))
-        return self._insert_many(
-            "ft_macro_indicators", columns, rows,
-            conflict_clause="ON CONFLICT (indicator, period, source) DO NOTHING",
-        )
+        clean = [it for it in items if it.get("indicator") and it.get("period")]
+        from src.infrastructure.persistence.repositories import MacroRepositoryImpl
+        return MacroRepositoryImpl().upsert_batch(clean)
 
     # ==================== 查询 ====================
 
@@ -369,13 +347,6 @@ class MacroAggregator(BaseAggregator):
         )
 
     async def get_latest_indicators(self) -> list[dict]:
-        """获取每个指标的最新值"""
-        with get_conn() as conn:
-            with conn.cursor(cursor_factory=__import__("psycopg2").extras.RealDictCursor) as cur:
-                cur.execute("""
-                    SELECT DISTINCT ON (indicator)
-                        indicator, period, value, unit, prev_value, source, published_at
-                    FROM ft_macro_indicators
-                    ORDER BY indicator, published_at DESC
-                """)
-                return [dict(r) for r in cur.fetchall()]
+        """获取每个指标的最新值 — R2.5 走 MacroRepository"""
+        from src.infrastructure.persistence.repositories import MacroRepositoryImpl
+        return MacroRepositoryImpl().latest_per_indicator()

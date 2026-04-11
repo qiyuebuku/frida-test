@@ -28,11 +28,8 @@ import logging
 import math
 from datetime import datetime, timedelta, timezone
 
-import psycopg2.extras
-
 from src.domain.aggregation.base import BaseAggregator
 from src.infrastructure.clients.embedding import decode_embedding
-from src.infrastructure.db.fund_db import get_conn
 
 logger = logging.getLogger(__name__)
 
@@ -94,68 +91,21 @@ def _classify_momentum(events: list[dict], now: datetime) -> str:
 
 
 def _query_recent_events(hours: int = LOOKBACK_HOURS, limit: int = MAX_EVENTS_PER_RUN) -> list[dict]:
-    """读最近 N 小时的事件（含 embedding）"""
-    with get_conn() as conn:
-        with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
-            cur.execute(
-                """
-                SELECT id, title, summary, event_type, industries,
-                       impact_strength, sentiment, event_time, embedding
-                FROM ft_events
-                WHERE event_time >= NOW() - INTERVAL '%s hours'
-                  AND embedding IS NOT NULL
-                ORDER BY event_time DESC
-                LIMIT %s
-                """,
-                (hours, limit),
-            )
-            return [dict(r) for r in cur.fetchall()]
+    """读最近 N 小时的事件 (含 embedding) — R2.7 走 EventRepository"""
+    from src.infrastructure.persistence.repositories import EventRepositoryImpl
+    return EventRepositoryImpl().find_recent_with_embedding(hours=hours, limit=limit)
 
 
 def _delete_active_streams() -> int:
-    """删除所有非 closed 的 stream（每次 tick 重建）
-
-    closed 的归档保留。
-    """
-    with get_conn() as conn:
-        with conn.cursor() as cur:
-            cur.execute(
-                "DELETE FROM ft_event_streams WHERE state != 'closed'",
-            )
-            conn.commit()
-            return cur.rowcount
+    """删除所有非 closed 的 stream — R2.7 走 EventStreamRepository"""
+    from src.infrastructure.persistence.repositories import EventStreamRepositoryImpl
+    return EventStreamRepositoryImpl().delete_active_streams()
 
 
 def _upsert_stream(stream: dict) -> bool:
-    with get_conn() as conn:
-        with conn.cursor() as cur:
-            cur.execute(
-                """
-                INSERT INTO ft_event_streams (
-                    industry, state, momentum, event_ids, event_count,
-                    avg_strength, max_strength, avg_sentiment,
-                    first_event_at, last_event_at
-                ) VALUES (
-                    %s, %s, %s, %s, %s,
-                    %s, %s, %s,
-                    %s, %s
-                )
-                """,
-                (
-                    stream["industry"][:64],
-                    stream["state"],
-                    stream["momentum"],
-                    stream["event_ids"],
-                    stream["event_count"],
-                    stream["avg_strength"],
-                    stream["max_strength"],
-                    stream["avg_sentiment"],
-                    stream["first_event_at"],
-                    stream["last_event_at"],
-                ),
-            )
-            conn.commit()
-            return True
+    """插入一条 stream — R2.7 走 EventStreamRepository"""
+    from src.infrastructure.persistence.repositories import EventStreamRepositoryImpl
+    return EventStreamRepositoryImpl().insert_stream(stream)
 
 
 # ==================== 聚类算法 ====================
