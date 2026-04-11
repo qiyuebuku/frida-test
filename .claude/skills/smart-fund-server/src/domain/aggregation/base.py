@@ -9,10 +9,14 @@ from typing import Any, Callable
 import psycopg2
 import psycopg2.extras
 
-from src.infrastructure.db import checkpoint_store
+from src.infrastructure.db import checkpoint_store, redis_lock
 from src.infrastructure.db.fund_db import get_conn
 
 logger = logging.getLogger(__name__)
+
+# 单 source 锁的默认 TTL（秒）
+# 必须大于该 source 的最长执行时间，否则锁过期会导致并发
+DEFAULT_LOCK_TTL = 600
 
 # 应用启动时确保 ft_collection_state 表存在
 checkpoint_store.init_table()
@@ -89,53 +93,68 @@ class BaseAggregator:
             if state and state.get("enabled") is False:
                 continue
 
-            # ── 3. interval 检查（last_run_at + interval_override or src.interval） ──
+            # ── 3. interval 检查 ──
             interval = state.get("interval_override") or src.interval
             last_run = state.get("last_run_at")
             if last_run is not None:
-                # last_run 是 timezone-aware datetime
                 if (now_utc - last_run).total_seconds() < interval:
                     continue
 
-            # ── 4. 拿 checkpoint dict ──
-            cp_raw = state.get("checkpoint")
-            if isinstance(cp_raw, str):
-                try:
-                    cp = json.loads(cp_raw) or {}
-                except Exception:
+            # ── 4. 分布式锁（防多 worker 并发执行同一 source） ──
+            #    interval 检查可能让两个 worker 同时通过（race condition），
+            #    redis 锁是真正的互斥点。worker 崩溃 → 锁自动过期。
+            lock_name = f"{self.data_domain}:{src.name}"
+            with redis_lock.acquire(lock_name, ttl=DEFAULT_LOCK_TTL) as lock:
+                if not lock:
+                    logger.debug(f"[{self.data_domain}:{src.name}] 锁被占用，跳过")
+                    continue
+
+                # 拿到锁后，再读一次 state（防止竞争窗口期间别人已经写了 checkpoint）
+                state = checkpoint_store.get(self.data_domain, src.name) or state
+                last_run = state.get("last_run_at")
+                if last_run is not None:
+                    if (now_utc - last_run).total_seconds() < interval:
+                        continue
+
+                # 解析 checkpoint dict
+                cp_raw = state.get("checkpoint")
+                if isinstance(cp_raw, str):
+                    try:
+                        cp = json.loads(cp_raw) or {}
+                    except Exception:
+                        cp = {}
+                elif isinstance(cp_raw, dict):
+                    cp = cp_raw
+                else:
                     cp = {}
-            elif isinstance(cp_raw, dict):
-                cp = cp_raw
-            else:
-                cp = {}
 
-            try:
-                # ── 5. fetch ──
-                raw = await src.fetch_fn(cp)
-                if not raw:
-                    checkpoint_store.update_success(self.data_domain, src.name, None, 0)
-                    continue
+                try:
+                    # ── 5. fetch ──
+                    raw = await src.fetch_fn(cp)
+                    if not raw:
+                        checkpoint_store.update_success(self.data_domain, src.name, None, 0)
+                        continue
 
-                items = src.normalize_fn(raw)
-                if not items:
-                    checkpoint_store.update_success(self.data_domain, src.name, None, 0)
-                    continue
+                    items = src.normalize_fn(raw)
+                    if not items:
+                        checkpoint_store.update_success(self.data_domain, src.name, None, 0)
+                        continue
 
-                saved = self._save(items)
-                sources_run += 1
-                total_saved += saved or 0
+                    saved = self._save(items)
+                    sources_run += 1
+                    total_saved += saved or 0
 
-                # ── 6. 计算并写入新 checkpoint ──
-                new_cp = self._compute_checkpoint(src.name, items, cp)
-                checkpoint_store.update_success(
-                    self.data_domain, src.name, new_cp, saved or 0,
-                )
-                logger.info(
-                    f"[{self.data_domain}:{src.name}] normalize {len(items)} 条，入库 {saved} 条 cp={new_cp}"
-                )
-            except Exception as e:
-                logger.warning(f"[{self.data_domain}:{src.name}] 采集失败: {e}")
-                checkpoint_store.update_failure(self.data_domain, src.name, str(e))
+                    # ── 6. 计算并写入新 checkpoint ──
+                    new_cp = self._compute_checkpoint(src.name, items, cp)
+                    checkpoint_store.update_success(
+                        self.data_domain, src.name, new_cp, saved or 0,
+                    )
+                    logger.info(
+                        f"[{self.data_domain}:{src.name}] normalize {len(items)} 条，入库 {saved} 条 cp={new_cp}"
+                    )
+                except Exception as e:
+                    logger.warning(f"[{self.data_domain}:{src.name}] 采集失败: {e}")
+                    checkpoint_store.update_failure(self.data_domain, src.name, str(e))
         return {"sources_run": sources_run, "total_saved": total_saved}
 
     # ==================== 子类必须实现 ====================
