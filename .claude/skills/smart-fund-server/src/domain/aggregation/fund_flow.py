@@ -181,8 +181,25 @@ def _code_with_prefix(sec_code: str, market_id: int | str = None) -> str:
     return f"sh{sec_code}"
 
 
+def _is_a_share_code(sec_code: str) -> bool:
+    """判断是否为 A 股代码（6 位数字，沪/深/北）
+
+    腾讯个股资金流接口只支持 A 股，需要过滤掉港股(5 位)、美股(字母)、QDII 持仓等。
+    """
+    if not sec_code or not isinstance(sec_code, str):
+        return False
+    code = sec_code.strip()
+    if len(code) != 6 or not code.isdigit():
+        return False
+    # 沪市 6/9 / 深市 0/3 / 北交所 4/8
+    return code[0] in ("0", "3", "4", "6", "8", "9")
+
+
 async def _fetch_held_stocks(ths_client, max_funds: int = 6, max_stocks: int = 20) -> list[str]:
-    """从 ft_config.fund_pool 读取关注的基金，调 ths.get_top10_holdings 拿重仓股，去重后返回带前缀的代码列表"""
+    """从 ft_config.fund_pool 读取关注的基金，调 ths.get_top10_holdings 拿重仓股，去重后返回带前缀的代码列表
+
+    过滤规则：只保留 A 股代码（6 位数字），跳过港股/美股/QDII 持仓。
+    """
     import asyncio as _asyncio
     from src.infrastructure.db.fund_db import get_config
 
@@ -198,6 +215,7 @@ async def _fetch_held_stocks(ths_client, max_funds: int = 6, max_stocks: int = 2
 
     seen = set()
     stock_codes = []
+    skipped_non_a = 0
     for r in results:
         if isinstance(r, Exception) or not isinstance(r, dict):
             continue
@@ -207,6 +225,10 @@ async def _fetch_held_stocks(ths_client, max_funds: int = 6, max_stocks: int = 2
             if not isinstance(s, dict):
                 continue
             sec_code = s.get("secCode") or ""
+            # 过滤非 A 股代码
+            if not _is_a_share_code(sec_code):
+                skipped_non_a += 1
+                continue
             market_id = s.get("marketid")
             full_code = _code_with_prefix(sec_code, market_id)
             if full_code and full_code not in seen:
@@ -216,6 +238,8 @@ async def _fetch_held_stocks(ths_client, max_funds: int = 6, max_stocks: int = 2
                 break
         if len(stock_codes) >= max_stocks:
             break
+    if skipped_non_a:
+        logger.info(f"[fund_flow] 跳过 {skipped_non_a} 个非 A 股持仓代码")
     return stock_codes
 
 
@@ -256,12 +280,14 @@ def normalize_stock_flow(raw) -> list[dict]:
     data = raw.get("data", raw)
     if not isinstance(data, dict):
         return []
-    today = data.get("today") or {}
-    if isinstance(today, dict):
-        # 过滤全 0 的空数据
-        numeric_vals = [v for v in today.values() if isinstance(v, (int, float))]
-        if numeric_vals and all(v == 0 for v in numeric_vals):
-            return []
+    today = data.get("today")
+    # 必须有 today 字段才算有效（腾讯对未识别代码只回显 code，无 today）
+    if not isinstance(today, dict) or not today:
+        return []
+    # 过滤全 0 的空数据（指数或非交易日）
+    numeric_vals = [v for v in today.values() if isinstance(v, (int, float))]
+    if numeric_vals and all(v == 0 for v in numeric_vals):
+        return []
     return [{
         "data_type": "stock_flow",
         "trade_date": _today(),
