@@ -526,6 +526,37 @@ class NewsRepositoryImpl(NewsRepository):
 
 ## 六、实施步骤（分阶段）
 
+### 6.0 测试策略总则
+
+**核心原则**：每个 Phase 的每个子步骤都必须有可执行的测试，**做完即测**，不要做完一整个 Phase 才回头补测试。发现问题立即矫正，防止在错误方向上累积工作量。
+
+**三层测试架构**：
+
+| 层 | 路径 | 依赖 | 触发时机 | 速度 |
+|---|---|---|---|---|
+| **单元测试** | `tests/unit/` | mock，不连任何外部 | 每改 1 个文件后 | < 1s |
+| **集成测试** | `tests/integration/` | 真实 PG + Redis（独立测试库） | 每完成 1 个子步骤后 | < 30s |
+| **端到端回归** | `tests/e2e/` | 完整 worker + scheduler + persist | 每完成 1 个 Phase 后 | < 5min |
+
+**测试基础设施约定**（R1.0 新建）：
+- 独立测试库 `jettask_test`（不要污染生产）
+- `tests/conftest.py` 提供 fixtures：`db_session` / `clean_db` / `sample_news` / `sample_event`
+- `pytest -m unit` / `pytest -m integration` / `pytest -m e2e` 三种 marker
+- 每次跑测试前 `TRUNCATE` 测试库的相关表
+- E2E 测试用真实远程 embedding 服务 + claude CLI（不 mock）
+
+**通过/失败判定**：
+- 单元测试 100% 通过 → 可以进入集成测试
+- 集成测试 100% 通过 → 可以提交并进入下一子步骤
+- E2E 测试任意失败 → **立即停止当前 Phase，回滚到上一个 git tag**
+
+**回归基线**（R1.0 锁定）：
+- 跑一次完整 worker 5 分钟，记录每张表的 row count + 各 source 的 last_run_at
+- 这是"重构前后等价性"的对比基准
+- 所有 Phase 完成后,这些指标必须等价或更好
+
+---
+
 ### Phase R1：基础设施补齐（1-2 天，低风险）
 
 **目标**：建立 ORM/连接管理/DDL 的基础，但**不替换业务代码**。新旧并存。
@@ -546,6 +577,34 @@ class NewsRepositoryImpl(NewsRepository):
 - 18 个 ORM 模型定义完成
 - 能用 ORM 只读查询所有现有表
 - 业务代码完全不变，仍然正常运行
+
+#### R1 验证测试
+
+| 测试 ID | 关联步骤 | 类型 | 测试内容 | 通过标准 |
+|---|---|---|---|---|
+| **T-R1.0-1** | R1.0 | 基础 | 创建 `jettask_test` 数据库，写 `tests/conftest.py` 提供 `db_session` fixture，跑一个空的 `pytest tests/` | pytest 启动成功，至少 1 个 fixture 被收集 |
+| **T-R1.0-2** | R1.0 | 基础 | 跑当前生产 worker 5 分钟，记录基线：`SELECT data_type, COUNT(*) FROM ft_market_flow GROUP BY data_type` 等所有 18 张表 row 数 | 所有 row count 落档到 `tests/baselines/r1_pre.json` |
+| **T-R1.1-1** | R1.1 | 集成 | 在干净的 `jettask_test` 库执行 `psql -f schema/01_collection.sql ...` | `\dt ft_*` 列出 6 张采集相关表 |
+| **T-R1.1-2** | R1.1 | 集成 | DDL 提取后与生产库 schema 比对：`information_schema.columns` JOIN 比对列名/类型/nullable/default | 0 差异 |
+| **T-R1.2-1** | R1.2 | 集成 | 跑 `python scripts/init_db.py --target=test` 重建 `jettask_test` | 18 张 ft_* 表全部建出，索引/UNIQUE/partial index 全部存在 |
+| **T-R1.2-2** | R1.2 | 集成 | 重复跑 init_db.py 三次 | 不报错（幂等） |
+| **T-R1.3-1** | R1.3 | 单元 | `from src.infrastructure.connections.database import get_session; with get_session() as s: s.execute(text('SELECT 1'))` | 返回 1 |
+| **T-R1.3-2** | R1.3 | 单元 | 同时拿两个 session，验证不互相干扰 | 两个 session 独立 |
+| **T-R1.4-1** | R1.4 | 单元 | `from src.infrastructure.persistence.models.base import Base; print(len(Base.registry.mappers))` | == 0（空 Base，无副作用） |
+| **T-R1.5-1** | R1.5 | 集成 | 对 6 个采集模型每个跑 `select(M).limit(1)` 拿到 ORM 对象（连真实生产库只读） | 每个模型至少能取到 1 行（无字段类型异常） |
+| **T-R1.5-2** | R1.5 | 集成 | `News.tags` / `MarketFlow.data` / `CollectionState.checkpoint` 直接当 list/dict 用 | 能 `for tag in news.tags: ...`，不需要 `json.loads` |
+| **T-R1.5-3** | R1.5 | 集成 | `News.published_at` 是 `datetime`，`Sentiment.trade_date` 是 `date`，`MacroIndicator.value` 是 `float` | 类型与 PG schema 对应 |
+| **T-R1.6-1** | R1.6 | smoke | 18 模型逐个 `select(M).limit(5)`，每行都能 `repr()` | 0 异常 |
+| **T-R1.6-2** | R1.6 | smoke | **schema 反射比对**：用 SQLAlchemy `inspect(engine)` 反射出实际 PG 列定义，与 ORM `__table__.columns` 比对 | 列名 100% 一致；类型有 1-2 处可接受偏差（如 `TIMESTAMPTZ` vs `DateTime(tz=True)`） |
+| **T-R1.7-1** | R1.7 | 集成 | 对 extraction 2 个模型跑 only-read smoke | OK |
+| **T-R1.8-1** | R1.8 | 集成 | 对 trading 8 个模型跑 only-read smoke | OK |
+| **T-R1.8-2** | R1.8 | 集成 | `select(PendingDecision).where(PendingDecision.dry_run.is_(True))` | 能查到 dry_run 决策 |
+| **T-R1.9-1** | R1.9 | 集成 | 对 reflection 2 个模型跑 only-read smoke | OK |
+| **T-R1-E2E** | R1 完成 | E2E | 跑完整 worker 5 分钟，再次记录所有表 row 数 | 与 T-R1.0-2 基线 **完全一致**（业务代码没动） |
+
+**R1 通过 → 立即打 git tag `refactor-r1-done`**。失败任意一项 → 不要继续 R2，先 fix。
+
+---
 
 ### Phase R2：repository 接口 + 实现（2-3 天，中风险）
 
@@ -569,6 +628,59 @@ class NewsRepositoryImpl(NewsRepository):
 - 所有读写都走 repository 接口
 - 业务功能完全等价
 
+#### R2 验证测试
+
+**R2 的测试模式**：每改造完一个 repository 就跑"3 件套"——单元 + 集成 + 端到端 smoke。
+
+**3 件套模板**（对应每个 repository）：
+
+```
+# 1. 单元测试: mock session 验证 SQL 语义
+tests/unit/repositories/test_<name>_repository.py::test_upsert_batch_calls_pg_insert
+
+# 2. 集成测试: 真实 PG 验证 CRUD
+tests/integration/repositories/test_<name>_repository.py::test_upsert_then_find_returns_same
+
+# 3. E2E smoke: 改造完的 aggregator/decider 跑通
+跑 trigger_tasks.py <task>，验证表 row 数与 R1 基线一致
+```
+
+| 测试 ID | 关联步骤 | 类型 | 测试内容 | 通过标准 |
+|---|---|---|---|---|
+| **T-R2.1-1** | R2.1 | 单元 | `from src.domain.collection.repositories.news_repository import NewsRepository; NewsRepository.__abstractmethods__` | 包含 `upsert_batch / find_today_titles / find_unextracted / mark_extracted` |
+| **T-R2.1-2** | R2.1 | 静态 | `grep "from src.infrastructure.db" src/domain/collection/repositories/` | 0 行（domain 不能 import infra） |
+| **T-R2.2-1** | R2.2 | 单元 | `NewsRepositoryImpl(mock_factory).upsert_batch([news_item])` 用 mock session 验证 SQL 是 `INSERT ... ON CONFLICT (fingerprint) DO NOTHING` | mock 被调用一次，参数包含 fingerprint |
+| **T-R2.2-2** | R2.2 | 集成 | 真实 PG 跑 upsert_batch([3 条新闻]) → find_by_fingerprint → 拿到对象 → 类型字段都对 | 3 条入库，对象字段值与输入一致 |
+| **T-R2.2-3** | R2.2 | 集成 | upsert_batch 同样 fingerprint 跑两次 | 第二次返回 0（ON CONFLICT 跳过） |
+| **T-R2.3-1** | R2.3 | 集成 | 改造后的 `NewsAggregator.tick()` 跑 1 次，对比基线 row 数 | 等价 |
+| **T-R2.3-2** | R2.3 | 静态 | `grep "psycopg2\|get_conn\|cursor" src/domain/aggregation/news.py` | 0 行 |
+| **T-R2.4** | R2.4 | E2E | `trigger_tasks.py news` → 等 worker 完成 → `SELECT COUNT(*) FROM ft_news` | 与 baseline 等价 ±10% |
+| **T-R2.5-fund_flow-1** | R2.5 | 集成 | 改造 fund_flow 后跑 4 个 source（northbound/sector/stock/dragon_tiger）的 upsert | 5 个 partial unique index 全部生效，重复跑 0 入库 |
+| **T-R2.5-fund_flow-2** | R2.5 | 集成 | normalize_stock_flow 展开 history 后入库 | 同 code 不同日期能入 11 行 |
+| **T-R2.5-market** | R2.5 | 集成 | MarketCacheRepository.upsert（覆盖式）跑两次 | 同一 data_type 只保留最新一行 |
+| **T-R2.5-sentiment** | R2.5 | 集成 | SentimentRepository.upsert_batch | 数据等价 |
+| **T-R2.5-macro** | R2.5 | 集成 | MacroRepository.upsert_batch | EM 9 + PBOC 7 = 16 个 indicator 全部入库 |
+| **T-R2.6-1** | R2.6 | 单元 | mock_repo 测试 base.py 的 tick() 调用流程：`should_fetch → enabled → lock → fetch → save → update_cp` | 5 个调用按顺序发生 |
+| **T-R2.6-2** | R2.6 | 集成 | base.py 改造后跑 fund_flow.tick() | 行为等价 |
+| **T-R2.7-1** | R2.7 | 集成 | EventRepository.upsert_with_embedding 写入 1 条带 embedding 的事件 | bytea 字段长度 == 4096 |
+| **T-R2.7-2** | R2.7 | 集成 | EventRepository.find_recent_with_embedding(hours=24) | 返回 list[Event]，每条都有非空 embedding |
+| **T-R2.7-3** | R2.7 | 集成 | EventStreamRepository.replace_active_streams([cluster]) | DELETE active + INSERT 新的，原子事务 |
+| **T-R2.7-4** | R2.7 | 集成 | EventRepository.update_market_reaction(event_id, {...}) | feedback_at 被更新为 NOW |
+| **T-R2.7-E2E** | R2.7 | E2E | trigger_tasks.py event_extraction → event_stream → event_feedback 三连，完成后查 ft_events 行数 + 有 embedding 的比例 | embedding 比例 == 入库数（100%） |
+| **T-R2.8-1** | R2.8 | 集成 | PendingDecisionRepository.upsert 同 stream_id+fund_code+date 跑两次 | 第二次 0 入库（partial unique 生效） |
+| **T-R2.8-2** | R2.8 | 集成 | TradeRepository.insert_dry_run 一笔，PositionRepository 不动 | ft_trades +1, ft_positions 不变 |
+| **T-R2.8-3** | R2.8 | 集成 | IndustryMappingRepository.resolve_to_funds("AI") | 返回 [515980 华夏中证人工智能 ETF, ...] |
+| **T-R2.8-E2E** | R2.8 | E2E | trigger_tasks.py trade_decision → trade_execution 完整跑 | 决策数 + dry_run 交易数与基线相符 |
+| **T-R2.9-1** | R2.9 | 集成 | ReviewRepository.upsert_review(trade_id, t1, t2, outcome) 同 trade_id 写两次 | 第二次 UPDATE，不报 unique error |
+| **T-R2.9-2** | R2.9 | 集成 | ReviewRepository.calculate_winrate(days=30) | 返回 dict {total, correct, wrong, neutral, winrate} |
+| **T-R2.10-1** | R2.10 | 集成 | checkpoint_store.get_checkpoint 改成 thin wrapper 后行为等价 | 现有 fund_flow tick() 不报错 |
+| **T-R2-final** | R2 完成 | E2E | 跑完整 worker 5 分钟 + 全部 trigger_tasks 一遍 | 18 张表 row 数与 R1 基线 ±10% |
+| **T-R2-grep** | R2 完成 | 静态 | `grep -rn "import psycopg2\|get_conn\|cursor.execute" src/domain/` | **0 行**（除了过渡期保留的 `infrastructure/db/raw_data.py`） |
+
+**R2 通过 → 打 tag `refactor-r2-done`**。
+
+---
+
 ### Phase R3：聚合根重组 + application services（2-3 天，中高风险）
 
 **目标**：按聚合根重新组织 domain 目录，新建 application services。
@@ -589,6 +701,38 @@ class NewsRepositoryImpl(NewsRepository):
 - application 层有明确的 use case 入口
 - task 层是 thin wrapper，没有业务逻辑
 
+#### R3 验证测试
+
+R3 主要是文件搬迁 + 接口调整,**重点测 import 不破和 task → application → domain 的调用链不破**。
+
+| 测试 ID | 关联步骤 | 类型 | 测试内容 | 通过标准 |
+|---|---|---|---|---|
+| **T-R3.1-1** | R3.1 | 静态 | 创建新目录后 `tree src/domain` | 4 个聚合根目录都在 |
+| **T-R3.2-1** | R3.2 | 静态 | `git mv` 完成后 `python -c "from src.interfaces.tasks.aggregator_tasks import *"` | import 0 错误 |
+| **T-R3.2-2** | R3.2 | 静态 | `grep -rn "from src.domain.aggregation\|from src.domain.decision\|from src.domain.trading" src/` | **0 行**（旧路径已全部替换） |
+| **T-R3.3-1** | R3.3 | 单元 | `EventExtractor.extract_one(news)` 用 mock claude 跑 | 返回 Event 对象 |
+| **T-R3.3-2** | R3.3 | 单元 | `EmbeddingGenerator.generate([text])` 用 mock httpx 跑 | 返回 1024 维 list |
+| **T-R3.3-3** | R3.3 | 集成 | EventExtractor 真实跑一条新闻 | 入库 1 条事件 |
+| **T-R3.4-1** | R3.4 | 单元 | `DecisionScoring.score(stream, events)` 用 fixture | 返回 (score, breakdown) |
+| **T-R3.4-2** | R3.4 | 单元 | `IndustryRouter.resolve("半导体")` mock repository | 返回 [{fund_code, ...}] |
+| **T-R3.5-1** | R3.5 | 单元 | `CollectionAppService.run_news_collection()` mock domain service | 调用顺序正确 |
+| **T-R3.5-2** | R3.5 | 单元 | `ExtractionAppService.extract_events_from_news()` 5 条 mock 输入 | 返回 ExtractionResult dto |
+| **T-R3.5-3** | R3.5 | 单元 | `TradingAppService.execute_pending_dry_run()` mock domain | 不应触发真实下单 |
+| **T-R3.5-4** | R3.5 | 单元 | `ReflectionAppService.run_review()` mock | 调用 review_engine 一次 |
+| **T-R3.6-1** | R3.6 | 静态 | `from src.application.dto.collection_dto import NewsCollectionResult` | 能 import |
+| **T-R3.7-1** | R3.7 | 集成 | `agg_news task` 内部应该只调 `CollectionAppService.run_news_collection()`，不再 import domain | grep 验证 |
+| **T-R3.7-2** | R3.7 | 集成 | trigger_tasks.py news → 完整跑通 | 等价 |
+| **T-R3.7-3** | R3.7 | 集成 | trigger_tasks.py 全部 12 个 task | 全部成功 |
+| **T-R3.8-1** | R3.8 | 静态 | 旧目录 `src/domain/aggregation/` 应该被删除 | `ls` 不存在 |
+| **T-R3.8-2** | R3.8 | 静态 | `find src -name "*.py" \| xargs grep -l "domain.aggregation\|domain.decision\|domain.trading"` | 0 文件 |
+| **T-R3-E2E-1** | R3 完成 | E2E | 跑完整 worker 10 分钟 | 12 个 task 全部正常执行,无异常 |
+| **T-R3-E2E-2** | R3 完成 | E2E | 跟 R1 baseline 比较 18 张表 row 数 | 总变化 ±15%（允许窗口期波动） |
+| **T-R3-E2E-3** | R3 完成 | E2E | scheduler / persist / worker 三进程同时跑 1 小时 | 0 cascade 失败、0 锁泄漏 |
+
+**R3 通过 → 打 tag `refactor-r3-done`**。
+
+---
+
 ### Phase R4（可选）：observability + click CLI
 
 | 步骤 | 工作 |
@@ -597,6 +741,44 @@ class NewsRepositoryImpl(NewsRepository):
 | R4.2 | 新建 `infrastructure/observability/metrics.py` Prometheus stub |
 | R4.3 | 改 `interfaces/cli/` 用 click 命令组 |
 | R4.4 | 新建 `tests/unit/` 单元测试目录（domain 服务可以用 mock repository） |
+
+#### R4 验证测试
+
+| 测试 ID | 关联步骤 | 类型 | 测试内容 | 通过标准 |
+|---|---|---|---|---|
+| **T-R4.1-1** | R4.1 | 单元 | `from src.infrastructure.observability.logging import get_logger; log = get_logger('test'); log.info('hi')` | 输出格式包含 timestamp + level + name + message |
+| **T-R4.1-2** | R4.1 | 集成 | 跑一次 worker，所有 logger 都用 `get_logger()` 替代 `logging.getLogger()` | grep `logging.getLogger` 在 src/ 中 ≤ 0 行 |
+| **T-R4.2-1** | R4.2 | 单元 | `from src.infrastructure.observability.metrics import COLLECTION_DURATION; COLLECTION_DURATION.labels('news').observe(1.5)` | 不报错 |
+| **T-R4.2-2** | R4.2 | 集成 | 起一个 prometheus endpoint（FastAPI route），跑 collection，curl `/metrics` | 能看到 `collection_duration_seconds_bucket{aggregator="news"}` |
+| **T-R4.3-1** | R4.3 | 单元 | `python -m smart_fund --help` | 列出 worker / scheduler / persist / trigger / init-db 子命令 |
+| **T-R4.3-2** | R4.3 | 集成 | `python -m smart_fund worker -c 1` 启动 worker | 等价于现在的 `start_worker.py` |
+| **T-R4.3-3** | R4.3 | 集成 | `python -m smart_fund trigger fund_flow` 替代 `trigger_tasks.py fund_flow` | 等价 |
+| **T-R4.4-1** | R4.4 | 基础 | `pytest tests/unit -v` | 至少 50 个测试通过（覆盖 4 个 application service + 18 个 repository） |
+| **T-R4.4-2** | R4.4 | 基础 | `pytest tests/integration -v` | 至少 20 个集成测试通过 |
+| **T-R4.4-3** | R4.4 | CI 友好 | 设计成 `pytest -m "not e2e"` 可以在没有真实 PG 时只跑 unit | 单元测试 0 网络依赖 |
+
+**R4 通过 → 打 tag `refactor-r4-done`**。
+
+---
+
+### 6.x 测试用例索引
+
+为方便实施时按 ID 查找，下面是所有测试 ID 的总览（按 Phase 排序）。
+
+| Phase | 测试 ID 范围 | 总数 | 重点 |
+|---|---|---|---|
+| R1 | T-R1.0-1 ~ T-R1-E2E | ~17 | ORM 模型只读 + 字段类型对账 + 基线锁定 |
+| R2 | T-R2.1-1 ~ T-R2-grep | ~30 | 每个 repository 三件套（unit + integration + E2E smoke） |
+| R3 | T-R3.1-1 ~ T-R3-E2E-3 | ~17 | import 不破 + application service 单元 + 完整 worker 1 小时 |
+| R4 | T-R4.1-1 ~ T-R4.4-3 | ~9 | logger / metrics / cli / 测试覆盖率 |
+| **合计** | | **~73 个测试用例** | |
+
+**实施纪律**：
+1. **每完成一个子步骤**（R1.1 / R1.2 ...）→ 跑该步骤对应的测试 → 全绿才进入下一步骤
+2. **每完成一个 Phase** → 跑该 Phase 全部测试 + E2E 回归 → 打 git tag
+3. **任意测试失败** → 立即停止，先 fix 再继续；fix 不动就回滚到上一个 tag
+4. **不允许跳过测试**进入下一阶段（哪怕"看起来没问题"）
+5. **测试代码本身也要 commit**，和实施代码一起进 PR
 
 ---
 
@@ -634,13 +816,17 @@ class NewsRepositoryImpl(NewsRepository):
 
 ## 八、工作量评估
 
-| Phase | 文件改动 | 代码增量 | 风险 | 估时 |
-|---|---|---|---|---|
-| R1 基础设施补齐 | 新增 ~12 个文件 | ~800 行 | 低 | 1-2 天 |
-| R2 repository 抽象 + 实现 | 新增 ~36 个文件 + 改 ~18 个 | ~2000 行 | 中 | 2-3 天 |
-| R3 聚合根重组 + application | 大量 git mv + 新增 ~10 个 | ~600 行 | 中高 | 2-3 天 |
-| R4（可选）observability + CLI | 新增 ~6 个 + 改 cli | ~300 行 | 低 | 1 天 |
-| **合计** | | **~3700 行** | | **6-9 天** |
+代码 + 测试一起算,因为"测试是实施的一部分"。
+
+| Phase | 实施文件 | 测试文件 | 实施代码 | 测试代码 | 测试用例数 | 风险 | 估时 |
+|---|---|---|---|---|---|---|---|
+| R1 基础设施 + ORM | ~12 | ~10 | ~800 行 | ~500 行 | 17 | 低 | **1.5-2.5 天** |
+| R2 repository | ~54(新增 36 + 改 18) | ~40 | ~2000 行 | ~1500 行 | 30 | 中 | **3-4 天** |
+| R3 聚合根重组 + application | git mv + 新增 ~10 | ~15 | ~600 行 | ~500 行 | 17 | 中高 | **2.5-3.5 天** |
+| R4（可选）observability + CLI | ~6 | ~10 | ~300 行 | ~300 行 | 9 | 低 | **1-1.5 天** |
+| **合计** | | | **~3700 行** | **~2800 行** | **~73 个** | | **8-11 天** |
+
+> 测试时间按 "实施时间 × 0.4" 估算（业内常见比例 30%-50%）。比裸做实施多 3-4 天，但能避免后期 debug 浪费 1-2 周。
 
 ---
 
