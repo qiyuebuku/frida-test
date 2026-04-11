@@ -39,6 +39,15 @@ SERVICE_BASE_URL = os.getenv("SERVICE_BASE_URL", "http://119.23.227.187:8900")
 
 OCR_URL = os.getenv("OCR_URL", "http://119.23.227.187:8675/glmocr/parse")
 
+# ==================== Embedding 服务 ====================
+
+# Qwen3-Embedding-4B HTTP 服务（部署在远程 GPU 机器，仅监听 127.0.0.1）
+# Worker 在远程同机时直接走 127.0.0.1；本地开发时需要 SSH 端口转发或对外暴露
+EMBEDDING_URL = os.getenv("EMBEDDING_URL", "http://127.0.0.1:8901")
+EMBEDDING_DIM = int(os.getenv("EMBEDDING_DIM", "1024"))  # MRL 截断维度
+EMBEDDING_BATCH_SIZE = int(os.getenv("EMBEDDING_BATCH_SIZE", "32"))
+EMBEDDING_TIMEOUT = float(os.getenv("EMBEDDING_TIMEOUT", "60"))
+
 # ==================== Claude / Skill ====================
 
 SKILL_DIR = os.getenv("SKILL_DIR", "/home/yuyangruan/claude-skills/.claude/skills/fund-trade")

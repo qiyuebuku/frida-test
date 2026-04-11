@@ -19,7 +19,14 @@ logger = logging.getLogger(__name__)
 _inflight_locks: dict[str, asyncio.Lock] = {}
 _inflight_max = 500  # 防止锁泄漏
 
-# 清除代理环境变量，避免 httpx 走代理导致上游请求失败
+# 备份原始代理环境变量（供需要走代理的子进程使用，如 claude CLI 访问 Anthropic API）
+ORIGINAL_PROXY_ENV = {
+    key: os.environ[key]
+    for key in ("http_proxy", "https_proxy", "HTTP_PROXY", "HTTPS_PROXY", "all_proxy", "ALL_PROXY")
+    if key in os.environ
+}
+
+# 清除代理环境变量，避免 httpx 走代理导致上游 A 股数据源请求失败
 for key in ("http_proxy", "https_proxy", "HTTP_PROXY", "HTTPS_PROXY", "all_proxy", "ALL_PROXY"):
     os.environ.pop(key, None)
 

@@ -126,7 +126,11 @@ def _make_em_normalizer(indicator_name: str, unit: str):
 def normalize_shibor_lpr(raw) -> list[dict]:
     """人民银行 Shibor+LPR → 统一格式
 
-    get_currency_data("shibor") 返回 dict: {status_code, data: {shibor:[...], lpr:[...]}}
+    pboc.get_currency_data("shibor") 返回:
+        {status_code, data: {
+            shibor: {"隔夜": [{date,rate,change},...], "1周": [...], ...},
+            lpr:    [{date, lpr1y, lpr5y}, ...]   # 按时间倒序
+        }}
     """
     results = []
     if not isinstance(raw, dict):
@@ -138,37 +142,59 @@ def normalize_shibor_lpr(raw) -> list[dict]:
 
     today = date.today().isoformat()
 
-    # Shibor
-    shibor_list = data.get("shibor") or []
-    if isinstance(shibor_list, list) and shibor_list:
-        latest = shibor_list[0] if isinstance(shibor_list[0], dict) else {}
-        value = latest.get("ON") or latest.get("overnight") or latest.get("value")
-        if value is not None:
-            results.append({
-                "indicator": "shibor",
-                "period": latest.get("date", today)[:10],
-                "value": float(value),
-                "unit": "%",
-                "prev_value": None,
-                "source": "pboc",
-                "published_at": latest.get("date", today)[:10],
-            })
+    # ── Shibor 各期限：每个期限作为独立指标 ──
+    shibor_dict = data.get("shibor") or {}
+    if isinstance(shibor_dict, dict):
+        TERM_MAP = {
+            "隔夜": "shibor_on",
+            "1周": "shibor_1w",
+            "1月": "shibor_1m",
+            "3月": "shibor_3m",
+        }
+        for term_name, indicator_name in TERM_MAP.items():
+            rows = shibor_dict.get(term_name) or []
+            if not isinstance(rows, list) or not rows:
+                continue
+            for i, row in enumerate(rows[:30]):  # 入近 30 个交易日
+                if not isinstance(row, dict):
+                    continue
+                rate = row.get("rate")
+                if rate is None:
+                    continue
+                row_date = (row.get("date") or today)[:10]
+                prev = rows[i + 1].get("rate") if i + 1 < len(rows) and isinstance(rows[i + 1], dict) else None
+                results.append({
+                    "indicator": indicator_name,
+                    "period": row_date,
+                    "value": float(rate),
+                    "unit": "%",
+                    "prev_value": float(prev) if prev is not None else None,
+                    "source": "pboc",
+                    "published_at": row_date,
+                })
 
-    # LPR
+    # ── LPR 1y / 5y ──
     lpr_list = data.get("lpr") or []
-    if isinstance(lpr_list, list) and lpr_list:
-        latest = lpr_list[0] if isinstance(lpr_list[0], dict) else {}
-        value = latest.get("1Y") or latest.get("lpr_1y") or latest.get("value")
-        if value is not None:
-            results.append({
-                "indicator": "lpr",
-                "period": latest.get("date", today)[:10],
-                "value": float(value),
-                "unit": "%",
-                "prev_value": None,
-                "source": "pboc",
-                "published_at": latest.get("date", today)[:10],
-            })
+    if isinstance(lpr_list, list):
+        for i, row in enumerate(lpr_list[:24]):  # 近 24 期
+            if not isinstance(row, dict):
+                continue
+            row_date = (row.get("date") or today)[:10]
+            prev_row = lpr_list[i + 1] if i + 1 < len(lpr_list) and isinstance(lpr_list[i + 1], dict) else {}
+            for field, indicator_name in (("lpr1y", "lpr_1y"), ("lpr5y", "lpr_5y")):
+                val = row.get(field)
+                if val is None:
+                    continue
+                prev = prev_row.get(field) if prev_row else None
+                results.append({
+                    "indicator": indicator_name,
+                    "period": row_date,
+                    "value": float(val),
+                    "unit": "%",
+                    "prev_value": float(prev) if prev is not None else None,
+                    "source": "pboc",
+                    "published_at": row_date,
+                })
 
     return results
 
@@ -176,7 +202,11 @@ def normalize_shibor_lpr(raw) -> list[dict]:
 def normalize_usdcny(raw) -> list[dict]:
     """人民银行 USD/CNY → 统一格式
 
-    get_currency_data("usdcny") 返回 dict: {status_code, data: {prices:[...], signals:{...}}}
+    pboc.get_currency_data("usdcny") 返回:
+        {status_code, data: {
+            tab, name, items: [{date, open, high, low, close}, ...],  # 时间升序
+            ma5, ma20, ma60
+        }}
     """
     results = []
     if not isinstance(raw, dict):
@@ -186,21 +216,31 @@ def normalize_usdcny(raw) -> list[dict]:
     if not isinstance(data, dict):
         return results
 
-    prices = data.get("prices") or []
-    if isinstance(prices, list) and prices:
-        latest = prices[0] if isinstance(prices[0], dict) else {}
-        value = latest.get("price") or latest.get("close") or latest.get("value")
-        if value is not None:
-            today = date.today().isoformat()
-            results.append({
-                "indicator": "usdcny",
-                "period": latest.get("date", today)[:10],
-                "value": float(value),
-                "unit": "",
-                "prev_value": None,
-                "source": "pboc",
-                "published_at": latest.get("date", today)[:10],
-            })
+    items = data.get("items") or []
+    if not isinstance(items, list) or not items:
+        return results
+
+    today = date.today().isoformat()
+    # items 按时间升序，取近 60 天反转为最新优先
+    rev = list(reversed(items[-60:]))
+    for i, row in enumerate(rev):
+        if not isinstance(row, dict):
+            continue
+        close = row.get("close")
+        if close is None:
+            continue
+        row_date = (row.get("date") or today)[:10]
+        prev_row = rev[i + 1] if i + 1 < len(rev) else None
+        prev = prev_row.get("close") if isinstance(prev_row, dict) else None
+        results.append({
+            "indicator": "usdcny",
+            "period": row_date,
+            "value": float(close),
+            "unit": "",
+            "prev_value": float(prev) if prev is not None else None,
+            "source": "pboc",
+            "published_at": row_date,
+        })
 
     return results
 

@@ -10,6 +10,8 @@ from src.domain.aggregation.macro import MacroAggregator
 from src.domain.aggregation.sentiment import SentimentAggregator
 from src.domain.aggregation.market import MarketAggregator
 from src.domain.aggregation.event_feedback import EventFeedbackAggregator
+from src.domain.aggregation.event_extraction import EventExtractionAggregator
+from src.domain.aggregation.event_stream import EventStreamAggregator
 
 __all__ = [
     "BaseAggregator",
@@ -20,4 +22,6 @@ __all__ = [
     "SentimentAggregator",
     "MarketAggregator",
     "EventFeedbackAggregator",
+    "EventExtractionAggregator",
+    "EventStreamAggregator",
 ]

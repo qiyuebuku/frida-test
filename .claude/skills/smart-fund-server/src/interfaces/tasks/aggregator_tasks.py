@@ -19,6 +19,7 @@ if ths is None:
 from src.domain.aggregation import (
     NewsAggregator, FundFlowAggregator, MacroAggregator,
     SentimentAggregator, MarketAggregator, EventFeedbackAggregator,
+    EventExtractionAggregator, EventStreamAggregator,
 )
 
 router = TaskRouter()
@@ -29,6 +30,8 @@ macro = MacroAggregator()
 sentiment = SentimentAggregator()
 market = MarketAggregator()
 event_feedback = EventFeedbackAggregator()
+event_extraction = EventExtractionAggregator()
+event_stream = EventStreamAggregator()
 
 
 # ==================== P0：核心任务 ====================
@@ -80,6 +83,27 @@ async def agg_macro():
     t0 = time.time()
     await macro.tick()
     logger.info(f"[agg_macro] 完成，耗时 {time.time()-t0:.1f}s")
+
+
+# ==================== AI 处理任务 ====================
+
+
+@router.task(queue="agg_event_extraction", max_retries=1)
+async def agg_event_extraction():
+    """AI 事件抽取 — 从 ft_news 读未抽取新闻，调 claude 抽取写 ft_events"""
+    logger.info("[agg_event_extraction] 开始执行")
+    t0 = time.time()
+    await event_extraction.tick()
+    logger.info(f"[agg_event_extraction] 完成，耗时 {time.time()-t0:.1f}s")
+
+
+@router.task(queue="agg_event_stream", max_retries=1)
+async def agg_event_stream():
+    """事件流聚合 — 从 ft_events 读最近 24h 事件，按 industry 贪心聚类写 ft_event_streams"""
+    logger.info("[agg_event_stream] 开始执行")
+    t0 = time.time()
+    await event_stream.tick()
+    logger.info(f"[agg_event_stream] 完成，耗时 {time.time()-t0:.1f}s")
 
 
 # ==================== P2：盘后任务 ====================

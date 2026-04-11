@@ -1,0 +1,7 @@
+torch>=2.0
+transformers>=4.40
+sentence-transformers>=3.0
+fastapi>=0.100
+uvicorn[standard]>=0.20
+pydantic>=2.0
+httpx>=0.25

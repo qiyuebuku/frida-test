@@ -72,21 +72,21 @@ class EventFeedbackAggregator(BaseAggregator):
 
     async def query(self, **filters) -> list[dict]:
         """查询已回填的事件"""
-        conditions = ["sector_change_1d IS NOT NULL"]
-        values = []
+        conditions = ["feedback_at IS NOT NULL"]
+        values: list = []
         if filters.get("since"):
-            conditions.append("created_at >= %s")
+            conditions.append("event_time >= %s")
             values.append(filters["since"])
         if filters.get("industry"):
-            conditions.append("industry = %s")
-            values.append(filters["industry"])
+            conditions.append("industries @> %s::jsonb")
+            values.append(json.dumps([filters["industry"]]))
         limit = filters.get("limit", 50)
         try:
             return self._query_table(
                 "ft_events",
                 conditions=conditions,
                 values=values,
-                order_by="created_at DESC",
+                order_by="event_time DESC",
                 limit=limit,
             )
         except Exception:
@@ -130,34 +130,86 @@ class EventFeedbackAggregator(BaseAggregator):
         return filled
 
     def _get_unfilled_events(self, days: int) -> list[dict]:
-        """获取近 N 天未回填市场反应的事件"""
+        """获取近 N 天未回填市场反应的事件
+
+        ft_events 用 industries (JSONB 数组)，不是 industry。
+        用 event_time（实际事件时间）做时间过滤而非 created_at（入库时间）。
+        """
         since = _days_ago(days)
         with get_conn() as conn:
             with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
                 cur.execute("""
-                    SELECT id, title, industry, sectors, created_at
+                    SELECT id, title, industries, event_time, created_at
                     FROM ft_events
-                    WHERE created_at >= %s AND sector_change_1d IS NULL
-                    ORDER BY created_at DESC
+                    WHERE event_time >= %s
+                      AND sector_change_1d IS NULL
+                      AND event_time < NOW() - INTERVAL '1 day'  -- 至少 T+1 才能回填
+                    ORDER BY event_time DESC
                     LIMIT 100
                 """, (since,))
                 return [dict(r) for r in cur.fetchall()]
 
     async def _compute_reaction(self, event: dict) -> dict | None:
-        """计算单个事件的市场反应"""
-        reaction = {}
+        """计算单个事件的市场反应
 
-        # 北向资金 T+1
+        当前实现的回填字段:
+        - north_flow_1d: T+1 北向净流入（来自 ft_market_flow / northbound 历史表）
+        - sector_net_inflow_1d: T+1 关联行业资金净流入（来自 ft_market_flow / sector_flow）
+
+        TODO: sector_change_1d/3d (涨跌幅) 需要 sector K 线数据，等 market.py 加 sector_kline 源后实现
+        """
+        reaction: dict = {}
+        event_time = event.get("event_time") or event.get("created_at")
+        if not event_time:
+            return None
+
+        # ── 北向资金 T+1 ──
         try:
-            north_data = self._get_northbound_flow_on_date(
-                (event["created_at"] + timedelta(days=1)).strftime("%Y-%m-%d")
-            )
+            t1_date = (event_time + timedelta(days=1)).strftime("%Y-%m-%d")
+            north_data = self._get_northbound_flow_on_date(t1_date)
             if north_data is not None:
                 reaction["north_flow_1d"] = north_data
         except Exception:
             pass
 
+        # ── 关联行业 T+1 资金净流入 ──（暂存到 sector_volume_change 字段作为代理指标）
+        industries = event.get("industries") or []
+        if isinstance(industries, str):
+            try:
+                industries = json.loads(industries)
+            except Exception:
+                industries = []
+        primary_industry = industries[0] if industries else None
+        if primary_industry:
+            try:
+                t1_date = (event_time + timedelta(days=1)).strftime("%Y-%m-%d")
+                net_in = self._get_sector_net_inflow(primary_industry, t1_date)
+                if net_in is not None:
+                    reaction["sector_volume_change"] = net_in
+            except Exception:
+                pass
+
         return reaction if reaction else None
+
+    def _get_sector_net_inflow(self, industry: str, trade_date: str) -> float | None:
+        """从 ft_market_flow.sector_flow 拿指定日期 + 行业的资金净流入"""
+        try:
+            with get_conn() as conn:
+                with conn.cursor() as cur:
+                    cur.execute("""
+                        SELECT data->>'net_amount'
+                        FROM ft_market_flow
+                        WHERE data_type = 'sector_flow'
+                          AND trade_date = %s
+                          AND data->>'name' = %s
+                        LIMIT 1
+                    """, (trade_date, industry))
+                    row = cur.fetchone()
+                    if row and row[0] is not None:
+                        return float(row[0])
+        except Exception:
+            return None
+        return None
 
     def _get_northbound_flow_on_date(self, trade_date: str) -> float | None:
         """从 ft_market_flow 获取指定日期的北向净流入"""
@@ -178,7 +230,7 @@ class EventFeedbackAggregator(BaseAggregator):
         return None
 
     def _update_event_reaction(self, event_id: int, reaction: dict):
-        """回填事件的市场反应字段"""
+        """回填事件的市场反应字段（含 feedback_at 时间戳）"""
         sets = []
         values = []
         for field in ("sector_change_1d", "sector_change_3d", "sector_volume_change",
@@ -188,6 +240,7 @@ class EventFeedbackAggregator(BaseAggregator):
                 values.append(reaction[field])
         if not sets:
             return
+        sets.append("feedback_at = NOW()")
         values.append(event_id)
         try:
             with get_conn() as conn:

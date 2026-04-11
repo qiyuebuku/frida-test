@@ -49,6 +49,20 @@ SCHEDULES = [
         description="宏观指标聚合 — 每 1 小时",
     ),
 
+    # ── AI 处理任务 ────────────────────────────
+    Schedule(
+        name="agg_event_extraction_5min",
+        queue="agg_event_extraction",
+        interval_seconds=300,
+        description="AI 事件抽取 — 每 5 分钟，从 ft_news 抽取到 ft_events",
+    ),
+    Schedule(
+        name="agg_event_stream_10min",
+        queue="agg_event_stream",
+        interval_seconds=600,
+        description="事件流聚合 — 每 10 分钟，按 industry 聚类近 24h 事件",
+    ),
+
     # ── P2：盘后任务 ──────────────────────────
     Schedule(
         name="agg_event_feedback_after_close",
