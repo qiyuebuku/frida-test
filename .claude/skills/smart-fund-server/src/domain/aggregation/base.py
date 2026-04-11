@@ -54,57 +54,78 @@ class BaseAggregator:
     sources: list[SourceDef] = []
 
     def __init__(self):
-        self._last_fetch: dict[str, float] = {}
+        # interval / 状态都改为从 ft_collection_state 读，不再用内存缓存
+        pass
 
     # ==================== 定时任务入口 ====================
 
     async def tick(self) -> dict:
         """串行遍历所有源，到期的才请求，拿到即入库
 
+        统一从 ft_collection_state 读状态（一次 DB query 拿到 cp + enabled + last_run）
+        判断是否到期 + 是否启用，避免内存状态与 DB 不同步、worker 重启失效。
+
         流程:
-            1. checkpoint_store.get_checkpoint(domain, source) → cp dict
-            2. _should_fetch 检查内存缓存 + DB enabled 状态
+            1. checkpoint_store.get(domain, source) → 完整 state（一次 DB）
+            2. 检查 enabled（DB）+ last_run_at + interval (DB) 决定是否跳过
             3. fetch_fn(cp) → raw
             4. normalize_fn(raw) → items
             5. _save(items) → saved_count
             6. _compute_checkpoint(source, items, cp) → new_cp
-            7. checkpoint_store.update_success(...) 或 update_failure(...)
+            7. checkpoint_store.update_success(...) / update_failure(...)
 
         Returns: {sources_run, total_saved}
-            供事件驱动级联（D.1）判断是否触发下游 task
         """
-        now = time.time()
+        from datetime import datetime, timezone
+        now_utc = datetime.now(timezone.utc)
         sources_run = 0
         total_saved = 0
+
         for src in self.sources:
-            # 1. DB 层 enabled 检查
-            if not checkpoint_store.is_enabled(self.data_domain, src.name):
+            # ── 1. 一次 DB query 拿全部状态 ──
+            state = checkpoint_store.get(self.data_domain, src.name) or {}
+
+            # ── 2. enabled 检查（首次无记录默认 True）──
+            if state and state.get("enabled") is False:
                 continue
-            # 2. 内存层 interval 检查
-            if not self._should_fetch(src.name, src.interval, now):
-                continue
+
+            # ── 3. interval 检查（last_run_at + interval_override or src.interval） ──
+            interval = state.get("interval_override") or src.interval
+            last_run = state.get("last_run_at")
+            if last_run is not None:
+                # last_run 是 timezone-aware datetime
+                if (now_utc - last_run).total_seconds() < interval:
+                    continue
+
+            # ── 4. 拿 checkpoint dict ──
+            cp_raw = state.get("checkpoint")
+            if isinstance(cp_raw, str):
+                try:
+                    cp = json.loads(cp_raw) or {}
+                except Exception:
+                    cp = {}
+            elif isinstance(cp_raw, dict):
+                cp = cp_raw
+            else:
+                cp = {}
+
             try:
-                # 3. 拿 checkpoint（dict 结构，{} 表示首次）
-                cp = checkpoint_store.get_checkpoint(self.data_domain, src.name)
-                # 4. fetch
+                # ── 5. fetch ──
                 raw = await src.fetch_fn(cp)
                 if not raw:
-                    self._last_fetch[src.name] = now
                     checkpoint_store.update_success(self.data_domain, src.name, None, 0)
                     continue
 
                 items = src.normalize_fn(raw)
                 if not items:
-                    self._last_fetch[src.name] = now
                     checkpoint_store.update_success(self.data_domain, src.name, None, 0)
                     continue
 
                 saved = self._save(items)
-                self._last_fetch[src.name] = now
                 sources_run += 1
                 total_saved += saved or 0
 
-                # 5. 计算并写入新 checkpoint
+                # ── 6. 计算并写入新 checkpoint ──
                 new_cp = self._compute_checkpoint(src.name, items, cp)
                 checkpoint_store.update_success(
                     self.data_domain, src.name, new_cp, saved or 0,
@@ -116,10 +137,6 @@ class BaseAggregator:
                 logger.warning(f"[{self.data_domain}:{src.name}] 采集失败: {e}")
                 checkpoint_store.update_failure(self.data_domain, src.name, str(e))
         return {"sources_run": sources_run, "total_saved": total_saved}
-
-    def _should_fetch(self, name: str, interval: int, now: float) -> bool:
-        last = self._last_fetch.get(name, 0)
-        return (now - last) >= interval
 
     # ==================== 子类必须实现 ====================
 
