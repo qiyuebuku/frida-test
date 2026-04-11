@@ -258,17 +258,32 @@ async def fetch_stock_flow_dynamic(tencent_client, ths_client) -> list[dict]:
 
 
 def normalize_stock_flow(raw) -> list[dict]:
-    """腾讯个股主力资金 → 统一格式
+    """腾讯个股主力资金 → 展开为每个(code, 日期)一行
 
-    支持两种输入：
-    1. 单个 dict：{status_code, data: {today:{...}, minutes:[...], ...}}
-    2. dict 列表：[{...}, {...}]（来自 fetch_stock_flow_dynamic 的批量结果）
-    如果 data.today 的所有值都是 0，说明接口返回空（指数或非交易日），跳过
+    腾讯接口返回:
+        {data: {
+            code: "sh603979",
+            today: {mainNetIn, mainOut, mainInRate, ...},     # 当天实时
+            history: [                                          # 近 ~10 天 K 线
+                {date: "2026-04-10", price: "60.75", mainNetIn: -6049725},
+                ...
+            ],
+            fiveDayList: [...],
+            minuteTrend: [...]
+        }}
+
+    展开策略:
+        - history 每条 → 一行 (code, date, mainNetIn, price)
+        - today → 一行 (code, today_date, today 全字段)
+        history 通常包含到 T-1，today 是 T，组合后覆盖最近 10 个交易日
+
+    支持两种输入:
+        1. 单个 dict (单只股票)
+        2. dict 列表 (来自 fetch_stock_flow_dynamic 批量)
     """
     if not raw:
         return []
 
-    # 如果是列表，递归处理每个元素
     if isinstance(raw, list):
         results = []
         for item in raw:
@@ -280,19 +295,57 @@ def normalize_stock_flow(raw) -> list[dict]:
     data = raw.get("data", raw)
     if not isinstance(data, dict):
         return []
+
     today = data.get("today")
-    # 必须有 today 字段才算有效（腾讯对未识别代码只回显 code，无 today）
     if not isinstance(today, dict) or not today:
         return []
-    # 过滤全 0 的空数据（指数或非交易日）
+    # 全 0 跳过（指数或非交易日，code 无效）
     numeric_vals = [v for v in today.values() if isinstance(v, (int, float))]
     if numeric_vals and all(v == 0 for v in numeric_vals):
         return []
-    return [{
+
+    code = data.get("code") or ""
+    if not code:
+        return []
+
+    results: list[dict] = []
+
+    # 1) history 数组展开成每天一行
+    history = data.get("history") or []
+    if isinstance(history, list):
+        for h in history:
+            if not isinstance(h, dict):
+                continue
+            h_date = (h.get("date") or "")[:10]
+            if not h_date:
+                continue
+            results.append({
+                "data_type": "stock_flow",
+                "trade_date": h_date,
+                "data": {
+                    "code": code,
+                    "date": h_date,
+                    "price": h.get("price"),
+                    "mainNetIn": h.get("mainNetIn"),
+                    "source": "tencent",
+                    "from": "history",
+                },
+            })
+
+    # 2) today 实时值作为今日一行（同 code+今日 已有则被 ON CONFLICT 跳过）
+    results.append({
         "data_type": "stock_flow",
         "trade_date": _today(),
-        "data": data,
-    }]
+        "data": {
+            "code": code,
+            "date": _today(),
+            "today": today,
+            "source": "tencent",
+            "from": "today",
+        },
+    })
+
+    return results
 
 
 def normalize_dragon_tiger_em(raw) -> list[dict]:
@@ -394,22 +447,33 @@ class FundFlowAggregator(BaseAggregator):
     def _init_sources(self):
         from src.infrastructure import clients
 
+        # checkpoint 是 source 上次入库的最大 trade_date
+        # cp=None → 首次拉取 → 全量
+        # cp=date → 后续拉取 → 增量
+
+        def _northbound_fetch(cp):
+            # 首次：拉 60 天历史；增量：拉 7 天即可（防漏掉补录）
+            page_size = 60 if cp is None else 7
+            return clients.eastmoney.get_northbound_recent(page_size=page_size)
+
         self.sources = [
             # 北向资金 — 10 分钟
             SourceDef(
                 "northbound",
-                lambda cp: clients.eastmoney.get_northbound_recent(page_size=5),
+                _northbound_fetch,
                 600,
                 normalize_northbound,
             ),
             # 板块资金流（新浪，含超大/大/中/小单分项）— 30 分钟
+            # 新浪接口只有当前快照，无历史端点，靠 cron 持续累积
             SourceDef(
                 "sector_flow_sina",
                 lambda cp: clients.sina.get_sector_money_flow(),
                 1800,
                 normalize_sector_flow_sina,
             ),
-            # 个股主力资金 — 30 分钟（动态从基金池关注的基金的重仓股拉取，去重后批量采集）
+            # 个股主力资金 — 30 分钟（动态从基金池关注的基金的重仓股拉取）
+            # 腾讯接口一次返回 today + history(~10 天)，normalize 已展开成多行
             SourceDef(
                 "stock_flow",
                 lambda cp: fetch_stock_flow_dynamic(clients.tencent, clients.ths),
@@ -432,8 +496,37 @@ class FundFlowAggregator(BaseAggregator):
             ),
         ]
 
+    # source 名 → ft_market_flow.data_type 映射
+    _SOURCE_TO_DATA_TYPE = {
+        "northbound": "northbound",
+        "sector_flow_sina": "sector_flow",
+        "stock_flow": "stock_flow",
+        "dragon_tiger_em": "dragon_tiger",
+        "dragon_tiger_ths": "dragon_tiger",
+    }
+
     def _get_checkpoint(self, source_name: str):
-        return None  # 资金流数据无需增量断点
+        """从 ft_market_flow 取该 data_type 当前最大 trade_date
+
+        返回 None 表示表中无此类型数据 → 首次全量；
+        返回 date 字符串 → 后续增量（fetch_fn 据此决定 page_size）。
+        """
+        data_type = self._SOURCE_TO_DATA_TYPE.get(source_name)
+        if not data_type:
+            return None
+        try:
+            with get_conn() as conn:
+                with conn.cursor() as cur:
+                    cur.execute(
+                        "SELECT MAX(trade_date) FROM ft_market_flow WHERE data_type = %s",
+                        (data_type,),
+                    )
+                    row = cur.fetchone()
+                    if row and row[0]:
+                        return row[0].isoformat()
+        except Exception as e:
+            logger.debug(f"取 {source_name} checkpoint 失败: {e}")
+        return None
 
     # ==================== 入库 ====================
 
@@ -454,7 +547,12 @@ class FundFlowAggregator(BaseAggregator):
                 item["trade_date"],
                 json.dumps(data, ensure_ascii=False, default=str),
             ))
-        return self._insert_many("ft_market_flow", columns, rows)
+        # ON CONFLICT DO NOTHING：不指定 target，自动匹配 partial unique index
+        # （uq_market_flow_stock / uq_market_flow_sector / uq_market_flow_northbound / uq_market_flow_dragon）
+        return self._insert_many(
+            "ft_market_flow", columns, rows,
+            conflict_clause="ON CONFLICT DO NOTHING",
+        )
 
     # ==================== 查询 ====================
 
