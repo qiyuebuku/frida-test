@@ -153,8 +153,10 @@ class BaseAggregator:
                         f"[{self.data_domain}:{src.name}] normalize {len(items)} 条，入库 {saved} 条 cp={new_cp}"
                     )
                 except Exception as e:
-                    logger.warning(f"[{self.data_domain}:{src.name}] 采集失败: {e}")
-                    checkpoint_store.update_failure(self.data_domain, src.name, str(e))
+                    # 包含异常类型，避免出现 "采集失败:" 空消息（很多 client 异常 str() 为空）
+                    err_msg = f"{type(e).__name__}: {e}" if str(e) else type(e).__name__
+                    logger.warning(f"[{self.data_domain}:{src.name}] 采集失败: {err_msg}")
+                    checkpoint_store.update_failure(self.data_domain, src.name, err_msg)
         return {"sources_run": sources_run, "total_saved": total_saved}
 
     # ==================== 子类必须实现 ====================

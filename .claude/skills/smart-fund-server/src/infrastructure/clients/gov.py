@@ -166,14 +166,28 @@ class GovClient(BaseClient):
             url: 公告详情页 URL
 
         Returns:
-            正文纯文本（完整，不截断）
+            正文纯文本（完整，不截断）；非 HTML（PDF/图片等）返回空串
         """
+        if not url:
+            return ""
+        # 扩展名预判：跳过 PDF/Office/图片/视频/压缩包等非 HTML
+        lower_url = url.lower().split("?")[0]
+        if lower_url.endswith((
+            ".pdf", ".doc", ".docx", ".xls", ".xlsx", ".ppt", ".pptx", ".zip",
+            ".jpg", ".jpeg", ".png", ".gif", ".bmp", ".webp",
+            ".mp4", ".mp3", ".avi", ".mov",
+        )):
+            return ""
         try:
             resp = await self._client.get(
                 url,
                 headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"},
             )
             resp.raise_for_status()
+            # Content-Type 二重检查：只处理 html/text/xml
+            ctype = resp.headers.get("content-type", "").lower()
+            if ctype and not any(t in ctype for t in ("html", "text/", "xml")):
+                return ""
             html = resp.text
 
             # 尝试按网站提取正文区域

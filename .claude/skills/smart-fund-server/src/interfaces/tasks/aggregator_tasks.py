@@ -23,10 +23,14 @@ logger = logging.getLogger(__name__)
 
 
 async def _trigger_downstream(queue: str, **kwargs):
-    """异步唤醒下游任务，失败不影响当前任务"""
+    """异步唤醒下游任务，失败不影响当前任务
+
+    jettask-rs API: app.send([TaskMessage]) 是 async, send_sync 是同步。
+    我们在 async task 里,优先用 await app.send。
+    """
     try:
         from src.interfaces.tasks import app
-        await app.send_tasks([TaskMessage(queue=queue, kwargs=kwargs)], asyncio=True)
+        await app.send([TaskMessage(queue=queue, kwargs=kwargs)])
         logger.info(f"[cascade] → {queue} {kwargs or ''}")
     except Exception as e:
         logger.warning(f"[cascade] 唤醒 {queue} 失败: {e}")

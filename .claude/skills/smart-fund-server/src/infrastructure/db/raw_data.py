@@ -161,6 +161,15 @@ def save_raw(
     elif isinstance(data, list):
         data_count = len(data)
 
+    # 序列化 + 清洗 \u0000（PG jsonb 不接受 NUL 字符；二进制响应漏过滤时会出现）
+    try:
+        params_json = json.dumps(params, ensure_ascii=False, default=str).replace("\\u0000", "")
+        data_json = json.dumps(data, ensure_ascii=False, default=str).replace("\\u0000", "")
+        related_json = json.dumps(related_codes or [], ensure_ascii=False)
+    except Exception as e:
+        logger.warning(f"ft_raw_data 序列化失败: {e}")
+        return
+
     try:
         with get_conn() as conn:
             with conn.cursor() as cur:
@@ -176,13 +185,12 @@ def save_raw(
                             %s, %s, %s, %s)
                 """, (
                     source, method, ph,
-                    json.dumps(params, ensure_ascii=False, default=str),
-                    # 字符串/数字等标量也要 json.dumps 成合法 JSON 字面量（如 "" → "\"\""）
-                    json.dumps(data, ensure_ascii=False, default=str),
+                    params_json,
+                    data_json,
                     data_count,
                     now, expires, latency_ms,
                     source_name, data_domain, data_frequency, market,
-                    json.dumps(related_codes or [], ensure_ascii=False),
+                    related_json,
                     trade_date,
                     is_success, error_msg,
                 ))
