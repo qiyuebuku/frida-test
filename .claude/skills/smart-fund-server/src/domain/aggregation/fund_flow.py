@@ -447,13 +447,14 @@ class FundFlowAggregator(BaseAggregator):
     def _init_sources(self):
         from src.infrastructure import clients
 
-        # checkpoint 是 source 上次入库的最大 trade_date
-        # cp=None → 首次拉取 → 全量
-        # cp=date → 后续拉取 → 增量
+        # checkpoint 是 dict（来自 ft_collection_state）
+        # cp == {} → 首次拉取（全量）
+        # cp == {"max_trade_date": "..."} → 增量
 
         def _northbound_fetch(cp):
             # 首次：拉 60 天历史；增量：拉 7 天即可（防漏掉补录）
-            page_size = 60 if cp is None else 7
+            is_first = not cp or not cp.get("max_trade_date")
+            page_size = 60 if is_first else 7
             return clients.eastmoney.get_northbound_recent(page_size=page_size)
 
         self.sources = [
@@ -496,37 +497,9 @@ class FundFlowAggregator(BaseAggregator):
             ),
         ]
 
-    # source 名 → ft_market_flow.data_type 映射
-    _SOURCE_TO_DATA_TYPE = {
-        "northbound": "northbound",
-        "sector_flow_sina": "sector_flow",
-        "stock_flow": "stock_flow",
-        "dragon_tiger_em": "dragon_tiger",
-        "dragon_tiger_ths": "dragon_tiger",
-    }
-
-    def _get_checkpoint(self, source_name: str):
-        """从 ft_market_flow 取该 data_type 当前最大 trade_date
-
-        返回 None 表示表中无此类型数据 → 首次全量；
-        返回 date 字符串 → 后续增量（fetch_fn 据此决定 page_size）。
-        """
-        data_type = self._SOURCE_TO_DATA_TYPE.get(source_name)
-        if not data_type:
-            return None
-        try:
-            with get_conn() as conn:
-                with conn.cursor() as cur:
-                    cur.execute(
-                        "SELECT MAX(trade_date) FROM ft_market_flow WHERE data_type = %s",
-                        (data_type,),
-                    )
-                    row = cur.fetchone()
-                    if row and row[0]:
-                        return row[0].isoformat()
-        except Exception as e:
-            logger.debug(f"取 {source_name} checkpoint 失败: {e}")
-        return None
+    # checkpoint 现在统一由 base.py 的 checkpoint_store 管理
+    # 子类无需再实现 _get_checkpoint
+    # _compute_checkpoint 用 base.py 的默认实现（取 items 最大 trade_date）即可
 
     # ==================== 入库 ====================
 
