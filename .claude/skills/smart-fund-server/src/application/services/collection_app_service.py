@@ -9,12 +9,31 @@
 
 每个 use case 内部调对应的 domain Aggregator (BaseAggregator 子类),
 返回 CollectionResult dto。
+
+R4: 加 prometheus metrics 上报 (collection_duration / collection_saved)
 """
-import logging
+import time
 
 from src.application.dto.collection_dto import CollectionResult
+from src.infrastructure.observability import get_logger, record_collection
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
+
+
+async def _run(aggregator_name: str, agg_class) -> CollectionResult:
+    """通用采集 use case 包装: 计时 + 上报 metrics"""
+    t0 = time.time()
+    try:
+        result = await agg_class().tick() or {}
+    finally:
+        duration = time.time() - t0
+    saved = result.get("total_saved", 0)
+    record_collection(aggregator_name, duration, saved)
+    return CollectionResult(
+        aggregator=aggregator_name,
+        sources_run=result.get("sources_run", 0),
+        total_saved=saved,
+    )
 
 
 class CollectionAppService:
@@ -23,45 +42,20 @@ class CollectionAppService:
     async def run_news_collection(self) -> CollectionResult:
         """新闻采集 use case (agg_news task)"""
         from src.domain.collection.services.news import NewsAggregator
-        result = await NewsAggregator().tick() or {}
-        return CollectionResult(
-            aggregator="news",
-            sources_run=result.get("sources_run", 0),
-            total_saved=result.get("total_saved", 0),
-        )
+        return await _run("news", NewsAggregator)
 
     async def run_fund_flow_collection(self) -> CollectionResult:
         from src.domain.collection.services.fund_flow import FundFlowAggregator
-        result = await FundFlowAggregator().tick() or {}
-        return CollectionResult(
-            aggregator="fund_flow",
-            sources_run=result.get("sources_run", 0),
-            total_saved=result.get("total_saved", 0),
-        )
+        return await _run("fund_flow", FundFlowAggregator)
 
     async def run_market_collection(self) -> CollectionResult:
         from src.domain.collection.services.market import MarketAggregator
-        result = await MarketAggregator().tick() or {}
-        return CollectionResult(
-            aggregator="market",
-            sources_run=result.get("sources_run", 0),
-            total_saved=result.get("total_saved", 0),
-        )
+        return await _run("market", MarketAggregator)
 
     async def run_sentiment_collection(self) -> CollectionResult:
         from src.domain.collection.services.sentiment import SentimentAggregator
-        result = await SentimentAggregator().tick() or {}
-        return CollectionResult(
-            aggregator="sentiment",
-            sources_run=result.get("sources_run", 0),
-            total_saved=result.get("total_saved", 0),
-        )
+        return await _run("sentiment", SentimentAggregator)
 
     async def run_macro_collection(self) -> CollectionResult:
         from src.domain.collection.services.macro import MacroAggregator
-        result = await MacroAggregator().tick() or {}
-        return CollectionResult(
-            aggregator="macro",
-            sources_run=result.get("sources_run", 0),
-            total_saved=result.get("total_saved", 0),
-        )
+        return await _run("macro", MacroAggregator)

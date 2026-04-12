@@ -1,16 +1,6 @@
-"""T-R2.x 测试: 6 个 collection repository 集成测试 (用 jettask_test 库)
-
-测试覆盖:
-- 静态: 不能 import psycopg2
-- 静态: domain 抽象类的 abstract methods
-- 集成: upsert/find/count CRUD 跑通
-- 集成: ON CONFLICT 行为
-"""
-import json
+"""T-R2.x 集成测试: 6 个 collection repository CRUD (用 jettask_test 库)"""
 from datetime import date, datetime, timedelta, timezone
-from decimal import Decimal
 
-import psycopg2
 import pytest
 from sqlalchemy import text
 
@@ -33,37 +23,6 @@ def clean_test_tables():
                        "ft_sentiment, ft_macro_indicators, ft_collection_state "
                        "RESTART IDENTITY CASCADE"))
     yield
-
-
-# ==================== 静态测试 ====================
-
-
-@pytest.mark.unit
-def test_r2_1_1_news_repo_abstract_methods():
-    """T-R2.1-1: NewsRepository 抽象方法齐全"""
-    from src.domain.collection.repositories.news_repository import NewsRepository
-    methods = NewsRepository.__abstractmethods__
-    assert "upsert_batch" in methods
-    assert "find_today_titles" in methods
-    assert "find_unextracted" in methods
-    assert "mark_extracted" in methods
-
-
-@pytest.mark.unit
-def test_r2_1_2_domain_does_not_import_sqlalchemy():
-    """T-R2.1-2: domain/collection/repositories/ 不能 import SQLAlchemy/psycopg2"""
-    import os
-    repo_dir = "/home/yuyang/frida-test/.claude/skills/smart-fund-server/src/domain/collection/repositories"
-    for f in os.listdir(repo_dir):
-        if not f.endswith(".py"):
-            continue
-        content = open(os.path.join(repo_dir, f)).read()
-        assert "import sqlalchemy" not in content, f"{f} imports sqlalchemy"
-        assert "import psycopg2" not in content, f"{f} imports psycopg2"
-        assert "from sqlalchemy" not in content, f"{f} imports from sqlalchemy"
-
-
-# ==================== NewsRepository 集成 ====================
 
 
 @pytest.mark.integration
@@ -100,27 +59,19 @@ def test_r2_2_news_upsert_and_find(clean_test_tables):
     n = repo.upsert_batch(items)
     assert n == 2
 
-    # 重复 upsert,应跳过
     n2 = repo.upsert_batch(items)
     assert n2 == 0
 
-    # find_unextracted 应返回 2 条
     rows = repo.find_unextracted(limit=10)
     assert len(rows) == 2
     assert all(r["title"] for r in rows)
 
-    # mark_extracted
     ids = [r["id"] for r in rows]
     n3 = repo.mark_extracted(ids)
     assert n3 == 2
 
-    # 再 find_unextracted 应返回 0
     assert len(repo.find_unextracted()) == 0
-
     assert repo.count() == 2
-
-
-# ==================== MarketFlowRepository 集成 ====================
 
 
 @pytest.mark.integration
@@ -143,7 +94,6 @@ def test_r2_2_market_flow_upsert_dedupe(clean_test_tables):
     n = repo.upsert_batch(items)
     assert n == 4
 
-    # 再插一遍同样的,应全部去重
     n2 = repo.upsert_batch(items)
     assert n2 == 0
 
@@ -152,9 +102,6 @@ def test_r2_2_market_flow_upsert_dedupe(clean_test_tables):
 
     assert repo.max_trade_date("stock_flow") == today
     assert repo.max_trade_date("not_exist") is None
-
-
-# ==================== MarketCacheRepository 集成 ====================
 
 
 @pytest.mark.integration
@@ -175,9 +122,6 @@ def test_r2_2_market_cache_upsert_overwrite(clean_test_tables):
     assert types == ["sector_ranking"]
 
 
-# ==================== SentimentRepository 集成 ====================
-
-
 @pytest.mark.integration
 def test_r2_2_sentiment_upsert(clean_test_tables):
     """T-R2.2-sentiment: 简单 INSERT"""
@@ -196,9 +140,6 @@ def test_r2_2_sentiment_upsert(clean_test_tables):
     assert repo.count_by_type() == {"guba_popularity": 1, "xueqiu_hot": 1}
 
 
-# ==================== MacroRepository 集成 ====================
-
-
 @pytest.mark.integration
 def test_r2_2_macro_upsert(clean_test_tables):
     """T-R2.2-macro: ON CONFLICT (indicator, period, source) DO NOTHING"""
@@ -212,14 +153,11 @@ def test_r2_2_macro_upsert(clean_test_tables):
          "source": "eastmoney", "published_at": date(2026, 4, 1)},
     ]
     assert repo.upsert_batch(items) == 2
-    assert repo.upsert_batch(items) == 0  # 重复跳过
+    assert repo.upsert_batch(items) == 0
 
     latest = repo.latest_per_indicator()
     assert len(latest) == 2
     assert {x["indicator"] for x in latest} == {"cpi", "ppi"}
-
-
-# ==================== CollectionStateRepository 集成 ====================
 
 
 @pytest.mark.integration
@@ -229,12 +167,10 @@ def test_r2_2_collection_state_full_lifecycle(clean_test_tables):
 
     repo = CollectionStateRepositoryImpl()
 
-    # 初始: 不存在
     assert repo.get("news", "cls") is None
     assert repo.get_checkpoint("news", "cls") == {}
-    assert repo.is_enabled("news", "cls") is True  # 默认 enabled
+    assert repo.is_enabled("news", "cls") is True
 
-    # update_success 创建
     repo.update_success("news", "cls", {"max_trade_date": "2026-04-11"}, saved_count=5)
     state = repo.get("news", "cls")
     assert state is not None
@@ -243,31 +179,26 @@ def test_r2_2_collection_state_full_lifecycle(clean_test_tables):
     assert state["total_saved"] == 5
     assert state["consecutive_failures"] == 0
 
-    # 第二次 update_success: 累加 + checkpoint 更新
     repo.update_success("news", "cls", {"max_trade_date": "2026-04-12"}, saved_count=3)
     state = repo.get("news", "cls")
     assert state["checkpoint"] == {"max_trade_date": "2026-04-12"}
     assert state["total_runs"] == 2
     assert state["total_saved"] == 8
 
-    # update_failure
     repo.update_failure("news", "cls", "test error")
     state = repo.get("news", "cls")
     assert state["consecutive_failures"] == 1
     assert state["last_error"] == "test error"
     assert state["total_runs"] == 3
 
-    # reset
     assert repo.reset("news", "cls") is True
     assert repo.get_checkpoint("news", "cls") == {}
 
-    # disable / enable
     repo.disable("news", "cls")
     assert repo.is_enabled("news", "cls") is False
     repo.enable("news", "cls")
     assert repo.is_enabled("news", "cls") is True
 
-    # list_all
     rows = repo.list_all("news")
     assert len(rows) == 1
     assert rows[0]["source_name"] == "cls"

@@ -5,7 +5,7 @@ from pathlib import Path
 import psycopg2
 import pytest
 
-PROJECT_ROOT = Path(__file__).resolve().parent.parent
+PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 INIT_DB = PROJECT_ROOT / "scripts" / "init_db.py"
 
 

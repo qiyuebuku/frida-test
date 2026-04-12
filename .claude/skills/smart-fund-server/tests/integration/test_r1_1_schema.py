@@ -4,7 +4,7 @@ from pathlib import Path
 import psycopg2
 import pytest
 
-PROJECT_ROOT = Path(__file__).resolve().parent.parent
+PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 SCHEMA_DIR = PROJECT_ROOT / "schema"
 
 ALL_FT_TABLES = [
