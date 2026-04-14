@@ -64,21 +64,21 @@ class THSClient(BaseClient):
 
     # ========== 基金详情 ==========
 
-    @cached(source="ths", source_name="同花顺", domain="market", market="fund", ttl=14400)
+    @cached(source="ths", source_name="同花顺", domain="market", market="fund", ttl=1209600)
     async def get_fund_detail(self, fund_code: str) -> dict:
         """基金综合详情（含净值、涨幅、基金经理、交易规则等）"""
         return await self._get(
             f"{self.BASE_URL}/hqapi/fund/detail/data/{fund_code}/123"
         )
 
-    @cached(source="ths", source_name="同花顺", domain="market", market="fund", ttl=14400)
+    @cached(source="ths", source_name="同花顺", domain="market", market="fund", ttl=1209600)
     async def get_fund_base(self, fund_code: str) -> dict:
         """基金基础信息（评分、风险等级、风格、基金经理）"""
         return await self._get(
             f"{self.BASE_URL}/quotation/fund_detail/v2/base/{fund_code}"
         )
 
-    @cached(source="ths", source_name="同花顺", domain="market", market="fund", ttl=14400)
+    @cached(source="ths", source_name="同花顺", domain="market", market="fund", ttl=1209600)
     async def get_fund_info(self, fund_code: str) -> dict:
         """基金行情信息（净值、涨幅、规模、交易状态）"""
         return await self._get(
@@ -86,7 +86,7 @@ class THSClient(BaseClient):
             params={"fundCode": fund_code},
         )
 
-    @cached(source="ths", source_name="同花顺", domain="market", market="fund", ttl=14400)
+    @cached(source="ths", source_name="同花顺", domain="market", market="fund", ttl=1209600)
     async def get_product_detail(self, fund_code: str) -> dict:
         """产品详情页（基本信息、投资理念、业绩基准、风险特征、分红等）"""
         resp = await self._client.get(
@@ -133,7 +133,7 @@ class THSClient(BaseClient):
                 result[title] = contents[0]
         return {"status_code": 0, "data": result}
 
-    @cached(source="ths", source_name="同花顺", domain="market", market="fund", ttl=14400)
+    @cached(source="ths", source_name="同花顺", domain="market", market="fund", ttl=1209600)
     async def get_fund_flag(self, fund_code: str) -> dict:
         """基金标志（是否LOF/退市、二级分类）"""
         return await self._get(
@@ -142,7 +142,6 @@ class THSClient(BaseClient):
 
     # ========== 净值走势 ==========
 
-    @cached(source="ths", source_name="同花顺", domain="market", market="fund", ttl=3600)
     async def get_nav_trend(self, fund_code: str, period: str = "year") -> dict:
         """净值走势图数据
         period: year(近一年) / month(近一月) / nowyear(今年以来)
@@ -151,7 +150,6 @@ class THSClient(BaseClient):
             f"{self.BASE_URL}/hqapi/static/detail/flashnew/{fund_code}/{period}"
         )
 
-    @cached(source="ths", source_name="同花顺", domain="market", market="fund", ttl=3600)
     async def get_realtime_trend(self, fund_code: str) -> dict:
         """实时估值分时走势（每分钟更新）"""
         return await self._get(
@@ -161,7 +159,6 @@ class THSClient(BaseClient):
 
     # ========== 业绩表现 ==========
 
-    @cached(source="ths", source_name="同花顺", domain="market", market="fund", ttl=14400)
     async def get_performance_rank(self, fund_code: str) -> dict:
         """阶段涨幅及同类排名（近一周/月/季/半年/1-5年）"""
         return await self._get(
@@ -169,7 +166,7 @@ class THSClient(BaseClient):
             params={"fundCode": fund_code, "type": "range"},
         )
 
-    @cached(source="ths", source_name="同花顺", domain="market", market="fund", ttl=14400)
+    @cached(source="ths", source_name="同花顺", domain="market", market="fund", ttl=1209600)
     async def get_year_return(self, fund_code: str) -> dict:
         """年度收益率及同类排名"""
         return await self._get(
@@ -177,7 +174,7 @@ class THSClient(BaseClient):
             params={"fundCode": fund_code, "type": "year"},
         )
 
-    @cached(source="ths", source_name="同花顺", domain="market", market="fund", ttl=14400)
+    @cached(source="ths", source_name="同花顺", domain="market", market="fund", ttl=1209600)
     async def get_max_drawdown(self, fund_code: str) -> dict:
         """最大回撤（近半年/近一年/近三年/成立以来）"""
         return await self._get(
@@ -185,7 +182,7 @@ class THSClient(BaseClient):
             params={"fundCode": fund_code, "type": "range"},
         )
 
-    @cached(source="ths", source_name="同花顺", domain="market", market="fund", ttl=14400)
+    @cached(source="ths", source_name="同花顺", domain="market", market="fund", ttl=1209600)
     async def get_periodic_rate(self, fund_code: str, group_type: str = "dayPeriodicRate") -> dict:
         """定期收益率（收益稳定度）
         group_type: dayPeriodicRate / weekPeriodicRate / monthPeriodicRate / quarterPeriodicRate / yearPeriodicRate
@@ -195,7 +192,7 @@ class THSClient(BaseClient):
             json={"groupType": group_type, "tradeCode": fund_code, "limit": 200},
         )
 
-    @cached(source="ths", source_name="同花顺", domain="market", market="fund", ttl=14400)
+    @cached(source="ths", source_name="同花顺", domain="market", market="fund", ttl=1209600)
     async def get_profit_contribution(self, fund_code: str, time_type: str = "threeMonth") -> dict:
         """收益贡献分析
         time_type: threeMonth / halfYear / year
@@ -207,7 +204,7 @@ class THSClient(BaseClient):
 
     # ========== 持仓信息 ==========
 
-    @cached(source="ths", source_name="同花顺", domain="market", market="fund", ttl=14400)
+    @cached(source="ths", source_name="同花顺", domain="market", market="fund", ttl=1209600)
     async def get_top10_holdings(self, fund_code: str) -> dict:
         """前十大持仓"""
         return await self._get(
@@ -215,7 +212,7 @@ class THSClient(BaseClient):
             params={"fundCode": fund_code},
         )
 
-    @cached(source="ths", source_name="同花顺", domain="market", market="fund", ttl=14400)
+    @cached(source="ths", source_name="同花顺", domain="market", market="fund", ttl=1209600)
     async def get_holding_overview(self, fund_code: str) -> dict:
         """持仓概览"""
         return await self._get(
@@ -223,7 +220,7 @@ class THSClient(BaseClient):
             params={"fundCode": fund_code},
         )
 
-    @cached(source="ths", source_name="同花顺", domain="market", market="fund", ttl=14400)
+    @cached(source="ths", source_name="同花顺", domain="market", market="fund", ttl=1209600)
     async def get_asset_allocation(self, fund_code: str, manager_id: str = "") -> dict:
         """资产配置"""
         return await self._get(
@@ -231,7 +228,7 @@ class THSClient(BaseClient):
             params={"fundCode": fund_code, "managerId": manager_id},
         )
 
-    @cached(source="ths", source_name="同花顺", domain="market", market="fund", ttl=14400)
+    @cached(source="ths", source_name="同花顺", domain="market", market="fund", ttl=1209600)
     async def get_style_preference(self, fund_code: str) -> dict:
         """投资风格偏好"""
         return await self._get(
@@ -239,7 +236,7 @@ class THSClient(BaseClient):
             params={"fundCode": fund_code},
         )
 
-    @cached(source="ths", source_name="同花顺", domain="market", market="fund", ttl=14400)
+    @cached(source="ths", source_name="同花顺", domain="market", market="fund", ttl=1209600)
     async def get_position_dates(self, fund_code: str) -> dict:
         """持仓回顾 - 获取可用的季度日期列表及行业概要"""
         return await self._get(
@@ -247,7 +244,7 @@ class THSClient(BaseClient):
             params={"fund_code": fund_code},
         )
 
-    @cached(source="ths", source_name="同花顺", domain="market", market="fund", ttl=14400)
+    @cached(source="ths", source_name="同花顺", domain="market", market="fund", ttl=1209600)
     async def get_position_detail(self, fund_code: str, end_date: str = "") -> dict:
         """持仓回顾 - 获取指定季度的前十大持仓明细"""
         return await self._get(
@@ -257,7 +254,7 @@ class THSClient(BaseClient):
 
     # ========== 基金经理 ==========
 
-    @cached(source="ths", source_name="同花顺", domain="market", market="fund", ttl=14400)
+    @cached(source="ths", source_name="同花顺", domain="market", market="fund", ttl=1209600)
     async def get_manager_info(self, fund_code: str, manager_id: str) -> dict:
         """基金经理详细信息"""
         return await self._get(
@@ -265,21 +262,21 @@ class THSClient(BaseClient):
             params={"fundManagerList": manager_id, "fundCode": fund_code},
         )
 
-    @cached(source="ths", source_name="同花顺", domain="market", market="fund", ttl=14400)
+    @cached(source="ths", source_name="同花顺", domain="market", market="fund", ttl=1209600)
     async def get_manager_profile(self, manager_id: str) -> dict:
         """基金经理完整档案（个人简历、雷达图、管理基金列表等）"""
         return await self._get(
             f"{self.BASE_URL}/hqapi/static/fundmanager/info/{manager_id}/0"
         )
 
-    @cached(source="ths", source_name="同花顺", domain="market", market="fund", ttl=14400)
+    @cached(source="ths", source_name="同花顺", domain="market", market="fund", ttl=1209600)
     async def get_manager_invest_history(self, manager_id: str) -> dict:
         """基金经理投资历史（管理的所有基金业绩、重仓股）"""
         return await self._get(
             f"{self.BASE_URL}/hqapi/static/fundmanager/investhistory/{manager_id}"
         )
 
-    @cached(source="ths", source_name="同花顺", domain="market", market="fund", ttl=14400)
+    @cached(source="ths", source_name="同花顺", domain="market", market="fund", ttl=1209600)
     async def get_manager_diagnose(self, manager_id: str) -> dict:
         """基金经理诊断评分（历史规模、回撤、年化收益）"""
         return await self._get(
@@ -287,7 +284,7 @@ class THSClient(BaseClient):
             params={"id": manager_id},
         )
 
-    @cached(source="ths", source_name="同花顺", domain="market", market="fund", ttl=14400)
+    @cached(source="ths", source_name="同花顺", domain="market", market="fund", ttl=1209600)
     async def get_manager_industry_prefer(self, manager_id: str) -> dict:
         """基金经理行业偏好"""
         return await self._get(
@@ -295,7 +292,7 @@ class THSClient(BaseClient):
             params={"fundManagerId": manager_id},
         )
 
-    @cached(source="ths", source_name="同花顺", domain="market", market="fund", ttl=14400)
+    @cached(source="ths", source_name="同花顺", domain="market", market="fund", ttl=1209600)
     async def get_manager_represent_fund(self, manager_id: str) -> dict:
         """基金经理代表基金"""
         return await self._get(
@@ -305,7 +302,7 @@ class THSClient(BaseClient):
 
     # ========== 交易规则与费率 ==========
 
-    @cached(source="ths", source_name="同花顺", domain="market", market="fund", ttl=14400)
+    @cached(source="ths", source_name="同花顺", domain="market", market="fund", ttl=1209600)
     async def get_trade_rule(self, fund_code: str) -> dict:
         """交易规则与费率（申购/赎回费率、管理费、托管费、服务费、交易确认时间）"""
         return await self._get(
@@ -314,14 +311,14 @@ class THSClient(BaseClient):
 
     # ========== 规模与持有人 ==========
 
-    @cached(source="ths", source_name="同花顺", domain="market", market="fund", ttl=14400)
+    @cached(source="ths", source_name="同花顺", domain="market", market="fund", ttl=1209600)
     async def get_scale_change(self, fund_code: str) -> dict:
         """规模变动历史（季度净资产、申购赎回金额、份额变动、持有人结构）"""
         return await self._get(
             f"{self.BASE_URL}/interface/fund/detail/{fund_code}_gmbd"
         )
 
-    @cached(source="ths", source_name="同花顺", domain="market", market="fund", ttl=14400)
+    @cached(source="ths", source_name="同花顺", domain="market", market="fund", ttl=1209600)
     async def get_holder_ratio(self, fund_code: str) -> dict:
         """机构持仓比例历史（半年度机构持有占比变化）"""
         return await self._get(
@@ -330,7 +327,7 @@ class THSClient(BaseClient):
 
     # ========== 分红历史 ==========
 
-    @cached(source="ths", source_name="同花顺", domain="market", market="fund", ttl=14400)
+    @cached(source="ths", source_name="同花顺", domain="market", market="fund", ttl=1209600)
     async def get_dividend_history(self, fund_code: str) -> dict:
         """分红历史（从产品详情页 HTML 解析分红和拆分记录）"""
         resp = await self._client.get(
@@ -388,7 +385,7 @@ class THSClient(BaseClient):
 
     # ========== 净值技术面 ==========
 
-    @cached(source="ths", source_name="同花顺", domain="market", market="fund", ttl=3600)
+    @cached(source="ths", source_name="同花顺", domain="market", market="fund", ttl=1209600)
     async def get_nav_technical(self, fund_code: str) -> dict:
         """基于近一年日净值计算技术面指标（RSI14/MA5/MA20/MA60/偏离度/信号）"""
         raw = await self.get_nav_trend(fund_code, "year")
@@ -484,7 +481,6 @@ class THSClient(BaseClient):
 
     # ========== 基金申赎资金流趋势 ==========
 
-    @cached(source="ths", source_name="同花顺", domain="market", market="fund", ttl=14400)
     async def get_fund_flow_trend(self, fund_code: str) -> dict:
         """基于规模变动 + 机构持仓比例，分析申赎资金流趋势"""
         scale_raw, holder_raw = await asyncio.gather(
@@ -610,7 +606,7 @@ class THSClient(BaseClient):
 
     # ========== 指标与追踪 ==========
 
-    @cached(source="ths", source_name="同花顺", domain="market", market="fund", ttl=14400)
+    @cached(source="ths", source_name="同花顺", domain="market", market="fund", ttl=1209600)
     async def get_rsi_indicator(self, fund_code: str) -> dict:
         """RSI 买卖指标"""
         return await self._get(
@@ -618,14 +614,14 @@ class THSClient(BaseClient):
             params={"tradeCodeList": fund_code, "typeList": "rsiBestLimitDown,rsiBestLimitUp"},
         )
 
-    @cached(source="ths", source_name="同花顺", domain="market", market="fund", ttl=14400)
+    @cached(source="ths", source_name="同花顺", domain="market", market="fund", ttl=1209600)
     async def get_fund_track(self, fund_code: str) -> dict:
         """基金追踪"""
         return await self._get(
             f"{self.BASE_URL}/hqapi/fund_track/query/{fund_code}"
         )
 
-    @cached(source="ths", source_name="同花顺", domain="market", market="fund", ttl=14400)
+    @cached(source="ths", source_name="同花顺", domain="market", market="fund", ttl=1209600)
     async def get_announcements(self, fund_code: str, category: str = "all",
                                 page: int = 1, page_size: int = 15) -> dict:
         """基金公告
@@ -636,7 +632,7 @@ class THSClient(BaseClient):
             f"{self.BASE_URL}/interface/net/pubnote2/{cat_id}_{fund_code}_{page}_{page_size}"
         )
 
-    @cached(source="ths", source_name="同花顺", domain="news", frequency="realtime", market="a_share", ttl=300)
+    @cached(source="ths", source_name="同花顺", domain="news", frequency="realtime", market="a_share", ttl=1209600)
     async def get_news(self, fund_code: str, limit: int = 10) -> dict:
         """基金相关资讯"""
         # 需要先获取 hqcode
@@ -761,7 +757,7 @@ class THSClient(BaseClient):
         },
     }
 
-    @cached(source="ths", source_name="同花顺", domain="market", market="fund", ttl=14400)
+    @cached(source="ths", source_name="同花顺", domain="market", market="fund", ttl=1209600)
     async def get_fund_ranking(self, sort_type: str = "year", sort: str = "DESC",
                                limit: int = 30, offset: int = 0,
                                fund_type: str = None, fund_company: str = None,
@@ -846,7 +842,7 @@ class THSClient(BaseClient):
             json=body,
         )
 
-    @cached(source="ths", source_name="同花顺", domain="market", market="fund", ttl=14400)
+    @cached(source="ths", source_name="同花顺", domain="market", market="fund", ttl=1209600)
     async def get_rank_board_config(self) -> dict:
         """获取排行榜配置（涨幅榜/反弹榜/人气榜/加仓榜/超额榜）"""
         resp = await self._get(
@@ -858,7 +854,7 @@ class THSClient(BaseClient):
             resp["data"] = json.loads(data)
         return resp
 
-    @cached(source="ths", source_name="同花顺", domain="market", market="fund", ttl=14400)
+    @cached(source="ths", source_name="同花顺", domain="market", market="fund", ttl=1209600)
     async def get_rank_filter_config(self) -> dict:
         """获取筛选策略配置（年年正收益/三年翻倍/机构偏爱/十年十倍等）"""
         resp = await self._get(
@@ -869,7 +865,7 @@ class THSClient(BaseClient):
             resp["data"] = json.loads(data)
         return resp
 
-    @cached(source="ths", source_name="同花顺", domain="market", market="fund", ttl=14400)
+    @cached(source="ths", source_name="同花顺", domain="market", market="fund", ttl=1209600)
     async def get_rank_distribution(self, indic_list: list = None) -> dict:
         """获取收益率分布统计（各周期的收益率分布：max/min/每个百分点的基金数量）"""
         if indic_list is None:
@@ -882,7 +878,7 @@ class THSClient(BaseClient):
             json={"indicList": indic_list},
         )
 
-    @cached(source="ths", source_name="同花顺", domain="market", market="fund", ttl=14400)
+    @cached(source="ths", source_name="同花顺", domain="market", market="fund", ttl=1209600)
     async def get_fund_company_list(self) -> list:
         """获取基金公司列表（使用独立请求避免 session 限流）"""
         async with httpx.AsyncClient(timeout=10.0) as tmp_client:
@@ -919,7 +915,7 @@ class THSClient(BaseClient):
         keys = ["kjRate", "zzRate", "xfRate", "zqRate", "jrRate", "ylRate", "jjRate"]
         return {k: latest.get(k, 0) for k in keys}
 
-    @cached(source="ths", source_name="同花顺", domain="market", market="fund", ttl=14400)
+    @cached(source="ths", source_name="同花顺", domain="market", market="fund", ttl=1209600)
     async def find_similar_funds(self, fund_code: str, top_n: int = 5) -> list[dict]:
         """自动发现同赛道基金
         1. 获取目标基金的行业分布
@@ -969,7 +965,7 @@ class THSClient(BaseClient):
         scored.sort(key=lambda x: x["similarity"], reverse=True)
         return scored[:top_n]
 
-    @cached(source="ths", source_name="同花顺", domain="market", market="fund", ttl=14400)
+    @cached(source="ths", source_name="同花顺", domain="market", market="fund", ttl=1209600)
     async def get_fund_compare_data(self, fund_codes: list[str]) -> list[dict]:
         """并发获取多只基金的对比数据
         返回: [{"code", "name", "manager", "scale", "establish_date",
@@ -1088,7 +1084,6 @@ class THSClient(BaseClient):
 
     # ========== 同花顺游资龙虎榜 ==========
 
-    @cached(source="ths", source_name="同花顺", domain="fund_flow", frequency="daily", market="a_share", ttl=3600)
     async def get_ths_dragon_tiger(self, tab: str = "youzi", count: int = 30) -> dict:
         """同花顺龙虎榜 - 带游资/机构标签
 
@@ -1248,43 +1243,36 @@ class THSClient(BaseClient):
 
     # ========== 市场热榜 (eq/t/dq.10jqka.com.cn) ==========
 
-    @cached(source="ths", source_name="同花顺", domain="news", frequency="realtime", market="a_share", ttl=300)
     async def get_hot_stocks(self, market: str = "a") -> dict:
         """个股热榜（A股/港股/美股）"""
         url = f"{self.HOT_LIST_BASE}/api/hot_list/v1/hot_stock/{market}/day/data.txt"
         return await self._get(url)
 
-    @cached(source="ths", source_name="同花顺", domain="news", frequency="realtime", market="a_share", ttl=300)
     async def get_hot_plate(self, plate_type: str = "concept") -> dict:
         """概念/行业热榜"""
         url = f"{self.HOT_LIST_BASE}/api/hot_list/v1/hot_plate/{plate_type}/data.txt"
         return await self._get(url)
 
-    @cached(source="ths", source_name="同花顺", domain="news", frequency="realtime", market="a_share", ttl=300)
     async def get_hot_etf(self) -> dict:
         """ETF 热榜"""
         url = f"{self.HOT_LIST_BASE}/api/etf_rank/v1/hot.txt"
         return await self._get(url)
 
-    @cached(source="ths", source_name="同花顺", domain="news", frequency="realtime", market="a_share", ttl=300)
     async def get_hot_futures(self) -> dict:
         """期货热榜"""
         url = f"{self.HOT_LIST_BASE}/api/hot_list/v1/futures/data.txt"
         return await self._get(url)
 
-    @cached(source="ths", source_name="同花顺", domain="news", frequency="realtime", market="a_share", ttl=300)
     async def get_hot_bond(self) -> dict:
         """可转债热榜"""
         url = f"{self.HOT_BOND_BASE}/fuyao/hot_list_data/out/hot_list/v1/bond"
         return await self._get(url)
 
-    @cached(source="ths", source_name="同花顺", domain="news", frequency="realtime", market="a_share", ttl=300)
     async def get_hot_topics(self) -> dict:
         """热榜话题"""
         url = f"{self.HOT_TOPIC_BASE}/lgt/topic/open/api/hot_topic/v1/hot_module_list"
         return await self._get(url)
 
-    @cached(source="ths", source_name="同花顺", domain="news", frequency="realtime", market="a_share", ttl=300)
     async def get_hot_posts(self, page: int = 1, page_size: int = 10) -> dict:
         """热门文章"""
         url = f"{self.HOT_TOPIC_BASE}/lgt/hotmodules/open/api/hot_module/v1/hot_post/list"
@@ -1294,7 +1282,6 @@ class THSClient(BaseClient):
 
     PUSH2_SUBDOMAINS = [2, 3, 12, 18, 42, 82]
 
-    @cached(source="ths", source_name="同花顺", domain="news", frequency="realtime", market="a_share", ttl=300)
     async def get_hot_board(self, board_type: str = "concept", sort: str = "rise", count: int = 10) -> dict:
         """热点板块排行（东方财富 push2 API）
 
@@ -1366,7 +1353,6 @@ class THSClient(BaseClient):
 
     # ========== 新闻 (news.10jqka.com.cn) ==========
 
-    @cached(source="ths", source_name="同花顺", domain="news", frequency="realtime", market="a_share", ttl=300)
     async def get_headlines(self) -> dict:
         """推荐头条（首页推荐tab头条模块）"""
         url = f"{self.NEWS_BASE}/tapp/news/headline/ths/client"
@@ -1384,7 +1370,7 @@ class THSClient(BaseClient):
         h = hashlib.md5(f"{seq}{check_digit}".encode()).hexdigest()
         return h[:4] + padded + str(check_digit) + h[-3:]
 
-    @cached(source="ths", source_name="同花顺", domain="news", frequency="realtime", market="a_share", ttl=300)
+    @cached(source="ths", source_name="同花顺", domain="news", frequency="realtime", market="a_share", ttl=1209600)
     async def get_article_detail(self, encoded_seq: str) -> dict:
         """获取新闻文章详情（type=1 新闻）
         encoded_seq: encoded 格式的文章ID，或纯数字 seq（会自动转换）
@@ -1394,13 +1380,13 @@ class THSClient(BaseClient):
         url = f"{self.NEWS_BASE}/mobile_api/news/article/v1/encoded/{encoded_seq}"
         return await self._get(url)
 
-    @cached(source="ths", source_name="同花顺", domain="news", frequency="realtime", market="a_share", ttl=300)
+    @cached(source="ths", source_name="同花顺", domain="news", frequency="realtime", market="a_share", ttl=1209600)
     async def get_news_themes(self) -> dict:
         """获取新闻主题分类列表（资讯→头条 tab 栏的主题标签）"""
         url = f"{self.NEWS_BASE}/app/headline/v1/hot-theme"
         return await self._get(url)
 
-    @cached(source="ths", source_name="同花顺", domain="news", frequency="realtime", market="a_share", ttl=300)
+    @cached(source="ths", source_name="同花顺", domain="news", frequency="realtime", market="a_share", ttl=1209600)
     async def get_theme_articles(self, theme_id: str, page: int = 1, size: int = 15) -> dict:
         """获取主题下的文章列表
         theme_id: 主题ID，如 TZ-11385
@@ -1434,13 +1420,12 @@ class THSClient(BaseClient):
             },
         }
 
-    @cached(source="ths", source_name="同花顺", domain="news", frequency="realtime", market="a_share", ttl=300)
+    @cached(source="ths", source_name="同花顺", domain="news", frequency="realtime", market="a_share", ttl=1209600)
     async def get_flash_news_tabs(self) -> dict:
         """获取快讯分类标签列表（A股、重要、公告、期货、异动、港股、美股）"""
         url = f"{self.NEWS_BASE}/app/flash/flashnews/v2/tab"
         return await self._get(url)
 
-    @cached(source="ths", source_name="同花顺", domain="news", frequency="realtime", market="a_share", ttl=300)
     async def get_flash_news_list(self, tag_id: int = 21101, seq: int = 0) -> dict:
         """获取指定分类的快讯列表
         tag_id: 分类ID（从 get_flash_news_tabs 获取），默认21101=A股
@@ -1455,13 +1440,13 @@ class THSClient(BaseClient):
         r'<div[^>]*class="[^"]*article[^"]*"[^>]*>',
     ]
 
-    @cached(source="ths", source_name="同花顺", domain="news", frequency="daily", market="a_share", ttl=3600)
+    @cached(source="ths", source_name="同花顺", domain="news", frequency="daily", market="a_share", ttl=1209600)
     async def fetch_article_content(self, url: str) -> str:
         """抓取同花顺新闻详情页正文"""
         html = await self._fetch_article_html(url, referer="https://news.10jqka.com.cn/")
         return self._extract_article_text(html, self.THS_ARTICLE_PATTERNS)
 
-    @cached(source="ths", source_name="同花顺", domain="news", frequency="realtime", market="a_share", ttl=300)
+    # 不缓存：滚动列表翻页，page=N 在不同时间返回不同数据
     async def get_news_feed(self, page: int = 1, with_content: bool = True) -> dict:
         """滚动快讯（财经要闻实时滚动，每页 20 条）
 
@@ -1486,7 +1471,7 @@ class THSClient(BaseClient):
                         item["content_full"] = c
         return result
 
-    @cached(source="ths", source_name="同花顺", domain="news", frequency="realtime", market="a_share", ttl=300)
+    @cached(source="ths", source_name="同花顺", domain="news", frequency="realtime", market="a_share", ttl=1209600)
     async def get_topic_detail(self, code: str, page: int = 1, page_size: int = 10) -> dict:
         """话题详情（含推荐帖子列表）"""
         info_url = f"{self.HOT_TOPIC_BASE}/lgt/topic/open/api/topic_info/v1/topic?code={code}"
@@ -1496,7 +1481,7 @@ class THSClient(BaseClient):
         )
         return {"topic": info_resp.get("data", {}), "feeds": feed_resp.get("data", {})}
 
-    @cached(source="ths", source_name="同花顺", domain="news", frequency="realtime", market="a_share", ttl=300)
+    @cached(source="ths", source_name="同花顺", domain="news", frequency="realtime", market="a_share", ttl=1209600)
     async def get_special_detail(self, code: str) -> dict:
         """专题详情（从 HTML 解析组件内容）"""
         import json as _json
@@ -1574,7 +1559,6 @@ class THSClient(BaseClient):
         for sub in comp.get("components", []):
             self._extract_special_section(sub, sections)
 
-    @cached(source="ths", source_name="同花顺", domain="sentiment", frequency="daily", market="a_share", ttl=3600)
     async def get_limit_pool(self, pool_type: str = "up") -> dict:
         """获取涨停/跌停池 (data.10jqka.com.cn)
 
@@ -1605,7 +1589,7 @@ class THSClient(BaseClient):
     _iwencai_last_request = 0.0
     _IWENCAI_MIN_INTERVAL = 60.0
 
-    @cached(source="ths", source_name="同花顺", domain="sentiment", frequency="realtime", market="a_share", ttl=60)
+    @cached(source="ths", source_name="同花顺", domain="sentiment", frequency="realtime", market="a_share", ttl=1209600)
     async def get_iwencai_query(self, question: str, perpage: int = 10, page: int = 1,
                                 secondary_intent: str = "stock") -> dict:
         """问财自然语言选股查询（依赖数据库中的 hexin-v token）
@@ -1686,7 +1670,7 @@ class THSClient(BaseClient):
 
         return data
 
-    @cached(source="ths", source_name="同花顺", domain="sentiment", frequency="realtime", market="a_share", ttl=60)
+    @cached(source="ths", source_name="同花顺", domain="sentiment", frequency="realtime", market="a_share", ttl=1209600)
     async def get_iwencai_stocks(self, question: str, limit: int = 10) -> list:
         """问财选股 — 提取结构化的股票列表
 

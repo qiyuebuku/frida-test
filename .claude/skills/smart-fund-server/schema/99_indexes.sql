@@ -841,3 +841,7 @@ ALTER INDEX public.idx_raw_trade_date ATTACH PARTITION public.ft_raw_data_202606
 
 --
 -- PostgreSQL database dump complete
+
+-- ft_watchlist_data indexes
+CREATE UNIQUE INDEX IF NOT EXISTS idx_watchlist_data_unique ON public.ft_watchlist_data(code, data_type, trade_date);
+CREATE INDEX IF NOT EXISTS idx_watchlist_data_code ON public.ft_watchlist_data(code, data_type);

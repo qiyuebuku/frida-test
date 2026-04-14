@@ -134,7 +134,6 @@ class XueqiuClient(BaseClient):
 
     # ==================== 业务方法 ====================
 
-    @cached(ttl=1800, source="xueqiu", domain="sentiment", frequency="realtime", market="a_share", source_name="雪球")
     async def get_hot_topics(self, count: int = 10) -> dict:
         """雪球热门话题
 
@@ -157,7 +156,6 @@ class XueqiuClient(BaseClient):
             })
         return {"status_code": 0, "data": {"count": len(topics), "topics": topics}}
 
-    @cached(ttl=1800, source="xueqiu", domain="sentiment", frequency="realtime", market="a_share", source_name="雪球")
     async def get_hot_topics_since(self, since_id: int) -> list:
         """增量采集热门话题：只返回 id > since_id 的话题"""
         r = await self.get_hot_topics(count=20)
@@ -165,7 +163,6 @@ class XueqiuClient(BaseClient):
             return []
         return [t for t in r["data"]["topics"] if (t.get("id") or 0) > since_id]
 
-    @cached(ttl=1800, source="xueqiu", domain="sentiment", frequency="realtime", market="a_share", source_name="雪球")
     async def get_hot_stocks(self, size: int = 10) -> dict:
         """雪球热股排行
 
@@ -188,7 +185,6 @@ class XueqiuClient(BaseClient):
             })
         return {"status_code": 0, "data": {"count": len(stocks), "stocks": stocks}}
 
-    @cached(ttl=300, source="xueqiu", domain="news", frequency="realtime", market="a_share", source_name="雪球")
     async def get_live_news(self, count: int = 20, max_id: int = -1) -> dict:
         """雪球 7×24 快讯
 
@@ -208,7 +204,6 @@ class XueqiuClient(BaseClient):
             "count": len(items), "next_max_id": r["raw"].get("next_max_id"), "items": items,
         }}
 
-    @cached(ttl=300, source="xueqiu", domain="news", frequency="realtime", market="a_share", source_name="雪球")
     async def get_live_news_since(self, since_id: int, count: int = 50) -> list:
         """增量采集快讯：只返回 id > since_id 的快讯"""
         r = await self.get_live_news(count=count)

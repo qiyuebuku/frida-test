@@ -194,59 +194,210 @@ def _is_a_share_code(sec_code: str) -> bool:
     return code[0] in ("0", "3", "4", "6", "8", "9")
 
 
-async def _fetch_held_stocks(ths_client, max_funds: int = 6, max_stocks: int = 20) -> list[str]:
-    """从 ft_config.fund_pool 读取关注的基金，调 ths.get_top10_holdings 拿重仓股，去重后返回带前缀的代码列表
 
-    过滤规则：只保留 A 股代码（6 位数字），跳过港股/美股/QDII 持仓。
+# ==================== 自选标的采集 ====================
+
+# 基金采集维度配置
+# high_freq: 每次 tick 都采（盘中数据）
+# daily: 每天采一次（日频数据）
+# low_freq: 每周/每月采一次（变化慢的数据）
+FUND_DIMENSIONS_HIGH = ["nav", "realtime"]
+FUND_DIMENSIONS_DAILY = ["holdings", "performance", "flow_trend"]
+FUND_DIMENSIONS_LOW = [
+    "scale", "holder_ratio", "dividend", "year_return",
+    "max_drawdown", "holding_overview", "fund_detail",
+    "style_preference",
+]
+
+
+def _is_exchange_traded(code: str) -> bool:
+    """判断是否场内基金（ETF/LOF）"""
+    return code.startswith(("15", "51", "16"))
+
+
+async def _fetch_watchlist_data(ths_client, tencent_client, sina_client=None, em_client=None) -> list[dict]:
+    """遍历 watchlist，按 type 采集各维度数据
+
+    返回 [{"code", "data_type", "trade_date", "data"}, ...]
+    直接写入 ft_watchlist_data（不走 ft_market_flow）。
     """
     import asyncio as _asyncio
-    from src.infrastructure.db.fund_db import get_config
+    from src.infrastructure.db import checkpoint_store
 
-    config = get_config()
-    fund_pool = config.get("fund_pool") or []
-    fund_codes = [f.get("code") for f in fund_pool if isinstance(f, dict) and f.get("code")][:max_funds]
-    if not fund_codes:
+    all_items = checkpoint_store.list_all("watchlist")
+    if not all_items:
         return []
 
-    # 并发拉取每只基金的前十大持仓
-    tasks = [ths_client.get_top10_holdings(code) for code in fund_codes]
-    results = await _asyncio.gather(*tasks, return_exceptions=True)
+    results = []
+    today = date.today()
 
-    seen = set()
-    stock_codes = []
-    skipped_non_a = 0
-    for r in results:
-        if isinstance(r, Exception) or not isinstance(r, dict):
+    for item in all_items:
+        if not item.get("enabled", True):
             continue
-        data = r.get("data") or {}
-        stocks = data.get("stock") or []
-        for s in stocks:
-            if not isinstance(s, dict):
-                continue
-            sec_code = s.get("secCode") or ""
-            # 过滤非 A 股代码
-            if not _is_a_share_code(sec_code):
-                skipped_non_a += 1
-                continue
-            market_id = s.get("marketid")
-            full_code = _code_with_prefix(sec_code, market_id)
-            if full_code and full_code not in seen:
-                seen.add(full_code)
-                stock_codes.append(full_code)
-            if len(stock_codes) >= max_stocks:
-                break
-        if len(stock_codes) >= max_stocks:
-            break
-    if skipped_non_a:
-        logger.info(f"[fund_flow] 跳过 {skipped_non_a} 个非 A 股持仓代码")
-    return stock_codes
+
+        code = item["source_name"]
+        config = item.get("config", {})
+        item_type = config.get("type", "fund")
+
+        try:
+            code_results = []
+
+            if item_type == "fund":
+                # 构建采集任务列表
+                dim_tasks = {}
+                # 高频：每次都采
+                dim_tasks["nav"] = ths_client.get_nav_trend(code, period="year")
+                dim_tasks["realtime"] = ths_client.get_realtime_trend(code)
+                # 日频
+                dim_tasks["holdings"] = ths_client.get_top10_holdings(code)
+                dim_tasks["performance"] = ths_client.get_performance_rank(code)
+                dim_tasks["flow_trend"] = ths_client.get_fund_flow_trend(code)
+                # 低频（每次都采，但数据变化慢，ON CONFLICT 会自动去重）
+                dim_tasks["scale"] = ths_client.get_scale_change(code)
+                dim_tasks["holder_ratio"] = ths_client.get_holder_ratio(code)
+                dim_tasks["dividend"] = ths_client.get_dividend_history(code)
+                dim_tasks["year_return"] = ths_client.get_year_return(code)
+                dim_tasks["max_drawdown"] = ths_client.get_max_drawdown(code)
+                dim_tasks["holding_overview"] = ths_client.get_holding_overview(code)
+                dim_tasks["fund_detail"] = ths_client.get_fund_detail(code)
+                dim_tasks["style_preference"] = ths_client.get_style_preference(code)
+
+                # 并发采集所有维度
+                keys = list(dim_tasks.keys())
+                raw_results = await _asyncio.gather(*dim_tasks.values(), return_exceptions=True)
+
+                for dim, raw in zip(keys, raw_results):
+                    if isinstance(raw, Exception):
+                        logger.debug(f"[watchlist:{code}] {dim} 失败: {raw}")
+                        continue
+                    data = raw.get("data", raw) if isinstance(raw, dict) else raw
+                    if data:
+                        code_results.append({
+                            "code": code, "data_type": dim,
+                            "trade_date": today, "data": data,
+                        })
+
+                # 场内基金追加个股维度（资金流/行情/K线）
+                if _is_exchange_traded(code):
+                    prefix = "sz" if code.startswith("15") else "sh"
+                    full_code = f"{prefix}{code}"
+                    stock_tasks = {
+                        "stock_flow": tencent_client.get_stock_fund_flow(full_code),
+                        "quote": tencent_client.get_stock_quote([full_code]),
+                        "minute_data": tencent_client.get_minute_data(full_code),
+                    }
+                    if sina_client:
+                        stock_tasks["kline"] = sina_client.get_kline(full_code, scale=240, datalen=60)
+
+                    stock_keys = list(stock_tasks.keys())
+                    stock_results = await _asyncio.gather(*stock_tasks.values(), return_exceptions=True)
+                    for dim, raw in zip(stock_keys, stock_results):
+                        if isinstance(raw, Exception):
+                            logger.debug(f"[watchlist:{code}] {dim} 失败: {raw}")
+                            continue
+                        data = raw.get("data", raw) if isinstance(raw, dict) else raw
+                        if data:
+                            code_results.append({
+                                "code": code, "data_type": dim,
+                                "trade_date": today, "data": data,
+                            })
+
+            elif item_type == "stock":
+                # 个股维度：资金流 + 行情 + K线 + 估值
+                stock_tasks = {
+                    "stock_flow": tencent_client.get_stock_fund_flow(code),
+                    "quote": tencent_client.get_stock_quote([code]),
+                    "minute_data": tencent_client.get_minute_data(code),
+                }
+                if sina_client:
+                    stock_tasks["kline"] = sina_client.get_kline(code, scale=240, datalen=60)
+                if em_client:
+                    # 估值历史（纯数字代码）
+                    pure_code = code.replace("sh", "").replace("sz", "")
+                    stock_tasks["valuation"] = em_client.get_stock_valuation_history(pure_code, years=1)
+
+                stock_keys = list(stock_tasks.keys())
+                stock_results = await _asyncio.gather(*stock_tasks.values(), return_exceptions=True)
+                for dim, raw in zip(stock_keys, stock_results):
+                    if isinstance(raw, Exception):
+                        logger.debug(f"[watchlist:{code}] {dim} 失败: {raw}")
+                        continue
+                    data = raw.get("data", raw) if isinstance(raw, dict) else raw
+                    if isinstance(data, list) and data:
+                        code_results.append({
+                            "code": code, "data_type": dim,
+                            "trade_date": today, "data": data,
+                        })
+                    elif isinstance(data, dict) and data:
+                        code_results.append({
+                            "code": code, "data_type": dim,
+                            "trade_date": today, "data": data,
+                        })
+
+            results.extend(code_results)
+
+            # 更新该标的的采集状态
+            if code_results:
+                checkpoint_store.update_success("watchlist", code, {
+                    "mode": "incremental",
+                    "newest_time": today.isoformat(),
+                }, saved_count=len(code_results))
+
+        except Exception as e:
+            logger.warning(f"[watchlist:{code}] 采集异常: {e}")
+
+    # ── QDII 关联：全市场级数据（只采一次，code='_market'） ──
+    try:
+        market_tasks = {}
+        if sina_client:
+            market_tasks["global_index"] = sina_client.get_global_index()
+            market_tasks["forex"] = sina_client.get_forex()
+        if tencent_client:
+            market_tasks["intl_futures"] = tencent_client.get_intl_futures()
+
+        if market_tasks:
+            mkeys = list(market_tasks.keys())
+            mresults = await _asyncio.gather(*market_tasks.values(), return_exceptions=True)
+            for dim, raw in zip(mkeys, mresults):
+                if isinstance(raw, Exception):
+                    logger.debug(f"[watchlist:_market] {dim} 失败: {raw}")
+                    continue
+                data = raw.get("data", raw) if isinstance(raw, dict) else raw
+                if data:
+                    results.append({
+                        "code": "_market", "data_type": dim,
+                        "trade_date": today, "data": data,
+                    })
+    except Exception as e:
+        logger.warning(f"[watchlist:_market] QDII 关联采集异常: {e}")
+
+    if results:
+        logger.info(f"[watchlist] 采集完成: {len(all_items)} 只标的, {len(results)} 条数据")
+
+    return results
+
+
+def _normalize_watchlist_data(raw_items: list) -> list[dict]:
+    """watchlist 数据不需要额外 normalize，直接透传"""
+    return raw_items if isinstance(raw_items, list) else []
 
 
 async def fetch_stock_flow_dynamic(tencent_client, ths_client) -> list[dict]:
-    """从持仓基金的重仓股动态采集主力资金流"""
-    import asyncio as _asyncio
+    """从 ft_collection_state (aggregator=watchlist) 驱动采集个股资金流
 
-    codes = await _fetch_held_stocks(ths_client)
+    遍历自选标的中 enabled=True 的股票，并发拉取资金流。
+    """
+    import asyncio as _asyncio
+    from src.infrastructure.db import checkpoint_store
+
+    # 从 watchlist 读取自选股
+    all_items = checkpoint_store.list_all("watchlist")
+    codes = [
+        item["source_name"]
+        for item in all_items
+        if item.get("enabled", True) and item.get("config", {}).get("type") in ("stock", None)
+    ]
+
     if not codes:
         return []
 
@@ -438,6 +589,15 @@ class FundFlowAggregator(BaseAggregator):
     data_domain = "fund_flow"
     task_interval = 300  # 5 分钟
 
+    SOURCE_CONFIGS = {
+        "northbound":       {"target_days": 60, "page_size": 60, "interval": 600},
+        "sector_flow_sina": {"target_days": 0, "page_size": 50, "interval": 1800, "default_mode": "incremental"},
+        "stock_flow":       {"target_days": 0, "page_size": 50, "interval": 1800, "default_mode": "incremental"},
+        "dragon_tiger_em":  {"target_days": 0, "page_size": 50, "interval": 21600, "default_mode": "incremental"},
+        "dragon_tiger_ths": {"target_days": 0, "page_size": 50, "interval": 21600, "default_mode": "incremental"},
+        "watchlist_data":   {"target_days": 0, "interval": 1800, "default_mode": "incremental"},
+    }
+
     def __init__(self):
         super().__init__()
         self._init_sources()
@@ -494,6 +654,15 @@ class FundFlowAggregator(BaseAggregator):
                 21600,
                 normalize_dragon_tiger_ths,
             ),
+            # 自选标的数据采集 — watchlist 驱动，30 分钟
+            SourceDef(
+                "watchlist_data",
+                lambda cp: _fetch_watchlist_data(
+                    clients.ths, clients.tencent, clients.sina, clients.eastmoney,
+                ),
+                1800,
+                _normalize_watchlist_data,
+            ),
         ]
 
     # checkpoint 现在统一由 base.py 的 checkpoint_store 管理
@@ -503,27 +672,45 @@ class FundFlowAggregator(BaseAggregator):
     # ==================== 入库 ====================
 
     def _save(self, items: list[dict]) -> int:
-        """改造后: 走 MarketFlowRepository (R2.5)
-
-        4 个 partial unique index 的 ON CONFLICT 由 repository 实现处理。
-        """
+        """路由写入：有 code 字段 → ft_watchlist_data，否则 → ft_market_flow"""
         if not items:
             return 0
-        # 过滤空数据(空 dict、空 list、None)
-        clean = []
+
+        watchlist_items = []
+        market_items = []
+
         for item in items:
-            if not item.get("data_type") or not item.get("trade_date"):
-                continue
             data = item.get("data")
             if data is None or (isinstance(data, (dict, list, str)) and len(data) == 0):
                 continue
-            clean.append({
-                "data_type": item["data_type"],
-                "trade_date": item["trade_date"],
-                "data": data,
-            })
-        from src.infrastructure.persistence.repositories import MarketFlowRepositoryImpl
-        return MarketFlowRepositoryImpl().upsert_batch(clean)
+
+            if item.get("code"):
+                # watchlist 数据 → ft_watchlist_data
+                watchlist_items.append({
+                    "code": item["code"],
+                    "data_type": item["data_type"],
+                    "trade_date": item.get("trade_date"),
+                    "data": data,
+                })
+            else:
+                # 全市场数据 → ft_market_flow
+                if not item.get("data_type") or not item.get("trade_date"):
+                    continue
+                market_items.append({
+                    "data_type": item["data_type"],
+                    "trade_date": item["trade_date"],
+                    "data": data,
+                })
+
+        saved = 0
+        if market_items:
+            from src.infrastructure.persistence.repositories import MarketFlowRepositoryImpl
+            saved += MarketFlowRepositoryImpl().upsert_batch(market_items)
+        if watchlist_items:
+            from src.infrastructure.persistence.repositories.watchlist_data_repository_impl import WatchlistDataRepositoryImpl
+            saved += WatchlistDataRepositoryImpl().save_batch(watchlist_items)
+
+        return saved
 
     # ==================== 查询 ====================
 

@@ -178,6 +178,16 @@ class MarketAggregator(BaseAggregator):
     data_domain = "market"
     task_interval = 60  # 1 分钟
 
+    SOURCE_CONFIGS = {
+        "market_overview":    {"target_days": 0, "interval": 120, "default_mode": "incremental"},
+        "market_environment": {"target_days": 0, "interval": 300, "default_mode": "incremental"},
+        "global_index":       {"target_days": 0, "interval": 300, "default_mode": "incremental"},
+        "futures_domestic":   {"target_days": 0, "interval": 300, "default_mode": "incremental"},
+        "futures_intl":       {"target_days": 0, "interval": 300, "default_mode": "incremental"},
+        "forex":              {"target_days": 0, "interval": 300, "default_mode": "incremental"},
+        "sector_ranking":     {"target_days": 0, "interval": 300, "default_mode": "incremental"},
+    }
+
     def __init__(self):
         super().__init__()
         self._init_sources()

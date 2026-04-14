@@ -186,8 +186,28 @@ class CollectionState(Base):
         String, nullable=False, comment="northbound/sector_flow_sina/cls/em_news/..."
     )
 
-    checkpoint: Mapped[dict] = mapped_column(
-        JSONB, default=dict, comment="增量游标,例 {'max_trade_date': '2026-04-11'}"
+    # 采集进度（原 checkpoint JSONB 提升为独立列）
+    mode: Mapped[str | None] = mapped_column(
+        String(16), default="incremental", comment="backfill / incremental"
+    )
+    target_time: Mapped[str | None] = mapped_column(
+        String(32), comment="回填目标时间"
+    )
+    newest_time: Mapped[str | None] = mapped_column(
+        String(32), comment="已采集最新时间"
+    )
+    oldest_time: Mapped[str | None] = mapped_column(
+        String(32), comment="已采集最早时间"
+    )
+    backfill_status: Mapped[str | None] = mapped_column(
+        String(16), comment="done / ceiling"
+    )
+    cursor: Mapped[dict | None] = mapped_column(
+        JSONB, comment="翻页游标（类型因源而异）"
+    )
+
+    config: Mapped[dict] = mapped_column(
+        JSONB, default=dict, comment="采集参数 {target_days,page_size,...}"
     )
 
     last_run_at: Mapped[datetime | None] = mapped_column(
@@ -221,4 +241,35 @@ class CollectionState(Base):
     )
 
     def __repr__(self) -> str:
-        return f"<CollectionState {self.aggregator}:{self.source_name} cp={self.checkpoint}>"
+        return f"<CollectionState {self.aggregator}:{self.source_name} mode={self.mode}>"
+
+
+# ==================== ft_watchlist_data ====================
+
+
+class WatchlistData(Base):
+    """自选标的采集数据（基金净值/持仓/个股资金流/行情等）
+
+    所有维度用 data_type 区分，按 (code, data_type, trade_date) 去重。
+    """
+    __tablename__ = "ft_watchlist_data"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    code: Mapped[str] = mapped_column(
+        String(16), nullable=False, comment="股票/基金代码"
+    )
+    data_type: Mapped[str] = mapped_column(
+        String(32), nullable=False, comment="数据维度: nav/holdings/stock_flow/..."
+    )
+    trade_date: Mapped[date | None] = mapped_column(
+        Date, comment="数据日期"
+    )
+    data: Mapped[dict] = mapped_column(
+        JSONB, nullable=False, comment="数据内容"
+    )
+    created_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+
+    def __repr__(self) -> str:
+        return f"<WatchlistData {self.code}:{self.data_type} {self.trade_date}>"

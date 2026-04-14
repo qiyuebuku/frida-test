@@ -1,9 +1,22 @@
 """全局配置 — 所有配置集中管理，支持环境变量覆盖
 
-优先级：环境变量 > 此文件默认值
+优先级：环境变量 > .env 文件 > 此文件默认值
 """
 
 import os
+from pathlib import Path
+
+# 自动加载 .env 文件（项目根目录）
+_env_file = Path(__file__).resolve().parents[3] / ".env"
+if _env_file.exists():
+    for line in _env_file.read_text().splitlines():
+        line = line.strip()
+        if not line or line.startswith("#"):
+            continue
+        key, _, value = line.partition("=")
+        key, value = key.strip(), value.strip()
+        if key and key not in os.environ:  # 不覆盖已设置的环境变量
+            os.environ[key] = value
 
 
 # ==================== 数据库 ====================

@@ -43,6 +43,11 @@ class NewsRepository(ABC):
         ...
 
     @abstractmethod
+    def find_recent_titles(self, days: int = 3) -> list[str]:
+        """取最近 N 天已入库的所有标题（增量采集用，范围比 today 更广）"""
+        ...
+
+    @abstractmethod
     def count(self) -> int:
         """全表行数(用于监控)"""
         ...

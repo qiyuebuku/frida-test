@@ -43,10 +43,11 @@ def test_r1_5_2_jsonb_auto_deserialize():
         if mf:
             assert isinstance(mf.data, dict), f"MarketFlow.data 类型 {type(mf.data)}"
 
-        # CollectionState.checkpoint 应该是 dict
+        # CollectionState.config 应该是 dict, mode 应该是 str
         cs = s.scalars(select(CollectionState).limit(1)).first()
         if cs:
-            assert isinstance(cs.checkpoint, dict), f"checkpoint 类型 {type(cs.checkpoint)}"
+            assert isinstance(cs.config, dict), f"config 类型 {type(cs.config)}"
+            assert cs.mode in ("backfill", "incremental", None), f"mode={cs.mode}"
 
 
 @pytest.mark.integration

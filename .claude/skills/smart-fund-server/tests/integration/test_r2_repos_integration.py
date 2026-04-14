@@ -171,17 +171,18 @@ def test_r2_2_collection_state_full_lifecycle(clean_test_tables):
     assert repo.get_checkpoint("news", "cls") == {}
     assert repo.is_enabled("news", "cls") is True
 
-    repo.update_success("news", "cls", {"max_trade_date": "2026-04-11"}, saved_count=5)
+    repo.update_success("news", "cls", {"mode": "backfill", "newest_time": "2026-04-11"}, saved_count=5)
     state = repo.get("news", "cls")
     assert state is not None
-    assert state["checkpoint"] == {"max_trade_date": "2026-04-11"}
+    assert state["mode"] == "backfill"
+    assert state["newest_time"] == "2026-04-11"
     assert state["total_runs"] == 1
     assert state["total_saved"] == 5
     assert state["consecutive_failures"] == 0
 
-    repo.update_success("news", "cls", {"max_trade_date": "2026-04-12"}, saved_count=3)
+    repo.update_success("news", "cls", {"newest_time": "2026-04-12"}, saved_count=3)
     state = repo.get("news", "cls")
-    assert state["checkpoint"] == {"max_trade_date": "2026-04-12"}
+    assert state["newest_time"] == "2026-04-12"
     assert state["total_runs"] == 2
     assert state["total_saved"] == 8
 
@@ -192,7 +193,8 @@ def test_r2_2_collection_state_full_lifecycle(clean_test_tables):
     assert state["total_runs"] == 3
 
     assert repo.reset("news", "cls") is True
-    assert repo.get_checkpoint("news", "cls") == {}
+    cp = repo.get_checkpoint("news", "cls")
+    assert cp["mode"] == "backfill"  # reset 后回到 backfill
 
     repo.disable("news", "cls")
     assert repo.is_enabled("news", "cls") is False

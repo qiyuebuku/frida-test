@@ -444,97 +444,493 @@ def normalize_xueqiu(raw_items) -> list[dict]:
 
 
 class NewsAggregator(BaseAggregator):
-    """新闻事件聚合
+    """新闻事件聚合 — 时间驱动模型
 
     9 个数据源，统一采集到 ft_news，用 fingerprint 去重。
+
+    采集策略（全部以时间为准）:
+        backfill 模式: 从最新向历史方向翻页，直到数据时间 <= target_time 或触顶
+        incremental 模式: 每次拉取 newest_time 之后的新数据
     """
 
     data_domain = "news"
-    task_interval = 180  # 3 分钟
+    task_interval = 180
+
+    # 源模板配置 — 仅在首次初始化时写入 DB，运行时从 DB 读取
+    SOURCE_CONFIGS = {
+        "cls":           {"target_days": 1,   "page_size": 50, "interval": 180},    # API 只有几小时数据
+        "gov":           {"target_days": 90,  "page_size": 20, "interval": 10800},   # 政府网站历史深
+        "pboc_omo":      {"target_days": 180, "page_size": 50, "interval": 86400},   # 央行发布频率低
+        "pboc_monetary": {"target_days": 180, "page_size": 50, "interval": 86400},
+        "em_news":       {"target_days": 3,   "page_size": 50, "interval": 900},     # 东方财富搜索 API 约 2-3 天深度
+        "em_reports":    {"target_days": 7,   "page_size": 50, "interval": 7200},    # 研报 API 约 3-7 天深度
+        "ths":           {"target_days": 60,  "page_size": 20, "interval": 1800},    # 同花顺可翻很深
+        "sina":          {"target_days": 60,  "page_size": 20, "interval": 3600},    # 新浪可翻很深
+        "xueqiu":        {"target_days": 4,   "page_size": 10, "interval": 1800},    # 雪球 API 最多 1000 条/4 天
+    }
+
+    # MAX_PAGES_PER_TICK 继承自 BaseAggregator
 
     def __init__(self):
         super().__init__()
         self._init_sources()
         self._exec_ddl(DDL)
+        self._backfill_cursor = None  # fetch 方法设置，_compute_checkpoint 读取
+
+    # ==================== 时间工具 ====================
+
+    @staticmethod
+    def _extract_item_date(item: dict) -> str:
+        """从原始 item 提取日期 YYYY-MM-DD"""
+        for key in ("ctime", "rtime", "time", "created_at"):
+            v = item.get(key)
+            if v:
+                try:
+                    ts = float(v)
+                    if ts > 1e12:
+                        ts = ts / 1000
+                    return datetime.fromtimestamp(ts, tz=TZ_CST).strftime("%Y-%m-%d")
+                except (ValueError, TypeError, OSError):
+                    pass
+        for key in ("date", "published_at", "publishDate"):
+            v = item.get(key)
+            if isinstance(v, str) and len(v) >= 10:
+                return v[:10]
+        return ""
+
+    @staticmethod
+    def _extract_item_timestamp(item: dict) -> float:
+        """从原始 item 提取精确时间戳（秒），用于回填进展判断（天级日期太粗）"""
+        for key in ("ctime", "rtime", "time", "created_at"):
+            v = item.get(key)
+            if v:
+                try:
+                    ts = float(v)
+                    if ts > 1e12:
+                        ts = ts / 1000
+                    return ts
+                except (ValueError, TypeError):
+                    pass
+        for key in ("date", "published_at", "publishDate"):
+            v = item.get(key)
+            if isinstance(v, str) and len(v) >= 10:
+                try:
+                    return datetime.strptime(v[:10], "%Y-%m-%d").replace(tzinfo=TZ_CST).timestamp()
+                except Exception:
+                    pass
+        return 0.0
+
+    @staticmethod
+    def _extract_normalized_date(item: dict) -> str:
+        """从 normalized item 提取日期（published_at 是 ISO 字符串）"""
+        pa = item.get("published_at", "")
+        if not pa:
+            return ""
+        return str(pa)[:10]
+
+    @staticmethod
+    def _unwrap_items(raw) -> list[dict]:
+        """解包常见嵌套结构"""
+        if isinstance(raw, list):
+            return [i for i in raw if isinstance(i, dict)]
+        if isinstance(raw, dict):
+            data = raw.get("data", raw)
+            if isinstance(data, dict):
+                for key in ("list", "items", "data", "articles", "roll_data"):
+                    v = data.get(key)
+                    if isinstance(v, list):
+                        return [i for i in v if isinstance(i, dict)]
+            if isinstance(data, list):
+                return [i for i in data if isinstance(i, dict)]
+        return []
+
+    async def _fetch_content_for_items(self, items, content_client, max_content=30):
+        """批量并发抓取详情页正文"""
+        import asyncio as _asyncio
+        if not items or not content_client:
+            return items
+        fetch_fn = getattr(content_client, "get_content", None) or \
+                   getattr(content_client, "fetch_article_content", None)
+        if not fetch_fn:
+            return items
+        to_fetch = [i for i in items if i.get("url")][:max_content]
+        for i in range(0, len(to_fetch), 10):
+            batch = to_fetch[i:i + 10]
+            contents = await _asyncio.gather(
+                *[fetch_fn(item["url"]) for item in batch], return_exceptions=True
+            )
+            for item, c in zip(batch, contents):
+                if isinstance(c, str) and c:
+                    item["content"] = c
+                    item["content_full"] = c
+        return items
+
+    # ==================== 回填循环（核心） ====================
+
+    BACKFILL_SAVE_INTERVAL = 5  # 每 5 页存一次
+
+    async def _backfill_loop(self, source_name, fetch_one_page, cp,
+                             normalize_fn=None, content_client=None):
+        """通用回填循环：一直翻页直到时间满足或触顶，每 5 页落库一次
+
+        Args:
+            source_name: 源名
+            fetch_one_page: async (cursor) -> (items: list[dict], next_cursor)
+            cp: checkpoint dict（含 target_time, cursor, _config, _lock）
+            normalize_fn: 可选，normalize 函数（传入则每批自动 normalize+save+update_checkpoint）
+            content_client: 可选，详情页抓取 client（flush 时批量抓正文）
+        """
+        from src.infrastructure.db import checkpoint_store
+
+        target_time = cp.get("target_time", "")
+        cursor = cp.get("cursor")
+        lock = cp.get("_lock")
+
+        all_items = []       # 当前批次缓冲（每 5 页清空）
+        total_saved = 0
+        prev_oldest_ts = None
+        done = False
+
+        for page_num in range(1, self.MAX_PAGES_PER_TICK + 1):
+            # 续锁
+            if lock and page_num % 5 == 0:
+                lock.renew()
+
+            try:
+                items, next_cursor = await fetch_one_page(cursor)
+            except Exception as e:
+                logger.warning(f"[news:{source_name}] 回填 page={page_num} 失败: {e}")
+                break
+
+            if not items:
+                logger.info(f"[news:{source_name}] 回填触顶: 返回空列表 (page={page_num})")
+                self._backfill_cursor = "__CEILING__"
+                done = True
+                break
+
+            # 游标无效检测
+            if next_cursor is not None and (next_cursor == -1 or next_cursor == cursor):
+                logger.info(f"[news:{source_name}] 回填触顶: 游标无效 cursor={next_cursor} (page={page_num})")
+                all_items.extend(items)
+                self._backfill_cursor = "__CEILING__"
+                done = True
+                break
+
+            all_items.extend(items)
+
+            # 提取本页最早时间戳
+            timestamps = [self._extract_item_timestamp(i) for i in items]
+            timestamps = [t for t in timestamps if t > 0]
+            if not timestamps:
+                cursor = next_cursor
+                continue
+
+            page_oldest_ts = min(timestamps)
+            page_oldest_str = datetime.fromtimestamp(page_oldest_ts, tz=TZ_CST).strftime("%m/%d %H:%M")
+            page_oldest_date = datetime.fromtimestamp(page_oldest_ts, tz=TZ_CST).strftime("%Y-%m-%d")
+
+            # 时间达标
+            if target_time and page_oldest_date <= target_time:
+                logger.info(f"[news:{source_name}] 回填完成: oldest={page_oldest_str} <= target={target_time}")
+                self._backfill_cursor = "__DONE__"
+                done = True
+                break
+
+            # 时间无进展
+            if prev_oldest_ts is not None and page_oldest_ts >= prev_oldest_ts:
+                logger.info(
+                    f"[news:{source_name}] 回填触顶: 时间无进展 {page_oldest_str}，目标 {target_time}"
+                )
+                self._backfill_cursor = "__CEILING__"
+                done = True
+                break
+
+            prev_oldest_ts = page_oldest_ts
+            cursor = next_cursor
+
+            logger.info(f"[news:{source_name}] 回填 page={page_num} items={len(items)} oldest={page_oldest_str}")
+
+            # ── 每 5 页落库一次 ──
+            if normalize_fn and page_num % self.BACKFILL_SAVE_INTERVAL == 0:
+                saved = await self._flush_backfill_batch(source_name, all_items, normalize_fn, cursor, cp, content_client)
+                total_saved += saved
+                all_items = []
+
+        else:
+            # 安全阀
+            self._backfill_cursor = cursor
+            logger.info(f"[news:{source_name}] 回填暂停: 达到 {self.MAX_PAGES_PER_TICK} 页上限，cursor={cursor}")
+
+        # 最后剩余的 items 也要落库
+        if normalize_fn and all_items:
+            saved = await self._flush_backfill_batch(source_name, all_items, normalize_fn, cursor, cp, content_client)
+            total_saved += saved
+            all_items = []
+
+        # normalize_fn 模式下，tick() 不会走到 _compute_checkpoint，
+        # 所以模式切换必须在这里完成
+        if normalize_fn and self._backfill_cursor in ("__DONE__", "__CEILING__"):
+            is_done = self._backfill_cursor == "__DONE__"
+            # 读当前 state 拿 newest/oldest/target 用于日志
+            state = checkpoint_store.get(self.data_domain, source_name) or {}
+            final_cp = {
+                "mode": "incremental",
+                "cursor": None,
+                "backfill_status": "done" if is_done else "ceiling",
+                "newest_time": state.get("newest_time"),
+                "oldest_time": state.get("oldest_time"),
+                "target_time": state.get("target_time"),
+            }
+            checkpoint_store.update_success(self.data_domain, source_name, final_cp, 0)
+            if is_done:
+                logger.info(f"[news:{source_name}] 回填完成 → 切增量")
+            else:
+                logger.warning(
+                    f"[news:{source_name}] 回填触顶 → 切增量: "
+                    f"覆盖 {state.get('oldest_time')} ~ {state.get('newest_time')}, "
+                    f"目标 {state.get('target_time')} 未达到"
+                )
+            self._backfill_cursor = None
+
+        if normalize_fn:
+            logger.info(f"[news:{source_name}] 回填批量入库合计 {total_saved} 条")
+
+        return all_items  # normalize_fn 模式下返回空（已入库），否则返回全部
+
+    async def _flush_backfill_batch(self, source_name, raw_items, normalize_fn, cursor, cp,
+                                     content_client=None):
+        """把一批 raw items normalize → 批量抓正文 → save → update checkpoint"""
+        from src.infrastructure.db import checkpoint_store
+
+        import time as _time
+
+        items = normalize_fn(raw_items)
+
+        # 先用 fingerprint 过滤已入库的，避免对已有数据白抓正文
+        if content_client and items:
+            existing_fps = set()
+            try:
+                from src.infrastructure.connections import get_session
+                from src.infrastructure.persistence.models.collection import News
+                from sqlalchemy import select
+                fps = [i.get("fingerprint") for i in items if i.get("fingerprint")]
+                if fps:
+                    with get_session() as s:
+                        existing_fps = set(s.scalars(
+                            select(News.fingerprint).where(News.fingerprint.in_(fps))
+                        ).all())
+            except Exception:
+                pass
+            new_items = [i for i in items if i.get("fingerprint") not in existing_fps]
+        else:
+            new_items = items
+
+        # 只为新条目抓正文
+        t_content = 0
+        if content_client and new_items:
+            t0 = _time.monotonic()
+            await self._fetch_content_for_items(new_items, content_client)
+            t_content = _time.monotonic() - t0
+
+        t0 = _time.monotonic()
+        saved = self._save(items) if items else 0  # 全量传入 _save，fingerprint 去重
+        t_save = _time.monotonic() - t0
+
+        # 中间 checkpoint：保存 cursor 进度（不切模式，mode 还是 backfill）
+        mid_cp = {k: v for k, v in cp.items() if not k.startswith("_")}
+        mid_cp["cursor"] = cursor
+        # 更新时间范围
+        dates = [str(i.get("published_at", "")) for i in items if i.get("published_at")]
+        if dates:
+            newest = max(dates)
+            oldest = min(dates)
+            prev_newest = mid_cp.get("newest_time") or ""
+            prev_oldest = mid_cp.get("oldest_time") or ""
+            mid_cp["newest_time"] = max(newest, prev_newest) if prev_newest else newest
+            mid_cp["oldest_time"] = min(oldest, prev_oldest) if prev_oldest else oldest
+
+        checkpoint_store.update_success(self.data_domain, source_name, mid_cp, saved)
+        content_info = f"，抓正文 {len(new_items)}篇 {t_content:.1f}s" if t_content > 0.1 else ""
+        skip_info = f"，跳过已有 {len(items) - len(new_items)}篇" if content_client and len(new_items) < len(items) else ""
+        logger.info(f"[news:{source_name}] 批量落库 {saved} 条，cursor={cursor} (save={t_save:.1f}s{content_info}{skip_info})")
+        return saved
+
+    # ==================== 各源 fetch 方法 ====================
+
+    async def _fetch_cls(self, cp: dict) -> list:
+        from src.infrastructure import clients
+        mode = cp.get("mode", "incremental")
+
+        if mode == "backfill":
+            async def fetch_page(cursor):
+                items = await clients.cls.get_telegraph_list(rn=50, last_time=cursor)
+                next_cursor = items[-1].get("ctime") if items else cursor
+                return items, next_cursor
+            return await self._backfill_loop("cls", fetch_page, cp, normalize_fn=normalize_cls)
+        else:
+            newest = cp.get("newest_time")
+            if newest:
+                ctime = int(datetime.strptime(newest[:10], "%Y-%m-%d").replace(tzinfo=TZ_CST).timestamp())
+                return await clients.cls.get_telegraph_since(ctime)
+            return await clients.cls.get_telegraph_list(rn=50)
+
+    async def _fetch_gov(self, cp: dict) -> list:
+        from src.infrastructure import clients
+        mode = cp.get("mode", "incremental")
+        newest = cp.get("newest_time")
+        # Gov 是单次拉取，无翻页
+        if mode == "incremental" and newest:
+            return await _fetch_gov_all_depts(clients.gov, newest)
+        return await _fetch_gov_all_depts(clients.gov, None)
+
+    async def _fetch_pboc_omo(self, cp: dict) -> list:
+        from src.infrastructure import clients
+        mode = cp.get("mode", "incremental")
+        newest = cp.get("newest_time")
+        if mode == "incremental" and newest:
+            raw = await clients.pboc.get_omo_announcements_since(newest)
+        else:
+            raw = await clients.pboc.get_omo_announcements(limit=50)
+        return await self._fetch_content_for_items(raw, clients.pboc)
+
+    async def _fetch_pboc_monetary(self, cp: dict) -> list:
+        from src.infrastructure import clients
+        mode = cp.get("mode", "incremental")
+        newest = cp.get("newest_time")
+        if mode == "incremental" and newest:
+            raw = await clients.pboc.get_monetary_policy_since(newest)
+        else:
+            raw = await clients.pboc.get_monetary_policy(limit=50)
+        return await self._fetch_content_for_items(raw, clients.pboc)
+
+    async def _fetch_em_news(self, cp: dict) -> list:
+        from src.infrastructure import clients
+        mode = cp.get("mode", "incremental")
+        config = cp.get("_config") or {}
+        page_size = config.get("page_size", 50)
+
+        if mode == "backfill":
+            async def fetch_page(cursor):
+                page = cursor or 1
+                items = await clients.eastmoney.get_news_by_keyword("A股", page_size=page_size, page=page, with_content=False)
+                return items, page + 1
+            return await self._backfill_loop("em_news", fetch_page, cp,
+                                            normalize_fn=normalize_eastmoney_news, content_client=clients.eastmoney)
+        else:
+            newest = cp.get("newest_time")
+            if newest:
+                return await clients.eastmoney.get_news_by_keyword_since("A股", newest)
+            return await clients.eastmoney.get_news_by_keyword("A股", page_size=page_size)
+
+    async def _fetch_em_reports(self, cp: dict) -> list:
+        from src.infrastructure import clients
+        mode = cp.get("mode", "incremental")
+        config = cp.get("_config") or {}
+        page_size = config.get("page_size", 50)
+
+        if mode == "backfill":
+            async def fetch_page(cursor):
+                page = cursor or 1
+                items = await clients.eastmoney.get_research_reports(page_size=page_size, page=page)
+                return items, page + 1
+            return await self._backfill_loop("em_reports", fetch_page, cp,
+                                            normalize_fn=normalize_eastmoney_reports, content_client=clients.eastmoney)
+        else:
+            newest = cp.get("newest_time")
+            if newest:
+                return await clients.eastmoney.get_research_reports_since(newest)
+            return await clients.eastmoney.get_research_reports(page_size=page_size)
+
+    async def _fetch_ths(self, cp: dict) -> list:
+        from src.infrastructure import clients
+        mode = cp.get("mode", "incremental")
+
+        if mode == "backfill":
+            async def fetch_page(cursor):
+                page = cursor or 1
+                # 回填只拉列表，不抓正文（正文后续增量补抓），速度快 10 倍
+                raw = await clients.ths.get_news_feed(page=page, with_content=False)
+                items = self._unwrap_items(raw)
+                return items, page + 1
+            return await self._backfill_loop("ths", fetch_page, cp,
+                                            normalize_fn=normalize_ths, content_client=clients.ths)
+        else:
+            newest = cp.get("newest_time")
+            raw = await clients.ths.get_news_feed(with_content=False)
+            items = self._unwrap_items(raw)
+            if newest:
+                items = [i for i in items if self._extract_item_date(i) >= newest]
+            if not items:
+                return []
+            return await self._fetch_content_for_items(items, clients.ths)
+
+    async def _fetch_sina(self, cp: dict) -> list:
+        from src.infrastructure import clients
+        mode = cp.get("mode", "incremental")
+
+        if mode == "backfill":
+            async def fetch_page(cursor):
+                page = cursor or 1
+                raw = await clients.sina.get_news(page=page, with_content=True)
+                items = self._unwrap_items(raw)
+                return items, page + 1
+            return await self._backfill_loop("sina", fetch_page, cp,
+                                            normalize_fn=normalize_sina, content_client=clients.sina)
+        else:
+            newest = cp.get("newest_time")
+            raw = await clients.sina.get_news(with_content=False)
+            items = self._unwrap_items(raw)
+            if newest:
+                items = [i for i in items if self._extract_item_date(i) >= newest]
+            if not items:
+                return []
+            return await self._fetch_content_for_items(items, clients.sina)
+
+    async def _fetch_xueqiu(self, cp: dict) -> list:
+        from src.infrastructure import clients
+        mode = cp.get("mode", "incremental")
+
+        if mode == "backfill":
+            async def fetch_page(cursor):
+                # 传 max_id 给 API 做服务端分页，而不是拉全量再客户端过滤
+                max_id = cursor if cursor is not None else -1
+                raw = await clients.xueqiu.get_live_news(count=50, max_id=max_id)
+                items = raw.get("data", {}).get("items", []) if isinstance(raw, dict) else []
+                # API 返回 next_max_id 作为下一页游标
+                next_cursor = raw.get("data", {}).get("next_max_id") if isinstance(raw, dict) else None
+                if not next_cursor and items:
+                    next_cursor = min(i.get("id", 0) for i in items)
+                return items, next_cursor
+            return await self._backfill_loop("xueqiu", fetch_page, cp, normalize_fn=normalize_xueqiu)
+        else:
+            return await clients.xueqiu.get_live_news()
+
+    # ==================== 源注册 ====================
 
     def _init_sources(self):
-        from src.infrastructure import clients
-
         self.sources = [
-            # P0: 财联社快讯 — 3 分钟
-            SourceDef(
-                "cls",
-                lambda cp: clients.cls.get_telegraph_since(cp) if cp else clients.cls.get_telegraph_list(rn=30),
-                180,
-                normalize_cls,
-            ),
-            # P0: 政府网站（多部委合并采集）— 3 小时
-            SourceDef(
-                "gov",
-                lambda cp: _fetch_gov_all_depts(clients.gov, cp),
-                10800,
-                normalize_gov,
-            ),
-            # P0: 人民银行公开市场操作 — 24 小时（含正文抓取）
-            SourceDef(
-                "pboc_omo",
-                lambda cp: _fetch_with_content(
-                    clients.pboc.get_omo_announcements_since(cp) if cp else clients.pboc.get_omo_announcements(),
-                    clients.pboc,
-                ),
-                86400,
-                normalize_pboc,
-            ),
-            # P1: 人民银行货币政策 — 24 小时（含正文抓取）
-            SourceDef(
-                "pboc_monetary",
-                lambda cp: _fetch_with_content(
-                    clients.pboc.get_monetary_policy_since(cp) if cp else clients.pboc.get_monetary_policy(),
-                    clients.pboc,
-                ),
-                86400,
-                normalize_pboc,
-            ),
-            # P1: 东方财富资讯 — 15 分钟
-            SourceDef(
-                "em_news",
-                lambda cp: clients.eastmoney.get_news_by_keyword_since("A股", cp) if cp else clients.eastmoney.get_news_by_keyword("A股"),
-                900,
-                normalize_eastmoney_news,
-            ),
-            # P2: 券商研报 — 2 小时
-            SourceDef(
-                "em_reports",
-                lambda cp: clients.eastmoney.get_research_reports_since(cp) if cp else clients.eastmoney.get_research_reports(),
-                7200,
-                normalize_eastmoney_reports,
-            ),
-            # P2: 同花顺滚动快讯 — 30 分钟
-            SourceDef(
-                "ths",
-                lambda cp: clients.ths.get_news_feed(),
-                1800,
-                normalize_ths,
-            ),
-            # P2: 新浪财经 — 1 小时
-            SourceDef(
-                "sina",
-                lambda cp: clients.sina.get_news(),
-                3600,
-                normalize_sina,
-            ),
-            # P2: 雪球 7x24 快讯 — 30 分钟
-            SourceDef(
-                "xueqiu",
-                lambda cp: clients.xueqiu.get_live_news_since(cp) if cp else clients.xueqiu.get_live_news(),
-                1800,
-                normalize_xueqiu,
-            ),
+            SourceDef("cls", self._fetch_cls, 180, normalize_cls),
+            SourceDef("gov", self._fetch_gov, 10800, normalize_gov),
+            SourceDef("pboc_omo", self._fetch_pboc_omo, 86400, normalize_pboc),
+            SourceDef("pboc_monetary", self._fetch_pboc_monetary, 86400, normalize_pboc),
+            SourceDef("em_news", self._fetch_em_news, 900, normalize_eastmoney_news),
+            SourceDef("em_reports", self._fetch_em_reports, 7200, normalize_eastmoney_reports),
+            SourceDef("ths", self._fetch_ths, 1800, normalize_ths),
+            SourceDef("sina", self._fetch_sina, 3600, normalize_sina),
+            SourceDef("xueqiu", self._fetch_xueqiu, 1800, normalize_xueqiu),
         ]
 
-    # ==================== checkpoint ====================
-    # 旧的 _get_checkpoint 已删除 (R2.3),checkpoint 现在统一由 base.py
-    # 通过 checkpoint_store / CollectionStateRepository 管理
+    # ==================== backfill 信号 hook ====================
+
+    def _get_backfill_signal(self, source_name: str) -> str | None:
+        """把 _backfill_loop 设置的 cursor 信号转发给 BaseAggregator"""
+        signal = self._backfill_cursor
+        self._backfill_cursor = None
+        if signal == "__DONE__":
+            return "done"
+        if signal == "__CEILING__":
+            return "ceiling"
+        return signal  # 翻页游标或 None
 
     # ==================== 入库 ====================
 

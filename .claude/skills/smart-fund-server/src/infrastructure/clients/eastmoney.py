@@ -78,7 +78,7 @@ class EastmoneyClient(BaseClient):
             return {"status_code": -1, "data": None, "msg": data.get("message", "无数据")}
         return {"status_code": 0, "data": data["result"]}
 
-    @cached(ttl=14400, source="eastmoney", source_name="东方财富", domain="market", frequency="daily", market="a_share")
+    @cached(ttl=1209600, source="eastmoney", source_name="东方财富", domain="market", frequency="daily", market="a_share")
     async def get_stock_valuation_history(self, stock_code: str, years: int = 3) -> list[dict]:
         """从东方财富获取单只股票的历史 PE_TTM/PB 数据
         stock_code: 纯数字股票代码，如 "300308"
@@ -128,7 +128,6 @@ class EastmoneyClient(BaseClient):
             page += 1
         return all_data
 
-    @cached(ttl=3600, source="eastmoney", source_name="东方财富", domain="fund_flow", frequency="daily", market="a_share")
     async def get_dragon_tiger(self, tab: str = "stock", days: int = 3, count: int = 30) -> dict:
         """龙虎榜数据
 
@@ -234,7 +233,6 @@ class EastmoneyClient(BaseClient):
 
         return {"status_code": -1, "msg": f"未知tab: {tab}"}
 
-    @cached(ttl=600, source="eastmoney", source_name="东方财富", domain="fund_flow", frequency="daily", market="a_share")
     async def get_capital_flow(self, tab: str = "market", days: int = 20) -> dict:
         """资金流向
 
@@ -445,7 +443,6 @@ class EastmoneyClient(BaseClient):
         except Exception:
             return []
 
-    @cached(ttl=3600, source="eastmoney", source_name="东方财富", domain="market", frequency="daily", market="a_share")
     async def get_yesterday_limit_performance(self) -> dict:
         """昨日涨停今日表现（东方财富 push2ex API）"""
         from datetime import date
@@ -538,7 +535,6 @@ class EastmoneyClient(BaseClient):
 
         return {"status_code": 0, "data": {"stocks": stocks, "stats": stats, "date": qdate}}
 
-    @cached(ttl=3600, source="eastmoney", source_name="东方财富", domain="market", frequency="daily", market="a_share")
     async def get_stock_financial(self, code: str, limit: int = 10) -> dict:
         """获取个股财务数据（EPS/营收/净利/ROE等）
 
@@ -619,7 +615,7 @@ class EastmoneyClient(BaseClient):
             return f"1.{code}"
         return f"0.{code}"
 
-    @cached(ttl=3600, source="eastmoney", source_name="东方财富", domain="market", frequency="daily", market="fund")
+    @cached(ttl=1209600, source="eastmoney", source_name="东方财富", domain="market", frequency="daily", market="fund")
     async def search_fund(self, keyword: str, limit: int = 20) -> dict:
         """搜索基金（使用东方财富 API）
 
@@ -668,7 +664,7 @@ class EastmoneyClient(BaseClient):
         except Exception as e:
             return {"status_code": -1, "status_msg": str(e), "data": []}
 
-    @cached(ttl=14400, source="eastmoney", source_name="东方财富", domain="market", frequency="daily", market="a_share")
+    @cached(ttl=1209600, source="eastmoney", source_name="东方财富", domain="market", frequency="daily", market="a_share")
     async def get_stock_kline(self, code: str, period: str = "101", limit: int = 60) -> dict:
         """获取个股K线数据
 
@@ -738,7 +734,6 @@ class EastmoneyClient(BaseClient):
             },
         }
 
-    @cached(ttl=600, source="eastmoney", source_name="东方财富", domain="fund_flow", frequency="daily", market="a_share")
     async def get_stock_capital_flow(self, code: str, days: int = 20) -> dict:
         """获取个股资金流向（主力/超大单/大单/中单/小单）
 
@@ -808,7 +803,6 @@ class EastmoneyClient(BaseClient):
             },
         }
 
-    @cached(ttl=60, source="eastmoney", source_name="东方财富", domain="market", frequency="realtime", market="a_share")
     async def get_stock_changes(self, change_type: str = "all", count: int = 50) -> dict:
         """盘中异动（东方财富 push2ex API）
 
@@ -900,7 +894,7 @@ class EastmoneyClient(BaseClient):
             "availableTypes": list(self.CHANGE_TYPE_GROUPS.keys()) + list(self.CHANGE_TYPE_ALIAS.keys()),
         }}
 
-    @cached(ttl=14400, source="eastmoney", source_name="东方财富", domain="market", frequency="daily", market="a_share")
+    @cached(ttl=1209600, source="eastmoney", source_name="东方财富", domain="market", frequency="daily", market="a_share")
     async def get_index_kline(self, secid: str, beg_date: str, lmt: int = 250) -> dict:
         """获取指数/ETF K线数据（含重试）
 
@@ -934,7 +928,7 @@ class EastmoneyClient(BaseClient):
                     await asyncio.sleep(1)
         return {}
 
-    @cached(ttl=600, source="eastmoney", source_name="东方财富", domain="fund_flow", frequency="daily", market="a_share")
+    # 不缓存：每天有新数据，同参数不同时间返回不同结果
     async def get_northbound_recent(self, page_size: int = 30) -> dict:
         """北向资金近N个交易日成交额（RPT_MUTUAL_DEAL_HISTORY，MUTUAL_TYPE=005 合计）
 
@@ -959,7 +953,6 @@ class EastmoneyClient(BaseClient):
         resp.raise_for_status()
         return resp.json()
 
-    @cached(ttl=3600, source="eastmoney", source_name="东方财富", domain="market", frequency="daily", market="a_share")
     async def get_margin_recent(self, page_size: int = 30) -> dict:
         """全市场融资融券余额（近N个交易日）
 
@@ -983,7 +976,6 @@ class EastmoneyClient(BaseClient):
         resp.raise_for_status()
         return resp.json()
 
-    @cached(ttl=60, source="eastmoney", source_name="东方财富", domain="market", frequency="realtime", market="a_share")
     async def get_indices_realtime(self, secids: str) -> dict:
         """获取主要指数实时行情（含涨跌家数），带重试
 
@@ -1014,7 +1006,6 @@ class EastmoneyClient(BaseClient):
                 await asyncio.sleep(1)
         return {}
 
-    @cached(ttl=300, source="eastmoney", source_name="东方财富", domain="fund_flow", frequency="realtime", market="a_share")
     async def get_index_capital_flow_daily(self, secid: str) -> dict:
         """获取指数当日资金流向，带重试
 
@@ -1047,7 +1038,7 @@ class EastmoneyClient(BaseClient):
 
     # ==================== 宏观经济指标 ====================
 
-    @cached(ttl=3600, source="eastmoney", source_name="东方财富", domain="macro", frequency="monthly", market="macro")
+    @cached(ttl=1209600, source="eastmoney", source_name="东方财富", domain="macro", frequency="monthly", market="macro")
     async def get_macro_indicator(self, report_name: str, page_size: int = 12) -> list:
         """宏观经济指标通用查询
 
@@ -1063,59 +1054,60 @@ class EastmoneyClient(BaseClient):
             return result["data"].get("data", [])
         return []
 
-    @cached(ttl=3600, source="eastmoney", source_name="东方财富", domain="macro", frequency="monthly", market="macro")
+    @cached(ttl=1209600, source="eastmoney", source_name="东方财富", domain="macro", frequency="monthly", market="macro")
     async def get_macro_cpi(self, page_size: int = 12) -> list:
         """CPI 居民消费价格指数"""
         return await self.get_macro_indicator("RPT_ECONOMY_CPI", page_size)
 
-    @cached(ttl=3600, source="eastmoney", source_name="东方财富", domain="macro", frequency="monthly", market="macro")
+    @cached(ttl=1209600, source="eastmoney", source_name="东方财富", domain="macro", frequency="monthly", market="macro")
     async def get_macro_ppi(self, page_size: int = 12) -> list:
         """PPI 工业生产者出厂价格指数"""
         return await self.get_macro_indicator("RPT_ECONOMY_PPI", page_size)
 
-    @cached(ttl=3600, source="eastmoney", source_name="东方财富", domain="macro", frequency="monthly", market="macro")
+    @cached(ttl=1209600, source="eastmoney", source_name="东方财富", domain="macro", frequency="monthly", market="macro")
     async def get_macro_pmi(self, page_size: int = 12) -> list:
         """PMI 制造业采购经理指数"""
         return await self.get_macro_indicator("RPT_ECONOMY_PMI", page_size)
 
-    @cached(ttl=3600, source="eastmoney", source_name="东方财富", domain="macro", frequency="monthly", market="macro")
+    @cached(ttl=1209600, source="eastmoney", source_name="东方财富", domain="macro", frequency="monthly", market="macro")
     async def get_macro_gdp(self, page_size: int = 12) -> list:
         """GDP"""
         return await self.get_macro_indicator("RPT_ECONOMY_GDP", page_size)
 
-    @cached(ttl=3600, source="eastmoney", source_name="东方财富", domain="macro", frequency="monthly", market="macro")
+    @cached(ttl=1209600, source="eastmoney", source_name="东方财富", domain="macro", frequency="monthly", market="macro")
     async def get_macro_money_supply(self, page_size: int = 12) -> list:
         """M2 货币供应量"""
         return await self.get_macro_indicator("RPT_ECONOMY_CURRENCY_SUPPLY", page_size)
 
-    @cached(ttl=3600, source="eastmoney", source_name="东方财富", domain="macro", frequency="monthly", market="macro")
+    @cached(ttl=1209600, source="eastmoney", source_name="东方财富", domain="macro", frequency="monthly", market="macro")
     async def get_macro_rmb_loan(self, page_size: int = 12) -> list:
         """人民币贷款（社融核心组成）"""
         return await self.get_macro_indicator("RPT_ECONOMY_RMB_LOAN", page_size)
 
-    @cached(ttl=3600, source="eastmoney", source_name="东方财富", domain="macro", frequency="monthly", market="macro")
+    @cached(ttl=1209600, source="eastmoney", source_name="东方财富", domain="macro", frequency="monthly", market="macro")
     async def get_macro_forex_reserve(self, page_size: int = 12) -> list:
         """外汇储备"""
         return await self.get_macro_indicator("RPT_ECONOMY_GOLD_CURRENCY", page_size)
 
-    @cached(ttl=3600, source="eastmoney", source_name="东方财富", domain="macro", frequency="monthly", market="macro")
+    @cached(ttl=1209600, source="eastmoney", source_name="东方财富", domain="macro", frequency="monthly", market="macro")
     async def get_macro_fixed_asset_invest(self, page_size: int = 12) -> list:
         """固定资产投资"""
         return await self.get_macro_indicator("RPT_ECONOMY_ASSET_INVEST", page_size)
 
-    @cached(ttl=3600, source="eastmoney", source_name="东方财富", domain="macro", frequency="monthly", market="macro")
+    @cached(ttl=1209600, source="eastmoney", source_name="东方财富", domain="macro", frequency="monthly", market="macro")
     async def get_macro_fdi(self, page_size: int = 12) -> list:
         """外商直接投资 (FDI)"""
         return await self.get_macro_indicator("RPT_ECONOMY_FDI", page_size)
 
     # ==================== 券商研报 ====================
 
-    @cached(ttl=3600, source="eastmoney", source_name="东方财富", domain="news", frequency="daily", market="a_share")
-    async def get_research_reports(self, page_size: int = 20, industry: str = "*", rating: str = "*") -> list:
+    # 不缓存：页码翻页，page=N 在不同时间返回不同数据
+    async def get_research_reports(self, page_size: int = 20, page: int = 1, industry: str = "*", rating: str = "*") -> list:
         """获取券商研报列表
 
         Args:
-            page_size: 返回条数
+            page_size: 每页条数
+            page: 页码（从 1 开始）
             industry: 行业筛选（* 为全部）
             rating: 评级筛选（* 为全部）
 
@@ -1132,7 +1124,7 @@ class EastmoneyClient(BaseClient):
                 "ratingChange": "*",
                 "beginTime": "",
                 "endTime": "",
-                "pageNo": "1",
+                "pageNo": str(page),
                 "fields": "",
                 "qType": "0",
                 "orgCode": "",
@@ -1155,19 +1147,20 @@ class EastmoneyClient(BaseClient):
         r'<div[^>]*class="[^"]*article-body[^"]*"[^>]*>',
     ]
 
-    @cached(ttl=3600, source="eastmoney", source_name="东方财富", domain="news", frequency="daily", market="a_share")
+    @cached(ttl=1209600, source="eastmoney", source_name="东方财富", domain="news", frequency="daily", market="a_share")
     async def fetch_article_content(self, url: str) -> str:
         """抓取东方财富文章正文"""
         html = await self._fetch_article_html(url, referer="https://finance.eastmoney.com/")
         return self._extract_article_text(html, self.EM_ARTICLE_PATTERNS)
 
-    @cached(ttl=300, source="eastmoney", source_name="东方财富", domain="news", frequency="realtime", market="a_share")
-    async def get_news_by_keyword(self, keyword: str, page_size: int = 20, with_content: bool = True) -> list:
+    # 不缓存：搜索结果翻页，page=N 在不同时间返回不同数据
+    async def get_news_by_keyword(self, keyword: str, page_size: int = 20, page: int = 1, with_content: bool = True) -> list:
         """按关键词搜索东方财富新闻
 
         Args:
             keyword: 搜索关键词（如"AI"、"新能源"）
-            page_size: 返回条数
+            page_size: 每页条数
+            page: 页码（从 1 开始）
             with_content: 是否并发抓取每条的详情页正文
 
         Returns:
@@ -1179,7 +1172,7 @@ class EastmoneyClient(BaseClient):
             "uid": "",
             "keyword": keyword,
             "type": ["cmsArticleWebOld"],
-            "pageIndex": 1,
+            "pageIndex": page,
             "pageSize": page_size,
         }, ensure_ascii=False)
         resp = await self._client.get(
@@ -1217,7 +1210,6 @@ class EastmoneyClient(BaseClient):
 
     # ==================== 股吧人气榜 ====================
 
-    @cached(ttl=1800, source="eastmoney", source_name="东方财富", domain="sentiment", frequency="daily", market="a_share")
     async def get_guba_popularity(self, page_size: int = 50) -> list:
         """获取股吧人气排行榜
 
@@ -1242,7 +1234,6 @@ class EastmoneyClient(BaseClient):
 
     # ==================== 增量方法 ====================
 
-    @cached(ttl=3600, source="eastmoney", source_name="东方财富", domain="macro", frequency="monthly", market="macro")
     async def get_macro_since(self, report_name: str, since_date: str, page_size: int = 24) -> list:
         """宏观指标增量采集：只返回 since_date 之后的数据
 
@@ -1253,13 +1244,11 @@ class EastmoneyClient(BaseClient):
         items = await self.get_macro_indicator(report_name, page_size)
         return [item for item in items if (item.get("REPORT_DATE") or "")[:10] > since_date]
 
-    @cached(ttl=3600, source="eastmoney", source_name="东方财富", domain="news", frequency="daily", market="a_share")
     async def get_research_reports_since(self, since_date: str, page_size: int = 50) -> list:
         """研报增量采集：只返回 since_date 之后的"""
         items = await self.get_research_reports(page_size)
         return [item for item in items if (item.get("publishDate") or "")[:10] > since_date]
 
-    @cached(ttl=300, source="eastmoney", source_name="东方财富", domain="news", frequency="realtime", market="a_share")
     async def get_news_by_keyword_since(self, keyword: str, since_date: str, page_size: int = 50) -> list:
         """新闻增量采集：只返回 since_date 之后的"""
         items = await self.get_news_by_keyword(keyword, page_size)
@@ -1267,7 +1256,6 @@ class EastmoneyClient(BaseClient):
 
     # ==================== 股吧帖子（SSR HTML 解析） ====================
 
-    @cached(ttl=1800, source="eastmoney", source_name="东方财富", domain="sentiment", frequency="daily", market="a_share")
     async def get_guba_posts(self, code: str, page: int = 1) -> dict:
         """个股股吧帖子列表（HTML 解析，非 API）
 
@@ -1322,7 +1310,6 @@ class EastmoneyClient(BaseClient):
 
         return {"status_code": 0, "data": {"code": code, "count": len(posts), "posts": posts}}
 
-    @cached(ttl=1800, source="eastmoney", source_name="东方财富", domain="sentiment", frequency="daily", market="a_share")
     async def get_guba_posts_since(self, code: str, since_id: str) -> list:
         """增量采集股吧帖子：只返回 id > since_id 的帖子"""
         r = await self.get_guba_posts(code)

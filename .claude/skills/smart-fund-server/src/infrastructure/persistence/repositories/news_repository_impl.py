@@ -72,6 +72,15 @@ class NewsRepositoryImpl(NewsRepository):
             )
             return result.rowcount or 0
 
+    def find_recent_titles(self, days: int = 3) -> list[str]:
+        from datetime import datetime, timedelta, timezone
+        since = datetime.now(timezone.utc) - timedelta(days=days)
+        with get_session() as s:
+            rows = s.scalars(
+                select(News.title).where(News.published_at >= since)
+            ).all()
+            return list(rows)
+
     def count(self) -> int:
         from sqlalchemy import func
         with get_session() as s:

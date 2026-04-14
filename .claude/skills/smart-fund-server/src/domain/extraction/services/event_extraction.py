@@ -383,11 +383,12 @@ class EventExtractionAggregator(BaseAggregator):
             _mark_extracted(batch_ids)
             total_processed += len(batch)
             total_saved += saved_in_batch
-            logger.info(
-                f"[event_extraction] batch {i // BATCH_SIZE + 1}: "
-                f"处理 {len(batch)} 条，抽取 {len(events)} 个事件，"
-                f"入库 {saved_in_batch} 条（含 embedding {embedded_in_batch} 条）"
-            )
+            if saved_in_batch > 0:
+                logger.info(
+                    f"[event_extraction] batch {i // BATCH_SIZE + 1}: "
+                    f"处理 {len(batch)} 条，抽取 {len(events)} 个事件，"
+                    f"入库 {saved_in_batch} 条（含 embedding {embedded_in_batch} 条）"
+                )
 
         logger.info(
             f"[event_extraction] 完成：处理 {total_processed} 条，入库 {total_saved} 个事件"

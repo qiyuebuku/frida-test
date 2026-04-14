@@ -18,7 +18,7 @@ class PBOCClient(BaseClient):
     PBOC_NEWS_URL = "https://www.pbc.gov.cn/goutongjiaoliu/113456/113469/index.html"
     PBOC_BASE_URL = "https://www.pbc.gov.cn"
 
-    @cached(ttl=3600, source="pboc", domain="news", frequency="daily", market="macro", source_name="人民银行")
+    @cached(ttl=1209600, source="pboc", domain="news", frequency="daily", market="macro", source_name="人民银行")
     async def get_announcements(self, limit: int = 20) -> list:
         """获取人民银行新闻发布列表
 
@@ -32,7 +32,7 @@ class PBOCClient(BaseClient):
             source_tag="pboc",
         )
 
-    @cached(ttl=3600, source="pboc", domain="news", frequency="daily", market="macro", source_name="人民银行")
+    @cached(ttl=1209600, source="pboc", domain="news", frequency="daily", market="macro", source_name="人民银行")
     async def get_announcements_since(self, since_date: str, limit: int = 50) -> list:
         """增量采集：只获取 since_date 之后的公告"""
         all_items = await self.get_announcements(limit=limit)
@@ -42,7 +42,7 @@ class PBOCClient(BaseClient):
 
     PBOC_OMO_URL = "https://www.pbc.gov.cn/zhengcehuobisi/125207/125213/125431/125475/index.html"
 
-    @cached(ttl=3600, source="pboc", domain="news", frequency="daily", market="macro", source_name="人民银行")
+    @cached(ttl=1209600, source="pboc", domain="news", frequency="daily", market="macro", source_name="人民银行")
     async def get_omo_announcements(self, limit: int = 20) -> list:
         """获取公开市场操作公告列表（每日逆回购/MLF/国债买卖）
 
@@ -56,7 +56,7 @@ class PBOCClient(BaseClient):
             source_tag="pboc_omo",
         )
 
-    @cached(ttl=3600, source="pboc", domain="news", frequency="daily", market="macro", source_name="人民银行")
+    @cached(ttl=1209600, source="pboc", domain="news", frequency="daily", market="macro", source_name="人民银行")
     async def get_omo_announcements_since(self, since_date: str, limit: int = 50) -> list:
         """增量采集公开市场操作公告"""
         all_items = await self.get_omo_announcements(limit=limit)
@@ -66,7 +66,7 @@ class PBOCClient(BaseClient):
 
     PBOC_MONETARY_URL = "https://www.pbc.gov.cn/zhengcehuobisi/125207/125213/125440/index.html"
 
-    @cached(ttl=3600, source="pboc", domain="news", frequency="daily", market="macro", source_name="人民银行")
+    @cached(ttl=1209600, source="pboc", domain="news", frequency="daily", market="macro", source_name="人民银行")
     async def get_monetary_policy(self, limit: int = 20) -> list:
         """获取货币政策公告列表（LPR公告、利率决议、政策解读等）
 
@@ -80,7 +80,7 @@ class PBOCClient(BaseClient):
             source_tag="pboc_monetary",
         )
 
-    @cached(ttl=3600, source="pboc", domain="news", frequency="daily", market="macro", source_name="人民银行")
+    @cached(ttl=1209600, source="pboc", domain="news", frequency="daily", market="macro", source_name="人民银行")
     async def get_monetary_policy_since(self, since_date: str, limit: int = 50) -> list:
         """增量采集货币政策公告"""
         all_items = await self.get_monetary_policy(limit=limit)
@@ -94,7 +94,7 @@ class PBOCClient(BaseClient):
         r'<div[^>]*class="[^"]*main_r[^"]*"[^>]*>',
     ]
 
-    @cached(ttl=86400, source="pboc", domain="news", frequency="daily", market="macro", source_name="人民银行")
+    @cached(ttl=1209600, source="pboc", domain="news", frequency="daily", market="macro", source_name="人民银行")
     async def get_content(self, url: str) -> str:
         """抓取人民银行公告详情页正文"""
         html = await self._fetch_article_html(url, referer="http://www.pbc.gov.cn/")
@@ -132,7 +132,7 @@ class PBOCClient(BaseClient):
                 break
         return items
 
-    @cached(ttl=3600, source="pboc", domain="macro", frequency="daily", market="macro", source_name="人民银行")
+    @cached(ttl=1209600, source="pboc", domain="macro", frequency="daily", market="macro", source_name="人民银行")
     async def get_currency_data(self, tab: str = "usdcny", days: int = 120) -> dict:
         """货币风向
 

@@ -78,5 +78,14 @@ def enable(aggregator: str, source_name: str) -> bool:
     return _get_repo().enable(aggregator, source_name)
 
 
+def ensure_initialized(
+    aggregator: str,
+    source_name: str,
+    checkpoint: dict,
+    config: dict,
+) -> bool:
+    return _get_repo().ensure_initialized(aggregator, source_name, checkpoint, config)
+
+
 def list_all(aggregator: str | None = None) -> list[dict]:
     return _get_repo().list_all(aggregator)

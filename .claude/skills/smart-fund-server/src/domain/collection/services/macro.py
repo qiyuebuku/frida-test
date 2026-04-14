@@ -256,6 +256,20 @@ class MacroAggregator(BaseAggregator):
     data_domain = "macro"
     task_interval = 3600  # 1 小时
 
+    SOURCE_CONFIGS = {
+        "em_cpi":            {"target_days": 365, "page_size": 24, "interval": 21600},
+        "em_ppi":            {"target_days": 365, "page_size": 24, "interval": 21600},
+        "em_pmi":            {"target_days": 365, "page_size": 24, "interval": 21600},
+        "em_gdp":            {"target_days": 365, "page_size": 24, "interval": 21600},
+        "em_m2":             {"target_days": 365, "page_size": 24, "interval": 21600},
+        "em_rmb_loan":       {"target_days": 365, "page_size": 24, "interval": 21600},
+        "em_forex_reserve":  {"target_days": 365, "page_size": 24, "interval": 21600},
+        "em_fai":            {"target_days": 365, "page_size": 24, "interval": 21600},
+        "em_fdi":            {"target_days": 365, "page_size": 24, "interval": 21600},
+        "pboc_shibor_lpr":   {"target_days": 90, "page_size": 30, "interval": 3600},
+        "pboc_usdcny":       {"target_days": 90, "page_size": 60, "interval": 3600},
+    }
+
     def __init__(self):
         super().__init__()
         self._init_sources()

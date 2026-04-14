@@ -54,15 +54,32 @@ end
 
 class _LockHandle:
     """锁句柄,bool() 返回是否成功获锁"""
-    __slots__ = ("key", "token", "locked")
+    __slots__ = ("key", "token", "locked", "ttl")
 
-    def __init__(self, key: str, token: str, locked: bool):
+    def __init__(self, key: str, token: str, locked: bool, ttl: int = 300):
         self.key = key
         self.token = token
         self.locked = locked
+        self.ttl = ttl
 
     def __bool__(self) -> bool:
         return self.locked
+
+    def renew(self) -> bool:
+        """续锁：重置 TTL（只有锁持有者才能续）"""
+        if not self.locked:
+            return False
+        try:
+            client = _get_client()
+            # 只有 token 匹配才续，防止续了别人的锁
+            current = client.get(self.key)
+            if current == self.token:
+                client.expire(self.key, self.ttl)
+                return True
+            return False
+        except Exception as e:
+            logger.warning(f"redis_lock renew {self.key} 失败: {e}")
+            return False
 
 
 def _make_key(name: str) -> str:
@@ -97,7 +114,7 @@ def acquire(name: str, ttl: int = 300):
         logger.warning(f"redis_lock acquire {full_key} 失败: {e}")
         ok = False
 
-    handle = _LockHandle(full_key, token, bool(ok))
+    handle = _LockHandle(full_key, token, bool(ok), ttl)
     try:
         yield handle
     finally:

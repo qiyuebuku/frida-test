@@ -3,20 +3,21 @@
 按月分区（fetched_at），自动创建未来分区。
 每次客户端请求外部 API 的返回值原样存入，永久保留。
 同时作为缓存层：参数相同 + 未过期 → 直接返回。
+
+R5: 统一使用 SQLAlchemy 连接池（不再 psycopg2.connect 裸连）
 """
 
 import hashlib
 import json
 import logging
-import time
 from datetime import datetime, timedelta
 
-import psycopg2
-import psycopg2.extras
+from sqlalchemy import text
 
-from src.infrastructure.db.fund_db import DB_CONFIG, get_conn
+from src.infrastructure.connections import get_session
 
 logger = logging.getLogger(__name__)
+
 
 # ==================== 建表 ====================
 
@@ -56,19 +57,16 @@ CREATE INDEX IF NOT EXISTS idx_raw_trade_date
 
 def init_raw_data_tables():
     """初始化 ft_raw_data 主表 + 当月及未来 2 个月的分区"""
-    with get_conn() as conn:
-        with conn.cursor() as cur:
-            cur.execute(INIT_SQL)
-            # 创建当月和未来 2 个月的分区
-            now = datetime.now()
-            for i in range(3):
-                dt = now + timedelta(days=30 * i)
-                _ensure_partition(cur, dt.year, dt.month)
-        conn.commit()
+    with get_session() as s:
+        s.execute(text(INIT_SQL))
+        now = datetime.now()
+        for i in range(3):
+            dt = now + timedelta(days=30 * i)
+            _ensure_partition(s, dt.year, dt.month)
     logger.info("ft_raw_data 表及分区已初始化")
 
 
-def _ensure_partition(cur, year: int, month: int):
+def _ensure_partition(session, year: int, month: int):
     """确保某个月份的分区存在"""
     name = f"ft_raw_data_{year}{month:02d}"
     start = f"{year}-{month:02d}-01"
@@ -77,22 +75,20 @@ def _ensure_partition(cur, year: int, month: int):
     else:
         end = f"{year}-{month + 1:02d}-01"
 
-    cur.execute(f"""
+    session.execute(text(f"""
         CREATE TABLE IF NOT EXISTS {name}
         PARTITION OF ft_raw_data
         FOR VALUES FROM ('{start}') TO ('{end}')
-    """)
+    """))
 
 
 def ensure_future_partitions(months_ahead: int = 2):
-    """确保未来 N 个月的分区已创建（可在定时任务中调用）"""
-    with get_conn() as conn:
-        with conn.cursor() as cur:
-            now = datetime.now()
-            for i in range(months_ahead + 1):
-                dt = now + timedelta(days=30 * i)
-                _ensure_partition(cur, dt.year, dt.month)
-        conn.commit()
+    """确保未来 N 个月的分区已创建"""
+    with get_session() as s:
+        now = datetime.now()
+        for i in range(months_ahead + 1):
+            dt = now + timedelta(days=30 * i)
+            _ensure_partition(s, dt.year, dt.month)
 
 
 # ==================== 参数哈希 ====================
@@ -110,17 +106,15 @@ def get_cached(source: str, method: str, params: dict, ttl_seconds: int) -> dict
     ph = params_hash(params)
     min_time = datetime.now() - timedelta(seconds=ttl_seconds)
 
-    with get_conn() as conn:
-        with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
-            cur.execute("""
-                SELECT data FROM ft_raw_data
-                WHERE source = %s AND method = %s AND params_hash = %s
-                  AND fetched_at > %s AND is_success = TRUE
-                ORDER BY fetched_at DESC
-                LIMIT 1
-            """, (source, method, ph, min_time))
-            row = cur.fetchone()
-            return row["data"] if row else None
+    with get_session() as s:
+        row = s.execute(text("""
+            SELECT data FROM ft_raw_data
+            WHERE source = :source AND method = :method AND params_hash = :ph
+              AND fetched_at > :min_time AND is_success = TRUE
+            ORDER BY fetched_at DESC
+            LIMIT 1
+        """), {"source": source, "method": method, "ph": ph, "min_time": min_time}).first()
+        return row[0] if row else None
 
 
 # ==================== 写入 ====================
@@ -150,7 +144,6 @@ def save_raw(
     # 计算 data_count
     data_count = 0
     if isinstance(data, dict):
-        # 常见模式：{"data": {"items": [...]}} 或 {"data": [...]}
         inner = data.get("data", data)
         if isinstance(inner, list):
             data_count = len(inner)
@@ -161,7 +154,7 @@ def save_raw(
     elif isinstance(data, list):
         data_count = len(data)
 
-    # 序列化 + 清洗 \u0000（PG jsonb 不接受 NUL 字符；二进制响应漏过滤时会出现）
+    # 序列化 + 清洗 \u0000（PG jsonb 不接受 NUL 字符）
     try:
         params_json = json.dumps(params, ensure_ascii=False, default=str).replace("\\u0000", "")
         data_json = json.dumps(data, ensure_ascii=False, default=str).replace("\\u0000", "")
@@ -171,30 +164,26 @@ def save_raw(
         return
 
     try:
-        with get_conn() as conn:
-            with conn.cursor() as cur:
-                cur.execute("""
-                    INSERT INTO ft_raw_data
-                    (source, method, params_hash, params, data, data_count,
-                     fetched_at, expires_at, api_latency_ms,
-                     source_name, data_domain, data_frequency, market,
-                     related_codes, trade_date, is_success, error_msg)
-                    VALUES (%s, %s, %s, %s, %s, %s,
-                            %s, %s, %s,
-                            %s, %s, %s, %s,
-                            %s, %s, %s, %s)
-                """, (
-                    source, method, ph,
-                    params_json,
-                    data_json,
-                    data_count,
-                    now, expires, latency_ms,
-                    source_name, data_domain, data_frequency, market,
-                    related_json,
-                    trade_date,
-                    is_success, error_msg,
-                ))
-            conn.commit()
+        with get_session() as s:
+            s.execute(text("""
+                INSERT INTO ft_raw_data
+                (source, method, params_hash, params, data, data_count,
+                 fetched_at, expires_at, api_latency_ms,
+                 source_name, data_domain, data_frequency, market,
+                 related_codes, trade_date, is_success, error_msg)
+                VALUES (:source, :method, :ph, CAST(:params AS jsonb), CAST(:data AS jsonb), :data_count,
+                        :fetched_at, :expires_at, :latency_ms,
+                        :source_name, :data_domain, :data_frequency, :market,
+                        CAST(:related_codes AS jsonb), :trade_date, :is_success, :error_msg)
+            """), {
+                "source": source, "method": method, "ph": ph,
+                "params": params_json, "data": data_json, "data_count": data_count,
+                "fetched_at": now, "expires_at": expires, "latency_ms": latency_ms,
+                "source_name": source_name, "data_domain": data_domain,
+                "data_frequency": data_frequency, "market": market,
+                "related_codes": related_json, "trade_date": trade_date,
+                "is_success": is_success, "error_msg": error_msg,
+            })
     except Exception as e:
         logger.warning(f"ft_raw_data 写入失败: {e}")
 
@@ -212,38 +201,37 @@ def query_raw(
 ) -> list[dict]:
     """查询历史原始数据（供聚合层重放用）"""
     conditions = ["is_success = TRUE"]
-    values = []
+    bind_params = {}
 
     if data_domain:
-        conditions.append("data_domain = %s")
-        values.append(data_domain)
+        conditions.append("data_domain = :data_domain")
+        bind_params["data_domain"] = data_domain
     if source:
-        conditions.append("source = %s")
-        values.append(source)
+        conditions.append("source = :source")
+        bind_params["source"] = source
     if method:
-        conditions.append("method = %s")
-        values.append(method)
+        conditions.append("method = :method")
+        bind_params["method"] = method
     if start_time:
-        conditions.append("fetched_at >= %s")
-        values.append(start_time)
+        conditions.append("fetched_at >= :start_time")
+        bind_params["start_time"] = start_time
     if end_time:
-        conditions.append("fetched_at <= %s")
-        values.append(end_time)
+        conditions.append("fetched_at <= :end_time")
+        bind_params["end_time"] = end_time
     if trade_date:
-        conditions.append("trade_date = %s")
-        values.append(trade_date)
+        conditions.append("trade_date = :trade_date")
+        bind_params["trade_date"] = trade_date
 
     where = " AND ".join(conditions)
-    values.append(limit)
+    bind_params["limit"] = limit
 
-    with get_conn() as conn:
-        with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
-            cur.execute(f"""
-                SELECT source, method, params, data, data_count,
-                       fetched_at, source_name, data_domain, trade_date
-                FROM ft_raw_data
-                WHERE {where}
-                ORDER BY fetched_at ASC
-                LIMIT %s
-            """, values)
-            return [dict(row) for row in cur.fetchall()]
+    with get_session() as s:
+        rows = s.execute(text(f"""
+            SELECT source, method, params, data, data_count,
+                   fetched_at, source_name, data_domain, trade_date
+            FROM ft_raw_data
+            WHERE {where}
+            ORDER BY fetched_at ASC
+            LIMIT :limit
+        """), bind_params).fetchall()
+        return [dict(row._mapping) for row in rows]

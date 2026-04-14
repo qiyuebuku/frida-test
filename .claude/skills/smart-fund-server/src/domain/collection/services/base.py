@@ -46,6 +46,7 @@ class BaseAggregator:
         data_domain: str          — 数据领域标识（用于 ft_raw_data 重放查询）
         task_interval: int        — 任务触发间隔（秒），取所有源的最小间隔
         sources: list[SourceDef]  — 数据源列表
+        SOURCE_CONFIGS: dict      — 源模板配置（仅首次初始化时写入 DB）
 
     子类需要实现:
         _save(items) -> int       — 写入结果表，返回成功写入条数
@@ -56,10 +57,71 @@ class BaseAggregator:
     data_domain: str = ""
     task_interval: int = 60
     sources: list[SourceDef] = []
+    SOURCE_CONFIGS: dict = {}
+    MAX_PAGES_PER_TICK: int = 500  # 回填安全阀：单次 tick 最多翻页数
 
     def __init__(self):
-        # interval / 状态都改为从 ft_collection_state 读，不再用内存缓存
         pass
+
+    @classmethod
+    def init_state(cls):
+        """初始化 ft_collection_state 记录（由 CLI `init-state` 命令调用）
+
+        从 SOURCE_CONFIGS 模板写入 DB，已有记录不覆盖。
+        """
+        if not cls.SOURCE_CONFIGS or not cls.data_domain:
+            return
+        from datetime import date, timedelta
+        today = date.today()
+        for name, cfg in cls.SOURCE_CONFIGS.items():
+            target_days = cfg.get("target_days", 0)
+            mode = cfg.get("default_mode", "backfill" if target_days > 0 else "incremental")
+            target_time = (today - timedelta(days=target_days)).isoformat() if target_days else None
+            cp = {
+                "mode": mode,
+                "target_time": target_time,
+                "newest_time": None,
+                "oldest_time": None,
+                "cursor": None,
+            }
+            checkpoint_store.ensure_initialized(cls.data_domain, name, cp, cfg)
+
+    # ==================== 网络重试 ====================
+
+    MAX_RETRIES = 3
+    RETRY_DELAY = 2  # 秒
+
+    # 值得重试的异常类型（网络暂时性错误）
+    RETRYABLE_ERRORS = (
+        "ConnectTimeout", "ReadTimeout", "WriteTimeout", "PoolTimeout",
+        "ConnectError", "RemoteProtocolError",
+        "ConnectionError", "TimeoutError",
+    )
+
+    async def _fetch_with_retry(self, src: SourceDef, cp: dict):
+        """fetch_fn 带重试 + 自动续锁，仅对网络超时/连接错误重试"""
+        import asyncio as _asyncio
+        lock = cp.get("_lock")
+        last_err = None
+        for attempt in range(1, self.MAX_RETRIES + 1):
+            # 每次尝试前续锁，防止长时间 fetch 导致锁过期
+            if lock:
+                lock.renew()
+            try:
+                return await src.fetch_fn(cp)
+            except Exception as e:
+                err_type = type(e).__name__
+                if err_type not in self.RETRYABLE_ERRORS and \
+                   not isinstance(e, (ConnectionError, TimeoutError)):
+                    raise  # 非网络错误，不重试
+                last_err = e
+                if attempt < self.MAX_RETRIES:
+                    delay = self.RETRY_DELAY * attempt
+                    logger.warning(
+                        f"[{self.data_domain}:{src.name}] {err_type} (第{attempt}次)，{delay}s 后重试"
+                    )
+                    await _asyncio.sleep(delay)
+        raise last_err
 
     # ==================== 定时任务入口 ====================
 
@@ -87,50 +149,57 @@ class BaseAggregator:
 
         for src in self.sources:
             # ── 1. 一次 DB query 拿全部状态 ──
-            state = checkpoint_store.get(self.data_domain, src.name) or {}
+            state = checkpoint_store.get(self.data_domain, src.name)
+            if not state:
+                raise RuntimeError(
+                    f"ft_collection_state 中未找到 [{self.data_domain}:{src.name}] 的记录，"
+                    f"请先执行: python -m src.interfaces.cli init state"
+                )
 
-            # ── 2. enabled 检查（首次无记录默认 True）──
-            if state and state.get("enabled") is False:
+            # ── 2. enabled 检查 ──
+            if state.get("enabled") is False:
                 continue
 
             # ── 3. interval 检查 ──
-            interval = state.get("interval_override") or src.interval
+            if state.get("mode") == "backfill":
+                min_interval = 5  # 回填模式：最短 5 秒间隔
+            else:
+                min_interval = state.get("interval_override") or src.interval
             last_run = state.get("last_run_at")
             if last_run is not None:
-                if (now_utc - last_run).total_seconds() < interval:
+                if (now_utc - last_run).total_seconds() < min_interval:
                     continue
 
-            # ── 4. 分布式锁（防多 worker 并发执行同一 source） ──
-            #    interval 检查可能让两个 worker 同时通过（race condition），
-            #    redis 锁是真正的互斥点。worker 崩溃 → 锁自动过期。
+            # ── 4. 分布式锁 ──
             lock_name = f"{self.data_domain}:{src.name}"
             with redis_lock.acquire(lock_name, ttl=DEFAULT_LOCK_TTL) as lock:
                 if not lock:
-                    logger.debug(f"[{self.data_domain}:{src.name}] 锁被占用，跳过")
+                    logger.info(f"[{self.data_domain}:{src.name}] 锁被占用，跳过（可能上一轮未释放，TTL={DEFAULT_LOCK_TTL}s）")
                     continue
 
-                # 拿到锁后，再读一次 state（防止竞争窗口期间别人已经写了 checkpoint）
+                # 拿到锁后再读一次 state
                 state = checkpoint_store.get(self.data_domain, src.name) or state
-                last_run = state.get("last_run_at")
-                if last_run is not None:
-                    if (now_utc - last_run).total_seconds() < interval:
-                        continue
+                if state.get("mode") != "backfill":
+                    last_run = state.get("last_run_at")
+                    if last_run is not None:
+                        if (now_utc - last_run).total_seconds() < min_interval:
+                            continue
 
-                # 解析 checkpoint dict
-                cp_raw = state.get("checkpoint")
-                if isinstance(cp_raw, str):
-                    try:
-                        cp = json.loads(cp_raw) or {}
-                    except Exception:
-                        cp = {}
-                elif isinstance(cp_raw, dict):
-                    cp = cp_raw
-                else:
-                    cp = {}
+                # 构建 cp dict（从独立列组装，供 fetch_fn 读取）
+                cp = {
+                    "mode": state.get("mode", "incremental"),
+                    "target_time": state.get("target_time"),
+                    "newest_time": state.get("newest_time"),
+                    "oldest_time": state.get("oldest_time"),
+                    "backfill_status": state.get("backfill_status"),
+                    "cursor": state.get("cursor"),
+                    "_config": state.get("config") or {},
+                    "_lock": lock,
+                }
 
                 try:
-                    # ── 5. fetch ──
-                    raw = await src.fetch_fn(cp)
+                    # ── 5. fetch（网络异常自动重试） ──
+                    raw = await self._fetch_with_retry(src, cp)
                     if not raw:
                         checkpoint_store.update_success(self.data_domain, src.name, None, 0)
                         continue
@@ -153,7 +222,6 @@ class BaseAggregator:
                         f"[{self.data_domain}:{src.name}] normalize {len(items)} 条，入库 {saved} 条 cp={new_cp}"
                     )
                 except Exception as e:
-                    # 包含异常类型，避免出现 "采集失败:" 空消息（很多 client 异常 str() 为空）
                     err_msg = f"{type(e).__name__}: {e}" if str(e) else type(e).__name__
                     logger.warning(f"[{self.data_domain}:{src.name}] 采集失败: {err_msg}")
                     checkpoint_store.update_failure(self.data_domain, src.name, err_msg)
@@ -181,28 +249,92 @@ class BaseAggregator:
         """根据本次入库的 items 计算新的 checkpoint dict
 
         默认实现:
-            - 取 items 中最大的 trade_date 作为 max_trade_date
-            - 与 prev_cp 中的旧值取 max（防止本次拉到旧数据导致 checkpoint 倒退）
+            - 保留 prev_cp 中的所有字段（mode/target_time/cursor 等）
+            - 计算 newest_time / oldest_time（从 items 的 trade_date 或 published_at）
+            - 兼容旧格式：同时更新 max_trade_date
 
-        子类可以重写返回任意 dict 结构（max_id / cursor / 多字段）。
+        子类可以重写（如 NewsAggregator 有回填逻辑）。
         """
         prev_cp = prev_cp or {}
         if not isinstance(prev_cp, dict):
             prev_cp = {}
-        max_date = prev_cp.get("max_trade_date")
-        if not isinstance(max_date, str):
-            max_date = None  # 防御: 旧数据残留可能是 dict / list
+
+        # 剥离内部字段（不持久化到 DB）
+        new_cp = {k: v for k, v in prev_cp.items() if not k.startswith("_")}
+
+        if not items:
+            return new_cp
+
+        # 提取所有时间（保留完整精度，不截断到天）
+        dates = []
         for item in items:
             d = item.get("trade_date") or item.get("published_at")
             if not d:
                 continue
             try:
-                d_str = (d if isinstance(d, str) else str(d))[:10]
+                d_str = d if isinstance(d, str) else str(d)
+                dates.append(d_str)
             except Exception:
                 continue
-            if not max_date or d_str > max_date:
-                max_date = d_str
-        return {"max_trade_date": max_date} if max_date else prev_cp
+
+        if not dates:
+            return new_cp
+
+        batch_newest = max(dates)
+        batch_oldest = min(dates)
+
+        # 更新 newest_time（取历史最大值）
+        prev_newest = new_cp.get("newest_time")
+        new_cp["newest_time"] = max(batch_newest, prev_newest) if prev_newest else batch_newest
+
+        # 更新 oldest_time（取历史最小值）
+        prev_oldest = new_cp.get("oldest_time")
+        if prev_oldest:
+            new_cp["oldest_time"] = min(batch_oldest, prev_oldest)
+        else:
+            new_cp["oldest_time"] = batch_oldest
+
+        # ── 通用模式切换：backfill → incremental ──
+        if new_cp.get("mode") == "backfill":
+            target_time = new_cp.get("target_time")
+            oldest_time = new_cp.get("oldest_time")
+
+            # 子类 hook：可通过 _get_backfill_signal 注入额外信号（如 _backfill_loop 的触顶/完成）
+            signal = self._get_backfill_signal(source_name)
+
+            if signal == "done" or (target_time and oldest_time and oldest_time <= target_time):
+                new_cp["mode"] = "incremental"
+                new_cp["cursor"] = None
+                new_cp["backfill_status"] = "done"
+                logger.info(
+                    f"[{self.data_domain}:{source_name}] 回填完成: "
+                    f"覆盖 {oldest_time} ~ {new_cp.get('newest_time')}"
+                )
+            elif signal == "ceiling":
+                new_cp["mode"] = "incremental"
+                new_cp["cursor"] = None
+                new_cp["backfill_status"] = "ceiling"
+                logger.warning(
+                    f"[{self.data_domain}:{source_name}] 回填触顶（数据源历史不足）: "
+                    f"覆盖 {oldest_time} ~ {new_cp.get('newest_time')}, "
+                    f"目标 {target_time} 未达到"
+                )
+            elif signal is not None:
+                # 保存翻页游标，下次继续
+                new_cp["cursor"] = signal
+
+        return new_cp
+
+    def _get_backfill_signal(self, source_name: str) -> str | None:
+        """子类 hook：返回回填信号
+
+        Returns:
+            "done" — 回填完成（时间达标）
+            "ceiling" — 触顶（数据源历史不足）
+            其他值 — 翻页游标，保存到 checkpoint.cursor
+            None — 无信号
+        """
+        return None
 
     async def query(self, **filters) -> list[dict]:
         raise NotImplementedError

@@ -39,7 +39,6 @@ class TencentClient(BaseClient):
             return f"sh{code}"
         return f"sz{code}"
 
-    @cached(ttl=60, domain="market", frequency="realtime", market="a_share", source="tencent", source_name="腾讯证券")
     async def get_stock_quote(self, codes: list[str]) -> dict:
         """从腾讯证券获取实时行情（支持批量，最多20只）
 
@@ -105,7 +104,6 @@ class TencentClient(BaseClient):
 
     # ==================== 个股资金流向 ====================
 
-    @cached(ttl=600, domain="fund_flow", frequency="daily", market="a_share", source="tencent", source_name="腾讯证券")
     async def get_stock_fund_flow(self, code: str, history_days: int = 10) -> dict:
         """个股资金流向（今日汇总 + 逐分钟趋势 + 5日 + 历史N日）
 
@@ -185,7 +183,6 @@ class TencentClient(BaseClient):
 
     # ==================== 分时数据 ====================
 
-    @cached(ttl=300, domain="market", frequency="minute", market="a_share", source="tencent", source_name="腾讯证券")
     async def get_minute_data(self, code: str) -> dict:
         """个股分时数据（逐分钟 价格+成交量+成交额）
 
@@ -216,7 +213,6 @@ class TencentClient(BaseClient):
 
     # ==================== 港股行情 ====================
 
-    @cached(ttl=60, domain="market", frequency="realtime", market="hk", source="tencent", source_name="腾讯证券")
     async def get_hk_quote(self, codes: list[str]) -> dict:
         """港股实时行情（支持批量）
 
@@ -264,7 +260,6 @@ class TencentClient(BaseClient):
 
     # ==================== 美股行情 ====================
 
-    @cached(ttl=60, domain="market", frequency="realtime", market="us", source="tencent", source_name="腾讯证券")
     async def get_us_quote(self, codes: list[str]) -> dict:
         """美股实时行情（支持批量）
 
@@ -317,7 +312,6 @@ class TencentClient(BaseClient):
 
     # ==================== 国际期货 ====================
 
-    @cached(ttl=60, domain="market", frequency="realtime", market="futures", source="tencent", source_name="腾讯证券")
     async def get_intl_futures(self, names: list[str] | None = None) -> dict:
         """国际期货行情（纽约金/银/原油/天然气/铜/大豆/玉米/小麦）
 
@@ -373,7 +367,7 @@ class TencentClient(BaseClient):
 
     # ==================== 个股所属板块 ====================
 
-    @cached(ttl=14400, domain="market", frequency="daily", market="a_share", source="tencent", source_name="腾讯证券")
+    @cached(ttl=1209600, domain="market", frequency="daily", market="a_share", source="tencent", source_name="腾讯证券")
     async def get_stock_plates(self, code: str) -> dict:
         """个股所属板块（行业+概念+地域，含实时涨跌幅）
 
@@ -404,7 +398,6 @@ class TencentClient(BaseClient):
 
     # ==================== 热门股排行 ====================
 
-    @cached(ttl=300, domain="sentiment", frequency="realtime", market="a_share", source="tencent", source_name="腾讯证券")
     async def get_hot_stocks(self) -> dict:
         """热门股票排行（5分钟/1小时/1天/1周维度）"""
         resp = await self._client.get(
@@ -437,7 +430,7 @@ class TencentClient(BaseClient):
 
     # ==================== 港美股K线 ====================
 
-    @cached(ttl=14400, domain="market", frequency="daily", market="hk", source="tencent", source_name="腾讯证券")
+    @cached(ttl=1209600, domain="market", frequency="daily", market="hk", source="tencent", source_name="腾讯证券")
     async def get_hk_us_kline(self, code: str, period: str = "day", count: int = 20) -> dict:
         """港股/美股K线数据（前复权）
 
@@ -476,7 +469,6 @@ class TencentClient(BaseClient):
 
     # ==================== 行业排名 ====================
 
-    @cached(ttl=14400, domain="market", frequency="daily", market="a_share", source="tencent", source_name="腾讯证券")
     async def get_industry_rank(self, code: str) -> dict:
         """个股在行业内的排名（PE/市值/EPS）
 

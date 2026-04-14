@@ -165,15 +165,21 @@ def normalize_guba_posts(raw) -> list[dict]:
 
 
 async def _fetch_guba_posts_for_held_stocks(em_client, ths_client, max_stocks: int = 10) -> list:
-    """从基金池关注的基金的重仓股拉取股吧帖子（限前 N 只避免请求量过大）"""
+    """从 watchlist 读取自选股拉取股吧帖子"""
     import asyncio as _asyncio
-    from src.domain.collection.services.fund_flow import _fetch_held_stocks
+    from src.infrastructure.db import checkpoint_store
 
-    full_codes = await _fetch_held_stocks(ths_client, max_stocks=max_stocks)
-    if not full_codes:
+    all_items = checkpoint_store.list_all("watchlist")
+    codes = [
+        item["source_name"]
+        for item in all_items
+        if item.get("enabled", True) and item.get("config", {}).get("type") in ("stock", None)
+    ][:max_stocks]
+
+    if not codes:
         return []
     # 去掉前缀（sh/sz/bj），股吧 API 用纯数字代码
-    pure_codes = [c[2:] if c[:2] in ("sh", "sz", "bj") else c for c in full_codes]
+    pure_codes = [c[2:] if c[:2] in ("sh", "sz", "bj") else c for c in codes]
 
     tasks = [em_client.get_guba_posts(code) for code in pure_codes]
     results = await _asyncio.gather(*tasks, return_exceptions=True)
@@ -191,6 +197,16 @@ class SentimentAggregator(BaseAggregator):
 
     data_domain = "sentiment"
     task_interval = 900  # 15 分钟
+
+    SOURCE_CONFIGS = {
+        "guba_popularity":    {"target_days": 0, "interval": 1800, "default_mode": "incremental"},
+        "limit_pool_up":      {"target_days": 0, "interval": 10800, "default_mode": "incremental"},
+        "limit_pool_down":    {"target_days": 0, "interval": 10800, "default_mode": "incremental"},
+        "xueqiu_hot_topics":  {"target_days": 0, "interval": 1800, "default_mode": "incremental"},
+        "xueqiu_hot_stocks":  {"target_days": 0, "interval": 1800, "default_mode": "incremental"},
+        "tencent_hot_stocks": {"target_days": 0, "interval": 1800, "default_mode": "incremental"},
+        "guba_posts":         {"target_days": 0, "interval": 1800, "default_mode": "incremental"},
+    }
 
     def __init__(self):
         super().__init__()

@@ -23,7 +23,6 @@ CREATE TABLE public.ft_collection_state (
     id integer NOT NULL,
     aggregator character varying(32) NOT NULL,
     source_name character varying(64) NOT NULL,
-    checkpoint jsonb DEFAULT '{}'::jsonb,
     last_run_at timestamp with time zone,
     last_success_at timestamp with time zone,
     last_error text DEFAULT ''::text,
@@ -33,7 +32,15 @@ CREATE TABLE public.ft_collection_state (
     total_runs bigint DEFAULT 0,
     total_saved bigint DEFAULT 0,
     created_at timestamp with time zone DEFAULT now(),
-    updated_at timestamp with time zone DEFAULT now()
+    updated_at timestamp with time zone DEFAULT now(),
+    config jsonb DEFAULT '{}'::jsonb,
+    -- 采集进度（ALTER TABLE ADD 的列在末尾）
+    mode character varying(16) DEFAULT 'incremental'::character varying,
+    target_time character varying(32),
+    newest_time character varying(32),
+    oldest_time character varying(32),
+    backfill_status character varying(16),
+    cursor jsonb
 );
 
 -- SEQUENCE: ft_collection_state_id_seq
@@ -276,3 +283,44 @@ ALTER TABLE ONLY public.ft_news ALTER COLUMN id SET DEFAULT nextval('public.ft_n
 --
 
 ALTER TABLE ONLY public.ft_sentiment ALTER COLUMN id SET DEFAULT nextval('public.ft_sentiment_id_seq'::regclass);
+
+-- TABLE: ft_watchlist_data
+--
+-- Name: ft_watchlist_data; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.ft_watchlist_data (
+    id integer NOT NULL,
+    code character varying(16) NOT NULL,
+    data_type character varying(32) NOT NULL,
+    trade_date date,
+    data jsonb NOT NULL,
+    created_at timestamp with time zone DEFAULT now()
+);
+
+-- SEQUENCE: ft_watchlist_data_id_seq
+--
+-- Name: ft_watchlist_data_id_seq; Type: SEQUENCE; Schema: public; Owner: -
+--
+
+CREATE SEQUENCE public.ft_watchlist_data_id_seq
+    AS integer
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+-- SEQUENCE OWNED BY: ft_watchlist_data_id_seq
+--
+-- Name: ft_watchlist_data_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: -
+--
+
+ALTER SEQUENCE public.ft_watchlist_data_id_seq OWNED BY public.ft_watchlist_data.id;
+
+-- DEFAULT: ft_watchlist_data id
+--
+-- Name: ft_watchlist_data id; Type: DEFAULT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.ft_watchlist_data ALTER COLUMN id SET DEFAULT nextval('public.ft_watchlist_data_id_seq'::regclass);

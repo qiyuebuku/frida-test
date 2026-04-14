@@ -10,6 +10,7 @@ from src.infrastructure.persistence.models.collection import (
     MarketFlow,
     News,
     Sentiment,
+    WatchlistData,
 )
 from src.infrastructure.persistence.models.extraction import (
     Event,
@@ -39,6 +40,7 @@ __all__ = [
     "Sentiment",
     "MacroIndicator",
     "CollectionState",
+    "WatchlistData",
     # extraction
     "Event",
     "EventStream",

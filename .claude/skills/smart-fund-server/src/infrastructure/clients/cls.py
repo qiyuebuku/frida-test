@@ -19,7 +19,7 @@ class CLSClient(BaseClient):
             proxy=None,
         )
 
-    @cached(ttl=300, source="cls", domain="news", frequency="realtime", market="a_share", source_name="财联社")
+    @cached(ttl=1209600, source="cls", domain="news", frequency="realtime", market="a_share", source_name="财联社")
     async def get_telegraph_list(self, rn: int = 20, last_time: int = None) -> list:
         """获取财联社电报快讯列表
 
@@ -54,7 +54,7 @@ class CLSClient(BaseClient):
         resp.raise_for_status()
         return resp.json().get("data", {}).get("roll_data", [])
 
-    @cached(ttl=300, source="cls", domain="news", frequency="realtime", market="a_share", source_name="财联社")
+    @cached(ttl=1209600, source="cls", domain="news", frequency="realtime", market="a_share", source_name="财联社")
     async def get_telegraph_since(self, since_ctime: int, max_pages: int = 5, page_size: int = 20) -> list:
         """增量采集：获取 since_ctime 之后的所有新快讯
 

@@ -48,8 +48,6 @@ class SinaClient(BaseClient):
     def __init__(self, timeout: float = 10.0):
         super().__init__(timeout)
 
-    @cached(ttl=900, source="sina", domain="market", frequency="daily",
-            market="a_share", source_name="新浪财经")
     async def get_stock_ranking(self, sort: str = "rise", count: int = 20) -> dict:
         """个股涨跌幅排行（新浪财经 API）
 
@@ -106,7 +104,7 @@ class SinaClient(BaseClient):
 
         return {"status_code": 0, "data": {"sort": sort, "count": len(items), "stocks": items}}
 
-    @cached(ttl=900, source="sina", domain="market", frequency="daily",
+    @cached(ttl=1209600, source="sina", domain="market", frequency="daily",
             market="a_share", source_name="新浪财经")
     async def get_sector_ranking(self, sector_type: str = "concept", count: int = 20) -> dict:
         """板块涨跌排行（新浪财经 API）
@@ -179,8 +177,6 @@ class SinaClient(BaseClient):
         resp.raise_for_status()
         return resp.content.decode("gbk", errors="replace")
 
-    @cached(ttl=60, source="sina", domain="market", frequency="realtime",
-            market="a_share", source_name="新浪财经")
     async def get_realtime_quotes(self, symbols: list[str]) -> dict:
         """A股实时行情（批量报价）
 
@@ -242,8 +238,6 @@ class SinaClient(BaseClient):
 
         return {"status_code": 0, "data": {"count": len(quotes), "quotes": quotes}}
 
-    @cached(ttl=60, source="sina", domain="market", frequency="realtime",
-            market="global", source_name="新浪财经")
     async def get_global_index(self, names: list[str] | None = None) -> dict:
         """全球指数实时行情
 
@@ -287,8 +281,6 @@ class SinaClient(BaseClient):
 
         return {"status_code": 0, "data": {"count": len(indices), "indices": indices}}
 
-    @cached(ttl=300, source="sina", domain="market", frequency="realtime",
-            market="forex", source_name="新浪财经")
     async def get_forex(self, currencies: list[str] | None = None) -> dict:
         """外汇行情
 
@@ -336,8 +328,6 @@ class SinaClient(BaseClient):
 
         return {"status_code": 0, "data": {"count": len(rates), "rates": rates}}
 
-    @cached(ttl=60, source="sina", domain="market", frequency="realtime",
-            market="futures", source_name="新浪财经")
     async def get_futures(self, names: list[str] | None = None) -> dict:
         """期货行情
 
@@ -386,8 +376,6 @@ class SinaClient(BaseClient):
 
     # ==================== K线 / 新闻 / 资金流 / 基金净值 ====================
 
-    @cached(ttl=14400, source="sina", domain="market", frequency="daily",
-            market="a_share", source_name="新浪财经")
     async def get_kline(self, symbol: str, scale: int = 240, datalen: int = 20) -> dict:
         """K线数据
 
@@ -425,15 +413,14 @@ class SinaClient(BaseClient):
         r'<div[^>]*class="article"[^>]*>',
     ]
 
-    @cached(ttl=3600, source="sina", domain="news", frequency="daily",
+    @cached(ttl=1209600, source="sina", domain="news", frequency="daily",
             market="a_share", source_name="新浪财经")
     async def fetch_article_content(self, url: str) -> str:
         """抓取新浪财经文章正文"""
         html = await self._fetch_article_html(url, referer="https://finance.sina.com.cn/")
         return self._extract_article_text(html, self.SINA_ARTICLE_PATTERNS)
 
-    @cached(ttl=300, source="sina", domain="news", frequency="realtime",
-            market="a_share", source_name="新浪财经")
+    # 不缓存：滚动列表翻页，page=N 在不同时间返回不同数据
     async def get_news(self, num: int = 20, page: int = 1, with_content: bool = True) -> dict:
         """财经新闻（列表 + 正文）
 
@@ -478,8 +465,6 @@ class SinaClient(BaseClient):
             "count": len(articles), "total": result.get("num", 0), "articles": articles,
         }}
 
-    @cached(ttl=900, source="sina", domain="fund_flow", frequency="daily",
-            market="a_share", source_name="新浪财经")
     async def get_sector_money_flow(self, sector_type: str = "concept", count: int = 20) -> dict:
         """板块资金流
 
@@ -523,7 +508,7 @@ class SinaClient(BaseClient):
             "type": sector_type, "count": len(sectors), "sectors": sectors,
         }}
 
-    @cached(ttl=86400, source="sina", domain="market", frequency="daily",
+    @cached(ttl=1209600, source="sina", domain="market", frequency="daily",
             market="fund", source_name="新浪财经")
     async def get_fund_nav(self, symbol: str, date_from: str = "", date_to: str = "") -> dict:
         """基金净值

@@ -112,7 +112,7 @@ class GovClient(BaseClient):
             proxy=None,
         )
 
-    @cached(ttl=3600, source="gov", domain="news", frequency="daily", market="macro", source_name="政府网站")
+    @cached(ttl=1209600, source="gov", domain="news", frequency="daily", market="macro", source_name="政府网站")
     async def get_announcements(self, source: str, limit: int = 20, fetch_content: bool = False) -> list:
         """获取指定来源的最新公告列表
 
@@ -144,7 +144,7 @@ class GovClient(BaseClient):
 
         return items
 
-    @cached(ttl=3600, source="gov", domain="news", frequency="daily", market="macro", source_name="政府网站")
+    @cached(ttl=1209600, source="gov", domain="news", frequency="daily", market="macro", source_name="政府网站")
     async def get_announcements_since(self, source: str, since_date: str, limit: int = 50) -> list:
         """增量采集：只获取 since_date 之后的公告"""
         all_items = await self.get_announcements(source, limit=limit)
@@ -158,7 +158,7 @@ class GovClient(BaseClient):
         "miit.gov.cn": ['id="con_con"', 'class="ccontent'],
     }
 
-    @cached(ttl=86400, source="gov", domain="news", frequency="daily", market="macro", source_name="政府网站")
+    @cached(ttl=1209600, source="gov", domain="news", frequency="daily", market="macro", source_name="政府网站")
     async def get_content(self, url: str) -> str:
         """获取公告详情页的完整正文
 

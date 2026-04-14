@@ -1,5 +1,7 @@
-"""CollectionStateRepository SQLAlchemy 实现"""
-import json
+"""CollectionStateRepository SQLAlchemy 实现
+
+R5: checkpoint JSONB 字段已提升为独立列（mode/target_time/newest_time/oldest_time/backfill_status/cursor）
+"""
 import logging
 
 from sqlalchemy import select, update
@@ -16,12 +18,19 @@ logger = logging.getLogger(__name__)
 
 
 def _row_to_dict(row: CollectionState) -> dict:
-    """ORM 行转 dict(保持 checkpoint 是 dict 而非 str)"""
+    """ORM 行转 dict"""
     return {
         "id": row.id,
         "aggregator": row.aggregator,
         "source_name": row.source_name,
-        "checkpoint": row.checkpoint or {},
+        # 采集进度（独立列）
+        "mode": row.mode or "incremental",
+        "target_time": row.target_time,
+        "newest_time": row.newest_time,
+        "oldest_time": row.oldest_time,
+        "backfill_status": row.backfill_status,
+        "cursor": row.cursor,
+        # 运行时状态
         "last_run_at": row.last_run_at,
         "last_success_at": row.last_success_at,
         "last_error": row.last_error or "",
@@ -30,6 +39,7 @@ def _row_to_dict(row: CollectionState) -> dict:
         "interval_override": row.interval_override,
         "total_runs": row.total_runs or 0,
         "total_saved": row.total_saved or 0,
+        "config": row.config or {},
         "created_at": row.created_at,
         "updated_at": row.updated_at,
     }
@@ -51,18 +61,18 @@ class CollectionStateRepositoryImpl(CollectionStateRepository):
             return None
 
     def get_checkpoint(self, aggregator: str, source_name: str) -> dict:
+        """兼容旧接口：返回 checkpoint 风格的 dict"""
         state = self.get(aggregator, source_name)
         if not state:
             return {}
-        cp = state.get("checkpoint")
-        if isinstance(cp, dict):
-            return cp
-        if isinstance(cp, str):
-            try:
-                return json.loads(cp)
-            except Exception:
-                return {}
-        return {}
+        return {
+            "mode": state.get("mode", "incremental"),
+            "target_time": state.get("target_time"),
+            "newest_time": state.get("newest_time"),
+            "oldest_time": state.get("oldest_time"),
+            "backfill_status": state.get("backfill_status"),
+            "cursor": state.get("cursor"),
+        }
 
     def is_enabled(self, aggregator: str, source_name: str) -> bool:
         state = self.get(aggregator, source_name)
@@ -77,8 +87,16 @@ class CollectionStateRepositoryImpl(CollectionStateRepository):
         new_checkpoint: dict | None,
         saved_count: int = 0,
     ) -> None:
+        """更新成功状态
+
+        new_checkpoint 可以包含 mode/target_time/newest_time/oldest_time/backfill_status/cursor，
+        会分别写入对应的独立列。
+        """
         try:
+            cp = new_checkpoint or {}
+
             with get_session() as s:
+                # INSERT 值
                 values = {
                     "aggregator": aggregator,
                     "source_name": source_name,
@@ -90,11 +108,8 @@ class CollectionStateRepositoryImpl(CollectionStateRepository):
                     "total_saved": saved_count,
                     "updated_at": func.now(),
                 }
-                if new_checkpoint is not None:
-                    values["checkpoint"] = new_checkpoint
 
-                stmt = pg_insert(CollectionState).values(**values)
-
+                # UPDATE 值
                 update_set = {
                     "last_run_at": func.now(),
                     "last_success_at": func.now(),
@@ -104,9 +119,15 @@ class CollectionStateRepositoryImpl(CollectionStateRepository):
                     "total_saved": CollectionState.total_saved + saved_count,
                     "updated_at": func.now(),
                 }
-                if new_checkpoint is not None:
-                    update_set["checkpoint"] = new_checkpoint
 
+                # 从 checkpoint dict 提取字段写入独立列
+                if new_checkpoint is not None:
+                    for field in ("mode", "target_time", "newest_time", "oldest_time", "backfill_status", "cursor"):
+                        if field in cp:
+                            values[field] = cp[field]
+                            update_set[field] = cp[field]
+
+                stmt = pg_insert(CollectionState).values(**values)
                 stmt = stmt.on_conflict_do_update(
                     index_elements=["aggregator", "source_name"],
                     set_=update_set,
@@ -152,7 +173,12 @@ class CollectionStateRepositoryImpl(CollectionStateRepository):
                         CollectionState.source_name == source_name,
                     )
                     .values(
-                        checkpoint={},
+                        mode="backfill",
+                        target_time=None,
+                        newest_time=None,
+                        oldest_time=None,
+                        backfill_status=None,
+                        cursor=None,
                         consecutive_failures=0,
                         last_error="",
                         updated_at=func.now(),
@@ -182,6 +208,43 @@ class CollectionStateRepositoryImpl(CollectionStateRepository):
                 return True
         except Exception as e:
             logger.warning(f"set_enabled 失败: {e}")
+            return False
+
+    def ensure_initialized(
+        self,
+        aggregator: str,
+        source_name: str,
+        checkpoint: dict,
+        config: dict,
+    ) -> bool:
+        """确保该源有 DB 记录，不存在则创建，已存在则跳过
+
+        checkpoint dict 中的 mode/target_time/... 写入独立列。
+        """
+        try:
+            cp = checkpoint or {}
+            with get_session() as s:
+                values = {
+                    "aggregator": aggregator,
+                    "source_name": source_name,
+                    "config": config,
+                    "mode": cp.get("mode", "incremental"),
+                    "target_time": cp.get("target_time"),
+                    "newest_time": cp.get("newest_time"),
+                    "oldest_time": cp.get("oldest_time"),
+                    "backfill_status": cp.get("backfill_status"),
+                    "cursor": cp.get("cursor"),
+                }
+                stmt = pg_insert(CollectionState).values(**values).on_conflict_do_nothing(
+                    index_elements=["aggregator", "source_name"],
+                )
+                result = s.execute(stmt)
+                created = (result.rowcount or 0) > 0
+                if created:
+                    logger.info(f"[{aggregator}:{source_name}] 自动初始化 mode={cp.get('mode')}")
+                return created
+        except Exception as e:
+            logger.warning(f"ensure_initialized({aggregator},{source_name}) 失败: {e}")
             return False
 
     def list_all(self, aggregator: str | None = None) -> list[dict]:

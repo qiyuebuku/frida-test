@@ -7,9 +7,11 @@ dependencies = [
     "fastapi>=0.100",
     "uvicorn[standard]",
     "psycopg2-binary",
+    "sqlalchemy>=2.0",
     "httpx",
     "jettask-python",
-    "apscheduler",
+    "prometheus-client",
+    "click>=8.0",
 ]
 
 [project.optional-dependencies]

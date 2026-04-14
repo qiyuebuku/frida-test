@@ -1,21 +1,17 @@
 """统一 CLI 入口 — click 命令组
 
-把 6 个散落的脚本合并成一个命令组：
-
     python -m src.interfaces.cli worker [-c N]
     python -m src.interfaces.cli scheduler
     python -m src.interfaces.cli persist
-    python -m src.interfaces.cli register-schedules
     python -m src.interfaces.cli trigger [queue...]
-    python -m src.interfaces.cli init-db [--target prod|test]
-
-每个子命令只做最薄的参数解析 + 调后端逻辑，核心实现仍在
-start_worker/start_scheduler/... 以及 scripts/init_db.py。
+    python -m src.interfaces.cli init db [--target prod|test]
+    python -m src.interfaces.cli init state [--reset]
+    python -m src.interfaces.cli init schedules
+    python -m src.interfaces.cli init all
 """
 import sys
 from pathlib import Path
 
-# 让 `python -m src.interfaces.cli` 和 `python src/interfaces/cli/main.py` 都能 import src.*
 sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
 
 import click
@@ -35,17 +31,29 @@ def cli(log_level: str | None):
 
 @cli.command()
 @click.option("-c", "--concurrency", type=int, default=1, help="并发数")
-def worker(concurrency: int):
-    """启动 jettask Worker 消费聚合任务队列"""
+@click.argument("tasks", nargs=-1)
+def worker(concurrency: int, tasks: tuple[str, ...]):
+    """启动 jettask Worker
+
+    不传 TASKS 则消费全部任务，传则只消费指定的：
+
+    \b
+      worker                          # 全部 12 个任务
+      worker agg_news agg_fund_flow   # 只跑这两个
+    """
     from src.interfaces.tasks import app
 
-    task_names = [
-        "agg_news", "agg_fund_flow",
-        "agg_macro", "agg_sentiment", "agg_market",
-        "agg_event_extraction", "agg_event_stream",
-        "trade_decision", "trade_execution", "trade_monitor",
-        "agg_event_feedback", "review_decision",
+    ALL_TASKS = [
+        # "agg_news",
+        "agg_fund_flow",
+        # "agg_market",
+        # "agg_macro", "agg_sentiment", 
+        # "agg_event_extraction", "agg_event_stream","agg_event_feedback",
+        # "trade_decision", "trade_execution", "trade_monitor",
+        # "review_decision",
     ]
+    task_names = list(tasks) if tasks else ALL_TASKS
+
     click.echo(f"🚀 启动 Worker（并发={concurrency}）")
     click.echo(f"   任务: {', '.join(task_names)}")
     app.start_worker(task_names=task_names, concurrency=concurrency, prefetch=100)
@@ -67,20 +75,6 @@ def persist():
 
     click.echo(f"📦 启动 Persist  db_url={DB_URL}")
     app.start_persist(db_url=DB_URL)
-
-
-# ==================== 注册调度 ====================
-
-
-@cli.command("register-schedules")
-def register_schedules_cmd():
-    """把 Schedule 列表注册到 jettask scheduler（需要 Persist 在跑）"""
-    from src.interfaces.cli.register_schedules import SCHEDULES
-    from src.interfaces.tasks import app
-
-    count = app.schedule_register(SCHEDULES)
-    click.echo(f"✅ 已发送 {count} 个调度命令")
-    app.close()
 
 
 # ==================== 手动触发 ====================
@@ -132,15 +126,29 @@ def trigger(queues: tuple[str, ...], list_only: bool):
     app.close()
 
 
-# ==================== 初始化数据库 ====================
+# ==================== init 子命令组 ====================
+
+AGGREGATORS = [
+    ("news", "src.domain.collection.services.news", "NewsAggregator"),
+    ("fund_flow", "src.domain.collection.services.fund_flow", "FundFlowAggregator"),
+    ("market", "src.domain.collection.services.market", "MarketAggregator"),
+    ("sentiment", "src.domain.collection.services.sentiment", "SentimentAggregator"),
+    ("macro", "src.domain.collection.services.macro", "MacroAggregator"),
+]
 
 
-@cli.command("init-db")
+@cli.group()
+def init():
+    """初始化命令组（首次部署时执行）"""
+    pass
+
+
+@init.command("db")
 @click.option("--target", type=click.Choice(["prod", "test"]), default="test")
 @click.option("--no-drop", is_flag=True, help="不 drop 已存在的表")
 @click.option("--yes", is_flag=True, help="对 prod 库的确认标记")
-def init_db_cmd(target: str, no_drop: bool, yes: bool):
-    """按 schema/*.sql 初始化数据库"""
+def init_db(target: str, no_drop: bool, yes: bool):
+    """按 schema/*.sql 初始化数据库表结构"""
     import subprocess
 
     script = Path(__file__).resolve().parents[3] / "scripts" / "init_db.py"
@@ -151,6 +159,69 @@ def init_db_cmd(target: str, no_drop: bool, yes: bool):
         cmd.append("--yes")
     click.echo(f"▶ {' '.join(cmd)}")
     sys.exit(subprocess.call(cmd))
+
+
+@init.command("state")
+@click.option("--reset", is_flag=True, help="清空已有记录后重新初始化")
+def init_state(reset: bool):
+    """初始化 ft_collection_state 采集状态"""
+    import importlib
+
+    if reset:
+        from src.infrastructure.db import checkpoint_store
+        existing = checkpoint_store.list_all()
+        if existing:
+            click.echo(f"⚠️  即将清空 {len(existing)} 条 ft_collection_state 记录")
+            if not click.confirm("确认?"):
+                return
+            from src.infrastructure.connections import get_session
+            from sqlalchemy import text
+            with get_session() as s:
+                s.execute(text("TRUNCATE ft_collection_state RESTART IDENTITY"))
+            click.echo("已清空")
+
+    total = 0
+    for name, mod_path, cls_name in AGGREGATORS:
+        try:
+            mod = importlib.import_module(mod_path)
+            cls = getattr(mod, cls_name)
+            cls.init_state()
+            count = len(cls.SOURCE_CONFIGS)
+            click.echo(f"  ✅ {name}: {count} 个源")
+            total += count
+        except Exception as e:
+            click.echo(f"  ❌ {name}: {e}", err=True)
+
+    click.echo(f"\n✅ 初始化完成，共 {total} 个源")
+
+
+@init.command("schedules")
+def init_schedules():
+    """注册定时调度到 jettask scheduler（需要 Persist 在跑）"""
+    from src.interfaces.cli.schedules import SCHEDULES
+    from src.interfaces.tasks import app
+
+    click.echo(f"注册 {len(SCHEDULES)} 个调度:")
+    for s in SCHEDULES:
+        click.echo(f"  - {s.name}")
+    count = app.schedule_register(SCHEDULES)
+    click.echo(f"✅ 已发送 {count} 个调度命令")
+    app.close()
+
+
+@init.command("all")
+@click.option("--target", type=click.Choice(["prod", "test"]), default="test")
+@click.pass_context
+def init_all(ctx, target: str):
+    """一键执行全部初始化: db → state → schedules"""
+    click.echo("═══ Step 1/3: 初始化数据库 ═══")
+    ctx.invoke(init_db, target=target, no_drop=False, yes=False)
+
+    click.echo("\n═══ Step 2/3: 初始化采集状态 ═══")
+    ctx.invoke(init_state, reset=False)
+
+    click.echo("\n═══ Step 3/3: 注册定时调度 ═══")
+    ctx.invoke(init_schedules)
 
 
 if __name__ == "__main__":
