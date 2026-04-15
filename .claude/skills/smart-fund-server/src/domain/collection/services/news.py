@@ -16,29 +16,6 @@ logger = logging.getLogger(__name__)
 
 TZ_CST = timezone(timedelta(hours=8))
 
-DDL = """
-CREATE TABLE IF NOT EXISTS ft_news (
-    id              SERIAL PRIMARY KEY,
-    title           TEXT NOT NULL,
-    summary         TEXT DEFAULT '',        -- 列表页摘要（快速预览，短）
-    content         TEXT DEFAULT '',        -- 真实正文（完整内容，用于 AI 抽取）
-    source          VARCHAR(32) NOT NULL,
-    source_name     VARCHAR(50) DEFAULT '',
-    source_reliability FLOAT DEFAULT 0.5,
-    category        VARCHAR(20) DEFAULT '',
-    url             TEXT DEFAULT '',
-    tags            JSONB DEFAULT '[]',
-    related_stocks  JSONB DEFAULT '[]',
-    published_at    TIMESTAMPTZ NOT NULL,
-    fingerprint     VARCHAR(64) NOT NULL,
-    created_at      TIMESTAMPTZ DEFAULT NOW()
-);
-
-CREATE UNIQUE INDEX IF NOT EXISTS idx_ft_news_fingerprint ON ft_news(fingerprint);
-CREATE INDEX IF NOT EXISTS idx_ft_news_source_time ON ft_news(source, published_at);
-CREATE INDEX IF NOT EXISTS idx_ft_news_category ON ft_news(category, published_at);
-"""
-
 # 政府网站采集的部委列表（按重要性排序）
 GOV_DEPARTMENTS = [
     "miit",          # 工信部·司局动态（验证可用）
@@ -474,7 +451,6 @@ class NewsAggregator(BaseAggregator):
     def __init__(self):
         super().__init__()
         self._init_sources()
-        self._exec_ddl(DDL)
         self._backfill_cursor = None  # fetch 方法设置，_compute_checkpoint 读取
 
     # ==================== 时间工具 ====================

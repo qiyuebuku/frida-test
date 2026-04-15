@@ -13,19 +13,6 @@ from src.domain.collection.services.base import BaseAggregator, SourceDef
 
 logger = logging.getLogger(__name__)
 
-DDL = """
-CREATE TABLE IF NOT EXISTS ft_sentiment (
-    id          SERIAL PRIMARY KEY,
-    data_type   VARCHAR(32) NOT NULL,
-    trade_date  DATE NOT NULL,
-    data        JSONB NOT NULL,
-    created_at  TIMESTAMPTZ DEFAULT NOW()
-);
-
-CREATE INDEX IF NOT EXISTS idx_ft_sentiment_type_date ON ft_sentiment(data_type, trade_date);
-"""
-
-
 def _today() -> str:
     return date.today().isoformat()
 
@@ -211,7 +198,6 @@ class SentimentAggregator(BaseAggregator):
     def __init__(self):
         super().__init__()
         self._init_sources()
-        self._exec_ddl(DDL)
 
     def _init_sources(self):
         from src.infrastructure import clients

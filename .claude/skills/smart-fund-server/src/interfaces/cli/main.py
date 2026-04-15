@@ -77,6 +77,36 @@ def persist():
     app.start_persist(db_url=DB_URL)
 
 
+# ==================== 数据审计 ====================
+
+
+@cli.command("data-types")
+def data_types():
+    """查看所有 data_type 及其在 DB 中的数据量"""
+    from sqlalchemy import text
+    from src.infrastructure.connections import get_session
+
+    with get_session() as s:
+        click.echo("═══ ft_market_flow ═══")
+        rows = s.execute(text(
+            "SELECT data_type, count(*), min(trade_date), max(trade_date) "
+            "FROM ft_market_flow GROUP BY data_type ORDER BY data_type"
+        )).fetchall()
+        for r in rows:
+            click.echo(f"  {r[0]:25} {r[1]:>6} 条  {r[2]} ~ {r[3]}")
+
+        click.echo("\n═══ ft_watchlist_data ═══")
+        rows = s.execute(text(
+            "SELECT data_type, count(*), count(DISTINCT code) "
+            "FROM ft_watchlist_data GROUP BY data_type ORDER BY data_type"
+        )).fetchall()
+        for r in rows:
+            click.echo(f"  {r[0]:25} {r[1]:>6} 条  {r[2]} 只标的")
+
+        codes = s.execute(text("SELECT count(DISTINCT code) FROM ft_watchlist_data")).scalar()
+        click.echo(f"\n  覆盖标的: {codes}")
+
+
 # ==================== 手动触发 ====================
 
 

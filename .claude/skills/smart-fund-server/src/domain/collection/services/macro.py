@@ -13,23 +13,6 @@ from src.domain.collection.services.base import BaseAggregator, SourceDef
 
 logger = logging.getLogger(__name__)
 
-DDL = """
-CREATE TABLE IF NOT EXISTS ft_macro_indicators (
-    id              SERIAL PRIMARY KEY,
-    indicator       VARCHAR(32) NOT NULL,
-    period          VARCHAR(16) NOT NULL,
-    value           FLOAT NOT NULL,
-    unit            VARCHAR(16) DEFAULT '',
-    prev_value      FLOAT,
-    source          VARCHAR(32) DEFAULT '',
-    published_at    DATE,
-    created_at      TIMESTAMPTZ DEFAULT NOW(),
-    UNIQUE(indicator, period, source)
-);
-
-CREATE INDEX IF NOT EXISTS idx_ft_macro_ind_period ON ft_macro_indicators(indicator, period);
-"""
-
 # ==================== 指标配置 ====================
 
 # 东方财富宏观指标: (indicator_name, method_name, report_name, unit)
@@ -273,7 +256,6 @@ class MacroAggregator(BaseAggregator):
     def __init__(self):
         super().__init__()
         self._init_sources()
-        self._exec_ddl(DDL)
 
     def _init_sources(self):
         from src.infrastructure import clients

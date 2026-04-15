@@ -15,17 +15,6 @@ from src.domain.collection.services.base import BaseAggregator, SourceDef
 logger = logging.getLogger(__name__)
 
 # ft_market_cache 已由 fund_db.py 创建，此处只确保索引
-DDL = """
-CREATE TABLE IF NOT EXISTS ft_market_cache (
-    id SERIAL PRIMARY KEY,
-    data_type VARCHAR(50) NOT NULL UNIQUE,
-    data JSONB NOT NULL,
-    expires_at TIMESTAMP NOT NULL,
-    created_at TIMESTAMP DEFAULT NOW()
-);
-"""
-
-
 def _today() -> str:
     return date.today().isoformat()
 
@@ -191,7 +180,6 @@ class MarketAggregator(BaseAggregator):
     def __init__(self):
         super().__init__()
         self._init_sources()
-        self._exec_ddl(DDL)
 
     def _init_sources(self):
         from src.infrastructure import clients

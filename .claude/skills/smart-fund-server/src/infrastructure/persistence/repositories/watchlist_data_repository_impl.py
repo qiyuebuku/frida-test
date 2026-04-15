@@ -13,24 +13,36 @@ logger = logging.getLogger(__name__)
 
 class WatchlistDataRepositoryImpl:
 
+    CHUNK_SIZE = 1000
+
     def save_batch(self, items: list[dict]) -> int:
         """批量写入，(code, data_type, trade_date) 冲突则更新 data
+
+        使用 PostgreSQL multi-row VALUES + ON CONFLICT DO UPDATE (EXCLUDED.data)
+        一条 SQL 插入 CHUNK_SIZE 条，大幅减少 round-trip 次数。
 
         items: [{"code": "007380", "data_type": "nav", "trade_date": date, "data": {...}}, ...]
         """
         if not items:
             return 0
+
         saved = 0
         with get_session() as s:
-            for item in items:
-                stmt = pg_insert(WatchlistData).values(
-                    code=item["code"],
-                    data_type=item["data_type"],
-                    trade_date=item.get("trade_date"),
-                    data=item["data"],
-                ).on_conflict_do_update(
+            for i in range(0, len(items), self.CHUNK_SIZE):
+                chunk = items[i:i + self.CHUNK_SIZE]
+                values = [
+                    {
+                        "code": it["code"],
+                        "data_type": it["data_type"],
+                        "trade_date": it.get("trade_date"),
+                        "data": it["data"],
+                    }
+                    for it in chunk
+                ]
+                stmt = pg_insert(WatchlistData).values(values)
+                stmt = stmt.on_conflict_do_update(
                     index_elements=["code", "data_type", "trade_date"],
-                    set_={"data": item["data"]},
+                    set_={"data": stmt.excluded.data},
                 )
                 result = s.execute(stmt)
                 saved += result.rowcount or 0
