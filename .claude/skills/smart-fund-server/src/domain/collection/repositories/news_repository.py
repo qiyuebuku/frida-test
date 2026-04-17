@@ -1,6 +1,6 @@
 """新闻仓储抽象接口"""
 from abc import ABC, abstractmethod
-from datetime import date
+from datetime import date, datetime
 from typing import Any
 
 
@@ -50,4 +50,14 @@ class NewsRepository(ABC):
     @abstractmethod
     def count(self) -> int:
         """全表行数(用于监控)"""
+        ...
+
+    @abstractmethod
+    def query_by_tag(self, tag: str, since: datetime) -> list[dict]:
+        """按 tags 数组查询近期新闻(regime engine 消费)"""
+        ...
+
+    @abstractmethod
+    def query_by_category(self, categories: list[str], since: datetime) -> list[dict]:
+        """按 category 查询近期新闻(regime engine policy_score 消费)"""
         ...

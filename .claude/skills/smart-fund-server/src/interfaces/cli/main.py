@@ -47,8 +47,9 @@ def worker(concurrency: int, tasks: tuple[str, ...]):
         # "agg_news",
         "agg_fund_flow",
         # "agg_market",
-        # "agg_macro", "agg_sentiment", 
-        # "agg_event_extraction", "agg_event_stream","agg_event_feedback",
+        "agg_macro",
+        # "agg_sentiment",
+        # "agg_event_extraction", "agg_event_stream", "agg_event_feedback",
         # "trade_decision", "trade_execution", "trade_monitor",
         # "review_decision",
     ]

@@ -77,8 +77,40 @@ CREATE TABLE public.ft_macro_indicators (
     prev_value double precision,
     source character varying(32) DEFAULT ''::character varying,
     published_at date,
+    dim_tag character varying(16) DEFAULT ''::character varying,
+    yoy double precision,
+    mom double precision,
     created_at timestamp with time zone DEFAULT now()
 );
+
+-- TABLE: ft_macro_regime
+--
+-- Name: ft_macro_regime; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.ft_macro_regime (
+    id integer NOT NULL,
+    computed_at timestamp with time zone DEFAULT now(),
+    snapshot_date date NOT NULL,
+    regime character varying(16) NOT NULL,
+    overall_score double precision NOT NULL,
+    multiplier double precision NOT NULL,
+    liquidity_score double precision NOT NULL DEFAULT 0,
+    growth_score double precision NOT NULL DEFAULT 0,
+    inflation_score double precision NOT NULL DEFAULT 0,
+    external_score double precision NOT NULL DEFAULT 0,
+    policy_score double precision NOT NULL DEFAULT 0,
+    contributors jsonb NOT NULL DEFAULT '{}'::jsonb
+);
+
+CREATE SEQUENCE public.ft_macro_regime_id_seq
+    AS integer START WITH 1 INCREMENT BY 1 NO MINVALUE NO MAXVALUE CACHE 1;
+
+ALTER SEQUENCE public.ft_macro_regime_id_seq OWNED BY public.ft_macro_regime.id;
+ALTER TABLE ONLY public.ft_macro_regime ALTER COLUMN id SET DEFAULT nextval('public.ft_macro_regime_id_seq'::regclass);
+ALTER TABLE ONLY public.ft_macro_regime ADD CONSTRAINT ft_macro_regime_pkey PRIMARY KEY (id);
+ALTER TABLE ONLY public.ft_macro_regime ADD CONSTRAINT ft_macro_regime_snapshot_date_key UNIQUE (snapshot_date);
+CREATE INDEX idx_macro_regime_date ON public.ft_macro_regime(snapshot_date DESC);
 
 -- SEQUENCE: ft_macro_indicators_id_seq
 --

@@ -141,7 +141,7 @@ class Sentiment(Base):
 
 
 class MacroIndicator(Base):
-    """宏观指标(EM 9 个 + PBOC shibor/lpr/usdcny)"""
+    """宏观指标(EM 14+ 个 + PBOC shibor/lpr/usdcny/omo)"""
     __tablename__ = "ft_macro_indicators"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
@@ -156,12 +156,49 @@ class MacroIndicator(Base):
     prev_value: Mapped[float | None] = mapped_column(Float, comment="上期值(用于环比)")
     source: Mapped[str] = mapped_column(String, default="", comment="数据源 eastmoney/pboc")
     published_at: Mapped[date | None] = mapped_column(Date, comment="发布日期")
+    dim_tag: Mapped[str] = mapped_column(
+        String(16), default="", comment="维度标签 liquidity/growth/inflation/external/policy"
+    )
+    yoy: Mapped[float | None] = mapped_column(Float, comment="同比 %")
+    mom: Mapped[float | None] = mapped_column(Float, comment="环比 %")
     created_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )
 
     def __repr__(self) -> str:
         return f"<MacroIndicator {self.indicator} {self.period}={self.value}{self.unit}>"
+
+
+# ==================== ft_macro_regime ====================
+
+
+class MacroRegime(Base):
+    """宏观 regime 信号(五维度加权打分 → regime + multiplier)"""
+    __tablename__ = "ft_macro_regime"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    computed_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), comment="计算时间"
+    )
+    snapshot_date: Mapped[date] = mapped_column(
+        Date, nullable=False, unique=True, comment="业务日"
+    )
+    regime: Mapped[str] = mapped_column(
+        String(16), nullable=False, comment="risk_off / neutral / risk_on"
+    )
+    overall_score: Mapped[float] = mapped_column(Float, nullable=False, comment="[-1, 1]")
+    multiplier: Mapped[float] = mapped_column(Float, nullable=False, comment="[0.6, 1.2]")
+    liquidity_score: Mapped[float] = mapped_column(Float, default=0, nullable=False)
+    growth_score: Mapped[float] = mapped_column(Float, default=0, nullable=False)
+    inflation_score: Mapped[float] = mapped_column(Float, default=0, nullable=False)
+    external_score: Mapped[float] = mapped_column(Float, default=0, nullable=False)
+    policy_score: Mapped[float] = mapped_column(Float, default=0, nullable=False)
+    contributors: Mapped[dict] = mapped_column(
+        JSONB, default=dict, nullable=False, comment="指标级贡献明细"
+    )
+
+    def __repr__(self) -> str:
+        return f"<MacroRegime {self.snapshot_date} {self.regime} mul={self.multiplier}>"
 
 
 # ==================== ft_collection_state ====================

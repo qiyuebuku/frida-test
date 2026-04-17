@@ -85,3 +85,37 @@ class NewsRepositoryImpl(NewsRepository):
         from sqlalchemy import func
         with get_session() as s:
             return s.scalar(select(func.count()).select_from(News)) or 0
+
+    def query_by_tag(self, tag: str, since) -> list[dict]:
+        from sqlalchemy import cast
+        from sqlalchemy.dialects.postgresql import ARRAY, TEXT
+        with get_session() as s:
+            rows = s.scalars(
+                select(News)
+                .where(
+                    News.tags.op("@>")(cast([tag], ARRAY(TEXT))),
+                    News.published_at >= since,
+                )
+                .order_by(News.published_at.desc())
+                .limit(200)
+            ).all()
+            return [
+                {"title": r.title, "summary": r.summary, "published_at": r.published_at}
+                for r in rows
+            ]
+
+    def query_by_category(self, categories: list[str], since) -> list[dict]:
+        with get_session() as s:
+            rows = s.scalars(
+                select(News)
+                .where(
+                    News.category.in_(categories),
+                    News.published_at >= since,
+                )
+                .order_by(News.published_at.desc())
+                .limit(200)
+            ).all()
+            return [
+                {"title": r.title, "summary": r.summary, "published_at": r.published_at}
+                for r in rows
+            ]
