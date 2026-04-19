@@ -1,0 +1,36 @@
+{
+  "active": "official",
+  "env_unset": [
+    "ANTHROPIC_BASE_URL", "ANTHROPIC_AUTH_TOKEN",
+    "ANTHROPIC_MODEL", "ANTHROPIC_DEFAULT_OPUS_MODEL",
+    "ANTHROPIC_DEFAULT_SONNET_MODEL", "ANTHROPIC_DEFAULT_HAIKU_MODEL",
+    "ANTHROPIC_REASONING_MODEL", "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC",
+    "API_TIMEOUT_MS"
+  ],
+  "backends": {
+    "official": {
+      "description": "Claude 官方（本地 OAuth 订阅，免 key）",
+      "type": "oauth",
+      "env": {},
+      "model": "claude-sonnet-4-6"
+    },
+    "lanyi-api": {
+      "description": "第三方平台账号（兰易 API）",
+      "type": "api",
+      "env": {
+        "ANTHROPIC_AUTH_TOKEN": "sk-wmzirOvRCtPT8nFNqvPgL1L7GGJvnmkHYgN0GNtbLQd2x8kp",
+        "ANTHROPIC_BASE_URL": "https://lanyiapi.com"
+      },
+      "model": "claude-sonnet-4-6"
+    },
+    "third-party": {
+      "description": "第三方中转站（需要填入 key 和 base_url）",
+      "type": "api",
+      "env": {
+        "ANTHROPIC_AUTH_TOKEN": "",
+        "ANTHROPIC_BASE_URL": ""
+      },
+      "model": "claude-sonnet-4-6"
+    }
+  }
+}

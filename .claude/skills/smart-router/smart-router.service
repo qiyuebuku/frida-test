@@ -1,0 +1,15 @@
+[Unit]
+Description=Smart API Router for Claude Code
+After=network.target
+
+[Service]
+Type=simple
+User=yuyang
+WorkingDirectory=/home/yuyang/.claude/smart-router
+ExecStart=/usr/bin/python3 /home/yuyang/.claude/smart-router/router.py
+Restart=always
+RestartSec=5
+Environment=PYTHONUNBUFFERED=1
+
+[Install]
+WantedBy=multi-user.target
