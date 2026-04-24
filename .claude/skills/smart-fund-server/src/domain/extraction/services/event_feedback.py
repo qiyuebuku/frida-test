@@ -103,7 +103,8 @@ class EventFeedbackAggregator(BaseAggregator):
     async def backfill_market_reaction(self, days: int = 3) -> int:
         """回填近 N 天事件的市场反应
 
-        扫描 ft_events 中 sector_change_1d 为空的记录，计算并回填。
+        扫描 ft_events 中 feedback_at 为空的记录，计算并回填。
+        即使所有数据源都没拿到值，也会写入 feedback_at 标记为已尝试。
         """
         try:
             events = self._get_unfilled_events(days)
@@ -118,9 +119,9 @@ class EventFeedbackAggregator(BaseAggregator):
         for event in events:
             try:
                 reaction = await self._compute_reaction(event)
-                if reaction:
-                    self._update_event_reaction(event["id"], reaction)
-                    filled += 1
+                # 无论 reaction 是否为空，都写 feedback_at（幂等保证）
+                self._update_event_reaction(event["id"], reaction)
+                filled += 1
             except Exception as e:
                 logger.debug(f"回填事件 {event.get('id')} 失败: {e}")
         return filled
@@ -133,16 +134,16 @@ class EventFeedbackAggregator(BaseAggregator):
     async def _compute_reaction(self, event: dict) -> dict | None:
         """计算单个事件的市场反应
 
-        当前实现的回填字段:
-        - north_flow_1d: T+1 北向净流入（来自 ft_market_flow / northbound 历史表）
-        - sector_net_inflow_1d: T+1 关联行业资金净流入（来自 ft_market_flow / sector_flow）
-
-        TODO: sector_change_1d/3d (涨跌幅) 需要 sector K 线数据，等 market.py 加 sector_kline 源后实现
+        回填字段:
+        - north_flow_1d: T+1 北向净流入
+        - sector_volume_change: T+1 关联行业资金净流入
+        - sector_change_1d: T+1 关联板块涨跌幅（来自 sector_kline 缓存）
+        - sector_change_3d: T+3 关联板块涨跌幅（来自 sector_kline 缓存）
         """
         reaction: dict = {}
         event_time = event.get("event_time") or event.get("created_at")
         if not event_time:
-            return None
+            return None  # 事件时间缺失，确实无法计算
 
         # ── 北向资金 T+1 ──
         try:
@@ -153,7 +154,7 @@ class EventFeedbackAggregator(BaseAggregator):
         except Exception:
             pass
 
-        # ── 关联行业 T+1 资金净流入 ──（暂存到 sector_volume_change 字段作为代理指标）
+        # ── 关联行业 T+1 资金净流入 ──
         industries = event.get("industries") or []
         if isinstance(industries, str):
             try:
@@ -170,30 +171,87 @@ class EventFeedbackAggregator(BaseAggregator):
             except Exception:
                 pass
 
-        return reaction if reaction else None
+        # ── 关联板块涨跌幅 T+1/T+3（来自 sector_kline 缓存） ──
+        try:
+            sector_change = await self._get_sector_change(event, industries)
+            if sector_change:
+                reaction.update(sector_change)
+        except Exception:
+            pass
+
+        return reaction
 
     def _get_sector_net_inflow(self, industry: str, trade_date: str) -> float | None:
         """R2.7 走 MarketFlowRepository"""
         from src.infrastructure.persistence.repositories import MarketFlowRepositoryImpl
         return MarketFlowRepositoryImpl().get_sector_net_inflow(industry, trade_date)
 
+    async def _get_sector_change(self, event: dict, industries: list[str]) -> dict:
+        """从 sector_kline 缓存中取关联板块的 T+1/T+3 涨跌幅
+
+        Returns: {"sector_change_1d": float, "sector_change_3d": float} 或 {}
+        """
+        if not industries:
+            return {}
+
+        from src.infrastructure.persistence.repositories import MarketCacheRepositoryImpl
+        from src.domain.collection.services.market import MarketAggregator
+
+        # 获取 sector_kline 缓存
+        cache_repo = MarketCacheRepositoryImpl()
+        cache = cache_repo.find_by_type("sector_kline")
+        if not cache or "data" not in cache:
+            return {}
+
+        sectors_data = cache["data"].get("sectors", {})
+        name_map = cache["data"].get("name_map", {})
+
+        # 匹配第一个有 K 线数据的行业
+        for industry_name in industries:
+            bk_code = name_map.get(industry_name)
+            if not bk_code or bk_code not in sectors_data:
+                continue
+
+            payload = sectors_data[bk_code]
+            result = {}
+            if payload.get("change_1d") is not None:
+                result["sector_change_1d"] = payload["change_1d"]
+            if payload.get("change_3d") is not None:
+                result["sector_change_3d"] = payload["change_3d"]
+            return result
+
+        return {}
+
     def _get_northbound_flow_on_date(self, trade_date: str) -> float | None:
         """R2.7 走 MarketFlowRepository"""
         from src.infrastructure.persistence.repositories import MarketFlowRepositoryImpl
         return MarketFlowRepositoryImpl().get_northbound_net_flow(trade_date)
 
-    def _update_event_reaction(self, event_id: int, reaction: dict):
-        """回填事件的市场反应字段(含 feedback_at 时间戳) — R2.7 走 EventRepository"""
+    def _update_event_reaction(self, event_id: int, reaction: dict | None):
+        """回填事件的市场反应字段(含 feedback_at 时间戳)
+
+        即使 reaction 为空/None，也会写入 feedback_at 标记为已尝试。
+        feedback_at 语义: "首次尝试回填时间"，非"所有字段回填完成"。
+        """
         from src.infrastructure.persistence.repositories import EventRepositoryImpl
         EventRepositoryImpl().update_market_reaction(event_id, reaction)
 
     # ==================== 2. 事件流衰退监控 ====================
 
     async def check_event_stream_decay(self, industries: list[str]) -> list[dict]:
-        """检查指定行业的事件流衰退信号
+        """检查指定行业的事件流衰退信号（盘后复盘用，不直接写决策表）
+
+        4 信号加权:
+        - 新闻密度低 (news_count_24h < 3)    → +0.25
+        - 连续 2 天板块净流出                 → +0.30
+        - 事件流状态恶化 (decaying/closed)    → +0.30
+        - 情绪趋势转差 (falling)             → +0.15
 
         Returns:
-            [{"industry": "AI", "signals": [...], "decay_score": 0.7}]
+            [{"industry": "AI", "signals": [...], "decay_score": 0.55}]
+
+        注意: 本方法仅供盘后复盘/离线观察，不直接写 ft_pending_decisions。
+        实时止损由 trade_monitor 负责，两者职责不重叠。
         """
         results = []
         for industry in industries:
@@ -202,19 +260,30 @@ class EventFeedbackAggregator(BaseAggregator):
 
             decay_data = await self.get_decay_signals(industry)
 
-            # 新闻密度
+            # 信号 1: 新闻密度
             news_count = decay_data.get("news_count_24h", 0)
             if news_count < 3:
                 signals.append(f"新闻密度低: 24h 仅 {news_count} 条")
-                decay_score += 0.3
+                decay_score += 0.25
 
-            # 资金方向
+            # 信号 2: 资金方向
             fund_flow_2d = decay_data.get("fund_flow_2d", [])
             if len(fund_flow_2d) >= 2 and all(f < 0 for f in fund_flow_2d):
                 signals.append("连续 2 天板块净流出")
-                decay_score += 0.4
+                decay_score += 0.30
 
-            # 限制在 0-1
+            # 信号 3: 事件流状态
+            stream_state = decay_data.get("stream_state")
+            if stream_state in ("decaying", "closed"):
+                signals.append(f"事件流状态恶化: {stream_state}")
+                decay_score += 0.30
+
+            # 信号 4: 情绪趋势
+            sentiment_trend = decay_data.get("sentiment_trend", "unknown")
+            if sentiment_trend in ("falling",):
+                signals.append(f"情绪趋势转差: {sentiment_trend}")
+                decay_score += 0.15
+
             decay_score = min(1.0, decay_score)
 
             results.append({
@@ -225,7 +294,14 @@ class EventFeedbackAggregator(BaseAggregator):
         return results
 
     async def get_decay_signals(self, industry: str) -> dict:
-        """获取单个行业的衰退监控指标 — R2.7 走 ORM"""
+        """获取单个行业的衰退监控指标（4 信号）
+
+        信号源:
+        1. news_count_24h — ft_news 中含该行业关键词的近 24h 新闻数
+        2. fund_flow_2d — ft_market_flow.sector_flow 近 2 天含该行业的数据
+        3. stream_state — ft_event_streams 中该行业的最新流状态
+        4. sentiment_trend — ft_sentiment 中该行业近 3 天的情绪趋势
+        """
         from datetime import datetime, timedelta, timezone
 
         from sqlalchemy import func, or_, select
@@ -238,6 +314,7 @@ class EventFeedbackAggregator(BaseAggregator):
         result: dict = {
             "news_count_24h": 0,
             "fund_flow_2d": [],
+            "stream_state": None,
             "sentiment_trend": "unknown",
         }
 
@@ -280,5 +357,28 @@ class EventFeedbackAggregator(BaseAggregator):
                         result["fund_flow_2d"].append(float(net))
         except Exception as e:
             logger.debug(f"fund_flow_2d({industry}) 失败: {e}")
+
+        # 3. 事件流状态: ft_event_streams 中该行业的最新流
+        try:
+            from src.infrastructure.persistence.repositories import (
+                EventStreamRepositoryImpl,
+            )
+            stream = EventStreamRepositoryImpl().find_latest_by_industries([industry])
+            if stream:
+                result["stream_state"] = stream.get("state")
+                result["stream_momentum"] = stream.get("momentum")
+        except Exception as e:
+            logger.debug(f"stream_state({industry}) 失败: {e}")
+
+        # 4. 情绪趋势: ft_sentiment 中该行业近 3 天的情绪趋势
+        try:
+            from src.infrastructure.persistence.repositories import (
+                SentimentRepositoryImpl,
+            )
+            result["sentiment_trend"] = SentimentRepositoryImpl().get_sentiment_trend(
+                industry, days=3,
+            )
+        except Exception as e:
+            logger.debug(f"sentiment_trend({industry}) 失败: {e}")
 
         return result

@@ -845,3 +845,9 @@ ALTER INDEX public.idx_raw_trade_date ATTACH PARTITION public.ft_raw_data_202606
 -- ft_watchlist_data indexes
 CREATE UNIQUE INDEX IF NOT EXISTS idx_watchlist_data_unique ON public.ft_watchlist_data(code, data_type, trade_date);
 CREATE INDEX IF NOT EXISTS idx_watchlist_data_code ON public.ft_watchlist_data(code, data_type);
+
+-- L1 事件识别层索引
+ALTER TABLE ONLY public.ft_events ADD CONSTRAINT ft_events_dedup_key_key UNIQUE (dedup_key);
+CREATE INDEX IF NOT EXISTS idx_ft_events_source_type ON public.ft_events(source_type, event_time DESC);
+CREATE INDEX IF NOT EXISTS idx_ft_events_event_subtype ON public.ft_events(event_subtype, event_time DESC) WHERE event_subtype IS NOT NULL AND event_subtype != '';
+CREATE INDEX IF NOT EXISTS idx_ft_rule_thresholds_rule ON public.ft_rule_thresholds(rule_name);

@@ -1,5 +1,7 @@
 """统一 CLI 入口 — click 命令组
 
+    python -m src.interfaces.cli api [--host H] [--port P] [--reload]
+    python -m src.interfaces.cli llm-proxy [--host H] [--port P] [--reload]
     python -m src.interfaces.cli worker [-c N]
     python -m src.interfaces.cli scheduler
     python -m src.interfaces.cli persist
@@ -44,7 +46,7 @@ def worker(concurrency: int, tasks: tuple[str, ...]):
     from src.interfaces.tasks import app
 
     ALL_TASKS = [
-        # "agg_news",
+        "agg_news",
         "agg_fund_flow",
         # "agg_market",
         "agg_macro",
@@ -76,6 +78,39 @@ def persist():
 
     click.echo(f"📦 启动 Persist  db_url={DB_URL}")
     app.start_persist(db_url=DB_URL)
+
+
+# ==================== API / LLM Proxy ====================
+
+
+def _run_api_server(host: str, port: int, reload: bool) -> None:
+    import uvicorn
+
+    click.echo(f"🌐 启动 API 服务  http://{host}:{port}")
+    click.echo("   包含 LLM 代理接口: /api/llm-proxy/health  /v1/chat/completions  /v1/embeddings")
+    uvicorn.run("main:app", host=host, port=port, reload=reload)
+
+
+@cli.command()
+@click.option("--host", default=None, help="监听地址，默认使用 SERVER_HOST")
+@click.option("--port", default=None, type=int, help="监听端口，默认使用 SERVER_PORT")
+@click.option("--reload", is_flag=True, help="开发模式热重载")
+def api(host: str | None, port: int | None, reload: bool):
+    """启动 FastAPI 服务（包含交易、采集、LLM代理接口）"""
+    from src.infrastructure.config.settings import SERVER_HOST, SERVER_PORT
+
+    _run_api_server(host or SERVER_HOST, port or SERVER_PORT, reload)
+
+
+@cli.command("llm-proxy")
+@click.option("--host", default=None, help="监听地址，默认使用 SERVER_HOST")
+@click.option("--port", default=None, type=int, help="监听端口，默认使用 SERVER_PORT")
+@click.option("--reload", is_flag=True, help="开发模式热重载")
+def llm_proxy(host: str | None, port: int | None, reload: bool):
+    """启动包含 Claude LLM 代理接口的 API 服务"""
+    from src.infrastructure.config.settings import SERVER_HOST, SERVER_PORT
+
+    _run_api_server(host or SERVER_HOST, port or SERVER_PORT, reload)
 
 
 # ==================== 数据审计 ====================
@@ -238,6 +273,21 @@ def init_schedules():
     count = app.schedule_register(SCHEDULES)
     click.echo(f"✅ 已发送 {count} 个调度命令")
     app.close()
+
+
+# ==================== 手动物化命令 ====================
+
+
+@cli.command("materialize-sentiment")
+@click.option("--date", "trade_date", default=None, help="指定日期 YYYY-MM-DD，默认今天")
+def materialize_sentiment(trade_date: str | None):
+    """手动执行 L2 情绪信号物化（写 ft_sentiment_signal）"""
+    import asyncio
+    from src.application.services.collection_app_service import CollectionAppService
+
+    svc = CollectionAppService()
+    result = asyncio.run(svc.materialize_sentiment_signal(trade_date=trade_date))
+    click.echo(f"✅ {result.to_dict()}")
 
 
 @init.command("all")

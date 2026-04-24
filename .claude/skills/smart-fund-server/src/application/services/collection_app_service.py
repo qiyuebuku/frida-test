@@ -1,11 +1,12 @@
 """数据采集应用服务
 
-5 个 use case:
+6 个 use case:
 - run_news_collection
 - run_fund_flow_collection
 - run_market_collection
 - run_sentiment_collection
 - run_macro_collection
+- materialize_sentiment_signal
 
 每个 use case 内部调对应的 domain Aggregator (BaseAggregator 子类),
 返回 CollectionResult dto。
@@ -59,3 +60,23 @@ class CollectionAppService:
     async def run_macro_collection(self) -> CollectionResult:
         from src.domain.collection.services.macro import MacroAggregator
         return await _run("macro", MacroAggregator)
+
+    async def materialize_sentiment_signal(self, trade_date: str | None = None) -> CollectionResult:
+        """物化 L2 情绪信号到 ft_sentiment_signal 快照表
+
+        盘后定时调用（cron 30 15 * * 1-5），也可手动指定日期回填。
+        """
+        from datetime import date as date_type
+        from src.domain.collection.services.sentiment import SentimentAggregator
+
+        t0 = time.time()
+        agg = SentimentAggregator()
+        target = date_type.fromisoformat(trade_date) if trade_date else None
+        result = await agg.materialize_snapshot(target)
+        duration = time.time() - t0
+        record_collection("sentiment_signal", duration, 1)
+        return CollectionResult(
+            aggregator="sentiment_signal",
+            sources_run=1,
+            total_saved=1,
+        )

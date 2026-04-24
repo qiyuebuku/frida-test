@@ -1,10 +1,11 @@
 """数据采集层 ORM 模型(对应 schema/01_collection.sql)
 
-6 张表:
+7 张表:
 - News: 新闻原始记录
 - MarketFlow: 资金流(北向/板块/个股/龙虎榜)
 - MarketCache: 市场快照(覆盖式)
 - Sentiment: 情绪舆情
+- SentimentSignal: L2 情绪信号日度快照
 - MacroIndicator: 宏观指标(EM + PBOC)
 - CollectionState: 采集 checkpoint + 调度元数据
 """
@@ -54,6 +55,9 @@ class News(Base):
     )
     event_extracted: Mapped[bool] = mapped_column(
         Boolean, default=False, comment="是否已被 AI 事件抽取处理"
+    )
+    l1_classified_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), comment="L1a 分类器处理时间"
     )
 
     def __repr__(self) -> str:
@@ -135,6 +139,33 @@ class Sentiment(Base):
 
     def __repr__(self) -> str:
         return f"<Sentiment id={self.id} type={self.data_type} date={self.trade_date}>"
+
+
+# ==================== ft_sentiment_signal ====================
+
+
+class SentimentSignal(Base):
+    """L2 情绪派生信号日度快照（每日一行）"""
+    __tablename__ = "ft_sentiment_signal"
+
+    snapshot_date: Mapped[date] = mapped_column(Date, primary_key=True, comment="快照日期（PK）")
+    market_temperature: Mapped[int] = mapped_column(Integer, nullable=False, comment="市场温度 0-100")
+    market_level: Mapped[str] = mapped_column(String(8), nullable=False, comment="cold/cool/warm/hot/extreme")
+    market_trend: Mapped[str | None] = mapped_column(String(16), comment="rising/falling/stable")
+    signals: Mapped[dict] = mapped_column(JSONB, nullable=False, comment="get_market_temperature() 完整返回")
+    overheat_codes: Mapped[dict | None] = mapped_column(JSONB, comment="{codes: {code: penalty}}")
+    leading_theme: Mapped[dict | None] = mapped_column(JSONB, comment="{theme, confidence}")
+    sentiment_agg: Mapped[dict | None] = mapped_column(JSONB, comment="{overall_score, industry_scores}")
+    contributors: Mapped[dict | None] = mapped_column(JSONB, comment="解释性数据")
+    created_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+    updated_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+    def __repr__(self) -> str:
+        return f"<SentimentSignal {self.snapshot_date} temp={self.market_temperature}>"
 
 
 # ==================== ft_macro_indicators ====================

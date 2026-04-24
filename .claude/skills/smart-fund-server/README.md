@@ -67,6 +67,10 @@ smart-fund-server/
 - frpc 配置：`119.23.227.187:2222` 机器上的 `/home/yuyangruan/frp_0.57.0_linux_amd64/frpc_smart_fund_8900.toml`
 - 由 supervisorctl 管理，进程名 `smart_fund_8900`
 
+公网 `119.23.227.187:8901` 实际通过 frp 转发到内网 Embedding 服务 `10.168.1.210:8901`：
+- frpc 配置：`119.23.227.187:2222` 机器上的 `/home/yuyangruan/frp_0.57.0_linux_amd64/frpc_smart_fund_8901.toml`
+- 由 supervisorctl 管理，进程名 `smart_fund_8901`
+
 ## 部署
 
 ### 首次部署
@@ -157,8 +161,9 @@ cd /home/yuyangruan/smart-fund-server
 
 排查顺序：
 1. **服务本身是否正常**：SSH 登录后 `curl http://127.0.0.1:8900/health`
-2. **frp 是否正常**：SSH 到 `119.23.227.187:2222`，执行 `echo '199848' | sudo -S supervisorctl status smart_fund_8900`
-3. **端口是否开放**：检查云服务商安全组是否放行 8900 端口
+2. **embedding 服务是否正常**：`curl http://119.23.227.187:8901/health`
+3. **frp 是否正常**：SSH 到 `119.23.227.187:2222`，执行 `echo '199848' | sudo -S supervisorctl status smart_fund_8900 smart_fund_8901`
+4. **端口是否开放**：检查云服务商安全组是否放行 8900 / 8901 端口
 
 ### Token 过期 / 认证失败
 

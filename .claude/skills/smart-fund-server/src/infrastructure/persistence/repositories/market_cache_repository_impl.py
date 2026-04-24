@@ -24,7 +24,7 @@ class MarketCacheRepositoryImpl(MarketCacheRepository):
                 data_type=data_type, data=data, expires_at=expires_at,
             ).on_conflict_do_update(
                 index_elements=["data_type"],
-                set_={"data": data, "expires_at": expires_at},
+                set_={"data": data, "expires_at": expires_at, "created_at": datetime.now()},
             )
             s.execute(stmt)
 

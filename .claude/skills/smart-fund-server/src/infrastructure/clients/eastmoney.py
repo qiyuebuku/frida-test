@@ -734,6 +734,184 @@ class EastmoneyClient(BaseClient):
             },
         }
 
+    # ==================== 板块 K 线 ====================
+
+    async def get_sector_list(self, sector_type: str = "industry") -> dict:
+        """获取 EM 板块列表（含 BK 代码和名称）
+
+        Args:
+            sector_type: "industry"=行业板块 / "concept"=概念板块
+
+        Returns:
+            {sectors: [{bk_code, name, change_pct}, ...]}
+        """
+        fs_map = {"industry": "m:90+t:2+f:!50", "concept": "m:90+t:3+f:!50"}
+        fs = fs_map.get(sector_type, fs_map["industry"])
+        headers = {
+            "User-Agent": self.DEFAULT_HEADERS["User-Agent"],
+            "Referer": "https://quote.eastmoney.com/center/boardlist.html",
+        }
+        try:
+            resp = await self._client.get(
+                "https://push2ex.eastmoney.com/getTopicBKDaily",
+                params={
+                    "ut": self.EM_UT,
+                    "dession": "",
+                    "fields1": "f1,f2,f3,f4",
+                    "fields2": "f12,f14,f3,f2",
+                    "sort": "f3",
+                    "order": "-1",
+                    "ut": "b2884a393a59ad64002292a3e90d46a5",
+                    "fs": fs,
+                    "pn": 1,
+                    "pz": 500,
+                    "po": 1,
+                    "np": 1,
+                    "fltt": 2,
+                    "invt": 2,
+                    "fid": "f3",
+                },
+                headers=headers,
+                timeout=15,
+            )
+            resp.raise_for_status()
+            raw = resp.json()
+        except Exception:
+            return {"sectors": []}
+
+        sectors = []
+        for row in raw.get("data", {}).get("diff", []):
+            bk_code = row.get("f12", "")
+            name = row.get("f14", "")
+            change_pct = row.get("f3", 0)
+            if bk_code and name:
+                sectors.append({
+                    "bk_code": bk_code,
+                    "name": name,
+                    "change_pct": float(change_pct) if change_pct else 0,
+                })
+        return {"sectors": sectors}
+
+    async def get_sector_kline(self, bk_code: str, period: str = "101", limit: int = 60) -> dict:
+        """获取板块 K 线数据（行业/概念板块）
+
+        Args:
+            bk_code: 板块代码，如 "BK0475"
+            period: "101"=日K, "102"=周K
+            limit: 返回条数（≤500）
+        """
+        secid = f"90.{bk_code}"
+        headers = {
+            "User-Agent": self.DEFAULT_HEADERS["User-Agent"],
+            "Referer": "https://quote.eastmoney.com/",
+        }
+        for attempt in range(3):
+            try:
+                resp = await self._client.get(
+                    "https://push2his.eastmoney.com/api/qt/stock/kline/get",
+                    params={
+                        "secid": secid,
+                        "fields1": "f1,f2,f3",
+                        "fields2": "f51,f52,f53,f54,f55,f56,f57",
+                        "klt": period,
+                        "fqt": "1",
+                        "end": "20500101",
+                        "lmt": str(min(limit, 500)),
+                    },
+                    headers=headers,
+                    timeout=15,
+                )
+                resp.raise_for_status()
+                data = resp.json()
+                break
+            except Exception:
+                if attempt < 2:
+                    await asyncio.sleep(1)
+                else:
+                    return {"status_code": -1, "msg": "获取板块K线失败"}
+
+        if data.get("rc") != 0 or not data.get("data"):
+            return {"status_code": -1, "msg": "无数据"}
+
+        raw = data["data"]
+        name = raw.get("name", "")
+        klines = []
+        for line in raw.get("klines", []):
+            parts = line.split(",")
+            if len(parts) < 7:
+                continue
+            klines.append({
+                "date": parts[0],
+                "open": float(parts[1]),
+                "close": float(parts[2]),
+                "high": float(parts[3]),
+                "low": float(parts[4]),
+                "volume": int(parts[5]),
+                "turnover": float(parts[6]),
+            })
+        return {
+            "status_code": 0,
+            "data": {
+                "bk_code": bk_code,
+                "name": name,
+                "total": len(klines),
+                "klines": klines,
+            },
+        }
+
+    async def get_sector_minute_kline(self, bk_code: str, trade_date) -> dict:
+        """获取板块当日分钟 K 线（5 分钟粒度）
+
+        Args:
+            bk_code: 板块代码，如 "BK0475"
+            trade_date: 日期对象或 "YYYY-MM-DD" 字符串
+        """
+        secid = f"90.{bk_code}"
+        date_str = str(trade_date).replace("-", "")
+        headers = {
+            "User-Agent": self.DEFAULT_HEADERS["User-Agent"],
+            "Referer": "https://quote.eastmoney.com/",
+        }
+        try:
+            resp = await self._client.get(
+                "https://push2his.eastmoney.com/api/qt/stock/kline/get",
+                params={
+                    "secid": secid,
+                    "fields1": "f1,f2,f3",
+                    "fields2": "f51,f52,f53,f54,f55,f56,f57",
+                    "klt": "5",
+                    "fqt": "1",
+                    "beg": date_str,
+                    "end": date_str,
+                    "lmt": "250",
+                },
+                headers=headers,
+                timeout=15,
+            )
+            resp.raise_for_status()
+            data = resp.json()
+        except Exception:
+            return {"status_code": -1, "klines": []}
+
+        if data.get("rc") != 0 or not data.get("data"):
+            return {"status_code": -1, "klines": []}
+
+        klines = []
+        for line in data["data"].get("klines", []):
+            parts = line.split(",")
+            if len(parts) < 7:
+                continue
+            klines.append({
+                "datetime": parts[0],
+                "open": float(parts[1]),
+                "close": float(parts[2]),
+                "high": float(parts[3]),
+                "low": float(parts[4]),
+                "volume": int(parts[5]),
+                "turnover": float(parts[6]),
+            })
+        return {"status_code": 0, "klines": klines}
+
     async def get_stock_capital_flow(self, code: str, days: int = 20) -> dict:
         """获取个股资金流向（主力/超大单/大单/中单/小单）
 
@@ -1094,10 +1272,14 @@ class EastmoneyClient(BaseClient):
         """固定资产投资"""
         return await self.get_macro_indicator("RPT_ECONOMY_ASSET_INVEST", page_size)
 
-    @cached(ttl=1209600, source="eastmoney", source_name="东方财富", domain="macro", frequency="monthly", market="macro")
-    async def get_macro_fdi(self, page_size: int = 12) -> list:
-        """外商直接投资 (FDI)"""
-        return await self.get_macro_indicator("RPT_ECONOMY_FDI", page_size)
+    @cached(ttl=1209600, source="eastmoney", source_name="东方财富", domain="macro", frequency="yearly", market="macro")
+    async def get_macro_fdi(self, page_size: int = 20) -> list:
+        """外商直接投资 (FDI) — 年度数据（RPT_ECONOMY_FDI_NEW）
+
+        旧接口 RPT_ECONOMY_FDI 为月度数据，2023-07 后停更。
+        新接口为年度数据，字段: ACTUAL_FOREIGN(亿美元), ACTUAL_FOREIGN_SAME(同比比率)
+        """
+        return await self.get_macro_indicator("RPT_ECONOMY_FDI_NEW", page_size)
 
     # ==================== 券商研报 ====================
 

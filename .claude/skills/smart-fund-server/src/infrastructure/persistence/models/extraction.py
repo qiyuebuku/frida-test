@@ -1,8 +1,9 @@
 """事件抽取层 ORM 模型(对应 schema/02_extraction.sql)
 
-2 张表:
-- Event: AI 抽取出的结构化事件(28 列含 embedding bytea)
+3 张表:
+- Event: AI 抽取出的结构化事件(L1a/L1b 双路径写入)
 - EventStream: 事件流聚合(13 列含 ARRAY[Integer] event_ids)
+- RuleThreshold: L1b 规则阈值配置(滚动窗口计算)
 """
 from datetime import datetime
 
@@ -86,7 +87,8 @@ class Event(Base):
         Integer, comment="市场反应延迟(分钟)"
     )
     feedback_at: Mapped[datetime | None] = mapped_column(
-        DateTime(timezone=True), comment="回填时间戳"
+        DateTime(timezone=True),
+        comment="首次尝试回填市场反应的时间戳（非完整性标志）。即使所有反应字段为 NULL 也会写入，下游不得用此字段判断完整性。",
     )
 
     event_time: Mapped[datetime] = mapped_column(
@@ -97,6 +99,44 @@ class Event(Base):
     )
     fingerprint: Mapped[str] = mapped_column(
         String, nullable=False, comment="SHA256(title|event_type) 去重"
+    )
+
+    # L1 新增字段（双路径事件识别）
+    event_id: Mapped[str | None] = mapped_column(
+        String, unique=True, comment="UUID v7，带时序前缀便于范围扫描"
+    )
+    source_type: Mapped[str] = mapped_column(
+        String(16), default="text", comment="来源路径: text(L1a) / numeric(L1b)"
+    )
+    source_table: Mapped[str] = mapped_column(
+        String(64), default="", comment="原始表名 ft_news/ft_market_flow/..."
+    )
+    evidence_refs: Mapped[list] = mapped_column(
+        JSONB, default=list, comment="证据引用 [{table, pk, excerpt}]"
+    )
+    schema_version: Mapped[str] = mapped_column(
+        String(16), default="v1.0", comment="Schema 版本"
+    )
+    extractor_version: Mapped[str] = mapped_column(
+        String(32), default="", comment="抽取器版本(L1a: prompt版本, L1b: 规则版本)"
+    )
+    affected_stocks: Mapped[list] = mapped_column(
+        JSONB, default=list, comment="[{code, name, role}] 受影响股票"
+    )
+    affected_industries: Mapped[list] = mapped_column(
+        JSONB, default=list, comment="申万二级行业代码数组"
+    )
+    affected_concepts: Mapped[list] = mapped_column(
+        JSONB, default=list, comment="概念板块数组"
+    )
+    affected_regions: Mapped[list] = mapped_column(
+        JSONB, default=list, comment="地域标签数组"
+    )
+    quality_flags: Mapped[list] = mapped_column(
+        JSONB, default=list, comment="异常旗标数组"
+    )
+    dedup_key: Mapped[str | None] = mapped_column(
+        String(128), comment="L1 粗粒度去重键"
     )
 
     def __repr__(self) -> str:
@@ -153,3 +193,43 @@ class EventStream(Base):
             f"<EventStream id={self.id} {self.industry}/{self.state}/{self.momentum} "
             f"events={self.event_count}>"
         )
+
+
+# ==================== ft_rule_thresholds ====================
+
+
+class RuleThreshold(Base):
+    """L1b 规则阈值配置(每日由 l1_refresh_thresholds 任务从历史数据滚动计算)"""
+    __tablename__ = "ft_rule_thresholds"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    rule_name: Mapped[str] = mapped_column(
+        String(128), nullable=False, unique=True, comment="规则唯一标识"
+    )
+    data_source: Mapped[str] = mapped_column(
+        String(64), nullable=False, comment="数据源表名 ft_market_flow/..."
+    )
+    metric_name: Mapped[str] = mapped_column(
+        String(64), nullable=False, comment="指标字段名"
+    )
+    window_days: Mapped[int] = mapped_column(
+        Integer, default=90, comment="滚动窗口天数"
+    )
+    percentile_95: Mapped[float | None] = mapped_column(Float, comment="95 分位阈值")
+    percentile_99: Mapped[float | None] = mapped_column(Float, comment="99 分位阈值")
+    sigma_value: Mapped[float | None] = mapped_column(Float, comment="标准差")
+    threshold_config: Mapped[dict] = mapped_column(
+        JSONB, default=dict, comment="额外阈值配置"
+    )
+    last_computed_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), comment="最近一次计算时间"
+    )
+    created_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+    updated_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+    def __repr__(self) -> str:
+        return f"<RuleThreshold {self.rule_name} p95={self.percentile_95}>"

@@ -2,12 +2,14 @@
 
 数据源: 基金净值(THS+Sina)、指数行情(EM+Sina)、个股行情(Tencent+Sina)、
         港美股(Tencent)、全球指数(Sina)、期货/外汇(Sina+Tencent+PBOC)、
-        板块涨跌(Sina)、大盘总览(Aggregator)
+        板块涨跌(Sina)、板块K线(EM)、大盘总览(Aggregator)
 目标表: ft_market_cache（已有）
 """
 
+import asyncio
 import json
 import logging
+import time
 from datetime import date, datetime
 
 from src.domain.collection.services.base import BaseAggregator, SourceDef
@@ -155,6 +157,84 @@ def normalize_sector_ranking(raw) -> list[dict]:
     return _wrap_cache("sector_ranking", raw, 300)
 
 
+# ==================== 板块 K 线 ====================
+
+
+async def _fetch_sector_kline(em_client) -> dict:
+    """拉取板块日 K 线（行业+概念），写入 ft_market_cache
+
+    返回结构: {updated_at, trade_date, sectors: {bk_code: {name, sector_type, klines, change_1d, change_3d}}}
+    以及 name_map: {板块名: bk_code} 用于下游映射
+    """
+    all_sectors = []
+    for sector_type in ("industry", "concept"):
+        raw = await em_client.get_sector_list(sector_type)
+        for s in raw.get("sectors", []):
+            s["sector_type"] = sector_type
+        all_sectors.extend(raw.get("sectors", []))
+
+    if not all_sectors:
+        logger.warning("[sector_kline] EM 板块列表为空，跳过")
+        return None
+
+    semaphore = asyncio.Semaphore(10)
+
+    async def fetch_one(sector):
+        async with semaphore:
+            resp = await em_client.get_sector_kline(sector["bk_code"], period="101", limit=60)
+            klines = resp.get("data", {}).get("klines", []) if resp.get("status_code") == 0 else []
+            return sector["bk_code"], {
+                "name": sector["name"],
+                "sector_type": sector["sector_type"],
+                "klines": klines,
+                "change_1d": _calc_cumulative_change(klines, 1),
+                "change_3d": _calc_cumulative_change(klines, 3),
+            }
+
+    results = await asyncio.gather(
+        *[fetch_one(s) for s in all_sectors],
+        return_exceptions=True,
+    )
+
+    sectors = {}
+    name_map = {}
+    success = 0
+    for r in results:
+        if isinstance(r, Exception):
+            logger.warning(f"[sector_kline] 单板块拉取失败: {r}")
+            continue
+        bk_code, payload = r
+        if payload["klines"]:
+            sectors[bk_code] = payload
+            name_map[payload["name"]] = bk_code
+            success += 1
+
+    logger.info(f"[sector_kline] 完成: {success}/{len(all_sectors)} 板块有 K 线数据")
+
+    data = {
+        "updated_at": datetime.now().isoformat(),
+        "trade_date": _today(),
+        "sectors": sectors,
+        "name_map": name_map,
+    }
+
+    # 同时写入 sector_map 供回填查询用
+    from src.infrastructure.persistence.repositories import MarketCacheRepositoryImpl
+    from datetime import timedelta as _td
+    repo = MarketCacheRepositoryImpl()
+    expires_at = datetime.now() + _td(seconds=900)
+    try:
+        repo.upsert("sector_map", {"name_map": name_map, "updated_at": data["updated_at"]}, expires_at)
+    except Exception as e:
+        logger.warning(f"[sector_kline] sector_map 写入失败: {e}")
+
+    return data
+
+
+def normalize_sector_kline(raw) -> list[dict]:
+    return _wrap_cache("sector_kline", raw, 900)
+
+
 # ==================== 聚合器 ====================
 
 
@@ -175,6 +255,7 @@ class MarketAggregator(BaseAggregator):
         "futures_intl":       {"target_days": 0, "interval": 300, "default_mode": "incremental"},
         "forex":              {"target_days": 0, "interval": 300, "default_mode": "incremental"},
         "sector_ranking":     {"target_days": 0, "interval": 300, "default_mode": "incremental"},
+        "sector_kline":       {"target_days": 0, "interval": 900, "default_mode": "incremental"},
     }
 
     def __init__(self):
@@ -233,6 +314,13 @@ class MarketAggregator(BaseAggregator):
                 lambda cp: _fetch_sector_ranking_enriched(clients.sina, clients.eastmoney),
                 300,
                 normalize_sector_ranking,
+            ),
+            # 板块日 K 线 — 15 分钟（EM 行业+概念板块 K 线，含 change_1d/3d）
+            SourceDef(
+                "sector_kline",
+                lambda cp: _fetch_sector_kline(clients.eastmoney),
+                900,
+                normalize_sector_kline,
             ),
         ]
 
@@ -351,3 +439,56 @@ class MarketAggregator(BaseAggregator):
         """基金重仓股估值（代理到 AggregatorClient）"""
         from src.infrastructure import clients
         return await clients.aggregator.get_holdings_valuation(fund_code)
+
+    # ==================== 板块分钟 K 缓存 ====================
+
+    def __init_memory_cache(self):
+        """初始化分钟 K 内存缓存"""
+        if not hasattr(self, "_minute_kline_cache"):
+            self._minute_kline_cache: dict[tuple[str, date], tuple[float, list]] = {}
+
+    async def get_sector_minute_kline(self, bk_code: str, trade_date: date) -> list:
+        """获取板块当日分钟 K 线（5 分钟粒度），带 300s 内存 TTL
+
+        不持久化，按需拉取。用于 event_feedback 计算 reaction_delay_minutes。
+        """
+        self.__init_memory_cache()
+        key = (bk_code, trade_date)
+        now = time.time()
+        cached = self._minute_kline_cache.get(key)
+        if cached and cached[0] > now:
+            return cached[1]
+
+        from src.infrastructure import clients
+        resp = await clients.eastmoney.get_sector_minute_kline(bk_code, trade_date)
+        klines = resp.get("klines", [])
+        self._minute_kline_cache[key] = (now + 300, klines)
+        # 清理过期缓存（简单遍历，key 数量可控）
+        expired = [k for k, v in self._minute_kline_cache.items() if v[0] <= now]
+        for k in expired:
+            del self._minute_kline_cache[k]
+        return klines
+
+    async def resolve_sector_name_to_bk(self, industry_name: str) -> str | None:
+        """将行业名称映射为 EM BK 代码
+
+        优先查 sector_map 缓存（最新），其次查 sector_kline 数据。
+        """
+        from src.infrastructure.persistence.repositories import MarketCacheRepositoryImpl
+        repo = MarketCacheRepositoryImpl()
+
+        # 先查 sector_map
+        cache = repo.find_by_type("sector_map")
+        if cache and "name_map" in cache:
+            bk = cache["name_map"].get(industry_name)
+            if bk:
+                return bk
+
+        # 回退到 sector_kline 的 name_map
+        cache = repo.find_by_type("sector_kline")
+        if cache and "data" and "name_map" in cache.get("data", {}):
+            bk = cache["data"]["name_map"].get(industry_name)
+            if bk:
+                return bk
+
+        return None

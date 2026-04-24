@@ -4,7 +4,7 @@ import hashlib
 
 from fastapi import APIRouter, Query
 
-import routers._utils as _utils
+from src.interfaces.api.routes import _utils
 from src.infrastructure.db import fund_db
 
 router = APIRouter(prefix="/api/news", tags=["新闻采集"])

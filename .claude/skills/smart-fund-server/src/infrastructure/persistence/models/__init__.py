@@ -15,6 +15,7 @@ from src.infrastructure.persistence.models.collection import (
 from src.infrastructure.persistence.models.extraction import (
     Event,
     EventStream,
+    RuleThreshold,
 )
 from src.infrastructure.persistence.models.trading import (
     Decision,
@@ -44,6 +45,7 @@ __all__ = [
     # extraction
     "Event",
     "EventStream",
+    "RuleThreshold",
     # trading
     "PendingDecision",
     "Decision",

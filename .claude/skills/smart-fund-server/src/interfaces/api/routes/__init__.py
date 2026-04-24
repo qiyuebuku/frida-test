@@ -3,7 +3,17 @@
 from fastapi import APIRouter
 
 from src.interfaces.api.routes.trade import start_auth_auto_refresh
-from src.interfaces.api.routes import fund_query, market, trade, strategy, task, skill, file, watchlist
+from src.interfaces.api.routes import (
+    file,
+    fund_query,
+    llm_proxy,
+    market,
+    skill,
+    strategy,
+    task,
+    trade,
+    watchlist,
+)
 
 router = APIRouter()
 router.include_router(fund_query.router)
@@ -14,3 +24,4 @@ router.include_router(task.router)
 router.include_router(skill.router)
 router.include_router(file.router)
 router.include_router(watchlist.router)
+router.include_router(llm_proxy.router)

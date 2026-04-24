@@ -88,8 +88,25 @@ CREATE TABLE public.ft_events (
     feedback_at timestamp with time zone,
     event_time timestamp with time zone NOT NULL,
     created_at timestamp with time zone DEFAULT now(),
-    fingerprint character varying(64) NOT NULL
+    fingerprint character varying(64) NOT NULL,
+
+    -- L1 新增字段（双路径事件识别）
+    event_id uuid DEFAULT gen_random_uuid(),
+    source_type character varying(16) DEFAULT 'text',
+    source_table character varying(64) DEFAULT ''::character varying,
+    evidence_refs jsonb DEFAULT '[]'::jsonb,
+    schema_version character varying(16) DEFAULT 'v1.0'::character varying,
+    extractor_version character varying(32) DEFAULT ''::character varying,
+    affected_stocks jsonb DEFAULT '[]'::jsonb,
+    affected_industries jsonb DEFAULT '[]'::jsonb,
+    affected_concepts jsonb DEFAULT '[]'::jsonb,
+    affected_regions jsonb DEFAULT '[]'::jsonb,
+    quality_flags jsonb DEFAULT '[]'::jsonb,
+    dedup_key character varying(128)
 );
+
+COMMENT ON COLUMN public.ft_events.feedback_at IS
+  '首次尝试回填市场反应的时间戳（非完整性标志）。即使所有反应字段为 NULL，该时间戳也会被写入以避免重复拉取。下游模块不得用 feedback_at IS NOT NULL 判断字段完整性。';
 
 -- SEQUENCE: ft_events_id_seq
 --
@@ -110,6 +127,42 @@ CREATE SEQUENCE public.ft_events_id_seq
 --
 
 ALTER SEQUENCE public.ft_events_id_seq OWNED BY public.ft_events.id;
+
+-- CONSTRAINT: ft_events event_id unique
+ALTER TABLE ONLY public.ft_events ADD CONSTRAINT ft_events_event_id_key UNIQUE (event_id);
+
+-- TABLE: ft_rule_thresholds
+CREATE TABLE public.ft_rule_thresholds (
+    id integer NOT NULL,
+    rule_name character varying(128) NOT NULL,
+    data_source character varying(64) NOT NULL,
+    metric_name character varying(64) NOT NULL,
+    window_days integer DEFAULT 90,
+    percentile_95 double precision,
+    percentile_99 double precision,
+    sigma_value double precision,
+    threshold_config jsonb DEFAULT '{}'::jsonb,
+    last_computed_at timestamp with time zone,
+    created_at timestamp with time zone DEFAULT now(),
+    updated_at timestamp with time zone DEFAULT now()
+);
+
+-- SEQUENCE: ft_rule_thresholds_id_seq
+CREATE SEQUENCE public.ft_rule_thresholds_id_seq
+    AS integer
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+ALTER SEQUENCE public.ft_rule_thresholds_id_seq OWNED BY public.ft_rule_thresholds.id;
+
+-- CONSTRAINT: ft_rule_thresholds rule_name unique
+ALTER TABLE ONLY public.ft_rule_thresholds ADD CONSTRAINT ft_rule_thresholds_rule_name_key UNIQUE (rule_name);
+
+-- DEFAULT: ft_rule_thresholds id
+ALTER TABLE ONLY public.ft_rule_thresholds ALTER COLUMN id SET DEFAULT nextval('public.ft_rule_thresholds_id_seq'::regclass);
 
 -- DEFAULT: ft_event_streams id
 --

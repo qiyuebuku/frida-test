@@ -30,3 +30,43 @@ class FeedbackResult:
 
     def to_dict(self) -> dict:
         return {"filled": self.filled}
+
+
+@dataclass
+class L1bResult:
+    """L1b 数值事件检测 use case 输出"""
+    checked: int
+    fired: int
+    saved: int
+
+    def to_dict(self) -> dict:
+        return {"checked": self.checked, "fired": self.fired, "saved": self.saved}
+
+
+@dataclass
+class L1aClassifyResult:
+    """L1a 分类 use case 输出"""
+    classified: int
+    skipped: int
+
+    def to_dict(self) -> dict:
+        return {"classified": self.classified, "skipped": self.skipped}
+
+
+@dataclass
+class ThresholdResult:
+    """阈值刷新 use case 输出"""
+    refreshed: int
+
+    def to_dict(self) -> dict:
+        return {"refreshed": self.refreshed}
+
+
+@dataclass
+class QualityResult:
+    """质量监控 use case 输出"""
+    metrics: dict = field(default_factory=dict)
+    alerts: list = field(default_factory=list)
+
+    def to_dict(self) -> dict:
+        return {"metrics": self.metrics, "alerts": self.alerts}

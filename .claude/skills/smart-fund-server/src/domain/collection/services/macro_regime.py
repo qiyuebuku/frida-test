@@ -4,6 +4,7 @@
 写入 ft_macro_regime (每日 UPSERT)
 """
 import logging
+import math
 from datetime import date, datetime, timedelta, timezone
 
 logger = logging.getLogger(__name__)
@@ -92,8 +93,8 @@ class MacroRegimeEngine:
                 total_w += w
                 items.append({
                     "indicator": ind,
-                    "value": row["value"],
-                    "yoy": row.get("yoy"),
+                    "value": None if isinstance(row["value"], float) and math.isnan(row["value"]) else row["value"],
+                    "yoy": None if isinstance(row.get("yoy"), float) and math.isnan(row.get("yoy")) else row.get("yoy"),
                     "score": round(s, 3),
                     "weight": w,
                 })

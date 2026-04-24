@@ -18,7 +18,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
 from db import init_tables, create_task, update_task, get_task, list_tasks, delete_task
-from tmux_manager import SessionManager, run_streaming, send_followup
+from tmux_manager import SessionManager, PlannerSession, run_streaming, run_chat, run_pipe, send_followup
 
 LOG_DIR = Path(__file__).parent / "logs"
 LOG_DIR.mkdir(exist_ok=True)
@@ -74,6 +74,20 @@ def get_active_backend() -> dict:
     return cfg["backends"][active_name]
 
 
+def get_backend_priority(initial: str | None = None) -> list[str]:
+    """返回后端尝试顺序，initial 排最前"""
+    cfg = load_backends()
+    priority = cfg.get("priority")
+    if priority:
+        order = [b for b in priority if b in cfg["backends"]]
+    else:
+        order = list(cfg["backends"].keys())
+    if initial and initial in order:
+        order.remove(initial)
+        order.insert(0, initial)
+    return order
+
+
 def load_planner_prompt() -> str:
     """加载架构师 persona（planner.md）"""
     if PLANNER_PROMPT_PATH.exists():
@@ -94,61 +108,123 @@ class CreateTaskRequest(BaseModel):
 class MessageRequest(BaseModel):
     message: str
 
+class RespondDialogRequest(BaseModel):
+    action: str  # "enter" | "escape" | "text"
+    text: str | None = None  # 当 action="text" 时，发送指定文本
+
 class SetBackendRequest(BaseModel):
     name: str
+
+class ChatRequest(BaseModel):
+    prompt: str
+    system_prompt: str | None = None
+    model: str | None = None
+    backend: str | None = None
+    cwd: str | None = None
+    timeout: int = 180
 
 
 # ==================== 任务执行线程 ====================
 
-def _run_task(task_id: int, prompt: str, backend_config: dict,
+def _run_task_once(task_id: int, prompt: str, backend_name: str,
+                   backend_config: dict, cwd: str | None,
+                   model: str | None, timeout: int) -> dict | None:
+    """单次尝试：创建 tmux 会话 → 执行 → 返回结果。
+
+    返回 result dict（含 rate_limited 等标记），或 None 表示启动失败。
+    调用方负责 acquire/release semaphore。
+    """
+    update_task(task_id, status="processing", progress=0,
+                progress_msg=f"启动 Claude CLI（后端: {backend_name}）")
+
+    planner_prompt = load_planner_prompt()
+    backends_cfg = load_backends()
+    env_unset = backends_cfg.get("env_unset", [])
+    model_map = backends_cfg.get("model_map", {})
+
+    session = _session_manager.get_or_create(
+        task_id, backend_config, cwd=cwd, model=model,
+        system_prompt=planner_prompt or None,
+        env_unset=env_unset,
+        model_map=model_map,
+    )
+    if not session.ready:
+        return None
+
+    update_task(task_id, session_id=session.claude_session_id,
+                session_name=session.session_name)
+
+    return run_streaming(session, task_id, prompt, timeout=timeout)
+
+
+def _run_task(task_id: int, prompt: str, initial_backend: str,
               cwd: str | None, model: str | None, timeout: int):
-    """后台线程：创建 tmux 会话 → 执行 → 写结果"""
-    if not _session_manager.acquire(timeout=300):
-        update_task(task_id, status="failed", error_msg="服务器繁忙，请稍后重试")
-        return
+    """后台线程：按优先级尝试各后端，rate limit 时自动切换"""
+    priority = get_backend_priority(initial_backend)
+    cfg = load_backends()
+    last_error = "无可用后端"
 
-    try:
-        update_task(task_id, status="processing", progress=0, progress_msg="启动 Claude CLI 会话")
+    for idx, backend_name in enumerate(priority):
+        backend_config = cfg["backends"][backend_name]
+        model_to_use = model or backend_config.get("model", "sonnet")
 
-        # 通过 --system-prompt 注入 planner.md（Claude 不会回显 system prompt）
-        planner_prompt = load_planner_prompt()
+        if not _session_manager.acquire(timeout=300):
+            last_error = "服务器繁忙，请稍后重试"
+            continue
 
-        # 从 backends.json 全局配置读取 env_unset 列表
-        env_unset = load_backends().get("env_unset", [])
+        try:
+            if idx > 0:
+                log.info(f"[task={task_id}] 切换到后端: {backend_name}（第 {idx+1}/{len(priority)} 个）")
+                update_task(task_id, progress=0,
+                            progress_msg=f"切换后端: {backend_name}（{idx+1}/{len(priority)}）")
 
-        session = _session_manager.get_or_create(
-            task_id, backend_config, cwd=cwd, model=model,
-            system_prompt=planner_prompt or None,
-            env_unset=env_unset,
-        )
-        if not session.ready:
-            update_task(task_id, status="failed", error_msg="Claude CLI 启动失败")
+            result = _run_task_once(task_id, prompt, backend_name,
+                                    backend_config, cwd, model_to_use, timeout)
+
+            if result is None:
+                last_error = f"后端 {backend_name} Claude CLI 启动失败"
+                _session_manager.remove(task_id)
+                continue
+
+            usage = result.get("usage", {})
+            dur = int(result["duration"])
+
+            if result.get("rate_limited"):
+                last_error = f"后端 {backend_name} rate limited"
+                log.warning(f"[task={task_id}] {last_error}，尝试下一个后端")
+                _session_manager.remove(task_id)
+                continue
+
+            if result.get("timeout"):
+                has_partial = bool(result.get("result"))
+                update_task(task_id,
+                            status="completed" if has_partial else "failed",
+                            progress=95 if has_partial else 0,
+                            error_msg=f"执行超时 ({timeout}s)" + ("，但文件可能已写入" if has_partial else ""),
+                            result=result.get("result"), tool_calls=result.get("tool_calls"),
+                            completed_at=datetime.now().isoformat(),
+                            duration_sec=dur, usage=usage)
+            elif result.get("result"):
+                update_task(task_id, status="completed", progress=100,
+                            result=result["result"], tool_calls=result.get("tool_calls"),
+                            completed_at=datetime.now().isoformat(),
+                            duration_sec=dur, usage=usage)
+            else:
+                update_task(task_id, status="failed", error_msg="未获得有效输出",
+                            duration_sec=dur, usage=usage)
             return
 
-        update_task(task_id, session_id=session.claude_session_id,
-                    session_name=session.session_name)
+        except Exception as e:
+            last_error = f"后端 {backend_name} 异常: {str(e)[:200]}"
+            log.exception(f"[task={task_id}] {last_error}")
+            _session_manager.remove(task_id)
+            continue
+        finally:
+            _session_manager.release()
 
-        # prompt 直接传用户的任务，不含 planner.md
-        result = run_streaming(session, task_id, prompt, timeout=timeout)
-
-        if result.get("timeout"):
-            update_task(task_id, status="failed", error_msg=f"执行超时 ({timeout}s)",
-                        result=result.get("result"), tool_calls=result.get("tool_calls"),
-                        duration_sec=int(result["duration"]))
-        elif result.get("result"):
-            update_task(task_id, status="completed", progress=100,
-                        result=result["result"], tool_calls=result.get("tool_calls"),
-                        completed_at=datetime.now().isoformat(),
-                        duration_sec=int(result["duration"]))
-        else:
-            update_task(task_id, status="failed", error_msg="未获得有效输出",
-                        duration_sec=int(result["duration"]))
-
-    except Exception as e:
-        log.exception(f"task_id={task_id} 执行失败")
-        update_task(task_id, status="failed", error_msg=str(e)[:500])
-    finally:
-        _session_manager.release()
+    update_task(task_id, status="failed",
+                error_msg=f"所有后端均失败（尝试 {len(priority)} 个）: {last_error}",
+                completed_at=datetime.now().isoformat())
 
 
 def _run_followup(task_id: int, message: str):
@@ -265,7 +341,7 @@ def create_new_task(req: CreateTaskRequest):
 
     t = threading.Thread(
         target=_run_task,
-        args=(task_id, req.prompt, backend_config, req.cwd, model, req.timeout),
+        args=(task_id, req.prompt, backend_name, req.cwd, model, req.timeout),
         daemon=True,
     )
     t.start()
@@ -304,6 +380,39 @@ def send_message(task_id: int, req: MessageRequest):
     return {"status": "processing", "message": "追问已发送"}
 
 
+@app.post("/tasks/{task_id}/respond")
+def respond_dialog(task_id: int, req: RespondDialogRequest):
+    """响应 Claude CLI 的交互对话框
+
+    客户端通过轮询 GET /tasks/{id} 发现 pending_dialog 不为空时调用此接口。
+    action: "enter" 确认 / "escape" 取消 / "text" 发送自定义文本
+    """
+    task = get_task(task_id)
+    if not task:
+        raise HTTPException(404, "Task not found")
+
+    session = _session_manager.get(task_id)
+    if not session:
+        raise HTTPException(400, "无活跃的 tmux 会话")
+
+    from tmux_manager import _tmux
+
+    if req.action == "enter":
+        _tmux("send-keys", "-t", session.session_name, "Enter")
+    elif req.action == "escape":
+        _tmux("send-keys", "-t", session.session_name, "Escape")
+    elif req.action == "text" and req.text:
+        session.send(req.text)
+    else:
+        raise HTTPException(400, f"无效的 action: {req.action}")
+
+    # 标记对话框已响应
+    update_task(task_id, pending_dialog={"resolved": True, "action": req.action})
+    log.info(f"task_id={task_id} 对话框已响应: action={req.action}")
+
+    return {"status": "responded", "action": req.action}
+
+
 @app.post("/tasks/{task_id}/stop")
 def stop_task(task_id: int):
     task = get_task(task_id)
@@ -330,6 +439,90 @@ def destroy_task(task_id: int):
     _session_manager.remove(task_id)
     delete_task(task_id)
     return {"status": "deleted"}
+
+
+@app.post("/chat")
+def chat(req: ChatRequest):
+    """一次性 LLM 调用（不写 tasks DB，不复用 session）。
+
+    创建临时 tmux + Claude CLI → 发送 prompt → 等待完成 → 从 JSONL 读取结果 → 关闭 session。
+    共享 SessionManager 的 semaphore，与 /tasks 互斥。
+    """
+    cfg = load_backends()
+    priority = get_backend_priority(req.backend or cfg.get("active"))
+    env_unset = cfg.get("env_unset", [])
+    model_map = cfg.get("model_map", {})
+    last_error = "无可用后端"
+
+    if not _session_manager.acquire(timeout=300):
+        raise HTTPException(503, "服务器繁忙，所有槽位被占用")
+
+    session = None
+    try:
+        for backend_name in priority:
+            backend_config = cfg["backends"][backend_name]
+            model = req.model or backend_config.get("model", "sonnet")
+
+            import random
+            fake_id = random.randint(100000, 999999)
+            session = PlannerSession(
+                task_id=fake_id,
+                backend_config=backend_config,
+                cwd=req.cwd,
+                model=model,
+                system_prompt=req.system_prompt,
+                env_unset=env_unset,
+                model_map=model_map,
+            )
+            if not session.ready:
+                last_error = f"后端 {backend_name} 启动失败"
+                try:
+                    session.close()
+                except Exception:
+                    pass
+                session = None
+                continue
+
+            try:
+                result = run_chat(session, req.prompt, timeout=req.timeout)
+                saved_uuid = session.claude_session_id
+            except RuntimeError as e:
+                raise HTTPException(500, str(e))
+            finally:
+                try:
+                    session.close()
+                except Exception:
+                    pass
+                session = None
+
+            if result.get("rate_limited"):
+                last_error = f"后端 {backend_name} rate limited"
+                log.warning(f"[chat] {last_error}，切换下一个后端")
+                continue
+
+            if result.get("timeout"):
+                raise HTTPException(504, f"执行超时 ({req.timeout}s)")
+
+            if not result.get("result"):
+                last_error = f"后端 {backend_name} 未获得有效输出"
+                continue
+
+            return {
+                "result": result["result"],
+                "session_uuid": saved_uuid,
+                "duration_sec": int(result["duration"]),
+                "usage": result.get("usage", {}),
+                "tool_calls": result.get("tool_calls", []),
+            }
+
+        raise HTTPException(429, f"所有后端均失败: {last_error}")
+    finally:
+        if session:
+            try:
+                session.close()
+            except Exception:
+                pass
+        _session_manager.release()
 
 
 @app.post("/shutdown")

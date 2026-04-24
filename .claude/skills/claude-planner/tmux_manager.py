@@ -20,7 +20,7 @@ import time
 import uuid
 from pathlib import Path
 
-from db import update_task
+from db import update_task, get_task
 
 log = logging.getLogger("planner.tmux")
 
@@ -122,17 +122,126 @@ def _is_thinking(screen: str) -> bool:
     return last_thinking_idx >= 0
 
 
+def _detect_rate_limit(screen: str) -> bool:
+    """检测 Claude CLI 是否触发了 rate limit"""
+    text = screen.lower()
+    return ("hit your limit" in text
+            or "rate-limit-options" in text
+            or "resets " in text and "stop and wait" in text)
+
+
+def _detect_interactive_dialog(screen: str) -> dict | None:
+    """检测 Claude CLI 是否在等待用户交互（任何类型的对话框）
+
+    返回: None 或 {
+        "type": "confirmation" | "rate_limit" | "permission" | "selection" | "unknown",
+        "title": str,         # 对话框标题/问题
+        "options": list[str], # 可选项
+        "hint": str,          # 操作提示（如 "Enter to confirm"）
+        "raw": str,           # 原始屏幕文本（最后 15 行）
+        "auto_action": str | None,  # 建议的自动操作: "enter" / "escape" / None（需客户端决策）
+    }
+    """
+    lines = screen.strip().split('\n')
+    last_lines = lines[-15:]
+    last_text = '\n'.join(last_lines)
+
+    # rate limit（特殊处理，建议 escape）
+    if _detect_rate_limit(screen):
+        return {
+            "type": "rate_limit",
+            "title": "Claude Pro 额度用完",
+            "options": ["Stop and wait for limit to reset", "Upgrade your plan"],
+            "hint": "rate limit reached",
+            "raw": last_text,
+            "auto_action": "escape",
+        }
+
+    # 检测通用交互标记
+    has_enter_confirm = 'Enter to confirm' in last_text
+    has_esc_cancel = 'Esc to cancel' in last_text
+    has_tab_amend = 'Tab to amend' in last_text
+
+    if not (has_enter_confirm or has_esc_cancel or has_tab_amend):
+        return None
+
+    # 提取选项列表（❯ 1. xxx / 2. xxx 格式）
+    options = []
+    for line in last_lines:
+        s = line.strip()
+        m = re.match(r'^[❯\s]*(\d+)\.\s+(.+)', s)
+        if m:
+            options.append(m.group(2).strip())
+
+    # 提取标题（"Do you want to..." 或其他问题）
+    title = ""
+    for line in last_lines:
+        s = line.strip()
+        if s.startswith('Do you want to'):
+            title = s
+            break
+        if s.endswith('?') and len(s) > 10:
+            title = s
+            break
+        if 'trust this' in s.lower() or 'This command requires' in s:
+            title = s
+            break
+
+    # 分类
+    dialog_type = "unknown"
+    auto_action = None
+
+    if 'Do you want to create' in last_text or 'Do you want to overwrite' in last_text:
+        dialog_type = "confirmation"
+        auto_action = "enter"  # 文件创建/覆盖 → 自动确认
+    elif 'trust this folder' in last_text.lower():
+        dialog_type = "confirmation"
+        auto_action = "enter"  # 信任文件夹 → 自动确认
+    elif 'This command requires approval' in last_text:
+        dialog_type = "permission"
+        auto_action = "enter"  # 权限确认 → 自动确认（已有 --dangerously-skip-permissions）
+    elif 'Do you want to proceed' in last_text:
+        dialog_type = "confirmation"
+        auto_action = "enter"
+    elif options:
+        dialog_type = "selection"
+        auto_action = None  # 有选项的对话框需要客户端决策
+
+    hint_parts = []
+    if has_enter_confirm:
+        hint_parts.append("Enter to confirm")
+    if has_esc_cancel:
+        hint_parts.append("Esc to cancel")
+    if has_tab_amend:
+        hint_parts.append("Tab to amend")
+
+    return {
+        "type": dialog_type,
+        "title": title or "(未识别的对话框)",
+        "options": options,
+        "hint": " · ".join(hint_parts),
+        "raw": last_text,
+        "auto_action": auto_action,
+    }
+
+
 def _is_at_prompt(screen: str) -> bool:
     """检测 Claude CLI 是否真正回到空闲 prompt。
 
-    注意：Claude Code TUI 底部永远有一个 ❯ 输入框，
-    但如果同时出现 'esc to interrupt' 说明 Claude 正在执行中，不算真正回到 prompt。
+    注意：
+    - Claude Code TUI 底部永远有一个 ❯ 输入框，'esc to interrupt' 说明正在执行
+    - rate limit 选择界面也有 ❯，但后面跟的是 '1.' 选项，不算 prompt
+    - 'Enter to confirm' 说明在等用户选择（如 rate limit / trust folder），不算 prompt
     """
     last_lines = screen.strip().split('\n')[-8:]
     last_text = '\n'.join(last_lines)
 
-    # 如果看到 "esc to interrupt" / "esc to cancel" 说明 Claude 正在执行
+    # 正在执行中
     if 'esc to interrupt' in last_text or 'esc to cancel' in last_text:
+        return False
+
+    # 等待用户选择（rate limit / trust folder 等）
+    if 'Enter to confirm' in last_text:
         return False
 
     for line in last_lines[-5:]:
@@ -262,9 +371,10 @@ class PlannerSession:
 
     def __init__(self, task_id: int, backend_config: dict, cwd: str = None,
                  model: str = None, resume_session_id: str = None,
-                 system_prompt: str = None, env_unset: list[str] = None):
+                 system_prompt: str = None, env_unset: list[str] = None,
+                 model_map: dict = None):
         self.task_id = task_id
-        self.model = model or backend_config.get("model", "claude-sonnet-4-6")
+        self.model = model or backend_config.get("model", "sonnet")
         self.claude_session_id = resume_session_id or str(uuid.uuid4())
         self.session_name = f"{SESSION_PREFIX}{task_id}"
         self._known_lines: set[str] = set()
@@ -274,10 +384,16 @@ class PlannerSession:
         subprocess.run(["tmux", "kill-session", "-t", self.session_name],
                        capture_output=True, timeout=5)
 
-        # ── 构建环境变量：先 unset 所有继承变量，再 set 后端需要的 ──
-        # 参照旧方案 accounts.json 的 env_unset + env_set 设计
+        # ── 构建环境变量：先 unset 所有继承变量，再 set 模型映射 + 后端变量 ──
         env_unset_list = env_unset or []
         env_set_dict = {k: v for k, v in backend_config.get("env", {}).items() if v}
+
+        # 注入模型映射（如 ANTHROPIC_DEFAULT_OPUS_MODEL=claude-opus-4-7）
+        # 先 unset 清除父进程的映射，然后用 model_map 重新设置
+        model_map = model_map or {}
+        for k, v in model_map.items():
+            if v:
+                env_set_dict[k] = v
 
         env_parts = []
         for var in env_unset_list:
@@ -321,7 +437,7 @@ class PlannerSession:
 
         # 创建 tmux session
         _tmux("new-session", "-d", "-s", self.session_name,
-              "-x", "80", "-y", "50", claude_cmd)
+              "-x", "220", "-y", "50", claude_cmd)
         _tmux("set-option", "-t", self.session_name, "history-limit", "10000")
 
         # 清理 system prompt 临时文件
@@ -458,7 +574,8 @@ class SessionManager:
                       cwd: str = None, model: str = None,
                       resume_session_id: str = None,
                       system_prompt: str = None,
-                      env_unset: list[str] = None) -> PlannerSession:
+                      env_unset: list[str] = None,
+                      model_map: dict = None) -> PlannerSession:
         with self._lock:
             session = self._sessions.get(task_id)
             if session and session.ready:
@@ -470,6 +587,7 @@ class SessionManager:
                 resume_session_id=resume_session_id,
                 system_prompt=system_prompt,
                 env_unset=env_unset,
+                model_map=model_map,
             )
             self._sessions[task_id] = session
             self._last_active[task_id] = time.time()
@@ -569,6 +687,14 @@ def run_streaming(
             session._known_lines.add(s)
 
     session.send(prompt)
+
+    # 等待粘贴回显渲染完毕，然后 mark 屏幕状态
+    # 这样回显的换行/折行版本也被标记为"已知"，不会被误认为输出
+    time.sleep(2)
+    screen = session.capture(-500)
+    for line in _extract_content(screen):
+        session._known_lines.add(line)
+
     update_task(task_id, status="processing", progress=5, progress_msg="Claude CLI 执行中")
     log.info(f"[task={task_id}] 开始执行，timeout={timeout}s")
 
@@ -646,6 +772,57 @@ def run_streaming(
                      f"工具 {len(tool_calls)} 次 | idle={idle_count} | {elapsed:.0f}s/{timeout}s")
             last_log_time = now
 
+        # 检测交互对话框（每 2 秒 idle 检查一次）
+        if idle_count >= 2 and idle_count % 2 == 0:
+            raw_screen = session.capture()
+            dialog = _detect_interactive_dialog(raw_screen)
+            if dialog:
+                log.info(f"[task={task_id}] 检测到对话框: type={dialog['type']} "
+                         f"title={dialog['title'][:50]} auto={dialog['auto_action']} ({elapsed:.0f}s)")
+
+                if dialog["type"] == "rate_limit":
+                    # rate limit 直接终止
+                    log.warning(f"[task={task_id}] rate limit! 终止任务")
+                    session.send_ctrl_c()
+                    duration = time.time() - start
+                    raw_result = "\n".join(accumulated).strip()
+                    result = _clean_result(raw_result)
+                    usage = parse_session_usage(session.claude_session_id)
+                    return {"result": result if result else None,
+                            "tool_calls": tool_calls, "duration": duration,
+                            "timeout": False, "rate_limited": True, "usage": usage}
+
+                if dialog["auto_action"]:
+                    # 可自动处理的对话框
+                    key = {"enter": "Enter", "escape": "Escape"}.get(dialog["auto_action"], "Enter")
+                    log.info(f"[task={task_id}] 自动响应: {key}")
+                    _tmux("send-keys", "-t", session.session_name, key)
+                    idle_count = 0
+                    continue
+
+                # 需要客户端决策的对话框 → 写入 DB，等待客户端响应
+                log.info(f"[task={task_id}] 等待客户端决策: {dialog['title'][:60]}")
+                update_task(task_id, progress_msg=f"⏸️ 等待确认: {dialog['title'][:40]}",
+                            pending_dialog=dialog)
+
+                # 等待客户端通过 /tasks/{id}/respond 发送响应（最多等 300 秒）
+                wait_start = time.time()
+                while time.time() - wait_start < 300:
+                    time.sleep(2)
+                    task = get_task(task_id)
+                    pd = task.get("pending_dialog")
+                    if not pd or (isinstance(pd, dict) and pd.get("resolved")):
+                        log.info(f"[task={task_id}] 客户端已响应对话框")
+                        idle_count = 0
+                        break
+                else:
+                    # 超时未响应，默认 Enter
+                    log.warning(f"[task={task_id}] 等待客户端响应超时(300s)，默认 Enter")
+                    _tmux("send-keys", "-t", session.session_name, "Enter")
+                    update_task(task_id, pending_dialog=None)
+                    idle_count = 0
+                continue
+
         # 检测完成
         content = "\n".join(accumulated)
         if content == last_content:
@@ -663,19 +840,358 @@ def run_streaming(
     if time.time() - start >= timeout:
         log.warning(f"[task={task_id}] 超时 ({timeout}s), 共 {len(accumulated)} 行输出, {len(tool_calls)} 次工具调用")
         session.send_ctrl_c()
-        return {"result": None, "tool_calls": tool_calls, "duration": duration, "timeout": True}
+        raw_result = "\n".join(accumulated).strip()
+        result = _clean_result(raw_result)
+        usage = parse_session_usage(session.claude_session_id)
+        return {"result": result if result else None,
+                "tool_calls": tool_calls, "duration": duration,
+                "timeout": True, "usage": usage}
 
     # 提取最终结果
     raw_result = "\n".join(accumulated).strip()
     result = _clean_result(raw_result)
 
-    log.info(f"[task={task_id}] 完成: {duration:.0f}s, 结果 {len(result)} 字符, {len(tool_calls)} 次工具调用")
+    # 从 JSONL 会话文件解析 token 用量
+    usage = parse_session_usage(session.claude_session_id)
+
+    log.info(f"[task={task_id}] 完成: {duration:.0f}s, 结果 {len(result)} 字符, "
+             f"{len(tool_calls)} 次工具调用, "
+             f"tokens: in={usage.get('input_tokens', '?')} out={usage.get('output_tokens', '?')} "
+             f"cost=${usage.get('total_cost_usd', '?')}")
     update_task(task_id, partial_result=None, tool_calls=tool_calls)
 
-    return {"result": result, "tool_calls": tool_calls, "duration": duration, "timeout": False}
+    return {"result": result, "tool_calls": tool_calls, "duration": duration,
+            "timeout": False, "usage": usage}
+
+
+def _parse_session_result(session_id: str) -> tuple[str, list[dict]]:
+    """从 JSONL 会话文件中读取完整的 assistant 输出和工具调用。
+
+    返回 (text_result, tool_calls)。
+    比 tmux capture-pane 抓屏可靠得多——TUI 渲染会破坏长文本结构，
+    JSONL 文件则保留了完整的原始内容。
+    """
+    f = _find_session_file(session_id)
+    if not f:
+        return "", []
+
+    texts: list[str] = []
+    tools: list[dict] = []
+
+    try:
+        for line in f.read_text(encoding="utf-8").splitlines():
+            if not line.strip():
+                continue
+            try:
+                obj = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+
+            if obj.get("type") != "assistant":
+                continue
+            content = obj.get("message", {}).get("content", [])
+            if isinstance(content, str):
+                content = [{"type": "text", "text": content}]
+            for block in content:
+                if not isinstance(block, dict):
+                    continue
+                bt = block.get("type", "")
+                if bt == "text":
+                    text = block.get("text", "").strip()
+                    if text:
+                        texts.append(text)
+                elif bt == "tool_use":
+                    tools.append({
+                        "tool": block.get("name", ""),
+                        "display": f"{block.get('name', '')}: {json.dumps(block.get('input', {}), ensure_ascii=False)[:80]}",
+                        "input": block.get("input", {}),
+                    })
+    except Exception as e:
+        log.warning(f"[session_result] 解析失败: {e}")
+
+    return "\n\n".join(texts), tools
+
+
+def _find_session_file(session_id: str) -> Path | None:
+    """查找 Claude CLI 会话 JSONL 文件"""
+    projects_dir = Path.home() / ".claude" / "projects"
+    if not projects_dir.exists():
+        return None
+    for project_dir in projects_dir.iterdir():
+        if not project_dir.is_dir():
+            continue
+        f = project_dir / f"{session_id}.jsonl"
+        if f.exists():
+            return f
+    return None
+
+
+def parse_session_usage(session_id: str) -> dict:
+    """从 Claude CLI 会话 JSONL 文件解析 token 用量
+
+    返回: {
+        "input_tokens": int,
+        "output_tokens": int,
+        "cache_creation_tokens": int,
+        "cache_read_tokens": int,
+        "total_cost_usd": float (估算),
+        "model": str,
+        "turns": int (assistant 响应次数),
+    }
+    """
+    f = _find_session_file(session_id)
+    if not f:
+        log.debug(f"未找到会话文件 session_id={session_id[:8]}...")
+        return {}
+
+    total_input = 0
+    total_output = 0
+    total_cache_create = 0
+    total_cache_read = 0
+    model = ""
+    turns = 0
+
+    try:
+        for line in f.read_text(encoding="utf-8").strip().split("\n"):
+            if not line.strip():
+                continue
+            try:
+                entry = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+
+            if entry.get("type") != "assistant":
+                continue
+            msg = entry.get("message", {})
+            usage = msg.get("usage", {})
+            if not usage:
+                continue
+
+            turns += 1
+            total_input += usage.get("input_tokens", 0)
+            total_output += usage.get("output_tokens", 0)
+            total_cache_create += usage.get("cache_creation_input_tokens", 0)
+            total_cache_read += usage.get("cache_read_input_tokens", 0)
+            if msg.get("model"):
+                model = msg["model"]
+    except Exception as e:
+        log.warning(f"解析会话文件失败: {e}")
+        return {}
+
+    # 估算费用（基于 Anthropic 官方定价，单位 USD per million tokens）
+    # Sonnet: input $3, output $15; Opus: input $15, output $75
+    # Cache: create 同 input 价格的 25%，read 同 input 价格的 10%
+    if "opus" in model:
+        input_rate, output_rate = 15.0, 75.0
+    else:
+        input_rate, output_rate = 3.0, 15.0
+    cache_create_rate = input_rate * 0.25
+    cache_read_rate = input_rate * 0.10
+
+    cost = (
+        total_input * input_rate / 1_000_000
+        + total_output * output_rate / 1_000_000
+        + total_cache_create * cache_create_rate / 1_000_000
+        + total_cache_read * cache_read_rate / 1_000_000
+    )
+
+    result = {
+        "input_tokens": total_input,
+        "output_tokens": total_output,
+        "cache_creation_tokens": total_cache_create,
+        "cache_read_tokens": total_cache_read,
+        "total_cost_usd": round(cost, 4),
+        "model": model,
+        "turns": turns,
+    }
+    log.info(f"Token 用量: input={total_input} output={total_output} "
+             f"cache_create={total_cache_create} cache_read={total_cache_read} "
+             f"cost=${cost:.4f} model={model} turns={turns}")
+    return result
 
 
 def send_followup(session: PlannerSession, task_id: int, message: str,
                   timeout: int = 600) -> dict:
     """向已有会话发送追问消息（不含 planner_prompt，会话已有上下文）"""
     return run_streaming(session, task_id, message, timeout=timeout)
+
+
+def run_chat(session: PlannerSession, prompt: str, timeout: int = 180) -> dict:
+    """一次性 chat 执行（不写 DB，不跟踪进度）。
+
+    完成检测仍用 tmux 屏幕状态判断（idle + at_prompt），
+    但最终结果从 JSONL 会话文件读取——避免 TUI 渲染破坏长文本。
+    """
+    session.send(prompt)
+    log.info(f"[chat] 开始执行, session={session.session_name}, timeout={timeout}s")
+
+    start = time.time()
+    idle_count = 0
+
+    while time.time() - start < timeout:
+        time.sleep(1)
+        raw_screen = session.capture()
+
+        # 对话框处理
+        dialog = _detect_interactive_dialog(raw_screen)
+        if dialog:
+            if dialog["type"] == "rate_limit":
+                session.send_ctrl_c()
+                usage = parse_session_usage(session.claude_session_id)
+                return {"result": None, "tool_calls": [], "duration": time.time() - start,
+                        "timeout": False, "rate_limited": True, "usage": usage}
+            if dialog["auto_action"]:
+                key = {"enter": "Enter", "escape": "Escape"}.get(dialog["auto_action"], "Enter")
+                _tmux("send-keys", "-t", session.session_name, key)
+                idle_count = 0
+                continue
+            session.send_ctrl_c()
+            raise RuntimeError(f"[chat] 未预期的交互对话框: {dialog['title'][:80]}")
+
+        # 完成检测：at_prompt + 非 thinking
+        if _is_at_prompt(raw_screen) and not _is_thinking(raw_screen):
+            idle_count += 1
+            if idle_count >= 3:
+                break
+        else:
+            idle_count = 0
+
+    duration = time.time() - start
+
+    if time.time() - start >= timeout:
+        session.send_ctrl_c()
+        usage = parse_session_usage(session.claude_session_id)
+        return {"result": None, "tool_calls": [], "duration": duration,
+                "timeout": True, "usage": usage}
+
+    # 从 JSONL 文件读取完整结果（比 tmux 抓屏可靠）
+    result, tool_calls = _parse_session_result(session.claude_session_id)
+    usage = parse_session_usage(session.claude_session_id)
+
+    log.info(f"[chat] 完成: {duration:.0f}s, 结果 {len(result)} 字符, "
+             f"{len(tool_calls)} 次工具调用, "
+             f"tokens: in={usage.get('input_tokens', '?')} out={usage.get('output_tokens', '?')}")
+    return {"result": result or None, "tool_calls": tool_calls, "duration": duration,
+            "timeout": False, "rate_limited": False, "usage": usage}
+
+
+def run_pipe(prompt: str, backend_config: dict, model: str = None,
+             system_prompt: str = None, cwd: str = None,
+             env_unset: list[str] = None, model_map: dict = None,
+             timeout: int = 180) -> dict:
+    """一次性 LLM 调用，使用 `claude -p` 子进程。
+
+    不创建 tmux 会话，不需要 SessionManager semaphore。
+    `claude -p --output-format json` 直接返回结构化 JSON（含 usage）。
+    """
+    model = model or backend_config.get("model", "sonnet")
+
+    # 写 prompt 到临时文件（避免 shell 转义问题）
+    prompt_file = tempfile.NamedTemporaryFile(mode='w', suffix='.txt', delete=False)
+    prompt_file.write(prompt)
+    prompt_file.close()
+
+    # 写 system_prompt 到临时文件
+    sp_file = None
+    if system_prompt:
+        sp_file = tempfile.NamedTemporaryFile(mode='w', suffix='.txt', delete=False)
+        sp_file.write(system_prompt)
+        sp_file.close()
+
+    try:
+        # 构建环境变量
+        env = os.environ.copy()
+        for var in (env_unset or []):
+            env.pop(var, None)
+        for k, v in backend_config.get("env", {}).items():
+            if v:
+                env[k] = v
+        for k, v in (model_map or {}).items():
+            if v:
+                env[k] = v
+
+        # 构建命令
+        cmd = ["claude", "-p", f"$(cat {prompt_file.name})",
+               "--model", model, "--output-format", "json"]
+        if sp_file:
+            cmd += ["--system-prompt", f"$(cat {sp_file.name})"]
+
+        # 用 bash -c 展开 $(cat ...)
+        bash_cmd = " ".join(cmd)
+        log.info(f"[pipe] 启动: model={model}, timeout={timeout}s")
+
+        start = time.time()
+        r = subprocess.run(
+            ["bash", "-c", bash_cmd],
+            capture_output=True, text=True, timeout=timeout,
+            cwd=cwd, env=env,
+        )
+        duration = time.time() - start
+
+        # 解析 JSON 输出
+        stdout = r.stdout.strip()
+        if not stdout:
+            log.warning(f"[pipe] 无输出, stderr={r.stderr[:200]}")
+            return {"result": None, "tool_calls": [], "duration": duration,
+                    "timeout": False, "rate_limited": False, "usage": {}}
+
+        try:
+            data = json.loads(stdout)
+        except json.JSONDecodeError:
+            # 非 JSON 输出，直接作为文本返回
+            log.info(f"[pipe] 非 JSON 输出 ({len(stdout)} chars), {duration:.0f}s")
+            return {"result": stdout, "tool_calls": [], "duration": duration,
+                    "timeout": False, "rate_limited": False, "usage": {}}
+
+        # claude -p --output-format json 的输出结构
+        result_text = data.get("result", "")
+        is_error = data.get("is_error", False)
+        session_id = data.get("session_id", "")
+        cost_usd = data.get("total_cost_usd", data.get("cost_usd", 0))
+
+        # 提取 usage
+        raw_usage = data.get("usage", {})
+        usage = {
+            "input_tokens": raw_usage.get("input_tokens", 0),
+            "output_tokens": raw_usage.get("output_tokens", 0),
+            "cache_creation_tokens": raw_usage.get("cache_creation_input_tokens", 0),
+            "cache_read_tokens": raw_usage.get("cache_read_input_tokens", 0),
+            "total_cost_usd": cost_usd,
+            "model": model,
+            "turns": data.get("num_turns", 1),
+        }
+
+        # rate limit 检测
+        if "hit your limit" in result_text.lower() or "rate" in result_text.lower() and "limit" in result_text.lower():
+            log.warning(f"[pipe] rate limited, {duration:.0f}s")
+            return {"result": None, "tool_calls": [], "duration": duration,
+                    "timeout": False, "rate_limited": True, "usage": usage}
+
+        if is_error:
+            log.warning(f"[pipe] 错误: {result_text[:200]}")
+            return {"result": None, "tool_calls": [], "duration": duration,
+                    "timeout": False, "rate_limited": False, "usage": usage}
+
+        log.info(f"[pipe] 完成: {duration:.0f}s, 结果 {len(result_text)} 字符, "
+                 f"tokens: in={usage['input_tokens']} out={usage['output_tokens']}, "
+                 f"cost=${cost_usd:.4f}")
+
+        return {
+            "result": result_text or None,
+            "tool_calls": [],
+            "duration": duration,
+            "timeout": False,
+            "rate_limited": False,
+            "usage": usage,
+            "session_uuid": session_id,
+        }
+
+    except subprocess.TimeoutExpired:
+        duration = time.time() - start
+        log.warning(f"[pipe] 超时 ({timeout}s)")
+        return {"result": None, "tool_calls": [], "duration": duration,
+                "timeout": True, "rate_limited": False, "usage": {}}
+    finally:
+        os.unlink(prompt_file.name)
+        if sp_file:
+            os.unlink(sp_file.name)

@@ -1,5 +1,6 @@
 {
   "active": "official",
+  "priority": ["official", "lanyi-api", "580ai"],
   "env_unset": [
     "ANTHROPIC_BASE_URL", "ANTHROPIC_AUTH_TOKEN",
     "ANTHROPIC_MODEL", "ANTHROPIC_DEFAULT_OPUS_MODEL",
@@ -7,11 +8,24 @@
     "ANTHROPIC_REASONING_MODEL", "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC",
     "API_TIMEOUT_MS"
   ],
+  "model_map": {
+    "ANTHROPIC_DEFAULT_OPUS_MODEL": "claude-opus-4-7",
+    "ANTHROPIC_DEFAULT_SONNET_MODEL": "claude-sonnet-4-6"
+  },
   "backends": {
     "official": {
       "description": "Claude 官方（本地 OAuth 订阅，免 key）",
       "type": "oauth",
       "env": {},
+      "model": "claude-opus-4-7"
+    },
+    "580ai": {
+      "description": "580AI 中转站",
+      "type": "api",
+      "env": {
+        "ANTHROPIC_AUTH_TOKEN": "sk-KfCh04EOfwfYUgR46tp9L26EfzuWOX0CIgJMUI9ZaZAwJc9f",
+        "ANTHROPIC_BASE_URL": "https://cc.580ai.net"
+      },
       "model": "claude-sonnet-4-6"
     },
     "lanyi-api": {
@@ -23,6 +37,7 @@
       },
       "model": "claude-sonnet-4-6"
     },
+
     "third-party": {
       "description": "第三方中转站（需要填入 key 和 base_url）",
       "type": "api",

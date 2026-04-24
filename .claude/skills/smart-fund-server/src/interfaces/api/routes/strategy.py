@@ -6,7 +6,7 @@ from io import StringIO
 
 from fastapi import APIRouter, HTTPException, Query, Body
 
-import routers._utils as _utils
+from src.interfaces.api.routes import _utils
 from src.interfaces.api.routes._utils import safe_call
 from src.infrastructure.db import fund_db
 

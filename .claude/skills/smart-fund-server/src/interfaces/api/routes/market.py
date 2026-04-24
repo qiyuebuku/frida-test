@@ -4,7 +4,7 @@ import asyncio
 
 from fastapi import APIRouter, HTTPException, Query
 
-import routers._utils as _utils
+from src.interfaces.api.routes import _utils
 from src.interfaces.api.routes._utils import safe_call
 from src.interfaces.api.routes._models import HOTLIST_MARKETS, HOTLIST_PLATE_TYPES
 

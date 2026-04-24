@@ -38,6 +38,8 @@ def init_tables():
 
                 messages        TEXT DEFAULT '[]',
                 error_msg       TEXT,
+                usage           TEXT DEFAULT '{}',
+                pending_dialog  TEXT,
 
                 created_at      TEXT DEFAULT (datetime('now', 'localtime')),
                 completed_at    TEXT,
@@ -45,6 +47,12 @@ def init_tables():
             )
         """)
         conn.execute("CREATE INDEX IF NOT EXISTS idx_tasks_status ON tasks(status)")
+        # 兼容旧表：添加 usage 列
+        for col, default in [("usage", "'{}'"), ("pending_dialog", "NULL")]:
+            try:
+                conn.execute(f"ALTER TABLE tasks ADD COLUMN {col} TEXT DEFAULT {default}")
+            except Exception:
+                pass
         conn.execute("CREATE INDEX IF NOT EXISTS idx_tasks_created ON tasks(created_at)")
 
 
@@ -76,7 +84,7 @@ def get_task(task_id: int) -> dict | None:
             return None
         d = dict(row)
         # 解析 JSON 字段
-        for field in ("tool_calls", "messages"):
+        for field in ("tool_calls", "messages", "usage", "pending_dialog"):
             if d.get(field) and isinstance(d[field], str):
                 try:
                     d[field] = json.loads(d[field])

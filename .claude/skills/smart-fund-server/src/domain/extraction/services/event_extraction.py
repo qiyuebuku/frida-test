@@ -18,11 +18,11 @@ import hashlib
 import json
 import logging
 import re
-import subprocess
 from datetime import datetime
 from pathlib import Path
 
 from src.domain.collection.services.base import BaseAggregator, SourceDef
+from src.infrastructure.llm_proxy import ClaudeProxyRequest, get_claude_proxy_service
 
 logger = logging.getLogger(__name__)
 
@@ -166,43 +166,8 @@ def _extract_json_from_output(output: str) -> list[dict]:
 
 
 def _call_claude_sync(prompt: str, skill_body: str) -> str:
-    """同步调用 claude -p（在线程池中执行，避免 asyncio.create_subprocess_exec 的兼容性问题）
-
-    注意：base.py 模块加载时会清除代理环境变量（避免 httpx 走代理影响 A 股数据源）。
-    但 claude CLI 需要代理才能访问 Anthropic API（国内网络），所以这里还原代理。
-    """
-    import os
-    from src.infrastructure.clients.base import ORIGINAL_PROXY_ENV
-
-    cmd = [
-        "claude", "-p", prompt,
-        "--append-system-prompt", skill_body,
-        "--dangerously-skip-permissions",
-    ]
-    # 给子进程注入代理环境变量
-    env = {**os.environ, **ORIGINAL_PROXY_ENV}
-    try:
-        result = subprocess.run(
-            cmd,
-            capture_output=True,
-            text=True,
-            timeout=CLAUDE_TIMEOUT,
-            env=env,
-        )
-        if result.returncode != 0:
-            err_short = (result.stderr or "")[:500]
-            out_short = (result.stdout or "")[:300]
-            logger.warning(
-                f"claude -p 退出码 {result.returncode}, stderr={err_short!r}, stdout={out_short!r}"
-            )
-            return ""
-        return result.stdout
-    except subprocess.TimeoutExpired:
-        logger.warning(f"claude -p 超时（{CLAUDE_TIMEOUT}s）")
-        return ""
-    except Exception as e:
-        logger.warning(f"claude -p 调用失败: {e}")
-        return ""
+    """保留兼容接口，实际走统一 LLM 代理层。"""
+    raise RuntimeError("_call_claude_sync 已废弃，请使用异步代理层调用")
 
 
 async def _call_claude_extract(news_batch: list[dict], skill_body: str) -> list[dict]:
@@ -210,11 +175,16 @@ async def _call_claude_extract(news_batch: list[dict], skill_body: str) -> list[
 
     Returns: 抽取出的事件列表（与新闻顺序对应，is_event=false 的也会包含）
     """
-    import asyncio as _asyncio
-
     prompt = _format_news_batch(news_batch)
-    # 在线程池执行同步子进程调用，避免阻塞事件循环
-    output = await _asyncio.to_thread(_call_claude_sync, prompt, skill_body)
+    response = await get_claude_proxy_service().generate(
+        ClaudeProxyRequest(
+            prompt=prompt,
+            system_prompt=skill_body,
+            timeout=CLAUDE_TIMEOUT,
+            metadata={"task": "event_extraction", "batch_size": len(news_batch)},
+        )
+    )
+    output = response.text
 
     if not output:
         return []

@@ -74,15 +74,21 @@ async def agg_news():
     logger.info(f"[agg_news] 完成,耗时 {time.time()-t0:.1f}s {result.to_dict()}")
     if result.total_saved > 0:
         await _trigger_downstream("agg_event_extraction")
+        await _trigger_downstream("l1a_classify_news")
 
 
 @router.task(queue="agg_fund_flow", max_retries=2, retry_backoff=True)
 async def agg_fund_flow():
-    """资金流采集 — 北向/板块/个股/龙虎榜"""
+    """资金流采集 — 北向/板块/个股/龙虎榜
+
+    级联: total_saved > 0 → 触发 l1b_detect_fund_flow
+    """
     logger.info("[agg_fund_flow] 开始执行")
     t0 = time.time()
     result = await _collection.run_fund_flow_collection()
     logger.info(f"[agg_fund_flow] 完成,耗时 {time.time()-t0:.1f}s {result.to_dict()}")
+    if result.total_saved > 0:
+        await _trigger_downstream("l1b_detect_fund_flow")
 
 
 # ==================== P1: 辅助任务 ====================
@@ -90,29 +96,44 @@ async def agg_fund_flow():
 
 @router.task(queue="agg_market", max_retries=2, retry_backoff=True)
 async def agg_market():
-    """市场数据采集 — 指数/全球/期货/外汇/板块"""
+    """市场数据采集 — 指数/全球/期货/外汇/板块
+
+    级联: total_saved > 0 → 触发 l1b_detect_market
+    """
     logger.info("[agg_market] 开始执行")
     t0 = time.time()
     result = await _collection.run_market_collection()
     logger.info(f"[agg_market] 完成,耗时 {time.time()-t0:.1f}s {result.to_dict()}")
+    if result.total_saved > 0:
+        await _trigger_downstream("l1b_detect_market")
 
 
 @router.task(queue="agg_sentiment", max_retries=2, retry_backoff=True)
 async def agg_sentiment():
-    """情绪舆情采集 — 股吧/雪球/涨停/热股"""
+    """情绪舆情采集 — 股吧/雪球/涨停/热股
+
+    级联: total_saved > 0 → 触发 l1b_detect_sentiment
+    """
     logger.info("[agg_sentiment] 开始执行")
     t0 = time.time()
     result = await _collection.run_sentiment_collection()
     logger.info(f"[agg_sentiment] 完成,耗时 {time.time()-t0:.1f}s {result.to_dict()}")
+    if result.total_saved > 0:
+        await _trigger_downstream("l1b_detect_sentiment")
 
 
 @router.task(queue="agg_macro", max_retries=2, retry_backoff=True)
 async def agg_macro():
-    """宏观指标采集 — CPI/PMI/M2/LPR/Shibor/汇率"""
+    """宏观指标采集 — CPI/PMI/M2/LPR/Shibor/汇率
+
+    级联: total_saved > 0 → 触发 l1b_detect_macro
+    """
     logger.info("[agg_macro] 开始执行")
     t0 = time.time()
     result = await _collection.run_macro_collection()
     logger.info(f"[agg_macro] 完成,耗时 {time.time()-t0:.1f}s {result.to_dict()}")
+    if result.total_saved > 0:
+        await _trigger_downstream("l1b_detect_macro")
 
 
 # ==================== AI 处理任务 ====================
@@ -128,6 +149,93 @@ async def agg_event_extraction():
     t0 = time.time()
     result = await _extraction.extract_events_from_news()
     logger.info(f"[agg_event_extraction] 完成,耗时 {time.time()-t0:.1f}s {result.to_dict()}")
+    if result.saved > 0:
+        await _trigger_downstream("agg_event_stream")
+
+
+# ==================== L1b 数值事件检测 ====================
+
+
+@router.task(queue="l1b_detect_fund_flow", max_retries=2, retry_backoff=True)
+async def l1b_detect_fund_flow():
+    """L1b 资金流事件检测"""
+    logger.info("[l1b_detect_fund_flow] 开始执行")
+    t0 = time.time()
+    result = await _extraction.run_l1b_fund_flow()
+    logger.info(f"[l1b_detect_fund_flow] 完成,耗时 {time.time()-t0:.1f}s {result.to_dict()}")
+    if result.saved > 0:
+        await _trigger_downstream("agg_event_stream")
+
+
+@router.task(queue="l1b_detect_macro", max_retries=2, retry_backoff=True)
+async def l1b_detect_macro():
+    """L1b 宏观指标事件检测"""
+    logger.info("[l1b_detect_macro] 开始执行")
+    t0 = time.time()
+    result = await _extraction.run_l1b_macro()
+    logger.info(f"[l1b_detect_macro] 完成,耗时 {time.time()-t0:.1f}s {result.to_dict()}")
+    if result.saved > 0:
+        await _trigger_downstream("agg_event_stream")
+
+
+@router.task(queue="l1b_detect_sentiment", max_retries=2, retry_backoff=True)
+async def l1b_detect_sentiment():
+    """L1b 情绪事件检测"""
+    logger.info("[l1b_detect_sentiment] 开始执行")
+    t0 = time.time()
+    result = await _extraction.run_l1b_sentiment()
+    logger.info(f"[l1b_detect_sentiment] 完成,耗时 {time.time()-t0:.1f}s {result.to_dict()}")
+    if result.saved > 0:
+        await _trigger_downstream("agg_event_stream")
+
+
+@router.task(queue="l1b_detect_market", max_retries=2, retry_backoff=True)
+async def l1b_detect_market():
+    """L1b 市场快照事件检测"""
+    logger.info("[l1b_detect_market] 开始执行")
+    t0 = time.time()
+    result = await _extraction.run_l1b_market()
+    logger.info(f"[l1b_detect_market] 完成,耗时 {time.time()-t0:.1f}s {result.to_dict()}")
+    if result.saved > 0:
+        await _trigger_downstream("agg_event_stream")
+
+
+@router.task(queue="l1_refresh_thresholds", max_retries=1)
+async def l1_refresh_thresholds():
+    """L1 阈值刷新 — 每日从历史数据滚动计算"""
+    logger.info("[l1_refresh_thresholds] 开始执行")
+    t0 = time.time()
+    result = await _extraction.refresh_l1_thresholds()
+    logger.info(f"[l1_refresh_thresholds] 完成,耗时 {time.time()-t0:.1f}s {result.to_dict()}")
+
+
+# ==================== L1a AI 文本事件抽取 ====================
+
+
+@router.task(queue="l1a_classify_news", max_retries=2, retry_backoff=True)
+async def l1a_classify_news():
+    """L1a 新闻分类 — 关键词预分流 + LLM 分类，推入 Redis 桶
+
+    级联: classified > 0 → 触发 l1a_extract_bucket
+    """
+    logger.info("[l1a_classify_news] 开始执行")
+    t0 = time.time()
+    result = await _extraction.run_l1a_classify()
+    logger.info(f"[l1a_classify_news] 完成,耗时 {time.time()-t0:.1f}s {result.to_dict()}")
+    if result.classified > 0:
+        await _trigger_downstream("l1a_extract_bucket")
+
+
+@router.task(queue="l1a_extract_bucket", max_retries=2, retry_backoff=True)
+async def l1a_extract_bucket():
+    """L1a 桶批量抽取 — 从 Redis 桶取出同类新闻，调 Planner API 抽取事件
+
+    级联: saved > 0 → 触发 agg_event_stream
+    """
+    logger.info("[l1a_extract_bucket] 开始执行")
+    t0 = time.time()
+    result = await _extraction.run_l1a_extract()
+    logger.info(f"[l1a_extract_bucket] 完成,耗时 {time.time()-t0:.1f}s {result.to_dict()}")
     if result.saved > 0:
         await _trigger_downstream("agg_event_stream")
 
@@ -204,3 +312,12 @@ async def agg_event_feedback():
     t0 = time.time()
     result = await _extraction.backfill_market_reaction()
     logger.info(f"[agg_event_feedback] 完成,耗时 {time.time()-t0:.1f}s {result.to_dict()}")
+
+
+@router.task(queue="materialize_sentiment_signal", max_retries=1)
+async def materialize_sentiment_signal(trade_date: str | None = None):
+    """L2 情绪信号物化 — 写 ft_sentiment_signal 快照表"""
+    logger.info("[materialize_sentiment_signal] 开始执行")
+    t0 = time.time()
+    result = await _collection.materialize_sentiment_signal(trade_date=trade_date)
+    logger.info(f"[materialize_sentiment_signal] 完成,耗时 {time.time()-t0:.1f}s {result.to_dict()}")

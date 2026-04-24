@@ -3,6 +3,7 @@
 优先级：环境变量 > .env 文件 > 此文件默认值
 """
 
+import json
 import os
 from pathlib import Path
 
@@ -22,7 +23,7 @@ if _env_file.exists():
 # ==================== 数据库 ====================
 
 DB_CONFIG = {
-    "host": os.getenv("DB_HOST", "119.23.227.187"),
+    "host": os.getenv("DB_HOST", "127.0.0.1"),
     "port": int(os.getenv("DB_PORT", "5432")),
     "dbname": os.getenv("DB_NAME", "jettask"),
     "user": os.getenv("DB_USER", "jettask"),
@@ -66,6 +67,74 @@ EMBEDDING_TIMEOUT = float(os.getenv("EMBEDDING_TIMEOUT", "60"))
 
 SKILL_DIR = os.getenv("SKILL_DIR", "/home/yuyangruan/claude-skills/.claude/skills/fund-trade")
 SKILLS_DIR = os.getenv("SKILLS_DIR", "")  # SkillRegistry 根目录，空则用 main.py 上级目录
+
+# Claude LLM 代理层
+CLAUDE_PROXY_BACKEND = os.getenv("CLAUDE_PROXY_BACKEND", "tmux_pool")
+CLAUDE_PROXY_CLI_BIN = os.getenv("CLAUDE_PROXY_CLI_BIN", "claude")
+CLAUDE_PROXY_MODEL = os.getenv("CLAUDE_PROXY_MODEL", "sonnet")
+CLAUDE_PROXY_TIMEOUT = float(os.getenv("CLAUDE_PROXY_TIMEOUT", "180"))
+CLAUDE_PROXY_TMUX_READY_TIMEOUT = int(os.getenv("CLAUDE_PROXY_TMUX_READY_TIMEOUT", "45"))
+CLAUDE_PROXY_TMUX_POOL_SIZE = int(os.getenv("CLAUDE_PROXY_TMUX_POOL_SIZE", "2"))
+CLAUDE_PROXY_TMUX_CLEAR_TIMEOUT = int(os.getenv("CLAUDE_PROXY_TMUX_CLEAR_TIMEOUT", "20"))
+CLAUDE_PROXY_TMUX_MAX_REQUESTS_PER_SESSION = int(
+    os.getenv("CLAUDE_PROXY_TMUX_MAX_REQUESTS_PER_SESSION", "200")
+)
+CLAUDE_PROXY_TMUX_MAX_SESSION_AGE_SECONDS = int(
+    os.getenv("CLAUDE_PROXY_TMUX_MAX_SESSION_AGE_SECONDS", "7200")
+)
+CLAUDE_PROXY_MAX_CONCURRENCY = int(os.getenv("CLAUDE_PROXY_MAX_CONCURRENCY", "2"))
+CLAUDE_PROXY_MIN_INTERVAL_SECONDS = float(os.getenv("CLAUDE_PROXY_MIN_INTERVAL_SECONDS", "0"))
+CLAUDE_PROXY_RATE_LIMIT_COOLDOWN_SECONDS = float(os.getenv("CLAUDE_PROXY_RATE_LIMIT_COOLDOWN_SECONDS", "0"))
+CLAUDE_PROXY_CACHE_TTL_SECONDS = int(os.getenv("CLAUDE_PROXY_CACHE_TTL_SECONDS", "300"))
+CLAUDE_PROXY_CACHE_MAX_SIZE = int(os.getenv("CLAUDE_PROXY_CACHE_MAX_SIZE", "256"))
+CLAUDE_PROXY_SANDBOX_MODE = os.getenv("CLAUDE_PROXY_SANDBOX_MODE", "auto")  # auto/light/hard/off
+CLAUDE_PROXY_SANDBOX_ROOT = os.getenv("CLAUDE_PROXY_SANDBOX_ROOT", "/tmp/smart-fund-claude-proxy")
+CLAUDE_PROXY_FILE_CONTEXT_THRESHOLD_CHARS = int(
+    os.getenv("CLAUDE_PROXY_FILE_CONTEXT_THRESHOLD_CHARS", "8000")
+)
+CLAUDE_PROXY_CLAUDE_CONFIG_JSON = os.getenv("CLAUDE_PROXY_CLAUDE_CONFIG_JSON", "")
+CLAUDE_PROXY_MODEL_ALIASES_JSON = os.getenv("CLAUDE_PROXY_MODEL_ALIASES_JSON", "")
+
+
+def _load_proxy_claude_config() -> dict:
+    if not CLAUDE_PROXY_CLAUDE_CONFIG_JSON.strip():
+        return {}
+    try:
+        data = json.loads(CLAUDE_PROXY_CLAUDE_CONFIG_JSON)
+        return data if isinstance(data, dict) else {}
+    except Exception:
+        return {}
+
+
+def _load_proxy_model_aliases() -> dict[str, str]:
+    if not CLAUDE_PROXY_MODEL_ALIASES_JSON.strip():
+        return {}
+    try:
+        data = json.loads(CLAUDE_PROXY_MODEL_ALIASES_JSON)
+        if not isinstance(data, dict):
+            return {}
+        aliases: dict[str, str] = {}
+        for key, value in data.items():
+            if not key or not value:
+                continue
+            aliases[str(key)] = str(value)
+        return aliases
+    except Exception:
+        return {}
+
+
+CLAUDE_PROXY_CLAUDE_CONFIG = _load_proxy_claude_config()
+CLAUDE_PROXY_MODEL_ALIASES = _load_proxy_model_aliases()
+CLAUDE_PROXY_CHILD_ENV = (
+    CLAUDE_PROXY_CLAUDE_CONFIG.get("env", {})
+    if isinstance(CLAUDE_PROXY_CLAUDE_CONFIG.get("env"), dict)
+    else {}
+)
+CLAUDE_PROXY_CHILD_SETTINGS = {
+    k: v
+    for k, v in CLAUDE_PROXY_CLAUDE_CONFIG.items()
+    if k != "env"
+}
 
 # ==================== 交易 ====================
 

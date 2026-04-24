@@ -6,6 +6,7 @@
 """
 
 import logging
+import math
 import re
 from collections import defaultdict
 from datetime import date, datetime, timedelta
@@ -32,12 +33,17 @@ EM_INDICATORS = [
     ("fai",             "RPT_ECONOMY_ASSET_INVEST",    "%",     "growth"),
     ("retail_sales",    "RPT_ECONOMY_TOTAL_RETAIL",    "%",     "growth"),
     ("customs_export",  "RPT_ECONOMY_CUSTOMS",         "亿美元", "external"),
+    ("fdi",             "RPT_ECONOMY_FDI_NEW",         "亿美元", "external"),
 ]
 
 # EM 自带同比字段的指标（value 是绝对值，但有独立的 yoy 字段）
 EM_YOY_FIELDS = {
     "rmb_loan": "RMB_LOAN_SAME",   # 人民币贷款同比 %
+    "fdi": "ACTUAL_FOREIGN_SAME",  # FDI 同比比率（需 ×100 转为 %）
 }
+
+# EM 同比字段值为比率（0~1），需 ×100 转为百分比
+EM_YOY_RATIO_FIELDS = {"fdi"}
 
 
 # ==================== Normalize 函数 ====================
@@ -47,13 +53,11 @@ def _extract_period(report_date: str) -> str:
     """从 REPORT_DATE 提取 period
 
     '2026-02-01 00:00:00' → '2026-02'
-    '2026-03-01 00:00:00' (GDP 季度) → '2026-Q1'
+    '2024-12-01 00:00:00' (FDI 年度) → '2024'
     """
     if not report_date:
         return ""
     date_str = report_date[:10]
-    # GDP 是季度数据
-    month = int(date_str[5:7])
     return date_str[:7]  # YYYY-MM
 
 
@@ -73,9 +77,9 @@ def _extract_value(item: dict) -> float | None:
         "FOREX",                # 外汇储备（亿美元）
         "GOLD_RESERVES",        # 黄金储备（兜底）
         "BASE_SAME",            # 固定资产投资当月同比
-        "FDI_US",               # FDI（旧版）
-        "ACTUAL_FOREIGN_SAME",  # FDI 当月同比
-        "FOREIGN_ACCUMULATE_SAME",  # FDI 累计同比（当月为空时）
+        "ACTUAL_FOREIGN",       # FDI 年度绝对值（亿美元，RPT_ECONOMY_FDI_NEW）
+        "FDI_US",               # FDI（旧版月度）
+        "FOREIGN_ACCUMULATE_SAME",  # FDI 累计同比（旧版兜底）
         "RETAIL_TOTAL_SAME",    # 社零当月同比
         "RETAIL_ACCUMULATE_SAME",  # 社零累计同比（1-2 月合并时当月为空）
         "EXIT_BASE_SAME",       # 出口同比
@@ -152,7 +156,10 @@ def _make_em_normalizer(indicator_name: str, unit: str, dim_tag: str):
                     em_yoy = item.get(yoy_field)
                     if em_yoy is not None:
                         try:
-                            row["yoy"] = float(em_yoy)
+                            yoy_val = float(em_yoy)
+                            if indicator_name in EM_YOY_RATIO_FIELDS:
+                                yoy_val = round(yoy_val * 100, 2)
+                            row["yoy"] = yoy_val
                         except (ValueError, TypeError):
                             pass
                 results.append(row)
@@ -427,7 +434,10 @@ def normalize_cnus_yield(raw_items: list) -> list[dict]:
         if cn_10y is None or us_10y is None:
             continue
         try:
-            spread = float(cn_10y) - float(us_10y)
+            cn_val, us_val = float(cn_10y), float(us_10y)
+            if math.isnan(cn_val) or math.isnan(us_val):
+                continue
+            spread = cn_val - us_val
         except (ValueError, TypeError):
             continue
 

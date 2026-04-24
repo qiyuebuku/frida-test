@@ -26,6 +26,9 @@ from src.infrastructure.persistence.repositories.market_flow_repository_impl imp
 from src.infrastructure.persistence.repositories.news_repository_impl import (
     NewsRepositoryImpl,
 )
+from src.infrastructure.persistence.repositories.rule_threshold_repository_impl import (
+    RuleThresholdRepositoryImpl,
+)
 from src.infrastructure.persistence.repositories.pending_decision_repository_impl import (
     PendingDecisionRepositoryImpl,
 )
@@ -38,6 +41,9 @@ from src.infrastructure.persistence.repositories.review_repository_impl import (
 from src.infrastructure.persistence.repositories.sentiment_repository_impl import (
     SentimentRepositoryImpl,
 )
+from src.infrastructure.persistence.repositories.sentiment_signal_repository_impl import (
+    SentimentSignalRepositoryImpl,
+)
 from src.infrastructure.persistence.repositories.trade_repository_impl import (
     TradeRepositoryImpl,
 )
@@ -48,11 +54,13 @@ __all__ = [
     "MarketFlowRepositoryImpl",
     "MarketCacheRepositoryImpl",
     "SentimentRepositoryImpl",
+    "SentimentSignalRepositoryImpl",
     "MacroRepositoryImpl",
     "CollectionStateRepositoryImpl",
     # extraction
     "EventRepositoryImpl",
     "EventStreamRepositoryImpl",
+    "RuleThresholdRepositoryImpl",
     # trading
     "PendingDecisionRepositoryImpl",
     "TradeRepositoryImpl",

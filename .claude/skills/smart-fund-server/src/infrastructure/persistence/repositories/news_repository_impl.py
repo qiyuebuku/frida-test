@@ -1,8 +1,8 @@
 """NewsRepository SQLAlchemy 实现"""
 import logging
-from datetime import date
+from datetime import date, datetime, timedelta, timezone
 
-from sqlalchemy import select, update
+from sqlalchemy import func, select, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 
 from src.domain.collection.repositories.news_repository import NewsRepository
@@ -119,3 +119,44 @@ class NewsRepositoryImpl(NewsRepository):
                 {"title": r.title, "summary": r.summary, "published_at": r.published_at}
                 for r in rows
             ]
+
+    def find_unclassified(self, limit: int = 200) -> list[dict]:
+        """L1a 专用：读取未分类的新闻（event_extracted=false AND l1_classified_at IS NULL）"""
+        with get_session() as s:
+            cutoff = datetime.now(timezone.utc) - timedelta(hours=24)
+            rows = s.scalars(
+                select(News)
+                .where(
+                    News.event_extracted.is_(False),
+                    News.l1_classified_at.is_(None),
+                    News.published_at >= cutoff,
+                )
+                .order_by(News.published_at.desc())
+                .limit(limit)
+            ).all()
+            return [
+                {
+                    "id": r.id,
+                    "title": r.title,
+                    "summary": r.summary,
+                    "content": r.content,
+                    "source": r.source,
+                    "source_name": r.source_name,
+                    "source_reliability": r.source_reliability,
+                    "category": r.category,
+                    "url": r.url,
+                    "published_at": r.published_at,
+                    "related_stocks": r.related_stocks,
+                }
+                for r in rows
+            ]
+
+    def mark_classified(self, ids: list[int]) -> int:
+        """标记新闻为 L1a 已分类（设置 l1_classified_at = now()）"""
+        if not ids:
+            return 0
+        with get_session() as s:
+            result = s.execute(
+                update(News).where(News.id.in_(ids)).values(l1_classified_at=func.now())
+            )
+            return result.rowcount or 0

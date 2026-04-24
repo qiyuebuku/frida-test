@@ -29,6 +29,22 @@ class EventRepository(ABC):
         ...
 
     @abstractmethod
+    def upsert_l1_event(self, event_data: dict) -> bool:
+        """L1 事件入库 (dedup_key 冲突时合并 evidence_refs)
+
+        event_data 需包含 dedup_key 字段。
+        冲突时 UPDATE evidence_refs = existing || new，不插入新行。
+
+        Returns: True 实际插入, False 合并更新 / 写入失败
+        """
+        ...
+
+    @abstractmethod
+    def find_by_dedup_key(self, dedup_key: str) -> dict | None:
+        """按 dedup_key 查找已存在的事件"""
+        ...
+
+    @abstractmethod
     def find_recent_with_embedding(self, hours: int = 24, limit: int = 500) -> list[dict]:
         """读最近 N 小时有 embedding 的事件 (供 EventStream 聚类用)
 
