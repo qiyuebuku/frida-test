@@ -53,6 +53,10 @@ class KGResearchContextRequest(BaseModel):
     query: str = Field(..., min_length=1, description="查询文本")
     adapter_name: str = Field("financial", description="adapter 名称")
     target: Target = Field("prod", description="数据库目标")
+    retrieval_mode: Literal["deterministic_plan", "agentic_arag"] = Field(
+        "agentic_arag",
+        description="检索模式，默认 Agentic A-RAG",
+    )
     graph_depth: int = Field(3, ge=1, le=4)
     graph_limit: int = Field(20, ge=1, le=100)
     wiki_limit: int = Field(10, ge=1, le=100)
@@ -147,6 +151,7 @@ async def research_context(req: KGResearchContextRequest):
                 adapter_name=req.adapter_name,
                 target=req.target,
                 query=req.query,
+                retrieval_mode=req.retrieval_mode,
                 graph_depth=req.graph_depth,
                 graph_limit=req.graph_limit,
                 wiki_limit=req.wiki_limit,

@@ -192,7 +192,7 @@ def rebuild_indexes(
 @click.option(
     "--retrieval-mode",
     type=click.Choice(["deterministic_plan", "agentic_arag"]),
-    default="deterministic_plan",
+    default="agentic_arag",
 )
 @click.option("--json", "json_output", is_flag=True, help="输出 JSON")
 def query(

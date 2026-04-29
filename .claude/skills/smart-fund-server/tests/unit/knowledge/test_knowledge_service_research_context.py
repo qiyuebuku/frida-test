@@ -152,6 +152,7 @@ async def test_research_context_returns_financial_retrieval_plan(monkeypatch) ->
         KnowledgeResearchContextCommand(
             query="宁德时代 300750 最近受哪些事件影响",
             adapter_name="financial",
+            retrieval_mode="deterministic_plan",
             graph_limit=5,
             wiki_limit=5,
             evidence_limit=5,
@@ -204,6 +205,33 @@ async def test_research_context_can_use_agentic_retrieval_mode(monkeypatch) -> N
     assert result.planner_enabled is False
     assert result.retrieval_channels_used == ["semantic_hybrid_search", "chunk_read"]
     assert result.evidence_refs == ["kg_ev:financial:news:overseas_capacity"]
+
+
+@pytest.mark.asyncio
+async def test_research_context_defaults_to_agentic_retrieval_mode(monkeypatch) -> None:
+    monkeypatch.setattr(
+        knowledge_service_module,
+        "_semantic_hybrid_retriever",
+        lambda: _FakeMilvusRetriever(),
+    )
+    monkeypatch.setattr(
+        knowledge_service_module,
+        "_agentic_retrieval_strategy",
+        lambda: _ScriptedAgenticStrategy(),
+    )
+    service = KnowledgeService(repository=_Repo())
+
+    result = await service.build_research_context_for(
+        KnowledgeResearchContextCommand(
+            query="宁德时代 300750 最近受哪些事件影响",
+            adapter_name="financial",
+            evidence_limit=5,
+        )
+    )
+
+    assert result.mode == "agentic_arag"
+    assert result.agentic_enabled is True
+    assert result.planner_enabled is False
 
 
 @pytest.mark.asyncio

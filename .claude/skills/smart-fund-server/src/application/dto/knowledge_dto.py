@@ -106,7 +106,7 @@ class KnowledgeResearchContextCommand:
     query: str
     adapter_name: str = "financial"
     target: Target = "prod"
-    retrieval_mode: Literal["deterministic_plan", "agentic_arag"] = "deterministic_plan"
+    retrieval_mode: Literal["deterministic_plan", "agentic_arag"] = "agentic_arag"
     graph_depth: int = 3
     graph_limit: int = 20
     wiki_limit: int = 10
