@@ -148,6 +148,8 @@ class KnowledgeResearchContextBadCase:
     expected_node_names: list[str] = field(default_factory=list)
     expected_relation_types: list[str] = field(default_factory=list)
     retrieval_mode: Literal["deterministic_plan", "agentic_arag"] = "deterministic_plan"
+    replay_trace: bool = False
+    recorded_trace: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass

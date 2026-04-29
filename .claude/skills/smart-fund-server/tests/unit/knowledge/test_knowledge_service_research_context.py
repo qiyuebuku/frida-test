@@ -6,7 +6,11 @@ from datetime import datetime, timezone
 
 import pytest
 
-from src.application.dto.knowledge_dto import KnowledgeResearchContextCommand
+from src.application.dto.knowledge_dto import (
+    KnowledgeBadCaseReplayCommand,
+    KnowledgeResearchContextBadCase,
+    KnowledgeResearchContextCommand,
+)
 from src.application.services import knowledge_service as knowledge_service_module
 from src.application.services.knowledge_service import (
     KnowledgeService,
@@ -14,7 +18,13 @@ from src.application.services.knowledge_service import (
 )
 from src.domain.knowledge.agentic_retrieval import AgenticRetrievalDecision
 from src.domain.knowledge.enums import ConfidenceLabel, EdgeStatus, EvidenceType, NodeStatus
-from src.domain.knowledge.retrieval import RetrievalHit, RetrievalOptions, SemanticHybridRetriever
+from src.domain.knowledge.retrieval import (
+    RetrievalHit,
+    RetrievalOptions,
+    RetrievalStep,
+    RetrievalTrace,
+    SemanticHybridRetriever,
+)
 from src.domain.knowledge.retrieval_tools import RetrievalToolCall
 from src.domain.knowledge.schemas import CompiledEdge, CompiledEvidence, CompiledNode
 from src.domain.knowledge_adapters.financial.query_planner import FinancialQueryPlanner
@@ -221,6 +231,64 @@ async def test_agentic_mode_materializes_evidence_refs_when_strategy_stops(monke
 
     assert result.retrieval_channels_used == ["semantic_hybrid_search", "chunk_read"]
     assert any(hit["hit_type"] == "evidence" for hit in result.hits)
+
+
+@pytest.mark.asyncio
+async def test_bad_case_replay_can_replay_recorded_agentic_trace(monkeypatch) -> None:
+    monkeypatch.setattr(
+        knowledge_service_module,
+        "_semantic_hybrid_retriever",
+        lambda: _FakeMilvusRetriever(),
+    )
+    semantic_call = RetrievalToolCall(
+        tool="semantic_hybrid_search",
+        query="宁德时代 300750 最近受哪些事件影响",
+    )
+    chunk_call = RetrievalToolCall(
+        tool="chunk_read",
+        evidence_ids=["kg_ev:financial:news:overseas_capacity"],
+    )
+    recorded_trace = RetrievalTrace(
+        mode="agentic_arag",
+        agentic_enabled=True,
+        steps=[
+            RetrievalStep(
+                tool="semantic_hybrid_search",
+                input=semantic_call.model_dump(mode="json"),
+                output_refs=["kg_chunk:fake"],
+                hit_count=1,
+            ),
+            RetrievalStep(
+                tool="chunk_read",
+                input=chunk_call.model_dump(mode="json"),
+                output_refs=["kg_ev:financial:news:overseas_capacity"],
+                hit_count=1,
+            ),
+        ],
+    )
+    service = KnowledgeService(repository=_Repo())
+
+    result = await service.replay_research_context_bad_cases(
+        KnowledgeBadCaseReplayCommand(
+            adapter_name="financial",
+            target="test",
+            cases=[
+                KnowledgeResearchContextBadCase(
+                    case_id="trace-replay",
+                    query="宁德时代 300750 最近受哪些事件影响",
+                    expected_evidence_refs=["kg_ev:financial:news:overseas_capacity"],
+                    replay_trace=True,
+                    recorded_trace=recorded_trace.model_dump(mode="json"),
+                )
+            ],
+            evidence_limit=5,
+        )
+    )
+
+    assert result.passed == 1
+    assert result.results[0]["trace_replay"] is True
+    assert result.results[0]["trace_mismatches"] == []
+    assert result.results[0]["channels_used"] == ["semantic_hybrid_search", "chunk_read"]
 
 
 def test_graph_time_window_for_recent_plan_is_anchored() -> None:

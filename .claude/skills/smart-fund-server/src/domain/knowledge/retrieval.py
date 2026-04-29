@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import re
 from collections import deque
 from datetime import datetime
@@ -18,6 +19,8 @@ from src.domain.knowledge.schemas import (
     CompiledNode,
     KnowledgeBaseModel,
 )
+
+logger = logging.getLogger(__name__)
 
 HitType = Literal["node", "edge", "path", "wiki", "evidence", "semantic_hybrid"]
 GraphDirection = Literal["incoming", "outgoing", "undirected", "path"]
@@ -287,7 +290,15 @@ class HybridRetrievalRuntime:
             self.chunk_read(evidence_ids, options),
             entity_hits + graph_hits + wiki_hits + semantic_hits,
         )
-
+        _log_retrieval_channels(
+            query=query,
+            options=options,
+            entity_hits=entity_hits,
+            graph_hits=graph_hits,
+            wiki_hits=wiki_hits,
+            semantic_hits=semantic_hits,
+            evidence_hits=evidence_hits,
+        )
         fused = reciprocal_rank_fusion(
             [entity_hits, graph_hits, wiki_hits, semantic_hits, evidence_hits]
         )
@@ -309,6 +320,7 @@ class HybridRetrievalRuntime:
             if hit.confidence in {ConfidenceLabel.AMBIGUOUS, ConfidenceLabel.REJECTED}
         ]
         hard_hits = [hit for hit in selected if hit not in low_confidence]
+        _log_selected_hits(query=query, options=options, trace=trace, hits=hard_hits)
         return AnswerContext(
             query=query,
             hits=hard_hits,
@@ -340,6 +352,15 @@ class HybridRetrievalRuntime:
             self.chunk_read(evidence_ids, options),
             entity_hits + graph_hits + wiki_hits + semantic_hits,
         )
+        _log_retrieval_channels(
+            query=query,
+            options=options,
+            entity_hits=entity_hits,
+            graph_hits=graph_hits,
+            wiki_hits=wiki_hits,
+            semantic_hits=semantic_hits,
+            evidence_hits=evidence_hits,
+        )
         fused = reciprocal_rank_fusion(
             [entity_hits, semantic_hits, graph_hits, wiki_hits, evidence_hits]
         )
@@ -359,6 +380,7 @@ class HybridRetrievalRuntime:
             if hit.confidence in {ConfidenceLabel.AMBIGUOUS, ConfidenceLabel.REJECTED}
         ]
         hard_hits = [hit for hit in selected if hit not in low_confidence]
+        _log_selected_hits(query=query, options=options, trace=trace, hits=hard_hits)
         return AnswerContext(
             query=query,
             hits=hard_hits,
@@ -385,6 +407,7 @@ class HybridRetrievalRuntime:
             if hit.confidence in {ConfidenceLabel.AMBIGUOUS, ConfidenceLabel.REJECTED}
         ]
         hard_hits = [hit for hit in selected if hit not in low_confidence]
+        _log_selected_hits(query=query, options=options, trace=trace, hits=hard_hits)
         return AnswerContext(
             query=query,
             hits=hard_hits,
@@ -447,6 +470,80 @@ def _inherit_evidence_scores(
             }
         )
         for hit in evidence_hits
+    ]
+
+
+def _log_retrieval_channels(
+    *,
+    query: str,
+    options: RetrievalOptions,
+    entity_hits: list[RetrievalHit],
+    graph_hits: list[RetrievalHit],
+    wiki_hits: list[RetrievalHit],
+    semantic_hits: list[RetrievalHit],
+    evidence_hits: list[RetrievalHit],
+) -> None:
+    if not logger.isEnabledFor(logging.INFO):
+        return
+    channels = {
+        "entity_resolve": entity_hits,
+        "semantic_hybrid_search": semantic_hits,
+        "graph_search": graph_hits,
+        "wiki_search": wiki_hits,
+        "chunk_read": evidence_hits,
+    }
+    logger.info(
+        "[kg_retrieval] adapter=%s mode=runtime query=%r channels=%s evidence_refs=%s",
+        options.adapter_name,
+        _clip(query, 160),
+        {
+            name: {
+                "hits": len(hits),
+                "sample": _hit_debug_sample(hits),
+            }
+            for name, hits in channels.items()
+        },
+        _ordered_unique(
+            evidence_id
+            for hits in channels.values()
+            for hit in hits
+            for evidence_id in hit.evidence_refs
+        )[:10],
+    )
+
+
+def _log_selected_hits(
+    *,
+    query: str,
+    options: RetrievalOptions,
+    trace: RetrievalTrace,
+    hits: list[RetrievalHit],
+) -> None:
+    if not logger.isEnabledFor(logging.INFO):
+        return
+    logger.info(
+        "[kg_retrieval] adapter=%s mode=%s query=%r selected_hits=%d channels_used=%s sample=%s",
+        options.adapter_name,
+        trace.mode,
+        _clip(query, 160),
+        len(hits),
+        trace.channels_used,
+        _hit_debug_sample(hits),
+    )
+
+
+def _hit_debug_sample(hits: list[RetrievalHit], limit: int = 5) -> list[dict[str, Any]]:
+    return [
+        {
+            "id": hit.hit_id,
+            "type": hit.hit_type,
+            "title": _clip(hit.title, 80),
+            "score": round(hit.score, 4),
+            "nodes": hit.node_refs[:3],
+            "edges": hit.edge_refs[:3],
+            "evidence": hit.evidence_refs[:3],
+        }
+        for hit in hits[:limit]
     ]
 
 

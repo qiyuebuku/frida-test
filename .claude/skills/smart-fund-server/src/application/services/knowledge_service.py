@@ -1,5 +1,6 @@
 """Application service entry point for knowledge use cases."""
 
+import logging
 from datetime import datetime, timedelta, timezone
 from typing import Any, Literal
 from uuid import uuid4
@@ -48,6 +49,7 @@ from src.domain.knowledge.retrieval import (
     AnswerContext,
     HybridRetrievalRuntime,
     RetrievalOptions,
+    RetrievalTrace,
     _inherit_evidence_scores,
 )
 from src.domain.knowledge.retrieval_plan_executor import RetrievalPlanExecutor
@@ -55,6 +57,7 @@ from src.domain.knowledge.retrieval_eval import (
     RetrievalBadCase,
     evaluate_retrieval_bad_case,
 )
+from src.domain.knowledge.retrieval_trace_replay import replay_retrieval_trace
 from src.domain.knowledge.retrieval_tools import RetrievalToolCall, RetrievalToolRegistry
 from src.domain.knowledge.repositories import KnowledgeRepository
 from src.domain.knowledge.schemas import CompileResult, CompiledEdge, CompiledNode
@@ -65,6 +68,8 @@ from src.infrastructure.config import settings
 from src.infrastructure.vector_store.semantic_hybrid_retriever import (
     MilvusSemanticHybridRetriever,
 )
+
+logger = logging.getLogger(__name__)
 
 
 class KnowledgeService:
@@ -269,6 +274,7 @@ class KnowledgeService:
         evidence_refs = _ordered_unique(
             evidence_id for hit in context.hits for evidence_id in hit.evidence_refs
         )
+        _log_research_context_summary(command, context, evidence_refs)
         return KnowledgeResearchContextDTO(
             query=command.query,
             hits=[dto_to_dict(hit) for hit in context.hits],
@@ -325,19 +331,26 @@ class KnowledgeService:
         get_adapter(command.adapter_name)
         results: list[dict[str, Any]] = []
         for case in command.cases:
-            context = await self.build_research_context_for(
-                KnowledgeResearchContextCommand(
-                    adapter_name=command.adapter_name,
-                    target=command.target,
-                    query=case.query,
-                    retrieval_mode=case.retrieval_mode,
-                    graph_depth=command.graph_depth,
-                    graph_limit=command.graph_limit,
-                    wiki_limit=command.wiki_limit,
-                    evidence_limit=command.evidence_limit,
-                    max_chars=command.max_chars,
+            if case.replay_trace:
+                context, trace_mismatches = await self._replay_research_context_trace(
+                    case=case,
+                    command=command,
                 )
-            )
+            else:
+                context = await self.build_research_context_for(
+                    KnowledgeResearchContextCommand(
+                        adapter_name=command.adapter_name,
+                        target=command.target,
+                        query=case.query,
+                        retrieval_mode=case.retrieval_mode,
+                        graph_depth=command.graph_depth,
+                        graph_limit=command.graph_limit,
+                        wiki_limit=command.wiki_limit,
+                        evidence_limit=command.evidence_limit,
+                        max_chars=command.max_chars,
+                    )
+                )
+                trace_mismatches = []
             replay = evaluate_retrieval_bad_case(
                 RetrievalBadCase(
                     case_id=case.case_id,
@@ -362,6 +375,8 @@ class KnowledgeService:
             item["retrieval_mode"] = case.retrieval_mode
             item["channels_used"] = context.retrieval_channels_used
             item["warnings"] = context.warnings
+            item["trace_replay"] = case.replay_trace
+            item["trace_mismatches"] = trace_mismatches
             results.append(item)
         passed = sum(1 for item in results if item.get("passed"))
         return KnowledgeBadCaseReplayResultDTO(
@@ -372,6 +387,64 @@ class KnowledgeService:
             failed=len(results) - passed,
             results=results,
         )
+
+    async def _replay_research_context_trace(
+        self,
+        *,
+        case: Any,
+        command: KnowledgeBadCaseReplayCommand,
+    ) -> tuple[KnowledgeResearchContextDTO, list[dict[str, Any]]]:
+        if not case.recorded_trace:
+            raise ValueError(f"bad case {case.case_id} replay_trace requires recorded_trace")
+        options = RetrievalOptions(
+            adapter_name=command.adapter_name,
+            target=command.target,
+            graph_depth=max(1, min(command.graph_depth, 3)),
+            graph_limit=command.graph_limit,
+            wiki_limit=command.wiki_limit,
+            evidence_limit=command.evidence_limit,
+            keyword_limit=max(command.graph_limit, 1),
+            semantic_hybrid_limit=command.evidence_limit,
+            max_hits=max(command.graph_limit, command.wiki_limit, command.evidence_limit, 1),
+            max_chars=command.max_chars,
+        )
+        repository = self._require_repository()
+        runtime = HybridRetrievalRuntime(
+            repository,
+            semantic_retriever=_semantic_hybrid_retriever(),
+        )
+        replay = await replay_retrieval_trace(
+            query=case.query,
+            recorded_trace=RetrievalTrace.model_validate(case.recorded_trace),
+            registry=RetrievalToolRegistry(runtime, options),
+        )
+        context = runtime.build_answer_context_from_hits(
+            query=case.query,
+            hits=replay.hits,
+            options=options,
+            trace=replay.trace,
+        )
+        dto = KnowledgeResearchContextDTO(
+            query=case.query,
+            hits=[dto_to_dict(hit) for hit in context.hits],
+            matched_nodes=[dto_to_dict(node) for node in context.matched_nodes],
+            matched_edges=[dto_to_dict(edge) for edge in context.matched_edges],
+            evidence_refs=_ordered_unique(
+                evidence_id for hit in context.hits for evidence_id in hit.evidence_refs
+            ),
+            context_text=_context_text(context),
+            budget_usage=dto_to_dict(context.budget_usage),
+            mode=context.trace.mode,
+            retrieval_channels_enabled=context.trace.channels_enabled,
+            retrieval_channels_used=context.trace.channels_used,
+            semantic_enabled=context.trace.semantic_enabled,
+            milvus_enabled=context.trace.milvus_enabled,
+            agentic_enabled=context.trace.agentic_enabled,
+            planner_enabled=context.trace.planner_enabled,
+            retrieval_trace=dto_to_dict(context.trace),
+            warnings=list(context.trace.warnings),
+        )
+        return dto, [dto_to_dict(item) for item in replay.mismatches]
 
     async def apply_review_action_for(self, command: KnowledgeReviewActionCommand) -> dict[str, Any]:
         await self.apply_review_action(command.review_id, command.action)  # type: ignore[arg-type]
@@ -701,6 +774,49 @@ def _context_text(context: AnswerContext) -> str:
             continue
         parts.append(f"[{hit.source}:{hit.hit_type}] {hit.title}\n{snippet}")
     return "\n\n".join(parts)
+
+
+def _log_research_context_summary(
+    command: KnowledgeResearchContextCommand,
+    context: AnswerContext,
+    evidence_refs: list[str],
+) -> None:
+    if not logger.isEnabledFor(logging.INFO):
+        return
+    logger.info(
+        "[kg_context] adapter=%s target=%s mode=%s query=%r hits=%d nodes=%s edges=%s "
+        "evidence_refs=%s channels=%s warnings=%s",
+        command.adapter_name,
+        command.target,
+        context.trace.mode,
+        _clip_text(command.query, 160),
+        len(context.hits),
+        [
+            {
+                "id": node.node_id,
+                "type": node.node_type,
+                "name": _clip_text(node.canonical_name, 80),
+            }
+            for node in context.matched_nodes[:10]
+        ],
+        [
+            {
+                "id": edge.edge_id,
+                "relation": edge.relation_type,
+                "source": edge.source_node_id,
+                "target": edge.target_node_id,
+                "evidence": edge.evidence_ids[:3],
+            }
+            for edge in context.matched_edges[:10]
+        ],
+        evidence_refs[:10],
+        context.trace.channels_used,
+        context.trace.warnings,
+    )
+
+
+def _clip_text(value: str, max_chars: int) -> str:
+    return value if len(value) <= max_chars else value[: max_chars - 3] + "..."
 
 
 def _match_financial_nodes(text: str, nodes: list[CompiledNode]) -> list[dict[str, Any]]:
