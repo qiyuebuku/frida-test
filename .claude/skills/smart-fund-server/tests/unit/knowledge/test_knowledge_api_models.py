@@ -5,6 +5,7 @@ from pydantic import ValidationError
 
 from src.interfaces.api.routes.knowledge import (
     KGCompileRequest,
+    KGFinancialIncrementalRefreshRequest,
     KGResearchContextRequest,
     KGRebuildIndexesRequest,
 )
@@ -32,3 +33,12 @@ def test_rebuild_indexes_defaults_to_minimal_indexes() -> None:
     req = KGRebuildIndexesRequest()
 
     assert req.index_types == ["graph_adjacency", "evidence_chunks"]
+
+
+def test_financial_incremental_refresh_request_defaults_are_bounded() -> None:
+    req = KGFinancialIncrementalRefreshRequest(codes=["300750"])
+
+    assert req.codes == ["300750"]
+    assert req.stock_limit == 500
+    assert req.news_limit == 20
+    assert req.rebuild_indexes is True

@@ -13,6 +13,8 @@ from src.application.dto.knowledge_dto import (
     KnowledgeCompileCommand,
     KnowledgeCompileResultDTO,
     KnowledgeHealthDTO,
+    KnowledgeIncrementalRefreshCommand,
+    KnowledgeIncrementalRefreshResultDTO,
     KnowledgeQualityScanCommand,
     KnowledgeQualityScanResultDTO,
     KnowledgeRebuildIndexesCommand,
@@ -106,6 +108,7 @@ class KnowledgeService:
                 "rebuild_wiki",
                 "rebuild_indexes",
                 "research_context",
+                "incremental_refresh",
                 "quality_scan",
                 "reviews",
             ],
@@ -172,6 +175,75 @@ class KnowledgeService:
                 request_id=command.request_id,
                 concurrency=command.concurrency,
             )
+        )
+
+    async def refresh_financial_incremental(
+        self,
+        command: KnowledgeIncrementalRefreshCommand,
+    ) -> KnowledgeIncrementalRefreshResultDTO:
+        run_id = f"kg_run:financial_incremental:{uuid4()}"
+        steps: list[dict[str, Any]] = []
+
+        stock_result = await self.bootstrap_financial_stock_entities(
+            KnowledgeBootstrapStocksCommand(
+                target=command.target,
+                codes=command.codes,
+                limit=command.stock_limit,
+                dry_run=command.dry_run,
+                request_id=command.request_id,
+            )
+        )
+        steps.append(_incremental_step("bootstrap_stocks", stock_result))
+
+        news_result = await self.bootstrap_financial_stock_news(
+            KnowledgeBootstrapStockNewsCommand(
+                target=command.target,
+                codes=command.codes,
+                limit=command.news_limit,
+                dry_run=command.dry_run,
+                request_id=command.request_id,
+                concurrency=command.concurrency,
+            )
+        )
+        steps.append(_incremental_step("bootstrap_stock_news", news_result))
+
+        if command.dry_run:
+            steps.append({"name": "rebuild_wiki", "status": "skipped", "reason": "dry_run"})
+            steps.append({"name": "rebuild_indexes", "status": "skipped", "reason": "dry_run"})
+            return KnowledgeIncrementalRefreshResultDTO(
+                adapter_name="financial",
+                target=command.target,
+                run_id=run_id,
+                dry_run=command.dry_run,
+                steps=steps,
+            )
+
+        wiki_result = await self.rebuild_wiki_for(
+            KnowledgeRebuildWikiCommand(
+                adapter_name="financial",
+                target=command.target,
+            )
+        )
+        steps.append(_incremental_step("rebuild_wiki", wiki_result))
+
+        if command.rebuild_indexes:
+            index_result = await self.rebuild_indexes_for(
+                KnowledgeRebuildIndexesCommand(
+                    adapter_name="financial",
+                    target=command.target,
+                    index_types=["graph_adjacency", "evidence_chunks", "hybrid_chunks"],
+                )
+            )
+            steps.append(_incremental_step("rebuild_indexes", index_result))
+        else:
+            steps.append({"name": "rebuild_indexes", "status": "skipped", "reason": "disabled"})
+
+        return KnowledgeIncrementalRefreshResultDTO(
+            adapter_name="financial",
+            target=command.target,
+            run_id=run_id,
+            dry_run=command.dry_run,
+            steps=steps,
         )
 
     async def rebuild_wiki_for(
@@ -781,6 +853,14 @@ def _context_text(context: AnswerContext) -> str:
             continue
         parts.append(f"[{hit.source}:{hit.hit_type}] {hit.title}\n{snippet}")
     return "\n\n".join(parts)
+
+
+def _incremental_step(name: str, result: Any) -> dict[str, Any]:
+    return {
+        "name": name,
+        "status": "ok",
+        "result": dto_to_dict(result),
+    }
 
 
 def _log_research_context_summary(

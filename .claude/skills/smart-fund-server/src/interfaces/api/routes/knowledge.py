@@ -9,6 +9,7 @@ from pydantic import BaseModel, Field
 
 from src.application.dto.knowledge_dto import (
     KnowledgeCompileCommand,
+    KnowledgeIncrementalRefreshCommand,
     KnowledgeQualityScanCommand,
     KnowledgeRebuildIndexesCommand,
     KnowledgeRebuildWikiCommand,
@@ -74,6 +75,17 @@ class KGResolveFinancialEntitiesRequest(BaseModel):
     text: str = Field(..., min_length=1)
     target: Target = "prod"
     limit: int = Field(20, ge=1, le=100)
+
+
+class KGFinancialIncrementalRefreshRequest(BaseModel):
+    target: Target = "prod"
+    codes: list[str] = Field(default_factory=list)
+    stock_limit: int = Field(500, ge=1, le=5000)
+    news_limit: int = Field(20, ge=1, le=5000)
+    dry_run: bool = False
+    request_id: str | None = None
+    concurrency: int | None = Field(1, ge=1, le=20)
+    rebuild_indexes: bool = True
 
 
 class KGFinancialPathsRequest(BaseModel):
@@ -180,6 +192,25 @@ async def quality_scan(req: KGQualityScanRequest):
 async def resolve_financial_entities(req: KGResolveFinancialEntitiesRequest):
     service = create_knowledge_service(target=req.target)
     return await _call(service.resolve_financial_entities(req.text, limit=req.limit))
+
+
+@router.post("/financial/incremental-refresh", summary="金融知识图谱增量刷新")
+async def financial_incremental_refresh(req: KGFinancialIncrementalRefreshRequest):
+    service = create_knowledge_service(target=req.target)
+    return await _call(
+        service.refresh_financial_incremental(
+            KnowledgeIncrementalRefreshCommand(
+                target=req.target,
+                codes=req.codes,
+                stock_limit=req.stock_limit,
+                news_limit=req.news_limit,
+                dry_run=req.dry_run,
+                request_id=req.request_id,
+                concurrency=req.concurrency,
+                rebuild_indexes=req.rebuild_indexes,
+            )
+        )
+    )
 
 
 @router.post("/financial/paths", summary="金融影响路径查询")

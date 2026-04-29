@@ -68,6 +68,27 @@ class KnowledgeBootstrapStockNewsCommand:
 
 
 @dataclass
+class KnowledgeIncrementalRefreshCommand:
+    target: Target = "prod"
+    codes: list[str] = field(default_factory=list)
+    stock_limit: int = 500
+    news_limit: int = 20
+    dry_run: bool = False
+    request_id: str | None = None
+    concurrency: int | None = 1
+    rebuild_indexes: bool = True
+
+
+@dataclass
+class KnowledgeIncrementalRefreshResultDTO(KnowledgeDTO):
+    adapter_name: str
+    target: Target
+    run_id: str
+    dry_run: bool
+    steps: list[dict[str, Any]] = field(default_factory=list)
+
+
+@dataclass
 class KnowledgeRebuildWikiCommand:
     adapter_name: str = "financial"
     target: Target = "prod"

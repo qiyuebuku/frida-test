@@ -14,6 +14,7 @@ from src.application.dto.knowledge_dto import (
     KnowledgeBootstrapStockNewsCommand,
     KnowledgeBootstrapStocksCommand,
     KnowledgeCompileCommand,
+    KnowledgeIncrementalRefreshCommand,
     KnowledgeQualityScanCommand,
     KnowledgeRebuildIndexesCommand,
     KnowledgeRebuildWikiCommand,
@@ -136,6 +137,45 @@ def bootstrap_stock_news(
         )
     )
     _echo(result, json_output, _compile_summary)
+
+
+@kg.command("incremental-refresh")
+@click.option("--target", type=click.Choice(["prod", "test"]), default="prod")
+@click.option("--code", "codes", multiple=True, help="可重复传入，如 300750")
+@click.option("--stock-limit", default=500, type=click.IntRange(1, 5000))
+@click.option("--news-limit", default=20, type=click.IntRange(1, 5000))
+@click.option("--dry-run", is_flag=True, help="只编译不写入，不重建 Wiki/索引")
+@click.option("--request-id", default=None, help="调用方幂等 ID")
+@click.option("--concurrency", default=1, type=click.IntRange(1, 20), help="新闻编译并发数")
+@click.option("--rebuild-indexes/--no-rebuild-indexes", default=True)
+@click.option("--json", "json_output", is_flag=True, help="输出 JSON")
+def incremental_refresh(
+    target: Target,
+    codes: tuple[str, ...],
+    stock_limit: int,
+    news_limit: int,
+    dry_run: bool,
+    request_id: str | None,
+    concurrency: int,
+    rebuild_indexes: bool,
+    json_output: bool,
+):
+    """Run the first-version financial KG incremental refresh job."""
+    result = _run(
+        create_knowledge_service(target=target).refresh_financial_incremental(
+            KnowledgeIncrementalRefreshCommand(
+                target=target,
+                codes=list(codes),
+                stock_limit=stock_limit,
+                news_limit=news_limit,
+                dry_run=dry_run,
+                request_id=request_id,
+                concurrency=concurrency,
+                rebuild_indexes=rebuild_indexes,
+            )
+        )
+    )
+    _echo(result, json_output, _incremental_summary)
 
 
 @kg.command("rebuild-wiki")
@@ -381,6 +421,15 @@ def _indexes_summary(data: dict[str, Any]) -> str:
         f"graph_adjacency={data.get('graph_adjacency')} "
         f"evidence_chunks={data.get('evidence_chunks')} "
         f"hybrid_chunks={data.get('hybrid_chunks', 0)}"
+    )
+
+
+def _incremental_summary(data: dict[str, Any]) -> str:
+    steps = data.get("steps") or []
+    failed = [step for step in steps if step.get("status") not in {"ok", "skipped"}]
+    return (
+        f"incremental adapter={data.get('adapter_name')} target={data.get('target')} "
+        f"dry_run={data.get('dry_run')} steps={len(steps)} failed={len(failed)}"
     )
 
 
