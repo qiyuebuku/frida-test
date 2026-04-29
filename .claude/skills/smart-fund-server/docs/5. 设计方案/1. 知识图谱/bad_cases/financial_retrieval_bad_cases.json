@@ -29,6 +29,33 @@
       "min_evidence_refs": 1,
       "min_matched_nodes": 1,
       "min_matched_edges": 1
+    },
+    {
+      "case_id": "financial-overseas-capacity-company-impact",
+      "query": "海外产能兑现会影响哪些公司",
+      "retrieval_mode": "deterministic_plan",
+      "top_k": 5,
+      "expected_channels_used": ["semantic_hybrid_search", "chunk_read"],
+      "min_hits": 1,
+      "min_evidence_refs": 1
+    },
+    {
+      "case_id": "financial-middle-east-conflict-assets",
+      "query": "中东冲突影响哪些资产",
+      "retrieval_mode": "deterministic_plan",
+      "top_k": 5,
+      "expected_channels_used": ["semantic_hybrid_search", "chunk_read"],
+      "min_hits": 1,
+      "min_evidence_refs": 1
+    },
+    {
+      "case_id": "financial-low-rate-beneficiaries",
+      "query": "低利率环境利好什么资产",
+      "retrieval_mode": "deterministic_plan",
+      "top_k": 5,
+      "expected_channels_used": ["semantic_hybrid_search", "chunk_read"],
+      "min_hits": 1,
+      "min_evidence_refs": 1
     }
   ]
 }
