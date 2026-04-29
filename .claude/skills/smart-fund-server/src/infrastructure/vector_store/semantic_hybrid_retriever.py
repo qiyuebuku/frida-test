@@ -25,12 +25,14 @@ class MilvusSemanticHybridRetriever(SemanticHybridRetriever):
     async def search(self, query: str, options: RetrievalOptions) -> list[RetrievalHit]:
         vectors = await embed_texts([query])
         query_vector = vectors[0] if vectors and vectors[0] else []
+        limit = max(options.semantic_hybrid_limit, 1)
+        search_limit = _candidate_limit(limit)
         hits = self.store.hybrid_search(
-            query_text=query,
+            query_text=_expanded_query_text(query),
             query_vector=query_vector,
             adapter_name=options.adapter_name,
             target=options.target,
-            limit=options.semantic_hybrid_limit,
+            limit=search_limit,
         )
         return [
             RetrievalHit(
@@ -45,7 +47,7 @@ class MilvusSemanticHybridRetriever(SemanticHybridRetriever):
             for hit in sorted(
                 hits,
                 key=lambda item: (-_reranked_score(query, item.text, item.score), item.chunk_id),
-            )
+            )[:limit]
         ]
 
     async def rebuild_index(
@@ -77,6 +79,15 @@ def _reranked_score(query: str, text: str, base_score: float) -> float:
     if matched:
         return base_score * (1.0 + min(matched, 4) * 0.35)
     return base_score * 0.35
+
+
+def _expanded_query_text(query: str) -> str:
+    terms = _ordered_unique([query.strip(), *_strong_query_terms(query)])
+    return " ".join(term for term in terms if term)
+
+
+def _candidate_limit(limit: int) -> int:
+    return max(limit, min(limit * 3, limit + 30))
 
 
 def _strong_query_terms(query: str) -> list[str]:
