@@ -1,0 +1,24 @@
+{
+  "cases": [
+    {
+      "case_id": "financial-catl-recent-events",
+      "query": "宁德时代 300750 最近受哪些事件影响",
+      "retrieval_mode": "deterministic_plan",
+      "expected_hit_titles": ["news_articles:ft_news:74342"],
+      "expected_top_hit_titles": ["news_articles:ft_news:74342"],
+      "top_k": 3,
+      "expected_node_names": ["宁德时代"],
+      "expected_relation_types": ["mentions"]
+    },
+    {
+      "case_id": "financial-ma-industry-impact",
+      "query": "并购重组对哪些行业有影响",
+      "retrieval_mode": "deterministic_plan",
+      "expected_hit_titles": ["news_articles:ft_news:83904"],
+      "expected_top_hit_titles": ["news_articles:ft_news:83904"],
+      "top_k": 5,
+      "expected_node_names": ["并购重组"],
+      "expected_relation_types": ["affects"]
+    }
+  ]
+}

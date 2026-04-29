@@ -298,6 +298,7 @@ class TmuxClaudeRunner:
         self.ready_timeout = ready_timeout
         self.session_id = str(uuid.uuid4())
         self.tmux_session = f"sfs_llm_{self.session_id.replace('-', '')[:12]}"
+        self.tmux_buffer = f"{self.tmux_session}_prompt"
         self.home_dir = self.sandbox_root / "tmux-home"
         self.workdir = self.sandbox_root / "tmux-workdir"
         self.home_dir.mkdir(parents=True, exist_ok=True)
@@ -319,6 +320,12 @@ class TmuxClaudeRunner:
             if not text:
                 screen = self._capture(-80).strip()
                 raise TmuxClaudeError(f"交互式 Claude 未产生有效输出: {screen[-500:]!r}")
+            if usage.get("turns", 0) == 0 or usage.get("output_tokens", 0) == 0:
+                screen = self._capture(-80).strip()
+                raise TmuxClaudeError(
+                    f"交互式 Claude 返回文本但 usage 为空（API 抖动/cold start）: "
+                    f"text_len={len(text)} usage={usage} screen_tail={screen[-300:]!r}"
+                )
 
             duration_ms = int((time.perf_counter() - started_at) * 1000)
             return TmuxClaudeResult(
@@ -404,11 +411,12 @@ class TmuxClaudeRunner:
             file.write(prompt)
             temp_path = file.name
         try:
-            _tmux("load-buffer", temp_path)
-            _tmux("paste-buffer", "-p", "-t", self.tmux_session)
+            _tmux("load-buffer", "-b", self.tmux_buffer, temp_path)
+            _tmux("paste-buffer", "-p", "-b", self.tmux_buffer, "-t", self.tmux_session)
             time.sleep(0.5)
             _tmux("send-keys", "-t", self.tmux_session, "Enter")
         finally:
+            _tmux("delete-buffer", "-b", self.tmux_buffer)
             try:
                 os.unlink(temp_path)
             except OSError:
@@ -480,8 +488,10 @@ class PooledTmuxClaudeSession:
         self.max_age_seconds = max(60, max_age_seconds)
         self.session_id = str(uuid.uuid4())
         self.tmux_session = f"sfs_llm_pool_{pool_id}_{self.session_id.replace('-', '')[:8]}"
-        self.home_dir = self.sandbox_root / "tmux-pool-home"
-        self.workdir = self.sandbox_root / "tmux-pool-workdir"
+        self.tmux_buffer = f"{self.tmux_session}_prompt"
+        self.session_root = self.sandbox_root / "tmux-pool" / f"session-{pool_id}"
+        self.home_dir = self.session_root / "home"
+        self.workdir = self.session_root / "workdir"
         self.request_count = 0
         self.started_at = time.time()
         self.healthy = False
@@ -509,6 +519,12 @@ class PooledTmuxClaudeSession:
         if not text:
             screen = self._capture(-80).strip()
             raise TmuxClaudeError(f"交互式 Claude 未产生有效输出: {screen[-500:]!r}")
+        if usage.get("turns", 0) == 0 or usage.get("output_tokens", 0) == 0:
+            screen = self._capture(-80).strip()
+            raise TmuxClaudeError(
+                f"交互式 Claude 返回文本但 usage 为空（API 抖动/cold start）: "
+                f"text_len={len(text)} usage={usage} screen_tail={screen[-300:]!r}"
+            )
 
         self._clear()
         self._jsonl_line = max(next_line, _session_line_count(self.home_dir, self.session_id))
@@ -533,9 +549,9 @@ class PooledTmuxClaudeSession:
         env = {
             **self.env,
             "HOME": str(self.home_dir),
-            "XDG_CACHE_HOME": str(self.sandbox_root / "tmux-pool-xdg-cache"),
-            "XDG_CONFIG_HOME": str(self.sandbox_root / "tmux-pool-xdg-config"),
-            "XDG_STATE_HOME": str(self.sandbox_root / "tmux-pool-xdg-state"),
+            "XDG_CACHE_HOME": str(self.session_root / "xdg-cache"),
+            "XDG_CONFIG_HOME": str(self.session_root / "xdg-config"),
+            "XDG_STATE_HOME": str(self.session_root / "xdg-state"),
             "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1",
         }
         for key in ("XDG_CACHE_HOME", "XDG_CONFIG_HOME", "XDG_STATE_HOME"):
@@ -596,11 +612,12 @@ class PooledTmuxClaudeSession:
             file.write(prompt)
             temp_path = file.name
         try:
-            _tmux("load-buffer", temp_path)
-            _tmux("paste-buffer", "-p", "-t", self.tmux_session)
+            _tmux("load-buffer", "-b", self.tmux_buffer, temp_path)
+            _tmux("paste-buffer", "-p", "-b", self.tmux_buffer, "-t", self.tmux_session)
             time.sleep(0.5)
             _tmux("send-keys", "-t", self.tmux_session, "Enter")
         finally:
+            _tmux("delete-buffer", "-b", self.tmux_buffer)
             try:
                 os.unlink(temp_path)
             except OSError:

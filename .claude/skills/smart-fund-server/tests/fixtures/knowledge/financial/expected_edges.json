@@ -1,0 +1,5 @@
+{
+  "relation_types": ["affects", "belongs_to", "holds", "mentions"],
+  "active_relations": ["belongs_to", "holds", "mentions"],
+  "candidate_relations": ["affects"]
+}

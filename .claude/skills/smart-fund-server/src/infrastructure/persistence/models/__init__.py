@@ -31,6 +31,18 @@ from src.infrastructure.persistence.models.reflection import (
     Lesson,
     Review,
 )
+from src.infrastructure.persistence.models.knowledge import (
+    KnowledgeCompilationRun,
+    KnowledgeEdge,
+    KnowledgeEdgeEvidence,
+    KnowledgeEvidenceChunk,
+    KnowledgeEvidence,
+    KnowledgeGraphAdjacency,
+    KnowledgeNode,
+    KnowledgeReviewItem,
+    KnowledgeVersion,
+    KnowledgeWikiPage,
+)
 
 __all__ = [
     "Base",
@@ -58,4 +70,15 @@ __all__ = [
     # reflection
     "Review",
     "Lesson",
+    # knowledge
+    "KnowledgeNode",
+    "KnowledgeEdge",
+    "KnowledgeEvidence",
+    "KnowledgeEdgeEvidence",
+    "KnowledgeVersion",
+    "KnowledgeReviewItem",
+    "KnowledgeCompilationRun",
+    "KnowledgeWikiPage",
+    "KnowledgeGraphAdjacency",
+    "KnowledgeEvidenceChunk",
 ]

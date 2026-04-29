@@ -6,6 +6,7 @@ from src.interfaces.api.routes.trade import start_auth_auto_refresh
 from src.interfaces.api.routes import (
     file,
     fund_query,
+    knowledge,
     llm_proxy,
     market,
     skill,
@@ -25,3 +26,4 @@ router.include_router(skill.router)
 router.include_router(file.router)
 router.include_router(watchlist.router)
 router.include_router(llm_proxy.router)
+router.include_router(knowledge.router)

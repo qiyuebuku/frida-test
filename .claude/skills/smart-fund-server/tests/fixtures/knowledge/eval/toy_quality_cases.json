@@ -1,0 +1,6 @@
+[
+  {
+    "case_id": "toy_missing_evidence",
+    "description": "active relation without evidence should enter quality issues"
+  }
+]

@@ -4,8 +4,9 @@ import json
 from pathlib import Path
 
 import src.infrastructure.llm_proxy.service as service_module
+import src.infrastructure.llm_proxy.tmux_backend as tmux_module
 from src.infrastructure.llm_proxy.service import ClaudeProxyRequest, ClaudeProxyService
-from src.infrastructure.llm_proxy.tmux_backend import TmuxClaudeResult
+from src.infrastructure.llm_proxy.tmux_backend import PooledTmuxClaudeSession, TmuxClaudeResult
 
 
 def _load_llm_proxy_module():
@@ -199,12 +200,66 @@ def test_claude_proxy_service_tmux_backend_renders_prompt_and_parses_json(monkey
     )
 
     assert calls["init"]["model"] == "sonnet"
-    assert "纯 LLM 后端" in calls["prompt"]
+    assert "独立文本任务" in calls["prompt"]
     assert "USER SYSTEM INSTRUCTIONS:\n你只返回 JSON" in calls["prompt"]
     assert "JSON Schema" in calls["prompt"]
     assert calls["timeout"] == 30
     assert response.structured_output == {"answer": "ok"}
     assert response.session_id == "tmux-session"
+
+
+def test_pooled_tmux_sessions_use_isolated_state_dirs(monkeypatch, tmp_path):
+    monkeypatch.setattr(PooledTmuxClaudeSession, "_start", lambda self: None)
+    monkeypatch.setattr(PooledTmuxClaudeSession, "_wait_until_ready", lambda self: None)
+    monkeypatch.setattr(tmux_module, "_session_line_count", lambda home, session_id: 0)
+
+    first = PooledTmuxClaudeSession(
+        pool_id=0,
+        cli_bin="claude",
+        model="sonnet",
+        env={},
+        sandbox_root=tmp_path,
+    )
+    second = PooledTmuxClaudeSession(
+        pool_id=1,
+        cli_bin="claude",
+        model="sonnet",
+        env={},
+        sandbox_root=tmp_path,
+    )
+
+    assert first.home_dir == tmp_path / "tmux-pool" / "session-0" / "home"
+    assert second.home_dir == tmp_path / "tmux-pool" / "session-1" / "home"
+    assert first.workdir != second.workdir
+    assert first.tmux_buffer != second.tmux_buffer
+
+
+def test_pooled_tmux_send_uses_named_buffer(monkeypatch, tmp_path):
+    monkeypatch.setattr(PooledTmuxClaudeSession, "_start", lambda self: None)
+    monkeypatch.setattr(PooledTmuxClaudeSession, "_wait_until_ready", lambda self: None)
+    monkeypatch.setattr(tmux_module, "_session_line_count", lambda home, session_id: 0)
+    monkeypatch.setattr(tmux_module.time, "sleep", lambda seconds: None)
+    calls = []
+
+    def fake_tmux(*args):
+        calls.append(args)
+        return ""
+
+    monkeypatch.setattr(tmux_module, "_tmux", fake_tmux)
+
+    session = PooledTmuxClaudeSession(
+        pool_id=2,
+        cli_bin="claude",
+        model="sonnet",
+        env={},
+        sandbox_root=tmp_path,
+    )
+
+    session._send("hello")
+
+    assert ("load-buffer", "-b", session.tmux_buffer) == calls[0][:3]
+    assert ("paste-buffer", "-p", "-b", session.tmux_buffer, "-t", session.tmux_session) in calls
+    assert ("delete-buffer", "-b", session.tmux_buffer) in calls
 
 
 def test_chat_completion_helpers_map_messages_and_schema():

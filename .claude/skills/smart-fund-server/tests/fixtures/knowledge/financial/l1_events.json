@@ -1,0 +1,30 @@
+[
+  {
+    "source_type": "l1_events",
+    "observed_at": "2026-04-24T10:05:00+08:00",
+    "payload": {
+      "event_id": "l1-001",
+      "event_type": "policy_support",
+      "event_time": "2026-04-24T10:05:00+08:00",
+      "title": "固态电池政策支持事件",
+      "mentioned_entities": [
+        {
+          "type": "concept",
+          "taxonomy": "theme",
+          "name": "固态电池"
+        }
+      ],
+      "affected_entities": [
+        {
+          "type": "stock",
+          "exchange": "SZ",
+          "code": "300750",
+          "name": "宁德时代",
+          "direction": "positive",
+          "confidence": 0.68,
+          "reason": "L1 事件识别出政策支持方向"
+        }
+      ]
+    }
+  }
+]

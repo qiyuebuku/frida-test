@@ -305,5 +305,10 @@ def init_all(ctx, target: str):
     ctx.invoke(init_schedules)
 
 
+from src.interfaces.cli.knowledge import kg
+
+cli.add_command(kg)
+
+
 if __name__ == "__main__":
     cli()

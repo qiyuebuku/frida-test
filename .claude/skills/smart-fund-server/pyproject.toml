@@ -12,6 +12,7 @@ dependencies = [
     "jettask-python",
     "prometheus-client",
     "click>=8.0",
+    "pymilvus[milvus_lite]>=2.6",
 ]
 
 [project.optional-dependencies]

@@ -62,6 +62,20 @@ EMBEDDING_URL = os.getenv("EMBEDDING_URL", "http://10.168.1.210:8901")
 EMBEDDING_DIM = int(os.getenv("EMBEDDING_DIM", "1024"))  # MRL 截断维度
 EMBEDDING_BATCH_SIZE = int(os.getenv("EMBEDDING_BATCH_SIZE", "32"))
 EMBEDDING_TIMEOUT = float(os.getenv("EMBEDDING_TIMEOUT", "60"))
+EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL", f"qwen3-embedding-{EMBEDDING_DIM}d")
+
+# ==================== Milvus Hybrid Retrieval ====================
+
+# Milvus hybrid retrieval is a required part of the KG research context path.
+# Do not gate it behind an environment flag: if pymilvus or the configured
+# Milvus endpoint is unavailable, the service should fail loudly.
+MILVUS_ENABLED = True
+MILVUS_URI = os.getenv("MILVUS_URI", "./data/milvus/kg_vectors.db")
+MILVUS_TOKEN = os.getenv("MILVUS_TOKEN", "")
+MILVUS_COLLECTION = os.getenv("MILVUS_COLLECTION", "kg_evidence_chunk_vectors")
+MILVUS_METRIC_TYPE = os.getenv("MILVUS_METRIC_TYPE", "COSINE")
+MILVUS_RRF_K = int(os.getenv("MILVUS_RRF_K", "60"))
+MILVUS_BATCH_SIZE = int(os.getenv("MILVUS_BATCH_SIZE", "128"))
 
 # ==================== Claude / Skill ====================
 

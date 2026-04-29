@@ -178,7 +178,16 @@ class ClaudeProxyService:
             if cached:
                 return cached.clone(cache_hit=True)
 
-        response = await asyncio.to_thread(self._invoke_with_limit, request)
+        # 失败重试一次：tmux session 偶发返回 usage 为空、API 抖动等。
+        # 限流类失败不重试（已经在 _record_rate_limit 里冷却）。
+        try:
+            response = await asyncio.to_thread(self._invoke_with_limit, request)
+        except LLMProxyError as exc:
+            msg = str(exc)
+            if self._looks_like_rate_limit(msg):
+                raise
+            logger.warning("[llm_proxy] first attempt failed, retrying once: %s", msg)
+            response = await asyncio.to_thread(self._invoke_with_limit, request)
 
         if request.use_cache:
             with self._cache_lock:

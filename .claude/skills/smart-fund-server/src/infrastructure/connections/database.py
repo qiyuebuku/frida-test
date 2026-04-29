@@ -35,11 +35,11 @@ def _build_url(target: Target) -> str:
     """根据 target 构造连接 URL
 
     prod → 走 settings.DB_CONFIG (jettask)
-    test → 同主机/用户/密码,但 dbname=jettask_test
+    test → 默认同样走 settings.DB_CONFIG; 只有显式设置 TEST_DB_NAME 时才切换库
     """
     cfg = dict(DB_CONFIG)
     if target == "test":
-        cfg["dbname"] = os.environ.get("TEST_DB_NAME", "jettask_test")
+        cfg["dbname"] = os.environ.get("TEST_DB_NAME", cfg["dbname"])
     return (
         f"postgresql+psycopg2://{cfg['user']}:{cfg['password']}"
         f"@{cfg['host']}:{cfg['port']}/{cfg['dbname']}"
