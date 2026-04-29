@@ -8,7 +8,12 @@
       "expected_top_hit_titles": ["news_articles:ft_news:74342"],
       "top_k": 3,
       "expected_node_names": ["宁德时代"],
-      "expected_relation_types": ["mentions"]
+      "expected_relation_types": ["mentions"],
+      "expected_channels_used": ["entity_resolve", "graph_search", "semantic_hybrid_search", "chunk_read"],
+      "min_hits": 1,
+      "min_evidence_refs": 1,
+      "min_matched_nodes": 1,
+      "min_matched_edges": 1
     },
     {
       "case_id": "financial-ma-industry-impact",
@@ -18,7 +23,12 @@
       "expected_top_hit_titles": ["news_articles:ft_news:83904"],
       "top_k": 5,
       "expected_node_names": ["并购重组"],
-      "expected_relation_types": ["affects"]
+      "expected_relation_types": ["affects"],
+      "expected_channels_used": ["entity_resolve", "graph_search", "semantic_hybrid_search", "chunk_read"],
+      "min_hits": 1,
+      "min_evidence_refs": 1,
+      "min_matched_nodes": 1,
+      "min_matched_edges": 1
     }
   ]
 }

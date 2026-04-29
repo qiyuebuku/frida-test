@@ -103,9 +103,15 @@ def test_evaluate_retrieval_bad_case_reports_missing_items() -> None:
             expected_top_hit_titles=["news_articles:ft_news:missing"],
             expected_node_names=["宁德时代"],
             expected_relation_types=["mentions"],
+            expected_channels_used=["semantic_hybrid_search"],
+            min_hits=2,
+            min_evidence_refs=2,
+            min_matched_nodes=2,
+            min_matched_edges=1,
         ),
         evidence_refs=["ev:actual"],
         hit_titles=["news_articles:ft_news:actual"],
+        channels_used=["entity_resolve"],
         matched_nodes=[_Repo.stock],
         matched_edges=[],
     )
@@ -115,6 +121,13 @@ def test_evaluate_retrieval_bad_case_reports_missing_items() -> None:
     assert result.missing_hit_titles == ["news_articles:ft_news:missing"]
     assert result.missing_top_hit_titles == ["news_articles:ft_news:missing"]
     assert result.missing_relation_types == ["mentions"]
+    assert result.missing_channels_used == ["semantic_hybrid_search"]
+    assert result.metric_failures == {
+        "hits": {"actual": 1, "expected_min": 2},
+        "evidence_refs": {"actual": 1, "expected_min": 2},
+        "matched_nodes": {"actual": 1, "expected_min": 2},
+        "matched_edges": {"actual": 0, "expected_min": 1},
+    }
     assert result.missing_node_names == []
 
 
@@ -138,6 +151,11 @@ async def test_service_replays_research_context_bad_cases(monkeypatch) -> None:
                     expected_top_hit_titles=["news_articles:ft_news:74342"],
                     expected_node_names=["宁德时代"],
                     expected_relation_types=["mentions"],
+                    expected_channels_used=["semantic_hybrid_search", "chunk_read"],
+                    min_hits=1,
+                    min_evidence_refs=1,
+                    min_matched_nodes=1,
+                    min_matched_edges=1,
                 )
             ],
         )
@@ -146,6 +164,10 @@ async def test_service_replays_research_context_bad_cases(monkeypatch) -> None:
     assert result.total == 1
     assert result.passed == 1
     assert result.failed == 0
+    assert result.metrics["pass_rate"] == 1.0
+    assert result.metrics["channel_coverage"]["semantic_hybrid_search"] == 1
+    assert result.results[0]["missing_channels_used"] == []
+    assert result.results[0]["metric_failures"] == {}
     assert result.results[0]["channels_used"] == [
         "entity_resolve",
         "graph_search",

@@ -16,6 +16,11 @@ class RetrievalBadCase(KnowledgeBaseModel):
     top_k: int = Field(default=5, ge=1)
     expected_node_names: list[str] = Field(default_factory=list)
     expected_relation_types: list[str] = Field(default_factory=list)
+    expected_channels_used: list[str] = Field(default_factory=list)
+    min_hits: int = Field(default=0, ge=0)
+    min_evidence_refs: int = Field(default=0, ge=0)
+    min_matched_nodes: int = Field(default=0, ge=0)
+    min_matched_edges: int = Field(default=0, ge=0)
 
 
 class RetrievalBadCaseReplayResult(KnowledgeBaseModel):
@@ -27,10 +32,13 @@ class RetrievalBadCaseReplayResult(KnowledgeBaseModel):
     missing_top_hit_titles: list[str] = Field(default_factory=list)
     missing_node_names: list[str] = Field(default_factory=list)
     missing_relation_types: list[str] = Field(default_factory=list)
+    missing_channels_used: list[str] = Field(default_factory=list)
+    metric_failures: dict[str, dict[str, int]] = Field(default_factory=dict)
     actual_evidence_refs: list[str] = Field(default_factory=list)
     actual_hit_titles: list[str] = Field(default_factory=list)
     actual_node_names: list[str] = Field(default_factory=list)
     actual_relation_types: list[str] = Field(default_factory=list)
+    actual_channels_used: list[str] = Field(default_factory=list)
     metrics: dict[str, int] = Field(default_factory=dict)
 
 
@@ -39,6 +47,7 @@ def evaluate_retrieval_bad_case(
     *,
     evidence_refs: list[str],
     hit_titles: list[str] | None = None,
+    channels_used: list[str] | None = None,
     matched_nodes: list[CompiledNode],
     matched_edges: list[CompiledEdge],
 ) -> RetrievalBadCaseReplayResult:
@@ -46,6 +55,7 @@ def evaluate_retrieval_bad_case(
     actual_relation_types = _ordered_unique(edge.relation_type for edge in matched_edges)
     actual_evidence_refs = _ordered_unique(evidence_refs)
     actual_hit_titles = _ordered_unique(hit_titles or [])
+    actual_channels_used = _ordered_unique(channels_used or [])
     missing_evidence_refs = [
         ref for ref in case.expected_evidence_refs if ref not in actual_evidence_refs
     ]
@@ -64,6 +74,20 @@ def evaluate_retrieval_bad_case(
         for relation in case.expected_relation_types
         if relation not in actual_relation_types
     ]
+    missing_channels_used = [
+        channel for channel in case.expected_channels_used if channel not in actual_channels_used
+    ]
+    metrics = {
+        "hits": len(hit_titles or []),
+        "evidence_refs": len(actual_evidence_refs),
+        "matched_nodes": len(matched_nodes),
+        "matched_edges": len(matched_edges),
+        "channels_used": len(actual_channels_used),
+    }
+    metric_failures = _metric_failures(
+        case,
+        metrics=metrics,
+    )
     return RetrievalBadCaseReplayResult(
         case_id=case.case_id,
         query=case.query,
@@ -73,21 +97,22 @@ def evaluate_retrieval_bad_case(
             or missing_top_hit_titles
             or missing_node_names
             or missing_relation_types
+            or missing_channels_used
+            or metric_failures
         ),
         missing_evidence_refs=missing_evidence_refs,
         missing_hit_titles=missing_hit_titles,
         missing_top_hit_titles=missing_top_hit_titles,
         missing_node_names=missing_node_names,
         missing_relation_types=missing_relation_types,
+        missing_channels_used=missing_channels_used,
+        metric_failures=metric_failures,
         actual_evidence_refs=actual_evidence_refs,
         actual_hit_titles=actual_hit_titles,
         actual_node_names=actual_node_names,
         actual_relation_types=actual_relation_types,
-        metrics={
-            "evidence_refs": len(actual_evidence_refs),
-            "matched_nodes": len(matched_nodes),
-            "matched_edges": len(matched_edges),
-        },
+        actual_channels_used=actual_channels_used,
+        metrics=metrics,
     )
 
 
@@ -100,3 +125,21 @@ def _ordered_unique(values) -> list[str]:
         seen.add(value)
         result.append(value)
     return result
+
+
+def _metric_failures(
+    case: RetrievalBadCase,
+    *,
+    metrics: dict[str, int],
+) -> dict[str, dict[str, int]]:
+    requirements = {
+        "hits": case.min_hits,
+        "evidence_refs": case.min_evidence_refs,
+        "matched_nodes": case.min_matched_nodes,
+        "matched_edges": case.min_matched_edges,
+    }
+    return {
+        name: {"actual": metrics.get(name, 0), "expected_min": expected}
+        for name, expected in requirements.items()
+        if expected and metrics.get(name, 0) < expected
+    }

@@ -395,9 +395,11 @@ def _query_summary(data: dict[str, Any]) -> str:
 
 
 def _bad_case_replay_summary(data: dict[str, Any]) -> str:
+    metrics = data.get("metrics") or {}
     return (
         f"bad_cases total={data.get('total')} "
-        f"passed={data.get('passed')} failed={data.get('failed')}"
+        f"passed={data.get('passed')} failed={data.get('failed')} "
+        f"pass_rate={metrics.get('pass_rate', 0):.2f}"
     )
 
 

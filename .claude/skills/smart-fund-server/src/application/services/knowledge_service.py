@@ -361,9 +361,15 @@ class KnowledgeService:
                     top_k=case.top_k,
                     expected_node_names=case.expected_node_names,
                     expected_relation_types=case.expected_relation_types,
+                    expected_channels_used=case.expected_channels_used,
+                    min_hits=case.min_hits,
+                    min_evidence_refs=case.min_evidence_refs,
+                    min_matched_nodes=case.min_matched_nodes,
+                    min_matched_edges=case.min_matched_edges,
                 ),
                 evidence_refs=context.evidence_refs,
                 hit_titles=[hit.get("title", "") for hit in context.hits],
+                channels_used=context.retrieval_channels_used,
                 matched_nodes=[
                     CompiledNode.model_validate(item) for item in context.matched_nodes
                 ],
@@ -385,6 +391,7 @@ class KnowledgeService:
             total=len(results),
             passed=passed,
             failed=len(results) - passed,
+            metrics=_bad_case_replay_metrics(results),
             results=results,
         )
 
@@ -817,6 +824,32 @@ def _log_research_context_summary(
 
 def _clip_text(value: str, max_chars: int) -> str:
     return value if len(value) <= max_chars else value[: max_chars - 3] + "..."
+
+
+def _bad_case_replay_metrics(results: list[dict[str, Any]]) -> dict[str, Any]:
+    total = len(results)
+    passed = sum(1 for item in results if item.get("passed"))
+    channel_counts: dict[str, int] = {}
+    total_metrics = {
+        "hits": 0,
+        "evidence_refs": 0,
+        "matched_nodes": 0,
+        "matched_edges": 0,
+    }
+    for item in results:
+        for channel in item.get("channels_used") or []:
+            channel_counts[channel] = channel_counts.get(channel, 0) + 1
+        metrics = item.get("metrics") or {}
+        for name in total_metrics:
+            total_metrics[name] += int(metrics.get(name) or 0)
+    return {
+        "pass_rate": (passed / total) if total else 0.0,
+        "channel_coverage": channel_counts,
+        "avg_hits": (total_metrics["hits"] / total) if total else 0.0,
+        "avg_evidence_refs": (total_metrics["evidence_refs"] / total) if total else 0.0,
+        "avg_matched_nodes": (total_metrics["matched_nodes"] / total) if total else 0.0,
+        "avg_matched_edges": (total_metrics["matched_edges"] / total) if total else 0.0,
+    }
 
 
 def _match_financial_nodes(text: str, nodes: list[CompiledNode]) -> list[dict[str, Any]]:

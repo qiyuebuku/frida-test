@@ -147,6 +147,11 @@ class KnowledgeResearchContextBadCase:
     top_k: int = 5
     expected_node_names: list[str] = field(default_factory=list)
     expected_relation_types: list[str] = field(default_factory=list)
+    expected_channels_used: list[str] = field(default_factory=list)
+    min_hits: int = 0
+    min_evidence_refs: int = 0
+    min_matched_nodes: int = 0
+    min_matched_edges: int = 0
     retrieval_mode: Literal["deterministic_plan", "agentic_arag"] = "deterministic_plan"
     replay_trace: bool = False
     recorded_trace: dict[str, Any] = field(default_factory=dict)
@@ -171,6 +176,7 @@ class KnowledgeBadCaseReplayResultDTO(KnowledgeDTO):
     total: int
     passed: int
     failed: int
+    metrics: dict[str, Any] = field(default_factory=dict)
     results: list[dict[str, Any]] = field(default_factory=list)
 
 

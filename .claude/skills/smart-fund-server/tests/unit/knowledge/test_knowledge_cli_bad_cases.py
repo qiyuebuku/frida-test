@@ -21,6 +21,9 @@ def test_load_bad_case_cases_from_file(tmp_path) -> None:
                         "top_k": 3,
                         "expected_node_names": ["宁德时代"],
                         "expected_relation_types": ["mentions"],
+                        "expected_channels_used": ["semantic_hybrid_search"],
+                        "min_hits": 1,
+                        "min_evidence_refs": 1,
                     }
                 ]
             },
@@ -37,3 +40,6 @@ def test_load_bad_case_cases_from_file(tmp_path) -> None:
     assert cases[0].expected_top_hit_titles == ["news_articles:ft_news:74342"]
     assert cases[0].top_k == 3
     assert cases[0].expected_node_names == ["宁德时代"]
+    assert cases[0].expected_channels_used == ["semantic_hybrid_search"]
+    assert cases[0].min_hits == 1
+    assert cases[0].min_evidence_refs == 1
