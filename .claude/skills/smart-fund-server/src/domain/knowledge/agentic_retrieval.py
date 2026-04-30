@@ -79,6 +79,16 @@ class AgenticRetrievalController:
                 constraints=self.constraints,
             )
             if decision.stop:
+                forced_call = _forced_call_before_stop(
+                    query=query,
+                    observations=observations,
+                    registry=self.registry,
+                )
+                if forced_call is not None:
+                    result = await self.registry.execute(forced_call)
+                    observations.append(result)
+                    hits.extend(result.hits)
+                    continue
                 stop_reason = decision.stop_reason or "strategy_stop"
                 break
             if decision.tool_call is None:
@@ -132,3 +142,24 @@ def _ordered_unique(values) -> list[str]:
         seen.add(value)
         result.append(value)
     return result
+
+
+def _forced_call_before_stop(
+    *,
+    query: str,
+    observations: list[RetrievalToolResult],
+    registry: RetrievalToolRegistry,
+) -> RetrievalToolCall | None:
+    used_tools = {item.tool for item in observations}
+    semantic_enabled = bool(getattr(registry.runtime.semantic_retriever, "enabled", False))
+    if (
+        semantic_enabled
+        and "semantic_hybrid_search" in registry.available_tools
+        and "semantic_hybrid_search" not in used_tools
+    ):
+        return RetrievalToolCall(
+            tool="semantic_hybrid_search",
+            query=query,
+            limit=registry.options.semantic_hybrid_limit,
+        )
+    return None

@@ -44,6 +44,15 @@ class _SemanticThenChunkStrategy:
         return AgenticRetrievalDecision(stop=True, stop_reason="evidence_sufficient")
 
 
+class _EntityThenStopStrategy:
+    async def next_decision(self, *, query, observations, constraints):
+        if not observations:
+            return AgenticRetrievalDecision(
+                tool_call=RetrievalToolCall(tool="entity_resolve", query=query)
+            )
+        return AgenticRetrievalDecision(stop=True, stop_reason="evidence_sufficient")
+
+
 @pytest.mark.asyncio
 async def test_agentic_controller_records_tool_trace_and_evidence_refs() -> None:
     controller = AgenticRetrievalController(
@@ -66,6 +75,18 @@ async def test_agentic_controller_records_tool_trace_and_evidence_refs() -> None
     assert result.trace.agentic_enabled is True
     assert result.trace.milvus_enabled is True
     assert result.trace.channels_used == ["semantic_hybrid_search"]
+    assert result.evidence_refs == ["kg_ev:financial:news:1"]
+    assert result.stop_reason == "evidence_sufficient"
+
+
+@pytest.mark.asyncio
+async def test_agentic_controller_forces_semantic_before_strategy_stop() -> None:
+    result = await AgenticRetrievalController(
+        _registry(),
+        _EntityThenStopStrategy(),
+    ).run("宁德时代 300750 最近受哪些事件影响")
+
+    assert result.trace.channels_used == ["entity_resolve", "semantic_hybrid_search"]
     assert result.evidence_refs == ["kg_ev:financial:news:1"]
     assert result.stop_reason == "evidence_sufficient"
 
