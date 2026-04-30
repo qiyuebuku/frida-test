@@ -55,8 +55,8 @@ class KGResearchContextRequest(BaseModel):
     adapter_name: str = Field("financial", description="adapter 名称")
     target: Target = Field("prod", description="数据库目标")
     retrieval_mode: Literal["deterministic_plan", "agentic_arag"] = Field(
-        "agentic_arag",
-        description="检索模式，默认 Agentic A-RAG",
+        "deterministic_plan",
+        description="检索模式，默认低延迟 deterministic fast path；agentic_arag 需显式指定",
     )
     graph_depth: int = Field(3, ge=1, le=4)
     graph_limit: int = Field(20, ge=1, le=100)

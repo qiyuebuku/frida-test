@@ -26,7 +26,7 @@ def test_research_context_request_validates_limits() -> None:
     req = KGResearchContextRequest(query="固态电池")
     assert req.adapter_name == "financial"
     assert req.target == "prod"
-    assert req.retrieval_mode == "agentic_arag"
+    assert req.retrieval_mode == "deterministic_plan"
 
 
 def test_rebuild_indexes_defaults_to_minimal_indexes() -> None:

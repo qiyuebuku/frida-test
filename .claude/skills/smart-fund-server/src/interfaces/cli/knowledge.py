@@ -232,7 +232,9 @@ def rebuild_indexes(
 @click.option(
     "--retrieval-mode",
     type=click.Choice(["deterministic_plan", "agentic_arag"]),
-    default="agentic_arag",
+    default="deterministic_plan",
+    show_default=True,
+    help="检索模式；agentic_arag 为显式深度研究路径",
 )
 @click.option("--json", "json_output", is_flag=True, help="输出 JSON")
 def query(

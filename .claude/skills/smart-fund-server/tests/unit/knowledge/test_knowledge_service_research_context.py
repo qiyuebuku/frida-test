@@ -210,7 +210,7 @@ async def test_research_context_can_use_agentic_retrieval_mode(monkeypatch) -> N
 
 
 @pytest.mark.asyncio
-async def test_research_context_defaults_to_agentic_retrieval_mode(monkeypatch) -> None:
+async def test_research_context_defaults_to_deterministic_fast_path(monkeypatch) -> None:
     monkeypatch.setattr(
         knowledge_service_module,
         "_semantic_hybrid_retriever",
@@ -231,9 +231,15 @@ async def test_research_context_defaults_to_agentic_retrieval_mode(monkeypatch) 
         )
     )
 
-    assert result.mode == "agentic_arag"
-    assert result.agentic_enabled is True
-    assert result.planner_enabled is False
+    assert result.mode == "deterministic_plan"
+    assert result.agentic_enabled is False
+    assert result.planner_enabled is True
+    assert result.retrieval_channels_used == [
+        "entity_resolve",
+        "graph_search",
+        "semantic_hybrid_search",
+        "chunk_read",
+    ]
 
 
 @pytest.mark.asyncio

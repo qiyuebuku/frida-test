@@ -23,7 +23,7 @@ def test_research_context_command_defaults_are_api_safe() -> None:
     command = KnowledgeResearchContextCommand(query="固态电池")
 
     assert command.adapter_name == "financial"
-    assert command.retrieval_mode == "agentic_arag"
+    assert command.retrieval_mode == "deterministic_plan"
     assert command.graph_depth == 3
     assert command.max_chars == 5000
 
