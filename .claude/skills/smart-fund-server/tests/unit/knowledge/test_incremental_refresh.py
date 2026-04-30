@@ -12,6 +12,7 @@ from src.application.dto.knowledge_dto import (
     KnowledgeBootstrapStocksCommand,
     KnowledgeCompileResultDTO,
     KnowledgeIncrementalRefreshCommand,
+    KnowledgeIncrementalRefreshResultDTO,
     KnowledgeRebuildIndexesCommand,
     KnowledgeRebuildIndexesResultDTO,
     KnowledgeRebuildWikiCommand,
@@ -159,6 +160,43 @@ async def test_compile_kg_refreshes_changed_indexes_incrementally(monkeypatch) -
     assert "upsert_evidence_chunks:1" in repository.calls
 
 
+@pytest.mark.asyncio
+async def test_incremental_refresh_task_can_run_and_persist_status() -> None:
+    repository = _TaskRepository()
+    service = _TaskService(repository=repository)
+
+    task = await service.enqueue_financial_incremental_refresh_task(
+        KnowledgeIncrementalRefreshCommand(target="test", codes=["300750"]),
+        max_retries=2,
+    )
+    result = await service.run_financial_incremental_refresh_task(task.run_id)
+
+    assert task.status == "pending"
+    assert result.status == "success"
+    assert result.attempt == 1
+    assert result.result["adapter_name"] == "financial"
+    assert repository.runs[task.run_id]["status"] == "success"
+
+
+@pytest.mark.asyncio
+async def test_incremental_refresh_task_records_failure_and_retry() -> None:
+    repository = _TaskRepository()
+    service = _TaskService(repository=repository, fail_once=True)
+
+    task = await service.enqueue_financial_incremental_refresh_task(
+        KnowledgeIncrementalRefreshCommand(target="test", codes=["300750"]),
+        max_retries=2,
+    )
+    failed = await service.run_financial_incremental_refresh_task(task.run_id)
+    retried = await service.retry_financial_incremental_refresh_task(task.run_id)
+
+    assert failed.status == "failed"
+    assert failed.attempt == 1
+    assert failed.error == "boom"
+    assert retried.status == "success"
+    assert retried.attempt == 2
+
+
 class _CompileRefreshRepository:
     def __init__(self):
         self.calls: list[str] = []
@@ -216,3 +254,60 @@ class _CompileRefreshRepository:
 
     def attach_edge_evidence(self, *_args):
         return 0
+
+
+class _TaskRepository:
+    def __init__(self):
+        self.runs: dict[str, dict] = {}
+
+    def create_compilation_run(self, run):
+        run_id = run["run_id"]
+        current = self.runs.get(run_id, {})
+        metadata = run.get("metadata", current.get("metadata", {}))
+        self.runs[run_id] = {
+            **current,
+            **run,
+            "metadata": metadata,
+        }
+        return run_id
+
+    def finish_compilation_run(self, run_id, result):
+        current = self.runs[run_id]
+        current["status"] = result.get("status", current.get("status"))
+        current["metadata"] = result.get("metadata", current.get("metadata", {}))
+
+    def get_compilation_run(self, run_id):
+        return self.runs.get(run_id)
+
+    def list_compilation_runs(self, **_kwargs):
+        return list(self.runs.values())
+
+
+class _TaskService(KnowledgeService):
+    def __init__(self, repository, fail_once: bool = False):
+        super().__init__(repository=repository)
+        self.fail_once = fail_once
+        self.calls = 0
+
+    async def refresh_financial_incremental(self, command: KnowledgeIncrementalRefreshCommand):
+        self.calls += 1
+        if self.fail_once and self.calls == 1:
+            raise RuntimeError("boom")
+        return KnowledgeIncrementalRefreshResultDTO(
+            adapter_name="financial",
+            target=command.target,
+            run_id="kg_run:incremental:test",
+            dry_run=command.dry_run,
+            steps=[
+                {
+                    "name": "bootstrap_stocks",
+                    "status": "ok",
+                    "result": {
+                        "nodes": 1,
+                        "edges": 0,
+                        "evidence": 1,
+                        "failed_records": 0,
+                    },
+                }
+            ],
+        )

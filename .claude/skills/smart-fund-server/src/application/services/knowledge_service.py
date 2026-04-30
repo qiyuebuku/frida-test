@@ -17,6 +17,7 @@ from src.application.dto.knowledge_dto import (
     KnowledgeHealthDTO,
     KnowledgeIncrementalRefreshCommand,
     KnowledgeIncrementalRefreshResultDTO,
+    KnowledgeIncrementalRefreshTaskDTO,
     KnowledgeQualityScanCommand,
     KnowledgeQualityScanResultDTO,
     KnowledgeRebuildIndexesCommand,
@@ -277,6 +278,138 @@ class KnowledgeService:
             dry_run=command.dry_run,
             steps=steps,
         )
+
+    async def enqueue_financial_incremental_refresh_task(
+        self,
+        command: KnowledgeIncrementalRefreshCommand,
+        *,
+        max_retries: int = 1,
+    ) -> KnowledgeIncrementalRefreshTaskDTO:
+        repository = self._require_repository()
+        run_id = f"kg_task:financial_incremental_refresh:{uuid4()}"
+        metadata = _incremental_task_metadata(
+            command=command,
+            status="pending",
+            attempt=0,
+            max_retries=max(0, max_retries),
+        )
+        repository.create_compilation_run(
+            {
+                "run_id": run_id,
+                "adapter_name": "financial",
+                "adapter_version": "",
+                "source_batch_id": "financial_incremental_refresh_task",
+                "status": "pending",
+                "input_count": 0,
+                "metadata": metadata,
+            }
+        )
+        return _incremental_task_dto(
+            {
+                "run_id": run_id,
+                "adapter_name": "financial",
+                "status": "pending",
+                "metadata": metadata,
+            }
+        )
+
+    async def run_financial_incremental_refresh_task(
+        self,
+        run_id: str,
+    ) -> KnowledgeIncrementalRefreshTaskDTO:
+        repository = self._require_repository()
+        run = repository.get_compilation_run(run_id)
+        if run is None:
+            raise ValueError(f"incremental refresh task not found: {run_id}")
+        metadata = dict(run.get("metadata") or {})
+        command = _incremental_command_from_metadata(metadata)
+        attempt = int(metadata.get("attempt") or 0) + 1
+        max_retries = int(metadata.get("max_retries") or 0)
+        running_metadata = {
+            **metadata,
+            "attempt": attempt,
+            "status": "running",
+            "error": None,
+        }
+        repository.create_compilation_run(
+            {
+                "run_id": run_id,
+                "adapter_name": "financial",
+                "adapter_version": "",
+                "source_batch_id": "financial_incremental_refresh_task",
+                "status": "running",
+                "started_at": datetime.now(timezone.utc),
+                "metadata": running_metadata,
+            }
+        )
+        try:
+            result = await self.refresh_financial_incremental(command)
+        except Exception as exc:
+            failed_metadata = {
+                **running_metadata,
+                "status": "failed",
+                "error": str(exc),
+                "retryable": attempt <= max_retries,
+            }
+            repository.finish_compilation_run(
+                run_id,
+                {
+                    "status": "failed",
+                    "failed_count": 1,
+                    "metadata": failed_metadata,
+                },
+            )
+            return _incremental_task_dto(
+                {
+                    **run,
+                    "status": "failed",
+                    "metadata": failed_metadata,
+                }
+            )
+
+        result_dict = result.to_dict()
+        success_metadata = {
+            **running_metadata,
+            "status": "success",
+            "result": result_dict,
+            "error": None,
+            "retryable": False,
+        }
+        repository.finish_compilation_run(
+            run_id,
+            {
+                "status": "success",
+                "metadata": success_metadata,
+                "node_count": _sum_step_metric(result_dict, "nodes"),
+                "edge_count": _sum_step_metric(result_dict, "edges"),
+                "evidence_count": _sum_step_metric(result_dict, "evidence"),
+                "failed_count": _sum_step_metric(result_dict, "failed_records"),
+            },
+        )
+        return _incremental_task_dto(
+            {
+                **run,
+                "status": "success",
+                "metadata": success_metadata,
+            }
+        )
+
+    async def retry_financial_incremental_refresh_task(
+        self,
+        run_id: str,
+    ) -> KnowledgeIncrementalRefreshTaskDTO:
+        run = self._require_repository().get_compilation_run(run_id)
+        if run is None:
+            raise ValueError(f"incremental refresh task not found: {run_id}")
+        if run.get("status") not in {"failed", "pending", "running"}:
+            raise ValueError(f"incremental refresh task cannot be retried from status={run.get('status')}")
+        return await self.run_financial_incremental_refresh_task(run_id)
+
+    async def get_incremental_refresh_task(self, run_id: str) -> KnowledgeIncrementalRefreshTaskDTO:
+        run = self._require_repository().get_compilation_run(run_id)
+        if run is None:
+            raise ValueError(f"incremental refresh task not found: {run_id}")
+        return _incremental_task_dto(run)
 
     async def rebuild_wiki_for(
         self,
@@ -1011,6 +1144,65 @@ def _merge_index_refresh_summaries(summaries: list[dict[str, Any]]) -> dict[str,
     for key in ("node_ids", "edge_ids", "evidence_ids"):
         merged[key] = _ordered_unique(merged[key])
     return merged
+
+
+def _incremental_task_metadata(
+    *,
+    command: KnowledgeIncrementalRefreshCommand,
+    status: str,
+    attempt: int,
+    max_retries: int,
+) -> dict[str, Any]:
+    return {
+        "task_type": "financial_incremental_refresh",
+        "status": status,
+        "attempt": attempt,
+        "max_retries": max_retries,
+        "command": dto_to_dict(command),
+        "result": {},
+        "error": None,
+        "retryable": False,
+    }
+
+
+def _incremental_command_from_metadata(metadata: dict[str, Any]) -> KnowledgeIncrementalRefreshCommand:
+    command = dict(metadata.get("command") or {})
+    return KnowledgeIncrementalRefreshCommand(
+        target=command.get("target") or "prod",
+        codes=list(command.get("codes") or []),
+        stock_limit=int(command.get("stock_limit") or 500),
+        news_limit=int(command.get("news_limit") or 20),
+        dry_run=bool(command.get("dry_run") or False),
+        request_id=command.get("request_id"),
+        concurrency=command.get("concurrency"),
+        rebuild_indexes=bool(command.get("rebuild_indexes", True)),
+    )
+
+
+def _incremental_task_dto(run: dict[str, Any]) -> KnowledgeIncrementalRefreshTaskDTO:
+    metadata = dict(run.get("metadata") or {})
+    command = dict(metadata.get("command") or {})
+    return KnowledgeIncrementalRefreshTaskDTO(
+        run_id=run["run_id"],
+        adapter_name=run.get("adapter_name") or "financial",
+        target=command.get("target") or "prod",
+        task_type=str(metadata.get("task_type") or "financial_incremental_refresh"),
+        status=str(run.get("status") or metadata.get("status") or "pending"),
+        attempt=int(metadata.get("attempt") or 0),
+        max_retries=int(metadata.get("max_retries") or 0),
+        command=command,
+        result=dict(metadata.get("result") or {}),
+        error=metadata.get("error"),
+    )
+
+
+def _sum_step_metric(result: dict[str, Any], metric: str) -> int:
+    total = 0
+    for step in result.get("steps") or []:
+        step_result = step.get("result") if isinstance(step, dict) else None
+        if isinstance(step_result, dict):
+            total += int(step_result.get(metric) or 0)
+    return total
 
 
 def _agentic_retrieval_strategy():

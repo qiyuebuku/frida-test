@@ -114,3 +114,18 @@ class KnowledgeRepository(ABC):
     @abstractmethod
     def finish_compilation_run(self, run_id: str, result: dict[str, Any]) -> None:
         """Mark a compile run as finished."""
+
+    @abstractmethod
+    def get_compilation_run(self, run_id: str) -> dict[str, Any] | None:
+        """Load one compile/task run record."""
+
+    @abstractmethod
+    def list_compilation_runs(
+        self,
+        *,
+        adapter_name: str | None = None,
+        source_batch_id: str | None = None,
+        status: str | None = None,
+        limit: int = 50,
+    ) -> list[dict[str, Any]]:
+        """Load compile/task run records for recovery or inspection."""

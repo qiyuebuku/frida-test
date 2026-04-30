@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any, Literal
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, BackgroundTasks, HTTPException, Query
 from pydantic import BaseModel, Field
 
 from src.application.dto.knowledge_dto import (
@@ -86,6 +86,10 @@ class KGFinancialIncrementalRefreshRequest(BaseModel):
     request_id: str | None = None
     concurrency: int | None = Field(1, ge=1, le=20)
     rebuild_indexes: bool = True
+
+
+class KGFinancialIncrementalRefreshTaskRequest(KGFinancialIncrementalRefreshRequest):
+    max_retries: int = Field(1, ge=0, le=5)
 
 
 class KGFinancialPathsRequest(BaseModel):
@@ -213,6 +217,49 @@ async def financial_incremental_refresh(req: KGFinancialIncrementalRefreshReques
     )
 
 
+@router.post("/financial/incremental-refresh/tasks", summary="提交金融知识图谱增量刷新后台任务")
+async def enqueue_financial_incremental_refresh_task(
+    req: KGFinancialIncrementalRefreshTaskRequest,
+    background_tasks: BackgroundTasks,
+):
+    service = create_knowledge_service(target=req.target)
+    task = await _call(
+        service.enqueue_financial_incremental_refresh_task(
+            KnowledgeIncrementalRefreshCommand(
+                target=req.target,
+                codes=req.codes,
+                stock_limit=req.stock_limit,
+                news_limit=req.news_limit,
+                dry_run=req.dry_run,
+                request_id=req.request_id,
+                concurrency=req.concurrency,
+                rebuild_indexes=req.rebuild_indexes,
+            ),
+            max_retries=req.max_retries,
+        )
+    )
+    background_tasks.add_task(_run_incremental_refresh_task, task["run_id"], req.target)
+    return task
+
+
+@router.get("/financial/incremental-refresh/tasks/{run_id}", summary="查询金融知识图谱增量刷新后台任务")
+async def get_financial_incremental_refresh_task(run_id: str, target: Target = Query("prod")):
+    service = create_knowledge_service(target=target)
+    return await _call(service.get_incremental_refresh_task(run_id))
+
+
+@router.post("/financial/incremental-refresh/tasks/{run_id}/retry", summary="重试金融知识图谱增量刷新后台任务")
+async def retry_financial_incremental_refresh_task(
+    run_id: str,
+    background_tasks: BackgroundTasks,
+    target: Target = Query("prod"),
+):
+    service = create_knowledge_service(target=target)
+    task = await _call(service.get_incremental_refresh_task(run_id))
+    background_tasks.add_task(_retry_incremental_refresh_task, run_id, target)
+    return {**task, "status": "retry_submitted"}
+
+
 @router.post("/financial/paths", summary="金融影响路径查询")
 async def financial_paths(req: KGFinancialPathsRequest):
     service = create_knowledge_service(target=req.target)
@@ -262,3 +309,11 @@ async def _call(coro):
         raise HTTPException(status_code=500, detail=str(exc)) from exc
     except Exception as exc:
         raise HTTPException(status_code=500, detail=f"知识图谱服务异常: {exc}") from exc
+
+
+async def _run_incremental_refresh_task(run_id: str, target: Target) -> None:
+    await create_knowledge_service(target=target).run_financial_incremental_refresh_task(run_id)
+
+
+async def _retry_incremental_refresh_task(run_id: str, target: Target) -> None:
+    await create_knowledge_service(target=target).retry_financial_incremental_refresh_task(run_id)

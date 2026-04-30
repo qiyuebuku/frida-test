@@ -462,6 +462,34 @@ class KnowledgeRepositoryImpl(KnowledgeRepository):
                 .values(**values)
             )
 
+    def get_compilation_run(self, run_id: str) -> dict[str, Any] | None:
+        with self._session_scope() as session:
+            row = session.scalar(
+                select(KnowledgeCompilationRun).where(KnowledgeCompilationRun.run_id == run_id)
+            )
+            return _compilation_run_schema(row) if row else None
+
+    def list_compilation_runs(
+        self,
+        *,
+        adapter_name: str | None = None,
+        source_batch_id: str | None = None,
+        status: str | None = None,
+        limit: int = 50,
+    ) -> list[dict[str, Any]]:
+        with self._session_scope() as session:
+            stmt = select(KnowledgeCompilationRun)
+            if adapter_name is not None:
+                stmt = stmt.where(KnowledgeCompilationRun.adapter_name == adapter_name)
+            if source_batch_id is not None:
+                stmt = stmt.where(KnowledgeCompilationRun.source_batch_id == source_batch_id)
+            if status is not None:
+                stmt = stmt.where(KnowledgeCompilationRun.status == status)
+            rows = session.scalars(
+                stmt.order_by(KnowledgeCompilationRun.started_at.desc()).limit(max(1, limit))
+            ).all()
+            return [_compilation_run_schema(row) for row in rows]
+
     @contextmanager
     def _session_scope(self) -> Iterator[Session]:
         if self._session is not None:
@@ -639,6 +667,24 @@ def _review_entry_schema(row: KnowledgeReviewItem) -> ReviewEntry:
         status=row.status,
         payload=row.payload or {},
     )
+
+
+def _compilation_run_schema(row: KnowledgeCompilationRun) -> dict[str, Any]:
+    return {
+        "run_id": row.run_id,
+        "adapter_name": row.adapter_name,
+        "adapter_version": row.adapter_version,
+        "source_batch_id": row.source_batch_id,
+        "status": row.status,
+        "started_at": row.started_at,
+        "finished_at": row.finished_at,
+        "input_count": row.input_count,
+        "node_count": row.node_count,
+        "edge_count": row.edge_count,
+        "evidence_count": row.evidence_count,
+        "failed_count": row.failed_count,
+        "metadata": row.metadata_ or {},
+    }
 
 
 def _chunk_content(row: KnowledgeEvidence) -> str:

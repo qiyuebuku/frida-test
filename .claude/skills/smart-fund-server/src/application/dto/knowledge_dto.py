@@ -93,6 +93,20 @@ class KnowledgeIncrementalRefreshResultDTO(KnowledgeDTO):
 
 
 @dataclass
+class KnowledgeIncrementalRefreshTaskDTO(KnowledgeDTO):
+    run_id: str
+    adapter_name: str = "financial"
+    target: Target = "prod"
+    task_type: str = "financial_incremental_refresh"
+    status: str = "pending"
+    attempt: int = 0
+    max_retries: int = 1
+    command: dict[str, Any] = field(default_factory=dict)
+    result: dict[str, Any] = field(default_factory=dict)
+    error: str | None = None
+
+
+@dataclass
 class KnowledgeRebuildWikiCommand:
     adapter_name: str = "financial"
     target: Target = "prod"
