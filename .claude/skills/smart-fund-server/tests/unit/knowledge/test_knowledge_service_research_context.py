@@ -205,6 +205,8 @@ async def test_research_context_can_use_agentic_retrieval_mode(monkeypatch) -> N
     assert result.planner_enabled is False
     assert result.retrieval_channels_used == ["semantic_hybrid_search", "chunk_read"]
     assert result.evidence_refs == ["kg_ev:financial:news:overseas_capacity"]
+    assert [edge["edge_id"] for edge in result.matched_edges] == [_Repo.edge.edge_id]
+    assert {node["canonical_name"] for node in result.matched_nodes} == {"宁德时代", "海外产能事件"}
 
 
 @pytest.mark.asyncio

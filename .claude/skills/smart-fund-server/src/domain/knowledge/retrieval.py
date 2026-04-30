@@ -320,12 +320,13 @@ class HybridRetrievalRuntime:
             if hit.confidence in {ConfidenceLabel.AMBIGUOUS, ConfidenceLabel.REJECTED}
         ]
         hard_hits = [hit for hit in selected if hit not in low_confidence]
+        matched_edges = self._load_edges(hard_hits, options.adapter_name)
         _log_selected_hits(query=query, options=options, trace=trace, hits=hard_hits)
         return AnswerContext(
             query=query,
             hits=hard_hits,
-            matched_nodes=self._load_nodes(hard_hits),
-            matched_edges=self._load_edges(hard_hits),
+            matched_nodes=self._load_nodes(hard_hits, matched_edges),
+            matched_edges=matched_edges,
             wiki_pages=[hit for hit in hard_hits if hit.hit_type == "wiki"],
             evidence_chunks=[hit for hit in hard_hits if hit.hit_type == "evidence"],
             low_confidence_items=low_confidence,
@@ -380,12 +381,13 @@ class HybridRetrievalRuntime:
             if hit.confidence in {ConfidenceLabel.AMBIGUOUS, ConfidenceLabel.REJECTED}
         ]
         hard_hits = [hit for hit in selected if hit not in low_confidence]
+        matched_edges = self._load_edges(hard_hits, options.adapter_name)
         _log_selected_hits(query=query, options=options, trace=trace, hits=hard_hits)
         return AnswerContext(
             query=query,
             hits=hard_hits,
-            matched_nodes=self._load_nodes(hard_hits),
-            matched_edges=self._load_edges(hard_hits),
+            matched_nodes=self._load_nodes(hard_hits, matched_edges),
+            matched_edges=matched_edges,
             wiki_pages=[hit for hit in hard_hits if hit.hit_type == "wiki"],
             evidence_chunks=[hit for hit in hard_hits if hit.hit_type == "evidence"],
             low_confidence_items=low_confidence,
@@ -407,12 +409,13 @@ class HybridRetrievalRuntime:
             if hit.confidence in {ConfidenceLabel.AMBIGUOUS, ConfidenceLabel.REJECTED}
         ]
         hard_hits = [hit for hit in selected if hit not in low_confidence]
+        matched_edges = self._load_edges(hard_hits, options.adapter_name)
         _log_selected_hits(query=query, options=options, trace=trace, hits=hard_hits)
         return AnswerContext(
             query=query,
             hits=hard_hits,
-            matched_nodes=self._load_nodes(hard_hits),
-            matched_edges=self._load_edges(hard_hits),
+            matched_nodes=self._load_nodes(hard_hits, matched_edges),
+            matched_edges=matched_edges,
             wiki_pages=[hit for hit in hard_hits if hit.hit_type == "wiki"],
             evidence_chunks=[hit for hit in hard_hits if hit.hit_type == "evidence"],
             low_confidence_items=low_confidence,
@@ -420,12 +423,32 @@ class HybridRetrievalRuntime:
             trace=trace,
         )
 
-    def _load_nodes(self, hits: list[RetrievalHit]) -> list[CompiledNode]:
-        node_ids = _ordered_unique(node_id for hit in hits for node_id in hit.node_refs)
+    def _load_nodes(
+        self,
+        hits: list[RetrievalHit],
+        edges: list[CompiledEdge] | None = None,
+    ) -> list[CompiledNode]:
+        node_ids = _ordered_unique(
+            [
+                *(node_id for hit in hits for node_id in hit.node_refs),
+                *(edge.source_node_id for edge in edges or []),
+                *(edge.target_node_id for edge in edges or []),
+            ]
+        )
         return [node for node_id in node_ids if (node := self.repository.get_node(node_id))]
 
-    def _load_edges(self, hits: list[RetrievalHit]) -> list[CompiledEdge]:
-        edge_ids = _ordered_unique(edge_id for hit in hits for edge_id in hit.edge_refs)
+    def _load_edges(self, hits: list[RetrievalHit], adapter_name: str) -> list[CompiledEdge]:
+        evidence_ids = set(evidence_id for hit in hits for evidence_id in hit.evidence_refs)
+        edge_ids = _ordered_unique(
+            [
+                *(edge_id for hit in hits for edge_id in hit.edge_refs),
+                *(
+                    edge.edge_id
+                    for edge in self.repository.list_edges(adapter_name)
+                    if evidence_ids.intersection(edge.evidence_ids)
+                ),
+            ]
+        )
         return [edge for edge_id in edge_ids if (edge := self.repository.get_edge(edge_id))]
 
 
