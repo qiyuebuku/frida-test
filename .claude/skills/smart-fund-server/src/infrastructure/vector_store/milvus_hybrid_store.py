@@ -145,28 +145,48 @@ class MilvusHybridStore:
     ) -> int:
         self.ensure_collection()
         self.delete_scope(adapter_name=adapter_name, target=target)
-        rows = []
-        for document, vector in zip(documents, vectors, strict=False):
-            if not vector:
-                continue
-            payload = dict(document.metadata or {})
-            source_type = str(payload.get("source_type") or payload.get("source_table") or "")
-            source_id = str(payload.get("source_id") or payload.get("source_pk") or "")
-            rows.append(
-                {
-                    "chunk_id": document.chunk_id,
-                    "evidence_id": document.evidence_id,
-                    "adapter_name": adapter_name,
-                    "target": target,
-                    "source_type": source_type[:80],
-                    "source_id": source_id[:160],
-                    "text": document.text[:8192],
-                    "dense_vector": vector,
-                    "content_hash": _content_hash(document.text),
-                    "embedding_model": embedding_model[:80],
-                    "kg_version": kg_version[:80],
-                }
+        rows = _document_rows(
+            adapter_name=adapter_name,
+            target=target,
+            documents=documents,
+            vectors=vectors,
+            embedding_model=embedding_model,
+            kg_version=kg_version,
+        )
+        if not rows:
+            return 0
+        client = self._get_client()
+        for start in range(0, len(rows), settings.MILVUS_BATCH_SIZE):
+            client.insert(
+                collection_name=self.collection_name,
+                data=rows[start : start + settings.MILVUS_BATCH_SIZE],
             )
+        return len(rows)
+
+    def upsert_documents(
+        self,
+        *,
+        adapter_name: str,
+        target: str,
+        documents: list[MilvusHybridDocument],
+        vectors: list[list[float]],
+        embedding_model: str,
+        kg_version: str = "",
+    ) -> int:
+        self.ensure_collection()
+        self.delete_documents(
+            adapter_name=adapter_name,
+            target=target,
+            chunk_ids=[document.chunk_id for document in documents],
+        )
+        rows = _document_rows(
+            adapter_name=adapter_name,
+            target=target,
+            documents=documents,
+            vectors=vectors,
+            embedding_model=embedding_model,
+            kg_version=kg_version,
+        )
         if not rows:
             return 0
         client = self._get_client()
@@ -185,6 +205,23 @@ class MilvusHybridStore:
             collection_name=self.collection_name,
             filter=f'adapter_name == "{adapter_name}" and target == "{target}"',
         )
+
+    def delete_documents(self, *, adapter_name: str, target: str, chunk_ids: list[str]) -> None:
+        chunk_ids = [chunk_id for chunk_id in chunk_ids if chunk_id]
+        if not chunk_ids:
+            return
+        client = self._get_client()
+        if not client.has_collection(self.collection_name):
+            return
+        for chunk_id in chunk_ids:
+            client.delete(
+                collection_name=self.collection_name,
+                filter=(
+                    f'adapter_name == "{_escape_filter_value(adapter_name)}" '
+                    f'and target == "{_escape_filter_value(target)}" '
+                    f'and chunk_id == "{_escape_filter_value(chunk_id)}"'
+                ),
+            )
 
     def hybrid_search(
         self,
@@ -284,6 +321,40 @@ def _content_hash(content: str) -> str:
     return hashlib.sha256(content.encode("utf-8")).hexdigest()
 
 
+def _document_rows(
+    *,
+    adapter_name: str,
+    target: str,
+    documents: list[MilvusHybridDocument],
+    vectors: list[list[float]],
+    embedding_model: str,
+    kg_version: str = "",
+) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    for document, vector in zip(documents, vectors, strict=False):
+        if not vector:
+            continue
+        payload = dict(document.metadata or {})
+        source_type = str(payload.get("source_type") or payload.get("source_table") or "")
+        source_id = str(payload.get("source_id") or payload.get("source_pk") or "")
+        rows.append(
+            {
+                "chunk_id": document.chunk_id,
+                "evidence_id": document.evidence_id,
+                "adapter_name": adapter_name,
+                "target": target,
+                "source_type": source_type[:80],
+                "source_id": source_id[:160],
+                "text": document.text[:8192],
+                "dense_vector": vector,
+                "content_hash": _content_hash(document.text),
+                "embedding_model": embedding_model[:80],
+                "kg_version": kg_version[:80],
+            }
+        )
+    return rows
+
+
 def _document_from_chunk(chunk: EvidenceChunk) -> MilvusHybridDocument:
     payload = dict(chunk.payload or {})
     payload.setdefault("source_type", "kg_evidence")
@@ -303,3 +374,7 @@ def _hit_value(hit: Any, key: str) -> Any:
         return hit[key]
     except Exception:
         return getattr(hit, key, None)
+
+
+def _escape_filter_value(value: str) -> str:
+    return value.replace("\\", "\\\\").replace('"', '\\"')

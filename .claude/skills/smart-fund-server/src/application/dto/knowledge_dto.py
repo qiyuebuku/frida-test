@@ -43,6 +43,10 @@ class KnowledgeCompileResultDTO(KnowledgeDTO):
     edges: int
     evidence: int
     failed_records: int
+    node_ids: list[str] = field(default_factory=list)
+    edge_ids: list[str] = field(default_factory=list)
+    evidence_ids: list[str] = field(default_factory=list)
+    index_refresh: dict[str, Any] = field(default_factory=dict)
     warnings: list[dict[str, Any]] = field(default_factory=list)
     failures: list[dict[str, Any]] = field(default_factory=list)
     dry_run: bool = False

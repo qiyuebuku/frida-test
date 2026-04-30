@@ -209,6 +209,35 @@ class KnowledgeRepositoryImpl(KnowledgeRepository):
             result = session.execute(pg_insert(KnowledgeWikiPage).values(rows))
             return result.rowcount or 0
 
+    def upsert_wiki_pages(self, adapter_name: str, pages: list[WikiPage]) -> int:
+        pages = [page for page in pages if page.adapter_name == adapter_name]
+        if not pages:
+            return 0
+        rows = [_wiki_page_values(page) for page in pages]
+        with self._session_scope() as session:
+            stmt = pg_insert(KnowledgeWikiPage).values(rows)
+            excluded = stmt.excluded
+            result = session.execute(
+                stmt.on_conflict_do_update(
+                    index_elements=["page_id"],
+                    set_={
+                        "adapter_name": excluded.adapter_name,
+                        "page_type": excluded.page_type,
+                        "subject_type": excluded.subject_type,
+                        "subject_id": excluded.subject_id,
+                        "title": excluded.title,
+                        "summary": excluded.summary,
+                        "content": excluded.content,
+                        "source_node_ids": excluded.source_node_ids,
+                        "source_edge_ids": excluded.source_edge_ids,
+                        "source_evidence_ids": excluded.source_evidence_ids,
+                        "version": excluded.version,
+                        "updated_at": datetime.now(timezone.utc),
+                    },
+                )
+            )
+            return result.rowcount or 0
+
     def list_wiki_pages(self, adapter_name: str) -> list[WikiPage]:
         with self._session_scope() as session:
             rows = session.scalars(
@@ -263,6 +292,29 @@ class KnowledgeRepositoryImpl(KnowledgeRepository):
             result = session.execute(pg_insert(KnowledgeGraphAdjacency).values(rows))
             return result.rowcount or 0
 
+    def upsert_graph_adjacency(self, edges: list[CompiledEdge]) -> int:
+        if not edges:
+            return 0
+        edge_ids = [edge.edge_id for edge in edges]
+        rows = [
+            {
+                "adapter_name": edge.adapter_name,
+                "source_node_id": edge.source_node_id,
+                "target_node_id": edge.target_node_id,
+                "edge_id": edge.edge_id,
+                "relation_type": edge.relation_type,
+            }
+            for edge in edges
+        ]
+        with self._session_scope() as session:
+            session.execute(
+                delete(KnowledgeGraphAdjacency).where(
+                    KnowledgeGraphAdjacency.edge_id.in_(edge_ids)
+                )
+            )
+            result = session.execute(pg_insert(KnowledgeGraphAdjacency).values(rows))
+            return result.rowcount or 0
+
     def get_neighbors(self, node_id: str, adapter_name: str | None = None) -> list[str]:
         with self._session_scope() as session:
             stmt = select(KnowledgeGraphAdjacency.target_node_id).where(
@@ -283,6 +335,20 @@ class KnowledgeRepositoryImpl(KnowledgeRepository):
                 select(KnowledgeEvidence).where(KnowledgeEvidence.adapter_name == adapter_name)
             ).all()
             rows = [_chunk_values(row) for row in evidence_rows if _chunk_content(row)]
+            if not rows:
+                return 0
+            result = session.execute(pg_insert(KnowledgeEvidenceChunk).values(rows))
+            return result.rowcount or 0
+
+    def upsert_evidence_chunks(self, evidence: list[CompiledEvidence]) -> int:
+        if not evidence:
+            return 0
+        chunk_ids = [f"kg_chunk:{item.evidence_id}:0" for item in evidence]
+        rows = [_chunk_values_from_compiled(item) for item in evidence if _compiled_chunk_content(item)]
+        with self._session_scope() as session:
+            session.execute(
+                delete(KnowledgeEvidenceChunk).where(KnowledgeEvidenceChunk.chunk_id.in_(chunk_ids))
+            )
             if not rows:
                 return 0
             result = session.execute(pg_insert(KnowledgeEvidenceChunk).values(rows))
@@ -594,6 +660,25 @@ def _chunk_content(row: KnowledgeEvidence) -> str:
     return "\n".join(_ordered_unique(part.strip() for part in parts if part and part.strip()))
 
 
+def _compiled_chunk_content(evidence: CompiledEvidence) -> str:
+    payload = evidence.payload or {}
+    parts: list[str] = []
+    if isinstance(payload, dict):
+        parts.extend(
+            str(payload.get(name) or "")
+            for name in ("title", "source_name", "signal_type")
+            if payload.get(name)
+        )
+        parts.extend(_entity_search_terms(payload.get("mentioned_entities")))
+        parts.extend(_entity_search_terms(payload.get("affected_entities")))
+        parts.extend(_entity_search_terms([payload.get("target_ref")]))
+    if evidence.content and evidence.content.strip():
+        parts.append(evidence.content)
+    elif payload:
+        parts.append(json.dumps(payload, ensure_ascii=False, sort_keys=True))
+    return "\n".join(_ordered_unique(part.strip() for part in parts if part and part.strip()))
+
+
 def _entity_search_terms(value: Any) -> list[str]:
     values = value if isinstance(value, list) else [value]
     terms: list[str] = []
@@ -626,6 +711,16 @@ def _chunk_values(row: KnowledgeEvidence) -> dict[str, Any]:
         "evidence_id": row.evidence_id,
         "content": _chunk_content(row),
         "payload": row.payload or {},
+    }
+
+
+def _chunk_values_from_compiled(evidence: CompiledEvidence) -> dict[str, Any]:
+    return {
+        "chunk_id": f"kg_chunk:{evidence.evidence_id}:0",
+        "adapter_name": evidence.adapter_name,
+        "evidence_id": evidence.evidence_id,
+        "content": _compiled_chunk_content(evidence),
+        "payload": evidence.payload or {},
     }
 
 

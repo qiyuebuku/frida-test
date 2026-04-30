@@ -50,6 +50,11 @@ class _Store:
         self.calls.append(kwargs)
         return len(self.documents)
 
+    def upsert_documents(self, **kwargs):
+        self.documents = kwargs["documents"]
+        self.calls.append(kwargs)
+        return len(self.documents)
+
 
 @pytest.mark.asyncio
 async def test_semantic_hybrid_reranks_strong_identifier_matches(monkeypatch) -> None:
@@ -160,6 +165,37 @@ async def test_rebuild_index_writes_lightrag_node_edge_wiki_documents(monkeypatc
     edge_doc = next(doc for doc in store.documents if doc.metadata["source_type"] == "kg_edge")
     assert "300750" in node_doc.text
     assert "affects" in edge_doc.text
+
+
+@pytest.mark.asyncio
+async def test_upsert_index_only_writes_changed_lightrag_documents(monkeypatch) -> None:
+    async def fake_embed_texts(texts):
+        return [[0.1, 0.2] for _ in texts]
+
+    monkeypatch.setattr(retriever_module, "embed_texts", fake_embed_texts)
+    store = _Store()
+    node = CompiledNode(
+        node_id="kg:financial:stock:300750",
+        adapter_name="financial",
+        node_type="stock",
+        canonical_name="宁德时代",
+        aliases=["300750"],
+        status=NodeStatus.ACTIVE,
+        version="v1",
+    )
+
+    count = await MilvusSemanticHybridRetriever(store=store).upsert_index(
+        adapter_name="financial",
+        target="prod",
+        chunks=[],
+        nodes=[node],
+        edges=[],
+        wiki_pages=[],
+    )
+
+    assert count == 1
+    assert store.documents[0].chunk_id == "kg_kv:node:kg:financial:stock:300750"
+    assert store.calls[-1]["documents"] == store.documents
 
 
 @pytest.mark.asyncio

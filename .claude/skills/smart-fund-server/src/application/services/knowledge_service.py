@@ -1,5 +1,7 @@
 """Application service entry point for knowledge use cases."""
 
+from __future__ import annotations
+
 import logging
 from datetime import datetime, timedelta, timezone
 from typing import Any, Literal
@@ -62,8 +64,14 @@ from src.domain.knowledge.retrieval_eval import (
 from src.domain.knowledge.retrieval_trace_replay import replay_retrieval_trace
 from src.domain.knowledge.retrieval_tools import RetrievalToolCall, RetrievalToolRegistry
 from src.domain.knowledge.repositories import KnowledgeRepository
-from src.domain.knowledge.schemas import CompileResult, CompiledEdge, CompiledNode
-from src.domain.knowledge.wiki import KnowledgeWikiBuilder, WikiBuildResult
+from src.domain.knowledge.schemas import (
+    CompileResult,
+    CompiledEdge,
+    CompiledEvidence,
+    CompiledNode,
+    EvidenceChunk,
+)
+from src.domain.knowledge.wiki import KnowledgeWikiBuilder, WikiBuildResult, WikiPage
 from src.domain.knowledge_adapters.financial.consumption import can_hard_consume
 from src.domain.knowledge_adapters.financial.query_planner import FinancialQueryPlanner
 from src.infrastructure.config import settings
@@ -121,6 +129,11 @@ class KnowledgeService:
             concurrency=_compile_concurrency(command),
         )
         result = await compiler.compile(adapter, command.records)
+        index_refresh = (
+            await self._refresh_incremental_indexes(result, command.target)
+            if self.repository is not None and not command.dry_run
+            else {}
+        )
         return KnowledgeCompileResultDTO(
             adapter_name=result.adapter_name,
             run_id=result.run_id,
@@ -128,6 +141,10 @@ class KnowledgeService:
             edges=len(result.edges),
             evidence=len(result.evidence),
             failed_records=len(result.failed_records),
+            node_ids=[node.node_id for node in result.nodes],
+            edge_ids=[edge.edge_id for edge in result.edges],
+            evidence_ids=[item.evidence_id for item in result.evidence],
+            index_refresh=index_refresh,
             warnings=[dto_to_dict(item) for item in result.warnings],
             failures=[dto_to_dict(item) for item in result.failed_records],
             dry_run=command.dry_run,
@@ -218,15 +235,29 @@ class KnowledgeService:
                 steps=steps,
             )
 
-        wiki_result = await self.rebuild_wiki_for(
-            KnowledgeRebuildWikiCommand(
-                adapter_name="financial",
-                target=command.target,
+        refresh_summaries = [
+            item
+            for item in [stock_result.index_refresh, news_result.index_refresh]
+            if item
+        ]
+        if refresh_summaries:
+            steps.append(
+                {
+                    "name": "incremental_indexes",
+                    "status": "ok",
+                    "result": _merge_index_refresh_summaries(refresh_summaries),
+                }
             )
-        )
-        steps.append(_incremental_step("rebuild_wiki", wiki_result))
+        else:
+            wiki_result = await self.rebuild_wiki_for(
+                KnowledgeRebuildWikiCommand(
+                    adapter_name="financial",
+                    target=command.target,
+                )
+            )
+            steps.append(_incremental_step("rebuild_wiki", wiki_result))
 
-        if command.rebuild_indexes:
+        if command.rebuild_indexes and not refresh_summaries:
             index_result = await self.rebuild_indexes_for(
                 KnowledgeRebuildIndexesCommand(
                     adapter_name="financial",
@@ -236,7 +267,8 @@ class KnowledgeService:
             )
             steps.append(_incremental_step("rebuild_indexes", index_result))
         else:
-            steps.append({"name": "rebuild_indexes", "status": "skipped", "reason": "disabled"})
+            reason = "covered_by_incremental_refresh" if refresh_summaries else "disabled"
+            steps.append({"name": "rebuild_indexes", "status": "skipped", "reason": reason})
 
         return KnowledgeIncrementalRefreshResultDTO(
             adapter_name="financial",
@@ -771,6 +803,90 @@ class KnowledgeService:
             == {edge.edge_id for edge in after.edges},
         }
 
+    async def _refresh_incremental_indexes(
+        self,
+        result: CompileResult,
+        target: Target,
+    ) -> dict[str, Any]:
+        repository = self._require_repository()
+        if not result.nodes and not result.edges and not result.evidence:
+            return {
+                "mode": "incremental",
+                "graph_adjacency": 0,
+                "evidence_chunks": 0,
+                "wiki_pages": 0,
+                "hybrid_chunks": 0,
+            }
+
+        graph_adjacency = repository.upsert_graph_adjacency(result.edges)
+        evidence_chunks = repository.upsert_evidence_chunks(result.evidence)
+        wiki_pages = self._changed_wiki_pages(result)
+        wiki_count = repository.upsert_wiki_pages(result.adapter_name, wiki_pages)
+        hybrid_chunks = await MilvusSemanticHybridRetriever().upsert_index(
+            adapter_name=result.adapter_name,
+            target=target,
+            chunks=_evidence_chunks_from_compiled(result.evidence),
+            nodes=_milvus_nodes_for_result(repository, result),
+            edges=result.edges,
+            wiki_pages=wiki_pages,
+            kg_version=result.version,
+        )
+        summary = {
+            "mode": "incremental",
+            "graph_adjacency": graph_adjacency,
+            "evidence_chunks": evidence_chunks,
+            "wiki_pages": wiki_count,
+            "hybrid_chunks": hybrid_chunks,
+            "node_ids": [node.node_id for node in result.nodes],
+            "edge_ids": [edge.edge_id for edge in result.edges],
+            "evidence_ids": [item.evidence_id for item in result.evidence],
+        }
+        logger.info(
+            "[kg_incremental_index] adapter=%s target=%s graph_adjacency=%d "
+            "evidence_chunks=%d wiki_pages=%d hybrid_chunks=%d nodes=%d edges=%d evidence=%d",
+            result.adapter_name,
+            target,
+            graph_adjacency,
+            evidence_chunks,
+            wiki_count,
+            hybrid_chunks,
+            len(result.nodes),
+            len(result.edges),
+            len(result.evidence),
+        )
+        return summary
+
+    def _changed_wiki_pages(self, result: CompileResult) -> list[WikiPage]:
+        repository = self._require_repository()
+        nodes = repository.list_nodes(result.adapter_name)
+        edges = repository.list_edges(result.adapter_name)
+        evidence = repository.list_evidence(result.adapter_name)
+        build_result = self.wiki_builder.build(
+            adapter_name=result.adapter_name,
+            version=_latest_version(nodes),
+            nodes=nodes,
+            edges=edges,
+            evidence=evidence,
+        )
+        errors = [issue for issue in build_result.issues if issue.severity.value == "error"]
+        if errors:
+            raise ValueError(f"wiki lint failed during incremental refresh: {len(errors)} error(s)")
+        changed_node_ids = {node.node_id for node in result.nodes}
+        changed_edge_ids = {edge.edge_id for edge in result.edges}
+        changed_evidence_ids = {item.evidence_id for item in result.evidence}
+        for edge in result.edges:
+            changed_node_ids.add(edge.source_node_id)
+            changed_node_ids.add(edge.target_node_id)
+            changed_evidence_ids.update(edge.evidence_ids)
+        return [
+            page
+            for page in build_result.pages
+            if page.page_type == "index_page"
+            or set(page.source_node_ids) & changed_node_ids
+            or set(page.source_edge_ids) & changed_edge_ids
+            or set(page.source_evidence_ids) & changed_evidence_ids
+        ]
+
     def _require_repository(self) -> KnowledgeRepository:
         if self.repository is None:
             raise RuntimeError("Knowledge repository is required for this use case")
@@ -806,6 +922,95 @@ def _compile_concurrency(command: KnowledgeCompileCommand) -> int:
 
 def _semantic_hybrid_retriever():
     return MilvusSemanticHybridRetriever()
+
+
+def _evidence_chunks_from_compiled(evidence: list[CompiledEvidence]) -> list[EvidenceChunk]:
+    chunks: list[EvidenceChunk] = []
+    for item in evidence:
+        content = _compiled_evidence_chunk_content(item)
+        if not content:
+            continue
+        chunks.append(
+            EvidenceChunk(
+                chunk_id=f"kg_chunk:{item.evidence_id}:0",
+                adapter_name=item.adapter_name,
+                evidence_id=item.evidence_id,
+                content=content,
+                payload=item.payload or {},
+            )
+        )
+    return chunks
+
+
+def _compiled_evidence_chunk_content(evidence: CompiledEvidence) -> str:
+    import json
+
+    payload = evidence.payload or {}
+    parts: list[str] = []
+    if isinstance(payload, dict):
+        parts.extend(
+            str(payload.get(name) or "")
+            for name in ("title", "source_name", "signal_type")
+            if payload.get(name)
+        )
+        parts.extend(_entity_search_terms(payload.get("mentioned_entities")))
+        parts.extend(_entity_search_terms(payload.get("affected_entities")))
+        parts.extend(_entity_search_terms([payload.get("target_ref")]))
+    if evidence.content and evidence.content.strip():
+        parts.append(evidence.content)
+    elif payload:
+        parts.append(json.dumps(payload, ensure_ascii=False, sort_keys=True))
+    return "\n".join(_ordered_unique(part.strip() for part in parts if part and part.strip()))
+
+
+def _entity_search_terms(value: Any) -> list[str]:
+    values = value if isinstance(value, list) else [value]
+    terms: list[str] = []
+    for item in values:
+        if not isinstance(item, dict):
+            continue
+        for name in ("name", "code", "indicator_code", "taxonomy"):
+            if item.get(name):
+                terms.append(str(item[name]))
+        if item.get("exchange") and item.get("code"):
+            terms.append(f"{item['exchange']}:{item['code']}")
+    return terms
+
+
+def _milvus_nodes_for_result(
+    repository: KnowledgeRepository,
+    result: CompileResult,
+) -> list[CompiledNode]:
+    node_by_id = {node.node_id: node for node in result.nodes}
+    for edge in result.edges:
+        for node_id in (edge.source_node_id, edge.target_node_id):
+            if node_id in node_by_id:
+                continue
+            node = repository.get_node(node_id)
+            if node is not None:
+                node_by_id[node_id] = node
+    return list(node_by_id.values())
+
+
+def _merge_index_refresh_summaries(summaries: list[dict[str, Any]]) -> dict[str, Any]:
+    merged: dict[str, Any] = {
+        "mode": "incremental",
+        "graph_adjacency": 0,
+        "evidence_chunks": 0,
+        "wiki_pages": 0,
+        "hybrid_chunks": 0,
+        "node_ids": [],
+        "edge_ids": [],
+        "evidence_ids": [],
+    }
+    for summary in summaries:
+        for key in ("graph_adjacency", "evidence_chunks", "wiki_pages", "hybrid_chunks"):
+            merged[key] += int(summary.get(key) or 0)
+        for key in ("node_ids", "edge_ids", "evidence_ids"):
+            merged[key].extend(summary.get(key) or [])
+    for key in ("node_ids", "edge_ids", "evidence_ids"):
+        merged[key] = _ordered_unique(merged[key])
+    return merged
 
 
 def _agentic_retrieval_strategy():

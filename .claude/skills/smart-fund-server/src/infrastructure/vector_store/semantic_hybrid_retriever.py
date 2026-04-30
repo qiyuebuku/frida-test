@@ -89,6 +89,36 @@ class MilvusSemanticHybridRetriever(SemanticHybridRetriever):
             kg_version=kg_version,
         )
 
+    async def upsert_index(
+        self,
+        *,
+        adapter_name: str,
+        target: str,
+        chunks: list[EvidenceChunk],
+        nodes: list[CompiledNode] | None = None,
+        edges: list[CompiledEdge] | None = None,
+        wiki_pages: list[WikiPage] | None = None,
+        kg_version: str = "",
+    ) -> int:
+        documents = _light_rag_documents(
+            chunks=chunks,
+            nodes=nodes or [],
+            edges=edges or [],
+            wiki_pages=wiki_pages or [],
+        )
+        if not documents:
+            return 0
+        texts = [document.text for document in documents]
+        vectors = await embed_texts(texts)
+        return self.store.upsert_documents(
+            adapter_name=adapter_name,
+            target=target,
+            documents=documents,
+            vectors=vectors,
+            embedding_model=settings.EMBEDDING_MODEL,
+            kg_version=kg_version,
+        )
+
 
 def _reranked_score(query: str, text: str, base_score: float) -> float:
     strong_terms = _strong_query_terms(query)

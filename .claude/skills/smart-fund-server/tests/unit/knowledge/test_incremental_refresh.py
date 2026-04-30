@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import json
+from pathlib import Path
+
 import pytest
 
 from src.application.dto.knowledge_dto import (
@@ -14,7 +17,12 @@ from src.application.dto.knowledge_dto import (
     KnowledgeRebuildWikiCommand,
     KnowledgeRebuildWikiResultDTO,
 )
+from src.application.services import knowledge_service as service_module
 from src.application.services.knowledge_service import KnowledgeService
+from src.domain.knowledge.toy_adapter import ToyProjectAdapter
+
+
+FIXTURE_DIR = Path(__file__).resolve().parents[2] / "fixtures" / "knowledge"
 
 
 class _Service(KnowledgeService):
@@ -110,3 +118,101 @@ async def test_incremental_refresh_dry_run_skips_rebuild_steps() -> None:
 
     assert [step["status"] for step in result.steps] == ["ok", "ok", "skipped", "skipped"]
     assert service.calls == ["stocks:test:300750", "news:20:1"]
+
+
+@pytest.mark.asyncio
+async def test_compile_kg_refreshes_changed_indexes_incrementally(monkeypatch) -> None:
+    records = json.loads((FIXTURE_DIR / "toy_records.json").read_text(encoding="utf-8"))
+    repository = _CompileRefreshRepository()
+    hybrid_calls: list[dict] = []
+
+    class FakeRetriever:
+        async def upsert_index(self, **kwargs):
+            hybrid_calls.append(kwargs)
+            return (
+                len(kwargs["chunks"])
+                + len(kwargs["nodes"])
+                + len(kwargs["edges"])
+                + len(kwargs["wiki_pages"])
+            )
+
+    monkeypatch.setattr(service_module, "get_adapter", lambda _name: ToyProjectAdapter())
+    monkeypatch.setattr(service_module, "MilvusSemanticHybridRetriever", lambda: FakeRetriever())
+
+    result = await KnowledgeService(repository=repository).compile_kg(
+        service_module.KnowledgeCompileCommand(
+            adapter_name="toy",
+            records=records,
+            target="test",
+        )
+    )
+
+    assert result.index_refresh["mode"] == "incremental"
+    assert result.index_refresh["graph_adjacency"] == 3
+    assert result.index_refresh["evidence_chunks"] == 1
+    assert result.index_refresh["wiki_pages"] >= 1
+    assert result.index_refresh["hybrid_chunks"] == len(hybrid_calls[0]["chunks"]) + len(
+        hybrid_calls[0]["nodes"]
+    ) + len(hybrid_calls[0]["edges"]) + len(hybrid_calls[0]["wiki_pages"])
+    assert repository.calls[:3] == ["create_run", "upsert_nodes:4", "upsert_evidence:1"]
+    assert "upsert_graph_adjacency:3" in repository.calls
+    assert "upsert_evidence_chunks:1" in repository.calls
+
+
+class _CompileRefreshRepository:
+    def __init__(self):
+        self.calls: list[str] = []
+        self.nodes = []
+        self.edges = []
+        self.evidence = []
+        self.wiki_pages = []
+
+    def create_compilation_run(self, _run):
+        self.calls.append("create_run")
+        return "kg_run:test"
+
+    def finish_compilation_run(self, _run_id, _result):
+        self.calls.append("finish_run")
+
+    def upsert_nodes(self, nodes):
+        self.calls.append(f"upsert_nodes:{len(nodes)}")
+        self.nodes = nodes
+        return len(nodes)
+
+    def upsert_edges(self, edges):
+        self.calls.append(f"upsert_edges:{len(edges)}")
+        self.edges = edges
+        return len(edges)
+
+    def upsert_evidence(self, evidence):
+        self.calls.append(f"upsert_evidence:{len(evidence)}")
+        self.evidence = evidence
+        return len(evidence)
+
+    def upsert_graph_adjacency(self, edges):
+        self.calls.append(f"upsert_graph_adjacency:{len(edges)}")
+        return len(edges)
+
+    def upsert_evidence_chunks(self, evidence):
+        self.calls.append(f"upsert_evidence_chunks:{len(evidence)}")
+        return len(evidence)
+
+    def upsert_wiki_pages(self, _adapter_name, pages):
+        self.calls.append(f"upsert_wiki_pages:{len(pages)}")
+        self.wiki_pages = pages
+        return len(pages)
+
+    def get_node(self, node_id):
+        return next((node for node in self.nodes if node.node_id == node_id), None)
+
+    def list_nodes(self, _adapter_name):
+        return self.nodes
+
+    def list_edges(self, _adapter_name):
+        return self.edges
+
+    def list_evidence(self, _adapter_name):
+        return self.evidence
+
+    def attach_edge_evidence(self, *_args):
+        return 0

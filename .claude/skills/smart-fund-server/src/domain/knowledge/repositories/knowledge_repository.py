@@ -60,6 +60,10 @@ class KnowledgeRepository(ABC):
         """Replace generated wiki pages for one adapter."""
 
     @abstractmethod
+    def upsert_wiki_pages(self, adapter_name: str, pages: list[WikiPage]) -> int:
+        """Insert or update generated wiki pages for one adapter."""
+
+    @abstractmethod
     def list_wiki_pages(self, adapter_name: str) -> list[WikiPage]:
         """Load generated wiki pages for one adapter."""
 
@@ -72,12 +76,20 @@ class KnowledgeRepository(ABC):
         """Replace generated adjacency records for one adapter."""
 
     @abstractmethod
+    def upsert_graph_adjacency(self, edges: list[CompiledEdge]) -> int:
+        """Insert or update generated adjacency records for changed edges."""
+
+    @abstractmethod
     def get_neighbors(self, node_id: str, adapter_name: str | None = None) -> list[str]:
         """Load direct neighbor node IDs."""
 
     @abstractmethod
     def rebuild_evidence_chunks(self, adapter_name: str) -> int:
         """Replace generated evidence chunks for one adapter."""
+
+    @abstractmethod
+    def upsert_evidence_chunks(self, evidence: list[CompiledEvidence]) -> int:
+        """Insert or update generated evidence chunks for changed evidence."""
 
     @abstractmethod
     def list_evidence_chunks(self, adapter_name: str) -> list[EvidenceChunk]:
