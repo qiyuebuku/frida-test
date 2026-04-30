@@ -113,6 +113,76 @@ def test_wiki_builder_generates_timeline_page_for_events() -> None:
     assert "ft_news:74342" in timeline.content
 
 
+def test_wiki_timeline_sorts_mixed_naive_and_aware_evidence_times() -> None:
+    event = CompiledNode(
+        node_id="kg:financial:event:1",
+        adapter_name="financial",
+        node_type="event",
+        canonical_name="事件",
+        status=NodeStatus.ACTIVE,
+        version="v1",
+    )
+    stock = CompiledNode(
+        node_id="kg:financial:stock:300750",
+        adapter_name="financial",
+        node_type="stock",
+        canonical_name="宁德时代",
+        status=NodeStatus.ACTIVE,
+        version="v1",
+    )
+    edges = [
+        CompiledEdge(
+            edge_id=f"kg_edge:financial:mentions:{idx}",
+            adapter_name="financial",
+            source_node_id=event.node_id,
+            target_node_id=stock.node_id,
+            relation_type="mentions",
+            confidence_label=ConfidenceLabel.EXTRACTED,
+            confidence_score=0.7,
+            status=EdgeStatus.ACTIVE,
+            evidence_ids=[evidence_id],
+            version="v1",
+        )
+        for idx, evidence_id in enumerate(
+            ["kg_ev:financial:news:aware", "kg_ev:financial:news:naive"], start=1
+        )
+    ]
+    evidence = [
+        CompiledEvidence(
+            evidence_id="kg_ev:financial:news:aware",
+            adapter_name="financial",
+            evidence_type=EvidenceType.TEXT_SPAN,
+            source_type="news_articles",
+            source_id="ft_news:aware",
+            content="aware",
+            payload={"published_at": "2026-04-23T00:00:00+08:00"},
+            version="v1",
+        ),
+        CompiledEvidence(
+            evidence_id="kg_ev:financial:news:naive",
+            adapter_name="financial",
+            evidence_type=EvidenceType.TEXT_SPAN,
+            source_type="news_articles",
+            source_id="ft_news:naive",
+            content="naive",
+            payload={"published_at": "2026-04-24T00:00:00"},
+            version="v1",
+        ),
+    ]
+
+    wiki = KnowledgeWikiBuilder().build(
+        adapter_name="financial",
+        version="v1",
+        nodes=[event, stock],
+        edges=edges,
+        evidence=evidence,
+    )
+
+    assert wiki.issues == []
+    timeline = next(page for page in wiki.pages if page.page_type == "timeline_page")
+    assert timeline.content.index("ft_news:naive") < timeline.content.index("ft_news:aware")
+
+
 async def _compile_toy():
     records = json.loads((FIXTURE_DIR / "toy_records.json").read_text(encoding="utf-8"))
     return await KnowledgeCompiler().compile(ToyProjectAdapter(), records)

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timezone
 from hashlib import sha1
 
 from pydantic import Field
@@ -252,7 +252,7 @@ def _timeline_page(
             _evidence_time(evidence_by_id[evidence_id]),
             evidence_by_id[evidence_id],
         ) for evidence_id in evidence_ids),
-        key=lambda item: (item[0] or datetime.min, item[1].evidence_id),
+        key=lambda item: (item[0] or datetime.min.replace(tzinfo=timezone.utc), item[1].evidence_id),
         reverse=True,
     )
     title = f"{adapter_name} event timeline"
@@ -371,13 +371,19 @@ def _evidence_time(evidence: CompiledEvidence) -> datetime | None:
         or evidence.payload.get("period")
     )
     if isinstance(value, datetime):
-        return value
+        return _aware_datetime(value)
     if not value:
         return None
     try:
-        return datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+        return _aware_datetime(datetime.fromisoformat(str(value).replace("Z", "+00:00")))
     except ValueError:
         return None
+
+
+def _aware_datetime(value: datetime) -> datetime:
+    if value.tzinfo is None or value.tzinfo.utcoffset(value) is None:
+        return value.replace(tzinfo=timezone.utc)
+    return value
 
 
 def _json_line(value) -> str:
