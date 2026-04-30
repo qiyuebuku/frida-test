@@ -3,13 +3,20 @@
 from __future__ import annotations
 
 import logging
+import json
 import re
+from typing import Any
 
 from src.domain.knowledge.retrieval import RetrievalHit, RetrievalOptions, SemanticHybridRetriever
-from src.domain.knowledge.schemas import EvidenceChunk
+from src.domain.knowledge.schemas import CompiledEdge, CompiledNode, EvidenceChunk
+from src.domain.knowledge.wiki import WikiPage
 from src.infrastructure.clients.embedding import embed_texts
 from src.infrastructure.config import settings
-from src.infrastructure.vector_store.milvus_hybrid_store import MilvusHybridStore
+from src.infrastructure.vector_store.milvus_hybrid_store import (
+    MilvusHybridDocument,
+    MilvusHybridHit,
+    MilvusHybridStore,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -35,14 +42,9 @@ class MilvusSemanticHybridRetriever(SemanticHybridRetriever):
             limit=search_limit,
         )
         return [
-            RetrievalHit(
-                hit_id=hit.chunk_id,
-                hit_type="semantic_hybrid",
-                title=f"evidence_chunk:{hit.evidence_id}",
-                snippet=hit.text[:800],
+            _retrieval_hit_from_milvus_hit(
+                hit,
                 score=_reranked_score(query, hit.text, hit.score),
-                source="semantic_hybrid",
-                evidence_refs=[hit.evidence_id] if hit.evidence_id else [],
             )
             for hit in sorted(
                 hits,
@@ -56,14 +58,32 @@ class MilvusSemanticHybridRetriever(SemanticHybridRetriever):
         adapter_name: str,
         target: str,
         chunks: list[EvidenceChunk],
+        nodes: list[CompiledNode] | None = None,
+        edges: list[CompiledEdge] | None = None,
+        wiki_pages: list[WikiPage] | None = None,
         kg_version: str = "",
     ) -> int:
-        texts = [chunk.content for chunk in chunks]
+        documents = _light_rag_documents(
+            chunks=chunks,
+            nodes=nodes or [],
+            edges=edges or [],
+            wiki_pages=wiki_pages or [],
+        )
+        if not documents:
+            return self.store.replace_documents(
+                adapter_name=adapter_name,
+                target=target,
+                documents=[],
+                vectors=[],
+                embedding_model=settings.EMBEDDING_MODEL,
+                kg_version=kg_version,
+            )
+        texts = [document.text for document in documents]
         vectors = await embed_texts(texts)
-        return self.store.replace_chunks(
+        return self.store.replace_documents(
             adapter_name=adapter_name,
             target=target,
-            chunks=chunks,
+            documents=documents,
             vectors=vectors,
             embedding_model=settings.EMBEDDING_MODEL,
             kg_version=kg_version,
@@ -88,6 +108,151 @@ def _expanded_query_text(query: str) -> str:
 
 def _candidate_limit(limit: int) -> int:
     return max(limit, min(limit * 3, limit + 30))
+
+
+def _retrieval_hit_from_milvus_hit(hit: MilvusHybridHit, *, score: float) -> RetrievalHit:
+    source_type = str(hit.metadata.get("source_type") or "")
+    source_id = str(hit.metadata.get("source_id") or "")
+    evidence_refs = [hit.evidence_id] if hit.evidence_id else []
+    if source_type == "kg_node" and source_id:
+        return RetrievalHit(
+            hit_id=hit.chunk_id,
+            hit_type="node",
+            title=f"node:{source_id}",
+            snippet=hit.text[:800],
+            score=score,
+            source="semantic_hybrid",
+            node_refs=[source_id],
+            evidence_refs=evidence_refs,
+        )
+    if source_type == "kg_edge" and source_id:
+        return RetrievalHit(
+            hit_id=hit.chunk_id,
+            hit_type="edge",
+            title=f"edge:{source_id}",
+            snippet=hit.text[:800],
+            score=score,
+            source="semantic_hybrid",
+            edge_refs=[source_id],
+            evidence_refs=evidence_refs,
+        )
+    if source_type == "kg_wiki" and source_id:
+        return RetrievalHit(
+            hit_id=hit.chunk_id,
+            hit_type="wiki",
+            title=f"wiki:{source_id}",
+            snippet=hit.text[:800],
+            score=score,
+            source="semantic_hybrid",
+            evidence_refs=evidence_refs,
+        )
+    return RetrievalHit(
+        hit_id=hit.chunk_id,
+        hit_type="semantic_hybrid",
+        title=f"evidence_chunk:{hit.evidence_id}",
+        snippet=hit.text[:800],
+        score=score,
+        source="semantic_hybrid",
+        evidence_refs=evidence_refs,
+    )
+
+
+def _light_rag_documents(
+    *,
+    chunks: list[EvidenceChunk],
+    nodes: list[CompiledNode],
+    edges: list[CompiledEdge],
+    wiki_pages: list[WikiPage],
+) -> list[MilvusHybridDocument]:
+    node_by_id = {node.node_id: node for node in nodes}
+    return [
+        *[_evidence_document(chunk) for chunk in chunks],
+        *[_node_document(node) for node in nodes],
+        *[_edge_document(edge, node_by_id) for edge in edges],
+        *[_wiki_document(page) for page in wiki_pages],
+    ]
+
+
+def _evidence_document(chunk: EvidenceChunk) -> MilvusHybridDocument:
+    payload = dict(chunk.payload or {})
+    payload.setdefault("source_type", "kg_evidence")
+    payload.setdefault("source_id", chunk.evidence_id)
+    return MilvusHybridDocument(
+        chunk_id=chunk.chunk_id,
+        evidence_id=chunk.evidence_id,
+        text=chunk.content,
+        metadata=payload,
+    )
+
+
+def _node_document(node: CompiledNode) -> MilvusHybridDocument:
+    aliases = _ordered_unique([node.canonical_name, *node.aliases, *node.external_ids.values()])
+    text = _join_parts(
+        [
+            f"Node Key: {node.canonical_name}",
+            f"Node Type: {node.node_type}",
+            f"Aliases: {' '.join(aliases)}",
+            f"Value: {_json_text(node.properties)}",
+        ]
+    )
+    return MilvusHybridDocument(
+        chunk_id=f"kg_kv:node:{node.node_id}",
+        text=text,
+        metadata={"source_type": "kg_node", "source_id": node.node_id},
+    )
+
+
+def _edge_document(edge: CompiledEdge, node_by_id: dict[str, CompiledNode]) -> MilvusHybridDocument:
+    source_name = _node_name(edge.source_node_id, node_by_id)
+    target_name = _node_name(edge.target_node_id, node_by_id)
+    relation_key = f"{source_name} {edge.relation_type} {target_name}"
+    text = _join_parts(
+        [
+            f"Edge Key: {relation_key}",
+            f"Relation: {edge.relation_type}",
+            f"Source: {source_name}",
+            f"Target: {target_name}",
+            f"Evidence: {' '.join(edge.evidence_ids)}",
+            f"Value: {_json_text(edge.properties)}",
+        ]
+    )
+    return MilvusHybridDocument(
+        chunk_id=f"kg_kv:edge:{edge.edge_id}",
+        evidence_id=edge.evidence_ids[0] if edge.evidence_ids else "",
+        text=text,
+        metadata={"source_type": "kg_edge", "source_id": edge.edge_id},
+    )
+
+
+def _wiki_document(page: WikiPage) -> MilvusHybridDocument:
+    text = _join_parts(
+        [
+            f"Wiki Key: {page.title}",
+            f"Page Type: {page.page_type}",
+            f"Subject: {page.subject_type or ''} {page.subject_id or ''}",
+            f"Summary: {page.summary}",
+            f"Value: {page.content}",
+        ]
+    )
+    return MilvusHybridDocument(
+        chunk_id=f"kg_kv:wiki:{page.page_id}",
+        evidence_id=page.source_evidence_ids[0] if page.source_evidence_ids else "",
+        text=text,
+        metadata={"source_type": "kg_wiki", "source_id": page.page_id},
+    )
+
+
+def _node_name(node_id: str, node_by_id: dict[str, CompiledNode]) -> str:
+    node = node_by_id.get(node_id)
+    return node.canonical_name if node is not None else node_id
+
+
+def _join_parts(parts: list[str]) -> str:
+    return "\n".join(part.strip() for part in parts if part and part.strip())
+
+
+def _json_text(value: dict[str, Any]) -> str:
+    return json.dumps(value, ensure_ascii=False, sort_keys=True) if value else ""
 
 
 def _strong_query_terms(query: str) -> list[str]:

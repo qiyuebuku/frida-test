@@ -285,6 +285,9 @@ class KnowledgeService:
                 adapter_name=command.adapter_name,
                 target=command.target,
                 chunks=chunks,
+                nodes=repository.list_nodes(command.adapter_name),
+                edges=repository.list_edges(command.adapter_name),
+                wiki_pages=repository.list_wiki_pages(command.adapter_name),
             )
         return KnowledgeRebuildIndexesResultDTO(
             adapter_name=command.adapter_name,

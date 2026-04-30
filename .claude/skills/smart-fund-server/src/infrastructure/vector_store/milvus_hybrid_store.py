@@ -22,6 +22,14 @@ class MilvusHybridHit:
     metadata: dict[str, Any]
 
 
+@dataclass(frozen=True)
+class MilvusHybridDocument:
+    chunk_id: str
+    text: str
+    evidence_id: str = ""
+    metadata: dict[str, Any] | None = None
+
+
 class MilvusHybridStore:
     """Thin wrapper around the required Milvus hybrid index."""
 
@@ -112,26 +120,49 @@ class MilvusHybridStore:
         embedding_model: str,
         kg_version: str = "",
     ) -> int:
+        documents = [
+            _document_from_chunk(chunk)
+            for chunk in chunks
+        ]
+        return self.replace_documents(
+            adapter_name=adapter_name,
+            target=target,
+            documents=documents,
+            vectors=vectors,
+            embedding_model=embedding_model,
+            kg_version=kg_version,
+        )
+
+    def replace_documents(
+        self,
+        *,
+        adapter_name: str,
+        target: str,
+        documents: list[MilvusHybridDocument],
+        vectors: list[list[float]],
+        embedding_model: str,
+        kg_version: str = "",
+    ) -> int:
         self.ensure_collection()
         self.delete_scope(adapter_name=adapter_name, target=target)
         rows = []
-        for chunk, vector in zip(chunks, vectors, strict=False):
+        for document, vector in zip(documents, vectors, strict=False):
             if not vector:
                 continue
-            payload = dict(chunk.payload or {})
+            payload = dict(document.metadata or {})
             source_type = str(payload.get("source_type") or payload.get("source_table") or "")
             source_id = str(payload.get("source_id") or payload.get("source_pk") or "")
             rows.append(
                 {
-                    "chunk_id": chunk.chunk_id,
-                    "evidence_id": chunk.evidence_id,
+                    "chunk_id": document.chunk_id,
+                    "evidence_id": document.evidence_id,
                     "adapter_name": adapter_name,
                     "target": target,
                     "source_type": source_type[:80],
                     "source_id": source_id[:160],
-                    "text": chunk.content[:8192],
+                    "text": document.text[:8192],
                     "dense_vector": vector,
-                    "content_hash": _content_hash(chunk.content),
+                    "content_hash": _content_hash(document.text),
                     "embedding_model": embedding_model[:80],
                     "kg_version": kg_version[:80],
                 }
@@ -251,6 +282,18 @@ def _content_hash(content: str) -> str:
     import hashlib
 
     return hashlib.sha256(content.encode("utf-8")).hexdigest()
+
+
+def _document_from_chunk(chunk: EvidenceChunk) -> MilvusHybridDocument:
+    payload = dict(chunk.payload or {})
+    payload.setdefault("source_type", "kg_evidence")
+    payload.setdefault("source_id", chunk.evidence_id)
+    return MilvusHybridDocument(
+        chunk_id=chunk.chunk_id,
+        evidence_id=chunk.evidence_id,
+        text=chunk.content,
+        metadata=payload,
+    )
 
 
 def _hit_value(hit: Any, key: str) -> Any:
