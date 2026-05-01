@@ -1,0 +1,109 @@
+{
+  "adapter_name": "financial",
+  "target": "prod",
+  "cases": [
+    {
+      "case_id": "real_baseline_catl_recent_events",
+      "query": "宁德时代 300750 最近受哪些事件影响",
+      "expected_node_names": [
+        "宁德时代"
+      ],
+      "expected_relation_types": [
+        "mentions"
+      ],
+      "expected_channels_used": [
+        "semantic_hybrid_search",
+        "chunk_read"
+      ],
+      "min_hits": 2,
+      "min_evidence_refs": 1,
+      "min_matched_nodes": 1,
+      "min_matched_edges": 1,
+      "retrieval_mode": "deterministic_plan"
+    },
+    {
+      "case_id": "real_baseline_ma_industry_targets",
+      "query": "并购重组对哪些行业有影响",
+      "expected_node_names": [
+        "并购重组",
+        "券商"
+      ],
+      "expected_relation_types": [
+        "mentions",
+        "affects"
+      ],
+      "expected_channels_used": [
+        "semantic_hybrid_search",
+        "chunk_read"
+      ],
+      "min_hits": 2,
+      "min_evidence_refs": 1,
+      "min_matched_nodes": 2,
+      "min_matched_edges": 1,
+      "retrieval_mode": "deterministic_plan"
+    },
+    {
+      "case_id": "real_baseline_low_rate_beneficiaries",
+      "query": "低利率环境利好什么资产和行业",
+      "expected_node_names": [
+        "低利率环境",
+        "成长资产"
+      ],
+      "expected_relation_types": [
+        "mentions",
+        "affects"
+      ],
+      "expected_channels_used": [
+        "semantic_hybrid_search",
+        "chunk_read"
+      ],
+      "min_hits": 2,
+      "min_evidence_refs": 1,
+      "min_matched_nodes": 2,
+      "min_matched_edges": 1,
+      "retrieval_mode": "deterministic_plan"
+    },
+    {
+      "case_id": "real_baseline_middle_east_asset_transmission",
+      "query": "中东冲突影响哪些资产和行业",
+      "expected_node_names": [
+        "中东冲突",
+        "原油",
+        "黄金"
+      ],
+      "expected_relation_types": [
+        "mentions",
+        "affects"
+      ],
+      "expected_channels_used": [
+        "semantic_hybrid_search",
+        "chunk_read"
+      ],
+      "min_hits": 2,
+      "min_evidence_refs": 1,
+      "min_matched_nodes": 3,
+      "min_matched_edges": 1,
+      "retrieval_mode": "deterministic_plan"
+    },
+    {
+      "case_id": "real_baseline_semantic_paraphrase_overseas_factory",
+      "query": "海外工厂投产会带动哪些产业链机会",
+      "expected_node_names": [
+        "海外产能",
+        "储能产业链"
+      ],
+      "expected_relation_types": [
+        "mentions"
+      ],
+      "expected_channels_used": [
+        "semantic_hybrid_search",
+        "chunk_read"
+      ],
+      "min_hits": 2,
+      "min_evidence_refs": 1,
+      "min_matched_nodes": 2,
+      "min_matched_edges": 1,
+      "retrieval_mode": "deterministic_plan"
+    }
+  ]
+}
