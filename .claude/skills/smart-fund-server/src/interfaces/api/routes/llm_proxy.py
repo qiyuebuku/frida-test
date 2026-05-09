@@ -14,9 +14,9 @@ from starlette.responses import StreamingResponse
 from src.infrastructure.config import settings
 from src.infrastructure.clients.embedding import embed_texts
 from src.infrastructure.llm_proxy import (
-    ClaudeProxyRequest,
+    LLMProxyRequest,
     LLMProxyError,
-    get_claude_proxy_service,
+    get_llm_gateway_service,
 )
 
 router = APIRouter(tags=["LLM代理"])
@@ -68,15 +68,7 @@ EmbeddingRequest.model_rebuild()
 
 @router.get("/api/llm-proxy/health", summary="LLM代理健康检查")
 async def llm_proxy_health():
-    service = get_claude_proxy_service()
-    return {
-        "status": "ok",
-        "provider": settings.CLAUDE_PROXY_BACKEND,
-        "model": settings.CLAUDE_PROXY_MODEL,
-        "max_concurrency": settings.CLAUDE_PROXY_MAX_CONCURRENCY,
-        "sandbox_mode": settings.CLAUDE_PROXY_SANDBOX_MODE,
-        "runtime": service.runtime_stats(),
-    }
+    return get_llm_gateway_service().health()
 
 
 @router.post("/v1/chat/completions", summary="OpenAI-compatible chat completions")
@@ -88,14 +80,16 @@ async def chat_completions(request: ChatCompletionRequest):
     json_schema = _resolve_json_schema(request.response_format)
 
     try:
-        result = await get_claude_proxy_service().generate(
-            ClaudeProxyRequest(
+        result = await get_llm_gateway_service().generate(
+            LLMProxyRequest(
                 prompt=prompt,
                 system_prompt=system_prompt,
                 model=request.model,
+                messages=[message.model_dump(mode="json") for message in request.messages],
                 temperature=request.temperature,
                 max_tokens=request.max_tokens,
                 json_schema=json_schema,
+                response_format=request.response_format.model_dump(mode="json") if request.response_format else None,
                 metadata=request.metadata or {},
             )
         )
@@ -109,15 +103,16 @@ async def chat_completions(request: ChatCompletionRequest):
     if request.stream:
         return _stream_chat_completion(
             content=content,
-            model=request.model or settings.CLAUDE_PROXY_MODEL,
+            model=result.proxy.get("resolved_model") or request.model or settings.LLM_PROXY_DEFAULT_MODEL,
         )
 
     usage = _normalize_usage(result.usage)
+    response_model = result.proxy.get("resolved_model") or request.model or settings.LLM_PROXY_DEFAULT_MODEL
     return {
         "id": f"chatcmpl-{uuid.uuid4().hex}",
         "object": "chat.completion",
         "created": int(time.time()),
-        "model": request.model or settings.CLAUDE_PROXY_MODEL,
+        "model": response_model,
         "choices": [
             {
                 "index": 0,
@@ -127,7 +122,7 @@ async def chat_completions(request: ChatCompletionRequest):
         ],
         "usage": usage,
         "_proxy": {
-            "provider": settings.CLAUDE_PROXY_BACKEND,
+            **result.proxy,
             "session_id": result.session_id,
             "cache_hit": result.cache_hit,
             "duration_ms": result.duration_ms,

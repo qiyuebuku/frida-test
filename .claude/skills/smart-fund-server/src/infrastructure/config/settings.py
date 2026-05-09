@@ -150,6 +150,83 @@ CLAUDE_PROXY_CHILD_SETTINGS = {
     if k != "env"
 }
 
+# 通用 LLM Proxy 网关。业务方只传 model，网关负责把模型路由到 provider。
+LLM_PROXY_DEFAULT_PROVIDER = os.getenv("LLM_PROXY_DEFAULT_PROVIDER", "claude_tmux")
+LLM_PROXY_DEFAULT_MODEL = os.getenv("LLM_PROXY_DEFAULT_MODEL", CLAUDE_PROXY_MODEL)
+LLM_PROXY_TIMEOUT = float(os.getenv("LLM_PROXY_TIMEOUT", str(CLAUDE_PROXY_TIMEOUT)))
+LLM_PROXY_MAX_CONCURRENCY = int(
+    os.getenv("LLM_PROXY_MAX_CONCURRENCY", str(CLAUDE_PROXY_MAX_CONCURRENCY))
+)
+LLM_PROXY_CACHE_TTL_SECONDS = int(
+    os.getenv("LLM_PROXY_CACHE_TTL_SECONDS", str(CLAUDE_PROXY_CACHE_TTL_SECONDS))
+)
+LLM_PROXY_CACHE_MAX_SIZE = int(
+    os.getenv("LLM_PROXY_CACHE_MAX_SIZE", str(CLAUDE_PROXY_CACHE_MAX_SIZE))
+)
+LLM_PROXY_MODEL_ROUTES_JSON = os.getenv("LLM_PROXY_MODEL_ROUTES_JSON", "")
+LLM_PROXY_MODEL_ALIASES_JSON = os.getenv("LLM_PROXY_MODEL_ALIASES_JSON", "")
+
+
+def _load_json_dict(value: str) -> dict:
+    if not value.strip():
+        return {}
+    try:
+        data = json.loads(value)
+        return data if isinstance(data, dict) else {}
+    except Exception:
+        return {}
+
+
+def _load_gateway_model_routes() -> dict[str, list[str]]:
+    routes: dict[str, list[str]] = {
+        CLAUDE_PROXY_MODEL: ["claude_tmux"],
+        "sonnet": ["claude_tmux"],
+        "opus": ["claude_tmux"],
+        "glm-5.1": ["claude_tmux", "glm_http"],
+        "deepseek-v4-flash": ["deepseek"],
+        "deepseek-v4-pro": ["deepseek"],
+    }
+    data = _load_json_dict(LLM_PROXY_MODEL_ROUTES_JSON)
+    for key, value in data.items():
+        if isinstance(value, str):
+            routes[str(key)] = [value]
+        elif isinstance(value, list):
+            routes[str(key)] = [str(item) for item in value if item]
+    return routes
+
+
+def _load_gateway_model_aliases() -> dict[str, str]:
+    aliases = dict(CLAUDE_PROXY_MODEL_ALIASES)
+    aliases.update(
+        {
+            "glm5.1": "glm-5.1",
+            "GLM-5.1": "glm-5.1",
+            "deepseek-flash": "deepseek-v4-flash",
+            "deepseek-pro": "deepseek-v4-pro",
+        }
+    )
+    data = _load_json_dict(LLM_PROXY_MODEL_ALIASES_JSON)
+    for key, value in data.items():
+        if key and value:
+            aliases[str(key)] = str(value)
+    return aliases
+
+
+LLM_PROXY_MODEL_ROUTES = _load_gateway_model_routes()
+LLM_PROXY_MODEL_ALIASES = _load_gateway_model_aliases()
+
+# DeepSeek OpenAI-compatible provider
+DEEPSEEK_BASE_URL = os.getenv("DEEPSEEK_BASE_URL", "https://api.deepseek.com")
+DEEPSEEK_API_KEY = os.getenv("DEEPSEEK_API_KEY", "")
+DEEPSEEK_DEFAULT_MODEL = os.getenv("DEEPSEEK_DEFAULT_MODEL", "deepseek-v4-flash")
+DEEPSEEK_TIMEOUT = float(os.getenv("DEEPSEEK_TIMEOUT", str(LLM_PROXY_TIMEOUT)))
+DEEPSEEK_MAX_CONCURRENCY = int(os.getenv("DEEPSEEK_MAX_CONCURRENCY", "5"))
+DEEPSEEK_RATE_LIMIT_COOLDOWN_SECONDS = float(
+    os.getenv("DEEPSEEK_RATE_LIMIT_COOLDOWN_SECONDS", "60")
+)
+DEEPSEEK_THINKING_TYPE = os.getenv("DEEPSEEK_THINKING_TYPE", "")
+DEEPSEEK_REASONING_EFFORT = os.getenv("DEEPSEEK_REASONING_EFFORT", "")
+
 # ==================== 交易 ====================
 
 TRADE_BASE_URL = "https://trade.5ifund.com"

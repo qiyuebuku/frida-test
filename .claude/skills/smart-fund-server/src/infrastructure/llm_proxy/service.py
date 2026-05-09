@@ -10,7 +10,6 @@
 from __future__ import annotations
 
 import asyncio
-import copy
 import hashlib
 import json
 import logging
@@ -21,59 +20,29 @@ import threading
 import time
 import uuid
 from collections import OrderedDict
-from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
 from src.infrastructure.clients.base import ORIGINAL_PROXY_ENV
 from src.infrastructure.config import settings
+from src.infrastructure.llm_proxy.providers.claude_tmux import ClaudeTmuxProvider
+from src.infrastructure.llm_proxy.providers.deepseek_openai import DeepSeekOpenAIProvider
+from src.infrastructure.llm_proxy.registry import ProviderRegistry
+from src.infrastructure.llm_proxy.router import ModelRouter, ModelRouterConfig
 from src.infrastructure.llm_proxy.tmux_backend import (
     TmuxClaudeError,
     TmuxClaudePool,
     TmuxClaudeRunner,
 )
+from src.infrastructure.llm_proxy.types import (
+    ClaudeProxyRequest,
+    ClaudeProxyResponse,
+    LLMProxyError,
+    LLMProxyRequest,
+    LLMProxyResponse,
+)
 
 logger = logging.getLogger(__name__)
-
-
-class LLMProxyError(RuntimeError):
-    """LLM 代理层异常。"""
-
-
-@dataclass(frozen=True)
-class ClaudeProxyRequest:
-    prompt: str
-    system_prompt: str | None = None
-    model: str | None = None
-    temperature: float | None = 0.0
-    max_tokens: int | None = None
-    json_schema: dict[str, Any] | None = None
-    metadata: dict[str, Any] = field(default_factory=dict)
-    timeout: float | None = None
-    use_cache: bool = True
-
-
-@dataclass
-class ClaudeProxyResponse:
-    text: str
-    structured_output: Any | None
-    usage: dict[str, Any]
-    session_id: str | None
-    duration_ms: int
-    raw_payload: dict[str, Any]
-    cache_hit: bool = False
-
-    def clone(self, *, cache_hit: bool | None = None) -> "ClaudeProxyResponse":
-        copied = ClaudeProxyResponse(
-            text=self.text,
-            structured_output=copy.deepcopy(self.structured_output),
-            usage=dict(self.usage),
-            session_id=self.session_id,
-            duration_ms=self.duration_ms,
-            raw_payload=dict(self.raw_payload),
-            cache_hit=self.cache_hit if cache_hit is None else cache_hit,
-        )
-        return copied
 
 
 class _TTLCache:
@@ -646,6 +615,7 @@ class ClaudeProxyService:
 
 
 _proxy_service: ClaudeProxyService | None = None
+_gateway_service: "LLMGatewayService | None" = None
 
 
 def get_claude_proxy_service() -> ClaudeProxyService:
@@ -674,3 +644,121 @@ def get_claude_proxy_service() -> ClaudeProxyService:
             file_context_threshold_chars=settings.CLAUDE_PROXY_FILE_CONTEXT_THRESHOLD_CHARS,
         )
     return _proxy_service
+
+
+class LLMGatewayService:
+    """Unified model gateway routing model names to providers."""
+
+    def __init__(
+        self,
+        *,
+        router: ModelRouter,
+        registry: ProviderRegistry,
+        cache_ttl_seconds: int,
+        cache_max_size: int,
+    ):
+        self.router = router
+        self.registry = registry
+        self._cache = _TTLCache(cache_ttl_seconds, cache_max_size)
+        self._cache_lock = threading.Lock()
+
+    async def generate(self, request: LLMProxyRequest) -> LLMProxyResponse:
+        route = self.router.resolve(request.model)
+        provider = self.registry.select_first_available(route.provider_candidates)
+        route = type(route)(
+            requested_model=route.requested_model,
+            resolved_model=route.resolved_model,
+            provider_candidates=route.provider_candidates,
+            selected_provider=provider.name,
+            route_reason=route.route_reason if provider.name == route.selected_provider else "fallback",
+            fallback_allowed=route.fallback_allowed,
+        )
+        cache_key = self._cache_key(request, route.selected_provider or "", route.resolved_model)
+        if request.use_cache:
+            with self._cache_lock:
+                cached = self._cache.get(cache_key)
+            if cached:
+                return cached.clone(cache_hit=True)
+
+        response = await provider.generate(request, route)
+        response.proxy.setdefault("provider", provider.name)
+        response.proxy.setdefault("requested_model", route.requested_model)
+        response.proxy.setdefault("resolved_model", route.resolved_model)
+        response.proxy.setdefault("route_reason", route.route_reason)
+        response.proxy.setdefault("retry_count", 0)
+
+        if request.use_cache:
+            with self._cache_lock:
+                self._cache.set(cache_key, response.clone())
+        return response
+
+    def health(self) -> dict[str, Any]:
+        return {
+            "status": "ok",
+            "default_provider": self.router.config.default_provider,
+            "default_model": self.router.config.default_model,
+            "model_routes": self.router.config.model_routes,
+            "model_aliases": self.router.config.model_aliases,
+            "providers": self.registry.health(),
+        }
+
+    def runtime_stats(self) -> dict[str, Any]:
+        return {
+            "router": {
+                "default_provider": self.router.config.default_provider,
+                "default_model": self.router.config.default_model,
+            },
+            "providers": self.registry.runtime_stats(),
+        }
+
+    @staticmethod
+    def _cache_key(request: LLMProxyRequest, provider: str, resolved_model: str) -> str:
+        payload = {
+            "provider": provider,
+            "resolved_model": resolved_model,
+            "prompt": request.prompt,
+            "system_prompt": request.system_prompt,
+            "messages": request.messages,
+            "temperature": request.temperature,
+            "max_tokens": request.max_tokens,
+            "json_schema": request.json_schema,
+            "response_format": request.response_format,
+            "metadata": request.metadata,
+        }
+        raw = json.dumps(payload, sort_keys=True, ensure_ascii=False, separators=(",", ":"))
+        return hashlib.sha256(raw.encode("utf-8")).hexdigest()
+
+
+def get_llm_gateway_service() -> LLMGatewayService:
+    global _gateway_service
+    if _gateway_service is None:
+        legacy_service = get_claude_proxy_service()
+        registry = ProviderRegistry()
+        registry.register(ClaudeTmuxProvider(legacy_service))
+        registry.register(
+            DeepSeekOpenAIProvider(
+                base_url=settings.DEEPSEEK_BASE_URL,
+                api_key=settings.DEEPSEEK_API_KEY,
+                default_model=settings.DEEPSEEK_DEFAULT_MODEL,
+                timeout=settings.DEEPSEEK_TIMEOUT,
+                max_concurrency=settings.DEEPSEEK_MAX_CONCURRENCY,
+                rate_limit_cooldown_seconds=settings.DEEPSEEK_RATE_LIMIT_COOLDOWN_SECONDS,
+                thinking_type=settings.DEEPSEEK_THINKING_TYPE or None,
+                reasoning_effort=settings.DEEPSEEK_REASONING_EFFORT or None,
+            )
+        )
+        router = ModelRouter(
+            ModelRouterConfig(
+                default_model=settings.LLM_PROXY_DEFAULT_MODEL,
+                default_provider=settings.LLM_PROXY_DEFAULT_PROVIDER,
+                model_routes=settings.LLM_PROXY_MODEL_ROUTES,
+                model_aliases=settings.LLM_PROXY_MODEL_ALIASES,
+            )
+        )
+        _gateway_service = LLMGatewayService(
+            router=router,
+            registry=registry,
+            cache_ttl_seconds=settings.LLM_PROXY_CACHE_TTL_SECONDS,
+            cache_max_size=settings.LLM_PROXY_CACHE_MAX_SIZE,
+        )
+    return _gateway_service
