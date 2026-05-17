@@ -11,6 +11,7 @@ from src.infrastructure.persistence.models.knowledge import (
     KnowledgeEvidence,
     KnowledgeGraphAdjacency,
     KnowledgeNode,
+    KnowledgeNormalizationRule,
     KnowledgeReviewItem,
     KnowledgeVersion,
     KnowledgeWikiPage,
@@ -25,6 +26,7 @@ def test_knowledge_tables_registered_on_base_metadata() -> None:
         "kg_edge_evidence",
         "kg_versions",
         "kg_review_items",
+        "kg_normalization_rules",
         "kg_compilation_runs",
         "kg_wiki_pages",
         "kg_graph_adjacency",
@@ -76,15 +78,23 @@ def test_knowledge_evidence_and_link_tables_exist() -> None:
     evidence_columns = set(KnowledgeEvidence.__table__.columns.keys())
     link_columns = set(KnowledgeEdgeEvidence.__table__.columns.keys())
 
-    assert {"evidence_id", "source_type", "source_id", "evidence_type", "payload"}.issubset(
-        evidence_columns
-    )
+    assert {
+        "evidence_id",
+        "source_type",
+        "source_id",
+        "evidence_type",
+        "payload",
+        "status",
+        "source_fingerprint",
+        "superseded_by",
+    }.issubset(evidence_columns)
     assert {"edge_id", "evidence_id"}.issubset(link_columns)
 
 
 def test_knowledge_audit_tables_exist() -> None:
     assert "version_id" in KnowledgeVersion.__table__.columns
     assert "review_id" in KnowledgeReviewItem.__table__.columns
+    assert "rule_id" in KnowledgeNormalizationRule.__table__.columns
     assert "run_id" in KnowledgeCompilationRun.__table__.columns
 
 

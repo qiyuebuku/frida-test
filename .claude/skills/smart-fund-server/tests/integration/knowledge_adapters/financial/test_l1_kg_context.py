@@ -101,7 +101,7 @@ def test_l1_event_record_writes_back_through_financial_adapter() -> None:
 
 def _bootstrap() -> KnowledgeRepositoryImpl:
     repo = KnowledgeRepositoryImpl(target="test")
-    KnowledgeCompiler(repository=repo).compile(FinancialKGAdapter(), _load_all())
+    _compile_financial(repo, _load_all())
     service = KnowledgeService(repository=repo)
     asyncio.run(service.rebuild_wiki("financial"))
     asyncio.run(service.rebuild_indexes("financial"))
@@ -110,6 +110,11 @@ def _bootstrap() -> KnowledgeRepositoryImpl:
 
 def _ensure_tables() -> None:
     Base.metadata.create_all(get_engine("test"), tables=KG_TABLES)
+
+
+def _compile_financial(repo: KnowledgeRepositoryImpl, records: list[dict]):
+    adapter = FinancialKGAdapter()
+    return asyncio.run(KnowledgeCompiler(repository=repo).compile(adapter, adapter.normalize(records)))
 
 
 def _cleanup() -> None:

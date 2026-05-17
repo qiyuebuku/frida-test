@@ -20,6 +20,7 @@ from src.application.dto.knowledge_dto import (
     KnowledgeRebuildWikiCommand,
     KnowledgeResearchContextCommand,
     KnowledgeResearchContextBadCase,
+    KnowledgeSourceProjectionCommand,
     dto_to_dict,
 )
 from src.application.services.knowledge_adapter_registry import AdapterNotFoundError
@@ -74,6 +75,36 @@ def compile_kg(
         )
     )
     _echo(result, json_output, _compile_summary)
+
+
+@kg.command("project-sources")
+@click.option("--target", type=click.Choice(["prod", "test"]), default="prod")
+@click.option("--source", "sources", multiple=True, help="可重复传入，默认读取五张核心表")
+@click.option("--code", "codes", multiple=True, help="可重复传入，如 300750；当前仅作用于 ft_news")
+@click.option("--limit", default=100, type=click.IntRange(1, 5000))
+@click.option("--include-skipped/--no-include-skipped", default=True)
+@click.option("--json", "json_output", is_flag=True, help="输出 JSON")
+def project_sources(
+    target: Target,
+    sources: tuple[str, ...],
+    codes: tuple[str, ...],
+    limit: int,
+    include_skipped: bool,
+    json_output: bool,
+):
+    """Project business tables into KG Source Records without compiling."""
+    result = _run(
+        create_knowledge_service(target=target).project_sources(
+            KnowledgeSourceProjectionCommand(
+                target=target,
+                sources=list(sources) or None,
+                codes=list(codes),
+                limit=limit,
+                include_skipped=include_skipped,
+            )
+        )
+    )
+    _echo(result, json_output, _source_projection_summary)
 
 
 @kg.command("bootstrap-stocks")
@@ -220,6 +251,41 @@ def rebuild_indexes(
     _echo(result, json_output, _indexes_summary)
 
 
+@kg.command("cleanup-evidence")
+@click.option("--adapter", "adapter_name", default="financial", help="adapter 名称")
+@click.option("--target", type=click.Choice(["prod", "test"]), default="prod")
+@click.option("--json", "json_output", is_flag=True, help="输出 JSON")
+def cleanup_evidence(adapter_name: str, target: Target, json_output: bool):
+    """Supersede stale same-source evidence versions."""
+    result = _run(create_knowledge_service(target=target).cleanup_evidence_versions_for(adapter_name))
+    _echo(
+        result,
+        json_output,
+        lambda data: (
+            f"evidence={data.get('evidence', 0)} edges={data.get('edges', 0)} "
+            f"hybrid_vectors_deleted={data.get('hybrid_vectors_deleted', 0)}"
+        ),
+    )
+
+
+@kg.command("normalization-migration-plan")
+@click.option("--adapter", "adapter_name", default="financial", help="adapter 名称")
+@click.option("--target", type=click.Choice(["prod", "test"]), default="prod")
+@click.option("--json", "json_output", is_flag=True, help="输出 JSON")
+def normalization_migration_plan(adapter_name: str, target: Target, json_output: bool):
+    """Plan historical normalization migration without mutating graph facts."""
+    result = _run(create_knowledge_service(target=target).plan_normalization_migration_for(adapter_name))
+    _echo(
+        result,
+        json_output,
+        lambda data: (
+            f"planned_actions={data.get('summary', {}).get('planned_actions', 0)} "
+            f"skipped={data.get('summary', {}).get('skipped_rules', 0)} "
+            f"affected_edges={data.get('summary', {}).get('affected_edges', 0)}"
+        ),
+    )
+
+
 @kg.command("query")
 @click.option("--adapter", "adapter_name", default="financial", help="adapter 名称")
 @click.option("--query", "query_text", required=True, help="查询文本")
@@ -231,10 +297,10 @@ def rebuild_indexes(
 @click.option("--max-chars", default=5000, type=click.IntRange(500, 20000))
 @click.option(
     "--retrieval-mode",
-    type=click.Choice(["deterministic_plan", "agentic_arag"]),
-    default="deterministic_plan",
+    type=click.Choice(["auto", "deterministic_plan", "agentic_arag"]),
+    default="auto",
     show_default=True,
-    help="检索模式；agentic_arag 为显式深度研究路径",
+    help="检索模式；auto 会自动路由，agentic_arag 为显式深度研究路径",
 )
 @click.option("--json", "json_output", is_flag=True, help="输出 JSON")
 def query(
@@ -410,6 +476,15 @@ def _compile_summary(data: dict[str, Any]) -> str:
         f"adapter={data.get('adapter_name')} nodes={data.get('nodes')} "
         f"edges={data.get('edges')} evidence={data.get('evidence')} "
         f"failed={data.get('failed_records')} dry_run={data.get('dry_run')}"
+    )
+
+
+def _source_projection_summary(data: dict[str, Any]) -> str:
+    return (
+        f"records={data.get('total_records')} "
+        f"sources={data.get('source_counts', {})} "
+        f"skipped={len(data.get('skipped', []))} "
+        f"warnings={len(data.get('warnings', []))}"
     )
 
 

@@ -160,12 +160,7 @@ async def test_plan_executor_fills_graph_seed_nodes_and_evidence_ids() -> None:
 
     assert result.trace.mode == "deterministic_plan"
     assert result.trace.planner_enabled is True
-    assert result.trace.channels_used == [
-        "entity_resolve",
-        "graph_search",
-        "semantic_hybrid_search",
-        "chunk_read",
-    ]
+    assert result.trace.channels_used == ["search", "open"]
     assert result.evidence_refs == ["kg_ev:financial:news:1"]
     assert any(hit.hit_type == "evidence" for hit in result.hits)
     assert any("planner time_range" in warning for warning in result.trace.warnings)
@@ -175,7 +170,7 @@ async def test_plan_executor_fills_graph_seed_nodes_and_evidence_ids() -> None:
 async def test_plan_executor_can_read_chunks_from_semantic_hits_without_entity_seed() -> None:
     plan = RetrievalPlan(
         intent="general",
-        steps=[RetrievalToolCall(tool="semantic_hybrid_search", query="海外产能影响")],
+        steps=[RetrievalToolCall(tool="search", query="海外产能影响")],
     )
 
     result = await RetrievalPlanExecutor(_registry()).execute(
@@ -183,7 +178,7 @@ async def test_plan_executor_can_read_chunks_from_semantic_hits_without_entity_s
         plan=plan,
     )
 
-    assert result.trace.channels_used == ["semantic_hybrid_search", "chunk_read"]
+    assert result.trace.channels_used == ["search", "open"]
     assert result.evidence_refs == ["kg_ev:financial:news:1"]
 
 
@@ -195,7 +190,7 @@ async def test_plan_executor_preserves_semantic_score_when_reading_chunks() -> N
     )
     plan = RetrievalPlan(
         intent="general",
-        steps=[RetrievalToolCall(tool="semantic_hybrid_search", query="宁德时代")],
+        steps=[RetrievalToolCall(tool="search", query="宁德时代")],
     )
 
     result = await RetrievalPlanExecutor(registry).execute(query="宁德时代", plan=plan)
@@ -223,40 +218,7 @@ async def test_plan_executor_respects_max_hits() -> None:
 
 
 @pytest.mark.asyncio
-async def test_plan_executor_uses_planned_entities_as_graph_seeds() -> None:
-    registry = _registry()
-    registry.runtime = HybridRetrievalRuntime(
-        _NoisyEntityRepo(),
-        semantic_retriever=_SemanticHybrid(),
-    )
-    registry.options = RetrievalOptions(adapter_name="financial", semantic_hybrid_limit=5)
+async def test_plan_executor_search_step_hides_low_level_tool_contract() -> None:
     plan = FinancialQueryPlanner().plan("宁德时代 300750 最近受哪些事件影响")
 
-    result = await RetrievalPlanExecutor(registry).execute(
-        query="宁德时代 300750 最近受哪些事件影响",
-        plan=plan,
-    )
-
-    graph_steps = [step for step in result.trace.steps if step.tool == "graph_search"]
-    assert graph_steps[0].input["seed_node_ids"] == ["kg:financial:stock:300750"]
-
-
-@pytest.mark.asyncio
-async def test_plan_executor_does_not_use_noisy_seed_when_typed_entity_is_unresolved() -> None:
-    registry = _registry()
-    registry.runtime = HybridRetrievalRuntime(
-        _NoisyEntityRepo(),
-        semantic_retriever=_SemanticHybrid(),
-    )
-    registry.options = RetrievalOptions(adapter_name="financial", semantic_hybrid_limit=5)
-    plan = FinancialQueryPlanner().plan("比亚迪 002594 最近受哪些事件影响")
-
-    result = await RetrievalPlanExecutor(registry).execute(
-        query="比亚迪 002594 最近受哪些事件影响",
-        plan=plan,
-    )
-
-    entity_steps = [step for step in result.trace.steps if step.tool == "entity_resolve"]
-    assert entity_steps[0].hit_count == 0
-    assert "graph_search" not in [step.tool for step in result.trace.steps]
-    assert any("planned typed entities unresolved" in item for item in result.trace.warnings)
+    assert [step.tool for step in plan.steps] == ["search"]

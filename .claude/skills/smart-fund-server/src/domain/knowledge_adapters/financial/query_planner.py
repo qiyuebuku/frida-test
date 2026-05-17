@@ -121,17 +121,7 @@ def _steps(
     direction: RelationDirection,
     entities: list[PlannedEntity],
 ) -> list[RetrievalToolCall]:
-    steps: list[RetrievalToolCall] = []
-    if entities:
-        steps.append(RetrievalToolCall(tool="entity_resolve", query=query))
-    if direction in {"incoming", "outgoing", "path"} and entities:
-        # seed_node_ids are filled after entity_resolve by execute_plan.
-        pass
-    steps.append(RetrievalToolCall(tool="semantic_hybrid_search", query=query))
-    if intent in {"research_summary", "general", "affected_targets_for_topic"}:
-        steps.append(RetrievalToolCall(tool="wiki_search", query=query))
-    # chunk_read is filled after retrieval channels return evidence refs.
-    return steps
+    return [RetrievalToolCall(tool="search", query=query)]
 
 
 def _dedupe_entities(entities: list[PlannedEntity]) -> list[PlannedEntity]:

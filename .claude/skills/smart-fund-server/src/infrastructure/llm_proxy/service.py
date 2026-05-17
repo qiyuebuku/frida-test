@@ -25,6 +25,7 @@ from typing import Any
 
 from src.infrastructure.clients.base import ORIGINAL_PROXY_ENV
 from src.infrastructure.config import settings
+from src.infrastructure.llm_proxy.cache import LLMPersistentFileCache
 from src.infrastructure.llm_proxy.providers.claude_tmux import ClaudeTmuxProvider
 from src.infrastructure.llm_proxy.providers.deepseek_openai import DeepSeekOpenAIProvider
 from src.infrastructure.llm_proxy.registry import ProviderRegistry
@@ -43,6 +44,143 @@ from src.infrastructure.llm_proxy.types import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+def _llm_call_log_fields(
+    request: LLMProxyRequest,
+    *,
+    provider: str,
+    model: str,
+    backend: str | None = None,
+) -> dict[str, Any]:
+    metadata = request.metadata or {}
+    return {
+        "task": metadata.get("task") or metadata.get("operation") or "-",
+        "source_id": metadata.get("source_id") or "-",
+        "source_type": metadata.get("source_type") or "-",
+        "provider": metadata.get("_llm_provider") or provider,
+        "model": model,
+        "backend": backend or "-",
+        "use_cache": request.use_cache,
+        "has_json_schema": bool(request.json_schema),
+        "prompt_chars": len(request.prompt_text()),
+    }
+
+
+def _log_llm_call_start(fields: dict[str, Any]) -> None:
+    logger.info(
+        "[llm_call] START task=%s provider=%s model=%s backend=%s source_type=%s source_id=%s "
+        "use_cache=%s json_schema=%s prompt_chars=%s",
+        fields["task"],
+        fields["provider"],
+        fields["model"],
+        fields["backend"],
+        fields["source_type"],
+        fields["source_id"],
+        fields["use_cache"],
+        fields["has_json_schema"],
+        fields["prompt_chars"],
+    )
+
+
+def _append_llm_full_trace(
+    *,
+    event: str,
+    fields: dict[str, Any],
+    request: LLMProxyRequest,
+    response: LLMProxyResponse | None = None,
+    error: Exception | None = None,
+) -> None:
+    path = os.getenv("LLM_PROXY_FULL_TRACE_FILE")
+    if not path:
+        return
+    payload: dict[str, Any] = {
+        "ts": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
+        "event": event,
+        "fields": fields,
+        "request": {
+            "model": request.model,
+            "system_prompt": request.system_prompt,
+            "prompt": request.prompt,
+            "messages": request.messages,
+            "temperature": request.temperature,
+            "max_tokens": request.max_tokens,
+            "json_schema": request.json_schema,
+            "response_format": request.response_format,
+            "tools": request.tools,
+            "tool_choice": request.tool_choice,
+            "metadata": request.metadata,
+            "timeout": request.timeout,
+            "use_cache": request.use_cache,
+        },
+    }
+    if response is not None:
+        payload["response"] = {
+            "text": response.text,
+            "structured_output": response.structured_output,
+            "usage": response.usage,
+            "duration_ms": response.duration_ms,
+            "raw_payload": response.raw_payload,
+            "proxy": response.proxy,
+            "cache_hit": response.cache_hit,
+        }
+    if error is not None:
+        payload["error"] = {"type": error.__class__.__name__, "message": str(error)}
+    try:
+        log_path = Path(path)
+        log_path.parent.mkdir(parents=True, exist_ok=True)
+        with log_path.open("a", encoding="utf-8") as handle:
+            handle.write(f"\n\n===== llm_proxy {event} =====\n")
+            handle.write(json.dumps(payload, ensure_ascii=False, indent=2, default=str))
+            handle.write("\n")
+    except Exception:
+        logger.debug("[llm_call] failed to append full trace", exc_info=True)
+
+
+def _log_llm_call_done(
+    fields: dict[str, Any],
+    *,
+    duration_ms: int,
+    usage: dict[str, Any] | None,
+) -> None:
+    usage = usage or {}
+    logger.info(
+        "[llm_call] DONE task=%s provider=%s model=%s backend=%s source_type=%s source_id=%s "
+        "duration_ms=%s input_tokens=%s output_tokens=%s total_tokens=%s "
+        "prompt_cache_hit_tokens=%s prompt_cache_miss_tokens=%s cache_hit=False",
+        fields["task"],
+        fields["provider"],
+        fields["model"],
+        fields["backend"],
+        fields["source_type"],
+        fields["source_id"],
+        duration_ms,
+        usage.get("input_tokens", 0),
+        usage.get("output_tokens", 0),
+        usage.get("total_tokens", 0),
+        usage.get("prompt_cache_hit_tokens", 0),
+        usage.get("prompt_cache_miss_tokens", 0),
+    )
+
+
+def _log_llm_call_failed(
+    fields: dict[str, Any],
+    *,
+    duration_ms: int,
+    error: Exception,
+) -> None:
+    logger.warning(
+        "[llm_call] FAILED task=%s provider=%s model=%s backend=%s source_type=%s source_id=%s "
+        "duration_ms=%s error=%r",
+        fields["task"],
+        fields["provider"],
+        fields["model"],
+        fields["backend"],
+        fields["source_type"],
+        fields["source_id"],
+        duration_ms,
+        error,
+    )
 
 
 class _TTLCache:
@@ -147,6 +285,16 @@ class ClaudeProxyService:
             if cached:
                 return cached.clone(cache_hit=True)
 
+        log_fields = _llm_call_log_fields(
+            request,
+            provider="claude_proxy",
+            model=self._resolve_model(request.model),
+            backend=self.backend,
+        )
+        call_started_at = time.perf_counter()
+        _log_llm_call_start(log_fields)
+        _append_llm_full_trace(event="request", fields=log_fields, request=request)
+
         # 失败重试一次：tmux session 偶发返回 usage 为空、API 抖动等。
         # 限流类失败不重试（已经在 _record_rate_limit 里冷却）。
         try:
@@ -154,9 +302,59 @@ class ClaudeProxyService:
         except LLMProxyError as exc:
             msg = str(exc)
             if self._looks_like_rate_limit(msg):
+                _log_llm_call_failed(
+                    log_fields,
+                    duration_ms=int((time.perf_counter() - call_started_at) * 1000),
+                    error=exc,
+                )
+                _append_llm_full_trace(
+                    event="failed",
+                    fields=log_fields,
+                    request=request,
+                    error=exc,
+                )
                 raise
             logger.warning("[llm_proxy] first attempt failed, retrying once: %s", msg)
-            response = await asyncio.to_thread(self._invoke_with_limit, request)
+            try:
+                response = await asyncio.to_thread(self._invoke_with_limit, request)
+            except Exception as retry_exc:
+                _log_llm_call_failed(
+                    log_fields,
+                    duration_ms=int((time.perf_counter() - call_started_at) * 1000),
+                    error=retry_exc,
+                )
+                _append_llm_full_trace(
+                    event="failed",
+                    fields=log_fields,
+                    request=request,
+                    error=retry_exc,
+                )
+                raise
+        except Exception as exc:
+            _log_llm_call_failed(
+                log_fields,
+                duration_ms=int((time.perf_counter() - call_started_at) * 1000),
+                error=exc,
+            )
+            _append_llm_full_trace(
+                event="failed",
+                fields=log_fields,
+                request=request,
+                error=exc,
+            )
+            raise
+
+        _log_llm_call_done(
+            log_fields,
+            duration_ms=int((time.perf_counter() - call_started_at) * 1000),
+            usage=response.usage,
+        )
+        _append_llm_full_trace(
+            event="response",
+            fields=log_fields,
+            request=request,
+            response=response,
+        )
 
         if request.use_cache:
             with self._cache_lock:
@@ -210,6 +408,9 @@ class ClaudeProxyService:
             "temperature": request.temperature,
             "max_tokens": request.max_tokens,
             "json_schema": request.json_schema,
+            "response_format": request.response_format,
+            "tools": request.tools,
+            "tool_choice": request.tool_choice,
             "metadata": request.metadata,
         }
         raw = json.dumps(payload, sort_keys=True, ensure_ascii=False, separators=(",", ":"))
@@ -656,11 +857,13 @@ class LLMGatewayService:
         registry: ProviderRegistry,
         cache_ttl_seconds: int,
         cache_max_size: int,
+        file_cache: LLMPersistentFileCache | None = None,
     ):
         self.router = router
         self.registry = registry
         self._cache = _TTLCache(cache_ttl_seconds, cache_max_size)
         self._cache_lock = threading.Lock()
+        self._file_cache = file_cache
 
     async def generate(self, request: LLMProxyRequest) -> LLMProxyResponse:
         route = self.router.resolve(request.model)
@@ -677,19 +880,70 @@ class LLMGatewayService:
         if request.use_cache:
             with self._cache_lock:
                 cached = self._cache.get(cache_key)
-            if cached:
+            if cached and _is_usable_cached_response(request, cached):
                 return cached.clone(cache_hit=True)
+            if self._file_cache is not None:
+                cached = self._file_cache.get(cache_key)
+                if cached and _is_usable_cached_response(request, cached):
+                    cached.proxy.setdefault("provider", provider.name)
+                    cached.proxy.setdefault("requested_model", route.requested_model)
+                    cached.proxy.setdefault("resolved_model", route.resolved_model)
+                    cached.proxy.setdefault("route_reason", route.route_reason)
+                    cached.proxy["cache_store"] = "file"
+                    with self._cache_lock:
+                        self._cache.set(cache_key, cached.clone(cache_hit=False))
+                    return cached.clone(cache_hit=True)
 
-        response = await provider.generate(request, route)
+        gateway_logs_call = provider.name != "claude_tmux"
+        log_fields = _llm_call_log_fields(
+            request,
+            provider=provider.name,
+            model=route.resolved_model,
+            backend=provider.name,
+        )
+        call_started_at = time.perf_counter()
+        if gateway_logs_call:
+            _log_llm_call_start(log_fields)
+            _append_llm_full_trace(event="request", fields=log_fields, request=request)
+        try:
+            response = await provider.generate(request, route)
+        except Exception as exc:
+            if gateway_logs_call:
+                _log_llm_call_failed(
+                    log_fields,
+                    duration_ms=int((time.perf_counter() - call_started_at) * 1000),
+                    error=exc,
+                )
+                _append_llm_full_trace(
+                    event="failed",
+                    fields=log_fields,
+                    request=request,
+                    error=exc,
+                )
+            raise
         response.proxy.setdefault("provider", provider.name)
         response.proxy.setdefault("requested_model", route.requested_model)
         response.proxy.setdefault("resolved_model", route.resolved_model)
         response.proxy.setdefault("route_reason", route.route_reason)
         response.proxy.setdefault("retry_count", 0)
+        if gateway_logs_call:
+            _log_llm_call_done(
+                log_fields,
+                duration_ms=int((time.perf_counter() - call_started_at) * 1000),
+                usage=response.usage,
+            )
+            _append_llm_full_trace(
+                event="response",
+                fields=log_fields,
+                request=request,
+                response=response,
+            )
 
-        if request.use_cache:
+        if _should_write_cache(request) and _is_cacheable_response(request, response):
             with self._cache_lock:
                 self._cache.set(cache_key, response.clone())
+            if self._file_cache is not None:
+                self._file_cache.set(cache_key, response.clone())
         return response
 
     def health(self) -> dict[str, Any]:
@@ -700,6 +954,11 @@ class LLMGatewayService:
             "model_routes": self.router.config.model_routes,
             "model_aliases": self.router.config.model_aliases,
             "providers": self.registry.health(),
+            "cache": {
+                "memory_ttl_seconds": self._cache.ttl_seconds,
+                "memory_max_size": self._cache.max_size,
+                "file": self._file_cache.stats() if self._file_cache else {"enabled": False},
+            },
         }
 
     def runtime_stats(self) -> dict[str, Any]:
@@ -709,24 +968,63 @@ class LLMGatewayService:
                 "default_model": self.router.config.default_model,
             },
             "providers": self.registry.runtime_stats(),
+            "cache": {
+                "file": self._file_cache.stats() if self._file_cache else {"enabled": False},
+            },
         }
 
     @staticmethod
     def _cache_key(request: LLMProxyRequest, provider: str, resolved_model: str) -> str:
+        metadata = request.metadata or {}
+        cache_prompt = metadata.get("_cache_key_prompt", request.prompt)
+        cache_system_prompt = metadata.get("_cache_key_system_prompt", request.system_prompt)
+        cache_messages = metadata.get("_cache_key_messages", request.messages)
         payload = {
             "provider": provider,
             "resolved_model": resolved_model,
-            "prompt": request.prompt,
-            "system_prompt": request.system_prompt,
-            "messages": request.messages,
+            "prompt": cache_prompt,
+            "system_prompt": cache_system_prompt,
+            "messages": cache_messages,
             "temperature": request.temperature,
             "max_tokens": request.max_tokens,
             "json_schema": request.json_schema,
             "response_format": request.response_format,
-            "metadata": request.metadata,
+            "tools": request.tools,
+            "tool_choice": request.tool_choice,
+            "metadata": _cache_key_metadata(request.metadata),
         }
         raw = json.dumps(payload, sort_keys=True, ensure_ascii=False, separators=(",", ":"))
         return hashlib.sha256(raw.encode("utf-8")).hexdigest()
+
+
+def _is_json_request(request: LLMProxyRequest) -> bool:
+    return bool(request.json_schema or (request.response_format or {}).get("type") == "json_object")
+
+
+def _is_usable_cached_response(request: LLMProxyRequest, response: LLMProxyResponse) -> bool:
+    if _is_json_request(request) and response.structured_output is None:
+        return False
+    return bool(response.text or response.structured_output is not None)
+
+
+def _is_cacheable_response(request: LLMProxyRequest, response: LLMProxyResponse) -> bool:
+    if _is_json_request(request) and response.structured_output is None:
+        return False
+    return bool(response.text or response.structured_output is not None)
+
+
+def _should_write_cache(request: LLMProxyRequest) -> bool:
+    if request.use_cache:
+        return True
+    return bool((request.metadata or {}).get("retry_reason"))
+
+
+def _cache_key_metadata(metadata: dict[str, Any]) -> dict[str, Any]:
+    return {
+        key: value
+        for key, value in (metadata or {}).items()
+        if key != "retry_reason" and not key.startswith("_cache_key_")
+    }
 
 
 def get_llm_gateway_service() -> LLMGatewayService:
@@ -760,5 +1058,9 @@ def get_llm_gateway_service() -> LLMGatewayService:
             registry=registry,
             cache_ttl_seconds=settings.LLM_PROXY_CACHE_TTL_SECONDS,
             cache_max_size=settings.LLM_PROXY_CACHE_MAX_SIZE,
+            file_cache=LLMPersistentFileCache(
+                settings.LLM_PROXY_FILE_CACHE_DIR,
+                enabled=settings.LLM_PROXY_FILE_CACHE_ENABLED,
+            ),
         )
     return _gateway_service

@@ -58,3 +58,70 @@ def test_holds_stock_to_fund_is_invalid() -> None:
 
     assert not result.ok
     assert result.issues[0].message == "invalid source node type"
+
+
+def test_event_can_mention_product_and_supplier_entities() -> None:
+    for target_type, target_key, target_name in [
+        ("product", "储能电芯", "储能电芯"),
+        ("supplier", "电池设备供应商", "电池设备供应商"),
+    ]:
+        edge = EdgeDraft(
+            source_ref="event:news-001",
+            target_ref=f"{target_type}:{target_key}",
+            relation_type="mentions",
+            confidence_label=ConfidenceLabel.EXTRACTED,
+            confidence_score=0.8,
+            status=EdgeStatus.ACTIVE,
+            evidence_refs=["news:x"],
+        )
+
+        result = validate_edge_against_adapter(
+            FINANCIAL_ADAPTER_SPEC,
+            edge,
+            NodeDraft(node_type="event", stable_key="news-001", canonical_name="新闻"),
+            NodeDraft(node_type=target_type, stable_key=target_key, canonical_name=target_name),
+        )
+
+        assert result.ok
+
+
+def test_region_can_have_candidate_related_to_region() -> None:
+    edge = EdgeDraft(
+        source_ref="region:伊朗",
+        target_ref="region:美国",
+        relation_type="related_to",
+        confidence_label=ConfidenceLabel.INFERRED,
+        confidence_score=0.6,
+        status=EdgeStatus.CANDIDATE,
+        evidence_refs=["news:x"],
+    )
+
+    result = validate_edge_against_adapter(
+        FINANCIAL_ADAPTER_SPEC,
+        edge,
+        NodeDraft(node_type="region", stable_key="伊朗", canonical_name="伊朗"),
+        NodeDraft(node_type="region", stable_key="美国", canonical_name="美国"),
+    )
+
+    assert result.ok
+
+
+def test_region_can_belong_to_region() -> None:
+    edge = EdgeDraft(
+        source_ref="region:波兰",
+        target_ref="region:欧洲",
+        relation_type="belongs_to",
+        confidence_label=ConfidenceLabel.EXTRACTED,
+        confidence_score=0.8,
+        status=EdgeStatus.CANDIDATE,
+        evidence_refs=["news:x"],
+    )
+
+    result = validate_edge_against_adapter(
+        FINANCIAL_ADAPTER_SPEC,
+        edge,
+        NodeDraft(node_type="region", stable_key="波兰", canonical_name="波兰"),
+        NodeDraft(node_type="region", stable_key="欧洲", canonical_name="欧洲"),
+    )
+
+    assert result.ok

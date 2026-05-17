@@ -27,6 +27,8 @@ from src.application.dto.knowledge_dto import (
     KnowledgeResearchContextCommand,
     KnowledgeResearchContextDTO,
     KnowledgeReviewActionCommand,
+    KnowledgeSourceProjectionCommand,
+    KnowledgeSourceProjectionResultDTO,
     dto_to_dict,
 )
 from src.application.services.financial_stock_bootstrap import (
@@ -35,8 +37,16 @@ from src.application.services.financial_stock_bootstrap import (
 from src.application.services.financial_news_projection import (
     build_news_records_from_sources,
 )
+from src.application.services.financial_normalization_audit import (
+    audit_financial_normalization_rules,
+    plan_financial_normalization_migration,
+)
 from src.application.services.knowledge_adapter_registry import get_adapter, list_adapters
+from src.application.services.knowledge_source_projection_service import (
+    KnowledgeSourceProjectionService,
+)
 from src.application.services.llm_agentic_retrieval_strategy import LLMAgenticRetrievalStrategy
+from src.application.services.llm_candidate_judge import LLMCandidateJudge
 from src.domain.knowledge.agentic_retrieval import (
     AgenticRetrievalConstraints,
     AgenticRetrievalController,
@@ -57,20 +67,34 @@ from src.domain.knowledge.retrieval import (
     RetrievalTrace,
     _inherit_evidence_scores,
 )
+from src.domain.knowledge.retrieval_document import build_retrieval_document_version, build_retrieval_documents
+from src.domain.knowledge.retrieval_profile import profile_span
+from src.domain.knowledge.retrieval_anchor import build_guarded_query_anchor
+from src.domain.knowledge.retrieval_router import (
+    RetrievalQualityMetrics,
+    apply_post_check,
+    fast_route,
+)
 from src.domain.knowledge.retrieval_plan_executor import RetrievalPlanExecutor
 from src.domain.knowledge.retrieval_eval import (
     RetrievalBadCase,
+    RetrievalTraceSnapshot,
     evaluate_retrieval_bad_case,
 )
 from src.domain.knowledge.retrieval_trace_replay import replay_retrieval_trace
 from src.domain.knowledge.retrieval_tools import RetrievalToolCall, RetrievalToolRegistry
-from src.domain.knowledge.repositories import KnowledgeRepository
+from src.domain.knowledge.repositories import (
+    KnowledgeRepository,
+    KnowledgeSourceProjectionRepository,
+)
 from src.domain.knowledge.schemas import (
     CompileResult,
     CompiledEdge,
     CompiledEvidence,
     CompiledNode,
     EvidenceChunk,
+    FailedRecord,
+    KnowledgeInput,
 )
 from src.domain.knowledge.wiki import KnowledgeWikiBuilder, WikiBuildResult, WikiPage
 from src.domain.knowledge_adapters.financial.consumption import can_hard_consume
@@ -86,8 +110,19 @@ logger = logging.getLogger(__name__)
 class KnowledgeService:
     """Coordinates knowledge use cases without owning persistence details."""
 
-    def __init__(self, repository: KnowledgeRepository | None = None):
+    def __init__(
+        self,
+        repository: KnowledgeRepository | None = None,
+        target: Target | None = None,
+        source_projection_repository: KnowledgeSourceProjectionRepository | None = None,
+    ):
         self.repository = repository
+        self.target = target or "prod"
+        self.source_projection_service = (
+            KnowledgeSourceProjectionService(source_projection_repository)
+            if source_projection_repository is not None
+            else None
+        )
         self.compiler = KnowledgeCompiler(
             repository=repository,
             concurrency=settings.CLAUDE_PROXY_MAX_CONCURRENCY,
@@ -100,8 +135,7 @@ class KnowledgeService:
         status = "degraded"
         if self.repository is not None:
             try:
-                # A cheap read is enough to verify table and connection availability.
-                self.repository.list_nodes("financial")
+                self.repository.ping()
                 database = "ok"
                 status = "ok"
             except Exception as exc:
@@ -118,18 +152,29 @@ class KnowledgeService:
                 "rebuild_indexes",
                 "research_context",
                 "incremental_refresh",
+                "source_projection",
                 "quality_scan",
                 "reviews",
             ],
         )
 
+    async def project_sources(
+        self,
+        command: KnowledgeSourceProjectionCommand,
+    ) -> KnowledgeSourceProjectionResultDTO:
+        if self.source_projection_service is None:
+            raise RuntimeError("Knowledge source projection repository is required for this use case")
+        return self.source_projection_service.project(command)
+
     async def compile_kg(self, command: KnowledgeCompileCommand) -> KnowledgeCompileResultDTO:
-        adapter = get_adapter(command.adapter_name)
+        adapter = get_adapter(command.adapter_name, target=command.target)
+        inputs, normalize_failures = _normalize_records(adapter, command.records)
         compiler = KnowledgeCompiler(
             repository=None if command.dry_run else self.repository,
             concurrency=_compile_concurrency(command),
         )
-        result = await compiler.compile(adapter, command.records)
+        result = await compiler.compile(adapter, inputs)
+        result.failed_records[:0] = normalize_failures
         index_refresh = (
             await self._refresh_incremental_indexes(result, command.target)
             if self.repository is not None and not command.dry_run
@@ -177,11 +222,22 @@ class KnowledgeService:
         self,
         command: KnowledgeBootstrapStockNewsCommand,
     ) -> KnowledgeCompileResultDTO:
-        records = build_news_records_from_sources(
-            target=command.target,
-            codes=command.codes or None,
-            limit=command.limit,
-        )
+        if self.source_projection_service is not None:
+            projection = self.source_projection_service.project(
+                KnowledgeSourceProjectionCommand(
+                    target=command.target,
+                    sources=["ft_news"],
+                    codes=command.codes,
+                    limit=command.limit,
+                )
+            )
+            records = projection.records
+        else:
+            records = build_news_records_from_sources(
+                target=command.target,
+                codes=command.codes or None,
+                limit=command.limit,
+            )
         if not records:
             raise ValueError("no news records found from business source tables")
         return await self.compile_kg(
@@ -416,7 +472,7 @@ class KnowledgeService:
         command: KnowledgeRebuildWikiCommand,
     ) -> KnowledgeRebuildWikiResultDTO:
         _ensure_scope_supported(command.scope)
-        get_adapter(command.adapter_name)
+        get_adapter(command.adapter_name, target=command.target)
         result = await self.rebuild_wiki(command.adapter_name)
         return KnowledgeRebuildWikiResultDTO(
             adapter_name=command.adapter_name,
@@ -431,13 +487,14 @@ class KnowledgeService:
         command: KnowledgeRebuildIndexesCommand,
     ) -> KnowledgeRebuildIndexesResultDTO:
         _ensure_scope_supported(command.scope)
-        get_adapter(command.adapter_name)
+        get_adapter(command.adapter_name, target=command.target)
         repository = self._require_repository()
         allowed = {"graph_adjacency", "evidence_chunks", "hybrid_chunks", "vector_chunks"}
         unknown = sorted(set(command.index_types) - allowed)
         if unknown:
             raise ValueError(f"unsupported index_types: {', '.join(unknown)}")
 
+        _cleanup_evidence_versions(repository, command.adapter_name)
         result = {"graph_adjacency": 0, "evidence_chunks": 0, "hybrid_chunks": 0}
         warnings: list[str] = []
         if "graph_adjacency" in command.index_types:
@@ -446,13 +503,20 @@ class KnowledgeService:
             result["evidence_chunks"] = repository.rebuild_evidence_chunks(command.adapter_name)
         if {"hybrid_chunks", "vector_chunks"} & set(command.index_types):
             chunks = repository.list_evidence_chunks(command.adapter_name)
-            result["hybrid_chunks"] = await MilvusSemanticHybridRetriever().rebuild_index(
+            list_retrieval_documents = getattr(repository, "list_retrieval_documents", None)
+            retrieval_documents = (
+                list_retrieval_documents(command.adapter_name, target=command.target)
+                if callable(list_retrieval_documents)
+                else []
+            )
+            result["hybrid_chunks"] = await _semantic_hybrid_retriever().rebuild_index(
                 adapter_name=command.adapter_name,
                 target=command.target,
                 chunks=chunks,
                 nodes=repository.list_nodes(command.adapter_name),
                 edges=repository.list_edges(command.adapter_name),
                 wiki_pages=repository.list_wiki_pages(command.adapter_name),
+                retrieval_documents=retrieval_documents,
             )
         return KnowledgeRebuildIndexesResultDTO(
             adapter_name=command.adapter_name,
@@ -463,11 +527,27 @@ class KnowledgeService:
             warnings=warnings,
         )
 
+    async def cleanup_evidence_versions_for(self, adapter_name: str) -> dict[str, Any]:
+        repository = self._require_repository()
+        cleanup = _cleanup_evidence_versions(repository, adapter_name)
+        cleanup["hybrid_vectors_deleted"] = await _delete_hybrid_evidence_vectors(
+            adapter_name=adapter_name,
+            target=self.target,
+            evidence_ids=cleanup.get("evidence_ids") or [],
+        )
+        return cleanup
+
     async def build_research_context_for(
         self,
         command: KnowledgeResearchContextCommand,
     ) -> KnowledgeResearchContextDTO:
-        get_adapter(command.adapter_name)
+        get_adapter(command.adapter_name, target=command.target)
+        repository = self._require_repository()
+        anchor = build_guarded_query_anchor(
+            command.query,
+            known_nodes=repository.list_nodes(command.adapter_name),
+        )
+        routing = fast_route(command.query, anchor, command.retrieval_mode)
         options = RetrievalOptions(
             adapter_name=command.adapter_name,
             target=command.target,
@@ -483,7 +563,7 @@ class KnowledgeService:
         retrieval_plan = (
             FinancialQueryPlanner().plan(command.query)
             if command.adapter_name == "financial"
-            and command.retrieval_mode == "deterministic_plan"
+            and routing.initial_mode == "deterministic_plan"
             else None
         )
         graph_time_window = _graph_time_window_for_plan(retrieval_plan)
@@ -498,8 +578,30 @@ class KnowledgeService:
             command.query,
             options,
             retrieval_plan=retrieval_plan,
-            retrieval_mode=command.retrieval_mode,
+            retrieval_mode=routing.initial_mode,
         )
+        if context.trace.retrieval_metrics:
+            routing = apply_post_check(
+                routing,
+                RetrievalQualityMetrics.model_validate(context.trace.retrieval_metrics),
+                anchor,
+            )
+        if routing.upgraded and routing.final_mode == "agentic_arag":
+            context = await self._build_research_answer_context(
+                command.query,
+                options,
+                retrieval_plan=None,
+                retrieval_mode="agentic_arag",
+            )
+            if context.trace.retrieval_metrics:
+                routing = routing.model_copy(
+                    update={
+                        "metrics": RetrievalQualityMetrics.model_validate(
+                            context.trace.retrieval_metrics
+                        )
+                    }
+                )
+        context.trace.routing_decision.update(routing.model_dump(mode="json"))
         trace = dto_to_dict(context.trace)
         hard_score_edges = [
             edge
@@ -531,9 +633,15 @@ class KnowledgeService:
             semantic_enabled=context.trace.semantic_enabled,
             milvus_enabled=context.trace.milvus_enabled,
             agentic_enabled=context.trace.agentic_enabled,
-            planner_enabled=retrieval_plan is not None,
-            retrieval_plan=dto_to_dict(retrieval_plan) if retrieval_plan is not None else {},
+            planner_enabled=context.trace.planner_enabled,
+            retrieval_plan=(
+                dto_to_dict(retrieval_plan)
+                if retrieval_plan is not None and context.trace.planner_enabled
+                else {}
+            ),
             retrieval_trace=trace,
+            query_anchor=trace.get("query_anchor", {}),
+            routing_decision=trace.get("routing_decision", {}),
             warnings=list(context.trace.warnings),
         )
 
@@ -541,7 +649,7 @@ class KnowledgeService:
         self,
         command: KnowledgeQualityScanCommand,
     ) -> KnowledgeQualityScanResultDTO:
-        get_adapter(command.adapter_name)
+        get_adapter(command.adapter_name, target=getattr(command, "target", self.target))
         report = await self.quality_scan(
             command.adapter_name,
             persist_review=command.persist_review,
@@ -564,11 +672,29 @@ class KnowledgeService:
         entries = await self.list_review_queue(status=status)
         return {"total": len(entries), "items": [dto_to_dict(entry) for entry in entries]}
 
+    async def plan_normalization_migration_for(self, adapter_name: str) -> dict[str, Any]:
+        get_adapter(adapter_name, target=self.target)
+        if adapter_name != "financial":
+            raise ValueError("normalization migration plan currently supports financial adapter only")
+        repository = self._require_repository()
+        from src.infrastructure.persistence.repositories.knowledge_normalization_rule_repository import (
+            KnowledgeNormalizationRuleRepository,
+        )
+
+        rules = KnowledgeNormalizationRuleRepository(target=self.target).list_rules(adapter_name, status="active")
+        return plan_financial_normalization_migration(
+            adapter_name=adapter_name,
+            rules=rules,
+            nodes=repository.list_nodes(adapter_name),
+            edges=repository.list_edges(adapter_name),
+            evidence=repository.list_evidence(adapter_name),
+        )
+
     async def replay_research_context_bad_cases(
         self,
         command: KnowledgeBadCaseReplayCommand,
     ) -> KnowledgeBadCaseReplayResultDTO:
-        get_adapter(command.adapter_name)
+        get_adapter(command.adapter_name, target=command.target)
         results: list[dict[str, Any]] = []
         for case in command.cases:
             if case.replay_trace:
@@ -602,10 +728,14 @@ class KnowledgeService:
                     expected_node_names=case.expected_node_names,
                     expected_relation_types=case.expected_relation_types,
                     expected_channels_used=case.expected_channels_used,
+                    forbidden_node_names=case.forbidden_node_names,
+                    forbidden_evidence_refs=case.forbidden_evidence_refs,
+                    forbidden_topics=case.forbidden_topics,
                     min_hits=case.min_hits,
                     min_evidence_refs=case.min_evidence_refs,
                     min_matched_nodes=case.min_matched_nodes,
                     min_matched_edges=case.min_matched_edges,
+                    max_forbidden_hits=case.max_forbidden_hits,
                 ),
                 evidence_refs=context.evidence_refs,
                 hit_titles=[hit.get("title", "") for hit in context.hits],
@@ -621,6 +751,12 @@ class KnowledgeService:
             item["retrieval_mode"] = case.retrieval_mode
             item["channels_used"] = context.retrieval_channels_used
             item["warnings"] = context.warnings
+            item["query_anchor"] = context.query_anchor
+            item["routing_decision"] = context.routing_decision
+            item["retrieval_metrics"] = context.retrieval_trace.get("retrieval_metrics", {})
+            item["candidate_judgement_summary"] = _candidate_judgement_summary(
+                context.retrieval_trace.get("candidate_judgements", [])
+            )
             item["trace_replay"] = case.replay_trace
             item["trace_mismatches"] = trace_mismatches
             results.append(item)
@@ -704,13 +840,17 @@ class KnowledgeService:
         }
 
     async def compile(self, adapter: DomainAdapter, raw_records: Any) -> CompileResult:
-        return await self.compiler.compile(adapter, raw_records)
+        inputs, normalize_failures = _normalize_records(adapter, raw_records)
+        result = await self.compiler.compile(adapter, inputs)
+        result.failed_records[:0] = normalize_failures
+        return result
 
     async def search(self, *args, **kwargs):
         raise NotImplementedError("Knowledge search is planned for a later step")
 
     async def rebuild_wiki(self, adapter_name: str) -> WikiBuildResult:
         repository = self._require_repository()
+        _cleanup_evidence_versions(repository, adapter_name)
         nodes = repository.list_nodes(adapter_name)
         result = self.wiki_builder.build(
             adapter_name=adapter_name,
@@ -727,6 +867,7 @@ class KnowledgeService:
 
     async def rebuild_indexes(self, adapter_name: str) -> dict[str, int]:
         repository = self._require_repository()
+        _cleanup_evidence_versions(repository, adapter_name)
         return {
             "graph_adjacency": repository.rebuild_graph_adjacency(adapter_name),
             "evidence_chunks": repository.rebuild_evidence_chunks(adapter_name),
@@ -760,46 +901,84 @@ class KnowledgeService:
         )
         if retrieval_mode == "agentic_arag":
             registry = RetrievalToolRegistry(runtime, options)
-            agentic = await AgenticRetrievalController(
-                registry,
-                _agentic_retrieval_strategy(),
-                AgenticRetrievalConstraints(max_hits=options.max_hits),
-            ).run(query)
+            with profile_span("kg_context.agentic_run", query=_clip_text(query, 120)):
+                agentic = await AgenticRetrievalController(
+                    registry,
+                    _agentic_retrieval_strategy(),
+                    _agentic_candidate_judge(),
+                    AgenticRetrievalConstraints(max_hits=options.max_hits),
+                ).run(query)
             hits = list(agentic.hits)
             trace = agentic.trace
-            if agentic.evidence_refs and "chunk_read" not in trace.channels_used:
-                chunk_result = await registry.execute(
-                    RetrievalToolCall(
-                        tool="chunk_read",
-                        evidence_ids=agentic.evidence_refs,
-                        limit=options.evidence_limit,
+            if agentic.evidence_refs and "open" not in trace.channels_used:
+                with profile_span(
+                    "kg_context.agentic_missing_open",
+                    evidence_count=len(agentic.evidence_refs),
+                ):
+                    chunk_result = await registry.execute(
+                        RetrievalToolCall(
+                            tool="open",
+                            evidence_ids=agentic.evidence_refs,
+                            limit=options.evidence_limit,
+                        )
                     )
-                )
                 chunk_hits = _inherit_evidence_scores(chunk_result.hits, hits)
                 hits.extend(chunk_hits)
                 trace = trace.model_copy(
                     update={
-                        "channels_used": _ordered_unique([*trace.channels_used, "chunk_read"]),
+                        "channels_used": _ordered_unique([*trace.channels_used, "open"]),
                         "steps": [*trace.steps, chunk_result.step],
                     }
                 )
-            return runtime.build_answer_context_from_hits(
+            with profile_span(
+                "kg_context.build_from_agentic_hits",
+                hits=len(hits),
+                evidence_refs=len(agentic.evidence_refs),
+            ):
+                context = runtime.build_answer_context_from_hits(
+                    query=query,
+                    hits=hits,
+                    options=options,
+                    trace=trace,
+                )
+            _save_retrieval_trace_snapshot(
+                repository,
                 query=query,
-                hits=hits,
                 options=options,
-                trace=trace,
+                context=context,
+                strategy_name="agentic_arag",
+                strategy_version="rrf_feature_coverage_v1",
             )
+            return context
         if retrieval_plan is None:
-            return await runtime.build_answer_context_async(query, options)
+            context = await runtime.build_answer_context_async(query, options)
+            _save_retrieval_trace_snapshot(
+                repository,
+                query=query,
+                options=options,
+                context=context,
+                strategy_name=context.trace.mode,
+                strategy_version="v1",
+            )
+            return context
         execution = await RetrievalPlanExecutor(
             RetrievalToolRegistry(runtime, options)
         ).execute(query=query, plan=retrieval_plan)
-        return runtime.build_answer_context_from_hits(
+        context = runtime.build_answer_context_from_hits(
             query=query,
             hits=execution.hits,
             options=options,
             trace=execution.trace,
         )
+        _save_retrieval_trace_snapshot(
+            repository,
+            query=query,
+            options=options,
+            context=context,
+            strategy_name=context.trace.mode,
+            strategy_version="v1",
+        )
+        return context
 
     async def resolve_financial_entities(self, text: str, limit: int = 20) -> dict[str, Any]:
         repository = self._require_repository()
@@ -833,13 +1012,12 @@ class KnowledgeService:
         }
 
     async def write_l1_event_to_kg(self, event_record: dict[str, Any]) -> CompileResult:
-        return await self.compiler.compile(get_adapter("financial"), [_as_financial_source("l1_events", event_record)])
+        adapter = get_adapter("financial", target=self.target)
+        return await self.compiler.compile(adapter, adapter.normalize([_as_financial_source("l1_events", event_record)]))
 
     async def record_kg_feedback(self, feedback_record: dict[str, Any]) -> CompileResult:
-        return await self.compiler.compile(
-            get_adapter("financial"),
-            [_as_financial_source("feedback_records", feedback_record)],
-        )
+        adapter = get_adapter("financial", target=self.target)
+        return await self.compiler.compile(adapter, adapter.normalize([_as_financial_source("feedback_records", feedback_record)]))
 
     async def find_financial_paths(
         self,
@@ -892,13 +1070,31 @@ class KnowledgeService:
 
     async def quality_scan(self, adapter_name: str, persist_review: bool = True) -> QualityReport:
         repository = self._require_repository()
+        nodes = repository.list_nodes(adapter_name)
+        edges = repository.list_edges(adapter_name)
+        evidence = repository.list_evidence(adapter_name)
         report = self.quality_scanner.scan(
             adapter_name=adapter_name,
-            nodes=repository.list_nodes(adapter_name),
-            edges=repository.list_edges(adapter_name),
-            evidence=repository.list_evidence(adapter_name),
+            nodes=nodes,
+            edges=edges,
+            evidence=evidence,
             wiki_pages=repository.list_wiki_pages(adapter_name),
         )
+        if adapter_name == "financial":
+            from src.infrastructure.persistence.repositories.knowledge_normalization_rule_repository import (
+                KnowledgeNormalizationRuleRepository,
+            )
+
+            rules = KnowledgeNormalizationRuleRepository(target=self.target).list_rules(adapter_name, status="active")
+            rule_issues, rule_metrics = audit_financial_normalization_rules(
+                adapter_name=adapter_name,
+                rules=rules,
+                nodes=nodes,
+                edges=edges,
+                evidence=evidence,
+            )
+            report.issues.extend(rule_issues)
+            report.metrics["normalization_audit"] = rule_metrics
         if persist_review:
             repository.upsert_review_entries(self.quality_scanner.review_entries_for(report))
         return report
@@ -948,22 +1144,87 @@ class KnowledgeService:
                 "graph_adjacency": 0,
                 "evidence_chunks": 0,
                 "wiki_pages": 0,
+                "retrieval_documents": 0,
                 "hybrid_chunks": 0,
             }
 
-        graph_adjacency = repository.upsert_graph_adjacency(result.edges)
-        evidence_chunks = repository.upsert_evidence_chunks(result.evidence)
-        wiki_pages = self._changed_wiki_pages(result)
-        wiki_count = repository.upsert_wiki_pages(result.adapter_name, wiki_pages)
-        hybrid_chunks = await MilvusSemanticHybridRetriever().upsert_index(
-            adapter_name=result.adapter_name,
-            target=target,
-            chunks=_evidence_chunks_from_compiled(result.evidence),
-            nodes=_milvus_nodes_for_result(repository, result),
-            edges=result.edges,
-            wiki_pages=wiki_pages,
-            kg_version=result.version,
-        )
+        with profile_span("kg_incremental_index.cleanup_evidence_versions", adapter=result.adapter_name):
+            cleanup = _cleanup_evidence_versions(repository, result.adapter_name)
+        with profile_span(
+            "kg_incremental_index.delete_stale_hybrid_vectors",
+            evidence=len(cleanup.get("evidence_ids") or []),
+        ):
+            stale_hybrid_vectors = await _delete_hybrid_evidence_vectors(
+                adapter_name=result.adapter_name,
+                target=target,
+                evidence_ids=cleanup.get("evidence_ids") or [],
+            )
+
+        with profile_span("kg_incremental_index.upsert_graph_adjacency", edges=len(result.edges)):
+            graph_adjacency = repository.upsert_graph_adjacency(result.edges)
+        with profile_span("kg_incremental_index.upsert_evidence_chunks", evidence=len(result.evidence)):
+            evidence_chunks = repository.upsert_evidence_chunks(result.evidence)
+        with profile_span("kg_incremental_index.changed_wiki_pages"):
+            wiki_pages = self._changed_wiki_pages(result)
+        with profile_span("kg_incremental_index.upsert_wiki_pages", wiki_pages=len(wiki_pages)):
+            wiki_count = repository.upsert_wiki_pages(result.adapter_name, wiki_pages)
+        with profile_span("kg_incremental_index.build_hybrid_evidence_chunks", evidence=len(result.evidence)):
+            hybrid_evidence_chunks = _evidence_chunks_from_compiled(result.evidence)
+        with profile_span("kg_incremental_index.collect_hybrid_nodes", nodes=len(result.nodes), edges=len(result.edges)):
+            hybrid_nodes = _milvus_nodes_for_result(repository, result)
+        with profile_span(
+            "kg_incremental_index.build_retrieval_documents",
+            nodes=len(hybrid_nodes),
+            edges=len(result.edges),
+            evidence=len(result.evidence),
+            wiki_pages=len(wiki_pages),
+        ):
+            retrieval_documents = build_retrieval_documents(
+                adapter_name=result.adapter_name,
+                target=target,
+                nodes=hybrid_nodes,
+                edges=result.edges,
+                evidence=result.evidence,
+                wiki_pages=wiki_pages,
+            )
+        with profile_span("kg_incremental_index.upsert_retrieval_documents", documents=len(retrieval_documents)):
+            retrieval_document_count = repository.upsert_retrieval_documents(retrieval_documents)
+        retrieval_document_version_id = ""
+        save_document_version = getattr(repository, "save_retrieval_document_version", None)
+        if callable(save_document_version):
+            with profile_span("kg_incremental_index.save_retrieval_document_version", documents=len(retrieval_documents)):
+                retrieval_document_version = build_retrieval_document_version(
+                    adapter_name=result.adapter_name,
+                    target=target,
+                    documents=retrieval_documents,
+                    nodes=hybrid_nodes,
+                    edges=result.edges,
+                    evidence=result.evidence,
+                    wiki_pages=wiki_pages,
+                    config={
+                        "compile_run_id": result.run_id,
+                        "kg_version": result.version,
+                        "builder": "build_retrieval_documents",
+                    },
+                )
+                retrieval_document_version_id = save_document_version(retrieval_document_version)
+        with profile_span(
+            "kg_incremental_index.hybrid_upsert_index",
+            chunks=len(hybrid_evidence_chunks),
+            nodes=len(hybrid_nodes),
+            edges=len(result.edges),
+            wiki_pages=len(wiki_pages),
+        ):
+            hybrid_chunks = await _semantic_hybrid_retriever().upsert_index(
+                adapter_name=result.adapter_name,
+                target=target,
+                chunks=hybrid_evidence_chunks,
+                nodes=hybrid_nodes,
+                edges=result.edges,
+                wiki_pages=wiki_pages,
+                retrieval_documents=retrieval_documents,
+                kg_version=result.version,
+            )
         summary = {
             "mode": "incremental",
             "graph_adjacency": graph_adjacency,
@@ -973,15 +1234,20 @@ class KnowledgeService:
             "node_ids": [node.node_id for node in result.nodes],
             "edge_ids": [edge.edge_id for edge in result.edges],
             "evidence_ids": [item.evidence_id for item in result.evidence],
+            "retrieval_documents": retrieval_document_count,
+            "retrieval_document_version_id": retrieval_document_version_id,
+            "stale_evidence_cleanup": cleanup,
+            "stale_hybrid_vectors_deleted": stale_hybrid_vectors,
         }
         logger.info(
             "[kg_incremental_index] adapter=%s target=%s graph_adjacency=%d "
-            "evidence_chunks=%d wiki_pages=%d hybrid_chunks=%d nodes=%d edges=%d evidence=%d",
+            "evidence_chunks=%d wiki_pages=%d retrieval_documents=%d hybrid_chunks=%d nodes=%d edges=%d evidence=%d",
             result.adapter_name,
             target,
             graph_adjacency,
             evidence_chunks,
             wiki_count,
+            retrieval_document_count,
             hybrid_chunks,
             len(result.nodes),
             len(result.edges),
@@ -991,16 +1257,25 @@ class KnowledgeService:
 
     def _changed_wiki_pages(self, result: CompileResult) -> list[WikiPage]:
         repository = self._require_repository()
-        nodes = repository.list_nodes(result.adapter_name)
-        edges = repository.list_edges(result.adapter_name)
-        evidence = repository.list_evidence(result.adapter_name)
-        build_result = self.wiki_builder.build(
-            adapter_name=result.adapter_name,
-            version=_latest_version(nodes),
-            nodes=nodes,
-            edges=edges,
-            evidence=evidence,
-        )
+        with profile_span("kg_incremental_index.changed_wiki_pages.load_nodes"):
+            nodes = repository.list_nodes(result.adapter_name)
+        with profile_span("kg_incremental_index.changed_wiki_pages.load_edges"):
+            edges = repository.list_edges(result.adapter_name)
+        with profile_span("kg_incremental_index.changed_wiki_pages.load_evidence"):
+            evidence = repository.list_evidence(result.adapter_name)
+        with profile_span(
+            "kg_incremental_index.changed_wiki_pages.build_all",
+            nodes=len(nodes),
+            edges=len(edges),
+            evidence=len(evidence),
+        ):
+            build_result = self.wiki_builder.build(
+                adapter_name=result.adapter_name,
+                version=_latest_version(nodes),
+                nodes=nodes,
+                edges=edges,
+                evidence=evidence,
+            )
         errors = [issue for issue in build_result.issues if issue.severity.value == "error"]
         if errors:
             raise ValueError(f"wiki lint failed during incremental refresh: {len(errors)} error(s)")
@@ -1011,14 +1286,15 @@ class KnowledgeService:
             changed_node_ids.add(edge.source_node_id)
             changed_node_ids.add(edge.target_node_id)
             changed_evidence_ids.update(edge.evidence_ids)
-        return [
-            page
-            for page in build_result.pages
-            if page.page_type == "index_page"
-            or set(page.source_node_ids) & changed_node_ids
-            or set(page.source_edge_ids) & changed_edge_ids
-            or set(page.source_evidence_ids) & changed_evidence_ids
-        ]
+        with profile_span("kg_incremental_index.changed_wiki_pages.filter", pages=len(build_result.pages)):
+            return [
+                page
+                for page in build_result.pages
+                if page.page_type == "index_page"
+                or set(page.source_node_ids) & changed_node_ids
+                or set(page.source_edge_ids) & changed_edge_ids
+                or set(page.source_evidence_ids) & changed_evidence_ids
+            ]
 
     def _require_repository(self) -> KnowledgeRepository:
         if self.repository is None:
@@ -1033,8 +1309,15 @@ def create_knowledge_service(target: Target | None = None) -> KnowledgeService:
     from src.infrastructure.persistence.repositories.knowledge_repository_impl import (
         KnowledgeRepositoryImpl,
     )
+    from src.infrastructure.persistence.repositories.knowledge_source_projection_repository_impl import (
+        KnowledgeSourceProjectionRepositoryImpl,
+    )
 
-    return KnowledgeService(repository=KnowledgeRepositoryImpl(target=target))
+    return KnowledgeService(
+        repository=KnowledgeRepositoryImpl(target=target),
+        target=target,
+        source_projection_repository=KnowledgeSourceProjectionRepositoryImpl(target=target),
+    )
 
 
 def _latest_version(nodes) -> str:
@@ -1053,8 +1336,85 @@ def _compile_concurrency(command: KnowledgeCompileCommand) -> int:
     return max(1, int(settings.CLAUDE_PROXY_MAX_CONCURRENCY))
 
 
+async def _delete_hybrid_evidence_vectors(*, adapter_name: str, target: str, evidence_ids: list[str]) -> int:
+    if not evidence_ids:
+        return 0
+    try:
+        return await _semantic_hybrid_retriever().delete_evidence(
+            adapter_name=adapter_name,
+            target=target,
+            evidence_ids=evidence_ids,
+        )
+    except Exception as exc:
+        logger.warning(
+            "[kg_cleanup] failed to delete stale hybrid vectors adapter=%s target=%s evidence=%d error=%s",
+            adapter_name,
+            target,
+            len(evidence_ids),
+            exc,
+        )
+        return 0
+
+
+def _cleanup_evidence_versions(repository: KnowledgeRepository, adapter_name: str) -> dict[str, Any]:
+    cleanup = getattr(repository, "cleanup_evidence_versions", None)
+    if cleanup is None:
+        return {"evidence": 0, "edges": 0, "evidence_ids": [], "edge_ids": []}
+    return cleanup(adapter_name)
+
+
+def _normalize_records(
+    adapter: DomainAdapter,
+    raw_records: Any,
+) -> tuple[list[KnowledgeInput], list[FailedRecord]]:
+    records = raw_records if isinstance(raw_records, list) else [raw_records]
+    inputs: list[KnowledgeInput] = []
+    failures: list[FailedRecord] = []
+    for index, record in enumerate(records):
+        if isinstance(record, KnowledgeInput):
+            inputs.append(record)
+            continue
+        try:
+            inputs.extend(adapter.normalize(record))
+        except Exception as exc:
+            failures.append(
+                FailedRecord(
+                    source_type=_raw_source_type(record),
+                    source_id=_raw_source_id(record, index),
+                    reason=f"normalize failed: {exc}",
+                    details={"index": index},
+                )
+            )
+    return inputs, failures
+
+
+def _raw_source_type(record: Any) -> str:
+    if isinstance(record, dict):
+        return str(record.get("source_type") or "raw")
+    return "raw"
+
+
+def _raw_source_id(record: Any, index: int) -> str:
+    if isinstance(record, dict):
+        payload = record.get("payload")
+        if isinstance(payload, dict):
+            value = record.get("source_id") or payload.get("source_id") or payload.get("id")
+        else:
+            value = record.get("source_id") or record.get("id")
+        if value is not None and str(value).strip():
+            return str(value)
+    return f"normalize:{index}"
+
+
+_SEMANTIC_HYBRID_RETRIEVER: MilvusSemanticHybridRetriever | None = None
+
+
 def _semantic_hybrid_retriever():
-    return MilvusSemanticHybridRetriever()
+    global _SEMANTIC_HYBRID_RETRIEVER
+    if _SEMANTIC_HYBRID_RETRIEVER is None:
+        with profile_span("kg_semantic_hybrid_retriever.create"):
+            _SEMANTIC_HYBRID_RETRIEVER = MilvusSemanticHybridRetriever()
+    return _SEMANTIC_HYBRID_RETRIEVER
 
 
 def _evidence_chunks_from_compiled(evidence: list[CompiledEvidence]) -> list[EvidenceChunk]:
@@ -1131,13 +1491,14 @@ def _merge_index_refresh_summaries(summaries: list[dict[str, Any]]) -> dict[str,
         "graph_adjacency": 0,
         "evidence_chunks": 0,
         "wiki_pages": 0,
+        "retrieval_documents": 0,
         "hybrid_chunks": 0,
         "node_ids": [],
         "edge_ids": [],
         "evidence_ids": [],
     }
     for summary in summaries:
-        for key in ("graph_adjacency", "evidence_chunks", "wiki_pages", "hybrid_chunks"):
+        for key in ("graph_adjacency", "evidence_chunks", "wiki_pages", "retrieval_documents", "hybrid_chunks"):
             merged[key] += int(summary.get(key) or 0)
         for key in ("node_ids", "edge_ids", "evidence_ids"):
             merged[key].extend(summary.get(key) or [])
@@ -1209,6 +1570,10 @@ def _agentic_retrieval_strategy():
     return LLMAgenticRetrievalStrategy()
 
 
+def _agentic_candidate_judge():
+    return LLMCandidateJudge()
+
+
 def _graph_time_window_for_plan(
     retrieval_plan,
     *,
@@ -1253,6 +1618,122 @@ def _context_text(context: AnswerContext) -> str:
             continue
         parts.append(f"[{hit.source}:{hit.hit_type}] {hit.title}\n{snippet}")
     return "\n\n".join(parts)
+
+
+def _save_retrieval_trace_snapshot(
+    repository: KnowledgeRepository,
+    *,
+    query: str,
+    options: RetrievalOptions,
+    context: AnswerContext,
+    strategy_name: str,
+    strategy_version: str,
+) -> None:
+    save_snapshot = getattr(repository, "save_retrieval_trace_snapshot", None)
+    if not callable(save_snapshot):
+        return
+    trace = context.trace
+    snapshot = RetrievalTraceSnapshot(
+        adapter_name=options.adapter_name,
+        target=options.target,
+        query=query,
+        strategy_name=strategy_name,
+        strategy_version=strategy_version,
+        query_snapshot={
+            "query": query,
+            "adapter_name": options.adapter_name,
+            "target": options.target,
+            "mode": trace.mode,
+            "query_anchor": trace.query_anchor,
+            "routing_decision": trace.routing_decision,
+        },
+        recall_snapshot={
+            "channels_enabled": trace.channels_enabled,
+            "channels_used": trace.channels_used,
+            "semantic_enabled": trace.semantic_enabled,
+            "milvus_enabled": trace.milvus_enabled,
+            "steps": [step.model_dump(mode="json") for step in trace.steps],
+            "hit_count": len(context.hits),
+            "hits": [_retrieval_hit_snapshot(hit) for hit in context.hits],
+        },
+        package_snapshot={
+            "matched_nodes": [
+                {
+                    "node_id": node.node_id,
+                    "node_type": node.node_type,
+                    "canonical_name": node.canonical_name,
+                }
+                for node in context.matched_nodes
+            ],
+            "matched_edges": [
+                {
+                    "edge_id": edge.edge_id,
+                    "relation_type": edge.relation_type,
+                    "source_node_id": edge.source_node_id,
+                    "target_node_id": edge.target_node_id,
+                    "evidence_ids": edge.evidence_ids,
+                }
+                for edge in context.matched_edges
+            ],
+        },
+        ranking_snapshot={
+            "controller_decisions": trace.controller_decisions,
+            "raw_candidate_counts": [
+                item.get("raw_candidate_count", 0)
+                for item in trace.controller_decisions
+                if isinstance(item, dict)
+            ],
+            "package_counts": [
+                item.get("package_count", 0)
+                for item in trace.controller_decisions
+                if isinstance(item, dict)
+            ],
+            "judge_top_k": [
+                item.get("judge_top_k", 0)
+                for item in trace.controller_decisions
+                if isinstance(item, dict)
+            ],
+        },
+        judge_snapshot={
+            "candidate_judgements": trace.candidate_judgements,
+            "retrieval_metrics": trace.retrieval_metrics,
+        },
+        context_snapshot={
+            "evidence_refs": _ordered_unique(
+                evidence_id for hit in context.hits for evidence_id in hit.evidence_refs
+            ),
+            "budget_usage": context.budget_usage.model_dump(mode="json"),
+            "context_text_preview": _clip_text(_context_text(context), 1200),
+        },
+        stop_snapshot={
+            "working_set": trace.working_set,
+            "warnings": trace.warnings,
+            "stop_reason": (trace.working_set or {}).get("stop_reason") if isinstance(trace.working_set, dict) else None,
+        },
+    )
+    try:
+        save_snapshot(snapshot)
+    except Exception as exc:  # pragma: no cover - defensive persistence guard
+        logger.warning(
+            "[kg_retrieval_quality] failed to save trace snapshot query=%r error=%s",
+            _clip_text(query, 120),
+            exc,
+        )
+
+
+def _retrieval_hit_snapshot(hit) -> dict[str, Any]:
+    return {
+        "id": hit.hit_id,
+        "type": hit.hit_type,
+        "title": _clip_text(hit.title, 160),
+        "source": hit.source,
+        "score": hit.score,
+        "node_refs": hit.node_refs,
+        "edge_refs": hit.edge_refs,
+        "evidence_refs": hit.evidence_refs,
+        "matched_terms": hit.matched_terms,
+        "matched_fields": hit.matched_fields,
+    }
 
 
 def _incremental_step(name: str, result: Any) -> dict[str, Any]:
@@ -1310,25 +1791,62 @@ def _bad_case_replay_metrics(results: list[dict[str, Any]]) -> dict[str, Any]:
     total = len(results)
     passed = sum(1 for item in results if item.get("passed"))
     channel_counts: dict[str, int] = {}
+    route_counts: dict[str, int] = {}
+    upgraded = 0
     total_metrics = {
         "hits": 0,
         "evidence_refs": 0,
         "matched_nodes": 0,
         "matched_edges": 0,
+        "forbidden_hits": 0,
     }
+    context_precision_total = 0.0
+    context_precision_count = 0
     for item in results:
         for channel in item.get("channels_used") or []:
             channel_counts[channel] = channel_counts.get(channel, 0) + 1
+        routing = item.get("routing_decision") or {}
+        route = str(routing.get("final_mode") or item.get("retrieval_mode") or "unknown")
+        route_counts[route] = route_counts.get(route, 0) + 1
+        if routing.get("upgraded"):
+            upgraded += 1
         metrics = item.get("metrics") or {}
         for name in total_metrics:
             total_metrics[name] += int(metrics.get(name) or 0)
+        retrieval_metrics = item.get("retrieval_metrics") or {}
+        if retrieval_metrics.get("context_precision") is not None:
+            context_precision_total += float(retrieval_metrics["context_precision"])
+            context_precision_count += 1
     return {
         "pass_rate": (passed / total) if total else 0.0,
         "channel_coverage": channel_counts,
+        "route_coverage": route_counts,
+        "upgraded": upgraded,
         "avg_hits": (total_metrics["hits"] / total) if total else 0.0,
         "avg_evidence_refs": (total_metrics["evidence_refs"] / total) if total else 0.0,
         "avg_matched_nodes": (total_metrics["matched_nodes"] / total) if total else 0.0,
         "avg_matched_edges": (total_metrics["matched_edges"] / total) if total else 0.0,
+        "avg_forbidden_hits": (total_metrics["forbidden_hits"] / total) if total else 0.0,
+        "avg_context_precision": (
+            context_precision_total / context_precision_count
+            if context_precision_count
+            else 0.0
+        ),
+    }
+
+
+def _candidate_judgement_summary(judgements: list[dict[str, Any]]) -> dict[str, Any]:
+    decisions: dict[str, int] = {}
+    sources: dict[str, int] = {}
+    for judgement in judgements or []:
+        decision = str(judgement.get("decision") or "unknown")
+        decisions[decision] = decisions.get(decision, 0) + 1
+        source = str(judgement.get("judge_source") or "unknown")
+        sources[source] = sources.get(source, 0) + 1
+    return {
+        "total": len(judgements or []),
+        "decisions": decisions,
+        "judge_sources": sources,
     }
 
 

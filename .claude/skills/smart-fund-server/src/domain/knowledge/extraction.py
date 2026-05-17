@@ -68,6 +68,66 @@ class ExtractedRelation(KnowledgeBaseModel):
         return value
 
 
+class CandidateFactEntity(KnowledgeBaseModel):
+    entity_type: str
+    canonical_name: str
+    identifiers: dict[str, str] = Field(default_factory=dict)
+    aliases: list[str] = Field(default_factory=list)
+    confidence: float = Field(0.0, ge=0.0, le=1.0)
+    evidence_spans: list[EvidenceSpan] = Field(default_factory=list)
+    properties: dict[str, Any] = Field(default_factory=dict)
+
+    @field_validator("entity_type", "canonical_name")
+    @classmethod
+    def _required_text(cls, value: str) -> str:
+        if not isinstance(value, str) or not value.strip():
+            raise ValueError("value must be a non-empty string")
+        return value
+
+
+class CandidateFactEvent(KnowledgeBaseModel):
+    title: str
+    summary: str | None = None
+    occurred_at: str | None = None
+    related_entities: list[str] = Field(default_factory=list)
+    confidence: float = Field(0.0, ge=0.0, le=1.0)
+    evidence_spans: list[EvidenceSpan] = Field(default_factory=list)
+    properties: dict[str, Any] = Field(default_factory=dict)
+
+    @field_validator("title")
+    @classmethod
+    def _required_title(cls, value: str) -> str:
+        if not isinstance(value, str) or not value.strip():
+            raise ValueError("value must be a non-empty string")
+        return value
+
+
+class CandidateFactRelation(KnowledgeBaseModel):
+    relation_type: str
+    source: str
+    target: str
+    direction: str | None = None
+    reason: str | None = None
+    confidence: float = Field(0.0, ge=0.0, le=1.0)
+    evidence_spans: list[EvidenceSpan] = Field(default_factory=list)
+    properties: dict[str, Any] = Field(default_factory=dict)
+
+    @field_validator("relation_type", "source", "target")
+    @classmethod
+    def _required_text(cls, value: str) -> str:
+        if not isinstance(value, str) or not value.strip():
+            raise ValueError("value must be a non-empty string")
+        return value
+
+
+class CandidateFactPackage(KnowledgeBaseModel):
+    entities: list[CandidateFactEntity] = Field(default_factory=list)
+    events: list[CandidateFactEvent] = Field(default_factory=list)
+    relations: list[CandidateFactRelation] = Field(default_factory=list)
+    uncertainties: list[str] = Field(default_factory=list)
+    rule_suggestions: list[str] = Field(default_factory=list)
+
+
 class TextExtractionInput(KnowledgeBaseModel):
     source_id: str
     source_type: str
@@ -101,8 +161,42 @@ class TextExtractionResult(KnowledgeBaseModel):
     mentioned_entities: list[ExtractedEntity] = Field(default_factory=list)
     affected_entities: list[ExtractedEntity] = Field(default_factory=list)
     relations: list[ExtractedRelation] = Field(default_factory=list)
+    candidate_package: CandidateFactPackage | None = None
     quality_flags: list[str] = Field(default_factory=list)
     warnings: list[str] = Field(default_factory=list)
+
+
+class LLMFactExtractionRequest(KnowledgeBaseModel):
+    task: str
+    source_id: str
+    source_type: str
+    prompt: str
+    system_prompt: str | None = None
+    messages: list[dict[str, Any]] = Field(default_factory=list)
+    model: str | None = None
+    json_schema: dict[str, Any] | None = None
+    temperature: float = 0.0
+    max_tokens: int | None = None
+    metadata: dict[str, Any] = Field(default_factory=dict)
+    use_cache: bool = True
+
+    @field_validator("task", "source_id", "source_type", "prompt")
+    @classmethod
+    def _required_text(cls, value: str) -> str:
+        if not isinstance(value, str) or not value.strip():
+            raise ValueError("value must be a non-empty string")
+        return value
+
+
+class LLMFactExtractionResult(KnowledgeBaseModel):
+    text: str = ""
+    structured_output: Any | None = None
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class LLMFactExtractionPort(Protocol):
+    async def extract(self, request: LLMFactExtractionRequest) -> LLMFactExtractionResult:
+        ...
 
 
 class TextExtractionStrategy(Protocol):
@@ -145,6 +239,13 @@ def _span_warnings(item: TextExtractionInput, result: TextExtractionResult) -> l
         spans.extend(entity.evidence_spans)
     for relation in result.relations:
         spans.extend(relation.evidence_spans)
+    if result.candidate_package is not None:
+        for entity in result.candidate_package.entities:
+            spans.extend(entity.evidence_spans)
+        for event in result.candidate_package.events:
+            spans.extend(event.evidence_spans)
+        for relation in result.candidate_package.relations:
+            spans.extend(relation.evidence_spans)
 
     for span in spans:
         field_value = item.lookup_field(span.field_name)

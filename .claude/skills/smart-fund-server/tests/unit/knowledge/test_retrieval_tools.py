@@ -85,6 +85,44 @@ class _SemanticHybrid(SemanticHybridRetriever):
         ]
 
 
+class _EnabledSemanticHybrid(SemanticHybridRetriever):
+    enabled = True
+    backend_name = "test"
+
+
+class _LimitRecordingRuntime(HybridRetrievalRuntime):
+    def __init__(self):
+        super().__init__(_Repo(), semantic_retriever=_EnabledSemanticHybrid())
+        self.keyword_limits: list[int | None] = []
+        self.semantic_limits: list[int | None] = []
+
+    def entity_resolve(self, query: str, options: RetrievalOptions, limit: int | None = None):
+        return []
+
+    def keyword_search(self, query: str, options: RetrievalOptions, limit: int | None = None):
+        self.keyword_limits.append(limit)
+        return [
+            RetrievalHit(
+                hit_id=f"kg:financial:event:{index}",
+                hit_type="node",
+                title=f"事件{index}",
+                snippet=query,
+                source="keyword",
+                evidence_refs=[f"kg_ev:financial:news:{index}"],
+            )
+            for index in range(limit or 0)
+        ]
+
+    async def semantic_hybrid_search(
+        self,
+        query: str,
+        options: RetrievalOptions,
+        limit: int | None = None,
+    ):
+        self.semantic_limits.append(limit)
+        return []
+
+
 class _TimedRepo(_Repo):
     recent_edge = CompiledEdge(
         edge_id="kg_edge:financial:affects:recent",
@@ -117,6 +155,21 @@ class _TimedRepo(_Repo):
 
     def list_edges(self, adapter_name: str):
         return [self.recent_edge, self.stale_edge]
+
+
+class _CandidateEdgeRepo(_Repo):
+    candidate_edge = _Repo.edge.model_copy(
+        update={
+            "edge_id": "kg_edge:financial:affects:candidate",
+            "status": EdgeStatus.CANDIDATE,
+        }
+    )
+
+    def list_edges(self, adapter_name: str):
+        return [self.candidate_edge]
+
+    def get_edge(self, edge_id: str):
+        return self.candidate_edge if edge_id == self.candidate_edge.edge_id else None
 
 
 class _PathRepo(_Repo):
@@ -159,144 +212,103 @@ def _registry() -> RetrievalToolRegistry:
 def test_tool_registry_exposes_no_standalone_keyword_search() -> None:
     assert "keyword_search" not in RetrievalToolRegistry.available_tools
     assert RetrievalToolRegistry.available_tools == (
-        "entity_resolve",
-        "semantic_hybrid_search",
-        "graph_search",
-        "wiki_search",
-        "chunk_read",
+        "search",
+        "find",
+        "open",
+        "summarize",
     )
 
 
 @pytest.mark.asyncio
-async def test_tool_registry_executes_entity_graph_and_chunk_tools() -> None:
+async def test_search_call_limit_expands_keyword_and_semantic_channel_limits() -> None:
+    runtime = _LimitRecordingRuntime()
+    registry = RetrievalToolRegistry(
+        runtime,
+        RetrievalOptions(
+            adapter_name="financial",
+            keyword_limit=5,
+            semantic_hybrid_limit=7,
+            max_hits=10,
+        ),
+    )
+
+    result = await registry.execute(RetrievalToolCall(tool="search", query="并购重组", limit=60))
+
+    assert runtime.keyword_limits == [60]
+    assert runtime.semantic_limits == [60]
+    assert len(result.hits) == 60
+
+
+@pytest.mark.asyncio
+async def test_tool_registry_search_packages_multi_channel_candidates() -> None:
     registry = _registry()
 
-    entity_result = await registry.execute(
-        RetrievalToolCall(tool="entity_resolve", query="宁德时代 300750")
-    )
-    graph_result = await registry.execute(
-        RetrievalToolCall(
-            tool="graph_search",
-            seed_node_ids=entity_result.hits[0].node_refs,
-            limit=5,
-        )
-    )
-    chunk_result = await registry.execute(
-        RetrievalToolCall(tool="chunk_read", evidence_ids=graph_result.hits[0].evidence_refs)
-    )
+    result = await registry.execute(RetrievalToolCall(tool="search", query="宁德时代 300750"))
 
-    assert entity_result.step.tool == "entity_resolve"
-    assert entity_result.hits[0].title == "宁德时代"
-    assert graph_result.hits[0].edge_refs == ["kg_edge:financial:affects:1"]
-    assert chunk_result.hits[0].evidence_refs == ["kg_ev:financial:news:1"]
+    assert result.step.tool == "search"
+    assert any(hit.title == "宁德时代" for hit in result.hits)
+    assert any(hit.edge_refs == ["kg_edge:financial:affects:1"] for hit in result.hits)
+    assert any(hit.evidence_refs == ["kg_ev:financial:news:1"] for hit in result.hits)
 
 
 @pytest.mark.asyncio
-async def test_tool_registry_graph_search_supports_direction_and_relation_filters() -> None:
+async def test_tool_registry_open_reads_evidence_window() -> None:
     registry = _registry()
 
-    incoming = await registry.execute(
-        RetrievalToolCall(
-            tool="graph_search",
-            seed_node_ids=["kg:financial:stock:300750"],
-            direction="incoming",
-            relation_filters=["affects"],
-            limit=5,
-        )
-    )
-    outgoing = await registry.execute(
-        RetrievalToolCall(
-            tool="graph_search",
-            seed_node_ids=["kg:financial:stock:300750"],
-            direction="outgoing",
-            relation_filters=["affects"],
-            limit=5,
-        )
-    )
-    filtered = await registry.execute(
-        RetrievalToolCall(
-            tool="graph_search",
-            seed_node_ids=["kg:financial:stock:300750"],
-            direction="incoming",
-            relation_filters=["mentions"],
-            limit=5,
-        )
-    )
-
-    assert incoming.hits[0].edge_refs == ["kg_edge:financial:affects:1"]
-    assert outgoing.hits == []
-    assert filtered.hits == []
-
-
-@pytest.mark.asyncio
-async def test_tool_registry_graph_search_supports_time_window() -> None:
-    registry = RetrievalToolRegistry(
-        HybridRetrievalRuntime(_TimedRepo(), semantic_retriever=_SemanticHybrid()),
-        RetrievalOptions(adapter_name="financial"),
-    )
-
     result = await registry.execute(
-        RetrievalToolCall(
-            tool="graph_search",
-            seed_node_ids=["kg:financial:stock:300750"],
-            direction="incoming",
-            relation_filters=["affects"],
-            time_start=datetime(2026, 4, 1, tzinfo=timezone.utc),
-            time_end=datetime(2026, 4, 30, tzinfo=timezone.utc),
-            limit=5,
-        )
+        RetrievalToolCall(tool="open", evidence_ids=["kg_ev:financial:news:1"])
     )
 
-    assert [hit.edge_refs[0] for hit in result.hits] == [
-        "kg_edge:financial:affects:recent"
-    ]
-
-
-@pytest.mark.asyncio
-async def test_tool_registry_graph_search_can_return_path_hits() -> None:
-    registry = RetrievalToolRegistry(
-        HybridRetrievalRuntime(_PathRepo(), semantic_retriever=_SemanticHybrid()),
-        RetrievalOptions(adapter_name="financial", graph_depth=2),
-    )
-
-    result = await registry.execute(
-        RetrievalToolCall(
-            tool="graph_search",
-            seed_node_ids=["kg:financial:stock:300750"],
-            direction="path",
-            relation_filters=["affects", "mentions"],
-            depth=2,
-            limit=5,
-        )
-    )
-
-    assert result.hits
-    assert {hit.hit_type for hit in result.hits} == {"path"}
-    assert any(
-        hit.path_node_refs == [
-            "kg:financial:stock:300750",
-            "kg:financial:event:1",
-            "kg:financial:industry:ev",
-        ]
-        and hit.path_edge_refs == [
-            "kg_edge:financial:affects:event_stock",
-            "kg_edge:financial:mentions:event_industry",
-        ]
-        for hit in result.hits
-    )
-
-
-@pytest.mark.asyncio
-async def test_tool_registry_executes_semantic_hybrid_tool() -> None:
-    result = await _registry().execute(
-        RetrievalToolCall(tool="semantic_hybrid_search", query="海外产能影响")
-    )
-
-    assert result.step.tool == "semantic_hybrid_search"
-    assert result.hits[0].hit_type == "semantic_hybrid"
+    assert result.step.tool == "open"
+    assert result.hits[0].hit_type == "evidence"
     assert result.hits[0].evidence_refs == ["kg_ev:financial:news:1"]
 
 
+@pytest.mark.asyncio
+async def test_tool_registry_open_expands_candidate_ids_to_evidence() -> None:
+    registry = _registry()
+
+    node_result = await registry.execute(
+        RetrievalToolCall(tool="open", candidate_ids=["kg:financial:stock:300750"])
+    )
+    edge_result = await registry.execute(
+        RetrievalToolCall(tool="open", candidate_ids=["kg_edge:financial:affects:1"])
+    )
+
+    assert node_result.hits[0].evidence_refs == ["kg_ev:financial:news:1"]
+    assert edge_result.hits[0].evidence_refs == ["kg_ev:financial:news:1"]
+
+
+@pytest.mark.asyncio
+async def test_tool_registry_find_searches_inside_known_evidence() -> None:
+    registry = _registry()
+
+    result = await registry.execute(
+        RetrievalToolCall(
+            tool="find",
+            query="海外产能",
+            evidence_ids=["kg_ev:financial:news:1"],
+        )
+    )
+
+    assert result.step.tool == "find"
+    assert result.hits[0].evidence_refs == ["kg_ev:financial:news:1"]
+
+
+@pytest.mark.asyncio
+async def test_tool_registry_summarize_is_controller_signal() -> None:
+    registry = _registry()
+
+    result = await registry.execute(RetrievalToolCall(tool="summarize"))
+
+    assert result.hits == []
+    assert result.summary == "summary_requested"
+
+
 def test_tool_call_validates_required_inputs() -> None:
-    with pytest.raises(ValueError, match="graph_search requires seed_node_ids"):
-        RetrievalToolCall(tool="graph_search")
+    with pytest.raises(ValueError, match="search requires query"):
+        RetrievalToolCall(tool="search")
+    with pytest.raises(ValueError, match="find requires query and evidence_ids"):
+        RetrievalToolCall(tool="find", query="宁德时代")
+    with pytest.raises(ValueError, match="open requires evidence_ids or candidate_ids"):
+        RetrievalToolCall(tool="open")

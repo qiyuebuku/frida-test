@@ -12,6 +12,14 @@ class InputType(str, Enum):
     FEEDBACK_RECORD = "feedback_record"
 
 
+class RecordKind(str, Enum):
+    TEXT_DOCUMENT = "text_document"
+    STRUCTURED_SIGNAL = "structured_signal"
+    ENTITY_SNAPSHOT = "entity_snapshot"
+    RELATION_ASSERTION = "relation_assertion"
+    EVENT_ASSERTION = "event_assertion"
+
+
 class NodeStatus(str, Enum):
     ACTIVE = "active"
     CANDIDATE = "candidate"
@@ -43,6 +51,12 @@ class EvidenceType(str, Enum):
     LLM_OUTPUT = "llm_output"
     HUMAN_REVIEW = "human_review"
     HISTORICAL_VALIDATION = "historical_validation"
+
+
+class EvidenceStatus(str, Enum):
+    ACTIVE = "active"
+    SUPERSEDED = "superseded"
+    INACTIVE = "inactive"
 
 
 class ValidationSeverity(str, Enum):

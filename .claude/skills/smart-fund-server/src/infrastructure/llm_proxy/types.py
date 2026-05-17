@@ -25,6 +25,8 @@ class LLMProxyRequest:
     max_tokens: int | None = None
     json_schema: dict[str, Any] | None = None
     response_format: dict[str, Any] | None = None
+    tools: list[dict[str, Any]] | None = None
+    tool_choice: str | dict[str, Any] | None = None
     metadata: dict[str, Any] = field(default_factory=dict)
     timeout: float | None = None
     use_cache: bool = True

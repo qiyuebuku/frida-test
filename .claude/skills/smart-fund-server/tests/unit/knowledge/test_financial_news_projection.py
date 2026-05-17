@@ -48,7 +48,9 @@ def test_build_news_records_from_sources_maps_stock_mentions(monkeypatch) -> Non
         "name": "宁德时代",
         "confidence": 0.7,
     }
-    assert records[0]["payload"]["mentioned_entities"][1]["name"] == "快充"
+    assert len(records[0]["payload"]["mentioned_entities"]) == 1
+    assert records[0]["metadata"]["tags"] == ["快充"]
+    assert records[0]["metadata"]["weak_entity_hints"][0]["value"] == "快充"
 
 
 @pytest.mark.asyncio

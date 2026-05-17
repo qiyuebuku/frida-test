@@ -11,6 +11,7 @@ from src.application.services.financial_stock_bootstrap import (
     build_stock_basics_records_from_sources,
     stock_from_any,
 )
+from src.domain.knowledge_adapters.financial.source_projection import project_ft_news_row
 from src.infrastructure.connections import get_session
 
 Target = Literal["prod", "test"]
@@ -21,6 +22,7 @@ def build_news_records_from_sources(
     target: Target = "prod",
     codes: list[str] | None = None,
     limit: int = 20,
+    order_by_created_at: bool = False,
 ) -> list[dict[str, Any]]:
     """Project recent business news rows into adapter-owned KG source records."""
 
@@ -37,14 +39,16 @@ def build_news_records_from_sources(
         )
         params.update({f"pattern_{idx}": pattern for idx, pattern in enumerate(patterns)})
     stock_names = _stock_names_by_code(target=target, codes=wanted_codes)
+    order_by = "created_at desc, id desc" if order_by_created_at else "published_at desc, id desc"
     rows = _rows(
         target,
         f"""
         select id, title, content, summary, source, source_name, category,
-               tags, related_stocks, published_at, created_at
+               source_reliability, url, tags, related_stocks, published_at,
+               fingerprint, created_at
         from ft_news
         {where}
-        order by published_at desc, id desc
+        order by {order_by}
         limit :limit
         """,
         params,
@@ -56,40 +60,7 @@ def _news_row_to_record(
     row: dict[str, Any],
     stock_names: dict[str, str] | None = None,
 ) -> dict[str, Any] | None:
-    published_at = _iso(row.get("published_at") or row.get("created_at"))
-    if not published_at:
-        return None
-    source_id = f"ft_news:{row['id']}"
-    category = str(row.get("category") or "").lower()
-    mentioned_entities = [
-        entity
-        for item in _as_list(row.get("related_stocks"))
-        if (entity := _stock_entity(item, stock_names or {})) is not None
-    ]
-    mentioned_entities.extend(
-        _concept_entity(tag)
-        for tag in _as_list(row.get("tags"))
-        if str(tag or "").strip()
-    )
-    text_content = row.get("content") or row.get("summary") or row.get("title") or ""
-    payload = {
-        "source_id": source_id,
-        "document_id": source_id,
-        "published_at": published_at,
-        "title": row.get("title") or source_id,
-        "text": text_content,
-        "source_name": row.get("source_name") or row.get("source") or "ft_news",
-        "mentioned_entities": _unique_entities(mentioned_entities),
-        "affected_entities": [],
-    }
-    return {
-        "source_type": "policy_news" if category in {"policy", "macro"} else "news_articles",
-        "source_id": source_id,
-        "observed_at": published_at,
-        "payload": payload,
-        "raw_text": text_content,
-        "metadata": {"source_table": "ft_news", "source_pk": row["id"]},
-    }
+    return project_ft_news_row(row, stock_names=stock_names or {})
 
 
 def _stock_entity(value: Any, stock_names: dict[str, str] | None = None) -> dict[str, Any] | None:

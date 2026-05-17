@@ -46,14 +46,16 @@ KG_TABLES = [
 ]
 
 
-def test_financial_fixture_compiles_and_is_idempotent() -> None:
+@pytest.mark.asyncio
+async def test_financial_fixture_compiles_and_is_idempotent() -> None:
     _ensure_tables()
     _cleanup()
     repo = KnowledgeRepositoryImpl(target="test")
     records = _load_all()
+    adapter = FinancialKGAdapter()
 
-    first = KnowledgeCompiler(repository=repo).compile(FinancialKGAdapter(), records)
-    second = KnowledgeCompiler(repository=repo).compile(FinancialKGAdapter(), records)
+    first = await KnowledgeCompiler(repository=repo).compile(adapter, adapter.normalize(records))
+    second = await KnowledgeCompiler(repository=repo).compile(adapter, adapter.normalize(records))
 
     assert first.failed_records == []
     assert second.failed_records == []

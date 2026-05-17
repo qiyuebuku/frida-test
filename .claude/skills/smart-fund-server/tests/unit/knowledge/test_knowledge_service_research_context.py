@@ -16,7 +16,7 @@ from src.application.services.knowledge_service import (
     KnowledgeService,
     _graph_time_window_for_plan,
 )
-from src.domain.knowledge.agentic_retrieval import AgenticRetrievalDecision
+from src.domain.knowledge.agentic_retrieval import RetrievalControllerDecision
 from src.domain.knowledge.enums import ConfidenceLabel, EdgeStatus, EvidenceType, NodeStatus
 from src.domain.knowledge.retrieval import (
     RetrievalHit,
@@ -25,6 +25,7 @@ from src.domain.knowledge.retrieval import (
     RetrievalTrace,
     SemanticHybridRetriever,
 )
+from src.domain.knowledge.retrieval_judge import DeterministicCandidateJudge
 from src.domain.knowledge.retrieval_tools import RetrievalToolCall
 from src.domain.knowledge.schemas import CompiledEdge, CompiledEvidence, CompiledNode
 from src.domain.knowledge_adapters.financial.query_planner import FinancialQueryPlanner
@@ -110,33 +111,119 @@ class _FakeMilvusRetriever(SemanticHybridRetriever):
         ]
 
 
+class _NoisyRepo(_Repo):
+    military_event = CompiledNode(
+        node_id="kg:financial:event:military",
+        adapter_name="financial",
+        node_type="event",
+        canonical_name="波兰法国联合军事演习",
+        aliases=[],
+        status=NodeStatus.ACTIVE,
+        version="v1",
+    )
+    france = CompiledNode(
+        node_id="kg:financial:region:france",
+        adapter_name="financial",
+        node_type="region",
+        canonical_name="法国",
+        aliases=[],
+        status=NodeStatus.ACTIVE,
+        version="v1",
+    )
+    military_edge = CompiledEdge(
+        edge_id="kg_edge:financial:affects:military:france",
+        adapter_name="financial",
+        source_node_id=military_event.node_id,
+        target_node_id=france.node_id,
+        relation_type="affects",
+        confidence_label=ConfidenceLabel.EXTRACTED,
+        confidence_score=0.7,
+        status=EdgeStatus.ACTIVE,
+        evidence_ids=["kg_ev:financial:news:military"],
+        version="v1",
+    )
+    military_evidence = CompiledEvidence(
+        evidence_id="kg_ev:financial:news:military",
+        adapter_name="financial",
+        evidence_type=EvidenceType.TEXT_SPAN,
+        source_type="news_articles",
+        source_id="ft_news:military",
+        content="波兰和法国计划举行联合军事演习，欧洲对俄全面对抗正在回归。",
+        version="v1",
+    )
+
+    def list_nodes(self, adapter_name: str):
+        return [self.stock, self.event, self.military_event, self.france]
+
+    def list_edges(self, adapter_name: str):
+        return [self.edge, self.military_edge]
+
+    def get_evidence(self, evidence_id: str):
+        return {
+            self.evidence.evidence_id: self.evidence,
+            self.military_evidence.evidence_id: self.military_evidence,
+        }.get(evidence_id)
+
+    def get_node(self, node_id: str):
+        return {
+            self.stock.node_id: self.stock,
+            self.event.node_id: self.event,
+            self.military_event.node_id: self.military_event,
+            self.france.node_id: self.france,
+        }.get(node_id)
+
+    def get_edge(self, edge_id: str):
+        return {
+            self.edge.edge_id: self.edge,
+            self.military_edge.edge_id: self.military_edge,
+        }.get(edge_id)
+
+
+class _NoisyMilvusRetriever(SemanticHybridRetriever):
+    enabled = True
+    backend_name = "milvus"
+
+    async def search(self, query: str, options: RetrievalOptions):
+        return [
+            RetrievalHit(
+                hit_id="kg_chunk:catl",
+                hit_type="semantic_hybrid",
+                title="catl semantic chunk",
+                snippet="宁德时代 海外产能",
+                score=0.9,
+                source="semantic_hybrid",
+                evidence_refs=["kg_ev:financial:news:overseas_capacity"],
+            ),
+            RetrievalHit(
+                hit_id="kg_chunk:military",
+                hit_type="semantic_hybrid",
+                title="military semantic chunk",
+                snippet="波兰 法国 联合军事演习",
+                score=0.8,
+                source="semantic_hybrid",
+                evidence_refs=["kg_ev:financial:news:military"],
+            ),
+        ]
+
+
 class _ScriptedAgenticStrategy:
-    async def next_decision(self, *, query, observations, constraints):
+    async def next_decision(self, *, query, working_set, observations, constraints):
         if not observations:
-            return AgenticRetrievalDecision(
-                tool_call=RetrievalToolCall(tool="semantic_hybrid_search", query=query)
+            return RetrievalControllerDecision(next_tool="search", query_rewrites=[query])
+        if observations[-1].tool == "search":
+            return RetrievalControllerDecision(
+                next_tool="open",
+                target_evidence_refs=working_set.evidence_refs,
+                expected_gain="context_window",
             )
-        if observations[-1].tool == "semantic_hybrid_search":
-            return AgenticRetrievalDecision(
-                tool_call=RetrievalToolCall(
-                    tool="chunk_read",
-                    evidence_ids=[
-                        evidence_id
-                        for hit in observations[-1].hits
-                        for evidence_id in hit.evidence_refs
-                    ],
-                )
-            )
-        return AgenticRetrievalDecision(stop=True, stop_reason="evidence_sufficient")
+        return RetrievalControllerDecision(next_tool="stop", stop_reason="evidence_sufficient")
 
 
 class _StopAfterSemanticStrategy:
-    async def next_decision(self, *, query, observations, constraints):
+    async def next_decision(self, *, query, working_set, observations, constraints):
         if not observations:
-            return AgenticRetrievalDecision(
-                tool_call=RetrievalToolCall(tool="semantic_hybrid_search", query=query)
-            )
-        return AgenticRetrievalDecision(stop=True, stop_reason="evidence_sufficient")
+            return RetrievalControllerDecision(next_tool="search", query_rewrites=[query])
+        return RetrievalControllerDecision(next_tool="stop", stop_reason="evidence_sufficient")
 
 
 @pytest.mark.asyncio
@@ -165,16 +252,39 @@ async def test_research_context_returns_financial_retrieval_plan(monkeypatch) ->
     assert result.retrieval_plan["time_range"]["preset"] == "recent"
     assert "keyword_search" not in {step["tool"] for step in result.retrieval_plan["steps"]}
     assert result.retrieval_trace["planner_enabled"] is True
-    assert result.retrieval_channels_used == [
-        "entity_resolve",
-        "graph_search",
-        "semantic_hybrid_search",
-        "chunk_read",
-    ]
+    assert result.retrieval_channels_used == ["search", "open"]
     assert result.semantic_enabled is True
     assert result.milvus_enabled is True
     assert result.evidence_refs == ["kg_ev:financial:news:overseas_capacity"]
     assert result.warnings == []
+
+
+@pytest.mark.asyncio
+async def test_research_context_filters_unanchored_noise_after_context_assembly(monkeypatch) -> None:
+    monkeypatch.setattr(
+        knowledge_service_module,
+        "_semantic_hybrid_retriever",
+        lambda: _NoisyMilvusRetriever(),
+    )
+    service = KnowledgeService(repository=_NoisyRepo())
+
+    result = await service.build_research_context_for(
+        KnowledgeResearchContextCommand(
+            query="宁德时代 300750 最近受哪些事件影响",
+            adapter_name="financial",
+            retrieval_mode="deterministic_plan",
+            graph_limit=10,
+            wiki_limit=5,
+            evidence_limit=10,
+        )
+    )
+
+    assert "kg_ev:financial:news:overseas_capacity" in result.evidence_refs
+    assert "kg_ev:financial:news:military" not in result.evidence_refs
+    assert "法国" not in {node["canonical_name"] for node in result.matched_nodes}
+    assert "kg_edge:financial:affects:military:france" not in {
+        edge["edge_id"] for edge in result.matched_edges
+    }
 
 
 @pytest.mark.asyncio
@@ -188,6 +298,11 @@ async def test_research_context_can_use_agentic_retrieval_mode(monkeypatch) -> N
         knowledge_service_module,
         "_agentic_retrieval_strategy",
         lambda: _ScriptedAgenticStrategy(),
+    )
+    monkeypatch.setattr(
+        knowledge_service_module,
+        "_agentic_candidate_judge",
+        lambda: DeterministicCandidateJudge(),
     )
     service = KnowledgeService(repository=_Repo())
 
@@ -203,14 +318,14 @@ async def test_research_context_can_use_agentic_retrieval_mode(monkeypatch) -> N
     assert result.mode == "agentic_arag"
     assert result.agentic_enabled is True
     assert result.planner_enabled is False
-    assert result.retrieval_channels_used == ["semantic_hybrid_search", "chunk_read"]
+    assert result.retrieval_channels_used == ["search", "open"]
     assert result.evidence_refs == ["kg_ev:financial:news:overseas_capacity"]
     assert [edge["edge_id"] for edge in result.matched_edges] == [_Repo.edge.edge_id]
     assert {node["canonical_name"] for node in result.matched_nodes} == {"宁德时代", "海外产能事件"}
 
 
 @pytest.mark.asyncio
-async def test_research_context_defaults_to_deterministic_fast_path(monkeypatch) -> None:
+async def test_research_context_auto_uses_agentic_semantic_judge_path(monkeypatch) -> None:
     monkeypatch.setattr(
         knowledge_service_module,
         "_semantic_hybrid_retriever",
@@ -220,6 +335,11 @@ async def test_research_context_defaults_to_deterministic_fast_path(monkeypatch)
         knowledge_service_module,
         "_agentic_retrieval_strategy",
         lambda: _ScriptedAgenticStrategy(),
+    )
+    monkeypatch.setattr(
+        knowledge_service_module,
+        "_agentic_candidate_judge",
+        lambda: DeterministicCandidateJudge(),
     )
     service = KnowledgeService(repository=_Repo())
 
@@ -231,15 +351,10 @@ async def test_research_context_defaults_to_deterministic_fast_path(monkeypatch)
         )
     )
 
-    assert result.mode == "deterministic_plan"
-    assert result.agentic_enabled is False
-    assert result.planner_enabled is True
-    assert result.retrieval_channels_used == [
-        "entity_resolve",
-        "graph_search",
-        "semantic_hybrid_search",
-        "chunk_read",
-    ]
+    assert result.mode == "agentic_arag"
+    assert result.agentic_enabled is True
+    assert result.planner_enabled is False
+    assert result.retrieval_channels_used == ["search", "open"]
 
 
 @pytest.mark.asyncio
@@ -254,6 +369,11 @@ async def test_agentic_mode_materializes_evidence_refs_when_strategy_stops(monke
         "_agentic_retrieval_strategy",
         lambda: _StopAfterSemanticStrategy(),
     )
+    monkeypatch.setattr(
+        knowledge_service_module,
+        "_agentic_candidate_judge",
+        lambda: DeterministicCandidateJudge(),
+    )
     service = KnowledgeService(repository=_Repo())
 
     result = await service.build_research_context_for(
@@ -265,7 +385,7 @@ async def test_agentic_mode_materializes_evidence_refs_when_strategy_stops(monke
         )
     )
 
-    assert result.retrieval_channels_used == ["semantic_hybrid_search", "chunk_read"]
+    assert result.retrieval_channels_used == ["search", "open"]
     assert any(hit["hit_type"] == "evidence" for hit in result.hits)
 
 
@@ -277,11 +397,11 @@ async def test_bad_case_replay_can_replay_recorded_agentic_trace(monkeypatch) ->
         lambda: _FakeMilvusRetriever(),
     )
     semantic_call = RetrievalToolCall(
-        tool="semantic_hybrid_search",
+        tool="search",
         query="宁德时代 300750 最近受哪些事件影响",
     )
     chunk_call = RetrievalToolCall(
-        tool="chunk_read",
+        tool="open",
         evidence_ids=["kg_ev:financial:news:overseas_capacity"],
     )
     recorded_trace = RetrievalTrace(
@@ -289,13 +409,18 @@ async def test_bad_case_replay_can_replay_recorded_agentic_trace(monkeypatch) ->
         agentic_enabled=True,
         steps=[
             RetrievalStep(
-                tool="semantic_hybrid_search",
+                tool="search",
                 input=semantic_call.model_dump(mode="json"),
-                output_refs=["kg_chunk:fake"],
-                hit_count=1,
+                output_refs=[
+                    "kg:financial:stock:300750",
+                    "kg:financial:event:overseas_capacity",
+                    "kg_edge:financial:affects:overseas_capacity:300750",
+                    "kg_chunk:fake",
+                ],
+                hit_count=4,
             ),
             RetrievalStep(
-                tool="chunk_read",
+                tool="open",
                 input=chunk_call.model_dump(mode="json"),
                 output_refs=["kg_ev:financial:news:overseas_capacity"],
                 hit_count=1,
@@ -324,7 +449,7 @@ async def test_bad_case_replay_can_replay_recorded_agentic_trace(monkeypatch) ->
     assert result.passed == 1
     assert result.results[0]["trace_replay"] is True
     assert result.results[0]["trace_mismatches"] == []
-    assert result.results[0]["channels_used"] == ["semantic_hybrid_search", "chunk_read"]
+    assert result.results[0]["channels_used"] == ["search", "open"]
 
 
 def test_graph_time_window_for_recent_plan_is_anchored() -> None:

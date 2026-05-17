@@ -137,7 +137,7 @@ async def test_compile_kg_refreshes_changed_indexes_incrementally(monkeypatch) -
                 + len(kwargs["wiki_pages"])
             )
 
-    monkeypatch.setattr(service_module, "get_adapter", lambda _name: ToyProjectAdapter())
+    monkeypatch.setattr(service_module, "get_adapter", lambda _name, **_kwargs: ToyProjectAdapter())
     monkeypatch.setattr(service_module, "MilvusSemanticHybridRetriever", lambda: FakeRetriever())
 
     result = await KnowledgeService(repository=repository).compile_kg(
@@ -152,12 +152,14 @@ async def test_compile_kg_refreshes_changed_indexes_incrementally(monkeypatch) -
     assert result.index_refresh["graph_adjacency"] == 3
     assert result.index_refresh["evidence_chunks"] == 1
     assert result.index_refresh["wiki_pages"] >= 1
+    assert result.index_refresh["retrieval_documents"] >= 1
     assert result.index_refresh["hybrid_chunks"] == len(hybrid_calls[0]["chunks"]) + len(
         hybrid_calls[0]["nodes"]
     ) + len(hybrid_calls[0]["edges"]) + len(hybrid_calls[0]["wiki_pages"])
     assert repository.calls[:3] == ["create_run", "upsert_nodes:4", "upsert_evidence:1"]
     assert "upsert_graph_adjacency:3" in repository.calls
     assert "upsert_evidence_chunks:1" in repository.calls
+    assert any(call.startswith("upsert_retrieval_documents:") for call in repository.calls)
 
 
 @pytest.mark.asyncio
@@ -239,6 +241,10 @@ class _CompileRefreshRepository:
         self.calls.append(f"upsert_wiki_pages:{len(pages)}")
         self.wiki_pages = pages
         return len(pages)
+
+    def upsert_retrieval_documents(self, documents):
+        self.calls.append(f"upsert_retrieval_documents:{len(documents)}")
+        return len(documents)
 
     def get_node(self, node_id):
         return next((node for node in self.nodes if node.node_id == node_id), None)

@@ -7,6 +7,7 @@ Apifox Open API 客户端
 
 用法:
     python apifox_client.py export <project_id> [选项]
+    python apifox_client.py normalize-openapi <input> -o <output>
     python apifox_client.py import-openapi <project_id> [选项]
     python apifox_client.py import-postman <project_id> [选项]
     python apifox_client.py list-projects
@@ -34,6 +35,35 @@ ACCESS_TOKEN = ""  # 由 CLI --token 或 APIFOX_TOKEN 环境变量设置
 
 # 默认输出目录
 DEFAULT_OUTPUT_DIR = Path(__file__).parent / "output"
+
+TAMAR_FOLDER_ALIASES = {
+    "社区活动": "用户端 (C端)/社区活动",
+    "轮播图": "用户端 (C端)/轮播图",
+    "用户投放": "用户端 (C端)/投放管理",
+    "用户端（C端）": "用户端 (C端)",
+    "激励管理": "管理后台",
+    "视频管理": "管理后台/视频管理",
+    "创作者管理": "管理后台/创作者管理",
+    "活动管理": "管理后台/活动管理",
+}
+
+TAMAR_FORBIDDEN_ROOT_FOLDERS = set(TAMAR_FOLDER_ALIASES)
+
+TARGETING_DECISION_EXAMPLE = {
+    "placement": "bottom_right_card",
+    "card_codes": [
+        "m1_retention_offer",
+        "minimax2.6",
+        "测试卡片",
+    ],
+    "scene": "home",
+    "client_context": {
+        "route": "/home",
+        "locale": "zh-CN",
+        "client_version": "2.9.0",
+        "device_type": "web",
+    },
+}
 
 
 def parse_apifox_url(url: str) -> dict:
@@ -69,6 +99,164 @@ def get_headers():
         "Authorization": f"Bearer {ACCESS_TOKEN}",
         "Content-Type": "application/json",
     }
+
+
+def _infer_tamar_folder(path: str) -> str:
+    """Infer the top-level folder when exported data has no Apifox folder."""
+    if path.startswith("/api/console/"):
+        return "管理后台"
+    if path.startswith("/api/community/events"):
+        return "用户端 (C端)/社区活动"
+    if path.startswith("/api/community/carousel"):
+        return "用户端 (C端)/轮播图"
+    if path.startswith("/api/incentive/targeting"):
+        return "用户端 (C端)/投放管理"
+    if path.startswith("/api/console/incentive"):
+        return "管理后台/激励管理"
+    if path.startswith("/api/community/") or path.startswith("/api/incentive/"):
+        return "用户端 (C端)"
+    return "内部接口"
+
+
+def _rebuild_tags_from_operations(data: dict) -> None:
+    tag_names = []
+    seen = set()
+    for item in data.get("paths", {}).values():
+        for operation in item.values():
+            if not isinstance(operation, dict):
+                continue
+            for tag in operation.get("tags") or []:
+                parts = tag.split("/")
+                for idx in range(1, len(parts) + 1):
+                    name = "/".join(parts[:idx])
+                    if name not in seen:
+                        seen.add(name)
+                        tag_names.append(name)
+    data["tags"] = [{"name": name} for name in tag_names]
+
+
+def _promote_request_examples(operation: dict) -> bool:
+    """Move schema-level examples to requestBody.content examples for Apifox UI."""
+    changed = False
+    request_body = operation.get("requestBody")
+    if not isinstance(request_body, dict):
+        return changed
+
+    content = request_body.get("content")
+    if not isinstance(content, dict):
+        return changed
+
+    for media in ("application/json", "multipart/form-data", "application/x-www-form-urlencoded"):
+        media_obj = content.get(media)
+        if not isinstance(media_obj, dict):
+            continue
+        if media_obj.get("examples") or media_obj.get("example"):
+            continue
+        schema = media_obj.get("schema")
+        if not isinstance(schema, dict):
+            continue
+        schema_examples = schema.get("examples")
+        if isinstance(schema_examples, list) and schema_examples:
+            media_obj["examples"] = {
+                "default": {
+                    "summary": "请求示例",
+                    "value": schema_examples[0],
+                }
+            }
+            schema.pop("examples", None)
+            changed = True
+    return changed
+
+
+def normalize_openapi(input_file: str, output_file: str, *, profile: str = "tamar-community") -> dict:
+    """Normalize OpenAPI before importing to Apifox."""
+    src = Path(input_file)
+    if not src.exists():
+        print(f"错误: 文件不存在: {input_file}", file=sys.stderr)
+        sys.exit(1)
+
+    data = json.loads(src.read_text(encoding="utf-8"))
+    paths = data.get("paths", {})
+    changed_folders = 0
+    promoted_examples = 0
+    targeting_example_added = False
+    forbidden_after = []
+
+    for path, item in paths.items():
+        if not isinstance(item, dict):
+            continue
+        for method, operation in item.items():
+            if not isinstance(operation, dict):
+                continue
+
+            folder = operation.get("x-apifox-folder")
+            if not folder:
+                tags = operation.get("tags") or []
+                folder = tags[0] if tags else _infer_tamar_folder(path)
+
+            if profile == "tamar-community" and path.startswith("/api/incentive/targeting"):
+                new_folder = "用户端 (C端)/投放管理"
+            elif profile == "tamar-community" and path.startswith("/api/console/incentive"):
+                new_folder = "管理后台/激励管理"
+            else:
+                new_folder = TAMAR_FOLDER_ALIASES.get(folder, folder)
+            if profile == "tamar-community" and not new_folder:
+                new_folder = _infer_tamar_folder(path)
+
+            if new_folder != folder:
+                changed_folders += 1
+
+            if new_folder:
+                operation["x-apifox-folder"] = new_folder
+                operation["tags"] = [new_folder]
+
+            if _promote_request_examples(operation):
+                promoted_examples += 1
+
+            if path == "/api/incentive/targeting/decision" and method.lower() == "post":
+                media_obj = (
+                    operation
+                    .setdefault("requestBody", {})
+                    .setdefault("content", {})
+                    .setdefault("application/json", {})
+                )
+                media_obj["examples"] = {
+                    "default": {
+                        "summary": "批量查询卡片投放展示决策",
+                        "value": TARGETING_DECISION_EXAMPLE,
+                    }
+                }
+                schema = media_obj.get("schema")
+                if isinstance(schema, dict):
+                    schema.pop("examples", None)
+                targeting_example_added = True
+
+            final_folder = operation.get("x-apifox-folder")
+            if final_folder in TAMAR_FORBIDDEN_ROOT_FOLDERS:
+                forbidden_after.append({
+                    "method": method.upper(),
+                    "path": path,
+                    "folder": final_folder,
+                })
+
+    _rebuild_tags_from_operations(data)
+
+    out = Path(output_file)
+    out.parent.mkdir(parents=True, exist_ok=True)
+    out.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+
+    report = {
+        "status": "ok" if not forbidden_after else "warning",
+        "file": str(out),
+        "paths": len(paths),
+        "endpoints": sum(len(item) for item in paths.values() if isinstance(item, dict)),
+        "changedFolders": changed_folders,
+        "promotedRequestExamples": promoted_examples,
+        "targetingDecisionExample": targeting_example_added,
+        "forbiddenRootFolderEndpoints": forbidden_after,
+    }
+    print(json.dumps(report, ensure_ascii=False, indent=2))
+    return report
 
 
 # ========== 导出 ==========
@@ -328,6 +516,14 @@ def main():
     p_export.add_argument("--branch-id", type=int, help="分支 ID")
     p_export.add_argument("--module-id", type=int, help="模块 ID（URL 中有 moduleId 时可省略）")
 
+    # normalize-openapi
+    p_normalize = subparsers.add_parser("normalize-openapi", help="导入前整理 OpenAPI 目录和示例")
+    p_normalize.add_argument("input", help="OpenAPI JSON 文件路径")
+    p_normalize.add_argument("-o", "--output", required=True, help="输出文件路径")
+    p_normalize.add_argument("--profile", default="tamar-community",
+                             choices=["tamar-community"],
+                             help="整理规则配置")
+
     # import-openapi
     p_import = subparsers.add_parser("import-openapi", help="导入 OpenAPI 数据")
     p_import.add_argument("project_id", help="项目 ID 或 Apifox URL")
@@ -364,6 +560,10 @@ def main():
     if not args.command:
         parser.print_help()
         sys.exit(1)
+
+    if args.command == "normalize-openapi":
+        normalize_openapi(args.input, args.output, profile=args.profile)
+        return
 
     # 初始化 token: --token > APIFOX_TOKEN 环境变量
     global ACCESS_TOKEN

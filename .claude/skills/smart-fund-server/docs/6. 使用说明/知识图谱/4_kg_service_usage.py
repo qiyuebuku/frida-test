@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Knowledge graph service usage script converted from 1.ipynb.
+"""Knowledge graph service usage script converted from kg_service_usage.ipynb.
 
 Default behavior matches the notebook step 5: read real prod data and write real KG rows.
 Use --dry-run or --no-compile when you only want to inspect projection output.

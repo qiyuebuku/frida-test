@@ -57,6 +57,44 @@ def test_deepseek_json_object_response_format():
     assert "JSON Schema" in payload["messages"][0]["content"]
 
 
+def test_deepseek_json_object_mode_injects_json_instruction_for_messages():
+    provider = _provider()
+    payload = provider._request_payload(
+        LLMProxyRequest(
+            messages=[{"role": "user", "content": "返回一个对象"}],
+            response_format={"type": "json_object"},
+        ),
+        _route(),
+    )
+
+    assert payload["response_format"] == {"type": "json_object"}
+    assert payload["messages"][0]["role"] == "system"
+    assert "JSON" in payload["messages"][0]["content"]
+    assert payload["messages"][1] == {"role": "user", "content": "返回一个对象"}
+
+
+def test_deepseek_request_body_supports_tool_calls():
+    provider = _provider()
+    tools = [
+        {
+            "type": "function",
+            "function": {
+                "name": "get_date",
+                "description": "Return current date",
+                "parameters": {"type": "object", "properties": {}},
+            },
+        }
+    ]
+
+    payload = provider._request_payload(
+        LLMProxyRequest(prompt="今天几号", tools=tools, tool_choice="auto"),
+        _route(),
+    )
+
+    assert payload["tools"] == tools
+    assert payload["tool_choice"] == "auto"
+
+
 def test_deepseek_usage_normalized(monkeypatch):
     provider = _provider()
 
@@ -65,7 +103,14 @@ def test_deepseek_usage_normalized(monkeypatch):
             "id": "chat-1",
             "model": payload["model"],
             "choices": [{"message": {"content": '{"ok": true}'}, "finish_reason": "stop"}],
-            "usage": {"prompt_tokens": 3, "completion_tokens": 4, "total_tokens": 7},
+            "usage": {
+                "prompt_tokens": 3,
+                "completion_tokens": 4,
+                "total_tokens": 7,
+                "prompt_cache_hit_tokens": 2,
+                "prompt_cache_miss_tokens": 1,
+                "completion_tokens_details": {"reasoning_tokens": 0},
+            },
         }
 
     monkeypatch.setattr(provider, "_post", fake_post)
@@ -77,9 +122,218 @@ def test_deepseek_usage_normalized(monkeypatch):
         )
     )
 
-    assert response.usage == {"input_tokens": 3, "output_tokens": 4, "total_tokens": 7}
+    assert response.usage == {
+        "input_tokens": 3,
+        "output_tokens": 4,
+        "total_tokens": 7,
+        "prompt_cache_hit_tokens": 2,
+        "prompt_cache_miss_tokens": 1,
+        "reasoning_tokens": 0,
+    }
     assert response.structured_output == {"ok": True}
     assert response.proxy["provider"] == "deepseek"
+
+
+def test_deepseek_response_preserves_tool_calls(monkeypatch):
+    provider = _provider()
+    tool_calls = [
+        {
+            "id": "call_1",
+            "type": "function",
+            "function": {"name": "get_date", "arguments": "{}"},
+        }
+    ]
+
+    async def fake_post(payload):
+        return {
+            "id": "chat-1",
+            "model": payload["model"],
+            "choices": [
+                {
+                    "message": {"content": "", "tool_calls": tool_calls},
+                    "finish_reason": "tool_calls",
+                }
+            ],
+            "usage": {},
+        }
+
+    monkeypatch.setattr(provider, "_post", fake_post)
+
+    response = asyncio.run(
+        provider.generate(LLMProxyRequest(prompt="今天几号", tools=[]), _route())
+    )
+
+    assert response.raw_payload["finish_reason"] == "tool_calls"
+    assert response.raw_payload["tool_calls"] == tool_calls
+    assert response.raw_payload["message"]["tool_calls"] == tool_calls
+
+
+def test_deepseek_extracts_json_from_prose_and_markdown(monkeypatch):
+    provider = _provider()
+
+    async def fake_post(payload):
+        return {
+            "id": "chat-1",
+            "model": payload["model"],
+            "choices": [
+                {
+                    "message": {"content": '结果如下：\n```json\n{"ok": true}\n```'},
+                    "finish_reason": "stop",
+                }
+            ],
+            "usage": {},
+        }
+
+    monkeypatch.setattr(provider, "_post", fake_post)
+
+    response = asyncio.run(
+        provider.generate(
+            LLMProxyRequest(prompt="返回 JSON", json_schema={"type": "object"}),
+            _route(),
+        )
+    )
+
+    assert response.structured_output == {"ok": True}
+    assert response.text == '{"ok": true}'
+
+
+def test_deepseek_repairs_unparseable_json_with_second_llm_call(monkeypatch):
+    provider = _provider()
+    calls = []
+
+    async def fake_post(payload):
+        calls.append(payload)
+        if len(calls) == 1:
+            return {
+                "id": "chat-1",
+                "model": payload["model"],
+                "choices": [{"message": {"content": "ok=true, reason=done"}, "finish_reason": "stop"}],
+                "usage": {"prompt_tokens": 3, "completion_tokens": 4, "total_tokens": 7},
+            }
+        return {
+            "id": "chat-2",
+            "model": payload["model"],
+            "choices": [{"message": {"content": '{"ok": true, "reason": "done"}'}, "finish_reason": "stop"}],
+            "usage": {"prompt_tokens": 5, "completion_tokens": 6, "total_tokens": 11},
+        }
+
+    monkeypatch.setattr(provider, "_post", fake_post)
+
+    response = asyncio.run(
+        provider.generate(
+            LLMProxyRequest(prompt="返回 JSON", json_schema={"type": "object"}),
+            _route(),
+        )
+    )
+
+    assert len(calls) == 2
+    assert calls[1]["response_format"] == {"type": "json_object"}
+    assert calls[1]["messages"][0] == calls[0]["messages"][0]
+    assert calls[1]["messages"][1] == calls[0]["messages"][1]
+    assert calls[1]["messages"][2] == {"role": "assistant", "content": "ok=true, reason=done"}
+    assert response.structured_output == {"ok": True, "reason": "done"}
+    assert response.usage == {
+        "input_tokens": 8,
+        "output_tokens": 10,
+        "total_tokens": 18,
+        "prompt_cache_hit_tokens": 0,
+        "prompt_cache_miss_tokens": 0,
+        "reasoning_tokens": 0,
+    }
+    assert response.proxy["json_repair_attempted"] is True
+    assert response.proxy["json_repair_success"] is True
+    assert response.raw_payload["json_repair"]["id"] == "chat-2"
+
+
+def test_deepseek_retries_empty_json_mode_without_forced_json_then_repairs(monkeypatch):
+    provider = _provider()
+    calls = []
+
+    async def fake_post(payload):
+        calls.append(payload)
+        if len(calls) == 1:
+            return {
+                "id": "chat-1",
+                "model": payload["model"],
+                "choices": [{"message": {"content": ""}, "finish_reason": "stop"}],
+                "usage": {"prompt_tokens": 2, "completion_tokens": 0, "total_tokens": 2},
+            }
+        if len(calls) == 2:
+            return {
+                "id": "chat-2",
+                "model": payload["model"],
+                "choices": [{"message": {"content": "ok=true, reason=done"}, "finish_reason": "stop"}],
+                "usage": {"prompt_tokens": 3, "completion_tokens": 4, "total_tokens": 7},
+            }
+        return {
+            "id": "chat-3",
+            "model": payload["model"],
+            "choices": [{"message": {"content": '{"ok": true, "reason": "done"}'}, "finish_reason": "stop"}],
+            "usage": {"prompt_tokens": 5, "completion_tokens": 6, "total_tokens": 11},
+        }
+
+    monkeypatch.setattr(provider, "_post", fake_post)
+
+    response = asyncio.run(
+        provider.generate(
+            LLMProxyRequest(prompt="返回 JSON", json_schema={"type": "object"}),
+            _route(),
+        )
+    )
+
+    assert len(calls) == 3
+    assert calls[0]["response_format"] == {"type": "json_object"}
+    assert "response_format" not in calls[1]
+    assert calls[1]["messages"][0] == calls[0]["messages"][0]
+    assert calls[1]["messages"][1] == calls[0]["messages"][1]
+    assert "JSON Schema" in str(calls[1]["messages"])
+    assert calls[2]["response_format"] == {"type": "json_object"}
+    assert calls[2]["messages"][0] == calls[0]["messages"][0]
+    assert calls[2]["messages"][1] == calls[0]["messages"][1]
+    assert calls[2]["messages"][2] == {"role": "assistant", "content": "ok=true, reason=done"}
+    assert response.structured_output == {"ok": True, "reason": "done"}
+    assert response.usage == {
+        "input_tokens": 10,
+        "output_tokens": 10,
+        "total_tokens": 20,
+        "prompt_cache_hit_tokens": 0,
+        "prompt_cache_miss_tokens": 0,
+        "reasoning_tokens": 0,
+    }
+    assert response.proxy["json_mode_retry_attempted"] is True
+    assert response.proxy["json_mode_retry_success"] is True
+    assert response.proxy["json_repair_attempted"] is True
+    assert response.proxy["json_repair_success"] is True
+    assert response.raw_payload["json_mode_initial"]["id"] == "chat-1"
+    assert response.raw_payload["json_mode_retry"]["id"] == "chat-2"
+    assert response.raw_payload["json_repair"]["id"] == "chat-3"
+
+
+def test_deepseek_keeps_original_text_when_json_repair_fails(monkeypatch):
+    provider = _provider()
+
+    async def fake_post(payload):
+        return {
+            "id": "chat-1",
+            "model": payload["model"],
+            "choices": [{"message": {"content": "still not json"}, "finish_reason": "stop"}],
+            "usage": {},
+        }
+
+    monkeypatch.setattr(provider, "_post", fake_post)
+
+    response = asyncio.run(
+        provider.generate(
+            LLMProxyRequest(prompt="返回 JSON", json_schema={"type": "object"}),
+            _route(),
+        )
+    )
+
+    assert response.structured_output is None
+    assert response.text == "still not json"
+    assert response.proxy["json_repair_attempted"] is True
+    assert response.proxy["json_repair_success"] is False
+    assert response.proxy["json_repair_error"] == "repair response not parseable as JSON"
 
 
 def test_deepseek_missing_api_key_raises_without_leaking_key():

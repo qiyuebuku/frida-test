@@ -25,7 +25,7 @@ class Event(Base):
 
     上游: ft_news.event_extracted=False 的新闻 → claude CLI 抽取
     下游: ft_event_streams 按 industry 聚类
-    embedding: Qwen3-Embedding-4B 1024 维 fp32 → 4096 字节 bytea
+    embedding: Qwen3-Embedding-4B 向量 fp32 bytea，维度由 EMBEDDING_DIM 控制
     fingerprint: SHA256(title|event_type) 防重复抽取
     """
     __tablename__ = "ft_events"
@@ -68,7 +68,7 @@ class Event(Base):
 
     # Embedding
     embedding: Mapped[bytes | None] = mapped_column(
-        LargeBinary, comment="向量(1024 维 float32 → 4096 字节)"
+        LargeBinary, comment="向量(float32 bytea，维度由 EMBEDDING_DIM 控制)"
     )
     embedding_model: Mapped[str | None] = mapped_column(
         String, default="", comment="向量模型标识 qwen3-emb-4b"

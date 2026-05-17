@@ -5,12 +5,12 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
-from typing import Any
 from uuid import uuid4
 
 from src.domain.knowledge.adapter import DomainAdapter
 from src.domain.knowledge.evidence import EvidenceManager
 from src.domain.knowledge.relation_compiler import RelationCompiler
+from src.domain.knowledge.retrieval_profile import profile_span
 from src.domain.knowledge.repositories import KnowledgeRepository
 from src.domain.knowledge.resolver import EntityResolver
 from src.domain.knowledge.schemas import (
@@ -18,9 +18,11 @@ from src.domain.knowledge.schemas import (
     EdgeDraft,
     EvidenceDraft,
     FailedRecord,
+    KnowledgeInput,
     NodeDraft,
     ValidationIssue,
 )
+from src.domain.knowledge.source_record import validate_source_record_contract
 
 logger = logging.getLogger(__name__)
 
@@ -42,30 +44,11 @@ class KnowledgeCompiler:
         # downstream LLM proxy/pool limit when adapters call remote models.
         self.concurrency = max(1, int(concurrency))
 
-    async def compile(self, adapter: DomainAdapter, raw_records: Any) -> CompileResult:
+    async def compile(self, adapter: DomainAdapter, inputs: list[KnowledgeInput]) -> CompileResult:
         run_id = f"kg_run:{adapter.spec.name}:{uuid4()}"
         version = adapter.spec.version
         failed_records: list[FailedRecord] = []
         warnings: list[ValidationIssue] = []
-
-        try:
-            inputs = adapter.normalize(raw_records)
-        except Exception as exc:
-            result = CompileResult(
-                run_id=run_id,
-                adapter_name=adapter.spec.name,
-                adapter_version=adapter.spec.version,
-                version=version,
-                failed_records=[
-                    FailedRecord(
-                        source_type="raw",
-                        source_id="normalize",
-                        reason=str(exc),
-                    )
-                ],
-            )
-            self._persist_result(result, input_count=0)
-            return result
 
         total = len(inputs)
         logger.info(
@@ -77,10 +60,11 @@ class KnowledgeCompiler:
         completed = [0]
         run_t0 = time.monotonic()
 
-        async def process_one(item):
+        async def process_one(item: KnowledgeInput):
             async with sem:
                 t0 = time.monotonic()
                 try:
+                    validate_source_record_contract(item)
                     item_evidence = adapter.extract_evidence_drafts(item)
                     item_nodes = await adapter.extract_node_drafts(item)
                     item_edges = await adapter.extract_edge_drafts(item, item_nodes)
@@ -96,7 +80,7 @@ class KnowledgeCompiler:
                         reason=str(exc),
                     )
                 completed[0] += 1
-                logger.info(
+                logger.debug(
                     "[compile] [%d/%d] ok source_type=%s source_id=%s nodes=%d edges=%d duration=%.1fs",
                     completed[0], total, item.source_type, item.source_id,
                     len(item_nodes), len(item_edges), time.monotonic() - t0,
@@ -123,24 +107,27 @@ class KnowledgeCompiler:
             len(failed_records), time.monotonic() - run_t0,
         )
 
-        evidence_result = self.evidence_manager.compile(
-            adapter_name=adapter.spec.name,
-            version=version,
-            drafts=evidence_drafts,
-        )
-        node_result = self.entity_resolver.resolve(
-            adapter_spec=adapter.spec,
-            version=version,
-            drafts=node_drafts,
-        )
-        edge_result = self.relation_compiler.compile(
-            adapter_spec=adapter.spec,
-            version=version,
-            drafts=edge_drafts,
-            draft_by_ref=node_result.draft_by_ref,
-            node_id_by_ref=node_result.node_id_by_ref,
-            evidence_ref_map=evidence_result.ref_map,
-        )
+        with profile_span("kg_compile.evidence_compile", drafts=len(evidence_drafts)):
+            evidence_result = self.evidence_manager.compile(
+                adapter_name=adapter.spec.name,
+                version=version,
+                drafts=evidence_drafts,
+            )
+        with profile_span("kg_compile.node_resolve", drafts=len(node_drafts)):
+            node_result = self.entity_resolver.resolve(
+                adapter_spec=adapter.spec,
+                version=version,
+                drafts=node_drafts,
+            )
+        with profile_span("kg_compile.edge_compile", drafts=len(edge_drafts)):
+            edge_result = self.relation_compiler.compile(
+                adapter_spec=adapter.spec,
+                version=version,
+                drafts=edge_drafts,
+                draft_by_ref=node_result.draft_by_ref,
+                node_id_by_ref=node_result.node_id_by_ref,
+                evidence_ref_map=evidence_result.ref_map,
+            )
 
         failed_records.extend(node_result.failed_records)
         failed_records.extend(edge_result.failed_records)
@@ -158,32 +145,44 @@ class KnowledgeCompiler:
             failed_records=failed_records,
             warnings=warnings,
         )
-        self._persist_result(result, input_count=len(inputs))
+        with profile_span(
+            "kg_compile.persist",
+            nodes=len(result.nodes),
+            edges=len(result.edges),
+            evidence=len(result.evidence),
+            failed=len(result.failed_records),
+        ):
+            self._persist_result(result, input_count=len(inputs))
         return result
 
     def _persist_result(self, result: CompileResult, *, input_count: int) -> None:
         if self.repository is None:
             return
-        self.repository.create_compilation_run(
-            {
-                "run_id": result.run_id,
-                "adapter_name": result.adapter_name,
-                "adapter_version": result.adapter_version,
-                "input_count": input_count,
-                "status": "running",
-            }
-        )
-        self.repository.upsert_nodes(result.nodes)
-        self.repository.upsert_evidence(result.evidence)
-        self.repository.upsert_edges(result.edges)
-        self.repository.finish_compilation_run(
-            result.run_id,
-            {
-                "status": "success" if not result.failed_records else "partial",
-                "input_count": input_count,
-                "node_count": len(result.nodes),
-                "edge_count": len(result.edges),
-                "evidence_count": len(result.evidence),
-                "failed_count": len(result.failed_records),
-            },
-        )
+        with profile_span("kg_compile.persist.create_run", run_id=result.run_id):
+            self.repository.create_compilation_run(
+                {
+                    "run_id": result.run_id,
+                    "adapter_name": result.adapter_name,
+                    "adapter_version": result.adapter_version,
+                    "input_count": input_count,
+                    "status": "running",
+                }
+            )
+        with profile_span("kg_compile.persist.upsert_nodes", nodes=len(result.nodes)):
+            self.repository.upsert_nodes(result.nodes)
+        with profile_span("kg_compile.persist.upsert_evidence", evidence=len(result.evidence)):
+            self.repository.upsert_evidence(result.evidence)
+        with profile_span("kg_compile.persist.upsert_edges", edges=len(result.edges)):
+            self.repository.upsert_edges(result.edges)
+        with profile_span("kg_compile.persist.finish_run", run_id=result.run_id):
+            self.repository.finish_compilation_run(
+                result.run_id,
+                {
+                    "status": "success" if not result.failed_records else "partial",
+                    "input_count": input_count,
+                    "node_count": len(result.nodes),
+                    "edge_count": len(result.edges),
+                    "evidence_count": len(result.evidence),
+                    "failed_count": len(result.failed_records),
+                },
+            )

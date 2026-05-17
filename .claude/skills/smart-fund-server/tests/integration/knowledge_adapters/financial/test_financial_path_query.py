@@ -53,7 +53,7 @@ def test_financial_event_to_concept_stock_fund_path_is_retrievable() -> None:
     _ensure_tables()
     _cleanup()
     repo = KnowledgeRepositoryImpl(target="test")
-    result = KnowledgeCompiler(repository=repo).compile(FinancialKGAdapter(), _load_all())
+    result = _compile_financial(repo, _load_all())
     service = KnowledgeService(repository=repo)
     asyncio.run(service.rebuild_wiki("financial"))
     asyncio.run(service.rebuild_indexes("financial"))
@@ -79,6 +79,11 @@ def test_financial_event_to_concept_stock_fund_path_is_retrievable() -> None:
 
 def _ensure_tables() -> None:
     Base.metadata.create_all(get_engine("test"), tables=KG_TABLES)
+
+
+def _compile_financial(repo: KnowledgeRepositoryImpl, records: list[dict]):
+    adapter = FinancialKGAdapter()
+    return asyncio.run(KnowledgeCompiler(repository=repo).compile(adapter, adapter.normalize(records)))
 
 
 def _cleanup() -> None:

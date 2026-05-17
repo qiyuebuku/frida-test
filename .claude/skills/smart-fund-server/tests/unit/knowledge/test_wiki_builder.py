@@ -185,4 +185,5 @@ def test_wiki_timeline_sorts_mixed_naive_and_aware_evidence_times() -> None:
 
 async def _compile_toy():
     records = json.loads((FIXTURE_DIR / "toy_records.json").read_text(encoding="utf-8"))
-    return await KnowledgeCompiler().compile(ToyProjectAdapter(), records)
+    adapter = ToyProjectAdapter()
+    return await KnowledgeCompiler().compile(adapter, adapter.normalize(records))

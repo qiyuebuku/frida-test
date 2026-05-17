@@ -46,13 +46,15 @@ KG_TABLES = [
 ]
 
 
-def test_toy_compiler_persists_nodes_edges_evidence_and_run() -> None:
+@pytest.mark.asyncio
+async def test_toy_compiler_persists_nodes_edges_evidence_and_run() -> None:
     _ensure_tables()
     _cleanup()
     records = json.loads((FIXTURE_DIR / "toy_records.json").read_text(encoding="utf-8"))
     repo = KnowledgeRepositoryImpl(target="test")
+    adapter = ToyProjectAdapter()
 
-    result = KnowledgeCompiler(repository=repo).compile(ToyProjectAdapter(), records)
+    result = await KnowledgeCompiler(repository=repo).compile(adapter, adapter.normalize(records))
 
     assert len(result.nodes) == 4
     assert len(result.edges) == 3

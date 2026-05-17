@@ -53,6 +53,25 @@ class KnowledgeCompileResultDTO(KnowledgeDTO):
 
 
 @dataclass
+class KnowledgeSourceProjectionCommand:
+    target: Target = "prod"
+    sources: list[str] | None = None
+    codes: list[str] = field(default_factory=list)
+    limit: int = 100
+    include_skipped: bool = True
+
+
+@dataclass
+class KnowledgeSourceProjectionResultDTO(KnowledgeDTO):
+    records: list[dict[str, Any]] = field(default_factory=list)
+    total_records: int = 0
+    source_counts: dict[str, int] = field(default_factory=dict)
+    skipped: list[dict[str, Any]] = field(default_factory=list)
+    warnings: list[str] = field(default_factory=list)
+    coverage: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass
 class KnowledgeBootstrapStocksCommand:
     target: Target = "prod"
     codes: list[str] = field(default_factory=list)
@@ -145,7 +164,7 @@ class KnowledgeResearchContextCommand:
     query: str
     adapter_name: str = "financial"
     target: Target = "prod"
-    retrieval_mode: Literal["deterministic_plan", "agentic_arag"] = "deterministic_plan"
+    retrieval_mode: Literal["auto", "deterministic_plan", "agentic_arag"] = "auto"
     graph_depth: int = 3
     graph_limit: int = 20
     wiki_limit: int = 10
@@ -173,6 +192,8 @@ class KnowledgeResearchContextDTO(KnowledgeDTO):
     planner_enabled: bool = False
     retrieval_plan: dict[str, Any] = field(default_factory=dict)
     retrieval_trace: dict[str, Any] = field(default_factory=dict)
+    query_anchor: dict[str, Any] = field(default_factory=dict)
+    routing_decision: dict[str, Any] = field(default_factory=dict)
     warnings: list[str] = field(default_factory=list)
 
 
@@ -187,11 +208,15 @@ class KnowledgeResearchContextBadCase:
     expected_node_names: list[str] = field(default_factory=list)
     expected_relation_types: list[str] = field(default_factory=list)
     expected_channels_used: list[str] = field(default_factory=list)
+    forbidden_node_names: list[str] = field(default_factory=list)
+    forbidden_evidence_refs: list[str] = field(default_factory=list)
+    forbidden_topics: list[str] = field(default_factory=list)
     min_hits: int = 0
     min_evidence_refs: int = 0
     min_matched_nodes: int = 0
     min_matched_edges: int = 0
-    retrieval_mode: Literal["deterministic_plan", "agentic_arag"] = "deterministic_plan"
+    max_forbidden_hits: int = 0
+    retrieval_mode: Literal["auto", "deterministic_plan", "agentic_arag"] = "auto"
     replay_trace: bool = False
     recorded_trace: dict[str, Any] = field(default_factory=dict)
 

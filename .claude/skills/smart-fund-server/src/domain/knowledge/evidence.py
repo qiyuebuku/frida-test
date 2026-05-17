@@ -33,6 +33,7 @@ class EvidenceManager:
                 draft.evidence_type,
                 draft.content,
                 draft.payload,
+                draft.metadata,
             )
             evidence = CompiledEvidence(
                 evidence_id=evidence_id,
@@ -46,6 +47,7 @@ class EvidenceManager:
                 span_end=draft.span_end,
                 version=version,
                 metadata=draft.metadata,
+                source_fingerprint=_source_fingerprint(draft.payload, draft.metadata),
             )
             evidence_by_id[evidence_id] = evidence
 
@@ -67,3 +69,12 @@ def _refs_for_draft(draft: EvidenceDraft, evidence_id: str) -> list[str]:
         draft.source_id,
     ]
     return [item for item in refs if item]
+
+
+def _source_fingerprint(payload: dict, metadata: dict) -> str | None:
+    for source in (metadata, payload):
+        for key in ("fingerprint", "source_fingerprint", "content_fingerprint"):
+            value = source.get(key)
+            if value:
+                return str(value)
+    return None

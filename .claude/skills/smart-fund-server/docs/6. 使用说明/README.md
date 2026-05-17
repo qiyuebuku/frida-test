@@ -13,5 +13,8 @@
 
 | 目录 | 文档 | 用途 |
 |---|---|---|
-| `知识图谱` | `1. 知识图谱服务启动与使用说明.md` | 启动 API、验证 health、调用当前 KG 能力、排查本地代理问题 |
-| `知识图谱` | `2. 知识图谱服务使用Notebook.ipynb` | 用可执行 Notebook 演示数据读取、Adapter 标准化、编译、索引、查询、质量扫描、CLI/API 调用 |
+| `知识图谱` | `1_kg_source_record_projection_demo.py` | 演示从真实数据库业务表读取记录并投影为 Source Record，不写 KG、不调用 LLM |
+| `知识图谱` | `2_kg_compile_and_write_demo.py` | 演示 Source Record 编译、写入 KG、增量刷新、检索和质量扫描 |
+| `知识图谱` | `3_kg_real_replay_quality_baseline.py` | 真实库回放、质量基线、Agentic A-RAG 观测和数据库抽查 |
+| `知识图谱` | `4_kg_service_usage.py` | 演示数据读取、Adapter 标准化、编译、索引、查询、质量扫描、CLI/API 调用 |
+| `知识图谱` | `5_kg_usage_demo.py` | 展示知识图谱当前使用效果和召回结果 |

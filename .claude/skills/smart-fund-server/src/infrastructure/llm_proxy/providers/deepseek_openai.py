@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import re
 import time
 from typing import Any
 
@@ -56,8 +57,11 @@ class DeepSeekOpenAIProvider:
                 raise LLMProxyError("DeepSeek API key 未配置", error_type="auth_error")
 
             payload = self._request_payload(request, route)
+            original_messages = list(payload.get("messages") or [])
             started_at = time.perf_counter()
             retry_count = 0
+            json_mode_retry_data: dict[str, Any] | None = None
+            json_mode_retry_error: str | None = None
 
             try:
                 data = await self._post(payload)
@@ -68,25 +72,63 @@ class DeepSeekOpenAIProvider:
                     raise
                 retry_count = 1
                 data = await self._post(payload)
+            primary_data = data
+
+            choice = (data.get("choices") or [{}])[0]
+            message = choice.get("message") or {}
+            text = message.get("content") or ""
+            tool_calls = message.get("tool_calls")
+            reasoning_content = message.get("reasoning_content")
+            structured_output = self._try_parse_json(text, request)
+            repair_data: dict[str, Any] | None = None
+            repair_error: str | None = None
+            if (
+                structured_output is None
+                and self._expects_json(request)
+                and not text.strip()
+                and not tool_calls
+            ):
+                try:
+                    json_mode_retry_data = await self._post(
+                        self._json_empty_continuation_payload(
+                            request,
+                            route,
+                            original_messages,
+                        )
+                    )
+                    data = json_mode_retry_data
+                    choice = (data.get("choices") or [{}])[0]
+                    message = choice.get("message") or {}
+                    text = message.get("content") or ""
+                    tool_calls = message.get("tool_calls")
+                    reasoning_content = message.get("reasoning_content")
+                    structured_output = self._try_parse_json(text, request)
+                except LLMProxyError as exc:
+                    json_mode_retry_error = f"{exc.error_type}: {str(exc)[:200]}"
+            if structured_output is None and self._expects_json(request) and text.strip():
+                try:
+                    repair_data = await self._post(
+                        self._json_repair_payload(request, route, text, original_messages)
+                    )
+                    repair_text = self._response_text(repair_data)
+                    structured_output = self._try_parse_json(repair_text, request)
+                    if structured_output is not None:
+                        text = json.dumps(structured_output, ensure_ascii=False)
+                    else:
+                        repair_error = "repair response not parseable as JSON"
+                except LLMProxyError as exc:
+                    repair_error = f"{exc.error_type}: {str(exc)[:200]}"
 
         duration_ms = int((time.perf_counter() - started_at) * 1000)
         choice = (data.get("choices") or [{}])[0]
-        message = choice.get("message") or {}
-        text = message.get("content") or ""
-        structured_output = self._try_parse_json(text, request)
         if structured_output is not None:
             text = json.dumps(structured_output, ensure_ascii=False)
 
-        usage = data.get("usage") or {}
-        normalized_usage = {
-            "input_tokens": int(usage.get("prompt_tokens", 0) or 0),
-            "output_tokens": int(usage.get("completion_tokens", 0) or 0),
-            "total_tokens": int(usage.get("total_tokens", 0) or 0),
-        }
-        if not normalized_usage["total_tokens"]:
-            normalized_usage["total_tokens"] = (
-                normalized_usage["input_tokens"] + normalized_usage["output_tokens"]
-            )
+        normalized_usage = self._normalized_usage(primary_data)
+        if json_mode_retry_data is not None:
+            normalized_usage = self._merge_usage(normalized_usage, self._normalized_usage(json_mode_retry_data))
+        if repair_data is not None:
+            normalized_usage = self._merge_usage(normalized_usage, self._normalized_usage(repair_data))
 
         return LLMProxyResponse(
             text=text,
@@ -99,7 +141,39 @@ class DeepSeekOpenAIProvider:
                 "object": data.get("object"),
                 "model": data.get("model"),
                 "finish_reason": choice.get("finish_reason"),
+                "message": {
+                    "content": text,
+                    "reasoning_content": reasoning_content,
+                    "tool_calls": tool_calls,
+                },
+                "tool_calls": tool_calls,
+                "reasoning_content": reasoning_content,
                 "provider": self.name,
+                "json_repair": (
+                    {
+                        "id": repair_data.get("id"),
+                        "model": repair_data.get("model"),
+                        "finish_reason": ((repair_data.get("choices") or [{}])[0]).get("finish_reason"),
+                    }
+                    if repair_data is not None
+                    else None
+                ),
+                "json_mode_retry": (
+                    {
+                        "id": json_mode_retry_data.get("id"),
+                        "model": json_mode_retry_data.get("model"),
+                        "finish_reason": ((json_mode_retry_data.get("choices") or [{}])[0]).get(
+                            "finish_reason"
+                        ),
+                    }
+                    if json_mode_retry_data is not None
+                    else None
+                ),
+                "json_mode_initial": {
+                    "id": primary_data.get("id"),
+                    "model": primary_data.get("model"),
+                    "finish_reason": ((primary_data.get("choices") or [{}])[0]).get("finish_reason"),
+                },
             },
             cache_hit=False,
             proxy={
@@ -109,6 +183,13 @@ class DeepSeekOpenAIProvider:
                 "upstream_model": data.get("model") or route.resolved_model,
                 "route_reason": route.route_reason,
                 "retry_count": retry_count,
+                "json_mode_retry_attempted": json_mode_retry_data is not None
+                or json_mode_retry_error is not None,
+                "json_mode_retry_success": json_mode_retry_data is not None and bool(text.strip()),
+                "json_mode_retry_error": json_mode_retry_error,
+                "json_repair_attempted": repair_data is not None or repair_error is not None,
+                "json_repair_success": repair_data is not None and structured_output is not None,
+                "json_repair_error": repair_error,
             },
         )
 
@@ -183,8 +264,18 @@ class DeepSeekOpenAIProvider:
             detail = repr(exc)
         return f"{exc.__class__.__name__}: {detail}"[:300]
 
-    def _request_payload(self, request: LLMProxyRequest, route: LLMRouteDecision) -> dict[str, Any]:
-        messages = request.messages or self._messages_from_prompt(request)
+    def _request_payload(
+        self,
+        request: LLMProxyRequest,
+        route: LLMRouteDecision,
+        *,
+        force_response_format: bool = True,
+        force_json_schema_instruction: bool = True,
+    ) -> dict[str, Any]:
+        messages = self._messages_for_request(
+            request,
+            force_json_schema_instruction=force_json_schema_instruction,
+        )
         payload: dict[str, Any] = {
             "model": route.resolved_model or self.default_model,
             "messages": messages,
@@ -194,45 +285,231 @@ class DeepSeekOpenAIProvider:
             payload["temperature"] = request.temperature
         if request.max_tokens is not None:
             payload["max_tokens"] = request.max_tokens
-        if request.json_schema or (request.response_format or {}).get("type") == "json_object":
+        if force_response_format and self._expects_json(request):
             payload["response_format"] = {"type": "json_object"}
+        if request.tools:
+            payload["tools"] = request.tools
+        if request.tool_choice is not None:
+            payload["tool_choice"] = request.tool_choice
         if self.thinking_type:
             payload["thinking"] = {"type": self.thinking_type}
         if self.reasoning_effort:
             payload["reasoning_effort"] = self.reasoning_effort
         return payload
 
+    def _messages_for_request(
+        self,
+        request: LLMProxyRequest,
+        *,
+        force_json_schema_instruction: bool = True,
+    ) -> list[dict[str, Any]]:
+        messages = list(request.messages) if request.messages else self._messages_from_prompt(request)
+        if force_json_schema_instruction and self._expects_json(request):
+            messages = self._ensure_json_mode_instruction(messages, request)
+        return messages
+
     def _messages_from_prompt(self, request: LLMProxyRequest) -> list[dict[str, str]]:
         messages: list[dict[str, str]] = []
         if request.system_prompt:
             messages.append({"role": "system", "content": request.system_prompt})
-        prompt = request.prompt or request.prompt_text()
-        if request.json_schema:
-            schema = json.dumps(request.json_schema, ensure_ascii=False, indent=2)
-            prompt = "\n\n".join(
-                [
-                    prompt,
-                    "请只输出合法 JSON，不要输出 Markdown、解释文字或代码块。",
-                    f"JSON Schema:\n{schema}",
-                ]
-            )
-        messages.append({"role": "user", "content": prompt})
+        messages.append({"role": "user", "content": request.prompt or request.prompt_text()})
         return messages
 
     @staticmethod
+    def _ensure_json_mode_instruction(
+        messages: list[dict[str, Any]],
+        request: LLMProxyRequest,
+    ) -> list[dict[str, Any]]:
+        joined = json.dumps(messages, ensure_ascii=False).lower()
+        needs_json_instruction = "json" not in joined
+        needs_schema = bool(request.json_schema) and "json schema" not in joined
+        if not needs_json_instruction and not needs_schema:
+            return messages
+
+        instruction_parts: list[str] = []
+        if needs_json_instruction:
+            instruction_parts.append("请只输出合法 JSON 对象，不要输出 Markdown、解释文字或代码块。")
+        if needs_schema and request.json_schema:
+            schema = json.dumps(request.json_schema, ensure_ascii=False, indent=2)
+            instruction_parts.append(f"JSON Schema:\n{schema}")
+        instruction = "\n".join(instruction_parts)
+        if messages and str(messages[0].get("role") or "").lower() == "system":
+            first = dict(messages[0])
+            first["content"] = "\n\n".join([str(first.get("content") or ""), instruction]).strip()
+            return [first, *messages[1:]]
+        return [{"role": "system", "content": instruction}, *messages]
+
+    def _json_empty_continuation_payload(
+        self,
+        request: LLMProxyRequest,
+        route: LLMRouteDecision,
+        original_messages: list[dict[str, Any]],
+    ) -> dict[str, Any]:
+        messages = [
+            *original_messages,
+            {
+                "role": "user",
+                "content": (
+                    "你上一次返回了空内容，导致系统无法解析。请基于同一个输入重新输出合法 JSON 对象。"
+                    "必须严格符合前面给出的 JSON Schema；不要输出 Markdown、解释文字或代码块。"
+                ),
+            },
+        ]
+        return self._payload_from_messages(
+            request,
+            route,
+            messages,
+            force_response_format=False,
+        )
+
+    def _json_repair_payload(
+        self,
+        request: LLMProxyRequest,
+        route: LLMRouteDecision,
+        raw_text: str,
+        original_messages: list[dict[str, Any]] | None = None,
+    ) -> dict[str, Any]:
+        if original_messages:
+            messages = [
+                *original_messages,
+                {"role": "assistant", "content": raw_text[:12000]},
+                {
+                    "role": "user",
+                    "content": (
+                        "你上一次输出无法被解析为合法 JSON，失败原因是 JSON parser 无法解析该内容。"
+                        "请说明失败原因只在内部判断，最终只重新输出一个合法 JSON 对象。"
+                        "必须严格符合前面给出的 JSON Schema；不要输出 Markdown、解释文字或代码块。"
+                    ),
+                },
+            ]
+            return self._payload_from_messages(
+                request,
+                route,
+                messages,
+                force_response_format=True,
+            )
+
+        schema = json.dumps(request.json_schema or {"type": "object"}, ensure_ascii=False, indent=2)
+        messages = [
+            {
+                "role": "system",
+                "content": (
+                    "你是严格的 JSON 修复器。只允许把用户提供的模型输出整理成合法 JSON，"
+                    "不得新增事实、不得解释、不得输出 Markdown。"
+                ),
+            },
+            {
+                "role": "user",
+                "content": "\n\n".join(
+                    [
+                        "下面这段模型输出本应是 JSON，但格式不合法。请尽最大可能转成合法 JSON。",
+                        f"JSON Schema:\n{schema}",
+                        f"原始输出:\n{raw_text[:12000]}",
+                        "只输出 JSON。",
+                    ]
+                ),
+            },
+        ]
+        return self._payload_from_messages(
+            request,
+            route,
+            messages,
+            force_response_format=True,
+        )
+
+    def _payload_from_messages(
+        self,
+        request: LLMProxyRequest,
+        route: LLMRouteDecision,
+        messages: list[dict[str, Any]],
+        *,
+        force_response_format: bool,
+    ) -> dict[str, Any]:
+        payload: dict[str, Any] = {
+            "model": route.resolved_model or self.default_model,
+            "messages": messages,
+            "stream": False,
+        }
+        if request.temperature is not None:
+            payload["temperature"] = request.temperature
+        if request.max_tokens is not None:
+            payload["max_tokens"] = request.max_tokens
+        if force_response_format and self._expects_json(request):
+            payload["response_format"] = {"type": "json_object"}
+        if request.tools:
+            payload["tools"] = request.tools
+        if request.tool_choice is not None:
+            payload["tool_choice"] = request.tool_choice
+        if self.thinking_type:
+            payload["thinking"] = {"type": self.thinking_type}
+        if self.reasoning_effort:
+            payload["reasoning_effort"] = self.reasoning_effort
+        return payload
+
+    @staticmethod
+    def _response_text(data: dict[str, Any]) -> str:
+        choice = (data.get("choices") or [{}])[0]
+        message = choice.get("message") or {}
+        return str(message.get("content") or "")
+
+    @staticmethod
+    def _normalized_usage(data: dict[str, Any]) -> dict[str, int]:
+        usage = data.get("usage") or {}
+        normalized_usage = {
+            "input_tokens": int(usage.get("prompt_tokens", 0) or 0),
+            "output_tokens": int(usage.get("completion_tokens", 0) or 0),
+            "total_tokens": int(usage.get("total_tokens", 0) or 0),
+            "prompt_cache_hit_tokens": int(usage.get("prompt_cache_hit_tokens", 0) or 0),
+            "prompt_cache_miss_tokens": int(usage.get("prompt_cache_miss_tokens", 0) or 0),
+        }
+        completion_details = usage.get("completion_tokens_details") or {}
+        if isinstance(completion_details, dict):
+            normalized_usage["reasoning_tokens"] = int(completion_details.get("reasoning_tokens", 0) or 0)
+        if not normalized_usage["total_tokens"]:
+            normalized_usage["total_tokens"] = (
+                normalized_usage["input_tokens"] + normalized_usage["output_tokens"]
+            )
+        return normalized_usage
+
+    @staticmethod
+    def _merge_usage(left: dict[str, int], right: dict[str, int]) -> dict[str, int]:
+        return {
+            "input_tokens": int(left.get("input_tokens", 0)) + int(right.get("input_tokens", 0)),
+            "output_tokens": int(left.get("output_tokens", 0)) + int(right.get("output_tokens", 0)),
+            "total_tokens": int(left.get("total_tokens", 0)) + int(right.get("total_tokens", 0)),
+            "prompt_cache_hit_tokens": int(left.get("prompt_cache_hit_tokens", 0))
+            + int(right.get("prompt_cache_hit_tokens", 0)),
+            "prompt_cache_miss_tokens": int(left.get("prompt_cache_miss_tokens", 0))
+            + int(right.get("prompt_cache_miss_tokens", 0)),
+            "reasoning_tokens": int(left.get("reasoning_tokens", 0)) + int(right.get("reasoning_tokens", 0)),
+        }
+
+    @staticmethod
+    def _expects_json(request: LLMProxyRequest) -> bool:
+        return bool(request.json_schema or (request.response_format or {}).get("type") == "json_object")
+
+    @staticmethod
     def _try_parse_json(text: str, request: LLMProxyRequest) -> Any | None:
-        if not (request.json_schema or (request.response_format or {}).get("type") == "json_object"):
+        if not DeepSeekOpenAIProvider._expects_json(request):
             return None
         candidate = text.strip()
         if not candidate:
             return None
         if candidate.startswith("```"):
-            candidate = candidate.removeprefix("```json").removeprefix("```").strip()
-            candidate = candidate.removesuffix("```").strip()
+            candidate = re.sub(r"^```(?:json)?\s*", "", candidate, flags=re.I)
+            candidate = re.sub(r"\s*```\s*$", "", candidate)
         try:
             return json.loads(candidate)
         except Exception:
-            return None
+            pass
+        start = candidate.find("{")
+        end = candidate.rfind("}")
+        if start >= 0 and end > start:
+            try:
+                return json.loads(candidate[start : end + 1])
+            except Exception:
+                pass
+        return None
 
     def health(self) -> dict:
         return {

@@ -337,7 +337,7 @@ def check_milvus() -> dict[str, Any]:
 
 
 def load_baseline_records() -> list[dict[str, Any]]:
-    script_path = Path(__file__).with_name("2. 真实库回放与质量基线.py")
+    script_path = Path(__file__).with_name("3_kg_real_replay_quality_baseline.py")
     spec = importlib.util.spec_from_file_location("kg_real_baseline_script", script_path)
     if spec is None or spec.loader is None:
         raise RuntimeError(f"cannot import baseline script: {script_path}")

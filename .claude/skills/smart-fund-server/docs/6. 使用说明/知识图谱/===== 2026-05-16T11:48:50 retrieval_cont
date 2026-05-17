@@ -1,0 +1,927 @@
+===== 2026-05-16T12:47:33 retrieval_controller request =====
+model: deepseek-v4-flash
+metadata: {"task":"kg_retrieval_controller","observations":0}
+use_cache: False  has_json_schema: True
+query:
+  宁德时代 300750 最近受哪些事件影响
+query_anchor:
+  query: 宁德时代 300750 最近受哪些事件影响
+  core_event: 宁德时代 300750 最近受哪些事件影响
+  core_entities:
+    -
+      text: 300750
+      hint_type: entity
+      strength: strong
+      confidence: 0.95
+      source: guard
+    -
+      text: 宁德时代
+      hint_type: entity
+      strength: strong
+      confidence: 0.95
+      source: guard
+  core_topics:
+    -
+      text: 宁德时代 300750 最近受哪些事件影响
+      hint_type: topic
+      strength: weak
+      confidence: 0.65
+      source: guard
+  relation_intents:
+    - impact
+  time_hints:
+
+  source_hints:
+
+  negative_boundaries:
+
+  inferred_hints:
+
+  guard_constraints:
+    -
+      value: 300750
+      constraint_type: instrument_code
+      must_preserve: True
+    -
+      value: 宁德时代
+      constraint_type: exact_entity
+      must_preserve: True
+    -
+      value: 300750
+      constraint_type: exact_entity
+      must_preserve: True
+    -
+      value: 宁德时代 300750 最近受哪些事件影响
+      constraint_type: query_phrase
+      must_preserve: False
+  confidence: 0.8
+  warnings:
+constraints:
+  max_turns: 6
+  max_tool_calls: 6
+  max_hits: 30
+  no_gain_round_limit: 2
+  judge_top_k: 8
+  judge_top_k_complex: 12
+  judge_top_k_max: 15
+  evidence_backfill_limit: 2
+  min_keep_evidence_to_auto_open: 1
+  min_keep_candidates_to_auto_stop: 2
+  anchor_coverage_stop_threshold: 0.8
+  max_llm_calls_normal_query: 2
+  max_auto_expand_candidates: 4
+  semantic_query_rewrite_limit: 3
+working_set:
+  evidence_refs:
+
+  evidence_refs_total: 0
+  opened_windows:
+
+  opened_windows_total: 0
+  missing_anchor_items:
+
+  missing_anchor_items_total: 0
+  tool_call_count: 0
+  no_gain_rounds: 0
+  accepted:
+
+  accepted_total: 0
+  background:
+
+  background_total: 0
+  dropped:
+
+  dropped_total: 0
+observations: total=0
+available_tools: {"search":"重新组织查询并多通道召回。","find":"在已知 evidence 内定位关键词或语义线索，必须指定 target_evidence_refs。","open":"打开已知 evidence 或候选的父证据/窗口，必须指定 target_evidence_refs 或 target_candidate_ids。","summarize":"压缩已验证 trace 和 evidence，不生成新事实。","stop":"证据足够或继续无收益时停止。"}
+decision_contract: {"search":{"next_tool":"search","query_rewrites":["query expression 1","query expression 2"],"search_plan":{"answer_targets":["objects to answer"],"negative_boundaries":["topics to avoid"],"expected_evidence":["evidence or relation type expected"],"relation_intents":["impact/beneficiary/cause/risk/etc"],"stop_condition":"what evidence is enough"},"expected_gain":"evidence_coverage"},"find":{"next_tool":"find","target_evidence_refs":["kg_ev:..."],"query_rewrites":["term"],"expected_gain":"disambiguation"},"open":{"next_tool":"open","target_evidence_refs":["kg_ev:..."],"expected_gain":"context_window"},"stop":{"next_tool":"stop","stop_reason":"evidence_sufficient"}}
+
+===== 2026-05-16T12:47:39 retrieval_controller response =====
+duration_ms: 5046  cache_hit: False
+usage: {"input_tokens":1734,"output_tokens":431,"total_tokens":2165}
+parsed_payload:
+  next_tool: search
+  reason: 初始查询，尚无证据，需搜索宁德时代近期事件影响
+  target_candidate_ids:
+
+  target_evidence_refs:
+
+  query_rewrites:
+    - 宁德时代 300750 近期事件影响
+    - 300750 重大事件 新闻
+    - 宁德时代 利空 利好 事件
+  search_plan:
+    answer_targets:
+      - 影响宁德时代股价或业务的近期事件
+    negative_boundaries:
+      - 电池技术细节
+      - 公司历史事件
+      - 无关行业动态
+    expected_evidence:
+      - 新闻公告
+      - 监管事件
+      - 业绩报告
+      - 机构研报
+    relation_intents:
+      - impact
+    stop_condition: 搜集到至少3个不同类别的事件证据
+  expected_gain: evidence_coverage
+  confidence: 0.9
+  stop_reason: None
+raw_text:
+  {"next_tool": "search", "reason": "初始查询，尚无证据，需搜索宁德时代近期事件影响", "target_candidate_ids": [], "target_evidence_refs": [], "query_rewrites": ["宁德时代 300750 近期事件影响", "300750 重大事件 新闻", "宁德时代 利空 利好 事件"], "search_plan": {"answer_targets": ["影响宁德时代股价或业务的近期事件"], "negative_boundaries": ["电池技术细节", "公司历史事件", "无关行业动态"], "expected_evidence": ["新闻公告", "监管事件", "业绩报告", "机构研报"], "relation_intents": ["impact"], "stop_condition": "搜集到至少3个不同类别的事件证据"}, "expected_gain": "evidence_coverage", "confidence": 0.9, "stop_reason": null}
+
+===== 2026-05-16T12:47:39 agentic_controller_apply event =====
+event_meaning: retrieval decision is being applied as the next tool call.
+controller_called: True
+controller_next_tool: search
+controller_reason: 初始查询，尚无证据，需搜索宁德时代近期事件影响
+expected_gain: evidence_coverage
+confidence: 0.9
+applied_tool: search
+applied_query: 宁德时代 300750 近期事件影响
+applied_queries: ["宁德时代 300750 近期事件影响","300750 重大事件 新闻","宁德时代 利空 利好 事件"]
+search_plan: {"answer_targets":["影响宁德时代股价或业务的近期事件"],"negative_boundaries":["电池技术细节","公司历史事件","无关行业动态"],"expected_evidence":["新闻公告","监管事件","业绩报告","机构研报"],"relation_intents":["impact"],"stop_condition":"搜集到至少3个不同类别的事件证据"}
+target_evidence_refs: []
+target_candidate_ids: []
+
+===== 2026-05-16T12:47:39 agentic_search_plan_result event =====
+human_summary:
+  搜索计划执行:
+    1. 宁德时代 300750 近期事件影响 mode=full semantic=True hits=30 sources={'entity_resolve': 6, 'graph': 14, 'wiki': 10}
+    2. 300750 重大事件 新闻 mode=full semantic=True hits=30 sources={'entity_resolve': 2, 'graph': 18, 'wiki': 10}
+    3. 宁德时代 利空 利好 事件 mode=full semantic=True hits=30 sources={'entity_resolve': 6, 'graph': 14, 'wiki': 10}
+  answer_targets: 影响宁德时代股价或业务的近期事件
+  expected_evidence: 新闻公告, 监管事件, 业绩报告, 机构研报
+  negative_boundaries: 电池技术细节, 公司历史事件, 无关行业动态
+  stop_condition: 搜集到至少3个不同类别的事件证据
+  召回后已按 search_plan rerank，进入候选池: 30
+event_meaning: search query rewrites were executed and search_plan was applied to rerank recalled candidates; no LLM request.
+query_rewrites: ["宁德时代 300750 近期事件影响","300750 重大事件 新闻","宁德时代 利空 利好 事件"]
+query_modes: [{"query":"宁德时代 300750 近期事件影响","mode":"full","semantic_enabled":true,"hit_count":30,"source_counts":{"entity_resolve":6,"graph":14,"wiki":10}},{"query":"300750 重大事件 新闻","mode":"full","semantic_enabled":true,"hit_count":30,"source_counts":{"entity_resolve":2,"graph":18,"wiki":10}},{"query":"宁德时代 利空 利好 事件","mode":"full","semantic_enabled":true,"hit_count":30,"source_counts":{"entity_resolve":6,"graph":14,"wiki":10}}]
+search_plan_usage: {"query_rewrites_executed":true,"semantic_search":"first_3_queries","keyword_entity_wiki_graph":"all_queries","search_plan_rerank":true,"hard_filter_by_negative_boundaries":false}
+selected_hit_count: 30
+selected_hits: [{"title":"宁德时代","type":"node","source":"entity_resolve","evidence_refs":[],"id":"kg:financial:stock:c37cbb33f0cc501f"},{"title":"快充电池","type":"wiki","source":"wiki","evidence_refs":["kg_ev:financial:news_articles:notebook_baseline:news:catl_overseas_capacity:40fe8cf7a130f5d2"],"id":"kg_wiki:financial:entity_page:04729ef0ab81f71d"},{"title":"储能电芯","type":"wiki","source":"wiki","evidence_refs":["kg_ev:financial:news_articles:notebook_baseline:news:catl_overseas_capacity:40fe8cf7a130f5d2"],"id":"kg_wiki:financial:entity_page:3420b2de666c6692"},{"title":"欧洲","type":"wiki","source":"wiki","evidence_refs":["kg_ev:financial:news_articles:ft_news:77543:6ef6deebc6e9c592","kg_ev:financial:news_articles:notebook_baseline:news:catl_overseas_capacity:40fe8cf7a130f5d2"],"id":"kg_wiki:financial:entity_page:377a3a0809bfd243"},{"title":"宁德时代海外产能扩张带动储能供应链订单","type":"wiki","source":"wiki","evidence_refs":["kg_ev:financial:news_articles:notebook_baseline:news:catl_overseas_capacity:40fe8cf7a130f5d2"],"id":"kg_wiki:financial:entity_page:42253b64b3a9de20"},{"title":"宁德时代","type":"wiki","source":"wiki","evidence_refs":["kg_ev:financial:derived_signal:notebook_baseline:signal:catl_flow:d1602b70797c690d","kg_ev:financial:news_articles:notebook_baseline:news:catl_overseas_capacity:40fe8cf7a130f5d2"],"id":"kg_wiki:financial:entity_page:4d3690839044c0d5"},{"title":"宁德时代资金净流入改善","type":"wiki","source":"wiki","evidence_refs":["kg_ev:financial:derived_signal:notebook_baseline:signal:catl_flow:d1602b70797c690d"],"id":"kg_wiki:financial:entity_page:4e65f708bf5a553d"},{"title":"新能源车产业链","type":"wiki","source":"wiki","evidence_refs":["kg_ev:financial:news_articles:notebook_baseline:news:catl_overseas_capacity:40fe8cf7a130f5d2","kg_ev:financial:news_articles:notebook_baseline:news:ma_industry_rotation:69e291c4a7cfb753"],"id":"kg_wiki:financial:entity_page:742be1363a42e749"},{"title":"东南亚","type":"wiki","source":"wiki","evidence_refs":["kg_ev:financial:news_articles:notebook_baseline:news:catl_overseas_capacity:40fe8cf7a130f5d2"],"id":"kg_wiki:financial:entity_page:75c4ef72c9fbcdcb"},{"title":"海外产能","type":"wiki","source":"wiki","evidence_refs":["kg_ev:financial:news_articles:notebook_baseline:news:catl_overseas_capacity:40fe8cf7a130f5d2"],"id":"kg_wiki:financial:entity_page:9d2ba4267c23ca2b"}]
+
+===== 2026-05-16T12:47:39 agentic_candidate_package event =====
+event_meaning: retrieved hits have been converted into human-readable candidate packages for judge; no LLM request.
+tool: search
+raw_candidates: 30
+judge_candidates: 8
+duration_ms: 37.4
+candidates: [{"title":"宁德时代资金净流入改善","type":"node","source":"entity_resolve","evidence_refs":["kg_ev:financial:derived_signal:notebook_baseline:signal:catl_flow:d1602b70797c690d"],"id":"kg:financial:event:2b21ce8883f6b560"},{"title":"宁德时代海外产能扩张带动储能供应链订单","type":"node","source":"entity_resolve","evidence_refs":["kg_ev:financial:news_articles:notebook_baseline:news:catl_overseas_capacity:40fe8cf7a130f5d2"],"id":"kg:financial:event:cda9601b1fc7ba0d"},{"title":"宁德时代海外产能扩张","type":"node","source":"entity_resolve","evidence_refs":[],"id":"kg:financial:event:ecd6b59280242c3f"},{"title":"宁德时代","type":"node","source":"entity_resolve","evidence_refs":["kg_ev:financial:derived_signal:notebook_baseline:signal:catl_flow:d1602b70797c690d","kg_ev:financial:news_articles:notebook_baseline:news:catl_overseas_capacity:40fe8cf7a130f5d2"],"id":"kg:financial:stock:c37cbb33f0cc501f"},{"title":"mentions","type":"edge","source":"graph","evidence_refs":["kg_ev:financial:news_articles:notebook_baseline:news:catl_overseas_capacity:40fe8cf7a130f5d2","kg_ev:financial:news_articles:notebook_baseline:news:ma_industry_rotation:69e291c4a7cfb753"],"id":"kg_edge:financial:mentions:0ae073a1311d64f6"},{"title":"mentions","type":"edge","source":"graph","evidence_refs":["kg_ev:financial:news_articles:notebook_baseline:news:middle_east_assets:4cd08eab7a600ac2"],"id":"kg_edge:financial:mentions:381592f819a52b8a"},{"title":"mentions","type":"edge","source":"graph","evidence_refs":["kg_ev:financial:news_articles:notebook_baseline:news:catl_overseas_capacity:40fe8cf7a130f5d2"],"id":"kg_edge:financial:mentions:45c71b0a0df0e71d"},{"title":"mentions","type":"edge","source":"graph","evidence_refs":["kg_ev:financial:news_articles:notebook_baseline:news:catl_overseas_capacity:40fe8cf7a130f5d2","kg_ev:financial:derived_signal:notebook_baseline:signal:catl_flow:d1602b70797c690d"],"id":"kg_edge:financial:mentions:552f00d9a9870a01"}]
+
+===== 2026-05-16T12:47:39 candidate_judge request =====
+model: deepseek-v4-flash
+metadata: {"task":"kg_candidate_judge","candidate_count":8}
+use_cache: False  has_json_schema: True
+q:
+  宁德时代 300750 最近受哪些事件影响
+anchor:
+  entities:
+    - 300750
+    - 宁德时代
+  topics:
+    - 宁德时代 300750 最近受哪些事件影响
+  intent:
+    - impact
+  time:
+
+  source:
+
+  negative:
+    - 电池技术细节
+    - 公司历史事件
+    - 无关行业动态
+  inferred:
+    - 影响宁德时代股价或业务的近期事件
+    - 新闻公告
+    - 监管事件
+    - 业绩报告
+    - 机构研报
+    - impact
+  must:
+    - 300750
+    - 宁德时代
+    - 300750
+candidates: total=8
+- candidate 1: 宁德时代资金净流入改善
+  candidate_key: C1
+  candidate_id: None
+  type: node
+  source: entity_resolve
+  score: None
+  evidence_refs: None
+  meaning: 名称：宁德时代资金净流入改善；类型：event；event_type：derived_signal；signal_type：market_flow.stock_net_inflow
+  support_relations: ["宁德时代资金净流入改善 --mentions--> 宁德时代"]
+  evidence: [{"source":"notebook_baseline:signal:catl_flow","excerpt":"宁德时代资金净流入改善"}]
+  why: ["召回通道：entity_resolve","候选类型：node","有证据支撑","有图谱关系支撑"]
+- candidate 2: 宁德时代海外产能扩张带动储能供应链订单
+  candidate_key: C2
+  candidate_id: None
+  type: node
+  source: entity_resolve
+  score: None
+  evidence_refs: None
+  meaning: 名称：宁德时代海外产能扩张带动储能供应链订单；类型：event；source_name：notebook基线；published_at：2026-04-29t09:30:00+08:00
+  support_relations: ["宁德时代海外产能扩张带动储能供应链订单 --affects--> 新能源车产业链","宁德时代海外产能扩张带动储能供应链订单 --affects--> 宁德时代"]
+  evidence: [{"source":"notebook_baseline:news:catl_overseas_capacity","excerpt":"宁德时代推进欧洲和东南亚海外产能扩张，储能电芯、快充电池和新能源车产业链订单预期改善。市场认为海外工厂投产有助于降低贸易壁垒，并改善供应链交付能力。"}]
+  why: ["召回通道：entity_resolve","候选类型：node","有证据支撑","有图谱关系支撑"]
+- candidate 3: 宁德时代海外产能扩张
+  candidate_key: C3
+  candidate_id: None
+  type: node
+  source: entity_resolve
+  score: None
+  evidence_refs: None
+  meaning: 名称：宁德时代海外产能扩张；类型：event；summary：宁德时代在欧洲和东南亚进行海外产能扩张，带动储能供应链等相关订单预期改善。
+  support_relations: None
+  evidence: None
+  why: ["召回通道：entity_resolve","候选类型：node","节点命中"]
+- candidate 4: 宁德时代
+  candidate_key: C4
+  candidate_id: None
+  type: node
+  source: entity_resolve
+  score: None
+  evidence_refs: None
+  meaning: 名称：宁德时代；类型：stock；code：300750；exchange：sz
+  support_relations: ["宁德时代海外产能扩张带动储能供应链订单 --affects--> 宁德时代","宁德时代 --benefits_from--> 储能供应链"]
+  evidence: [{"source":"notebook_baseline:signal:catl_flow","excerpt":"宁德时代资金净流入改善"},{"source":"notebook_baseline:news:catl_overseas_capacity","excerpt":"宁德时代推进欧洲和东南亚海外产能扩张，储能电芯、快充电池和新能源车产业链订单预期改善。市场认为海外工厂投产有助于降低贸易壁垒，并改善供应链交付能力。"}]
+  why: ["召回通道：entity_resolve","候选类型：node","有证据支撑","有图谱关系支撑"]
+- candidate 5: mentions
+  candidate_key: C5
+  candidate_id: None
+  type: edge
+  source: graph
+  score: None
+  evidence_refs: None
+  meaning: mentions。kg:financial:event:cda9601b1fc7ba0d -> kg:financial:concept:76906f0e74945cce
+  support_relations: ["宁德时代海外产能扩张带动储能供应链订单 --affects--> 新能源车产业链","宁德时代海外产能扩张带动储能供应链订单 --affects--> 宁德时代"]
+  evidence: [{"source":"notebook_baseline:news:catl_overseas_capacity","excerpt":"宁德时代推进欧洲和东南亚海外产能扩张，储能电芯、快充电池和新能源车产业链订单预期改善。市场认为海外工厂投产有助于降低贸易壁垒，并改善供应链交付能力。"},{"source":"notebook_baseline:news:ma_industry_rotation","excerpt":"资本市场并购重组审核提速，市场预期产业整合会带动券商投行业务、半导体设备国产替代和新能源车产业链估值修复。并购重组主题也可能提升中小市值公司的交易活跃度。"}]
+  why: ["召回通道：graph","候选类型：edge","有证据支撑","有图谱关系支撑"]
+- candidate 6: mentions
+  candidate_key: C6
+  candidate_id: None
+  type: edge
+  source: graph
+  score: None
+  evidence_refs: None
+  meaning: mentions。kg:financial:event:0ea6945b98a9f0cb -> kg:financial:region:6763eec559a98104
+  support_relations: ["中东冲突升温推升原油和黄金避险需求 --affects--> 航空运输","中东冲突升温推升原油和黄金避险需求 --affects--> 原油"]
+  evidence: [{"source":"notebook_baseline:news:middle_east_assets","excerpt":"中东冲突升温可能扰动能源运输通道，原油价格和黄金避险需求上升。航空运输行业面临燃油成本压力，化工产业链也会受到原油成本传导影响。"}]
+  why: ["召回通道：graph","候选类型：edge","有证据支撑","有图谱关系支撑"]
+- candidate 7: mentions
+  candidate_key: C7
+  candidate_id: None
+  type: edge
+  source: graph
+  score: None
+  evidence_refs: None
+  meaning: mentions。kg:financial:event:cda9601b1fc7ba0d -> kg:financial:region:4be6377006d6e1b3
+  support_relations: ["宁德时代海外产能扩张带动储能供应链订单 --affects--> 新能源车产业链","宁德时代海外产能扩张带动储能供应链订单 --affects--> 宁德时代"]
+  evidence: [{"source":"notebook_baseline:news:catl_overseas_capacity","excerpt":"宁德时代推进欧洲和东南亚海外产能扩张，储能电芯、快充电池和新能源车产业链订单预期改善。市场认为海外工厂投产有助于降低贸易壁垒，并改善供应链交付能力。"}]
+  why: ["召回通道：graph","候选类型：edge","有证据支撑","有图谱关系支撑"]
+- candidate 8: mentions
+  candidate_key: C8
+  candidate_id: None
+  type: edge
+  source: graph
+  score: None
+  evidence_refs: None
+  meaning: mentions。kg:financial:event:cda9601b1fc7ba0d -> kg:financial:stock:c37cbb33f0cc501f
+  support_relations: ["宁德时代海外产能扩张带动储能供应链订单 --affects--> 新能源车产业链","宁德时代海外产能扩张带动储能供应链订单 --affects--> 宁德时代"]
+  evidence: [{"source":"notebook_baseline:news:catl_overseas_capacity","excerpt":"宁德时代推进欧洲和东南亚海外产能扩张，储能电芯、快充电池和新能源车产业链订单预期改善。市场认为海外工厂投产有助于降低贸易壁垒，并改善供应链交付能力。"},{"source":"notebook_baseline:signal:catl_flow","excerpt":"宁德时代资金净流入改善"}]
+  why: ["召回通道：graph","候选类型：edge","有证据支撑","有图谱关系支撑"]
+rules: ["answer/support may enter context; only answer/support can expand graph.","background may enter context but must not expand.","drop must not enter context.","Return candidate_key such as C1/C2; do not return database ids.","score must be a semantic relevance number from 0 to 1; never copy retrieval scores.","Prefer support over drop for exact query anchor nodes with evidence.","Use drop for topic drift even when evidence/vector score is high."]
+
+===== 2026-05-16T12:47:53 candidate_judge response =====
+duration_ms: 13855  cache_hit: False
+usage: {"input_tokens":2225,"output_tokens":1049,"total_tokens":3274}
+judgements: total=8
+- judgement 1: 宁德时代资金净流入改善
+  candidate_id: kg:financial:event:2b21ce8883f6b560
+  candidate_key: C1
+  role: answer
+  decision: keep
+  score: 0.9
+  expand: True
+  code: direct_answer
+- judgement 2: 宁德时代海外产能扩张带动储能供应链订单
+  candidate_id: kg:financial:event:cda9601b1fc7ba0d
+  candidate_key: C2
+  role: answer
+  decision: keep
+  score: 0.9
+  expand: True
+  code: direct_answer
+- judgement 3: 宁德时代海外产能扩张
+  candidate_id: kg:financial:event:ecd6b59280242c3f
+  candidate_key: C3
+  role: drop
+  decision: drop
+  score: 0.1
+  expand: False
+  code: insufficient_evidence
+- judgement 4: 宁德时代
+  candidate_id: kg:financial:stock:c37cbb33f0cc501f
+  candidate_key: C4
+  role: support
+  decision: keep
+  score: 0.8
+  expand: True
+  code: anchor_support
+- judgement 5: mentions
+  candidate_id: kg_edge:financial:mentions:0ae073a1311d64f6
+  candidate_key: C5
+  role: drop
+  decision: drop
+  score: 0.1
+  expand: False
+  code: topic_drift
+- judgement 6: mentions
+  candidate_id: kg_edge:financial:mentions:381592f819a52b8a
+  candidate_key: C6
+  role: drop
+  decision: drop
+  score: 0.1
+  expand: False
+  code: topic_drift
+- judgement 7: mentions
+  candidate_id: kg_edge:financial:mentions:45c71b0a0df0e71d
+  candidate_key: C7
+  role: drop
+  decision: drop
+  score: 0.1
+  expand: False
+  code: topic_drift
+- judgement 8: mentions
+  candidate_id: kg_edge:financial:mentions:552f00d9a9870a01
+  candidate_key: C8
+  role: support
+  decision: keep
+  score: 0.7
+  expand: True
+  code: evidence_support
+raw_text:
+  {"judgements": [{"candidate_key": "C1", "role": "answer", "score": 0.9, "expand": true, "code": "direct_answer"}, {"candidate_key": "C2", "role": "answer", "score": 0.9, "expand": true, "code": "direct_answer"}, {"candidate_key": "C3", "role": "drop", "score": 0.1, "expand": false, "code": "insufficient_evidence"}, {"candidate_key": "C4", "role": "support", "score": 0.8, "expand": true, "code": "anchor_support"}, {"candidate_key": "C5", "role": "drop", "score": 0.1, "expand": false, "code": "topic_drift"}, {"candidate_key": "C6", "role": "drop", "score": 0.1, "expand": false, "code": "topic_drift"}, {"candidate_key": "C7", "role": "drop", "score": 0.1, "expand": false, "code": "topic_drift"}, {"candidate_key": "C8", "role": "support", "score": 0.7, "expand": true, "code": "evidence_support"}]}
+
+===== 2026-05-16T12:47:53 agentic_tool event =====
+event_meaning: tool execution has finished; this is post-judge bookkeeping, not an LLM request.
+tool: search
+raw_candidates: 30
+judged_packages: 8
+keep: 4
+weak_keep: 0
+drop: 4
+added_evidence_refs: ["kg_ev:financial:derived_signal:notebook_baseline:signal:catl_flow:d1602b70797c690d","kg_ev:financial:news_articles:notebook_baseline:news:catl_overseas_capacity:40fe8cf7a130f5d2"]
+added_evidence: [{"id":"kg_ev:financial:derived_signal:notebook_baseline:signal:catl_flow:d1602b70797c690d","source":"notebook_baseline:signal:catl_flow","excerpt":"宁德时代资金净流入改善"},{"id":"kg_ev:financial:news_articles:notebook_baseline:news:catl_overseas_capacity:40fe8cf7a130f5d2","source":"notebook_baseline:news:catl_overseas_capacity","excerpt":"宁德时代推进欧洲和东南亚海外产能扩张，储能电芯、快充电池和新能源车产业链订单预期改善。市场认为海外工厂投产有助于降低贸易壁垒，并改善供应链交付能力。"}]
+kept_candidates: [{"title":"宁德时代资金净流入改善","type":"node","role":"answer","decision":"keep","score":0.9,"expand":true,"reason":"direct_answer","evidence_refs":["kg_ev:financial:derived_signal:notebook_baseline:signal:catl_flow:d1602b70797c690d"],"id":"kg:financial:event:2b21ce8883f6b560"},{"title":"宁德时代海外产能扩张带动储能供应链订单","type":"node","role":"answer","decision":"keep","score":0.9,"expand":true,"reason":"direct_answer","evidence_refs":["kg_ev:financial:news_articles:notebook_baseline:news:catl_overseas_capacity:40fe8cf7a130f5d2"],"id":"kg:financial:event:cda9601b1fc7ba0d"},{"title":"宁德时代","type":"node","role":"support","decision":"keep","score":0.8,"expand":true,"reason":"anchor_support","evidence_refs":["kg_ev:financial:derived_signal:notebook_baseline:signal:catl_flow:d1602b70797c690d","kg_ev:financial:news_articles:notebook_baseline:news:catl_overseas_capacity:40fe8cf7a130f5d2"],"id":"kg:financial:stock:c37cbb33f0cc501f"},{"title":"mentions","type":"edge","role":"support","decision":"keep","score":0.7,"expand":true,"reason":"evidence_support","evidence_refs":["kg_ev:financial:news_articles:notebook_baseline:news:catl_overseas_capacity:40fe8cf7a130f5d2","kg_ev:financial:derived_signal:notebook_baseline:signal:catl_flow:d1602b70797c690d"],"id":"kg_edge:financial:mentions:552f00d9a9870a01"}]
+background_candidates: []
+dropped_candidates: [{"title":"宁德时代海外产能扩张","type":"node","role":"drop","decision":"drop","score":0.1,"expand":false,"reason":"insufficient_evidence","evidence_refs":[],"id":"kg:financial:event:ecd6b59280242c3f"},{"title":"mentions","type":"edge","role":"drop","decision":"drop","score":0.1,"expand":false,"reason":"topic_drift","evidence_refs":["kg_ev:financial:news_articles:notebook_baseline:news:catl_overseas_capacity:40fe8cf7a130f5d2","kg_ev:financial:news_articles:notebook_baseline:news:ma_industry_rotation:69e291c4a7cfb753"],"id":"kg_edge:financial:mentions:0ae073a1311d64f6"},{"title":"mentions","type":"edge","role":"drop","decision":"drop","score":0.1,"expand":false,"reason":"topic_drift","evidence_refs":["kg_ev:financial:news_articles:notebook_baseline:news:middle_east_assets:4cd08eab7a600ac2"],"id":"kg_edge:financial:mentions:381592f819a52b8a"},{"title":"mentions","type":"edge","role":"drop","decision":"drop","score":0.1,"expand":false,"reason":"topic_drift","evidence_refs":["kg_ev:financial:news_articles:notebook_baseline:news:catl_overseas_capacity:40fe8cf7a130f5d2"],"id":"kg_edge:financial:mentions:45c71b0a0df0e71d"}]
+controller_ms: 5048.7
+tool_ms: 393.5
+judge_ms: 13857.0
+
+===== 2026-05-16T12:47:53 agentic_auto_open event =====
+event_meaning: program opened selected evidence windows after judge accepted candidates; no LLM request.
+evidence_refs: ["kg_ev:financial:derived_signal:notebook_baseline:signal:catl_flow:d1602b70797c690d","kg_ev:financial:news_articles:notebook_baseline:news:catl_overseas_capacity:40fe8cf7a130f5d2"]
+opened_hits: [{"title":"derived_signal:notebook_baseline:signal:catl_flow","type":"evidence","source":"chunk","evidence_refs":["kg_ev:financial:derived_signal:notebook_baseline:signal:catl_flow:d1602b70797c690d"],"id":"kg_ev:financial:derived_signal:notebook_baseline:signal:catl_flow:d1602b70797c690d"},{"title":"news_articles:notebook_baseline:news:catl_overseas_capacity","type":"evidence","source":"chunk","evidence_refs":["kg_ev:financial:news_articles:notebook_baseline:news:catl_overseas_capacity:40fe8cf7a130f5d2"],"id":"kg_ev:financial:news_articles:notebook_baseline:news:catl_overseas_capacity:40fe8cf7a130f5d2"}]
+tool_ms: 22.2
+reason: sufficient_keep_evidence
+
+===== 2026-05-16T12:47:53 agentic_auto_expand event =====
+human_summary:
+  自动展开: 对 answer/support 且 expand=True 的候选执行 open(candidate_ids)。
+  展开候选:
+    1. 宁德时代资金净流入改善 (node, answer, 0.90, direct_answer)
+    2. 宁德时代海外产能扩张带动储能供应链订单 (node, answer, 0.90, direct_answer)
+    3. 宁德时代 (node, support, 0.80, anchor_support)
+    4. mentions (edge, support, 0.70, evidence_support)
+  打开证据:
+    1. derived_signal:notebook_baseline:signal:catl_flow evidence=['kg_ev:financial:derived_signal:notebook_baseline:signal:catl_flow:d1602b70797c690d']
+    2. news_articles:notebook_baseline:news:catl_overseas_capacity evidence=['kg_ev:financial:news_articles:notebook_baseline:news:catl_overseas_capacity:40fe8cf7a130f5d2']
+event_meaning: program opened evidence for answer/support candidates marked expand=true; no LLM request.
+target_candidate_ids: ["kg:financial:event:2b21ce8883f6b560","kg:financial:event:cda9601b1fc7ba0d","kg:financial:stock:c37cbb33f0cc501f","kg_edge:financial:mentions:552f00d9a9870a01"]
+pending_expand_candidates: [{"title":"宁德时代资金净流入改善","type":"node","role":"answer","decision":"keep","score":0.9,"expand":true,"reason":"direct_answer","evidence_refs":["kg_ev:financial:derived_signal:notebook_baseline:signal:catl_flow:d1602b70797c690d"],"id":"kg:financial:event:2b21ce8883f6b560"},{"title":"宁德时代海外产能扩张带动储能供应链订单","type":"node","role":"answer","decision":"keep","score":0.9,"expand":true,"reason":"direct_answer","evidence_refs":["kg_ev:financial:news_articles:notebook_baseline:news:catl_overseas_capacity:40fe8cf7a130f5d2"],"id":"kg:financial:event:cda9601b1fc7ba0d"},{"title":"宁德时代","type":"node","role":"support","decision":"keep","score":0.8,"expand":true,"reason":"anchor_support","evidence_refs":["kg_ev:financial:derived_signal:notebook_baseline:signal:catl_flow:d1602b70797c690d","kg_ev:financial:news_articles:notebook_baseline:news:catl_overseas_capacity:40fe8cf7a130f5d2"],"id":"kg:financial:stock:c37cbb33f0cc501f"},{"title":"mentions","type":"edge","role":"support","decision":"keep","score":0.7,"expand":true,"reason":"evidence_support","evidence_refs":["kg_ev:financial:news_articles:notebook_baseline:news:catl_overseas_capacity:40fe8cf7a130f5d2","kg_ev:financial:derived_signal:notebook_baseline:signal:catl_flow:d1602b70797c690d"],"id":"kg_edge:financial:mentions:552f00d9a9870a01"}]
+opened_hits: [{"title":"derived_signal:notebook_baseline:signal:catl_flow","type":"evidence","source":"chunk","evidence_refs":["kg_ev:financial:derived_signal:notebook_baseline:signal:catl_flow:d1602b70797c690d"],"id":"kg_ev:financial:derived_signal:notebook_baseline:signal:catl_flow:d1602b70797c690d"},{"title":"news_articles:notebook_baseline:news:catl_overseas_capacity","type":"evidence","source":"chunk","evidence_refs":["kg_ev:financial:news_articles:notebook_baseline:news:catl_overseas_capacity:40fe8cf7a130f5d2"],"id":"kg_ev:financial:news_articles:notebook_baseline:news:catl_overseas_capacity:40fe8cf7a130f5d2"}]
+tool_ms: 89.5
+reason: candidate_judge_requested_expand
+
+===== 2026-05-16T12:47:53 retrieval_controller request =====
+model: deepseek-v4-flash
+metadata: {"task":"kg_retrieval_controller","observations":3}
+use_cache: False  has_json_schema: True
+query:
+  宁德时代 300750 最近受哪些事件影响
+query_anchor:
+  query: 宁德时代 300750 最近受哪些事件影响
+  core_event: 宁德时代 300750 最近受哪些事件影响
+  core_entities:
+    -
+      text: 300750
+      hint_type: entity
+      strength: strong
+      confidence: 0.95
+      source: guard
+    -
+      text: 宁德时代
+      hint_type: entity
+      strength: strong
+      confidence: 0.95
+      source: guard
+  core_topics:
+    -
+      text: 宁德时代 300750 最近受哪些事件影响
+      hint_type: topic
+      strength: weak
+      confidence: 0.65
+      source: guard
+  relation_intents:
+    - impact
+  time_hints:
+
+  source_hints:
+
+  negative_boundaries:
+
+  inferred_hints:
+
+  guard_constraints:
+    -
+      value: 300750
+      constraint_type: instrument_code
+      must_preserve: True
+    -
+      value: 宁德时代
+      constraint_type: exact_entity
+      must_preserve: True
+    -
+      value: 300750
+      constraint_type: exact_entity
+      must_preserve: True
+    -
+      value: 宁德时代 300750 最近受哪些事件影响
+      constraint_type: query_phrase
+      must_preserve: False
+  confidence: 0.8
+  warnings:
+constraints:
+  max_turns: 6
+  max_tool_calls: 6
+  max_hits: 30
+  no_gain_round_limit: 2
+  judge_top_k: 8
+  judge_top_k_complex: 12
+  judge_top_k_max: 15
+  evidence_backfill_limit: 2
+  min_keep_evidence_to_auto_open: 1
+  min_keep_candidates_to_auto_stop: 2
+  anchor_coverage_stop_threshold: 0.8
+  max_llm_calls_normal_query: 2
+  max_auto_expand_candidates: 4
+  semantic_query_rewrite_limit: 3
+working_set:
+  evidence_refs:
+    - kg_ev:financial:derived_signal:notebook_baseline:signal:catl_flow:d1602b70797c690d
+    - kg_ev:financial:news_articles:notebook_baseline:news:catl_overseas_capacity:40fe8cf7a130f5d2
+  evidence_refs_total: 2
+  opened_windows:
+    - kg_ev:financial:derived_signal:notebook_baseline:signal:catl_flow:d1602b70797c690d
+    - kg_ev:financial:news_articles:notebook_baseline:news:catl_overseas_capacity:40fe8cf7a130f5d2
+    - candidate_expand:kg:financial:event:2b21ce8883f6b560
+    - candidate_expand:kg:financial:event:cda9601b1fc7ba0d
+    - candidate_expand:kg:financial:stock:c37cbb33f0cc501f
+    - candidate_expand:kg_edge:financial:mentions:552f00d9a9870a01
+  opened_windows_total: 6
+  missing_anchor_items:
+
+  missing_anchor_items_total: 0
+  tool_call_count: 3
+  no_gain_rounds: 0
+  accepted:
+    -
+      candidate_key: None
+      candidate_id: kg:financial:event:2b21ce8883f6b560
+      type: None
+      source: None
+      title: None
+      score: None
+      evidence_refs: None
+      meaning: 
+      support_relations: None
+      evidence: None
+      why: None
+    -
+      candidate_key: None
+      candidate_id: kg:financial:event:cda9601b1fc7ba0d
+      type: None
+      source: None
+      title: None
+      score: None
+      evidence_refs: None
+      meaning: 
+      support_relations: None
+      evidence: None
+      why: None
+    -
+      candidate_key: None
+      candidate_id: kg:financial:stock:c37cbb33f0cc501f
+      type: None
+      source: None
+      title: None
+      score: None
+      evidence_refs: None
+      meaning: 
+      support_relations: None
+      evidence: None
+      why: None
+    -
+      candidate_key: None
+      candidate_id: kg_edge:financial:mentions:552f00d9a9870a01
+      type: None
+      source: None
+      title: None
+      score: None
+      evidence_refs: None
+      meaning: 
+      support_relations: None
+      evidence: None
+      why: None
+  accepted_total: 4
+  background:
+
+  background_total: 0
+  dropped:
+    -
+      candidate_key: None
+      candidate_id: kg:financial:event:ecd6b59280242c3f
+      type: None
+      source: None
+      title: None
+      score: None
+      evidence_refs: None
+      meaning: 
+      support_relations: None
+      evidence: None
+      why: None
+    -
+      candidate_key: None
+      candidate_id: kg_edge:financial:mentions:0ae073a1311d64f6
+      type: None
+      source: None
+      title: None
+      score: None
+      evidence_refs: None
+      meaning: 
+      support_relations: None
+      evidence: None
+      why: None
+    -
+      candidate_key: None
+      candidate_id: kg_edge:financial:mentions:381592f819a52b8a
+      type: None
+      source: None
+      title: None
+      score: None
+      evidence_refs: None
+      meaning: 
+      support_relations: None
+      evidence: None
+      why: None
+    -
+      candidate_key: None
+      candidate_id: kg_edge:financial:mentions:45c71b0a0df0e71d
+      type: None
+      source: None
+      title: None
+      score: None
+      evidence_refs: None
+      meaning: 
+      support_relations: None
+      evidence: None
+      why: None
+  dropped_total: 4
+observations: total=3
+- observation 1: search
+  tool: search
+  hit_count: 30
+  summary: multi_query_search:3;semantic_queries:3
+  hits: 8
+    - hit 1: {"candidate_key":null,"candidate_id":"kg:financial:stock:c37cbb33f0cc501f","type":"node","source":null,"title":"宁德时代","score":2.0,"evidence_refs":null,"meaning":"{\"aliases\": [\"catl\", \"300750\", \"300750.sz\", \"宁德时代新能源科技股份有限公司\"], \"name\": \"宁德时代\", \"properties\": {\"code\": \"300750\", \"exchange\": \"sz\", \"list_date\": null, \"status\": \"active\"}, \"type\": \"stock\"}","support_relations":null,"evidence":null,"why":null}
+    - hit 2: {"candidate_key":null,"candidate_id":"kg_wiki:financial:entity_page:04729ef0ab81f71d","type":"wiki","source":null,"title":"快充电池","score":1.0,"evidence_refs":["kg_ev:financial:news_articles:notebook_baseline:news:catl_overseas_capacity:40fe8cf7a130f5d2"],"meaning":"快充电池 is a concept node with 1 relationships. Related: 宁德时代海外产能扩张带动储能供应链订单.","support_relations":null,"evidence":null,"why":null}
+    - hit 3: {"candidate_key":null,"candidate_id":"kg_wiki:financial:entity_page:3420b2de666c6692","type":"wiki","source":null,"title":"储能电芯","score":1.0,"evidence_refs":["kg_ev:financial:news_articles:notebook_baseline:news:catl_overseas_capacity:40fe8cf7a130f5d2"],"meaning":"储能电芯 is a concept node with 2 relationships. Related: 宁德时代, 宁德时代海外产能扩张带动储能供应链订单.","support_relations":null,"evidence":null,"why":null}
+    - hit 4: {"candidate_key":null,"candidate_id":"kg_wiki:financial:entity_page:377a3a0809bfd243","type":"wiki","source":null,"title":"欧洲","score":1.0,"evidence_refs":["kg_ev:financial:news_articles:ft_news:77543:6ef6deebc6e9c592","kg_ev:financial:news_articles:notebook_baseline:news:catl_overseas_capacity:40fe8cf7a130f5d2"],"meaning":"欧洲 is a region node with 4 relationships. Related: 法国, 波兰, 俄就波法联合军演发出警告：欧洲对俄“全面对抗正在回归”, 宁德时代海外产能扩张带动储能供应链订单.","support_relations":null,"evidence":null,"why":null}
+    - hit 5: {"candidate_key":null,"candidate_id":"kg_wiki:financial:entity_page:42253b64b3a9de20","type":"wiki","source":null,"title":"宁德时代海外产能扩张带动储能供应链订单","score":1.0,"evidence_refs":["kg_ev:financial:news_articles:notebook_baseline:news:catl_overseas_capacity:40fe8cf7a130f5d2"],"meaning":"宁德时代海外产能扩张带动储能供应链订单 is a event node with 13 relationships. Related: 新能源车产业链, 宁德时代, 储能产业链, 新能源车产业链, 东南亚.","support_relations":null,"evidence":null,"why":null}
+    - hit 6: {"candidate_key":null,"candidate_id":"kg_wiki:financial:entity_page:4d3690839044c0d5","type":"wiki","source":null,"title":"宁德时代","score":1.0,"evidence_refs":["kg_ev:financial:derived_signal:notebook_baseline:signal:catl_flow:d1602b70797c690d","kg_ev:financial:news_articles:notebook_baseline:news:catl_overseas_capacity:40fe8cf7a130f5d2"],"meaning":"宁德时代 is a stock node with 5 relationships. Related: 宁德时代海外产能扩张带动储能供应链订单, 储能供应链, 储能电芯, 宁德时代海外产能扩张带动储能供应链订单, 宁德时代资金净流入改善.","support_relations":null,"evidence":null,"why":null}
+    - hit 7: {"candidate_key":null,"candidate_id":"kg_wiki:financial:entity_page:4e65f708bf5a553d","type":"wiki","source":null,"title":"宁德时代资金净流入改善","score":1.0,"evidence_refs":["kg_ev:financial:derived_signal:notebook_baseline:signal:catl_flow:d1602b70797c690d"],"meaning":"宁德时代资金净流入改善 is a event node with 1 relationships. Related: 宁德时代.","support_relations":null,"evidence":null,"why":null}
+    - hit 8: {"candidate_key":null,"candidate_id":"kg_wiki:financial:entity_page:742be1363a42e749","type":"wiki","source":null,"title":"新能源车产业链","score":1.0,"evidence_refs":["kg_ev:financial:news_articles:notebook_baseline:news:catl_overseas_capacity:40fe8cf7a130f5d2","kg_ev:financial:news_articles:notebook_baseline:news:ma_industry_rotation:69e291c4a7cfb753","kg_ev:financial:policy_news:notebook_baseline:policy:low_rate_growth_assets:ff9aa376929aac35"],"meaning":"新能源车产业链 is a concept node with 7 relationships. Related: 宁德时代海外产能扩张带动储能供应链订单, 低利率环境和资本市场改革提升成长资产估值, 并购重组政策活跃提升券商、半导体设备和新能源车风险偏好, 宁德时代海外产能扩张带动储能供应链订单, 低利率环境和资本市场改革提升成长资产估值.","support_relations":null,"evidence":null,"why":null}
+- observation 2: open
+  tool: open
+  hit_count: 2
+  summary: None
+  hits: 2
+    - hit 1: {"candidate_key":null,"candidate_id":"kg_ev:financial:derived_signal:notebook_baseline:signal:catl_flow:d1602b70797c690d","type":"evidence","source":null,"title":"derived_signal:notebook_baseline:signal:catl_flow","score":2.000000001,"evidence_refs":["kg_ev:financial:derived_signal:notebook_baseline:signal:catl_flow:d1602b70797c690d"],"meaning":"宁德时代资金净流入改善","support_relations":null,"evidence":null,"why":null}
+    - hit 2: {"candidate_key":null,"candidate_id":"kg_ev:financial:news_articles:notebook_baseline:news:catl_overseas_capacity:40fe8cf7a130f5d2","type":"evidence","source":null,"title":"news_articles:notebook_baseline:news:catl_overseas_capacity","score":2.000000001,"evidence_refs":["kg_ev:financial:news_articles:notebook_baseline:news:catl_overseas_capacity:40fe8cf7a130f5d2"],"meaning":"宁德时代推进欧洲和东南亚海外产能扩张，储能电芯、快充电池和新能源车产业链订单预期改善。市场认为海外工厂投产有助于降低贸易壁垒，并改善供应链交付能力。","support_relations":null,"evidence":null,"why":null}
+- observation 3: open
+  tool: open
+  hit_count: 2
+  summary: None
+  hits: 2
+    - hit 1: {"candidate_key":null,"candidate_id":"kg_ev:financial:derived_signal:notebook_baseline:signal:catl_flow:d1602b70797c690d","type":"evidence","source":null,"title":"derived_signal:notebook_baseline:signal:catl_flow","score":2.000000002,"evidence_refs":["kg_ev:financial:derived_signal:notebook_baseline:signal:catl_flow:d1602b70797c690d"],"meaning":"宁德时代资金净流入改善","support_relations":null,"evidence":null,"why":null}
+    - hit 2: {"candidate_key":null,"candidate_id":"kg_ev:financial:news_articles:notebook_baseline:news:catl_overseas_capacity:40fe8cf7a130f5d2","type":"evidence","source":null,"title":"news_articles:notebook_baseline:news:catl_overseas_capacity","score":2.000000002,"evidence_refs":["kg_ev:financial:news_articles:notebook_baseline:news:catl_overseas_capacity:40fe8cf7a130f5d2"],"meaning":"宁德时代推进欧洲和东南亚海外产能扩张，储能电芯、快充电池和新能源车产业链订单预期改善。市场认为海外工厂投产有助于降低贸易壁垒，并改善供应链交付能力。","support_relations":null,"evidence":null,"why":null}
+available_tools: {"search":"重新组织查询并多通道召回。","find":"在已知 evidence 内定位关键词或语义线索，必须指定 target_evidence_refs。","open":"打开已知 evidence 或候选的父证据/窗口，必须指定 target_evidence_refs 或 target_candidate_ids。","summarize":"压缩已验证 trace 和 evidence，不生成新事实。","stop":"证据足够或继续无收益时停止。"}
+decision_contract: {"search":{"next_tool":"search","query_rewrites":["query expression 1","query expression 2"],"search_plan":{"answer_targets":["objects to answer"],"negative_boundaries":["topics to avoid"],"expected_evidence":["evidence or relation type expected"],"relation_intents":["impact/beneficiary/cause/risk/etc"],"stop_condition":"what evidence is enough"},"expected_gain":"evidence_coverage"},"find":{"next_tool":"find","target_evidence_refs":["kg_ev:..."],"query_rewrites":["term"],"expected_gain":"disambiguation"},"open":{"next_tool":"open","target_evidence_refs":["kg_ev:..."],"expected_gain":"context_window"},"stop":{"next_tool":"stop","stop_reason":"evidence_sufficient"}}
+
+===== 2026-05-16T12:47:58 retrieval_controller response =====
+duration_ms: 4728  cache_hit: False
+usage: {"input_tokens":5614,"output_tokens":347,"total_tokens":5961}
+parsed_payload:
+  next_tool: search
+  reason: 已有两个事件被开窗，但仍可能遗漏其他近期影响事件，需进一步搜索补齐覆盖。
+  query_rewrites:
+    - 宁德时代 300750 事件 影响
+    - 宁德时代 最近 新闻 事件
+    - CATL 300750 impact events
+  search_plan:
+    answer_targets:
+      - 宁德时代 300750 近期影响事件
+    negative_boundaries:
+      - 宏观经济无关主题
+      - 非宁德时代产业链的其它公司事件
+    expected_evidence:
+      - news_articles
+      - event_nodes
+      - mention_edges
+    relation_intents:
+      - impact
+      - affects
+    stop_condition: 找到至少3-4个不同的事件节点，且覆盖资金面、产能、政策等维度
+  expected_gain: evidence_coverage
+  confidence: 0.9
+raw_text:
+  {"next_tool": "search", "reason": "已有两个事件被开窗，但仍可能遗漏其他近期影响事件，需进一步搜索补齐覆盖。", "query_rewrites": ["宁德时代 300750 事件 影响", "宁德时代 最近 新闻 事件", "CATL 300750 impact events"], "search_plan": {"answer_targets": ["宁德时代 300750 近期影响事件"], "negative_boundaries": ["宏观经济无关主题", "非宁德时代产业链的其它公司事件"], "expected_evidence": ["news_articles", "event_nodes", "mention_edges"], "relation_intents": ["impact", "affects"], "stop_condition": "找到至少3-4个不同的事件节点，且覆盖资金面、产能、政策等维度"}, "expected_gain": "evidence_coverage", "confidence": 0.9}
+
+===== 2026-05-16T12:47:58 agentic_controller_apply event =====
+event_meaning: retrieval decision is being applied as the next tool call.
+controller_called: True
+controller_next_tool: search
+controller_reason: 已有两个事件被开窗，但仍可能遗漏其他近期影响事件，需进一步搜索补齐覆盖。
+expected_gain: evidence_coverage
+confidence: 0.9
+applied_tool: search
+applied_query: 宁德时代 300750 事件 影响
+applied_queries: ["宁德时代 300750 事件 影响","宁德时代 最近 新闻 事件","CATL 300750 impact events"]
+search_plan: {"answer_targets":["宁德时代 300750 近期影响事件"],"negative_boundaries":["宏观经济无关主题","非宁德时代产业链的其它公司事件"],"expected_evidence":["news_articles","event_nodes","mention_edges"],"relation_intents":["impact","affects"],"stop_condition":"找到至少3-4个不同的事件节点，且覆盖资金面、产能、政策等维度"}
+target_evidence_refs: []
+target_candidate_ids: []
+
+===== 2026-05-16T12:47:56 agentic_search_plan_result event =====
+human_summary:
+  搜索计划执行:
+    1. 宁德时代 300750 事件 影响 mode=full semantic=True hits=30 sources={'entity_resolve': 5, 'graph': 15, 'wiki': 10}
+    2. 宁德时代 最近 新闻 事件 mode=full semantic=True hits=30 sources={'entity_resolve': 6, 'graph': 14, 'wiki': 10}
+    3. CATL 300750 impact events mode=full semantic=True hits=30 sources={'entity_resolve': 1, 'graph': 19, 'wiki': 10}
+  answer_targets: 宁德时代 300750 近期影响事件
+  expected_evidence: news_articles, event_nodes, mention_edges
+  negative_boundaries: 宏观经济无关主题, 非宁德时代产业链的其它公司事件
+  stop_condition: 找到至少3-4个不同的事件节点，且覆盖资金面、产能、政策等维度
+  召回后已按 search_plan rerank，进入候选池: 30
+event_meaning: search query rewrites were executed and search_plan was applied to rerank recalled candidates; no LLM request.
+query_rewrites: ["宁德时代 300750 事件 影响","宁德时代 最近 新闻 事件","CATL 300750 impact events"]
+query_modes: [{"query":"宁德时代 300750 事件 影响","mode":"full","semantic_enabled":true,"hit_count":30,"source_counts":{"entity_resolve":5,"graph":15,"wiki":10}},{"query":"宁德时代 最近 新闻 事件","mode":"full","semantic_enabled":true,"hit_count":30,"source_counts":{"entity_resolve":6,"graph":14,"wiki":10}},{"query":"CATL 300750 impact events","mode":"full","semantic_enabled":true,"hit_count":30,"source_counts":{"entity_resolve":1,"graph":19,"wiki":10}}]
+search_plan_usage: {"query_rewrites_executed":true,"semantic_search":"first_3_queries","keyword_entity_wiki_graph":"all_queries","search_plan_rerank":true,"hard_filter_by_negative_boundaries":false}
+selected_hit_count: 30
+selected_hits: [{"title":"快充电池","type":"wiki","source":"wiki","evidence_refs":["kg_ev:financial:news_articles:notebook_baseline:news:catl_overseas_capacity:40fe8cf7a130f5d2"],"id":"kg_wiki:financial:entity_page:04729ef0ab81f71d"},{"title":"储能电芯","type":"wiki","source":"wiki","evidence_refs":["kg_ev:financial:news_articles:notebook_baseline:news:catl_overseas_capacity:40fe8cf7a130f5d2"],"id":"kg_wiki:financial:entity_page:3420b2de666c6692"},{"title":"欧洲","type":"wiki","source":"wiki","evidence_refs":["kg_ev:financial:news_articles:ft_news:77543:6ef6deebc6e9c592","kg_ev:financial:news_articles:notebook_baseline:news:catl_overseas_capacity:40fe8cf7a130f5d2"],"id":"kg_wiki:financial:entity_page:377a3a0809bfd243"},{"title":"宁德时代海外产能扩张带动储能供应链订单","type":"wiki","source":"wiki","evidence_refs":["kg_ev:financial:news_articles:notebook_baseline:news:catl_overseas_capacity:40fe8cf7a130f5d2"],"id":"kg_wiki:financial:entity_page:42253b64b3a9de20"},{"title":"宁德时代","type":"wiki","source":"wiki","evidence_refs":["kg_ev:financial:derived_signal:notebook_baseline:signal:catl_flow:d1602b70797c690d","kg_ev:financial:news_articles:notebook_baseline:news:catl_overseas_capacity:40fe8cf7a130f5d2"],"id":"kg_wiki:financial:entity_page:4d3690839044c0d5"},{"title":"新能源车产业链","type":"wiki","source":"wiki","evidence_refs":["kg_ev:financial:news_articles:notebook_baseline:news:catl_overseas_capacity:40fe8cf7a130f5d2","kg_ev:financial:news_articles:notebook_baseline:news:ma_industry_rotation:69e291c4a7cfb753"],"id":"kg_wiki:financial:entity_page:742be1363a42e749"},{"title":"东南亚","type":"wiki","source":"wiki","evidence_refs":["kg_ev:financial:news_articles:notebook_baseline:news:catl_overseas_capacity:40fe8cf7a130f5d2"],"id":"kg_wiki:financial:entity_page:75c4ef72c9fbcdcb"},{"title":"海外产能","type":"wiki","source":"wiki","evidence_refs":["kg_ev:financial:news_articles:notebook_baseline:news:catl_overseas_capacity:40fe8cf7a130f5d2"],"id":"kg_wiki:financial:entity_page:9d2ba4267c23ca2b"},{"title":"宁德时代","type":"node","source":"entity_resolve","evidence_refs":[],"id":"kg:financial:stock:c37cbb33f0cc501f"},{"title":"宁德时代海外产能扩张带动储能供应链订单","type":"node","source":"entity_resolve","evidence_refs":[],"id":"kg:financial:event:cda9601b1fc7ba0d"}]
+
+===== 2026-05-16T12:47:56 agentic_candidate_package event =====
+event_meaning: retrieved hits have been converted into human-readable candidate packages for judge; no LLM request.
+tool: search
+raw_candidates: 30
+judge_candidates: 8
+duration_ms: 44.4
+candidates: [{"title":"宁德时代资金净流入改善","type":"node","source":"entity_resolve","evidence_refs":["kg_ev:financial:derived_signal:notebook_baseline:signal:catl_flow:d1602b70797c690d"],"id":"kg:financial:event:2b21ce8883f6b560"},{"title":"宁德时代海外产能扩张带动储能供应链订单","type":"node","source":"entity_resolve","evidence_refs":["kg_ev:financial:news_articles:notebook_baseline:news:catl_overseas_capacity:40fe8cf7a130f5d2"],"id":"kg:financial:event:cda9601b1fc7ba0d"},{"title":"宁德时代海外产能扩张","type":"node","source":"entity_resolve","evidence_refs":[],"id":"kg:financial:event:ecd6b59280242c3f"},{"title":"宁德时代","type":"node","source":"entity_resolve","evidence_refs":["kg_ev:financial:derived_signal:notebook_baseline:signal:catl_flow:d1602b70797c690d","kg_ev:financial:news_articles:notebook_baseline:news:catl_overseas_capacity:40fe8cf7a130f5d2"],"id":"kg:financial:stock:c37cbb33f0cc501f"},{"title":"affects","type":"edge","source":"graph","evidence_refs":["kg_ev:financial:news_articles:notebook_baseline:news:catl_overseas_capacity:40fe8cf7a130f5d2","kg_ev:financial:derived_signal:notebook_baseline:signal:catl_flow:d1602b70797c690d"],"id":"kg_edge:financial:affects:552f00d9a9870a01"},{"title":"affects","type":"edge","source":"graph","evidence_refs":["kg_ev:financial:news_articles:notebook_baseline:news:catl_overseas_capacity:40fe8cf7a130f5d2","kg_ev:financial:news_articles:notebook_baseline:news:ma_industry_rotation:69e291c4a7cfb753"],"id":"kg_edge:financial:affects:0ae073a1311d64f6"},{"title":"affects","type":"edge","source":"graph","evidence_refs":["kg_ev:financial:policy_news:notebook_baseline:policy:low_rate_growth_assets:ff9aa376929aac35","kg_ev:financial:news_articles:notebook_baseline:news:catl_overseas_capacity:40fe8cf7a130f5d2"],"id":"kg_edge:financial:affects:3f0fd1fae9ed8dbc"},{"title":"affects","type":"edge","source":"graph","evidence_refs":["kg_ev:financial:news_articles:notebook_baseline:news:catl_overseas_capacity:40fe8cf7a130f5d2"],"id":"kg_edge:financial:affects:e6f22a5dea1a4797"}]
+
+===== 2026-05-16T12:47:56 candidate_judge request =====
+model: deepseek-v4-flash
+metadata: {"task":"kg_candidate_judge","candidate_count":8}
+use_cache: False  has_json_schema: True
+q:
+  宁德时代 300750 最近受哪些事件影响
+anchor:
+  entities:
+    - 300750
+    - 宁德时代
+  topics:
+    - 宁德时代 300750 最近受哪些事件影响
+  intent:
+    - impact
+    - affects
+  time:
+
+  source:
+
+  negative:
+    - 宏观经济无关主题
+    - 非宁德时代产业链的其它公司事件
+  inferred:
+    - 宁德时代 300750 近期影响事件
+    - news_articles
+    - event_nodes
+    - mention_edges
+    - impact
+    - affects
+  must:
+    - 300750
+    - 宁德时代
+    - 300750
+candidates: total=8
+- candidate 1: 宁德时代资金净流入改善
+  candidate_key: C1
+  candidate_id: None
+  type: node
+  source: entity_resolve
+  score: None
+  evidence_refs: None
+  meaning: 名称：宁德时代资金净流入改善；类型：event；event_type：derived_signal；signal_type：market_flow.stock_net_inflow
+  support_relations: ["宁德时代资金净流入改善 --mentions--> 宁德时代"]
+  evidence: [{"source":"notebook_baseline:signal:catl_flow","excerpt":"宁德时代资金净流入改善"}]
+  why: ["召回通道：entity_resolve","候选类型：node","有证据支撑","有图谱关系支撑"]
+- candidate 2: 宁德时代海外产能扩张带动储能供应链订单
+  candidate_key: C2
+  candidate_id: None
+  type: node
+  source: entity_resolve
+  score: None
+  evidence_refs: None
+  meaning: 名称：宁德时代海外产能扩张带动储能供应链订单；类型：event；source_name：notebook基线；published_at：2026-04-29t09:30:00+08:00
+  support_relations: ["宁德时代海外产能扩张带动储能供应链订单 --affects--> 新能源车产业链","宁德时代海外产能扩张带动储能供应链订单 --affects--> 宁德时代"]
+  evidence: [{"source":"notebook_baseline:news:catl_overseas_capacity","excerpt":"宁德时代推进欧洲和东南亚海外产能扩张，储能电芯、快充电池和新能源车产业链订单预期改善。市场认为海外工厂投产有助于降低贸易壁垒，并改善供应链交付能力。"}]
+  why: ["召回通道：entity_resolve","候选类型：node","有证据支撑","有图谱关系支撑"]
+- candidate 3: 宁德时代海外产能扩张
+  candidate_key: C3
+  candidate_id: None
+  type: node
+  source: entity_resolve
+  score: None
+  evidence_refs: None
+  meaning: 名称：宁德时代海外产能扩张；类型：event；summary：宁德时代在欧洲和东南亚进行海外产能扩张，带动储能供应链等相关订单预期改善。
+  support_relations: None
+  evidence: None
+  why: ["召回通道：entity_resolve","候选类型：node","节点命中"]
+- candidate 4: 宁德时代
+  candidate_key: C4
+  candidate_id: None
+  type: node
+  source: entity_resolve
+  score: None
+  evidence_refs: None
+  meaning: 名称：宁德时代；类型：stock；code：300750；exchange：sz
+  support_relations: ["宁德时代海外产能扩张带动储能供应链订单 --affects--> 宁德时代","宁德时代 --benefits_from--> 储能供应链"]
+  evidence: [{"source":"notebook_baseline:signal:catl_flow","excerpt":"宁德时代资金净流入改善"},{"source":"notebook_baseline:news:catl_overseas_capacity","excerpt":"宁德时代推进欧洲和东南亚海外产能扩张，储能电芯、快充电池和新能源车产业链订单预期改善。市场认为海外工厂投产有助于降低贸易壁垒，并改善供应链交付能力。"}]
+  why: ["召回通道：entity_resolve","候选类型：node","有证据支撑","有图谱关系支撑"]
+- candidate 5: affects
+  candidate_key: C5
+  candidate_id: None
+  type: edge
+  source: graph
+  score: None
+  evidence_refs: None
+  meaning: affects。kg:financial:event:cda9601b1fc7ba0d -> kg:financial:stock:c37cbb33f0cc501f
+  support_relations: ["宁德时代海外产能扩张带动储能供应链订单 --affects--> 新能源车产业链","宁德时代海外产能扩张带动储能供应链订单 --affects--> 宁德时代"]
+  evidence: [{"source":"notebook_baseline:news:catl_overseas_capacity","excerpt":"宁德时代推进欧洲和东南亚海外产能扩张，储能电芯、快充电池和新能源车产业链订单预期改善。市场认为海外工厂投产有助于降低贸易壁垒，并改善供应链交付能力。"},{"source":"notebook_baseline:signal:catl_flow","excerpt":"宁德时代资金净流入改善"}]
+  why: ["召回通道：graph","候选类型：edge","有证据支撑","有图谱关系支撑"]
+- candidate 6: affects
+  candidate_key: C6
+  candidate_id: None
+  type: edge
+  source: graph
+  score: None
+  evidence_refs: None
+  meaning: affects。kg:financial:event:cda9601b1fc7ba0d -> kg:financial:concept:76906f0e74945cce
+  support_relations: ["宁德时代海外产能扩张带动储能供应链订单 --affects--> 新能源车产业链","宁德时代海外产能扩张带动储能供应链订单 --affects--> 宁德时代"]
+  evidence: [{"source":"notebook_baseline:news:catl_overseas_capacity","excerpt":"宁德时代推进欧洲和东南亚海外产能扩张，储能电芯、快充电池和新能源车产业链订单预期改善。市场认为海外工厂投产有助于降低贸易壁垒，并改善供应链交付能力。"},{"source":"notebook_baseline:news:ma_industry_rotation","excerpt":"资本市场并购重组审核提速，市场预期产业整合会带动券商投行业务、半导体设备国产替代和新能源车产业链估值修复。并购重组主题也可能提升中小市值公司的交易活跃度。"}]
+  why: ["召回通道：graph","候选类型：edge","有证据支撑","有图谱关系支撑"]
+- candidate 7: affects
+  candidate_key: C7
+  candidate_id: None
+  type: edge
+  source: graph
+  score: None
+  evidence_refs: None
+  meaning: affects。kg:financial:policy:1c56c5820126c775 -> kg:financial:concept:76906f0e74945cce
+  support_relations: ["宁德时代海外产能扩张带动储能供应链订单 --affects--> 新能源车产业链","宁德时代海外产能扩张带动储能供应链订单 --mentions--> 新能源车产业链"]
+  evidence: [{"source":"notebook_baseline:policy:low_rate_growth_assets","excerpt":"低利率环境降低权益资产折现率，资本市场改革改善风险偏好。成长资产、科技创新、半导体设备和新能源车产业链可能受益，但高股息资产的相对吸引力可能下降。"},{"source":"notebook_baseline:news:catl_overseas_capacity","excerpt":"宁德时代推进欧洲和东南亚海外产能扩张，储能电芯、快充电池和新能源车产业链订单预期改善。市场认为海外工厂投产有助于降低贸易壁垒，并改善供应链交付能力。"}]
+  why: ["召回通道：graph","候选类型：edge","有证据支撑","有图谱关系支撑"]
+- candidate 8: affects
+  candidate_key: C8
+  candidate_id: None
+  type: edge
+  source: graph
+  score: None
+  evidence_refs: None
+  meaning: affects。kg:financial:event:cda9601b1fc7ba0d -> kg:financial:concept:ea3ba65475fb5877
+  support_relations: ["宁德时代海外产能扩张带动储能供应链订单 --affects--> 新能源车产业链","宁德时代海外产能扩张带动储能供应链订单 --affects--> 宁德时代"]
+  evidence: [{"source":"notebook_baseline:news:catl_overseas_capacity","excerpt":"宁德时代推进欧洲和东南亚海外产能扩张，储能电芯、快充电池和新能源车产业链订单预期改善。市场认为海外工厂投产有助于降低贸易壁垒，并改善供应链交付能力。"}]
+  why: ["召回通道：graph","候选类型：edge","有证据支撑","有图谱关系支撑"]
+rules: ["answer/support may enter context; only answer/support can expand graph.","background may enter context but must not expand.","drop must not enter context.","Return candidate_key such as C1/C2; do not return database ids.","score must be a semantic relevance number from 0 to 1; never copy retrieval scores.","Prefer support over drop for exact query anchor nodes with evidence.","Use drop for topic drift even when evidence/vector score is high."]
+
+===== 2026-05-16T12:48:03 candidate_judge response =====
+duration_ms: 8563  cache_hit: False
+usage: {"input_tokens":2313,"output_tokens":986,"total_tokens":3299}
+judgements: total=8
+- judgement 1: 宁德时代资金净流入改善
+  candidate_id: kg:financial:event:2b21ce8883f6b560
+  candidate_key: C1
+  role: answer
+  decision: keep
+  score: 0.95
+  expand: True
+  code: direct_answer
+- judgement 2: 宁德时代海外产能扩张带动储能供应链订单
+  candidate_id: kg:financial:event:cda9601b1fc7ba0d
+  candidate_key: C2
+  role: answer
+  decision: keep
+  score: 0.95
+  expand: True
+  code: direct_answer
+- judgement 3: 宁德时代海外产能扩张
+  candidate_id: kg:financial:event:ecd6b59280242c3f
+  candidate_key: C3
+  role: background
+  decision: weak_keep
+  score: 0.6
+  expand: False
+  code: background_only
+- judgement 4: 宁德时代
+  candidate_id: kg:financial:stock:c37cbb33f0cc501f
+  candidate_key: C4
+  role: support
+  decision: keep
+  score: 0.9
+  expand: True
+  code: anchor_support
+- judgement 5: affects
+  candidate_id: kg_edge:financial:affects:552f00d9a9870a01
+  candidate_key: C5
+  role: background
+  decision: weak_keep
+  score: 0.5
+  expand: False
+  code: insufficient_evidence
+- judgement 6: affects
+  candidate_id: kg_edge:financial:affects:0ae073a1311d64f6
+  candidate_key: C6
+  role: background
+  decision: weak_keep
+  score: 0.5
+  expand: False
+  code: insufficient_evidence
+- judgement 7: affects
+  candidate_id: kg_edge:financial:affects:3f0fd1fae9ed8dbc
+  candidate_key: C7
+  role: background
+  decision: weak_keep
+  score: 0.5
+  expand: False
+  code: insufficient_evidence
+- judgement 8: affects
+  candidate_id: kg_edge:financial:affects:e6f22a5dea1a4797
+  candidate_key: C8
+  role: background
+  decision: weak_keep
+  score: 0.5
+  expand: False
+  code: insufficient_evidence
+raw_text:
+  {"judgements": [{"candidate_key": "C1", "role": "answer", "score": 0.95, "expand": true, "code": "direct_answer"}, {"candidate_key": "C2", "role": "answer", "score": 0.95, "expand": true, "code": "direct_answer"}, {"candidate_key": "C3", "role": "background", "score": 0.6, "expand": false, "code": "background_only"}, {"candidate_key": "C4", "role": "support", "score": 0.9, "expand": true, "code": "anchor_support"}, {"candidate_key": "C5", "role": "background", "score": 0.5, "expand": false, "code": "insufficient_evidence"}, {"candidate_key": "C6", "role": "background", "score": 0.5, "expand": false, "code": "insufficient_evidence"}, {"candidate_key": "C7", "role": "background", "score": 0.5, "expand": false, "code": "insufficient_evidence"}, {"candidate_key": "C8", "role": "background", "score": 0.5, "expand": false, "code": "insufficient_evidence"}]}
+
+===== 2026-05-16T12:48:03 agentic_tool event =====
+event_meaning: tool execution has finished; this is post-judge bookkeeping, not an LLM request.
+tool: search
+raw_candidates: 30
+judged_packages: 8
+keep: 3
+weak_keep: 5
+drop: 0
+added_evidence_refs: []
+added_evidence: []
+kept_candidates: [{"title":"宁德时代资金净流入改善","type":"node","role":"answer","decision":"keep","score":0.95,"expand":true,"reason":"direct_answer","evidence_refs":["kg_ev:financial:derived_signal:notebook_baseline:signal:catl_flow:d1602b70797c690d"],"id":"kg:financial:event:2b21ce8883f6b560"},{"title":"宁德时代海外产能扩张带动储能供应链订单","type":"node","role":"answer","decision":"keep","score":0.95,"expand":true,"reason":"direct_answer","evidence_refs":["kg_ev:financial:news_articles:notebook_baseline:news:catl_overseas_capacity:40fe8cf7a130f5d2"],"id":"kg:financial:event:cda9601b1fc7ba0d"},{"title":"宁德时代","type":"node","role":"support","decision":"keep","score":0.9,"expand":true,"reason":"anchor_support","evidence_refs":["kg_ev:financial:derived_signal:notebook_baseline:signal:catl_flow:d1602b70797c690d","kg_ev:financial:news_articles:notebook_baseline:news:catl_overseas_capacity:40fe8cf7a130f5d2"],"id":"kg:financial:stock:c37cbb33f0cc501f"}]
+background_candidates: [{"title":"宁德时代海外产能扩张","type":"node","role":"background","decision":"weak_keep","score":0.6,"expand":false,"reason":"background_only","evidence_refs":[],"id":"kg:financial:event:ecd6b59280242c3f"},{"title":"affects","type":"edge","role":"background","decision":"weak_keep","score":0.5,"expand":false,"reason":"insufficient_evidence","evidence_refs":["kg_ev:financial:news_articles:notebook_baseline:news:catl_overseas_capacity:40fe8cf7a130f5d2","kg_ev:financial:derived_signal:notebook_baseline:signal:catl_flow:d1602b70797c690d"],"id":"kg_edge:financial:affects:552f00d9a9870a01"},{"title":"affects","type":"edge","role":"background","decision":"weak_keep","score":0.5,"expand":false,"reason":"insufficient_evidence","evidence_refs":["kg_ev:financial:news_articles:notebook_baseline:news:catl_overseas_capacity:40fe8cf7a130f5d2","kg_ev:financial:news_articles:notebook_baseline:news:ma_industry_rotation:69e291c4a7cfb753"],"id":"kg_edge:financial:affects:0ae073a1311d64f6"},{"title":"affects","type":"edge","role":"background","decision":"weak_keep","score":0.5,"expand":false,"reason":"insufficient_evidence","evidence_refs":["kg_ev:financial:policy_news:notebook_baseline:policy:low_rate_growth_assets:ff9aa376929aac35","kg_ev:financial:news_articles:notebook_baseline:news:catl_overseas_capacity:40fe8cf7a130f5d2"],"id":"kg_edge:financial:affects:3f0fd1fae9ed8dbc"},{"title":"affects","type":"edge","role":"background","decision":"weak_keep","score":0.5,"expand":false,"reason":"insufficient_evidence","evidence_refs":["kg_ev:financial:news_articles:notebook_baseline:news:catl_overseas_capacity:40fe8cf7a130f5d2"],"id":"kg_edge:financial:affects:e6f22a5dea1a4797"}]
+dropped_candidates: []
+controller_ms: 4730.8
+tool_ms: 360.3
+judge_ms: 8564.3
+
+===== 2026-05-16T12:48:03 agentic_budget_stop event =====
+human_summary:
+  查询: 宁德时代 300750 最近受哪些事件影响
+  停止: controller LLM 预算已用完，但当前 search_plan 的停止条件未满足。
+  这不是证据充分停止；需要增加预算或改进召回才能继续补证。
+event_meaning: controller LLM budget is exhausted and current search_plan stop condition is not met; stop is explicit, not evidence sufficient.
+stop_reason: llm_budget_exhausted_stop_condition_unmet
+controller_budget_remaining: False
+distinct_answer_candidate_ids: ["kg:financial:event:2b21ce8883f6b560","kg:financial:event:cda9601b1fc7ba0d"]
+new_answer_candidate_ids: []
+search_plan: {"answer_targets":["宁德时代 300750 近期影响事件"],"negative_boundaries":["宏观经济无关主题","非宁德时代产业链的其它公司事件"],"expected_evidence":["news_articles","event_nodes","mention_edges"],"relation_intents":["impact","affects"],"stop_condition":"找到至少3-4个不同的事件节点，且覆盖资金面、产能、政策等维度"}

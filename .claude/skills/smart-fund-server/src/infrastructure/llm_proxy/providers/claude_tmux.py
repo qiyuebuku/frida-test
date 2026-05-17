@@ -32,7 +32,9 @@ class ClaudeTmuxProvider:
             max_tokens=request.max_tokens,
             json_schema=request.json_schema,
             response_format=request.response_format,
-            metadata=request.metadata,
+            tools=request.tools,
+            tool_choice=request.tool_choice,
+            metadata={**request.metadata, "_llm_provider": self.name},
             timeout=request.timeout,
             use_cache=False,
         )

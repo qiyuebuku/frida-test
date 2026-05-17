@@ -23,6 +23,7 @@ from src.infrastructure.persistence.models.knowledge import (
     KnowledgeEvidence,
     KnowledgeGraphAdjacency,
     KnowledgeNode,
+    KnowledgeRetrievalDocument,
     KnowledgeReviewItem,
     KnowledgeVersion,
     KnowledgeWikiPage,
@@ -46,6 +47,7 @@ KG_TABLES = [
     KnowledgeWikiPage.__table__,
     KnowledgeGraphAdjacency.__table__,
     KnowledgeEvidenceChunk.__table__,
+    KnowledgeRetrievalDocument.__table__,
 ]
 
 
@@ -54,7 +56,7 @@ def test_hybrid_retrieval_toy_minimum_path() -> None:
     _cleanup()
     repo = KnowledgeRepositoryImpl(target="test")
     records = json.loads((FIXTURE_DIR / "toy_records.json").read_text(encoding="utf-8"))
-    compile_result = KnowledgeCompiler(repository=repo).compile(ToyProjectAdapter(), records)
+    compile_result = _compile_toy(repo, records)
     service = KnowledgeService(repository=repo)
     asyncio.run(service.rebuild_wiki("toy"))
     asyncio.run(service.rebuild_indexes("toy"))
@@ -86,7 +88,7 @@ def test_knowledge_service_build_answer_context() -> None:
     _cleanup()
     repo = KnowledgeRepositoryImpl(target="test")
     records = json.loads((FIXTURE_DIR / "toy_records.json").read_text(encoding="utf-8"))
-    KnowledgeCompiler(repository=repo).compile(ToyProjectAdapter(), records)
+    _compile_toy(repo, records)
     service = KnowledgeService(repository=repo)
     asyncio.run(service.rebuild_wiki("toy"))
     asyncio.run(service.rebuild_indexes("toy"))
@@ -105,6 +107,11 @@ def _ensure_tables() -> None:
     Base.metadata.create_all(get_engine("test"), tables=KG_TABLES)
 
 
+def _compile_toy(repo: KnowledgeRepositoryImpl, records: list[dict]):
+    adapter = ToyProjectAdapter()
+    return asyncio.run(KnowledgeCompiler(repository=repo).compile(adapter, adapter.normalize(records)))
+
+
 def _cleanup() -> None:
     with get_session("test") as session:
         toy_edge_ids = select(KnowledgeEdge.edge_id).where(KnowledgeEdge.adapter_name == "toy")
@@ -113,6 +120,7 @@ def _cleanup() -> None:
         )
         session.execute(delete(KnowledgeGraphAdjacency).where(KnowledgeGraphAdjacency.adapter_name == "toy"))
         session.execute(delete(KnowledgeEvidenceChunk).where(KnowledgeEvidenceChunk.adapter_name == "toy"))
+        session.execute(delete(KnowledgeRetrievalDocument).where(KnowledgeRetrievalDocument.adapter_name == "toy"))
         session.execute(delete(KnowledgeWikiPage).where(KnowledgeWikiPage.adapter_name == "toy"))
         session.execute(delete(KnowledgeEdge).where(KnowledgeEdge.adapter_name == "toy"))
         session.execute(delete(KnowledgeEvidence).where(KnowledgeEvidence.adapter_name == "toy"))

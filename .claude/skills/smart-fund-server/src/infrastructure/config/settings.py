@@ -55,14 +55,30 @@ OCR_URL = os.getenv("OCR_URL", "http://119.23.227.187:8675/glmocr/parse")
 
 # ==================== Embedding 服务 ====================
 
-# Qwen3-Embedding-4B HTTP 服务（部署在远程 GPU 机器，监听 0.0.0.0:8901）
-# - 远程同机部署时：http://127.0.0.1:8901
-# - 本地开发连远程内网：http://10.168.1.210:8901（远程内网地址）
-EMBEDDING_URL = os.getenv("EMBEDDING_URL", "http://10.168.1.210:8901")
-EMBEDDING_DIM = int(os.getenv("EMBEDDING_DIM", "1024"))  # MRL 截断维度
-EMBEDDING_BATCH_SIZE = int(os.getenv("EMBEDDING_BATCH_SIZE", "32"))
+# Qwen3-Embedding-4B OpenAI-compatible HTTP 服务（vLLM，监听 0.0.0.0:8901）
+# - 接口: /v1/embeddings
+# - 同内网优先走 10.168.1.113:8901
+EMBEDDING_URL = os.getenv("EMBEDDING_URL", "http://10.168.1.113:8901")
+EMBEDDING_DIM = int(os.getenv("EMBEDDING_DIM", "2560"))  # Qwen3-Embedding-4B 默认输出维度
+EMBEDDING_REQUEST_DIMENSIONS = os.getenv("EMBEDDING_REQUEST_DIMENSIONS", "false").lower() == "true"
+EMBEDDING_MIN_DIM = int(os.getenv("EMBEDDING_MIN_DIM", "32"))
+EMBEDDING_MAX_DIM = int(os.getenv("EMBEDDING_MAX_DIM", "2560"))
+EMBEDDING_BATCH_SIZE = int(os.getenv("EMBEDDING_BATCH_SIZE", "64"))
 EMBEDDING_TIMEOUT = float(os.getenv("EMBEDDING_TIMEOUT", "60"))
-EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL", f"qwen3-embedding-{EMBEDDING_DIM}d")
+EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL", "/models/Qwen3-Embedding-4B")
+EMBEDDING_FILE_CACHE_ENABLED = (
+    os.getenv("EMBEDDING_FILE_CACHE_ENABLED", "1").strip().lower()
+    not in {"0", "false", "no", "off"}
+)
+_EMBEDDING_FILE_CACHE_DIR_RAW = os.getenv(
+    "EMBEDDING_FILE_CACHE_DIR",
+    str(_env_file.parent / "data" / "embedding_cache"),
+)
+EMBEDDING_FILE_CACHE_DIR = str(
+    Path(_EMBEDDING_FILE_CACHE_DIR_RAW)
+    if Path(_EMBEDDING_FILE_CACHE_DIR_RAW).is_absolute()
+    else _env_file.parent / _EMBEDDING_FILE_CACHE_DIR_RAW
+)
 
 # ==================== Milvus Hybrid Retrieval ====================
 
@@ -163,6 +179,19 @@ LLM_PROXY_CACHE_TTL_SECONDS = int(
 LLM_PROXY_CACHE_MAX_SIZE = int(
     os.getenv("LLM_PROXY_CACHE_MAX_SIZE", str(CLAUDE_PROXY_CACHE_MAX_SIZE))
 )
+LLM_PROXY_FILE_CACHE_ENABLED = (
+    os.getenv("LLM_PROXY_FILE_CACHE_ENABLED", "1").strip().lower()
+    not in {"0", "false", "no", "off"}
+)
+_LLM_PROXY_FILE_CACHE_DIR_RAW = os.getenv(
+    "LLM_PROXY_FILE_CACHE_DIR",
+    str(_env_file.parent / "data" / "llm_proxy_cache"),
+)
+LLM_PROXY_FILE_CACHE_DIR = str(
+    Path(_LLM_PROXY_FILE_CACHE_DIR_RAW)
+    if Path(_LLM_PROXY_FILE_CACHE_DIR_RAW).is_absolute()
+    else _env_file.parent / _LLM_PROXY_FILE_CACHE_DIR_RAW
+)
 LLM_PROXY_MODEL_ROUTES_JSON = os.getenv("LLM_PROXY_MODEL_ROUTES_JSON", "")
 LLM_PROXY_MODEL_ALIASES_JSON = os.getenv("LLM_PROXY_MODEL_ALIASES_JSON", "")
 
@@ -226,6 +255,67 @@ DEEPSEEK_RATE_LIMIT_COOLDOWN_SECONDS = float(
 )
 DEEPSEEK_THINKING_TYPE = os.getenv("DEEPSEEK_THINKING_TYPE", "")
 DEEPSEEK_REASONING_EFFORT = os.getenv("DEEPSEEK_REASONING_EFFORT", "")
+
+# 知识图谱 LLM 任务模型方案。这里只选择模型名；模型到供应商的路由由 LLM Proxy 负责。
+KG_LLM_PLAN = os.getenv("KG_LLM_PLAN", "deepseek_balanced")
+KG_LLM_FORCE_MODEL = os.getenv("KG_LLM_FORCE_MODEL", "")
+KG_LLM_PLANS_JSON = os.getenv("KG_LLM_PLANS_JSON", "")
+
+
+def _load_kg_llm_plans() -> dict[str, dict[str, str]]:
+    all_deepseek_flash = {
+        "*": "deepseek-v4-flash",
+        "financial_news_extraction": "deepseek-v4-flash",
+        "financial_entity_normalization": "deepseek-v4-flash",
+        "kg_retrieval_controller": "deepseek-v4-flash",
+        "kg_candidate_judge": "deepseek-v4-flash",
+        "kg_agentic_retrieval": "deepseek-v4-flash",
+        "simple_extraction": "deepseek-v4-flash",
+        "complex_extraction": "deepseek-v4-flash",
+        "query_planning": "deepseek-v4-flash",
+        "summarization": "deepseek-v4-flash",
+        "quality_review": "deepseek-v4-flash",
+    }
+    plans: dict[str, dict[str, str]] = {
+        "deepseek_cheap": dict(all_deepseek_flash),
+        "deepseek_balanced": {
+            **all_deepseek_flash,
+            "financial_entity_normalization": "deepseek-v4-flash",
+            "kg_retrieval_controller": "deepseek-v4-flash",
+            "kg_candidate_judge": "deepseek-v4-flash",
+            "kg_agentic_retrieval": "deepseek-v4-pro",
+            "complex_extraction": "deepseek-v4-pro",
+            "query_planning": "deepseek-v4-pro",
+            "summarization": "deepseek-v4-pro",
+            "quality_review": "deepseek-v4-pro",
+        },
+        "glm_subscription": {
+            "*": "glm-5.1",
+            "financial_news_extraction": "glm-5.1",
+            "financial_entity_normalization": "glm-5.1",
+            "kg_retrieval_controller": "glm-5.1",
+            "kg_candidate_judge": "glm-5.1",
+            "kg_agentic_retrieval": "glm-5.1",
+            "simple_extraction": "glm-5.1",
+            "complex_extraction": "glm-5.1",
+            "query_planning": "glm-5.1",
+            "summarization": "glm-5.1",
+            "quality_review": "glm-5.1",
+        },
+    }
+    data = _load_json_dict(KG_LLM_PLANS_JSON)
+    for plan_name, mapping in data.items():
+        if not isinstance(mapping, dict):
+            continue
+        plans[str(plan_name)] = {
+            str(task): str(model)
+            for task, model in mapping.items()
+            if task and model
+        }
+    return plans
+
+
+KG_LLM_PLANS = _load_kg_llm_plans()
 
 # ==================== 交易 ====================
 

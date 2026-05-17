@@ -11,6 +11,8 @@ from src.application.dto.knowledge_dto import (
 from src.application.services import knowledge_service as knowledge_service_module
 from src.application.services.knowledge_service import KnowledgeService
 from src.domain.knowledge.enums import ConfidenceLabel, EdgeStatus, EvidenceType, NodeStatus
+from src.domain.knowledge.agentic_retrieval import RetrievalControllerDecision
+from src.domain.knowledge.retrieval_judge import DeterministicCandidateJudge
 from src.domain.knowledge.retrieval import RetrievalHit, RetrievalOptions, SemanticHybridRetriever
 from src.domain.knowledge.retrieval_eval import RetrievalBadCase, evaluate_retrieval_bad_case
 from src.domain.knowledge.schemas import CompiledEdge, CompiledEvidence, CompiledNode
@@ -93,6 +95,13 @@ class _Milvus(SemanticHybridRetriever):
         ]
 
 
+class _StopAfterSemanticStrategy:
+    async def next_decision(self, *, query, working_set, observations, constraints):
+        if not observations:
+            return RetrievalControllerDecision(next_tool="search", query_rewrites=[query])
+        return RetrievalControllerDecision(next_tool="stop", stop_reason="evidence_sufficient")
+
+
 def test_evaluate_retrieval_bad_case_reports_missing_items() -> None:
     result = evaluate_retrieval_bad_case(
         RetrievalBadCase(
@@ -103,7 +112,7 @@ def test_evaluate_retrieval_bad_case_reports_missing_items() -> None:
             expected_top_hit_titles=["news_articles:ft_news:missing"],
             expected_node_names=["宁德时代"],
             expected_relation_types=["mentions"],
-            expected_channels_used=["semantic_hybrid_search"],
+            expected_channels_used=["search"],
             min_hits=2,
             min_evidence_refs=2,
             min_matched_nodes=2,
@@ -121,7 +130,7 @@ def test_evaluate_retrieval_bad_case_reports_missing_items() -> None:
     assert result.missing_hit_titles == ["news_articles:ft_news:missing"]
     assert result.missing_top_hit_titles == ["news_articles:ft_news:missing"]
     assert result.missing_relation_types == ["mentions"]
-    assert result.missing_channels_used == ["semantic_hybrid_search"]
+    assert result.missing_channels_used == ["search"]
     assert result.metric_failures == {
         "hits": {"actual": 1, "expected_min": 2},
         "evidence_refs": {"actual": 1, "expected_min": 2},
@@ -131,12 +140,45 @@ def test_evaluate_retrieval_bad_case_reports_missing_items() -> None:
     assert result.missing_node_names == []
 
 
+def test_evaluate_retrieval_bad_case_reports_forbidden_noise() -> None:
+    result = evaluate_retrieval_bad_case(
+        RetrievalBadCase(
+            case_id="noise-case",
+            query="俄就波法联合军演发出警告",
+            forbidden_node_names=["宁德时代"],
+            forbidden_topics=["固态电池"],
+            max_forbidden_hits=0,
+        ),
+        evidence_refs=["kg_ev:financial:l1_events:solid_state"],
+        hit_titles=["固态电池政策支持带动宁德时代产业链预期"],
+        channels_used=["semantic_hybrid_search"],
+        matched_nodes=[_Repo.stock],
+        matched_edges=[],
+    )
+
+    assert result.passed is False
+    assert result.forbidden_node_names_hit == ["宁德时代"]
+    assert result.forbidden_topics_hit == ["固态电池"]
+    assert result.metrics["forbidden_hits"] == 2
+    assert result.metric_failures["forbidden_hits"] == {"actual": 2, "expected_max": 0}
+
+
 @pytest.mark.asyncio
 async def test_service_replays_research_context_bad_cases(monkeypatch) -> None:
     monkeypatch.setattr(
         knowledge_service_module,
         "_semantic_hybrid_retriever",
         lambda: _Milvus(),
+    )
+    monkeypatch.setattr(
+        knowledge_service_module,
+        "_agentic_retrieval_strategy",
+        lambda: _StopAfterSemanticStrategy(),
+    )
+    monkeypatch.setattr(
+        knowledge_service_module,
+        "_agentic_candidate_judge",
+        lambda: DeterministicCandidateJudge(),
     )
     service = KnowledgeService(repository=_Repo())
 
@@ -151,7 +193,7 @@ async def test_service_replays_research_context_bad_cases(monkeypatch) -> None:
                     expected_top_hit_titles=["news_articles:ft_news:74342"],
                     expected_node_names=["宁德时代"],
                     expected_relation_types=["mentions"],
-                    expected_channels_used=["semantic_hybrid_search", "chunk_read"],
+                    expected_channels_used=["search", "open"],
                     min_hits=1,
                     min_evidence_refs=1,
                     min_matched_nodes=1,
@@ -165,12 +207,15 @@ async def test_service_replays_research_context_bad_cases(monkeypatch) -> None:
     assert result.passed == 1
     assert result.failed == 0
     assert result.metrics["pass_rate"] == 1.0
-    assert result.metrics["channel_coverage"]["semantic_hybrid_search"] == 1
+    assert result.metrics["channel_coverage"]["search"] == 1
     assert result.results[0]["missing_channels_used"] == []
     assert result.results[0]["metric_failures"] == {}
-    assert result.results[0]["channels_used"] == [
-        "entity_resolve",
-        "graph_search",
-        "semantic_hybrid_search",
-        "chunk_read",
-    ]
+    assert "search" in result.results[0]["channels_used"]
+    assert "open" in result.results[0]["channels_used"]
+    assert result.results[0]["query_anchor"]
+    assert result.results[0]["routing_decision"]["final_mode"] in {
+        "deterministic_plan",
+        "agentic_arag",
+    }
+    assert result.results[0]["candidate_judgement_summary"]["total"] >= 1
+    assert sum(result.metrics["route_coverage"].values()) == 1

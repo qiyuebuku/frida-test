@@ -42,7 +42,7 @@ async def replay_retrieval_trace(
     for index, recorded_step in enumerate(recorded_trace.steps):
         call = RetrievalToolCall.model_validate(recorded_step.input)
         result = await registry.execute(call)
-        if call.tool == "chunk_read":
+        if call.tool == "open":
             result = result.model_copy(
                 update={"hits": _inherit_evidence_scores(result.hits, hits)}
             )

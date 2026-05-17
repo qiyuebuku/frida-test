@@ -15,6 +15,7 @@ from src.application.dto.knowledge_dto import (
     KnowledgeRebuildWikiCommand,
     KnowledgeResearchContextCommand,
     KnowledgeReviewActionCommand,
+    KnowledgeSourceProjectionCommand,
     dto_to_dict,
 )
 from src.application.services.knowledge_adapter_registry import AdapterNotFoundError
@@ -32,6 +33,14 @@ class KGCompileRequest(BaseModel):
     dry_run: bool = Field(False, description="只编译不写入")
     request_id: str | None = Field(None, description="调用方幂等 ID")
     concurrency: int | None = Field(None, ge=1, le=20, description="编译并发数，默认跟随 LLM proxy 配置")
+
+
+class KGSourceProjectionRequest(BaseModel):
+    target: Target = Field("prod", description="数据库目标")
+    sources: list[str] | None = Field(None, description="为空时读取五张核心表")
+    codes: list[str] = Field(default_factory=list, description="可选股票代码过滤，当前仅作用于 ft_news")
+    limit: int = Field(100, ge=1, le=5000, description="每个来源读取数量上限")
+    include_skipped: bool = Field(True, description="是否返回跳过行明细")
 
 
 class KGRebuildWikiRequest(BaseModel):
@@ -54,9 +63,9 @@ class KGResearchContextRequest(BaseModel):
     query: str = Field(..., min_length=1, description="查询文本")
     adapter_name: str = Field("financial", description="adapter 名称")
     target: Target = Field("prod", description="数据库目标")
-    retrieval_mode: Literal["deterministic_plan", "agentic_arag"] = Field(
-        "deterministic_plan",
-        description="检索模式，默认低延迟 deterministic fast path；agentic_arag 需显式指定",
+    retrieval_mode: Literal["auto", "deterministic_plan", "agentic_arag"] = Field(
+        "auto",
+        description="检索模式；auto 会自动路由到 deterministic_plan 或 agentic_arag",
     )
     graph_depth: int = Field(3, ge=1, le=4)
     graph_limit: int = Field(20, ge=1, le=100)
@@ -124,6 +133,22 @@ async def compile_kg(req: KGCompileRequest):
                 dry_run=req.dry_run,
                 request_id=req.request_id,
                 concurrency=req.concurrency,
+            )
+        )
+    )
+
+
+@router.post("/project-sources", summary="投影业务表为 Source Record")
+async def project_sources(req: KGSourceProjectionRequest):
+    service = create_knowledge_service(target=req.target)
+    return await _call(
+        service.project_sources(
+            KnowledgeSourceProjectionCommand(
+                target=req.target,
+                sources=req.sources,
+                codes=req.codes,
+                limit=req.limit,
+                include_skipped=req.include_skipped,
             )
         )
     )

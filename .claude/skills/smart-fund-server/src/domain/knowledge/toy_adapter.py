@@ -12,7 +12,7 @@ from src.domain.knowledge.adapter import (
     SourceTypeSpec,
     WikiPageSpec,
 )
-from src.domain.knowledge.enums import ConfidenceLabel, EdgeStatus, EvidenceType, InputType
+from src.domain.knowledge.enums import ConfidenceLabel, EdgeStatus, EvidenceType, InputType, RecordKind
 from src.domain.knowledge.schemas import EdgeDraft, EvidenceDraft, KnowledgeInput, NodeDraft
 
 
@@ -159,6 +159,7 @@ class ToyProjectAdapter:
             observed_at=_parse_datetime(record["observed_at"]),
             adapter_name=self.spec.name,
             adapter_version=self.spec.version,
+            record_kind=RecordKind.RELATION_ASSERTION,
             payload=payload,
             raw_text=raw_text,
         )

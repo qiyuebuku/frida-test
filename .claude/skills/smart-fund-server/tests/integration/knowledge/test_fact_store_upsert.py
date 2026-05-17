@@ -138,6 +138,90 @@ def test_fact_store_upsert_and_edge_evidence_roundtrip() -> None:
     _cleanup()
 
 
+def test_fact_store_supersedes_old_same_source_evidence() -> None:
+    _ensure_tables()
+    _cleanup()
+
+    repo = KnowledgeRepositoryImpl(target="test")
+    nodes = [
+        CompiledNode(
+            node_id="kg:toy:person:alice_it",
+            adapter_name="toy_it",
+            node_type="person",
+            canonical_name="Alice",
+            status=NodeStatus.ACTIVE,
+            version="v1",
+        ),
+        CompiledNode(
+            node_id="kg:toy:project:alpha_it",
+            adapter_name="toy_it",
+            node_type="project",
+            canonical_name="Alpha",
+            status=NodeStatus.ACTIVE,
+            version="v1",
+        ),
+    ]
+    old_evidence = CompiledEvidence(
+        evidence_id="kg_ev:toy_it:note:n1:old",
+        adapter_name="toy_it",
+        evidence_type=EvidenceType.TEXT_SPAN,
+        source_type="note",
+        source_id="n1",
+        content="Alice owns Alpha old.",
+        version="v1",
+        source_fingerprint="old",
+    )
+    new_evidence = CompiledEvidence(
+        evidence_id="kg_ev:toy_it:note:n1:new",
+        adapter_name="toy_it",
+        evidence_type=EvidenceType.TEXT_SPAN,
+        source_type="note",
+        source_id="n1",
+        content="Alice owns Alpha new.",
+        version="v1",
+        source_fingerprint="new",
+    )
+    old_edge = CompiledEdge(
+        edge_id="kg_edge:toy_it:owns:old",
+        adapter_name="toy_it",
+        source_node_id=nodes[0].node_id,
+        target_node_id=nodes[1].node_id,
+        relation_type="owns",
+        confidence_label=ConfidenceLabel.EXTRACTED,
+        confidence_score=1.0,
+        status=EdgeStatus.ACTIVE,
+        evidence_ids=[old_evidence.evidence_id],
+        version="v1",
+    )
+
+    repo.upsert_nodes(nodes)
+    repo.upsert_evidence([old_evidence])
+    repo.upsert_edges([old_edge])
+    repo.upsert_evidence([new_evidence])
+
+    with get_session("test") as session:
+        old_row = session.get(KnowledgeEvidence, old_evidence.evidence_id)
+        new_row = session.get(KnowledgeEvidence, new_evidence.evidence_id)
+        old_edge_row = session.get(KnowledgeEdge, old_edge.edge_id)
+
+    assert old_row is not None
+    assert old_row.status == "superseded"
+    assert old_row.superseded_by == new_evidence.evidence_id
+    assert new_row is not None
+    assert new_row.status == "active"
+    assert old_edge_row is not None
+    assert old_edge_row.status == "deprecated"
+    assert repo.get_evidence(old_evidence.evidence_id) is None
+    assert repo.get_evidence(new_evidence.evidence_id) is not None
+    assert [item.evidence_id for item in repo.list_evidence("toy_it")] == [new_evidence.evidence_id]
+    assert {item.evidence_id for item in repo.list_evidence("toy_it", include_inactive=True)} == {
+        old_evidence.evidence_id,
+        new_evidence.evidence_id,
+    }
+
+    _cleanup()
+
+
 def test_compilation_run_create_and_finish() -> None:
     _ensure_tables()
     _cleanup()

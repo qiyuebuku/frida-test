@@ -1,0 +1,3271 @@
+{
+  "real_ft_news_compile": {
+    "projection": {
+      "records": [
+        {
+          "source_type": "news_articles",
+          "source_id": "ft_news:83904",
+          "observed_at": "2026-04-24T07:38:00+08:00",
+          "payload": {
+            "source_id": "ft_news:83904",
+            "document_id": "ft_news:83904",
+            "published_at": "2026-04-24T07:38:00+08:00",
+            "title": "A股并购重组市场呈现三方面新变化",
+            "text": "A股并购重组市场呈现三方面新变化\n在各类政策推动下，A股并购市场进一步锚定价值投资与产业估值。数据显示，2025年A股横向整合并购事件达463起，交易金额4410亿元，同比增长27%；垂直整合案例从2023年的4起、2024年的5起大幅增至2025年的20起。\nWind资讯数据显示，截至4月23日晚间，年内A股上市公司首次披露的并购重组交易已达1104起，合计交易金额约3634.65亿元，其中重大资产重组案例达33起。结合近两年数据来看，并购重组市场整体呈现出数量稳步增长、交易规模持续放量的良好态势。更为关键的是，并购重组市场生态也在发生深刻变革。 第一，新兴领域产业链深度整合，新旧动能协同推进。 本轮并购重组最鲜明的特征之一，是资源要素加速向新质生产力领域集聚。在“并购六条”和“科创板八条”等政策引导下，创业板与科创板上市公司并购重组案例呈现量质齐升态势。机构研究数据显示，科创板与创业板并购重组案例数量占A股总案例的比重由2020年的26%逐步提升至2025年的37%。其中，半导体、软件、生物医药、高端装备制造等新兴产业占比超过九成。此外，跨境并购、多工具组合的复杂交易案例频繁出现，反映出市场对新质生产力整合的迫切需求以及交易能力的显著提升。 与此同时，传统行业的横向整合加快、产业集中度提升。汽车零部件、化学制品、电力等传统行业通过横向整合、战略合作优化产业结构，提升资源配置效率。 这种“新兴聚势、传统提质”的双轮驱动格局，正推动并购重组市场步入更成熟、更高效的发展新阶段。 第二，并购重组回归产业本源，助力资本市场生态优化。 在各类政策推动下，A股并购市场进一步锚定价值投资与产业估值。数据显示，2025年A股横向整合并购事件达463起，交易金额4410亿元，同比增长27%；垂直整合案例从2023年的4起、2024年的5起大幅增至2025年的20起。这些数据清晰表明，并购市场正加速转向追求产业协同与长期价值。 并购重组不仅有利于推动产业结构优化，还为一些上市公司提供了主动退市的新选择，这也契合“畅通退市渠道”的政策导向。从更宏观的视角看，通过市场化并购实现优胜劣汰，既能保护投资者利益，又能引导资源向优质企业集中，推动资本市场生态持续优化。 第三，机构角色升级，从交易通道转向“价值合伙人”。 当前，A股并购重组市场在变革中展现出前所未有的活力，这也为中介机构带来更多机遇与挑战。作为独立财务顾问，券商深度参与上市公司并购重组的交易方案设计、标的估值定价、交易撮合谈判及融资安排等关键环节。2025年，券商共服务82家上市公司完成重大资产重组，交易金额超6000亿元，通过参与产业链整合、跨区域或跨境并购等重大交易，助力上市公司实现外延式发展，为打造具有国际影响力的产业集群提供金融支撑。 面对标的估值、产业协同、未盈利资产并购等新课题，券商正锚定复杂交易执行、跨行业估值定价、投后整合管理等综合能力加速转型。当前，多家头部券商已明确提出做“全生命周期合伙人”，聚焦新兴赛道，推动产业链整合，投行团队进行垂直行业分组，强化“行业研究+产业研究”双轮驱动。在新的市场需求下，券商扮演着“战略顾问”“资源整合者”和“交易赋能者”等多重角色，不再满足于撮合交易、完成流程，而是积极介入战略规划、交易设计、投后整合与产业赋能。 从政策红利的释放到估值体系的重塑，再到中介机构的角色跃升，多重变革彼此赋能、协同发力，推动A股并购重组市场从“量的积累”迈向“质的跃升”。随着并购重组真正成为企业提质增效的“助推器”，一个更具效率、更富韧性、更能服务国家战略的资本市场正加速成型。（文章来源：证券日报）",
+            "source_name": "证券日报",
+            "mentioned_entities": [],
+            "affected_entities": []
+          },
+          "raw_text": "A股并购重组市场呈现三方面新变化\n在各类政策推动下，A股并购市场进一步锚定价值投资与产业估值。数据显示，2025年A股横向整合并购事件达463起，交易金额4410亿元，同比增长27%；垂直整合案例从2023年的4起、2024年的5起大幅增至2025年的20起。\nWind资讯数据显示，截至4月23日晚间，年内A股上市公司首次披露的并购重组交易已达1104起，合计交易金额约3634.65亿元，其中重大资产重组案例达33起。结合近两年数据来看，并购重组市场整体呈现出数量稳步增长、交易规模持续放量的良好态势。更为关键的是，并购重组市场生态也在发生深刻变革。 第一，新兴领域产业链深度整合，新旧动能协同推进。 本轮并购重组最鲜明的特征之一，是资源要素加速向新质生产力领域集聚。在“并购六条”和“科创板八条”等政策引导下，创业板与科创板上市公司并购重组案例呈现量质齐升态势。机构研究数据显示，科创板与创业板并购重组案例数量占A股总案例的比重由2020年的26%逐步提升至2025年的37%。其中，半导体、软件、生物医药、高端装备制造等新兴产业占比超过九成。此外，跨境并购、多工具组合的复杂交易案例频繁出现，反映出市场对新质生产力整合的迫切需求以及交易能力的显著提升。 与此同时，传统行业的横向整合加快、产业集中度提升。汽车零部件、化学制品、电力等传统行业通过横向整合、战略合作优化产业结构，提升资源配置效率。 这种“新兴聚势、传统提质”的双轮驱动格局，正推动并购重组市场步入更成熟、更高效的发展新阶段。 第二，并购重组回归产业本源，助力资本市场生态优化。 在各类政策推动下，A股并购市场进一步锚定价值投资与产业估值。数据显示，2025年A股横向整合并购事件达463起，交易金额4410亿元，同比增长27%；垂直整合案例从2023年的4起、2024年的5起大幅增至2025年的20起。这些数据清晰表明，并购市场正加速转向追求产业协同与长期价值。 并购重组不仅有利于推动产业结构优化，还为一些上市公司提供了主动退市的新选择，这也契合“畅通退市渠道”的政策导向。从更宏观的视角看，通过市场化并购实现优胜劣汰，既能保护投资者利益，又能引导资源向优质企业集中，推动资本市场生态持续优化。 第三，机构角色升级，从交易通道转向“价值合伙人”。 当前，A股并购重组市场在变革中展现出前所未有的活力，这也为中介机构带来更多机遇与挑战。作为独立财务顾问，券商深度参与上市公司并购重组的交易方案设计、标的估值定价、交易撮合谈判及融资安排等关键环节。2025年，券商共服务82家上市公司完成重大资产重组，交易金额超6000亿元，通过参与产业链整合、跨区域或跨境并购等重大交易，助力上市公司实现外延式发展，为打造具有国际影响力的产业集群提供金融支撑。 面对标的估值、产业协同、未盈利资产并购等新课题，券商正锚定复杂交易执行、跨行业估值定价、投后整合管理等综合能力加速转型。当前，多家头部券商已明确提出做“全生命周期合伙人”，聚焦新兴赛道，推动产业链整合，投行团队进行垂直行业分组，强化“行业研究+产业研究”双轮驱动。在新的市场需求下，券商扮演着“战略顾问”“资源整合者”和“交易赋能者”等多重角色，不再满足于撮合交易、完成流程，而是积极介入战略规划、交易设计、投后整合与产业赋能。 从政策红利的释放到估值体系的重塑，再到中介机构的角色跃升，多重变革彼此赋能、协同发力，推动A股并购重组市场从“量的积累”迈向“质的跃升”。随着并购重组真正成为企业提质增效的“助推器”，一个更具效率、更富韧性、更能服务国家战略的资本市场正加速成型。（文章来源：证券日报）",
+          "metadata": {
+            "source_table": "ft_news",
+            "source_pk": 83904,
+            "source": "eastmoney",
+            "source_name": "证券日报",
+            "source_reliability": 0.75,
+            "category": "",
+            "url": "http://finance.eastmoney.com/a/202604243716747262.html",
+            "tags": [],
+            "weak_entity_hints": [],
+            "related_stocks": [],
+            "fingerprint": "b3197a1d7c4f1490909953000dd6186af115234bd6ee35ef37fe5dc7b0d27e82",
+            "source_type_reason": "news_source_default",
+            "source_type_matched_rules": [
+              "news_source:证券日报"
+            ],
+            "source_type_confidence": 0.72,
+            "source_type_uncertain": true,
+            "source_type_candidates": [
+              {
+                "source_type": "policy_news",
+                "score": 2
+              },
+              {
+                "source_type": "news_articles",
+                "score": 0
+              }
+            ]
+          }
+        },
+        {
+          "source_type": "news_articles",
+          "source_id": "ft_news:77543",
+          "observed_at": "2026-04-24T00:40:57+08:00",
+          "payload": {
+            "source_id": "ft_news:77543",
+            "document_id": "ft_news:77543",
+            "published_at": "2026-04-24T00:40:57+08:00",
+            "title": "俄就波法联合军演发出警告：欧洲对俄“全面对抗正在回归”",
+            "text": "俄就波法联合军演发出警告：欧洲对俄“全面对抗正在回归”\n据俄罗斯方面23日消息，俄总统新闻秘书佩斯科夫称，波兰和法国的联合军事演习是欧洲针对俄罗斯进行军事部署的直接体现。他称，欧洲对俄表现出相当的侵略性，“全面对抗正在回归”。据悉，波兰消息人士称，法国和波兰计划于近期举行联合演习，模拟打击俄罗斯圣彼得堡地区的重要目标。演习将动用能够携带核弹头的“阵风”战斗机。佩斯科夫强调，无论欧洲多么不情愿，构建欧洲安全新架构都必须与俄罗斯对话。（央视新闻）\n据俄罗斯方面23日消息，俄总统新闻秘书佩斯科夫称，波兰和法国的联合军事演习是欧洲针对俄罗斯进行军事部署的直接体现。他称，欧洲对俄表现出相当的侵略性，“全面对抗正在回归”。据悉，波兰消息人士称，法国和波兰计划于近期举行联合演习，模拟打击俄罗斯圣彼得堡地区的重要目标。演习将动用能够携带核弹头的“阵风”战斗机。佩斯科夫强调，无论欧洲多么不情愿，构建欧洲安全新架构都必须与俄罗斯对话。(央视新闻)",
+            "source_name": "同花顺",
+            "mentioned_entities": [],
+            "affected_entities": []
+          },
+          "raw_text": "俄就波法联合军演发出警告：欧洲对俄“全面对抗正在回归”\n据俄罗斯方面23日消息，俄总统新闻秘书佩斯科夫称，波兰和法国的联合军事演习是欧洲针对俄罗斯进行军事部署的直接体现。他称，欧洲对俄表现出相当的侵略性，“全面对抗正在回归”。据悉，波兰消息人士称，法国和波兰计划于近期举行联合演习，模拟打击俄罗斯圣彼得堡地区的重要目标。演习将动用能够携带核弹头的“阵风”战斗机。佩斯科夫强调，无论欧洲多么不情愿，构建欧洲安全新架构都必须与俄罗斯对话。（央视新闻）\n据俄罗斯方面23日消息，俄总统新闻秘书佩斯科夫称，波兰和法国的联合军事演习是欧洲针对俄罗斯进行军事部署的直接体现。他称，欧洲对俄表现出相当的侵略性，“全面对抗正在回归”。据悉，波兰消息人士称，法国和波兰计划于近期举行联合演习，模拟打击俄罗斯圣彼得堡地区的重要目标。演习将动用能够携带核弹头的“阵风”战斗机。佩斯科夫强调，无论欧洲多么不情愿，构建欧洲安全新架构都必须与俄罗斯对话。(央视新闻)",
+          "metadata": {
+            "source_table": "ft_news",
+            "source_pk": 77543,
+            "source": "ths",
+            "source_name": "同花顺",
+            "source_reliability": 0.75,
+            "category": "",
+            "url": "https://news.10jqka.com.cn/20260424/c676237373.shtml",
+            "tags": [
+              "美股",
+              "港股",
+              "A股"
+            ],
+            "weak_entity_hints": [
+              {
+                "kind": "tag",
+                "value": "美股",
+                "confidence": 0.25,
+                "in_title": false,
+                "in_text": false
+              },
+              {
+                "kind": "tag",
+                "value": "港股",
+                "confidence": 0.25,
+                "in_title": false,
+                "in_text": false
+              },
+              {
+                "kind": "tag",
+                "value": "A股",
+                "confidence": 0.25,
+                "in_title": false,
+                "in_text": false
+              }
+            ],
+            "related_stocks": [],
+            "fingerprint": "c9c5e32b4bc50ae13f9de6790828ce974f7a2205f031cb6a0cc6f41c6b829d99",
+            "source_type_reason": "negative_news_pattern",
+            "source_type_matched_rules": [
+              "negative_news:军演"
+            ],
+            "source_type_confidence": 0.82,
+            "source_type_uncertain": false,
+            "source_type_candidates": []
+          }
+        }
+      ],
+      "total_records": 2,
+      "source_counts": {
+        "ft_news": 2
+      },
+      "skipped": [],
+      "warnings": []
+    },
+    "compile": {
+      "adapter_name": "financial",
+      "run_id": "kg_run:financial:69dda3a9-211c-4092-84b8-781d828649e7",
+      "nodes": 17,
+      "edges": 16,
+      "evidence": 2,
+      "failed_records": 0,
+      "node_ids": [
+        "kg:financial:event:5b8cdfdfc972155e",
+        "kg:financial:concept:d22a035f92055198",
+        "kg:financial:concept:692ccaa96d9076e6",
+        "kg:financial:concept:30ec9ce8d249345c",
+        "kg:financial:industry:0382d4d5a5ccc248",
+        "kg:financial:industry:101304223a8cd3c6",
+        "kg:financial:industry:aa47b41443f6da9f",
+        "kg:financial:industry:25e3144becebf9dc",
+        "kg:financial:industry:bc04a86941e85840",
+        "kg:financial:industry:06d14fb2bb0754e3",
+        "kg:financial:industry:50063d3c91ec9e00",
+        "kg:financial:event:bc7af8ca1c405f22",
+        "kg:financial:person:29eee14f8488bb3c",
+        "kg:financial:region:93ceae94dddc7acb",
+        "kg:financial:region:3e369211857983dc",
+        "kg:financial:region:99f5c09b2d9d2852",
+        "kg:financial:region:fc32106fd0943e1f"
+      ],
+      "edge_ids": [
+        "kg_edge:financial:mentions:a7828b21c31813e0",
+        "kg_edge:financial:mentions:072c05b8427f089d",
+        "kg_edge:financial:mentions:b3bb0e08ce86c1e0",
+        "kg_edge:financial:mentions:5cfed905f6baaffa",
+        "kg_edge:financial:mentions:0c0c6a44bfa2c956",
+        "kg_edge:financial:mentions:4d5214974ba227c1",
+        "kg_edge:financial:mentions:c0c763c69a0d3741",
+        "kg_edge:financial:mentions:5ffb3244fe301c2a",
+        "kg_edge:financial:mentions:ae17ce50c3d5e381",
+        "kg_edge:financial:mentions:2b821b8f1b266bd2",
+        "kg_edge:financial:mentions:d47b623b9ab21783",
+        "kg_edge:financial:mentions:13258b63685c36fd",
+        "kg_edge:financial:mentions:450e735a0883f0af",
+        "kg_edge:financial:mentions:9ef751f30828886f",
+        "kg_edge:financial:mentions:4bf00ab3e09cff24",
+        "kg_edge:financial:affects:13258b63685c36fd"
+      ],
+      "evidence_ids": [
+        "kg_ev:financial:news_articles:ft_news:83904:a8934858d26f15da",
+        "kg_ev:financial:news_articles:ft_news:77543:6ef6deebc6e9c592"
+      ],
+      "index_refresh": {
+        "mode": "incremental",
+        "graph_adjacency": 15,
+        "evidence_chunks": 2,
+        "wiki_pages": 21,
+        "hybrid_chunks": 56,
+        "node_ids": [
+          "kg:financial:event:5b8cdfdfc972155e",
+          "kg:financial:concept:d22a035f92055198",
+          "kg:financial:concept:692ccaa96d9076e6",
+          "kg:financial:concept:30ec9ce8d249345c",
+          "kg:financial:industry:0382d4d5a5ccc248",
+          "kg:financial:industry:101304223a8cd3c6",
+          "kg:financial:industry:aa47b41443f6da9f",
+          "kg:financial:industry:25e3144becebf9dc",
+          "kg:financial:industry:bc04a86941e85840",
+          "kg:financial:industry:06d14fb2bb0754e3",
+          "kg:financial:industry:50063d3c91ec9e00",
+          "kg:financial:event:bc7af8ca1c405f22",
+          "kg:financial:person:29eee14f8488bb3c",
+          "kg:financial:region:93ceae94dddc7acb",
+          "kg:financial:region:3e369211857983dc",
+          "kg:financial:region:99f5c09b2d9d2852",
+          "kg:financial:region:fc32106fd0943e1f"
+        ],
+        "edge_ids": [
+          "kg_edge:financial:mentions:a7828b21c31813e0",
+          "kg_edge:financial:mentions:072c05b8427f089d",
+          "kg_edge:financial:mentions:b3bb0e08ce86c1e0",
+          "kg_edge:financial:mentions:5cfed905f6baaffa",
+          "kg_edge:financial:mentions:0c0c6a44bfa2c956",
+          "kg_edge:financial:mentions:4d5214974ba227c1",
+          "kg_edge:financial:mentions:c0c763c69a0d3741",
+          "kg_edge:financial:mentions:5ffb3244fe301c2a",
+          "kg_edge:financial:mentions:ae17ce50c3d5e381",
+          "kg_edge:financial:mentions:2b821b8f1b266bd2",
+          "kg_edge:financial:mentions:d47b623b9ab21783",
+          "kg_edge:financial:mentions:13258b63685c36fd",
+          "kg_edge:financial:mentions:450e735a0883f0af",
+          "kg_edge:financial:mentions:9ef751f30828886f",
+          "kg_edge:financial:mentions:4bf00ab3e09cff24",
+          "kg_edge:financial:affects:13258b63685c36fd"
+        ],
+        "evidence_ids": [
+          "kg_ev:financial:news_articles:ft_news:83904:a8934858d26f15da",
+          "kg_ev:financial:news_articles:ft_news:77543:6ef6deebc6e9c592"
+        ]
+      },
+      "warnings": [],
+      "failures": [],
+      "dry_run": false
+    }
+  },
+  "real_ft_news_retrieval": {
+    "queries": [
+      "A股并购重组市场呈现三方面新变化 ft_news:83904",
+      "俄就波法联合军演发出警告：欧洲对俄“全面对抗正在回归” ft_news:77543"
+    ],
+    "expected_evidence_ids": [
+      "kg_ev:financial:news_articles:ft_news:77543:6ef6deebc6e9c592",
+      "kg_ev:financial:news_articles:ft_news:83904:a8934858d26f15da"
+    ],
+    "results": [
+      {
+        "query": "A股并购重组市场呈现三方面新变化 ft_news:83904",
+        "expected_evidence_hit": true,
+        "matched_evidence_ids": [
+          "kg_ev:financial:news_articles:ft_news:83904:a8934858d26f15da"
+        ],
+        "context": {
+          "query": "A股并购重组市场呈现三方面新变化 ft_news:83904",
+          "hits": [
+            {
+              "hit_id": "kg:financial:event:5b8cdfdfc972155e",
+              "hit_type": "node",
+              "title": "A股并购重组市场呈现三方面新变化",
+              "snippet": "{\"aliases\": [], \"name\": \"a股并购重组市场呈现三方面新变化\", \"properties\": {\"event_time\": null, \"event_type\": null, \"published_at\": \"2026-04-24t07:38:00+08:00\", \"source_name\": \"证券日报\"}, \"type\": \"event\"}",
+              "score": 39.0,
+              "source": "entity_resolve",
+              "node_refs": [
+                "kg:financial:event:5b8cdfdfc972155e"
+              ],
+              "edge_refs": [],
+              "evidence_refs": [],
+              "path_node_refs": [],
+              "path_edge_refs": [],
+              "confidence": null,
+              "consumption_scope": "context"
+            },
+            {
+              "hit_id": "kg_ev:financial:news_articles:ft_news:83904:a8934858d26f15da",
+              "hit_type": "evidence",
+              "title": "news_articles:ft_news:83904",
+              "snippet": "A股并购重组市场呈现三方面新变化\n在各类政策推动下，A股并购市场进一步锚定价值投资与产业估值。数据显示，2025年A股横向整合并购事件达463起，交易金额4410亿元，同比增长27%；垂直整合案例从2023年的4起、2024年的5起大幅增至2025年的20起。\nWind资讯数据显示，截至4月23日晚间，年内A股上市公司首次披露的并购重组交易已达1104起，合计交易金额约3634.65亿元，其中重大资产重组案例达33起。结合近两年数据来看，并购重组市场整体呈现出数量稳步增长、交易规模持续放量的良好态势。更为关键的是，并购重组市场生态也在发生深刻变革。 第一，新兴领域产业链深度整合，新旧动能协同推进。 本轮并购重组最鲜明的特征之一，是资源要素加速向新质生产力领域集聚。在“并购六条”和“科创板八条”等政策引导下，创业板与科创板上市公司并购重组案例呈现量质齐升态势。机构研究数据显示，科创板与创业板并购重组案例数量占A股总案例的比重由2020年的26%逐步提升至2025年的37%。其中，半导体、软件、生物医药、高端装备制造等新兴产业占比超过九成。此外，跨境并购、多工具组合的复杂交易案例频繁出现，反映出市场对新质生产力整合的迫切需求以及交易能力的显著提升。 与此同时，传统行业的横向整合加快、产业集中度提升。汽车零部件、化学制品、电力等传统行业通过横向整合、战略合作优化产业结构，提升资源配置效率。 这种“新兴聚势、传统提质”的双轮驱动格局，正推动并购重组市场步入更成熟、更高效的发展新阶段。 第二，并购重组回归产业本源，助力资本市场生态优化。 在各类政策推动下，A股并购市场进一步锚定价值投资与产业估值。数据显示，2025年A股横向整合并购事件达463起，交易金额4410亿元，同比增长27%；垂直整合案例从2023年的4起、2024年的5起大幅增至2025年的20起。这些数据清晰表明，...",
+              "score": 1.000000001,
+              "source": "chunk",
+              "node_refs": [],
+              "edge_refs": [],
+              "evidence_refs": [
+                "kg_ev:financial:news_articles:ft_news:83904:a8934858d26f15da"
+              ],
+              "path_node_refs": [],
+              "path_edge_refs": [],
+              "confidence": null,
+              "consumption_scope": "context"
+            },
+            {
+              "hit_id": "kg_wiki:financial:entity_page:085aa3ee85b7fc5f",
+              "hit_type": "wiki",
+              "title": "电力",
+              "snippet": "电力 is a industry node with 2 relationships. Related: A股并购重组市场呈现三方面新变化, A股并购重组市场呈现三方面新变化.",
+              "score": 1.0,
+              "source": "wiki",
+              "node_refs": [
+                "kg:financial:industry:50063d3c91ec9e00"
+              ],
+              "edge_refs": [
+                "kg_edge:financial:mentions:2b821b8f1b266bd2",
+                "kg_edge:financial:mentions:de9997a4a6575809"
+              ],
+              "evidence_refs": [
+                "kg_ev:financial:news_articles:ft_news:83904:a8934858d26f15da"
+              ],
+              "path_node_refs": [],
+              "path_edge_refs": [],
+              "confidence": null,
+              "consumption_scope": "context"
+            },
+            {
+              "hit_id": "kg_wiki:financial:entity_page:4d2b7e60ddb24c4d",
+              "hit_type": "wiki",
+              "title": "高端装备制造",
+              "snippet": "高端装备制造 is a industry node with 2 relationships. Related: A股并购重组市场呈现三方面新变化, A股并购重组市场呈现三方面新变化.",
+              "score": 1.0,
+              "source": "wiki",
+              "node_refs": [
+                "kg:financial:industry:25e3144becebf9dc"
+              ],
+              "edge_refs": [
+                "kg_edge:financial:mentions:61e891869f23c272",
+                "kg_edge:financial:mentions:c0c763c69a0d3741"
+              ],
+              "evidence_refs": [
+                "kg_ev:financial:news_articles:ft_news:83904:a8934858d26f15da"
+              ],
+              "path_node_refs": [],
+              "path_edge_refs": [],
+              "confidence": null,
+              "consumption_scope": "context"
+            },
+            {
+              "hit_id": "kg_wiki:financial:entity_page:88298b39404e39da",
+              "hit_type": "wiki",
+              "title": "化学制品",
+              "snippet": "化学制品 is a industry node with 2 relationships. Related: A股并购重组市场呈现三方面新变化, A股并购重组市场呈现三方面新变化.",
+              "score": 1.0,
+              "source": "wiki",
+              "node_refs": [
+                "kg:financial:industry:06d14fb2bb0754e3"
+              ],
+              "edge_refs": [
+                "kg_edge:financial:mentions:10ccdc288cf8a262",
+                "kg_edge:financial:mentions:ae17ce50c3d5e381"
+              ],
+              "evidence_refs": [
+                "kg_ev:financial:news_articles:ft_news:83904:a8934858d26f15da"
+              ],
+              "path_node_refs": [],
+              "path_edge_refs": [],
+              "confidence": null,
+              "consumption_scope": "context"
+            },
+            {
+              "hit_id": "kg_wiki:financial:entity_page:92cd7ee615d79839",
+              "hit_type": "wiki",
+              "title": "汽车零部件",
+              "snippet": "汽车零部件 is a industry node with 2 relationships. Related: A股并购重组市场呈现三方面新变化, A股并购重组市场呈现三方面新变化.",
+              "score": 1.0,
+              "source": "wiki",
+              "node_refs": [
+                "kg:financial:industry:bc04a86941e85840"
+              ],
+              "edge_refs": [
+                "kg_edge:financial:mentions:5ffb3244fe301c2a",
+                "kg_edge:financial:mentions:b38ea96f5cacb158"
+              ],
+              "evidence_refs": [
+                "kg_ev:financial:news_articles:ft_news:83904:a8934858d26f15da"
+              ],
+              "path_node_refs": [],
+              "path_edge_refs": [],
+              "confidence": null,
+              "consumption_scope": "context"
+            },
+            {
+              "hit_id": "kg_wiki:financial:entity_page:9cbb37bdc442fda4",
+              "hit_type": "wiki",
+              "title": "横向整合",
+              "snippet": "横向整合 is a concept node with 2 relationships. Related: A股并购重组市场呈现三方面新变化, A股并购重组市场呈现三方面新变化.",
+              "score": 1.0,
+              "source": "wiki",
+              "node_refs": [
+                "kg:financial:concept:692ccaa96d9076e6"
+              ],
+              "edge_refs": [
+                "kg_edge:financial:mentions:072c05b8427f089d",
+                "kg_edge:financial:mentions:308a6aad08c711ab"
+              ],
+              "evidence_refs": [
+                "kg_ev:financial:news_articles:ft_news:83904:a8934858d26f15da"
+              ],
+              "path_node_refs": [],
+              "path_edge_refs": [],
+              "confidence": null,
+              "consumption_scope": "context"
+            },
+            {
+              "hit_id": "kg_wiki:financial:entity_page:a6f3a2e15f4fbc9a",
+              "hit_type": "wiki",
+              "title": "软件",
+              "snippet": "软件 is a industry node with 2 relationships. Related: A股并购重组市场呈现三方面新变化, A股并购重组市场呈现三方面新变化.",
+              "score": 1.0,
+              "source": "wiki",
+              "node_refs": [
+                "kg:financial:industry:101304223a8cd3c6"
+              ],
+              "edge_refs": [
+                "kg_edge:financial:mentions:0c0c6a44bfa2c956",
+                "kg_edge:financial:mentions:48f7f992fbd66ba0"
+              ],
+              "evidence_refs": [
+                "kg_ev:financial:news_articles:ft_news:83904:a8934858d26f15da"
+              ],
+              "path_node_refs": [],
+              "path_edge_refs": [],
+              "confidence": null,
+              "consumption_scope": "context"
+            },
+            {
+              "hit_id": "kg_wiki:financial:entity_page:a8cf7c99e12d629f",
+              "hit_type": "wiki",
+              "title": "半导体",
+              "snippet": "半导体 is a industry node with 2 relationships. Related: A股并购重组市场呈现三方面新变化, A股并购重组市场呈现三方面新变化.",
+              "score": 1.0,
+              "source": "wiki",
+              "node_refs": [
+                "kg:financial:industry:0382d4d5a5ccc248"
+              ],
+              "edge_refs": [
+                "kg_edge:financial:mentions:5cfed905f6baaffa",
+                "kg_edge:financial:mentions:ed94b11471e66224"
+              ],
+              "evidence_refs": [
+                "kg_ev:financial:news_articles:ft_news:83904:a8934858d26f15da"
+              ],
+              "path_node_refs": [],
+              "path_edge_refs": [],
+              "confidence": null,
+              "consumption_scope": "context"
+            },
+            {
+              "hit_id": "kg_wiki:financial:entity_page:be3291bce66c45ac",
+              "hit_type": "wiki",
+              "title": "生物医药",
+              "snippet": "生物医药 is a industry node with 2 relationships. Related: A股并购重组市场呈现三方面新变化, A股并购重组市场呈现三方面新变化.",
+              "score": 1.0,
+              "source": "wiki",
+              "node_refs": [
+                "kg:financial:industry:aa47b41443f6da9f"
+              ],
+              "edge_refs": [
+                "kg_edge:financial:mentions:4d5214974ba227c1",
+                "kg_edge:financial:mentions:67a75dd98ea6f455"
+              ],
+              "evidence_refs": [
+                "kg_ev:financial:news_articles:ft_news:83904:a8934858d26f15da"
+              ],
+              "path_node_refs": [],
+              "path_edge_refs": [],
+              "confidence": null,
+              "consumption_scope": "context"
+            },
+            {
+              "hit_id": "kg_kv:edge:kg_edge:financial:mentions:2b821b8f1b266bd2",
+              "hit_type": "edge",
+              "title": "edge:kg_edge:financial:mentions:2b821b8f1b266bd2",
+              "snippet": "Edge Key: A股并购重组市场呈现三方面新变化 mentions 电力\nRelation: mentions\nSource: A股并购重组市场呈现三方面新变化\nTarget: 电力\nEvidence: kg_ev:financial:news_articles:ft_news:83904:a8934858d26f15da\nValue:",
+              "score": 0.07134426087141037,
+              "source": "semantic_hybrid",
+              "node_refs": [],
+              "edge_refs": [
+                "kg_edge:financial:mentions:2b821b8f1b266bd2"
+              ],
+              "evidence_refs": [
+                "kg_ev:financial:news_articles:ft_news:83904:a8934858d26f15da"
+              ],
+              "path_node_refs": [],
+              "path_edge_refs": [],
+              "confidence": null,
+              "consumption_scope": "context"
+            },
+            {
+              "hit_id": "kg_kv:edge:kg_edge:financial:mentions:a7828b21c31813e0",
+              "hit_type": "edge",
+              "title": "edge:kg_edge:financial:mentions:a7828b21c31813e0",
+              "snippet": "Edge Key: A股并购重组市场呈现三方面新变化 mentions 新质生产力\nRelation: mentions\nSource: A股并购重组市场呈现三方面新变化\nTarget: 新质生产力\nEvidence: kg_ev:financial:news_articles:ft_news:83904:a8934858d26f15da\nValue:",
+              "score": 0.07064934968948364,
+              "source": "semantic_hybrid",
+              "node_refs": [],
+              "edge_refs": [
+                "kg_edge:financial:mentions:a7828b21c31813e0"
+              ],
+              "evidence_refs": [
+                "kg_ev:financial:news_articles:ft_news:83904:a8934858d26f15da"
+              ],
+              "path_node_refs": [],
+              "path_edge_refs": [],
+              "confidence": null,
+              "consumption_scope": "context"
+            },
+            {
+              "hit_id": "kg_kv:edge:kg_edge:financial:mentions:072c05b8427f089d",
+              "hit_type": "edge",
+              "title": "edge:kg_edge:financial:mentions:072c05b8427f089d",
+              "snippet": "Edge Key: A股并购重组市场呈现三方面新变化 mentions 横向整合\nRelation: mentions\nSource: A股并购重组市场呈现三方面新变化\nTarget: 横向整合\nEvidence: kg_ev:financial:news_articles:ft_news:83904:a8934858d26f15da\nValue:",
+              "score": 0.07007672488689422,
+              "source": "semantic_hybrid",
+              "node_refs": [],
+              "edge_refs": [
+                "kg_edge:financial:mentions:072c05b8427f089d"
+              ],
+              "evidence_refs": [
+                "kg_ev:financial:news_articles:ft_news:83904:a8934858d26f15da"
+              ],
+              "path_node_refs": [],
+              "path_edge_refs": [],
+              "confidence": null,
+              "consumption_scope": "context"
+            },
+            {
+              "hit_id": "kg_kv:edge:kg_edge:financial:mentions:0c0c6a44bfa2c956",
+              "hit_type": "edge",
+              "title": "edge:kg_edge:financial:mentions:0c0c6a44bfa2c956",
+              "snippet": "Edge Key: A股并购重组市场呈现三方面新变化 mentions 软件\nRelation: mentions\nSource: A股并购重组市场呈现三方面新变化\nTarget: 软件\nEvidence: kg_ev:financial:news_articles:ft_news:83904:a8934858d26f15da\nValue:",
+              "score": 0.06969696879386901,
+              "source": "semantic_hybrid",
+              "node_refs": [],
+              "edge_refs": [
+                "kg_edge:financial:mentions:0c0c6a44bfa2c956"
+              ],
+              "evidence_refs": [
+                "kg_ev:financial:news_articles:ft_news:83904:a8934858d26f15da"
+              ],
+              "path_node_refs": [],
+              "path_edge_refs": [],
+              "confidence": null,
+              "consumption_scope": "context"
+            },
+            {
+              "hit_id": "kg_kv:edge:kg_edge:financial:mentions:b3bb0e08ce86c1e0",
+              "hit_type": "edge",
+              "title": "edge:kg_edge:financial:mentions:b3bb0e08ce86c1e0",
+              "snippet": "Edge Key: A股并购重组市场呈现三方面新变化 mentions 垂直整合\nRelation: mentions\nSource: A股并购重组市场呈现三方面新变化\nTarget: 垂直整合\nEvidence: kg_ev:financial:news_articles:ft_news:83904:a8934858d26f15da\nValue:",
+              "score": 0.0695798322558403,
+              "source": "semantic_hybrid",
+              "node_refs": [],
+              "edge_refs": [
+                "kg_edge:financial:mentions:b3bb0e08ce86c1e0"
+              ],
+              "evidence_refs": [
+                "kg_ev:financial:news_articles:ft_news:83904:a8934858d26f15da"
+              ],
+              "path_node_refs": [],
+              "path_edge_refs": [],
+              "confidence": null,
+              "consumption_scope": "context"
+            },
+            {
+              "hit_id": "kg_kv:edge:kg_edge:financial:mentions:4d5214974ba227c1",
+              "hit_type": "edge",
+              "title": "edge:kg_edge:financial:mentions:4d5214974ba227c1",
+              "snippet": "Edge Key: A股并购重组市场呈现三方面新变化 mentions 生物医药\nRelation: mentions\nSource: A股并购重组市场呈现三方面新变化\nTarget: 生物医药\nEvidence: kg_ev:financial:news_articles:ft_news:83904:a8934858d26f15da\nValue:",
+              "score": 0.06692307740449906,
+              "source": "semantic_hybrid",
+              "node_refs": [],
+              "edge_refs": [
+                "kg_edge:financial:mentions:4d5214974ba227c1"
+              ],
+              "evidence_refs": [
+                "kg_ev:financial:news_articles:ft_news:83904:a8934858d26f15da"
+              ],
+              "path_node_refs": [],
+              "path_edge_refs": [],
+              "confidence": null,
+              "consumption_scope": "context"
+            },
+            {
+              "hit_id": "kg_kv:edge:kg_edge:financial:mentions:c0c763c69a0d3741",
+              "hit_type": "edge",
+              "title": "edge:kg_edge:financial:mentions:c0c763c69a0d3741",
+              "snippet": "Edge Key: A股并购重组市场呈现三方面新变化 mentions 高端装备制造\nRelation: mentions\nSource: A股并购重组市场呈现三方面新变化\nTarget: 高端装备制造\nEvidence: kg_ev:financial:news_articles:ft_news:83904:a8934858d26f15da\nValue:",
+              "score": 0.06540697664022445,
+              "source": "semantic_hybrid",
+              "node_refs": [],
+              "edge_refs": [
+                "kg_edge:financial:mentions:c0c763c69a0d3741"
+              ],
+              "evidence_refs": [
+                "kg_ev:financial:news_articles:ft_news:83904:a8934858d26f15da"
+              ],
+              "path_node_refs": [],
+              "path_edge_refs": [],
+              "confidence": null,
+              "consumption_scope": "context"
+            },
+            {
+              "hit_id": "kg_kv:edge:kg_edge:financial:mentions:5ffb3244fe301c2a",
+              "hit_type": "edge",
+              "title": "edge:kg_edge:financial:mentions:5ffb3244fe301c2a",
+              "snippet": "Edge Key: A股并购重组市场呈现三方面新变化 mentions 汽车零部件\nRelation: mentions\nSource: A股并购重组市场呈现三方面新变化\nTarget: 汽车零部件\nEvidence: kg_ev:financial:news_articles:ft_news:83904:a8934858d26f15da\nValue:",
+              "score": 0.0653679683804512,
+              "source": "semantic_hybrid",
+              "node_refs": [],
+              "edge_refs": [
+                "kg_edge:financial:mentions:5ffb3244fe301c2a"
+              ],
+              "evidence_refs": [
+                "kg_ev:financial:news_articles:ft_news:83904:a8934858d26f15da"
+              ],
+              "path_node_refs": [],
+              "path_edge_refs": [],
+              "confidence": null,
+              "consumption_scope": "context"
+            },
+            {
+              "hit_id": "kg_kv:edge:kg_edge:financial:mentions:ae17ce50c3d5e381",
+              "hit_type": "edge",
+              "title": "edge:kg_edge:financial:mentions:ae17ce50c3d5e381",
+              "snippet": "Edge Key: A股并购重组市场呈现三方面新变化 mentions 化学制品\nRelation: mentions\nSource: A股并购重组市场呈现三方面新变化\nTarget: 化学制品\nEvidence: kg_ev:financial:news_articles:ft_news:83904:a8934858d26f15da\nValue:",
+              "score": 0.06479663550853729,
+              "source": "semantic_hybrid",
+              "node_refs": [],
+              "edge_refs": [
+                "kg_edge:financial:mentions:ae17ce50c3d5e381"
+              ],
+              "evidence_refs": [
+                "kg_ev:financial:news_articles:ft_news:83904:a8934858d26f15da"
+              ],
+              "path_node_refs": [],
+              "path_edge_refs": [],
+              "confidence": null,
+              "consumption_scope": "context"
+            },
+            {
+              "hit_id": "kg_kv:edge:kg_edge:financial:mentions:5cfed905f6baaffa",
+              "hit_type": "edge",
+              "title": "edge:kg_edge:financial:mentions:5cfed905f6baaffa",
+              "snippet": "Edge Key: A股并购重组市场呈现三方面新变化 mentions 半导体\nRelation: mentions\nSource: A股并购重组市场呈现三方面新变化\nTarget: 半导体\nEvidence: kg_ev:financial:news_articles:ft_news:83904:a8934858d26f15da\nValue:",
+              "score": 0.0647365540266037,
+              "source": "semantic_hybrid",
+              "node_refs": [],
+              "edge_refs": [
+                "kg_edge:financial:mentions:5cfed905f6baaffa"
+              ],
+              "evidence_refs": [
+                "kg_ev:financial:news_articles:ft_news:83904:a8934858d26f15da"
+              ],
+              "path_node_refs": [],
+              "path_edge_refs": [],
+              "confidence": null,
+              "consumption_scope": "context"
+            }
+          ],
+          "matched_nodes": [
+            {
+              "node_id": "kg:financial:event:5b8cdfdfc972155e",
+              "adapter_name": "financial",
+              "node_type": "event",
+              "canonical_name": "A股并购重组市场呈现三方面新变化",
+              "aliases": [],
+              "external_ids": {
+                "event": "ft_news:83904"
+              },
+              "properties": {
+                "event_time": null,
+                "event_type": null,
+                "source_name": "证券日报",
+                "published_at": "2026-04-24T07:38:00+08:00"
+              },
+              "status": "candidate",
+              "version": "v1"
+            },
+            {
+              "node_id": "kg:financial:industry:50063d3c91ec9e00",
+              "adapter_name": "financial",
+              "node_type": "industry",
+              "canonical_name": "电力",
+              "aliases": [],
+              "external_ids": {},
+              "properties": {
+                "code": null,
+                "taxonomy": "default",
+                "normalization": {
+                  "reason": "电力在上下文中被列为传统行业，属于明确的行业分类，且无已有规则匹配。",
+                  "source": "llm_write_time",
+                  "decision": "create_new_canonical_entity",
+                  "raw_name": "电力",
+                  "raw_type": "industry",
+                  "taxonomy": "default",
+                  "confidence": 0.9,
+                  "decision_id": "kg_norm_decision:2baeea2cba69d100",
+                  "entity_type": "industry",
+                  "canonical_name": "电力"
+                }
+              },
+              "status": "candidate",
+              "version": "v1"
+            },
+            {
+              "node_id": "kg:financial:industry:25e3144becebf9dc",
+              "adapter_name": "financial",
+              "node_type": "industry",
+              "canonical_name": "高端装备制造",
+              "aliases": [],
+              "external_ids": {},
+              "properties": {
+                "code": null,
+                "taxonomy": "default",
+                "normalization": {
+                  "reason": "上下文明确提及'高端装备制造'作为新兴产业之一，与半导体、软件、生物医药并列，是独立的行业分类，无已有规则匹配。",
+                  "source": "llm_write_time",
+                  "decision": "create_new_canonical_entity",
+                  "raw_name": "高端装备制造",
+                  "raw_type": "industry",
+                  "taxonomy": "default",
+                  "confidence": 0.95,
+                  "decision_id": "kg_norm_decision:58829a964c0412c1",
+                  "entity_type": "industry",
+                  "canonical_name": "高端装备制造"
+                }
+              },
+              "status": "candidate",
+              "version": "v1"
+            },
+            {
+              "node_id": "kg:financial:industry:06d14fb2bb0754e3",
+              "adapter_name": "financial",
+              "node_type": "industry",
+              "canonical_name": "化学制品",
+              "aliases": [],
+              "external_ids": {},
+              "properties": {
+                "code": null,
+                "taxonomy": "default",
+                "normalization": {
+                  "reason": "该实体出现在描述传统行业横向整合的上下文中，是明确的行业类别，应作为独立规范实体入库。",
+                  "source": "llm_write_time",
+                  "decision": "create_new_canonical_entity",
+                  "raw_name": "化学制品",
+                  "raw_type": "industry",
+                  "taxonomy": "default",
+                  "confidence": 0.9,
+                  "decision_id": "kg_norm_decision:e59e6193af502b4a",
+                  "entity_type": "industry",
+                  "canonical_name": "化学制品"
+                }
+              },
+              "status": "candidate",
+              "version": "v1"
+            },
+            {
+              "node_id": "kg:financial:industry:bc04a86941e85840",
+              "adapter_name": "financial",
+              "node_type": "industry",
+              "canonical_name": "汽车零部件",
+              "aliases": [],
+              "external_ids": {},
+              "properties": {
+                "code": null,
+                "taxonomy": "default",
+                "normalization": {
+                  "reason": "基于上下文，汽车零部件作为传统行业被提及，且没有现有规则或别名，应作为独立行业实体写入知识图谱。",
+                  "source": "llm_write_time",
+                  "decision": "create_new_canonical_entity",
+                  "raw_name": "汽车零部件",
+                  "raw_type": "industry",
+                  "taxonomy": "default",
+                  "confidence": 0.9,
+                  "decision_id": "kg_norm_decision:e7ec054709669028",
+                  "entity_type": "industry",
+                  "canonical_name": "汽车零部件"
+                }
+              },
+              "status": "candidate",
+              "version": "v1"
+            },
+            {
+              "node_id": "kg:financial:concept:692ccaa96d9076e6",
+              "adapter_name": "financial",
+              "node_type": "concept",
+              "canonical_name": "横向整合",
+              "aliases": [],
+              "external_ids": {},
+              "properties": {
+                "taxonomy": "并购类型",
+                "normalization": {
+                  "reason": "横向整合作为并购重组的一种类型，在上下文中被明确提及并统计，属于独立的概念实体，没有现有规则或别名匹配。",
+                  "source": "llm_write_time",
+                  "decision": "create_new_canonical_entity",
+                  "raw_name": "横向整合",
+                  "raw_type": "concept",
+                  "taxonomy": "并购类型",
+                  "confidence": 0.9,
+                  "decision_id": "kg_norm_decision:b264e87446aed06f",
+                  "entity_type": "concept",
+                  "canonical_name": "横向整合"
+                }
+              },
+              "status": "candidate",
+              "version": "v1"
+            },
+            {
+              "node_id": "kg:financial:industry:101304223a8cd3c6",
+              "adapter_name": "financial",
+              "node_type": "industry",
+              "canonical_name": "软件",
+              "aliases": [],
+              "external_ids": {},
+              "properties": {
+                "code": null,
+                "taxonomy": "default",
+                "normalization": {
+                  "reason": "原文将‘软件’作为新兴产业列举，是独立的行业实体，未发现已有规则或需要合并的歧义。",
+                  "source": "llm_write_time",
+                  "decision": "create_new_canonical_entity",
+                  "raw_name": "软件",
+                  "raw_type": "industry",
+                  "taxonomy": "default",
+                  "confidence": 0.95,
+                  "decision_id": "kg_norm_decision:91fecdb00f4b5446",
+                  "entity_type": "industry",
+                  "canonical_name": "软件"
+                }
+              },
+              "status": "candidate",
+              "version": "v1"
+            },
+            {
+              "node_id": "kg:financial:industry:0382d4d5a5ccc248",
+              "adapter_name": "financial",
+              "node_type": "industry",
+              "canonical_name": "半导体",
+              "aliases": [],
+              "external_ids": {},
+              "properties": {
+                "code": null,
+                "taxonomy": "default",
+                "normalization": {
+                  "reason": "'半导体'是一个明确的行业名称，在上下文中作为新兴产业被提及，没有歧义或现有规则匹配，因此创建新的规范实体。",
+                  "source": "llm_write_time",
+                  "decision": "create_new_canonical_entity",
+                  "raw_name": "半导体",
+                  "raw_type": "industry",
+                  "taxonomy": "default",
+                  "confidence": 0.95,
+                  "decision_id": "kg_norm_decision:0469a1c6d7d7c6c8",
+                  "entity_type": "industry",
+                  "canonical_name": "半导体"
+                }
+              },
+              "status": "candidate",
+              "version": "v1"
+            },
+            {
+              "node_id": "kg:financial:industry:aa47b41443f6da9f",
+              "adapter_name": "financial",
+              "node_type": "industry",
+              "canonical_name": "生物医药",
+              "aliases": [],
+              "external_ids": {},
+              "properties": {
+                "code": null,
+                "taxonomy": "default",
+                "normalization": {
+                  "reason": "生物医药是一个明确的独立行业实体，上下文视为新兴产业，没有现有规则适用，故创建新的标准实体。",
+                  "source": "llm_write_time",
+                  "decision": "create_new_canonical_entity",
+                  "raw_name": "生物医药",
+                  "raw_type": "industry",
+                  "taxonomy": "default",
+                  "confidence": 0.95,
+                  "decision_id": "kg_norm_decision:0d321dadd4c91392",
+                  "entity_type": "industry",
+                  "canonical_name": "生物医药"
+                }
+              },
+              "status": "candidate",
+              "version": "v1"
+            },
+            {
+              "node_id": "kg:financial:concept:d22a035f92055198",
+              "adapter_name": "financial",
+              "node_type": "concept",
+              "canonical_name": "新质生产力",
+              "aliases": [],
+              "external_ids": {},
+              "properties": {
+                "taxonomy": "economic_concept",
+                "normalization": {
+                  "reason": "新质生产力是独特的经济政策概念，在当前市场分析语境中频繁出现，不是已有实体的别名，因此创建新的规范实体。",
+                  "source": "llm_write_time",
+                  "decision": "create_new_canonical_entity",
+                  "raw_name": "新质生产力",
+                  "raw_type": "concept",
+                  "taxonomy": "economic_concept",
+                  "confidence": 0.95,
+                  "decision_id": "kg_norm_decision:a73792e506a13179",
+                  "entity_type": "concept",
+                  "canonical_name": "新质生产力"
+                }
+              },
+              "status": "candidate",
+              "version": "v1"
+            },
+            {
+              "node_id": "kg:financial:concept:30ec9ce8d249345c",
+              "adapter_name": "financial",
+              "node_type": "concept",
+              "canonical_name": "垂直整合",
+              "aliases": [],
+              "external_ids": {},
+              "properties": {
+                "taxonomy": "并购重组",
+                "normalization": {
+                  "reason": "垂直整合是并购重组中的一个通用概念，上下文清晰，无歧义，且无现有规则匹配，应作为新的规范概念实体创建。",
+                  "source": "llm_write_time",
+                  "decision": "create_new_canonical_entity",
+                  "raw_name": "垂直整合",
+                  "raw_type": "concept",
+                  "taxonomy": "并购重组",
+                  "confidence": 0.9,
+                  "decision_id": "kg_norm_decision:256da1f31339e525",
+                  "entity_type": "concept",
+                  "canonical_name": "垂直整合"
+                }
+              },
+              "status": "candidate",
+              "version": "v1"
+            }
+          ],
+          "matched_edges": [
+            {
+              "edge_id": "kg_edge:financial:mentions:2b821b8f1b266bd2",
+              "adapter_name": "financial",
+              "source_node_id": "kg:financial:event:5b8cdfdfc972155e",
+              "target_node_id": "kg:financial:industry:50063d3c91ec9e00",
+              "relation_type": "mentions",
+              "properties": {},
+              "confidence_label": "EXTRACTED",
+              "confidence_score": 0.9,
+              "status": "active",
+              "evidence_ids": [
+                "kg_ev:financial:news_articles:ft_news:83904:a8934858d26f15da"
+              ],
+              "valid_from": null,
+              "valid_to": null,
+              "version": "v1"
+            },
+            {
+              "edge_id": "kg_edge:financial:mentions:c0c763c69a0d3741",
+              "adapter_name": "financial",
+              "source_node_id": "kg:financial:event:5b8cdfdfc972155e",
+              "target_node_id": "kg:financial:industry:25e3144becebf9dc",
+              "relation_type": "mentions",
+              "properties": {},
+              "confidence_label": "EXTRACTED",
+              "confidence_score": 0.95,
+              "status": "active",
+              "evidence_ids": [
+                "kg_ev:financial:news_articles:ft_news:83904:a8934858d26f15da"
+              ],
+              "valid_from": null,
+              "valid_to": null,
+              "version": "v1"
+            },
+            {
+              "edge_id": "kg_edge:financial:mentions:ae17ce50c3d5e381",
+              "adapter_name": "financial",
+              "source_node_id": "kg:financial:event:5b8cdfdfc972155e",
+              "target_node_id": "kg:financial:industry:06d14fb2bb0754e3",
+              "relation_type": "mentions",
+              "properties": {},
+              "confidence_label": "EXTRACTED",
+              "confidence_score": 0.9,
+              "status": "active",
+              "evidence_ids": [
+                "kg_ev:financial:news_articles:ft_news:83904:a8934858d26f15da"
+              ],
+              "valid_from": null,
+              "valid_to": null,
+              "version": "v1"
+            },
+            {
+              "edge_id": "kg_edge:financial:mentions:5ffb3244fe301c2a",
+              "adapter_name": "financial",
+              "source_node_id": "kg:financial:event:5b8cdfdfc972155e",
+              "target_node_id": "kg:financial:industry:bc04a86941e85840",
+              "relation_type": "mentions",
+              "properties": {},
+              "confidence_label": "EXTRACTED",
+              "confidence_score": 0.9,
+              "status": "active",
+              "evidence_ids": [
+                "kg_ev:financial:news_articles:ft_news:83904:a8934858d26f15da"
+              ],
+              "valid_from": null,
+              "valid_to": null,
+              "version": "v1"
+            },
+            {
+              "edge_id": "kg_edge:financial:mentions:072c05b8427f089d",
+              "adapter_name": "financial",
+              "source_node_id": "kg:financial:event:5b8cdfdfc972155e",
+              "target_node_id": "kg:financial:concept:692ccaa96d9076e6",
+              "relation_type": "mentions",
+              "properties": {},
+              "confidence_label": "EXTRACTED",
+              "confidence_score": 0.9,
+              "status": "active",
+              "evidence_ids": [
+                "kg_ev:financial:news_articles:ft_news:83904:a8934858d26f15da"
+              ],
+              "valid_from": null,
+              "valid_to": null,
+              "version": "v1"
+            },
+            {
+              "edge_id": "kg_edge:financial:mentions:0c0c6a44bfa2c956",
+              "adapter_name": "financial",
+              "source_node_id": "kg:financial:event:5b8cdfdfc972155e",
+              "target_node_id": "kg:financial:industry:101304223a8cd3c6",
+              "relation_type": "mentions",
+              "properties": {},
+              "confidence_label": "EXTRACTED",
+              "confidence_score": 0.95,
+              "status": "active",
+              "evidence_ids": [
+                "kg_ev:financial:news_articles:ft_news:83904:a8934858d26f15da"
+              ],
+              "valid_from": null,
+              "valid_to": null,
+              "version": "v1"
+            },
+            {
+              "edge_id": "kg_edge:financial:mentions:5cfed905f6baaffa",
+              "adapter_name": "financial",
+              "source_node_id": "kg:financial:event:5b8cdfdfc972155e",
+              "target_node_id": "kg:financial:industry:0382d4d5a5ccc248",
+              "relation_type": "mentions",
+              "properties": {},
+              "confidence_label": "EXTRACTED",
+              "confidence_score": 0.95,
+              "status": "active",
+              "evidence_ids": [
+                "kg_ev:financial:news_articles:ft_news:83904:a8934858d26f15da"
+              ],
+              "valid_from": null,
+              "valid_to": null,
+              "version": "v1"
+            },
+            {
+              "edge_id": "kg_edge:financial:mentions:4d5214974ba227c1",
+              "adapter_name": "financial",
+              "source_node_id": "kg:financial:event:5b8cdfdfc972155e",
+              "target_node_id": "kg:financial:industry:aa47b41443f6da9f",
+              "relation_type": "mentions",
+              "properties": {},
+              "confidence_label": "EXTRACTED",
+              "confidence_score": 0.95,
+              "status": "active",
+              "evidence_ids": [
+                "kg_ev:financial:news_articles:ft_news:83904:a8934858d26f15da"
+              ],
+              "valid_from": null,
+              "valid_to": null,
+              "version": "v1"
+            },
+            {
+              "edge_id": "kg_edge:financial:mentions:a7828b21c31813e0",
+              "adapter_name": "financial",
+              "source_node_id": "kg:financial:event:5b8cdfdfc972155e",
+              "target_node_id": "kg:financial:concept:d22a035f92055198",
+              "relation_type": "mentions",
+              "properties": {},
+              "confidence_label": "EXTRACTED",
+              "confidence_score": 0.95,
+              "status": "active",
+              "evidence_ids": [
+                "kg_ev:financial:news_articles:ft_news:83904:a8934858d26f15da"
+              ],
+              "valid_from": null,
+              "valid_to": null,
+              "version": "v1"
+            },
+            {
+              "edge_id": "kg_edge:financial:mentions:b3bb0e08ce86c1e0",
+              "adapter_name": "financial",
+              "source_node_id": "kg:financial:event:5b8cdfdfc972155e",
+              "target_node_id": "kg:financial:concept:30ec9ce8d249345c",
+              "relation_type": "mentions",
+              "properties": {},
+              "confidence_label": "EXTRACTED",
+              "confidence_score": 0.9,
+              "status": "active",
+              "evidence_ids": [
+                "kg_ev:financial:news_articles:ft_news:83904:a8934858d26f15da"
+              ],
+              "valid_from": null,
+              "valid_to": null,
+              "version": "v1"
+            }
+          ],
+          "evidence_refs": [
+            "kg_ev:financial:news_articles:ft_news:83904:a8934858d26f15da"
+          ],
+          "hard_score_edges": [],
+          "explanation_edges": [
+            {
+              "edge_id": "kg_edge:financial:mentions:2b821b8f1b266bd2",
+              "adapter_name": "financial",
+              "source_node_id": "kg:financial:event:5b8cdfdfc972155e",
+              "target_node_id": "kg:financial:industry:50063d3c91ec9e00",
+              "relation_type": "mentions",
+              "properties": {},
+              "confidence_label": "EXTRACTED",
+              "confidence_score": 0.9,
+              "status": "active",
+              "evidence_ids": [
+                "kg_ev:financial:news_articles:ft_news:83904:a8934858d26f15da"
+              ],
+              "valid_from": null,
+              "valid_to": null,
+              "version": "v1"
+            },
+            {
+              "edge_id": "kg_edge:financial:mentions:c0c763c69a0d3741",
+              "adapter_name": "financial",
+              "source_node_id": "kg:financial:event:5b8cdfdfc972155e",
+              "target_node_id": "kg:financial:industry:25e3144becebf9dc",
+              "relation_type": "mentions",
+              "properties": {},
+              "confidence_label": "EXTRACTED",
+              "confidence_score": 0.95,
+              "status": "active",
+              "evidence_ids": [
+                "kg_ev:financial:news_articles:ft_news:83904:a8934858d26f15da"
+              ],
+              "valid_from": null,
+              "valid_to": null,
+              "version": "v1"
+            },
+            {
+              "edge_id": "kg_edge:financial:mentions:ae17ce50c3d5e381",
+              "adapter_name": "financial",
+              "source_node_id": "kg:financial:event:5b8cdfdfc972155e",
+              "target_node_id": "kg:financial:industry:06d14fb2bb0754e3",
+              "relation_type": "mentions",
+              "properties": {},
+              "confidence_label": "EXTRACTED",
+              "confidence_score": 0.9,
+              "status": "active",
+              "evidence_ids": [
+                "kg_ev:financial:news_articles:ft_news:83904:a8934858d26f15da"
+              ],
+              "valid_from": null,
+              "valid_to": null,
+              "version": "v1"
+            },
+            {
+              "edge_id": "kg_edge:financial:mentions:5ffb3244fe301c2a",
+              "adapter_name": "financial",
+              "source_node_id": "kg:financial:event:5b8cdfdfc972155e",
+              "target_node_id": "kg:financial:industry:bc04a86941e85840",
+              "relation_type": "mentions",
+              "properties": {},
+              "confidence_label": "EXTRACTED",
+              "confidence_score": 0.9,
+              "status": "active",
+              "evidence_ids": [
+                "kg_ev:financial:news_articles:ft_news:83904:a8934858d26f15da"
+              ],
+              "valid_from": null,
+              "valid_to": null,
+              "version": "v1"
+            },
+            {
+              "edge_id": "kg_edge:financial:mentions:072c05b8427f089d",
+              "adapter_name": "financial",
+              "source_node_id": "kg:financial:event:5b8cdfdfc972155e",
+              "target_node_id": "kg:financial:concept:692ccaa96d9076e6",
+              "relation_type": "mentions",
+              "properties": {},
+              "confidence_label": "EXTRACTED",
+              "confidence_score": 0.9,
+              "status": "active",
+              "evidence_ids": [
+                "kg_ev:financial:news_articles:ft_news:83904:a8934858d26f15da"
+              ],
+              "valid_from": null,
+              "valid_to": null,
+              "version": "v1"
+            },
+            {
+              "edge_id": "kg_edge:financial:mentions:0c0c6a44bfa2c956",
+              "adapter_name": "financial",
+              "source_node_id": "kg:financial:event:5b8cdfdfc972155e",
+              "target_node_id": "kg:financial:industry:101304223a8cd3c6",
+              "relation_type": "mentions",
+              "properties": {},
+              "confidence_label": "EXTRACTED",
+              "confidence_score": 0.95,
+              "status": "active",
+              "evidence_ids": [
+                "kg_ev:financial:news_articles:ft_news:83904:a8934858d26f15da"
+              ],
+              "valid_from": null,
+              "valid_to": null,
+              "version": "v1"
+            },
+            {
+              "edge_id": "kg_edge:financial:mentions:5cfed905f6baaffa",
+              "adapter_name": "financial",
+              "source_node_id": "kg:financial:event:5b8cdfdfc972155e",
+              "target_node_id": "kg:financial:industry:0382d4d5a5ccc248",
+              "relation_type": "mentions",
+              "properties": {},
+              "confidence_label": "EXTRACTED",
+              "confidence_score": 0.95,
+              "status": "active",
+              "evidence_ids": [
+                "kg_ev:financial:news_articles:ft_news:83904:a8934858d26f15da"
+              ],
+              "valid_from": null,
+              "valid_to": null,
+              "version": "v1"
+            },
+            {
+              "edge_id": "kg_edge:financial:mentions:4d5214974ba227c1",
+              "adapter_name": "financial",
+              "source_node_id": "kg:financial:event:5b8cdfdfc972155e",
+              "target_node_id": "kg:financial:industry:aa47b41443f6da9f",
+              "relation_type": "mentions",
+              "properties": {},
+              "confidence_label": "EXTRACTED",
+              "confidence_score": 0.95,
+              "status": "active",
+              "evidence_ids": [
+                "kg_ev:financial:news_articles:ft_news:83904:a8934858d26f15da"
+              ],
+              "valid_from": null,
+              "valid_to": null,
+              "version": "v1"
+            },
+            {
+              "edge_id": "kg_edge:financial:mentions:a7828b21c31813e0",
+              "adapter_name": "financial",
+              "source_node_id": "kg:financial:event:5b8cdfdfc972155e",
+              "target_node_id": "kg:financial:concept:d22a035f92055198",
+              "relation_type": "mentions",
+              "properties": {},
+              "confidence_label": "EXTRACTED",
+              "confidence_score": 0.95,
+              "status": "active",
+              "evidence_ids": [
+                "kg_ev:financial:news_articles:ft_news:83904:a8934858d26f15da"
+              ],
+              "valid_from": null,
+              "valid_to": null,
+              "version": "v1"
+            },
+            {
+              "edge_id": "kg_edge:financial:mentions:b3bb0e08ce86c1e0",
+              "adapter_name": "financial",
+              "source_node_id": "kg:financial:event:5b8cdfdfc972155e",
+              "target_node_id": "kg:financial:concept:30ec9ce8d249345c",
+              "relation_type": "mentions",
+              "properties": {},
+              "confidence_label": "EXTRACTED",
+              "confidence_score": 0.9,
+              "status": "active",
+              "evidence_ids": [
+                "kg_ev:financial:news_articles:ft_news:83904:a8934858d26f15da"
+              ],
+              "valid_from": null,
+              "valid_to": null,
+              "version": "v1"
+            }
+          ],
+          "context_text": "[entity_resolve:node] A股并购重组市场呈现三方面新变化\n{\"aliases\": [], \"name\": \"a股并购重组市场呈现三方面新变化\", \"properties\": {\"event_time\": null, \"event_type\": null, \"published_at\": \"2026-04-24t07:38:00+08:00\", \"source_name\": \"证券日报\"}, \"type\": \"event\"}\n\n[chunk:evidence] news_articles:ft_news:83904\nA股并购重组市场呈现三方面新变化\n在各类政策推动下，A股并购市场进一步锚定价值投资与产业估值。数据显示，2025年A股横向整合并购事件达463起，交易金额4410亿元，同比增长27%；垂直整合案例从2023年的4起、2024年的5起大幅增至2025年的20起。\nWind资讯数据显示，截至4月23日晚间，年内A股上市公司首次披露的并购重组交易已达1104起，合计交易金额约3634.65亿元，其中重大资产重组案例达33起。结合近两年数据来看，并购重组市场整体呈现出数量稳步增长、交易规模持续放量的良好态势。更为关键的是，并购重组市场生态也在发生深刻变革。 第一，新兴领域产业链深度整合，新旧动能协同推进。 本轮并购重组最鲜明的特征之一，是资源要素加速向新质生产力领域集聚。在“并购六条”和“科创板八条”等政策引导下，创业板与科创板上市公司并购重组案例呈现量质齐升态势。机构研究数据显示，科创板与创业板并购重组案例数量占A股总案例的比重由2020年的26%逐步提升至2025年的37%。其中，半导体、软件、生物医药、高端装备制造等新兴产业占比超过九成。此外，跨境并购、多工具组合的复杂交易案例频繁出现，反映出市场对新质生产力整合的迫切需求以及交易能力的显著提升。 与此同时，传统行业的横向整合加快、产业集中度提升。汽车零部件、化学制品、电力等传统行业通过横向整合、战略合作优化产业结构，提升资源配置效率。 这种“新兴聚势、传统提质”的双轮驱动格局，正推动并购重组市场步入更成熟、更高效的发展新阶段。 第二，并购重组回归产业本源，助力资本市场生态优化。 在各类政策推动下，A股并购市场进一步锚定价值投资与产业估值。数据显示，2025年A股横向整合并购事件达463起，交易金额4410亿元，同比增长27%；垂直整合案例从2023年的4起、2024年的5起大幅增至2025年的20起。这些数据清晰表明，...\n\n[wiki:wiki] 电力\n电力 is a industry node with 2 relationships. Related: A股并购重组市场呈现三方面新变化, A股并购重组市场呈现三方面新变化.\n\n[wiki:wiki] 高端装备制造\n高端装备制造 is a industry node with 2 relationships. Related: A股并购重组市场呈现三方面新变化, A股并购重组市场呈现三方面新变化.\n\n[wiki:wiki] 化学制品\n化学制品 is a industry node with 2 relationships. Related: A股并购重组市场呈现三方面新变化, A股并购重组市场呈现三方面新变化.\n\n[wiki:wiki] 汽车零部件\n汽车零部件 is a industry node with 2 relationships. Related: A股并购重组市场呈现三方面新变化, A股并购重组市场呈现三方面新变化.\n\n[wiki:wiki] 横向整合\n横向整合 is a concept node with 2 relationships. Related: A股并购重组市场呈现三方面新变化, A股并购重组市场呈现三方面新变化.\n\n[wiki:wiki] 软件\n软件 is a industry node with 2 relationships. Related: A股并购重组市场呈现三方面新变化, A股并购重组市场呈现三方面新变化.\n\n[wiki:wiki] 半导体\n半导体 is a industry node with 2 relationships. Related: A股并购重组市场呈现三方面新变化, A股并购重组市场呈现三方面新变化.\n\n[wiki:wiki] 生物医药\n生物医药 is a industry node with 2 relationships. Related: A股并购重组市场呈现三方面新变化, A股并购重组市场呈现三方面新变化.\n\n[semantic_hybrid:edge] edge:kg_edge:financial:mentions:2b821b8f1b266bd2\nEdge Key: A股并购重组市场呈现三方面新变化 mentions 电力\nRelation: mentions\nSource: A股并购重组市场呈现三方面新变化\nTarget: 电力\nEvidence: kg_ev:financial:news_articles:ft_news:83904:a8934858d26f15da\nValue:\n\n[semantic_hybrid:edge] edge:kg_edge:financial:mentions:a7828b21c31813e0\nEdge Key: A股并购重组市场呈现三方面新变化 mentions 新质生产力\nRelation: mentions\nSource: A股并购重组市场呈现三方面新变化\nTarget: 新质生产力\nEvidence: kg_ev:financial:news_articles:ft_news:83904:a8934858d26f15da\nValue:\n\n[semantic_hybrid:edge] edge:kg_edge:financial:mentions:072c05b8427f089d\nEdge Key: A股并购重组市场呈现三方面新变化 mentions 横向整合\nRelation: mentions\nSource: A股并购重组市场呈现三方面新变化\nTarget: 横向整合\nEvidence: kg_ev:financial:news_articles:ft_news:83904:a8934858d26f15da\nValue:\n\n[semantic_hybrid:edge] edge:kg_edge:financial:mentions:0c0c6a44bfa2c956\nEdge Key: A股并购重组市场呈现三方面新变化 mentions 软件\nRelation: mentions\nSource: A股并购重组市场呈现三方面新变化\nTarget: 软件\nEvidence: kg_ev:financial:news_articles:ft_news:83904:a8934858d26f15da\nValue:\n\n[semantic_hybrid:edge] edge:kg_edge:financial:mentions:b3bb0e08ce86c1e0\nEdge Key: A股并购重组市场呈现三方面新变化 mentions 垂直整合\nRelation: mentions\nSource: A股并购重组市场呈现三方面新变化\nTarget: 垂直整合\nEvidence: kg_ev:financial:news_articles:ft_news:83904:a8934858d26f15da\nValue:\n\n[semantic_hybrid:edge] edge:kg_edge:financial:mentions:4d5214974ba227c1\nEdge Key: A股并购重组市场呈现三方面新变化 mentions 生物医药\nRelation: mentions\nSource: A股并购重组市场呈现三方面新变化\nTarget: 生物医药\nEvidence: kg_ev:financial:news_articles:ft_news:83904:a8934858d26f15da\nValue:\n\n[semantic_hybrid:edge] edge:kg_edge:financial:mentions:c0c763c69a0d3741\nEdge Key: A股并购重组市场呈现三方面新变化 mentions 高端装备制造\nRelation: mentions\nSource: A股并购重组市场呈现三方面新变化\nTarget: 高端装备制造\nEvidence: kg_ev:financial:news_articles:ft_news:83904:a8934858d26f15da\nValue:\n\n[semantic_hybrid:edge] edge:kg_edge:financial:mentions:5ffb3244fe301c2a\nEdge Key: A股并购重组市场呈现三方面新变化 mentions 汽车零部件\nRelation: mentions\nSource: A股并购重组市场呈现三方面新变化\nTarget: 汽车零部件\nEvidence: kg_ev:financial:news_articles:ft_news:83904:a8934858d26f15da\nValue:\n\n[semantic_hybrid:edge] edge:kg_edge:financial:mentions:ae17ce50c3d5e381\nEdge Key: A股并购重组市场呈现三方面新变化 mentions 化学制品\nRelation: mentions\nSource: A股并购重组市场呈现三方面新变化\nTarget: 化学制品\nEvidence: kg_ev:financial:news_articles:ft_news:83904:a8934858d26f15da\nValue:\n\n[semantic_hybrid:edge] edge:kg_edge:financial:mentions:5cfed905f6baaffa\nEdge Key: A股并购重组市场呈现三方面新变化 mentions 半导体\nRelation: mentions\nSource: A股并购重组市场呈现三方面新变化\nTarget: 半导体\nEvidence: kg_ev:financial:news_articles:ft_news:83904:a8934858d26f15da\nValue:",
+          "budget_usage": {
+            "max_chars": 5000,
+            "used_chars": 4002,
+            "truncated": false
+          },
+          "mode": "deterministic_plan",
+          "retrieval_channels_enabled": [
+            "entity_resolve",
+            "semantic_hybrid_search",
+            "graph_search",
+            "wiki_search",
+            "chunk_read"
+          ],
+          "retrieval_channels_used": [
+            "entity_resolve",
+            "semantic_hybrid_search",
+            "wiki_search",
+            "chunk_read"
+          ],
+          "semantic_enabled": true,
+          "milvus_enabled": true,
+          "agentic_enabled": false,
+          "planner_enabled": true,
+          "retrieval_plan": {
+            "mode": "deterministic_plan",
+            "intent": "general",
+            "entities": [
+              {
+                "text": "A股并购重组市场呈现三方面新变化",
+                "type_hint": null
+              },
+              {
+                "text": "ft",
+                "type_hint": null
+              },
+              {
+                "text": "news",
+                "type_hint": null
+              }
+            ],
+            "time_range": {
+              "preset": null,
+              "days": null,
+              "start": null,
+              "end": null
+            },
+            "relation_filters": [
+              "mentions",
+              "related_to",
+              "affects"
+            ],
+            "direction": "undirected",
+            "steps": [
+              {
+                "tool": "entity_resolve",
+                "query": "A股并购重组市场呈现三方面新变化 ft_news:83904",
+                "seed_node_ids": [],
+                "evidence_ids": [],
+                "depth": null,
+                "limit": null,
+                "direction": null,
+                "relation_filters": [],
+                "time_start": null,
+                "time_end": null
+              },
+              {
+                "tool": "semantic_hybrid_search",
+                "query": "A股并购重组市场呈现三方面新变化 ft_news:83904",
+                "seed_node_ids": [],
+                "evidence_ids": [],
+                "depth": null,
+                "limit": null,
+                "direction": null,
+                "relation_filters": [],
+                "time_start": null,
+                "time_end": null
+              },
+              {
+                "tool": "wiki_search",
+                "query": "A股并购重组市场呈现三方面新变化 ft_news:83904",
+                "seed_node_ids": [],
+                "evidence_ids": [],
+                "depth": null,
+                "limit": null,
+                "direction": null,
+                "relation_filters": [],
+                "time_start": null,
+                "time_end": null
+              }
+            ],
+            "warnings": []
+          },
+          "retrieval_trace": {
+            "mode": "deterministic_plan",
+            "channels_enabled": [
+              "entity_resolve",
+              "semantic_hybrid_search",
+              "graph_search",
+              "wiki_search",
+              "chunk_read"
+            ],
+            "channels_used": [
+              "entity_resolve",
+              "semantic_hybrid_search",
+              "wiki_search",
+              "chunk_read"
+            ],
+            "semantic_enabled": true,
+            "milvus_enabled": true,
+            "agentic_enabled": false,
+            "planner_enabled": true,
+            "steps": [
+              {
+                "tool": "entity_resolve",
+                "input": {
+                  "tool": "entity_resolve",
+                  "query": "A股并购重组市场呈现三方面新变化 ft_news:83904",
+                  "seed_node_ids": [],
+                  "evidence_ids": [],
+                  "depth": null,
+                  "limit": null,
+                  "direction": null,
+                  "relation_filters": [],
+                  "time_start": null,
+                  "time_end": null
+                },
+                "output_refs": [
+                  "kg:financial:event:5b8cdfdfc972155e"
+                ],
+                "hit_count": 1,
+                "warning": null
+              },
+              {
+                "tool": "semantic_hybrid_search",
+                "input": {
+                  "tool": "semantic_hybrid_search",
+                  "query": "A股并购重组市场呈现三方面新变化 ft_news:83904",
+                  "seed_node_ids": [],
+                  "evidence_ids": [],
+                  "depth": null,
+                  "limit": null,
+                  "direction": null,
+                  "relation_filters": [],
+                  "time_start": null,
+                  "time_end": null
+                },
+                "output_refs": [
+                  "kg_kv:edge:kg_edge:financial:mentions:2b821b8f1b266bd2",
+                  "kg_kv:edge:kg_edge:financial:mentions:a7828b21c31813e0",
+                  "kg_kv:edge:kg_edge:financial:mentions:072c05b8427f089d",
+                  "kg_kv:edge:kg_edge:financial:mentions:0c0c6a44bfa2c956",
+                  "kg_kv:edge:kg_edge:financial:mentions:b3bb0e08ce86c1e0",
+                  "kg_kv:edge:kg_edge:financial:mentions:4d5214974ba227c1",
+                  "kg_kv:edge:kg_edge:financial:mentions:c0c763c69a0d3741",
+                  "kg_kv:edge:kg_edge:financial:mentions:5ffb3244fe301c2a",
+                  "kg_kv:edge:kg_edge:financial:mentions:ae17ce50c3d5e381",
+                  "kg_kv:edge:kg_edge:financial:mentions:5cfed905f6baaffa"
+                ],
+                "hit_count": 10,
+                "warning": null
+              },
+              {
+                "tool": "wiki_search",
+                "input": {
+                  "tool": "wiki_search",
+                  "query": "A股并购重组市场呈现三方面新变化 ft_news:83904",
+                  "seed_node_ids": [],
+                  "evidence_ids": [],
+                  "depth": null,
+                  "limit": null,
+                  "direction": null,
+                  "relation_filters": [],
+                  "time_start": null,
+                  "time_end": null
+                },
+                "output_refs": [
+                  "kg_wiki:financial:entity_page:085aa3ee85b7fc5f",
+                  "kg_wiki:financial:entity_page:4d2b7e60ddb24c4d",
+                  "kg_wiki:financial:entity_page:88298b39404e39da",
+                  "kg_wiki:financial:entity_page:92cd7ee615d79839",
+                  "kg_wiki:financial:entity_page:9cbb37bdc442fda4",
+                  "kg_wiki:financial:entity_page:a6f3a2e15f4fbc9a",
+                  "kg_wiki:financial:entity_page:a8cf7c99e12d629f",
+                  "kg_wiki:financial:entity_page:be3291bce66c45ac"
+                ],
+                "hit_count": 8,
+                "warning": null
+              },
+              {
+                "tool": "chunk_read",
+                "input": {
+                  "tool": "chunk_read",
+                  "query": null,
+                  "seed_node_ids": [],
+                  "evidence_ids": [
+                    "kg_ev:financial:news_articles:ft_news:83904:a8934858d26f15da"
+                  ],
+                  "depth": null,
+                  "limit": 20,
+                  "direction": null,
+                  "relation_filters": [],
+                  "time_start": null,
+                  "time_end": null
+                },
+                "output_refs": [
+                  "kg_ev:financial:news_articles:ft_news:83904:a8934858d26f15da"
+                ],
+                "hit_count": 1,
+                "warning": null
+              }
+            ],
+            "warnings": []
+          },
+          "warnings": []
+        }
+      },
+      {
+        "query": "俄就波法联合军演发出警告：欧洲对俄“全面对抗正在回归” ft_news:77543",
+        "expected_evidence_hit": true,
+        "matched_evidence_ids": [
+          "kg_ev:financial:derived_signal:usage_demo_compile_write:signal:catl_flow:679ea0178f8f3bce",
+          "kg_ev:financial:l1_events:usage_demo_compile_write:event:solid_state_policy:55822125132d5247",
+          "kg_ev:financial:news_articles:ft_news:77543:6ef6deebc6e9c592",
+          "kg_ev:financial:news_articles:ft_news:83904:a8934858d26f15da"
+        ],
+        "context": {
+          "query": "俄就波法联合军演发出警告：欧洲对俄“全面对抗正在回归” ft_news:77543",
+          "hits": [
+            {
+              "hit_id": "kg:financial:event:bc7af8ca1c405f22",
+              "hit_type": "node",
+              "title": "俄就波法联合军演发出警告：欧洲对俄“全面对抗正在回归”",
+              "snippet": "{\"aliases\": [], \"name\": \"俄就波法联合军演发出警告：欧洲对俄“全面对抗正在回归”\", \"properties\": {\"event_time\": null, \"event_type\": null, \"published_at\": \"2026-04-24t00:40:57+08:00\", \"source_name\": \"同花顺\"}, \"type\": \"event\"}",
+              "score": 49.0,
+              "source": "entity_resolve",
+              "node_refs": [
+                "kg:financial:event:bc7af8ca1c405f22"
+              ],
+              "edge_refs": [],
+              "evidence_refs": [],
+              "path_node_refs": [],
+              "path_edge_refs": [],
+              "confidence": null,
+              "consumption_scope": "context"
+            },
+            {
+              "hit_id": "kg_ev:financial:derived_signal:usage_demo_compile_write:signal:catl_flow:679ea0178f8f3bce",
+              "hit_type": "evidence",
+              "title": "derived_signal:usage_demo_compile_write:signal:catl_flow",
+              "snippet": "宁德时代资金流入改善",
+              "score": 1.000000001,
+              "source": "chunk",
+              "node_refs": [],
+              "edge_refs": [],
+              "evidence_refs": [
+                "kg_ev:financial:derived_signal:usage_demo_compile_write:signal:catl_flow:679ea0178f8f3bce"
+              ],
+              "path_node_refs": [],
+              "path_edge_refs": [],
+              "confidence": null,
+              "consumption_scope": "context"
+            },
+            {
+              "hit_id": "kg_ev:financial:l1_events:usage_demo_compile_write:event:solid_state_policy:55822125132d5247",
+              "hit_type": "evidence",
+              "title": "l1_events:usage_demo_compile_write:event:solid_state_policy",
+              "snippet": "固态电池政策支持带动宁德时代产业链预期",
+              "score": 1.000000001,
+              "source": "chunk",
+              "node_refs": [],
+              "edge_refs": [],
+              "evidence_refs": [
+                "kg_ev:financial:l1_events:usage_demo_compile_write:event:solid_state_policy:55822125132d5247"
+              ],
+              "path_node_refs": [],
+              "path_edge_refs": [],
+              "confidence": null,
+              "consumption_scope": "context"
+            },
+            {
+              "hit_id": "kg_ev:financial:news_articles:ft_news:77543:6ef6deebc6e9c592",
+              "hit_type": "evidence",
+              "title": "news_articles:ft_news:77543",
+              "snippet": "俄就波法联合军演发出警告：欧洲对俄“全面对抗正在回归”\n据俄罗斯方面23日消息，俄总统新闻秘书佩斯科夫称，波兰和法国的联合军事演习是欧洲针对俄罗斯进行军事部署的直接体现。他称，欧洲对俄表现出相当的侵略性，“全面对抗正在回归”。据悉，波兰消息人士称，法国和波兰计划于近期举行联合演习，模拟打击俄罗斯圣彼得堡地区的重要目标。演习将动用能够携带核弹头的“阵风”战斗机。佩斯科夫强调，无论欧洲多么不情愿，构建欧洲安全新架构都必须与俄罗斯对话。（央视新闻）\n据俄罗斯方面23日消息，俄总统新闻秘书佩斯科夫称，波兰和法国的联合军事演习是欧洲针对俄罗斯进行军事部署的直接体现。他称，欧洲对俄表现出相当的侵略性，“全面对抗正在回归”。据悉，波兰消息人士称，法国和波兰计划于近期举行联合演习，模拟打击俄罗斯圣彼得堡地区的重要目标。演习将动用能够携带核弹头的“阵风”战斗机。佩斯科夫强调，无论欧洲多么不情愿，构建欧洲安全新架构都必须与俄罗斯对话。(央视新闻)",
+              "score": 1.000000001,
+              "source": "chunk",
+              "node_refs": [],
+              "edge_refs": [],
+              "evidence_refs": [
+                "kg_ev:financial:news_articles:ft_news:77543:6ef6deebc6e9c592"
+              ],
+              "path_node_refs": [],
+              "path_edge_refs": [],
+              "confidence": null,
+              "consumption_scope": "context"
+            },
+            {
+              "hit_id": "kg_ev:financial:news_articles:ft_news:83904:a8934858d26f15da",
+              "hit_type": "evidence",
+              "title": "news_articles:ft_news:83904",
+              "snippet": "A股并购重组市场呈现三方面新变化\n在各类政策推动下，A股并购市场进一步锚定价值投资与产业估值。数据显示，2025年A股横向整合并购事件达463起，交易金额4410亿元，同比增长27%；垂直整合案例从2023年的4起、2024年的5起大幅增至2025年的20起。\nWind资讯数据显示，截至4月23日晚间，年内A股上市公司首次披露的并购重组交易已达1104起，合计交易金额约3634.65亿元，其中重大资产重组案例达33起。结合近两年数据来看，并购重组市场整体呈现出数量稳步增长、交易规模持续放量的良好态势。更为关键的是，并购重组市场生态也在发生深刻变革。 第一，新兴领域产业链深度整合，新旧动能协同推进。 本轮并购重组最鲜明的特征之一，是资源要素加速向新质生产力领域集聚。在“并购六条”和“科创板八条”等政策引导下，创业板与科创板上市公司并购重组案例呈现量质齐升态势。机构研究数据显示，科创板与创业板并购重组案例数量占A股总案例的比重由2020年的26%逐步提升至2025年的37%。其中，半导体、软件、生物医药、高端装备制造等新兴产业占比超过九成。此外，跨境并购、多工具组合的复杂交易案例频繁出现，反映出市场对新质生产力整合的迫切需求以及交易能力的显著提升。 与此同时，传统行业的横向整合加快、产业集中度提升。汽车零部件、化学制品、电力等传统行业通过横向整合、战略合作优化产业结构，提升资源配置效率。 这种“新兴聚势、传统提质”的双轮驱动格局，正推动并购重组市场步入更成熟、更高效的发展新阶段。 第二，并购重组回归产业本源，助力资本市场生态优化。 在各类政策推动下，A股并购市场进一步锚定价值投资与产业估值。数据显示，2025年A股横向整合并购事件达463起，交易金额4410亿元，同比增长27%；垂直整合案例从2023年的4起、2024年的5起大幅增至2025年的20起。这些数据清晰表明，...",
+              "score": 1.000000001,
+              "source": "chunk",
+              "node_refs": [],
+              "edge_refs": [],
+              "evidence_refs": [
+                "kg_ev:financial:news_articles:ft_news:83904:a8934858d26f15da"
+              ],
+              "path_node_refs": [],
+              "path_edge_refs": [],
+              "confidence": null,
+              "consumption_scope": "context"
+            },
+            {
+              "hit_id": "kg_wiki:financial:entity_page:0510644dab7f5232",
+              "hit_type": "wiki",
+              "title": "佩斯科夫",
+              "snippet": "佩斯科夫 is a person node with 2 relationships. Related: 俄就波法联合军演发出警告：欧洲对俄“全面对抗正在回归”, 俄就波法联合军演发出警告：欧洲对俄“全面对抗正在回归”.",
+              "score": 1.0,
+              "source": "wiki",
+              "node_refs": [
+                "kg:financial:person:29eee14f8488bb3c"
+              ],
+              "edge_refs": [
+                "kg_edge:financial:mentions:d47b623b9ab21783",
+                "kg_edge:financial:mentions:d62db708dd0e23aa"
+              ],
+              "evidence_refs": [
+                "kg_ev:financial:news_articles:ft_news:77543:6ef6deebc6e9c592"
+              ],
+              "path_node_refs": [],
+              "path_edge_refs": [],
+              "confidence": null,
+              "consumption_scope": "context"
+            },
+            {
+              "hit_id": "kg_wiki:financial:entity_page:377a3a0809bfd243",
+              "hit_type": "wiki",
+              "title": "欧洲",
+              "snippet": "欧洲 is a region node with 2 relationships. Related: 俄就波法联合军演发出警告：欧洲对俄“全面对抗正在回归”, 俄就波法联合军演发出警告：欧洲对俄“全面对抗正在回归”.",
+              "score": 1.0,
+              "source": "wiki",
+              "node_refs": [
+                "kg:financial:region:fc32106fd0943e1f"
+              ],
+              "edge_refs": [
+                "kg_edge:financial:mentions:12f3659a39f6e379",
+                "kg_edge:financial:mentions:4bf00ab3e09cff24"
+              ],
+              "evidence_refs": [
+                "kg_ev:financial:news_articles:ft_news:77543:6ef6deebc6e9c592"
+              ],
+              "path_node_refs": [],
+              "path_edge_refs": [],
+              "confidence": null,
+              "consumption_scope": "context"
+            },
+            {
+              "hit_id": "kg_wiki:financial:entity_page:42789fa2e3559377",
+              "hit_type": "wiki",
+              "title": "波兰",
+              "snippet": "波兰 is a region node with 2 relationships. Related: 俄就波法联合军演发出警告：欧洲对俄“全面对抗正在回归”, 俄就波法联合军演发出警告：欧洲对俄“全面对抗正在回归”.",
+              "score": 1.0,
+              "source": "wiki",
+              "node_refs": [
+                "kg:financial:region:3e369211857983dc"
+              ],
+              "edge_refs": [
+                "kg_edge:financial:mentions:450e735a0883f0af",
+                "kg_edge:financial:mentions:d4d22e972c38c93a"
+              ],
+              "evidence_refs": [
+                "kg_ev:financial:news_articles:ft_news:77543:6ef6deebc6e9c592"
+              ],
+              "path_node_refs": [],
+              "path_edge_refs": [],
+              "confidence": null,
+              "consumption_scope": "context"
+            },
+            {
+              "hit_id": "kg_wiki:financial:entity_page:679555c14bd454a4",
+              "hit_type": "wiki",
+              "title": "法国",
+              "snippet": "法国 is a region node with 2 relationships. Related: 俄就波法联合军演发出警告：欧洲对俄“全面对抗正在回归”, 俄就波法联合军演发出警告：欧洲对俄“全面对抗正在回归”.",
+              "score": 1.0,
+              "source": "wiki",
+              "node_refs": [
+                "kg:financial:region:99f5c09b2d9d2852"
+              ],
+              "edge_refs": [
+                "kg_edge:financial:mentions:0e13ec6017eb301d",
+                "kg_edge:financial:mentions:9ef751f30828886f"
+              ],
+              "evidence_refs": [
+                "kg_ev:financial:news_articles:ft_news:77543:6ef6deebc6e9c592"
+              ],
+              "path_node_refs": [],
+              "path_edge_refs": [],
+              "confidence": null,
+              "consumption_scope": "context"
+            },
+            {
+              "hit_id": "kg_wiki:financial:entity_page:d806c310661c229e",
+              "hit_type": "wiki",
+              "title": "俄罗斯",
+              "snippet": "俄罗斯 is a region node with 4 relationships. Related: 俄就波法联合军演发出警告：欧洲对俄“全面对抗正在回归”, 俄就波法联合军演发出警告：欧洲对俄“全面对抗正在回归”, 俄就波法联合军演发出警告：欧洲对俄“全面对抗正在回归”, 俄就波法联合军演发出警告：欧洲对俄“全面对抗正在回归”.",
+              "score": 1.0,
+              "source": "wiki",
+              "node_refs": [
+                "kg:financial:region:93ceae94dddc7acb"
+              ],
+              "edge_refs": [
+                "kg_edge:financial:affects:13258b63685c36fd",
+                "kg_edge:financial:affects:99d686791ef29bc2",
+                "kg_edge:financial:mentions:13258b63685c36fd",
+                "kg_edge:financial:mentions:99d686791ef29bc2"
+              ],
+              "evidence_refs": [
+                "kg_ev:financial:news_articles:ft_news:77543:6ef6deebc6e9c592"
+              ],
+              "path_node_refs": [],
+              "path_edge_refs": [],
+              "confidence": null,
+              "consumption_scope": "context"
+            },
+            {
+              "hit_id": "kg_wiki:financial:entity_page:e240caeb4fc7796b",
+              "hit_type": "wiki",
+              "title": "俄就波法联合军演发出警告：欧洲对俄“全面对抗正在回归”",
+              "snippet": "俄就波法联合军演发出警告：欧洲对俄“全面对抗正在回归” is a event node with 12 relationships. Related: 俄罗斯, 俄罗斯, 法国, 欧洲, 俄罗斯.",
+              "score": 1.0,
+              "source": "wiki",
+              "node_refs": [
+                "kg:financial:event:bc7af8ca1c405f22"
+              ],
+              "edge_refs": [
+                "kg_edge:financial:affects:13258b63685c36fd",
+                "kg_edge:financial:affects:99d686791ef29bc2",
+                "kg_edge:financial:mentions:0e13ec6017eb301d",
+                "kg_edge:financial:mentions:12f3659a39f6e379",
+                "kg_edge:financial:mentions:13258b63685c36fd",
+                "kg_edge:financial:mentions:450e735a0883f0af",
+                "kg_edge:financial:mentions:4bf00ab3e09cff24",
+                "kg_edge:financial:mentions:99d686791ef29bc2",
+                "kg_edge:financial:mentions:9ef751f30828886f",
+                "kg_edge:financial:mentions:d47b623b9ab21783",
+                "kg_edge:financial:mentions:d4d22e972c38c93a",
+                "kg_edge:financial:mentions:d62db708dd0e23aa"
+              ],
+              "evidence_refs": [
+                "kg_ev:financial:news_articles:ft_news:77543:6ef6deebc6e9c592"
+              ],
+              "path_node_refs": [],
+              "path_edge_refs": [],
+              "confidence": null,
+              "consumption_scope": "context"
+            },
+            {
+              "hit_id": "kg_wiki:financial:relation_page:93447f0bc2efd9e4",
+              "hit_type": "wiki",
+              "title": "relation: affects",
+              "snippet": "affects has 3 relationships.",
+              "score": 1.0,
+              "source": "wiki",
+              "node_refs": [
+                "kg:financial:event:112ac4ce2d5d4f7c",
+                "kg:financial:event:bc7af8ca1c405f22",
+                "kg:financial:region:93ceae94dddc7acb",
+                "kg:financial:stock:c37cbb33f0cc501f"
+              ],
+              "edge_refs": [
+                "kg_edge:financial:affects:1293549cf3553cb8",
+                "kg_edge:financial:affects:13258b63685c36fd",
+                "kg_edge:financial:affects:99d686791ef29bc2"
+              ],
+              "evidence_refs": [
+                "kg_ev:financial:l1_events:usage_demo_compile_write:event:solid_state_policy:55822125132d5247",
+                "kg_ev:financial:news_articles:ft_news:77543:6ef6deebc6e9c592"
+              ],
+              "path_node_refs": [],
+              "path_edge_refs": [],
+              "confidence": null,
+              "consumption_scope": "context"
+            },
+            {
+              "hit_id": "kg_wiki:financial:relation_page:9842cd22926948ea",
+              "hit_type": "wiki",
+              "title": "relation: mentions",
+              "snippet": "mentions has 32 relationships.",
+              "score": 1.0,
+              "source": "wiki",
+              "node_refs": [
+                "kg:financial:concept:30ec9ce8d249345c",
+                "kg:financial:concept:692ccaa96d9076e6",
+                "kg:financial:concept:6a3b53acdb5b1bea",
+                "kg:financial:concept:d22a035f92055198",
+                "kg:financial:event:112ac4ce2d5d4f7c",
+                "kg:financial:event:5b8cdfdfc972155e",
+                "kg:financial:event:bc7af8ca1c405f22",
+                "kg:financial:event:c1bf282a86aa0829",
+                "kg:financial:industry:0382d4d5a5ccc248",
+                "kg:financial:industry:06d14fb2bb0754e3",
+                "kg:financial:industry:101304223a8cd3c6",
+                "kg:financial:industry:25e3144becebf9dc",
+                "kg:financial:industry:50063d3c91ec9e00",
+                "kg:financial:industry:aa47b41443f6da9f",
+                "kg:financial:industry:bc04a86941e85840",
+                "kg:financial:person:29eee14f8488bb3c",
+                "kg:financial:region:3e369211857983dc",
+                "kg:financial:region:93ceae94dddc7acb",
+                "kg:financial:region:99f5c09b2d9d2852",
+                "kg:financial:region:fc32106fd0943e1f",
+                "kg:financial:stock:c37cbb33f0cc501f"
+              ],
+              "edge_refs": [
+                "kg_edge:financial:mentions:072c05b8427f089d",
+                "kg_edge:financial:mentions:0c0c6a44bfa2c956",
+                "kg_edge:financial:mentions:0e13ec6017eb301d",
+                "kg_edge:financial:mentions:10ccdc288cf8a262",
+                "kg_edge:financial:mentions:12f3659a39f6e379",
+                "kg_edge:financial:mentions:13258b63685c36fd",
+                "kg_edge:financial:mentions:2b821b8f1b266bd2",
+                "kg_edge:financial:mentions:308a6aad08c711ab",
+                "kg_edge:financial:mentions:450e735a0883f0af",
+                "kg_edge:financial:mentions:48f7f992fbd66ba0",
+                "kg_edge:financial:mentions:4bf00ab3e09cff24",
+                "kg_edge:financial:mentions:4d5214974ba227c1",
+                "kg_edge:financial:mentions:55e524f0ff00b1f2",
+                "kg_edge:financial:mentions:5cfed905f6baaffa",
+                "kg_edge:financial:mentions:5ffb3244fe301c2a",
+                "kg_edge:financial:mentions:61e891869f23c272",
+                "kg_edge:financial:mentions:67a75dd98ea6f455",
+                "kg_edge:financial:mentions:99d686791ef29bc2",
+                "kg_edge:financial:mentions:9ef751f30828886f",
+                "kg_edge:financial:mentions:a7828b21c31813e0",
+                "kg_edge:financial:mentions:ae17ce50c3d5e381",
+                "kg_edge:financial:mentions:b38ea96f5cacb158",
+                "kg_edge:financial:mentions:b3bb0e08ce86c1e0",
+                "kg_edge:financial:mentions:c0c763c69a0d3741",
+                "kg_edge:financial:mentions:cac27db1054704f0",
+                "kg_edge:financial:mentions:d47b623b9ab21783",
+                "kg_edge:financial:mentions:d4d22e972c38c93a",
+                "kg_edge:financial:mentions:d62db708dd0e23aa",
+                "kg_edge:financial:mentions:de9997a4a6575809",
+                "kg_edge:financial:mentions:ded002b1aaa13509",
+                "kg_edge:financial:mentions:df90730bb728ef0d",
+                "kg_edge:financial:mentions:ed94b11471e66224"
+              ],
+              "evidence_refs": [
+                "kg_ev:financial:derived_signal:usage_demo_compile_write:signal:catl_flow:679ea0178f8f3bce",
+                "kg_ev:financial:l1_events:usage_demo_compile_write:event:solid_state_policy:55822125132d5247",
+                "kg_ev:financial:news_articles:ft_news:77543:6ef6deebc6e9c592",
+                "kg_ev:financial:news_articles:ft_news:83904:a8934858d26f15da"
+              ],
+              "path_node_refs": [],
+              "path_edge_refs": [],
+              "confidence": null,
+              "consumption_scope": "context"
+            },
+            {
+              "hit_id": "kg_kv:edge:kg_edge:financial:mentions:13258b63685c36fd",
+              "hit_type": "edge",
+              "title": "edge:kg_edge:financial:mentions:13258b63685c36fd",
+              "snippet": "Edge Key: 俄就波法联合军演发出警告：欧洲对俄“全面对抗正在回归” mentions 俄罗斯\nRelation: mentions\nSource: 俄就波法联合军演发出警告：欧洲对俄“全面对抗正在回归”\nTarget: 俄罗斯\nEvidence: kg_ev:financial:news_articles:ft_news:77543:6ef6deebc6e9c592\nValue:",
+              "score": 0.0744588777422905,
+              "source": "semantic_hybrid",
+              "node_refs": [],
+              "edge_refs": [
+                "kg_edge:financial:mentions:13258b63685c36fd"
+              ],
+              "evidence_refs": [
+                "kg_ev:financial:news_articles:ft_news:77543:6ef6deebc6e9c592"
+              ],
+              "path_node_refs": [],
+              "path_edge_refs": [],
+              "confidence": null,
+              "consumption_scope": "context"
+            },
+            {
+              "hit_id": "kg_kv:edge:kg_edge:financial:mentions:4bf00ab3e09cff24",
+              "hit_type": "edge",
+              "title": "edge:kg_edge:financial:mentions:4bf00ab3e09cff24",
+              "snippet": "Edge Key: 俄就波法联合军演发出警告：欧洲对俄“全面对抗正在回归” mentions 欧洲\nRelation: mentions\nSource: 俄就波法联合军演发出警告：欧洲对俄“全面对抗正在回归”\nTarget: 欧洲\nEvidence: kg_ev:financial:news_articles:ft_news:77543:6ef6deebc6e9c592\nValue:",
+              "score": 0.07338936030864715,
+              "source": "semantic_hybrid",
+              "node_refs": [],
+              "edge_refs": [
+                "kg_edge:financial:mentions:4bf00ab3e09cff24"
+              ],
+              "evidence_refs": [
+                "kg_ev:financial:news_articles:ft_news:77543:6ef6deebc6e9c592"
+              ],
+              "path_node_refs": [],
+              "path_edge_refs": [],
+              "confidence": null,
+              "consumption_scope": "context"
+            },
+            {
+              "hit_id": "kg_kv:edge:kg_edge:financial:mentions:450e735a0883f0af",
+              "hit_type": "edge",
+              "title": "edge:kg_edge:financial:mentions:450e735a0883f0af",
+              "snippet": "Edge Key: 俄就波法联合军演发出警告：欧洲对俄“全面对抗正在回归” mentions 波兰\nRelation: mentions\nSource: 俄就波法联合军演发出警告：欧洲对俄“全面对抗正在回归”\nTarget: 波兰\nEvidence: kg_ev:financial:news_articles:ft_news:77543:6ef6deebc6e9c592\nValue:",
+              "score": 0.07170568406581879,
+              "source": "semantic_hybrid",
+              "node_refs": [],
+              "edge_refs": [
+                "kg_edge:financial:mentions:450e735a0883f0af"
+              ],
+              "evidence_refs": [
+                "kg_ev:financial:news_articles:ft_news:77543:6ef6deebc6e9c592"
+              ],
+              "path_node_refs": [],
+              "path_edge_refs": [],
+              "confidence": null,
+              "consumption_scope": "context"
+            },
+            {
+              "hit_id": "kg_kv:edge:kg_edge:financial:mentions:9ef751f30828886f",
+              "hit_type": "edge",
+              "title": "edge:kg_edge:financial:mentions:9ef751f30828886f",
+              "snippet": "Edge Key: 俄就波法联合军演发出警告：欧洲对俄“全面对抗正在回归” mentions 法国\nRelation: mentions\nSource: 俄就波法联合军演发出警告：欧洲对俄“全面对抗正在回归”\nTarget: 法国\nEvidence: kg_ev:financial:news_articles:ft_news:77543:6ef6deebc6e9c592\nValue:",
+              "score": 0.06787974536418914,
+              "source": "semantic_hybrid",
+              "node_refs": [],
+              "edge_refs": [
+                "kg_edge:financial:mentions:9ef751f30828886f"
+              ],
+              "evidence_refs": [
+                "kg_ev:financial:news_articles:ft_news:77543:6ef6deebc6e9c592"
+              ],
+              "path_node_refs": [],
+              "path_edge_refs": [],
+              "confidence": null,
+              "consumption_scope": "context"
+            },
+            {
+              "hit_id": "kg_kv:wiki:kg_wiki:financial:entity_page:e240caeb4fc7796b",
+              "hit_type": "wiki",
+              "title": "wiki:kg_wiki:financial:entity_page:e240caeb4fc7796b",
+              "snippet": "Wiki Key: 俄就波法联合军演发出警告：欧洲对俄“全面对抗正在回归”\nPage Type: entity_page\nSubject: event kg:financial:event:bc7af8ca1c405f22\nSummary: 俄就波法联合军演发出警告：欧洲对俄“全面对抗正在回归” is a event node with 12 relationships. Related: 俄罗斯, 俄罗斯, 法国, 欧洲, 俄罗斯.\nValue: # 俄就波法联合军演发出警告：欧洲对俄“全面对抗正在回归”\n\nType: event\nStatus: candidate\nAliases: none\nExternal IDs: {\"event\": \"ft_news:77543\"}\nProperties: {\"event_time\": null, \"event_type\": null, \"published_at\": \"2026-04-24T00:40:57+08:00\", \"source_name\": \"同花顺\"}\n\nRelationships:\n- affects: 俄就波法联合军演发出警告：欧洲对俄“全面对抗正在回归” -> 俄罗斯 (confidence=1.00, status=candidate)\n- affects: 俄就波法联合军演发出警告：欧洲对俄“全面对抗正在回归” -> 俄罗斯 (confidence=1.00, status=deprecated)\n- mentions: 俄就波法联合军演发出警告：欧洲对俄“全面对抗正在回归” -> 法国 (confidence=1.00, status=deprecated)\n- mentions: 俄就波法联合军演发出警告：欧洲对俄“全面对抗正在回归” -> 欧洲 (confidence=1.00, status=de",
+              "score": 0.066616652905941,
+              "source": "semantic_hybrid",
+              "node_refs": [],
+              "edge_refs": [],
+              "evidence_refs": [
+                "kg_ev:financial:news_articles:ft_news:77543:6ef6deebc6e9c592"
+              ],
+              "path_node_refs": [],
+              "path_edge_refs": [],
+              "confidence": null,
+              "consumption_scope": "context"
+            },
+            {
+              "hit_id": "kg_kv:edge:kg_edge:financial:mentions:d47b623b9ab21783",
+              "hit_type": "edge",
+              "title": "edge:kg_edge:financial:mentions:d47b623b9ab21783",
+              "snippet": "Edge Key: 俄就波法联合军演发出警告：欧洲对俄“全面对抗正在回归” mentions 佩斯科夫\nRelation: mentions\nSource: 俄就波法联合军演发出警告：欧洲对俄“全面对抗正在回归”\nTarget: 佩斯科夫\nEvidence: kg_ev:financial:news_articles:ft_news:77543:6ef6deebc6e9c592\nValue:",
+              "score": 0.06372787356376648,
+              "source": "semantic_hybrid",
+              "node_refs": [],
+              "edge_refs": [
+                "kg_edge:financial:mentions:d47b623b9ab21783"
+              ],
+              "evidence_refs": [
+                "kg_ev:financial:news_articles:ft_news:77543:6ef6deebc6e9c592"
+              ],
+              "path_node_refs": [],
+              "path_edge_refs": [],
+              "confidence": null,
+              "consumption_scope": "context"
+            }
+          ],
+          "matched_nodes": [
+            {
+              "node_id": "kg:financial:event:bc7af8ca1c405f22",
+              "adapter_name": "financial",
+              "node_type": "event",
+              "canonical_name": "俄就波法联合军演发出警告：欧洲对俄“全面对抗正在回归”",
+              "aliases": [],
+              "external_ids": {
+                "event": "ft_news:77543"
+              },
+              "properties": {
+                "event_time": null,
+                "event_type": null,
+                "source_name": "同花顺",
+                "published_at": "2026-04-24T00:40:57+08:00"
+              },
+              "status": "candidate",
+              "version": "v1"
+            },
+            {
+              "node_id": "kg:financial:person:29eee14f8488bb3c",
+              "adapter_name": "financial",
+              "node_type": "person",
+              "canonical_name": "佩斯科夫",
+              "aliases": [],
+              "external_ids": {},
+              "properties": {
+                "normalization": {
+                  "reason": "上下文明确指向俄罗斯总统新闻秘书佩斯科夫，没有已有规则匹配，视为新的独立人物实体。",
+                  "source": "llm_write_time",
+                  "decision": "create_new_canonical_entity",
+                  "raw_name": "佩斯科夫",
+                  "raw_type": "person",
+                  "taxonomy": "",
+                  "confidence": 1.0,
+                  "decision_id": "kg_norm_decision:8715dd8a9a290f3d",
+                  "entity_type": "person",
+                  "canonical_name": "佩斯科夫"
+                }
+              },
+              "status": "candidate",
+              "version": "v1"
+            },
+            {
+              "node_id": "kg:financial:region:fc32106fd0943e1f",
+              "adapter_name": "financial",
+              "node_type": "region",
+              "canonical_name": "欧洲",
+              "aliases": [],
+              "external_ids": {},
+              "properties": {
+                "normalization": {
+                  "reason": "欧洲作为一个独特的地理政治区域，可独立作为标准化实体",
+                  "source": "llm_write_time",
+                  "decision": "create_new_canonical_entity",
+                  "raw_name": "欧洲",
+                  "raw_type": "region",
+                  "taxonomy": "",
+                  "confidence": 1.0,
+                  "decision_id": "kg_norm_decision:ed4d2a6c203b5fb6",
+                  "entity_type": "region",
+                  "canonical_name": "欧洲"
+                }
+              },
+              "status": "candidate",
+              "version": "v1"
+            },
+            {
+              "node_id": "kg:financial:region:3e369211857983dc",
+              "adapter_name": "financial",
+              "node_type": "region",
+              "canonical_name": "波兰",
+              "aliases": [],
+              "external_ids": {},
+              "properties": {
+                "normalization": {
+                  "reason": "实体'波兰'是明确的国家名称，无歧义，无已有规则，应作为独立标准实体。",
+                  "source": "llm_write_time",
+                  "decision": "create_new_canonical_entity",
+                  "raw_name": "波兰",
+                  "raw_type": "region",
+                  "taxonomy": "",
+                  "confidence": 1.0,
+                  "decision_id": "kg_norm_decision:6a86ceb99f54d17a",
+                  "entity_type": "region",
+                  "canonical_name": "波兰"
+                }
+              },
+              "status": "candidate",
+              "version": "v1"
+            },
+            {
+              "node_id": "kg:financial:region:99f5c09b2d9d2852",
+              "adapter_name": "financial",
+              "node_type": "region",
+              "canonical_name": "法国",
+              "aliases": [],
+              "external_ids": {},
+              "properties": {
+                "normalization": {
+                  "reason": "法国是一个明确的国家实体，上下文无歧义，应作为新的规范实体。",
+                  "source": "llm_write_time",
+                  "decision": "create_new_canonical_entity",
+                  "raw_name": "法国",
+                  "raw_type": "region",
+                  "taxonomy": "",
+                  "confidence": 1.0,
+                  "decision_id": "kg_norm_decision:be020673c1c8c482",
+                  "entity_type": "region",
+                  "canonical_name": "法国"
+                }
+              },
+              "status": "candidate",
+              "version": "v1"
+            },
+            {
+              "node_id": "kg:financial:region:93ceae94dddc7acb",
+              "adapter_name": "financial",
+              "node_type": "region",
+              "canonical_name": "俄罗斯",
+              "aliases": [],
+              "external_ids": {},
+              "properties": {
+                "normalization": {
+                  "reason": "俄罗斯是一个主权国家，上下文明确指代国家实体，没有匹配的已有规则，因此作为新的规范实体创建。",
+                  "source": "llm_write_time",
+                  "decision": "create_new_canonical_entity",
+                  "raw_name": "俄罗斯",
+                  "raw_type": "region",
+                  "taxonomy": "",
+                  "confidence": 1.0,
+                  "decision_id": "kg_norm_decision:991b8c42eba79e42",
+                  "entity_type": "region",
+                  "canonical_name": "俄罗斯"
+                }
+              },
+              "status": "candidate",
+              "version": "v1"
+            },
+            {
+              "node_id": "kg:financial:event:112ac4ce2d5d4f7c",
+              "adapter_name": "financial",
+              "node_type": "event",
+              "canonical_name": "固态电池政策支持带动宁德时代产业链预期",
+              "aliases": [],
+              "external_ids": {
+                "event": "usage_demo_compile_write:event:solid_state_policy"
+              },
+              "properties": {
+                "event_time": "2026-05-14T09:30:00+08:00",
+                "event_type": "policy_support",
+                "source_name": null,
+                "published_at": null
+              },
+              "status": "candidate",
+              "version": "v1"
+            },
+            {
+              "node_id": "kg:financial:stock:c37cbb33f0cc501f",
+              "adapter_name": "financial",
+              "node_type": "stock",
+              "canonical_name": "宁德时代",
+              "aliases": [
+                "CATL",
+                "300750",
+                "300750.SZ",
+                "宁德时代新能源科技股份有限公司"
+              ],
+              "external_ids": {
+                "code": "300750",
+                "exchange": "SZ"
+              },
+              "properties": {
+                "code": "300750",
+                "status": "active",
+                "exchange": "SZ",
+                "list_date": null
+              },
+              "status": "candidate",
+              "version": "v1"
+            },
+            {
+              "node_id": "kg:financial:concept:30ec9ce8d249345c",
+              "adapter_name": "financial",
+              "node_type": "concept",
+              "canonical_name": "垂直整合",
+              "aliases": [],
+              "external_ids": {},
+              "properties": {
+                "taxonomy": "并购重组",
+                "normalization": {
+                  "reason": "垂直整合是并购重组中的一个通用概念，上下文清晰，无歧义，且无现有规则匹配，应作为新的规范概念实体创建。",
+                  "source": "llm_write_time",
+                  "decision": "create_new_canonical_entity",
+                  "raw_name": "垂直整合",
+                  "raw_type": "concept",
+                  "taxonomy": "并购重组",
+                  "confidence": 0.9,
+                  "decision_id": "kg_norm_decision:256da1f31339e525",
+                  "entity_type": "concept",
+                  "canonical_name": "垂直整合"
+                }
+              },
+              "status": "candidate",
+              "version": "v1"
+            },
+            {
+              "node_id": "kg:financial:concept:692ccaa96d9076e6",
+              "adapter_name": "financial",
+              "node_type": "concept",
+              "canonical_name": "横向整合",
+              "aliases": [],
+              "external_ids": {},
+              "properties": {
+                "taxonomy": "并购类型",
+                "normalization": {
+                  "reason": "横向整合作为并购重组的一种类型，在上下文中被明确提及并统计，属于独立的概念实体，没有现有规则或别名匹配。",
+                  "source": "llm_write_time",
+                  "decision": "create_new_canonical_entity",
+                  "raw_name": "横向整合",
+                  "raw_type": "concept",
+                  "taxonomy": "并购类型",
+                  "confidence": 0.9,
+                  "decision_id": "kg_norm_decision:b264e87446aed06f",
+                  "entity_type": "concept",
+                  "canonical_name": "横向整合"
+                }
+              },
+              "status": "candidate",
+              "version": "v1"
+            },
+            {
+              "node_id": "kg:financial:concept:6a3b53acdb5b1bea",
+              "adapter_name": "financial",
+              "node_type": "concept",
+              "canonical_name": "固态电池产业链",
+              "aliases": [],
+              "external_ids": {},
+              "properties": {
+                "taxonomy": "industry_chain",
+                "normalization": {
+                  "reason": "matched active normalization rules",
+                  "source": "active_rules",
+                  "decision": "use_existing_rule",
+                  "raw_name": "固态电池产业链",
+                  "raw_type": "concept",
+                  "taxonomy": "industry_chain",
+                  "confidence": 1.0,
+                  "decision_id": "kg_norm_decision:1c90cdea2b9a37c8",
+                  "entity_type": "concept",
+                  "canonical_name": "固态电池产业链"
+                }
+              },
+              "status": "candidate",
+              "version": "v1"
+            },
+            {
+              "node_id": "kg:financial:concept:d22a035f92055198",
+              "adapter_name": "financial",
+              "node_type": "concept",
+              "canonical_name": "新质生产力",
+              "aliases": [],
+              "external_ids": {},
+              "properties": {
+                "taxonomy": "economic_concept",
+                "normalization": {
+                  "reason": "新质生产力是独特的经济政策概念，在当前市场分析语境中频繁出现，不是已有实体的别名，因此创建新的规范实体。",
+                  "source": "llm_write_time",
+                  "decision": "create_new_canonical_entity",
+                  "raw_name": "新质生产力",
+                  "raw_type": "concept",
+                  "taxonomy": "economic_concept",
+                  "confidence": 0.95,
+                  "decision_id": "kg_norm_decision:a73792e506a13179",
+                  "entity_type": "concept",
+                  "canonical_name": "新质生产力"
+                }
+              },
+              "status": "candidate",
+              "version": "v1"
+            },
+            {
+              "node_id": "kg:financial:event:5b8cdfdfc972155e",
+              "adapter_name": "financial",
+              "node_type": "event",
+              "canonical_name": "A股并购重组市场呈现三方面新变化",
+              "aliases": [],
+              "external_ids": {
+                "event": "ft_news:83904"
+              },
+              "properties": {
+                "event_time": null,
+                "event_type": null,
+                "source_name": "证券日报",
+                "published_at": "2026-04-24T07:38:00+08:00"
+              },
+              "status": "candidate",
+              "version": "v1"
+            },
+            {
+              "node_id": "kg:financial:event:c1bf282a86aa0829",
+              "adapter_name": "financial",
+              "node_type": "event",
+              "canonical_name": "宁德时代资金流入改善",
+              "aliases": [],
+              "external_ids": {
+                "event": "usage_demo_compile_write:signal:catl_flow"
+              },
+              "properties": {
+                "unit": "亿元",
+                "value": 1.28,
+                "window": "1d",
+                "event_type": "derived_signal",
+                "observed_at": "2026-05-14T09:30:00+08:00",
+                "signal_type": "capital_flow"
+              },
+              "status": "candidate",
+              "version": "v1"
+            },
+            {
+              "node_id": "kg:financial:industry:0382d4d5a5ccc248",
+              "adapter_name": "financial",
+              "node_type": "industry",
+              "canonical_name": "半导体",
+              "aliases": [],
+              "external_ids": {},
+              "properties": {
+                "code": null,
+                "taxonomy": "default",
+                "normalization": {
+                  "reason": "'半导体'是一个明确的行业名称，在上下文中作为新兴产业被提及，没有歧义或现有规则匹配，因此创建新的规范实体。",
+                  "source": "llm_write_time",
+                  "decision": "create_new_canonical_entity",
+                  "raw_name": "半导体",
+                  "raw_type": "industry",
+                  "taxonomy": "default",
+                  "confidence": 0.95,
+                  "decision_id": "kg_norm_decision:0469a1c6d7d7c6c8",
+                  "entity_type": "industry",
+                  "canonical_name": "半导体"
+                }
+              },
+              "status": "candidate",
+              "version": "v1"
+            },
+            {
+              "node_id": "kg:financial:industry:06d14fb2bb0754e3",
+              "adapter_name": "financial",
+              "node_type": "industry",
+              "canonical_name": "化学制品",
+              "aliases": [],
+              "external_ids": {},
+              "properties": {
+                "code": null,
+                "taxonomy": "default",
+                "normalization": {
+                  "reason": "该实体出现在描述传统行业横向整合的上下文中，是明确的行业类别，应作为独立规范实体入库。",
+                  "source": "llm_write_time",
+                  "decision": "create_new_canonical_entity",
+                  "raw_name": "化学制品",
+                  "raw_type": "industry",
+                  "taxonomy": "default",
+                  "confidence": 0.9,
+                  "decision_id": "kg_norm_decision:e59e6193af502b4a",
+                  "entity_type": "industry",
+                  "canonical_name": "化学制品"
+                }
+              },
+              "status": "candidate",
+              "version": "v1"
+            },
+            {
+              "node_id": "kg:financial:industry:101304223a8cd3c6",
+              "adapter_name": "financial",
+              "node_type": "industry",
+              "canonical_name": "软件",
+              "aliases": [],
+              "external_ids": {},
+              "properties": {
+                "code": null,
+                "taxonomy": "default",
+                "normalization": {
+                  "reason": "原文将‘软件’作为新兴产业列举，是独立的行业实体，未发现已有规则或需要合并的歧义。",
+                  "source": "llm_write_time",
+                  "decision": "create_new_canonical_entity",
+                  "raw_name": "软件",
+                  "raw_type": "industry",
+                  "taxonomy": "default",
+                  "confidence": 0.95,
+                  "decision_id": "kg_norm_decision:91fecdb00f4b5446",
+                  "entity_type": "industry",
+                  "canonical_name": "软件"
+                }
+              },
+              "status": "candidate",
+              "version": "v1"
+            },
+            {
+              "node_id": "kg:financial:industry:25e3144becebf9dc",
+              "adapter_name": "financial",
+              "node_type": "industry",
+              "canonical_name": "高端装备制造",
+              "aliases": [],
+              "external_ids": {},
+              "properties": {
+                "code": null,
+                "taxonomy": "default",
+                "normalization": {
+                  "reason": "上下文明确提及'高端装备制造'作为新兴产业之一，与半导体、软件、生物医药并列，是独立的行业分类，无已有规则匹配。",
+                  "source": "llm_write_time",
+                  "decision": "create_new_canonical_entity",
+                  "raw_name": "高端装备制造",
+                  "raw_type": "industry",
+                  "taxonomy": "default",
+                  "confidence": 0.95,
+                  "decision_id": "kg_norm_decision:58829a964c0412c1",
+                  "entity_type": "industry",
+                  "canonical_name": "高端装备制造"
+                }
+              },
+              "status": "candidate",
+              "version": "v1"
+            },
+            {
+              "node_id": "kg:financial:industry:50063d3c91ec9e00",
+              "adapter_name": "financial",
+              "node_type": "industry",
+              "canonical_name": "电力",
+              "aliases": [],
+              "external_ids": {},
+              "properties": {
+                "code": null,
+                "taxonomy": "default",
+                "normalization": {
+                  "reason": "电力在上下文中被列为传统行业，属于明确的行业分类，且无已有规则匹配。",
+                  "source": "llm_write_time",
+                  "decision": "create_new_canonical_entity",
+                  "raw_name": "电力",
+                  "raw_type": "industry",
+                  "taxonomy": "default",
+                  "confidence": 0.9,
+                  "decision_id": "kg_norm_decision:2baeea2cba69d100",
+                  "entity_type": "industry",
+                  "canonical_name": "电力"
+                }
+              },
+              "status": "candidate",
+              "version": "v1"
+            },
+            {
+              "node_id": "kg:financial:industry:aa47b41443f6da9f",
+              "adapter_name": "financial",
+              "node_type": "industry",
+              "canonical_name": "生物医药",
+              "aliases": [],
+              "external_ids": {},
+              "properties": {
+                "code": null,
+                "taxonomy": "default",
+                "normalization": {
+                  "reason": "生物医药是一个明确的独立行业实体，上下文视为新兴产业，没有现有规则适用，故创建新的标准实体。",
+                  "source": "llm_write_time",
+                  "decision": "create_new_canonical_entity",
+                  "raw_name": "生物医药",
+                  "raw_type": "industry",
+                  "taxonomy": "default",
+                  "confidence": 0.95,
+                  "decision_id": "kg_norm_decision:0d321dadd4c91392",
+                  "entity_type": "industry",
+                  "canonical_name": "生物医药"
+                }
+              },
+              "status": "candidate",
+              "version": "v1"
+            },
+            {
+              "node_id": "kg:financial:industry:bc04a86941e85840",
+              "adapter_name": "financial",
+              "node_type": "industry",
+              "canonical_name": "汽车零部件",
+              "aliases": [],
+              "external_ids": {},
+              "properties": {
+                "code": null,
+                "taxonomy": "default",
+                "normalization": {
+                  "reason": "基于上下文，汽车零部件作为传统行业被提及，且没有现有规则或别名，应作为独立行业实体写入知识图谱。",
+                  "source": "llm_write_time",
+                  "decision": "create_new_canonical_entity",
+                  "raw_name": "汽车零部件",
+                  "raw_type": "industry",
+                  "taxonomy": "default",
+                  "confidence": 0.9,
+                  "decision_id": "kg_norm_decision:e7ec054709669028",
+                  "entity_type": "industry",
+                  "canonical_name": "汽车零部件"
+                }
+              },
+              "status": "candidate",
+              "version": "v1"
+            }
+          ],
+          "matched_edges": [
+            {
+              "edge_id": "kg_edge:financial:mentions:d47b623b9ab21783",
+              "adapter_name": "financial",
+              "source_node_id": "kg:financial:event:bc7af8ca1c405f22",
+              "target_node_id": "kg:financial:person:29eee14f8488bb3c",
+              "relation_type": "mentions",
+              "properties": {},
+              "confidence_label": "EXTRACTED",
+              "confidence_score": 1.0,
+              "status": "active",
+              "evidence_ids": [
+                "kg_ev:financial:news_articles:ft_news:77543:6ef6deebc6e9c592"
+              ],
+              "valid_from": null,
+              "valid_to": null,
+              "version": "v1"
+            },
+            {
+              "edge_id": "kg_edge:financial:mentions:4bf00ab3e09cff24",
+              "adapter_name": "financial",
+              "source_node_id": "kg:financial:event:bc7af8ca1c405f22",
+              "target_node_id": "kg:financial:region:fc32106fd0943e1f",
+              "relation_type": "mentions",
+              "properties": {},
+              "confidence_label": "EXTRACTED",
+              "confidence_score": 1.0,
+              "status": "active",
+              "evidence_ids": [
+                "kg_ev:financial:news_articles:ft_news:77543:6ef6deebc6e9c592"
+              ],
+              "valid_from": null,
+              "valid_to": null,
+              "version": "v1"
+            },
+            {
+              "edge_id": "kg_edge:financial:mentions:450e735a0883f0af",
+              "adapter_name": "financial",
+              "source_node_id": "kg:financial:event:bc7af8ca1c405f22",
+              "target_node_id": "kg:financial:region:3e369211857983dc",
+              "relation_type": "mentions",
+              "properties": {},
+              "confidence_label": "EXTRACTED",
+              "confidence_score": 1.0,
+              "status": "active",
+              "evidence_ids": [
+                "kg_ev:financial:news_articles:ft_news:77543:6ef6deebc6e9c592"
+              ],
+              "valid_from": null,
+              "valid_to": null,
+              "version": "v1"
+            },
+            {
+              "edge_id": "kg_edge:financial:mentions:9ef751f30828886f",
+              "adapter_name": "financial",
+              "source_node_id": "kg:financial:event:bc7af8ca1c405f22",
+              "target_node_id": "kg:financial:region:99f5c09b2d9d2852",
+              "relation_type": "mentions",
+              "properties": {},
+              "confidence_label": "EXTRACTED",
+              "confidence_score": 1.0,
+              "status": "active",
+              "evidence_ids": [
+                "kg_ev:financial:news_articles:ft_news:77543:6ef6deebc6e9c592"
+              ],
+              "valid_from": null,
+              "valid_to": null,
+              "version": "v1"
+            },
+            {
+              "edge_id": "kg_edge:financial:mentions:13258b63685c36fd",
+              "adapter_name": "financial",
+              "source_node_id": "kg:financial:event:bc7af8ca1c405f22",
+              "target_node_id": "kg:financial:region:93ceae94dddc7acb",
+              "relation_type": "mentions",
+              "properties": {},
+              "confidence_label": "EXTRACTED",
+              "confidence_score": 1.0,
+              "status": "active",
+              "evidence_ids": [
+                "kg_ev:financial:news_articles:ft_news:77543:6ef6deebc6e9c592"
+              ],
+              "valid_from": null,
+              "valid_to": null,
+              "version": "v1"
+            },
+            {
+              "edge_id": "kg_edge:financial:mentions:072c05b8427f089d",
+              "adapter_name": "financial",
+              "source_node_id": "kg:financial:event:5b8cdfdfc972155e",
+              "target_node_id": "kg:financial:concept:692ccaa96d9076e6",
+              "relation_type": "mentions",
+              "properties": {},
+              "confidence_label": "EXTRACTED",
+              "confidence_score": 0.9,
+              "status": "active",
+              "evidence_ids": [
+                "kg_ev:financial:news_articles:ft_news:83904:a8934858d26f15da"
+              ],
+              "valid_from": null,
+              "valid_to": null,
+              "version": "v1"
+            },
+            {
+              "edge_id": "kg_edge:financial:mentions:0c0c6a44bfa2c956",
+              "adapter_name": "financial",
+              "source_node_id": "kg:financial:event:5b8cdfdfc972155e",
+              "target_node_id": "kg:financial:industry:101304223a8cd3c6",
+              "relation_type": "mentions",
+              "properties": {},
+              "confidence_label": "EXTRACTED",
+              "confidence_score": 0.95,
+              "status": "active",
+              "evidence_ids": [
+                "kg_ev:financial:news_articles:ft_news:83904:a8934858d26f15da"
+              ],
+              "valid_from": null,
+              "valid_to": null,
+              "version": "v1"
+            },
+            {
+              "edge_id": "kg_edge:financial:mentions:2b821b8f1b266bd2",
+              "adapter_name": "financial",
+              "source_node_id": "kg:financial:event:5b8cdfdfc972155e",
+              "target_node_id": "kg:financial:industry:50063d3c91ec9e00",
+              "relation_type": "mentions",
+              "properties": {},
+              "confidence_label": "EXTRACTED",
+              "confidence_score": 0.9,
+              "status": "active",
+              "evidence_ids": [
+                "kg_ev:financial:news_articles:ft_news:83904:a8934858d26f15da"
+              ],
+              "valid_from": null,
+              "valid_to": null,
+              "version": "v1"
+            },
+            {
+              "edge_id": "kg_edge:financial:mentions:4d5214974ba227c1",
+              "adapter_name": "financial",
+              "source_node_id": "kg:financial:event:5b8cdfdfc972155e",
+              "target_node_id": "kg:financial:industry:aa47b41443f6da9f",
+              "relation_type": "mentions",
+              "properties": {},
+              "confidence_label": "EXTRACTED",
+              "confidence_score": 0.95,
+              "status": "active",
+              "evidence_ids": [
+                "kg_ev:financial:news_articles:ft_news:83904:a8934858d26f15da"
+              ],
+              "valid_from": null,
+              "valid_to": null,
+              "version": "v1"
+            },
+            {
+              "edge_id": "kg_edge:financial:mentions:55e524f0ff00b1f2",
+              "adapter_name": "financial",
+              "source_node_id": "kg:financial:event:112ac4ce2d5d4f7c",
+              "target_node_id": "kg:financial:concept:6a3b53acdb5b1bea",
+              "relation_type": "mentions",
+              "properties": {},
+              "confidence_label": "EXTRACTED",
+              "confidence_score": 0.9,
+              "status": "active",
+              "evidence_ids": [
+                "kg_ev:financial:l1_events:usage_demo_compile_write:event:solid_state_policy:55822125132d5247"
+              ],
+              "valid_from": null,
+              "valid_to": null,
+              "version": "v1"
+            },
+            {
+              "edge_id": "kg_edge:financial:mentions:5cfed905f6baaffa",
+              "adapter_name": "financial",
+              "source_node_id": "kg:financial:event:5b8cdfdfc972155e",
+              "target_node_id": "kg:financial:industry:0382d4d5a5ccc248",
+              "relation_type": "mentions",
+              "properties": {},
+              "confidence_label": "EXTRACTED",
+              "confidence_score": 0.95,
+              "status": "active",
+              "evidence_ids": [
+                "kg_ev:financial:news_articles:ft_news:83904:a8934858d26f15da"
+              ],
+              "valid_from": null,
+              "valid_to": null,
+              "version": "v1"
+            },
+            {
+              "edge_id": "kg_edge:financial:mentions:5ffb3244fe301c2a",
+              "adapter_name": "financial",
+              "source_node_id": "kg:financial:event:5b8cdfdfc972155e",
+              "target_node_id": "kg:financial:industry:bc04a86941e85840",
+              "relation_type": "mentions",
+              "properties": {},
+              "confidence_label": "EXTRACTED",
+              "confidence_score": 0.9,
+              "status": "active",
+              "evidence_ids": [
+                "kg_ev:financial:news_articles:ft_news:83904:a8934858d26f15da"
+              ],
+              "valid_from": null,
+              "valid_to": null,
+              "version": "v1"
+            },
+            {
+              "edge_id": "kg_edge:financial:mentions:a7828b21c31813e0",
+              "adapter_name": "financial",
+              "source_node_id": "kg:financial:event:5b8cdfdfc972155e",
+              "target_node_id": "kg:financial:concept:d22a035f92055198",
+              "relation_type": "mentions",
+              "properties": {},
+              "confidence_label": "EXTRACTED",
+              "confidence_score": 0.95,
+              "status": "active",
+              "evidence_ids": [
+                "kg_ev:financial:news_articles:ft_news:83904:a8934858d26f15da"
+              ],
+              "valid_from": null,
+              "valid_to": null,
+              "version": "v1"
+            },
+            {
+              "edge_id": "kg_edge:financial:mentions:ae17ce50c3d5e381",
+              "adapter_name": "financial",
+              "source_node_id": "kg:financial:event:5b8cdfdfc972155e",
+              "target_node_id": "kg:financial:industry:06d14fb2bb0754e3",
+              "relation_type": "mentions",
+              "properties": {},
+              "confidence_label": "EXTRACTED",
+              "confidence_score": 0.9,
+              "status": "active",
+              "evidence_ids": [
+                "kg_ev:financial:news_articles:ft_news:83904:a8934858d26f15da"
+              ],
+              "valid_from": null,
+              "valid_to": null,
+              "version": "v1"
+            },
+            {
+              "edge_id": "kg_edge:financial:mentions:b3bb0e08ce86c1e0",
+              "adapter_name": "financial",
+              "source_node_id": "kg:financial:event:5b8cdfdfc972155e",
+              "target_node_id": "kg:financial:concept:30ec9ce8d249345c",
+              "relation_type": "mentions",
+              "properties": {},
+              "confidence_label": "EXTRACTED",
+              "confidence_score": 0.9,
+              "status": "active",
+              "evidence_ids": [
+                "kg_ev:financial:news_articles:ft_news:83904:a8934858d26f15da"
+              ],
+              "valid_from": null,
+              "valid_to": null,
+              "version": "v1"
+            },
+            {
+              "edge_id": "kg_edge:financial:mentions:c0c763c69a0d3741",
+              "adapter_name": "financial",
+              "source_node_id": "kg:financial:event:5b8cdfdfc972155e",
+              "target_node_id": "kg:financial:industry:25e3144becebf9dc",
+              "relation_type": "mentions",
+              "properties": {},
+              "confidence_label": "EXTRACTED",
+              "confidence_score": 0.95,
+              "status": "active",
+              "evidence_ids": [
+                "kg_ev:financial:news_articles:ft_news:83904:a8934858d26f15da"
+              ],
+              "valid_from": null,
+              "valid_to": null,
+              "version": "v1"
+            },
+            {
+              "edge_id": "kg_edge:financial:mentions:df90730bb728ef0d",
+              "adapter_name": "financial",
+              "source_node_id": "kg:financial:event:c1bf282a86aa0829",
+              "target_node_id": "kg:financial:stock:c37cbb33f0cc501f",
+              "relation_type": "mentions",
+              "properties": {
+                "unit": "亿元",
+                "value": 1.28,
+                "window": "1d",
+                "signal_type": "capital_flow"
+              },
+              "confidence_label": "EXTRACTED",
+              "confidence_score": 0.88,
+              "status": "active",
+              "evidence_ids": [
+                "kg_ev:financial:derived_signal:usage_demo_compile_write:signal:catl_flow:679ea0178f8f3bce"
+              ],
+              "valid_from": null,
+              "valid_to": null,
+              "version": "v1"
+            }
+          ],
+          "evidence_refs": [
+            "kg_ev:financial:derived_signal:usage_demo_compile_write:signal:catl_flow:679ea0178f8f3bce",
+            "kg_ev:financial:l1_events:usage_demo_compile_write:event:solid_state_policy:55822125132d5247",
+            "kg_ev:financial:news_articles:ft_news:77543:6ef6deebc6e9c592",
+            "kg_ev:financial:news_articles:ft_news:83904:a8934858d26f15da"
+          ],
+          "hard_score_edges": [],
+          "explanation_edges": [
+            {
+              "edge_id": "kg_edge:financial:mentions:d47b623b9ab21783",
+              "adapter_name": "financial",
+              "source_node_id": "kg:financial:event:bc7af8ca1c405f22",
+              "target_node_id": "kg:financial:person:29eee14f8488bb3c",
+              "relation_type": "mentions",
+              "properties": {},
+              "confidence_label": "EXTRACTED",
+              "confidence_score": 1.0,
+              "status": "active",
+              "evidence_ids": [
+                "kg_ev:financial:news_articles:ft_news:77543:6ef6deebc6e9c592"
+              ],
+              "valid_from": null,
+              "valid_to": null,
+              "version": "v1"
+            },
+            {
+              "edge_id": "kg_edge:financial:mentions:4bf00ab3e09cff24",
+              "adapter_name": "financial",
+              "source_node_id": "kg:financial:event:bc7af8ca1c405f22",
+              "target_node_id": "kg:financial:region:fc32106fd0943e1f",
+              "relation_type": "mentions",
+              "properties": {},
+              "confidence_label": "EXTRACTED",
+              "confidence_score": 1.0,
+              "status": "active",
+              "evidence_ids": [
+                "kg_ev:financial:news_articles:ft_news:77543:6ef6deebc6e9c592"
+              ],
+              "valid_from": null,
+              "valid_to": null,
+              "version": "v1"
+            },
+            {
+              "edge_id": "kg_edge:financial:mentions:450e735a0883f0af",
+              "adapter_name": "financial",
+              "source_node_id": "kg:financial:event:bc7af8ca1c405f22",
+              "target_node_id": "kg:financial:region:3e369211857983dc",
+              "relation_type": "mentions",
+              "properties": {},
+              "confidence_label": "EXTRACTED",
+              "confidence_score": 1.0,
+              "status": "active",
+              "evidence_ids": [
+                "kg_ev:financial:news_articles:ft_news:77543:6ef6deebc6e9c592"
+              ],
+              "valid_from": null,
+              "valid_to": null,
+              "version": "v1"
+            },
+            {
+              "edge_id": "kg_edge:financial:mentions:9ef751f30828886f",
+              "adapter_name": "financial",
+              "source_node_id": "kg:financial:event:bc7af8ca1c405f22",
+              "target_node_id": "kg:financial:region:99f5c09b2d9d2852",
+              "relation_type": "mentions",
+              "properties": {},
+              "confidence_label": "EXTRACTED",
+              "confidence_score": 1.0,
+              "status": "active",
+              "evidence_ids": [
+                "kg_ev:financial:news_articles:ft_news:77543:6ef6deebc6e9c592"
+              ],
+              "valid_from": null,
+              "valid_to": null,
+              "version": "v1"
+            },
+            {
+              "edge_id": "kg_edge:financial:mentions:13258b63685c36fd",
+              "adapter_name": "financial",
+              "source_node_id": "kg:financial:event:bc7af8ca1c405f22",
+              "target_node_id": "kg:financial:region:93ceae94dddc7acb",
+              "relation_type": "mentions",
+              "properties": {},
+              "confidence_label": "EXTRACTED",
+              "confidence_score": 1.0,
+              "status": "active",
+              "evidence_ids": [
+                "kg_ev:financial:news_articles:ft_news:77543:6ef6deebc6e9c592"
+              ],
+              "valid_from": null,
+              "valid_to": null,
+              "version": "v1"
+            },
+            {
+              "edge_id": "kg_edge:financial:mentions:072c05b8427f089d",
+              "adapter_name": "financial",
+              "source_node_id": "kg:financial:event:5b8cdfdfc972155e",
+              "target_node_id": "kg:financial:concept:692ccaa96d9076e6",
+              "relation_type": "mentions",
+              "properties": {},
+              "confidence_label": "EXTRACTED",
+              "confidence_score": 0.9,
+              "status": "active",
+              "evidence_ids": [
+                "kg_ev:financial:news_articles:ft_news:83904:a8934858d26f15da"
+              ],
+              "valid_from": null,
+              "valid_to": null,
+              "version": "v1"
+            },
+            {
+              "edge_id": "kg_edge:financial:mentions:0c0c6a44bfa2c956",
+              "adapter_name": "financial",
+              "source_node_id": "kg:financial:event:5b8cdfdfc972155e",
+              "target_node_id": "kg:financial:industry:101304223a8cd3c6",
+              "relation_type": "mentions",
+              "properties": {},
+              "confidence_label": "EXTRACTED",
+              "confidence_score": 0.95,
+              "status": "active",
+              "evidence_ids": [
+                "kg_ev:financial:news_articles:ft_news:83904:a8934858d26f15da"
+              ],
+              "valid_from": null,
+              "valid_to": null,
+              "version": "v1"
+            },
+            {
+              "edge_id": "kg_edge:financial:mentions:2b821b8f1b266bd2",
+              "adapter_name": "financial",
+              "source_node_id": "kg:financial:event:5b8cdfdfc972155e",
+              "target_node_id": "kg:financial:industry:50063d3c91ec9e00",
+              "relation_type": "mentions",
+              "properties": {},
+              "confidence_label": "EXTRACTED",
+              "confidence_score": 0.9,
+              "status": "active",
+              "evidence_ids": [
+                "kg_ev:financial:news_articles:ft_news:83904:a8934858d26f15da"
+              ],
+              "valid_from": null,
+              "valid_to": null,
+              "version": "v1"
+            },
+            {
+              "edge_id": "kg_edge:financial:mentions:4d5214974ba227c1",
+              "adapter_name": "financial",
+              "source_node_id": "kg:financial:event:5b8cdfdfc972155e",
+              "target_node_id": "kg:financial:industry:aa47b41443f6da9f",
+              "relation_type": "mentions",
+              "properties": {},
+              "confidence_label": "EXTRACTED",
+              "confidence_score": 0.95,
+              "status": "active",
+              "evidence_ids": [
+                "kg_ev:financial:news_articles:ft_news:83904:a8934858d26f15da"
+              ],
+              "valid_from": null,
+              "valid_to": null,
+              "version": "v1"
+            },
+            {
+              "edge_id": "kg_edge:financial:mentions:55e524f0ff00b1f2",
+              "adapter_name": "financial",
+              "source_node_id": "kg:financial:event:112ac4ce2d5d4f7c",
+              "target_node_id": "kg:financial:concept:6a3b53acdb5b1bea",
+              "relation_type": "mentions",
+              "properties": {},
+              "confidence_label": "EXTRACTED",
+              "confidence_score": 0.9,
+              "status": "active",
+              "evidence_ids": [
+                "kg_ev:financial:l1_events:usage_demo_compile_write:event:solid_state_policy:55822125132d5247"
+              ],
+              "valid_from": null,
+              "valid_to": null,
+              "version": "v1"
+            },
+            {
+              "edge_id": "kg_edge:financial:mentions:5cfed905f6baaffa",
+              "adapter_name": "financial",
+              "source_node_id": "kg:financial:event:5b8cdfdfc972155e",
+              "target_node_id": "kg:financial:industry:0382d4d5a5ccc248",
+              "relation_type": "mentions",
+              "properties": {},
+              "confidence_label": "EXTRACTED",
+              "confidence_score": 0.95,
+              "status": "active",
+              "evidence_ids": [
+                "kg_ev:financial:news_articles:ft_news:83904:a8934858d26f15da"
+              ],
+              "valid_from": null,
+              "valid_to": null,
+              "version": "v1"
+            },
+            {
+              "edge_id": "kg_edge:financial:mentions:5ffb3244fe301c2a",
+              "adapter_name": "financial",
+              "source_node_id": "kg:financial:event:5b8cdfdfc972155e",
+              "target_node_id": "kg:financial:industry:bc04a86941e85840",
+              "relation_type": "mentions",
+              "properties": {},
+              "confidence_label": "EXTRACTED",
+              "confidence_score": 0.9,
+              "status": "active",
+              "evidence_ids": [
+                "kg_ev:financial:news_articles:ft_news:83904:a8934858d26f15da"
+              ],
+              "valid_from": null,
+              "valid_to": null,
+              "version": "v1"
+            },
+            {
+              "edge_id": "kg_edge:financial:mentions:a7828b21c31813e0",
+              "adapter_name": "financial",
+              "source_node_id": "kg:financial:event:5b8cdfdfc972155e",
+              "target_node_id": "kg:financial:concept:d22a035f92055198",
+              "relation_type": "mentions",
+              "properties": {},
+              "confidence_label": "EXTRACTED",
+              "confidence_score": 0.95,
+              "status": "active",
+              "evidence_ids": [
+                "kg_ev:financial:news_articles:ft_news:83904:a8934858d26f15da"
+              ],
+              "valid_from": null,
+              "valid_to": null,
+              "version": "v1"
+            },
+            {
+              "edge_id": "kg_edge:financial:mentions:ae17ce50c3d5e381",
+              "adapter_name": "financial",
+              "source_node_id": "kg:financial:event:5b8cdfdfc972155e",
+              "target_node_id": "kg:financial:industry:06d14fb2bb0754e3",
+              "relation_type": "mentions",
+              "properties": {},
+              "confidence_label": "EXTRACTED",
+              "confidence_score": 0.9,
+              "status": "active",
+              "evidence_ids": [
+                "kg_ev:financial:news_articles:ft_news:83904:a8934858d26f15da"
+              ],
+              "valid_from": null,
+              "valid_to": null,
+              "version": "v1"
+            },
+            {
+              "edge_id": "kg_edge:financial:mentions:b3bb0e08ce86c1e0",
+              "adapter_name": "financial",
+              "source_node_id": "kg:financial:event:5b8cdfdfc972155e",
+              "target_node_id": "kg:financial:concept:30ec9ce8d249345c",
+              "relation_type": "mentions",
+              "properties": {},
+              "confidence_label": "EXTRACTED",
+              "confidence_score": 0.9,
+              "status": "active",
+              "evidence_ids": [
+                "kg_ev:financial:news_articles:ft_news:83904:a8934858d26f15da"
+              ],
+              "valid_from": null,
+              "valid_to": null,
+              "version": "v1"
+            },
+            {
+              "edge_id": "kg_edge:financial:mentions:c0c763c69a0d3741",
+              "adapter_name": "financial",
+              "source_node_id": "kg:financial:event:5b8cdfdfc972155e",
+              "target_node_id": "kg:financial:industry:25e3144becebf9dc",
+              "relation_type": "mentions",
+              "properties": {},
+              "confidence_label": "EXTRACTED",
+              "confidence_score": 0.95,
+              "status": "active",
+              "evidence_ids": [
+                "kg_ev:financial:news_articles:ft_news:83904:a8934858d26f15da"
+              ],
+              "valid_from": null,
+              "valid_to": null,
+              "version": "v1"
+            },
+            {
+              "edge_id": "kg_edge:financial:mentions:df90730bb728ef0d",
+              "adapter_name": "financial",
+              "source_node_id": "kg:financial:event:c1bf282a86aa0829",
+              "target_node_id": "kg:financial:stock:c37cbb33f0cc501f",
+              "relation_type": "mentions",
+              "properties": {
+                "unit": "亿元",
+                "value": 1.28,
+                "window": "1d",
+                "signal_type": "capital_flow"
+              },
+              "confidence_label": "EXTRACTED",
+              "confidence_score": 0.88,
+              "status": "active",
+              "evidence_ids": [
+                "kg_ev:financial:derived_signal:usage_demo_compile_write:signal:catl_flow:679ea0178f8f3bce"
+              ],
+              "valid_from": null,
+              "valid_to": null,
+              "version": "v1"
+            }
+          ],
+          "context_text": "[entity_resolve:node] 俄就波法联合军演发出警告：欧洲对俄“全面对抗正在回归”\n{\"aliases\": [], \"name\": \"俄就波法联合军演发出警告：欧洲对俄“全面对抗正在回归”\", \"properties\": {\"event_time\": null, \"event_type\": null, \"published_at\": \"2026-04-24t00:40:57+08:00\", \"source_name\": \"同花顺\"}, \"type\": \"event\"}\n\n[chunk:evidence] derived_signal:usage_demo_compile_write:signal:catl_flow\n宁德时代资金流入改善\n\n[chunk:evidence] l1_events:usage_demo_compile_write:event:solid_state_policy\n固态电池政策支持带动宁德时代产业链预期\n\n[chunk:evidence] news_articles:ft_news:77543\n俄就波法联合军演发出警告：欧洲对俄“全面对抗正在回归”\n据俄罗斯方面23日消息，俄总统新闻秘书佩斯科夫称，波兰和法国的联合军事演习是欧洲针对俄罗斯进行军事部署的直接体现。他称，欧洲对俄表现出相当的侵略性，“全面对抗正在回归”。据悉，波兰消息人士称，法国和波兰计划于近期举行联合演习，模拟打击俄罗斯圣彼得堡地区的重要目标。演习将动用能够携带核弹头的“阵风”战斗机。佩斯科夫强调，无论欧洲多么不情愿，构建欧洲安全新架构都必须与俄罗斯对话。（央视新闻）\n据俄罗斯方面23日消息，俄总统新闻秘书佩斯科夫称，波兰和法国的联合军事演习是欧洲针对俄罗斯进行军事部署的直接体现。他称，欧洲对俄表现出相当的侵略性，“全面对抗正在回归”。据悉，波兰消息人士称，法国和波兰计划于近期举行联合演习，模拟打击俄罗斯圣彼得堡地区的重要目标。演习将动用能够携带核弹头的“阵风”战斗机。佩斯科夫强调，无论欧洲多么不情愿，构建欧洲安全新架构都必须与俄罗斯对话。(央视新闻)\n\n[chunk:evidence] news_articles:ft_news:83904\nA股并购重组市场呈现三方面新变化\n在各类政策推动下，A股并购市场进一步锚定价值投资与产业估值。数据显示，2025年A股横向整合并购事件达463起，交易金额4410亿元，同比增长27%；垂直整合案例从2023年的4起、2024年的5起大幅增至2025年的20起。\nWind资讯数据显示，截至4月23日晚间，年内A股上市公司首次披露的并购重组交易已达1104起，合计交易金额约3634.65亿元，其中重大资产重组案例达33起。结合近两年数据来看，并购重组市场整体呈现出数量稳步增长、交易规模持续放量的良好态势。更为关键的是，并购重组市场生态也在发生深刻变革。 第一，新兴领域产业链深度整合，新旧动能协同推进。 本轮并购重组最鲜明的特征之一，是资源要素加速向新质生产力领域集聚。在“并购六条”和“科创板八条”等政策引导下，创业板与科创板上市公司并购重组案例呈现量质齐升态势。机构研究数据显示，科创板与创业板并购重组案例数量占A股总案例的比重由2020年的26%逐步提升至2025年的37%。其中，半导体、软件、生物医药、高端装备制造等新兴产业占比超过九成。此外，跨境并购、多工具组合的复杂交易案例频繁出现，反映出市场对新质生产力整合的迫切需求以及交易能力的显著提升。 与此同时，传统行业的横向整合加快、产业集中度提升。汽车零部件、化学制品、电力等传统行业通过横向整合、战略合作优化产业结构，提升资源配置效率。 这种“新兴聚势、传统提质”的双轮驱动格局，正推动并购重组市场步入更成熟、更高效的发展新阶段。 第二，并购重组回归产业本源，助力资本市场生态优化。 在各类政策推动下，A股并购市场进一步锚定价值投资与产业估值。数据显示，2025年A股横向整合并购事件达463起，交易金额4410亿元，同比增长27%；垂直整合案例从2023年的4起、2024年的5起大幅增至2025年的20起。这些数据清晰表明，...\n\n[wiki:wiki] 佩斯科夫\n佩斯科夫 is a person node with 2 relationships. Related: 俄就波法联合军演发出警告：欧洲对俄“全面对抗正在回归”, 俄就波法联合军演发出警告：欧洲对俄“全面对抗正在回归”.\n\n[wiki:wiki] 欧洲\n欧洲 is a region node with 2 relationships. Related: 俄就波法联合军演发出警告：欧洲对俄“全面对抗正在回归”, 俄就波法联合军演发出警告：欧洲对俄“全面对抗正在回归”.\n\n[wiki:wiki] 波兰\n波兰 is a region node with 2 relationships. Related: 俄就波法联合军演发出警告：欧洲对俄“全面对抗正在回归”, 俄就波法联合军演发出警告：欧洲对俄“全面对抗正在回归”.\n\n[wiki:wiki] 法国\n法国 is a region node with 2 relationships. Related: 俄就波法联合军演发出警告：欧洲对俄“全面对抗正在回归”, 俄就波法联合军演发出警告：欧洲对俄“全面对抗正在回归”.\n\n[wiki:wiki] 俄罗斯\n俄罗斯 is a region node with 4 relationships. Related: 俄就波法联合军演发出警告：欧洲对俄“全面对抗正在回归”, 俄就波法联合军演发出警告：欧洲对俄“全面对抗正在回归”, 俄就波法联合军演发出警告：欧洲对俄“全面对抗正在回归”, 俄就波法联合军演发出警告：欧洲对俄“全面对抗正在回归”.\n\n[wiki:wiki] 俄就波法联合军演发出警告：欧洲对俄“全面对抗正在回归”\n俄就波法联合军演发出警告：欧洲对俄“全面对抗正在回归” is a event node with 12 relationships. Related: 俄罗斯, 俄罗斯, 法国, 欧洲, 俄罗斯.\n\n[wiki:wiki] relation: affects\naffects has 3 relationships.\n\n[wiki:wiki] relation: mentions\nmentions has 32 relationships.\n\n[semantic_hybrid:edge] edge:kg_edge:financial:mentions:13258b63685c36fd\nEdge Key: 俄就波法联合军演发出警告：欧洲对俄“全面对抗正在回归” mentions 俄罗斯\nRelation: mentions\nSource: 俄就波法联合军演发出警告：欧洲对俄“全面对抗正在回归”\nTarget: 俄罗斯\nEvidence: kg_ev:financial:news_articles:ft_news:77543:6ef6deebc6e9c592\nValue:\n\n[semantic_hybrid:edge] edge:kg_edge:financial:mentions:4bf00ab3e09cff24\nEdge Key: 俄就波法联合军演发出警告：欧洲对俄“全面对抗正在回归” mentions 欧洲\nRelation: mentions\nSource: 俄就波法联合军演发出警告：欧洲对俄“全面对抗正在回归”\nTarget: 欧洲\nEvidence: kg_ev:financial:news_articles:ft_news:77543:6ef6deebc6e9c592\nValue:\n\n[semantic_hybrid:edge] edge:kg_edge:financial:mentions:450e735a0883f0af\nEdge Key: 俄就波法联合军演发出警告：欧洲对俄“全面对抗正在回归” mentions 波兰\nRelation: mentions\nSource: 俄就波法联合军演发出警告：欧洲对俄“全面对抗正在回归”\nTarget: 波兰\nEvidence: kg_ev:financial:news_articles:ft_news:77543:6ef6deebc6e9c592\nValue:\n\n[semantic_hybrid:edge] edge:kg_edge:financial:mentions:9ef751f30828886f\nEdge Key: 俄就波法联合军演发出警告：欧洲对俄“全面对抗正在回归” mentions 法国\nRelation: mentions\nSource: 俄就波法联合军演发出警告：欧洲对俄“全面对抗正在回归”\nTarget: 法国\nEvidence: kg_ev:financial:news_articles:ft_news:77543:6ef6deebc6e9c592\nValue:\n\n[semantic_hybrid:wiki] wiki:kg_wiki:financial:entity_page:e240caeb4fc7796b\nWiki Key: 俄就波法联合军演发出警告：欧洲对俄“全面对抗正在回归”\nPage Type: entity_page\nSubject: event kg:financial:event:bc7af8ca1c405f22\nSummary: 俄就波法联合军演发出警告：欧洲对俄“全面对抗正在回归” is a event node with 12 relationships. Related: 俄罗斯, 俄罗斯, 法国, 欧洲, 俄罗斯.\nValue: # 俄就波法联合军演发出警告：欧洲对俄“全面对抗正在回归”\n\nType: event\nStatus: candidate\nAliases: none\nExternal IDs: {\"event\": \"ft_news:77543\"}\nProperties: {\"event_time\": null, \"event_type\": null, \"published_at\": \"2026-04-24T00:40:57+08:00\", \"source_name\": \"同花顺\"}\n\nRelationships:\n- affects: 俄就波法联合军演发出警告：欧洲对俄“全面对抗正在回归” -> 俄罗斯 (confidence=1.00, status=candidate)\n- affects: 俄就波法联合军演发出警告：欧洲对俄“全面对抗正在回归” -> 俄罗斯 (confidence=1.00, status=deprecated)\n- mentions: 俄就波法联合军演发出警告：欧洲对俄“全面对抗正在回归” -> 法国 (confidence=1.00, status=deprecated)\n- mentions: 俄就波法联合军演发出警告：欧洲对俄“全面对抗正在回归” -> 欧洲 (confidence=1.00, status=de\n\n[semantic_hybrid:edge] edge:kg_edge:financial:mentions:d47b623b9ab21783\nEdge Key: 俄就波法联合军演发出警告：欧洲对俄“全面对抗正在回归” mentions 佩斯科夫\nRelation: mentions\nSource: 俄就波法联合军演发出警告：欧洲对俄“全面对抗正在回归”\nTarget: 佩斯科夫\nEvidence: kg_ev:financial:news_articles:ft_news:77543:6ef6deebc6e9c592\nValue:",
+          "budget_usage": {
+            "max_chars": 5000,
+            "used_chars": 4532,
+            "truncated": true
+          },
+          "mode": "deterministic_plan",
+          "retrieval_channels_enabled": [
+            "entity_resolve",
+            "semantic_hybrid_search",
+            "graph_search",
+            "wiki_search",
+            "chunk_read"
+          ],
+          "retrieval_channels_used": [
+            "entity_resolve",
+            "semantic_hybrid_search",
+            "wiki_search",
+            "chunk_read"
+          ],
+          "semantic_enabled": true,
+          "milvus_enabled": true,
+          "agentic_enabled": false,
+          "planner_enabled": true,
+          "retrieval_plan": {
+            "mode": "deterministic_plan",
+            "intent": "general",
+            "entities": [
+              {
+                "text": "俄就波法联合军演发出警告",
+                "type_hint": null
+              },
+              {
+                "text": "欧洲对俄",
+                "type_hint": null
+              },
+              {
+                "text": "全面对抗正在回归",
+                "type_hint": null
+              },
+              {
+                "text": "ft",
+                "type_hint": null
+              },
+              {
+                "text": "news",
+                "type_hint": null
+              }
+            ],
+            "time_range": {
+              "preset": null,
+              "days": null,
+              "start": null,
+              "end": null
+            },
+            "relation_filters": [
+              "mentions",
+              "related_to",
+              "affects"
+            ],
+            "direction": "undirected",
+            "steps": [
+              {
+                "tool": "entity_resolve",
+                "query": "俄就波法联合军演发出警告：欧洲对俄“全面对抗正在回归” ft_news:77543",
+                "seed_node_ids": [],
+                "evidence_ids": [],
+                "depth": null,
+                "limit": null,
+                "direction": null,
+                "relation_filters": [],
+                "time_start": null,
+                "time_end": null
+              },
+              {
+                "tool": "semantic_hybrid_search",
+                "query": "俄就波法联合军演发出警告：欧洲对俄“全面对抗正在回归” ft_news:77543",
+                "seed_node_ids": [],
+                "evidence_ids": [],
+                "depth": null,
+                "limit": null,
+                "direction": null,
+                "relation_filters": [],
+                "time_start": null,
+                "time_end": null
+              },
+              {
+                "tool": "wiki_search",
+                "query": "俄就波法联合军演发出警告：欧洲对俄“全面对抗正在回归” ft_news:77543",
+                "seed_node_ids": [],
+                "evidence_ids": [],
+                "depth": null,
+                "limit": null,
+                "direction": null,
+                "relation_filters": [],
+                "time_start": null,
+                "time_end": null
+              }
+            ],
+            "warnings": []
+          },
+          "retrieval_trace": {
+            "mode": "deterministic_plan",
+            "channels_enabled": [
+              "entity_resolve",
+              "semantic_hybrid_search",
+              "graph_search",
+              "wiki_search",
+              "chunk_read"
+            ],
+            "channels_used": [
+              "entity_resolve",
+              "semantic_hybrid_search",
+              "wiki_search",
+              "chunk_read"
+            ],
+            "semantic_enabled": true,
+            "milvus_enabled": true,
+            "agentic_enabled": false,
+            "planner_enabled": true,
+            "steps": [
+              {
+                "tool": "entity_resolve",
+                "input": {
+                  "tool": "entity_resolve",
+                  "query": "俄就波法联合军演发出警告：欧洲对俄“全面对抗正在回归” ft_news:77543",
+                  "seed_node_ids": [],
+                  "evidence_ids": [],
+                  "depth": null,
+                  "limit": null,
+                  "direction": null,
+                  "relation_filters": [],
+                  "time_start": null,
+                  "time_end": null
+                },
+                "output_refs": [
+                  "kg:financial:event:bc7af8ca1c405f22"
+                ],
+                "hit_count": 1,
+                "warning": null
+              },
+              {
+                "tool": "semantic_hybrid_search",
+                "input": {
+                  "tool": "semantic_hybrid_search",
+                  "query": "俄就波法联合军演发出警告：欧洲对俄“全面对抗正在回归” ft_news:77543",
+                  "seed_node_ids": [],
+                  "evidence_ids": [],
+                  "depth": null,
+                  "limit": null,
+                  "direction": null,
+                  "relation_filters": [],
+                  "time_start": null,
+                  "time_end": null
+                },
+                "output_refs": [
+                  "kg_kv:edge:kg_edge:financial:mentions:13258b63685c36fd",
+                  "kg_kv:edge:kg_edge:financial:mentions:4bf00ab3e09cff24",
+                  "kg_kv:edge:kg_edge:financial:mentions:450e735a0883f0af",
+                  "kg_kv:edge:kg_edge:financial:mentions:9ef751f30828886f",
+                  "kg_kv:node:kg:financial:event:bc7af8ca1c405f22",
+                  "kg_kv:wiki:kg_wiki:financial:entity_page:e240caeb4fc7796b",
+                  "kg_kv:edge:kg_edge:financial:mentions:d47b623b9ab21783",
+                  "kg_kv:wiki:kg_wiki:financial:entity_page:d806c310661c229e"
+                ],
+                "hit_count": 8,
+                "warning": null
+              },
+              {
+                "tool": "wiki_search",
+                "input": {
+                  "tool": "wiki_search",
+                  "query": "俄就波法联合军演发出警告：欧洲对俄“全面对抗正在回归” ft_news:77543",
+                  "seed_node_ids": [],
+                  "evidence_ids": [],
+                  "depth": null,
+                  "limit": null,
+                  "direction": null,
+                  "relation_filters": [],
+                  "time_start": null,
+                  "time_end": null
+                },
+                "output_refs": [
+                  "kg_wiki:financial:entity_page:0510644dab7f5232",
+                  "kg_wiki:financial:entity_page:377a3a0809bfd243",
+                  "kg_wiki:financial:entity_page:42789fa2e3559377",
+                  "kg_wiki:financial:entity_page:679555c14bd454a4",
+                  "kg_wiki:financial:entity_page:d806c310661c229e",
+                  "kg_wiki:financial:entity_page:e240caeb4fc7796b",
+                  "kg_wiki:financial:relation_page:93447f0bc2efd9e4",
+                  "kg_wiki:financial:relation_page:9842cd22926948ea"
+                ],
+                "hit_count": 8,
+                "warning": null
+              },
+              {
+                "tool": "chunk_read",
+                "input": {
+                  "tool": "chunk_read",
+                  "query": null,
+                  "seed_node_ids": [],
+                  "evidence_ids": [
+                    "kg_ev:financial:news_articles:ft_news:77543:6ef6deebc6e9c592",
+                    "kg_ev:financial:l1_events:usage_demo_compile_write:event:solid_state_policy:55822125132d5247",
+                    "kg_ev:financial:derived_signal:usage_demo_compile_write:signal:catl_flow:679ea0178f8f3bce",
+                    "kg_ev:financial:news_articles:ft_news:83904:a8934858d26f15da"
+                  ],
+                  "depth": null,
+                  "limit": 20,
+                  "direction": null,
+                  "relation_filters": [],
+                  "time_start": null,
+                  "time_end": null
+                },
+                "output_refs": [
+                  "kg_ev:financial:news_articles:ft_news:77543:6ef6deebc6e9c592",
+                  "kg_ev:financial:l1_events:usage_demo_compile_write:event:solid_state_policy:55822125132d5247",
+                  "kg_ev:financial:derived_signal:usage_demo_compile_write:signal:catl_flow:679ea0178f8f3bce",
+                  "kg_ev:financial:news_articles:ft_news:83904:a8934858d26f15da"
+                ],
+                "hit_count": 4,
+                "warning": null
+              }
+            ],
+            "warnings": []
+          },
+          "warnings": []
+        }
+      }
+    ]
+  }
+}

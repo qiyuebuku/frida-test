@@ -9,10 +9,11 @@
 - TradingAppService: 3 个交易决策 use case
 - ReflectionAppService: 1 个复盘 use case
 """
-from src.application.services.collection_app_service import CollectionAppService
-from src.application.services.extraction_app_service import ExtractionAppService
-from src.application.services.reflection_app_service import ReflectionAppService
-from src.application.services.trading_app_service import TradingAppService
+
+from __future__ import annotations
+
+from typing import Any
+
 
 __all__ = [
     "CollectionAppService",
@@ -20,3 +21,29 @@ __all__ = [
     "TradingAppService",
     "ReflectionAppService",
 ]
+
+
+def __getattr__(name: str) -> Any:
+    """Lazy-load app services to avoid importing unrelated infrastructure deps.
+
+    Importing a submodule such as ``src.application.services.knowledge_service`` must
+    not require optional dependencies from collection/trading services.
+    """
+
+    if name == "CollectionAppService":
+        from src.application.services.collection_app_service import CollectionAppService
+
+        return CollectionAppService
+    if name == "ExtractionAppService":
+        from src.application.services.extraction_app_service import ExtractionAppService
+
+        return ExtractionAppService
+    if name == "TradingAppService":
+        from src.application.services.trading_app_service import TradingAppService
+
+        return TradingAppService
+    if name == "ReflectionAppService":
+        from src.application.services.reflection_app_service import ReflectionAppService
+
+        return ReflectionAppService
+    raise AttributeError(name)

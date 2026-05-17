@@ -53,13 +53,13 @@ def test_wiki_and_indexes_are_rebuildable_from_fact_store() -> None:
     _cleanup()
     repo = KnowledgeRepositoryImpl(target="test")
     records = json.loads((FIXTURE_DIR / "toy_records.json").read_text(encoding="utf-8"))
-    compile_result = KnowledgeCompiler(repository=repo).compile(ToyProjectAdapter(), records)
+    compile_result = _compile_toy(repo, records)
 
     service = KnowledgeService(repository=repo)
     wiki_result = asyncio.run(service.rebuild_wiki("toy"))
     index_counts = asyncio.run(service.rebuild_indexes("toy"))
 
-    assert len(wiki_result.pages) == 5
+    assert len(wiki_result.pages) == 8
     assert index_counts == {"graph_adjacency": 3, "evidence_chunks": 1}
     assert repo.search_wiki_pages("toy", "Alpha", limit=10)
     assert repo.get_neighbors(compile_result.edges[0].source_node_id, adapter_name="toy")
@@ -68,14 +68,19 @@ def test_wiki_and_indexes_are_rebuildable_from_fact_store() -> None:
         session.execute(delete(KnowledgeWikiPage).where(KnowledgeWikiPage.adapter_name == "toy"))
 
     rebuilt = asyncio.run(service.rebuild_wiki("toy"))
-    assert len(rebuilt.pages) == 5
-    assert len(repo.list_wiki_pages("toy")) == 5
+    assert len(rebuilt.pages) == 8
+    assert len(repo.list_wiki_pages("toy")) == 8
 
     _cleanup()
 
 
 def _ensure_tables() -> None:
     Base.metadata.create_all(get_engine("test"), tables=KG_TABLES)
+
+
+def _compile_toy(repo: KnowledgeRepositoryImpl, records: list[dict]):
+    adapter = ToyProjectAdapter()
+    return asyncio.run(KnowledgeCompiler(repository=repo).compile(adapter, adapter.normalize(records)))
 
 
 def _cleanup() -> None:

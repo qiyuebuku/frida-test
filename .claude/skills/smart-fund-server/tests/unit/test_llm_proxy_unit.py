@@ -284,12 +284,23 @@ def test_chat_completion_helpers_map_messages_and_schema():
         )
     )
 
-    usage = llm_proxy._normalize_usage({"input_tokens": 3, "output_tokens": 2})
+    usage = llm_proxy._normalize_usage(
+        {
+            "input_tokens": 3,
+            "output_tokens": 2,
+            "prompt_cache_hit_tokens": 1,
+            "prompt_cache_miss_tokens": 2,
+            "reasoning_tokens": 0,
+        }
+    )
 
     assert system_prompt == "你只返回 JSON"
     assert prompt == "USER:\n给我一个结果"
     assert schema["type"] == "object"
     assert usage["total_tokens"] == 5
+    assert usage["prompt_cache_hit_tokens"] == 1
+    assert usage["prompt_cache_miss_tokens"] == 2
+    assert usage["completion_tokens_details"] == {"reasoning_tokens": 0}
 
 
 def test_embeddings_endpoint_maps_remote_embedding_service(monkeypatch):
@@ -304,6 +315,9 @@ def test_embeddings_endpoint_maps_remote_embedding_service(monkeypatch):
 
     monkeypatch.setattr(llm_proxy, "embed_texts", fake_embed_texts)
     monkeypatch.setattr(llm_proxy.settings, "EMBEDDING_DIM", 1024)
+    monkeypatch.setattr(llm_proxy.settings, "EMBEDDING_MIN_DIM", 1)
+    monkeypatch.setattr(llm_proxy.settings, "EMBEDDING_MAX_DIM", 2560)
+    monkeypatch.setattr(llm_proxy.settings, "EMBEDDING_MODEL", "/models/Qwen3-Embedding-4B")
     monkeypatch.setattr(llm_proxy.settings, "EMBEDDING_URL", "http://embedding.local")
     monkeypatch.setattr(llm_proxy.settings, "EMBEDDING_BATCH_SIZE", 32)
 

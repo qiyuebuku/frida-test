@@ -56,17 +56,34 @@ def make_evidence_id(
     evidence_type: EvidenceType,
     content: str | None,
     payload: dict[str, Any],
+    metadata: dict[str, Any] | None = None,
 ) -> str:
     _require_text(adapter_name, "adapter_name")
     _require_text(source_type, "source_type")
     _require_text(source_id, "source_id")
     evidence_value = evidence_type.value if isinstance(evidence_type, EvidenceType) else str(evidence_type)
-    identity = {
-        "evidence_type": evidence_value,
-        "content": content,
-        "payload": payload,
-    }
+    revision = _evidence_revision(payload, metadata or {})
+    if revision:
+        identity = {
+            "evidence_type": evidence_value,
+            "revision": revision,
+        }
+    else:
+        identity = {
+            "evidence_type": evidence_value,
+            "content": content,
+            "payload": payload,
+        }
     return f"kg_ev:{adapter_name}:{source_type}:{source_id}:{stable_hash(identity)}"
+
+
+def _evidence_revision(payload: dict[str, Any], metadata: dict[str, Any]) -> str | None:
+    for source in (metadata, payload):
+        for key in ("fingerprint", "source_fingerprint", "content_fingerprint"):
+            value = source.get(key)
+            if value:
+                return f"{key}:{value}"
+    return None
 
 
 def _require_text(value: str, name: str) -> None:

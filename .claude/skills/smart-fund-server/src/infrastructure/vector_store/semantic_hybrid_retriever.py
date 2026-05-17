@@ -8,6 +8,8 @@ import re
 from typing import Any
 
 from src.domain.knowledge.retrieval import RetrievalHit, RetrievalOptions, SemanticHybridRetriever
+from src.domain.knowledge.retrieval_document import RetrievalDocument
+from src.domain.knowledge.retrieval_profile import profile_event, profile_span
 from src.domain.knowledge.schemas import CompiledEdge, CompiledNode, EvidenceChunk
 from src.domain.knowledge.wiki import WikiPage
 from src.infrastructure.clients.embedding import embed_texts
@@ -26,22 +28,34 @@ class MilvusSemanticHybridRetriever(SemanticHybridRetriever):
 
     def __init__(self, store: MilvusHybridStore | None = None):
         self.store = store or MilvusHybridStore()
-        self.store.ensure_ready()
+        with profile_span("milvus_retriever.ensure_ready"):
+            self.store.ensure_ready()
         self.enabled = True
 
     async def search(self, query: str, options: RetrievalOptions) -> list[RetrievalHit]:
-        vectors = await embed_texts([query])
+        with profile_span("semantic_hybrid.embed_query", query=query):
+            vectors = await embed_texts([query])
         query_vector = vectors[0] if vectors and vectors[0] else []
         limit = max(options.semantic_hybrid_limit, 1)
         search_limit = _candidate_limit(limit)
-        hits = self.store.hybrid_search(
-            query_text=_expanded_query_text(query),
-            query_vector=query_vector,
-            adapter_name=options.adapter_name,
-            target=options.target,
-            limit=search_limit,
+        expanded_query = _expanded_query_text(query)
+        profile_event(
+            "semantic_hybrid.query_ready",
+            query=query,
+            expanded_query=expanded_query,
+            vector_dim=len(query_vector),
+            limit=limit,
+            search_limit=search_limit,
         )
-        return [
+        with profile_span("semantic_hybrid.milvus_hybrid_search", limit=search_limit):
+            hits = self.store.hybrid_search(
+                query_text=expanded_query,
+                query_vector=query_vector,
+                adapter_name=options.adapter_name,
+                target=options.target,
+                limit=search_limit,
+            )
+        result = [
             _retrieval_hit_from_milvus_hit(
                 hit,
                 score=_reranked_score(query, hit.text, hit.score),
@@ -51,6 +65,8 @@ class MilvusSemanticHybridRetriever(SemanticHybridRetriever):
                 key=lambda item: (-_reranked_score(query, item.text, item.score), item.chunk_id),
             )[:limit]
         ]
+        profile_event("semantic_hybrid.result", raw_hits=len(hits), hits=len(result))
+        return result
 
     async def rebuild_index(
         self,
@@ -61,33 +77,57 @@ class MilvusSemanticHybridRetriever(SemanticHybridRetriever):
         nodes: list[CompiledNode] | None = None,
         edges: list[CompiledEdge] | None = None,
         wiki_pages: list[WikiPage] | None = None,
+        retrieval_documents: list[RetrievalDocument] | None = None,
         kg_version: str = "",
     ) -> int:
-        documents = _light_rag_documents(
-            chunks=chunks,
-            nodes=nodes or [],
-            edges=edges or [],
-            wiki_pages=wiki_pages or [],
-        )
+        with profile_span(
+            "semantic_hybrid.rebuild_index.build_documents",
+            chunks=len(chunks),
+            nodes=len(nodes or []),
+            edges=len(edges or []),
+            wiki_pages=len(wiki_pages or []),
+            retrieval_documents=len(retrieval_documents or []),
+        ):
+            documents = _semantic_index_documents(
+                retrieval_documents=retrieval_documents or [],
+                chunks=chunks,
+                nodes=nodes or [],
+                edges=edges or [],
+                wiki_pages=wiki_pages or [],
+            )
         if not documents:
+            with profile_span("semantic_hybrid.rebuild_index.store_replace", documents=0):
+                return self.store.replace_documents(
+                    adapter_name=adapter_name,
+                    target=target,
+                    documents=[],
+                    vectors=[],
+                    embedding_model=settings.EMBEDDING_MODEL,
+                    kg_version=kg_version,
+                )
+        _log_embedding_plan(
+            action="rebuild_index",
+            adapter_name=adapter_name,
+            target=target,
+            documents=len(documents),
+            chunks=len(chunks),
+            nodes=len(nodes or []),
+            edges=len(edges or []),
+            wiki_pages=len(wiki_pages or []),
+            retrieval_documents=len(retrieval_documents or []),
+        )
+        texts = [document.text for document in documents]
+        with profile_span("semantic_hybrid.rebuild_index.embed_documents", documents=len(documents)):
+            vectors = await embed_texts(texts)
+        with profile_span("semantic_hybrid.rebuild_index.store_replace", documents=len(documents)):
             return self.store.replace_documents(
                 adapter_name=adapter_name,
                 target=target,
-                documents=[],
-                vectors=[],
+                documents=documents,
+                vectors=vectors,
                 embedding_model=settings.EMBEDDING_MODEL,
                 kg_version=kg_version,
             )
-        texts = [document.text for document in documents]
-        vectors = await embed_texts(texts)
-        return self.store.replace_documents(
-            adapter_name=adapter_name,
-            target=target,
-            documents=documents,
-            vectors=vectors,
-            embedding_model=settings.EMBEDDING_MODEL,
-            kg_version=kg_version,
-        )
 
     async def upsert_index(
         self,
@@ -98,26 +138,95 @@ class MilvusSemanticHybridRetriever(SemanticHybridRetriever):
         nodes: list[CompiledNode] | None = None,
         edges: list[CompiledEdge] | None = None,
         wiki_pages: list[WikiPage] | None = None,
+        retrieval_documents: list[RetrievalDocument] | None = None,
         kg_version: str = "",
     ) -> int:
-        documents = _light_rag_documents(
-            chunks=chunks,
-            nodes=nodes or [],
-            edges=edges or [],
-            wiki_pages=wiki_pages or [],
-        )
+        with profile_span(
+            "semantic_hybrid.upsert_index.build_documents",
+            chunks=len(chunks),
+            nodes=len(nodes or []),
+            edges=len(edges or []),
+            wiki_pages=len(wiki_pages or []),
+            retrieval_documents=len(retrieval_documents or []),
+        ):
+            documents = _semantic_index_documents(
+                retrieval_documents=retrieval_documents or [],
+                chunks=chunks,
+                nodes=nodes or [],
+                edges=edges or [],
+                wiki_pages=wiki_pages or [],
+            )
         if not documents:
             return 0
-        texts = [document.text for document in documents]
-        vectors = await embed_texts(texts)
-        return self.store.upsert_documents(
+        _log_embedding_plan(
+            action="upsert_index",
             adapter_name=adapter_name,
             target=target,
-            documents=documents,
-            vectors=vectors,
-            embedding_model=settings.EMBEDDING_MODEL,
-            kg_version=kg_version,
+            documents=len(documents),
+            chunks=len(chunks),
+            nodes=len(nodes or []),
+            edges=len(edges or []),
+            wiki_pages=len(wiki_pages or []),
+            retrieval_documents=len(retrieval_documents or []),
         )
+        texts = [document.text for document in documents]
+        with profile_span("semantic_hybrid.upsert_index.embed_documents", documents=len(documents)):
+            vectors = await embed_texts(texts)
+        with profile_span("semantic_hybrid.upsert_index.store_upsert", documents=len(documents)):
+            return self.store.upsert_documents(
+                adapter_name=adapter_name,
+                target=target,
+                documents=documents,
+                vectors=vectors,
+                embedding_model=settings.EMBEDDING_MODEL,
+                kg_version=kg_version,
+            )
+
+    async def delete_evidence(
+        self,
+        *,
+        adapter_name: str,
+        target: str,
+        evidence_ids: list[str],
+    ) -> int:
+        unique_ids = [evidence_id for evidence_id in dict.fromkeys(evidence_ids) if evidence_id]
+        if not unique_ids:
+            return 0
+        self.store.delete_evidence(adapter_name=adapter_name, target=target, evidence_ids=unique_ids)
+        return len(unique_ids)
+
+
+def _log_embedding_plan(
+    *,
+    action: str,
+    adapter_name: str,
+    target: str,
+    documents: int,
+    chunks: int,
+    nodes: int,
+    edges: int,
+    wiki_pages: int,
+    retrieval_documents: int,
+) -> None:
+    estimated_requests = (documents + settings.EMBEDDING_BATCH_SIZE - 1) // settings.EMBEDDING_BATCH_SIZE
+    logger.info(
+        "[semantic_hybrid] %s embedding plan: adapter=%s target=%s documents=%d "
+        "estimated_post_embeddings_rounds=%d batch_size=%d dim=%d request_dimensions=%s "
+        "inputs={retrieval_documents:%d,chunks:%d,nodes:%d,edges:%d,wiki_pages:%d}",
+        action,
+        adapter_name,
+        target,
+        documents,
+        estimated_requests,
+        settings.EMBEDDING_BATCH_SIZE,
+        settings.EMBEDDING_DIM,
+        settings.EMBEDDING_REQUEST_DIMENSIONS,
+        retrieval_documents,
+        chunks,
+        nodes,
+        edges,
+        wiki_pages,
+    )
 
 
 def _reranked_score(query: str, text: str, base_score: float) -> float:
@@ -144,6 +253,54 @@ def _retrieval_hit_from_milvus_hit(hit: MilvusHybridHit, *, score: float) -> Ret
     source_type = str(hit.metadata.get("source_type") or "")
     source_id = str(hit.metadata.get("source_id") or "")
     evidence_refs = [hit.evidence_id] if hit.evidence_id else []
+    if source_type.startswith("kg_retrieval_") and source_id:
+        source_fact_type = source_type.removeprefix("kg_retrieval_")
+        if source_fact_type == "node":
+            return RetrievalHit(
+                hit_id=source_id,
+                hit_type="node",
+                title=f"node:{source_id}",
+                snippet=hit.text[:800],
+                score=score,
+                source="semantic_hybrid",
+                node_refs=[source_id],
+                evidence_refs=evidence_refs,
+                matched_fields=["retrieval_document.search_text"],
+            )
+        if source_fact_type == "edge":
+            return RetrievalHit(
+                hit_id=source_id,
+                hit_type="edge",
+                title=f"edge:{source_id}",
+                snippet=hit.text[:800],
+                score=score,
+                source="semantic_hybrid",
+                edge_refs=[source_id],
+                evidence_refs=evidence_refs,
+                matched_fields=["retrieval_document.search_text"],
+            )
+        if source_fact_type == "wiki":
+            return RetrievalHit(
+                hit_id=source_id,
+                hit_type="wiki",
+                title=f"wiki:{source_id}",
+                snippet=hit.text[:800],
+                score=score,
+                source="semantic_hybrid",
+                evidence_refs=evidence_refs,
+                matched_fields=["retrieval_document.search_text"],
+            )
+        if source_fact_type == "evidence":
+            return RetrievalHit(
+                hit_id=source_id,
+                hit_type="evidence",
+                title=f"evidence:{source_id}",
+                snippet=hit.text[:800],
+                score=score,
+                source="semantic_hybrid",
+                evidence_refs=[source_id],
+                matched_fields=["retrieval_document.search_text"],
+            )
     if source_type == "kg_node" and source_id:
         return RetrievalHit(
             hit_id=hit.chunk_id,
@@ -184,6 +341,48 @@ def _retrieval_hit_from_milvus_hit(hit: MilvusHybridHit, *, score: float) -> Ret
         score=score,
         source="semantic_hybrid",
         evidence_refs=evidence_refs,
+    )
+
+
+def _semantic_index_documents(
+    *,
+    retrieval_documents: list[RetrievalDocument],
+    chunks: list[EvidenceChunk],
+    nodes: list[CompiledNode],
+    edges: list[CompiledEdge],
+    wiki_pages: list[WikiPage],
+) -> list[MilvusHybridDocument]:
+    if retrieval_documents:
+        return [_retrieval_document_document(document) for document in retrieval_documents]
+    return _light_rag_documents(
+        chunks=chunks,
+        nodes=nodes,
+        edges=edges,
+        wiki_pages=wiki_pages,
+    )
+
+
+def _retrieval_document_document(document: RetrievalDocument) -> MilvusHybridDocument:
+    text = _join_parts(
+        [
+            f"Retrieval Key: {document.title}",
+            f"Fact Type: {document.source_fact_type}",
+            f"Answer Type: {document.answer_candidate_type}",
+            f"Aliases: {' '.join(document.aliases)}",
+            f"Key Phrases: {' '.join(document.key_phrases)}",
+            f"Relations: {' '.join(document.readable_relations)}",
+            f"Evidence Summary: {document.evidence_summary}",
+            f"Value: {document.search_text}",
+        ]
+    )
+    return MilvusHybridDocument(
+        chunk_id=document.document_id,
+        evidence_id=document.evidence_refs[0] if document.evidence_refs else "",
+        text=text,
+        metadata={
+            "source_type": f"kg_retrieval_{document.source_fact_type}",
+            "source_id": document.source_fact_id,
+        },
     )
 
 

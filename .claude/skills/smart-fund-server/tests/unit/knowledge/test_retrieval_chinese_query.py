@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from src.domain.knowledge.enums import NodeStatus
 from src.domain.knowledge.retrieval import HybridRetrievalRuntime, RetrievalOptions, _terms
+from src.domain.knowledge.retrieval_document import RetrievalDocument
 from src.domain.knowledge.schemas import CompiledNode
 
 
@@ -20,6 +21,22 @@ class _Repo:
                 version="v1",
             )
         ]
+
+    def search_retrieval_documents(self, adapter_name: str, query: str, *, target: str = "prod", limit: int = 20):
+        assert adapter_name == "financial"
+        return [
+            RetrievalDocument(
+                document_id="kg_rdoc:prod:node:kg:financial:concept:ma",
+                adapter_name="financial",
+                source_fact_type="node",
+                source_fact_id="kg:financial:concept:ma",
+                title="并购重组",
+                search_text="并购重组 对 行业 影响",
+                key_phrases=["并购重组", "行业", "影响"],
+                node_refs=["kg:financial:concept:ma"],
+                answer_candidate_type="answer",
+            )
+        ][:limit]
 
 
 def test_chinese_query_terms_include_domain_phrase_and_bigrams() -> None:

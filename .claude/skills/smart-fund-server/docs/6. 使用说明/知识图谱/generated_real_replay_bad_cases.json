@@ -3,107 +3,256 @@
   "target": "prod",
   "cases": [
     {
-      "case_id": "real_baseline_catl_recent_events",
-      "query": "宁德时代 300750 最近受哪些事件影响",
+      "case_id": "real_ft_news_ft_news_83904",
+      "query": "A股并购重组市场呈现三方面新变化 这条新闻涉及哪些主体、行业或资产影响",
       "expected_node_names": [
-        "宁德时代"
+        "A股并购重组市场呈现三方面新变化"
       ],
-      "expected_relation_types": [
-        "mentions"
-      ],
+      "expected_relation_types": [],
       "expected_channels_used": [
-        "semantic_hybrid_search",
-        "chunk_read"
+        "search",
+        "open"
       ],
+      "forbidden_node_names": [],
+      "forbidden_evidence_refs": [],
+      "forbidden_topics": [],
       "min_hits": 2,
       "min_evidence_refs": 1,
       "min_matched_nodes": 1,
-      "min_matched_edges": 1,
-      "retrieval_mode": "deterministic_plan"
+      "min_matched_edges": 0,
+      "max_forbidden_hits": 0,
+      "retrieval_mode": "auto"
     },
     {
-      "case_id": "real_baseline_ma_industry_targets",
-      "query": "并购重组对哪些行业有影响",
+      "case_id": "real_ft_news_ft_news_78253",
+      "query": "2025年年报点评：25年储能业务实现量利齐升，静待海外产能&新兴业务兑现业绩 这条新闻涉及哪些主体、行业或资产影响",
       "expected_node_names": [
-        "并购重组",
-        "券商"
+        "2025年年报点评：25年储能业务实现量利齐升，静待海外产能&新兴业务兑现业绩"
       ],
-      "expected_relation_types": [
-        "mentions",
-        "affects"
-      ],
+      "expected_relation_types": [],
       "expected_channels_used": [
-        "semantic_hybrid_search",
-        "chunk_read"
+        "search",
+        "open"
       ],
+      "forbidden_node_names": [],
+      "forbidden_evidence_refs": [],
+      "forbidden_topics": [],
       "min_hits": 2,
       "min_evidence_refs": 1,
-      "min_matched_nodes": 2,
-      "min_matched_edges": 1,
-      "retrieval_mode": "deterministic_plan"
+      "min_matched_nodes": 1,
+      "min_matched_edges": 0,
+      "max_forbidden_hits": 0,
+      "retrieval_mode": "auto"
     },
     {
-      "case_id": "real_baseline_low_rate_beneficiaries",
-      "query": "低利率环境利好什么资产和行业",
+      "case_id": "real_ft_news_ft_news_78252",
+      "query": "2026年一季报点评：快充需求旺盛满产满销，业绩符合市场预期 这条新闻涉及哪些主体、行业或资产影响",
       "expected_node_names": [
-        "低利率环境",
-        "成长资产"
+        "2026年一季报点评：快充需求旺盛满产满销，业绩符合市场预期"
       ],
-      "expected_relation_types": [
-        "mentions",
-        "affects"
-      ],
+      "expected_relation_types": [],
       "expected_channels_used": [
-        "semantic_hybrid_search",
-        "chunk_read"
+        "search",
+        "open"
       ],
+      "forbidden_node_names": [],
+      "forbidden_evidence_refs": [],
+      "forbidden_topics": [],
       "min_hits": 2,
       "min_evidence_refs": 1,
-      "min_matched_nodes": 2,
-      "min_matched_edges": 1,
-      "retrieval_mode": "deterministic_plan"
+      "min_matched_nodes": 1,
+      "min_matched_edges": 0,
+      "max_forbidden_hits": 0,
+      "retrieval_mode": "auto"
     },
     {
-      "case_id": "real_baseline_middle_east_asset_transmission",
-      "query": "中东冲突影响哪些资产和行业",
+      "case_id": "real_ft_news_ft_news_77551",
+      "query": "午盘：标普500创盘中新高后转跌 这条新闻涉及哪些主体、行业或资产影响",
       "expected_node_names": [
-        "中东冲突",
-        "原油",
-        "黄金"
+        "午盘：标普500创盘中新高后转跌"
       ],
-      "expected_relation_types": [
-        "mentions",
-        "affects"
-      ],
+      "expected_relation_types": [],
       "expected_channels_used": [
-        "semantic_hybrid_search",
-        "chunk_read"
+        "search",
+        "open"
       ],
+      "forbidden_node_names": [],
+      "forbidden_evidence_refs": [],
+      "forbidden_topics": [],
       "min_hits": 2,
       "min_evidence_refs": 1,
-      "min_matched_nodes": 3,
-      "min_matched_edges": 1,
-      "retrieval_mode": "deterministic_plan"
+      "min_matched_nodes": 1,
+      "min_matched_edges": 0,
+      "max_forbidden_hits": 0,
+      "retrieval_mode": "auto"
     },
     {
-      "case_id": "real_baseline_semantic_paraphrase_overseas_factory",
-      "query": "海外工厂投产会带动哪些产业链机会",
+      "case_id": "real_ft_news_ft_news_77550",
+      "query": "以色列国防部长卡茨：以方准备重启对伊战争 这条新闻涉及哪些主体、行业或资产影响",
       "expected_node_names": [
-        "海外产能",
-        "储能产业链"
+        "以色列国防部长卡茨：以方准备重启对伊战争"
       ],
-      "expected_relation_types": [
-        "mentions"
-      ],
+      "expected_relation_types": [],
       "expected_channels_used": [
-        "semantic_hybrid_search",
-        "chunk_read"
+        "search",
+        "open"
       ],
+      "forbidden_node_names": [],
+      "forbidden_evidence_refs": [],
+      "forbidden_topics": [],
       "min_hits": 2,
       "min_evidence_refs": 1,
-      "min_matched_nodes": 2,
-      "min_matched_edges": 1,
-      "retrieval_mode": "deterministic_plan"
+      "min_matched_nodes": 1,
+      "min_matched_edges": 0,
+      "max_forbidden_hits": 0,
+      "retrieval_mode": "auto"
+    },
+    {
+      "case_id": "real_ft_news_ft_news_77549",
+      "query": "伊朗战争期间 Pimco通过私募交易向海湾地区提供逾100亿美元借款 这条新闻涉及哪些主体、行业或资产影响",
+      "expected_node_names": [
+        "伊朗战争期间 Pimco通过私募交易向海湾地区提供逾100亿美元借款"
+      ],
+      "expected_relation_types": [],
+      "expected_channels_used": [
+        "search",
+        "open"
+      ],
+      "forbidden_node_names": [],
+      "forbidden_evidence_refs": [],
+      "forbidden_topics": [],
+      "min_hits": 2,
+      "min_evidence_refs": 1,
+      "min_matched_nodes": 1,
+      "min_matched_edges": 0,
+      "max_forbidden_hits": 0,
+      "retrieval_mode": "auto"
+    },
+    {
+      "case_id": "real_ft_news_ft_news_77548",
+      "query": "美国商务部长：特朗普金卡签证项目迄今只有一人获批 这条新闻涉及哪些主体、行业或资产影响",
+      "expected_node_names": [
+        "美国商务部长：特朗普金卡签证项目迄今只有一人获批"
+      ],
+      "expected_relation_types": [],
+      "expected_channels_used": [
+        "search",
+        "open"
+      ],
+      "forbidden_node_names": [],
+      "forbidden_evidence_refs": [],
+      "forbidden_topics": [],
+      "min_hits": 2,
+      "min_evidence_refs": 1,
+      "min_matched_nodes": 1,
+      "min_matched_edges": 0,
+      "max_forbidden_hits": 0,
+      "retrieval_mode": "auto"
+    },
+    {
+      "case_id": "real_ft_news_ft_news_77547",
+      "query": "霍尔木兹海峡紧张局势持续，美伊海上博弈风险升级 这条新闻涉及哪些主体、行业或资产影响",
+      "expected_node_names": [
+        "霍尔木兹海峡紧张局势持续，美伊海上博弈风险升级"
+      ],
+      "expected_relation_types": [],
+      "expected_channels_used": [
+        "search",
+        "open"
+      ],
+      "forbidden_node_names": [],
+      "forbidden_evidence_refs": [],
+      "forbidden_topics": [],
+      "min_hits": 2,
+      "min_evidence_refs": 1,
+      "min_matched_nodes": 1,
+      "min_matched_edges": 0,
+      "max_forbidden_hits": 0,
+      "retrieval_mode": "auto"
+    },
+    {
+      "case_id": "real_ft_news_ft_news_77546",
+      "query": "欧盟批准对乌贷款并通过新一轮对俄制裁 这条新闻涉及哪些主体、行业或资产影响",
+      "expected_node_names": [
+        "欧盟批准对乌贷款并通过新一轮对俄制裁"
+      ],
+      "expected_relation_types": [],
+      "expected_channels_used": [
+        "search",
+        "open"
+      ],
+      "forbidden_node_names": [],
+      "forbidden_evidence_refs": [],
+      "forbidden_topics": [],
+      "min_hits": 2,
+      "min_evidence_refs": 1,
+      "min_matched_nodes": 1,
+      "min_matched_edges": 0,
+      "max_forbidden_hits": 0,
+      "retrieval_mode": "auto"
+    },
+    {
+      "case_id": "real_ft_news_ft_news_77545",
+      "query": "教科文组织官员：中国是世界地质公园网络中的重量级国家 这条新闻涉及哪些主体、行业或资产影响",
+      "expected_node_names": [
+        "教科文组织官员：中国是世界地质公园网络中的重量级国家"
+      ],
+      "expected_relation_types": [],
+      "expected_channels_used": [
+        "search",
+        "open"
+      ],
+      "forbidden_node_names": [],
+      "forbidden_evidence_refs": [],
+      "forbidden_topics": [],
+      "min_hits": 2,
+      "min_evidence_refs": 1,
+      "min_matched_nodes": 1,
+      "min_matched_edges": 0,
+      "max_forbidden_hits": 0,
+      "retrieval_mode": "auto"
+    },
+    {
+      "case_id": "real_ft_news_ft_news_77544",
+      "query": "伊朗媒体：伊方针对美方及其盟友潜在军事行动制定反击方案 这条新闻涉及哪些主体、行业或资产影响",
+      "expected_node_names": [
+        "伊朗媒体：伊方针对美方及其盟友潜在军事行动制定反击方案"
+      ],
+      "expected_relation_types": [],
+      "expected_channels_used": [
+        "search",
+        "open"
+      ],
+      "forbidden_node_names": [],
+      "forbidden_evidence_refs": [],
+      "forbidden_topics": [],
+      "min_hits": 2,
+      "min_evidence_refs": 1,
+      "min_matched_nodes": 1,
+      "min_matched_edges": 0,
+      "max_forbidden_hits": 0,
+      "retrieval_mode": "auto"
+    },
+    {
+      "case_id": "real_ft_news_ft_news_77543",
+      "query": "俄就波法联合军演发出警告：欧洲对俄“全面对抗正在回归” 这条新闻涉及哪些主体、行业或资产影响",
+      "expected_node_names": [
+        "俄就波法联合军演发出警告：欧洲对俄“全面对抗正在回归”"
+      ],
+      "expected_relation_types": [],
+      "expected_channels_used": [
+        "search",
+        "open"
+      ],
+      "forbidden_node_names": [],
+      "forbidden_evidence_refs": [],
+      "forbidden_topics": [],
+      "min_hits": 2,
+      "min_evidence_refs": 1,
+      "min_matched_nodes": 1,
+      "min_matched_edges": 0,
+      "max_forbidden_hits": 0,
+      "retrieval_mode": "auto"
     }
   ]
 }

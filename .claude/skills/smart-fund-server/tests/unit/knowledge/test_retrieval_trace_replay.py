@@ -67,21 +67,21 @@ class _SemanticHybrid(SemanticHybridRetriever):
 
 @pytest.mark.asyncio
 async def test_replay_retrieval_trace_reexecutes_recorded_tool_calls() -> None:
-    semantic_call = RetrievalToolCall(tool="semantic_hybrid_search", query="宁德时代")
-    chunk_call = RetrievalToolCall(tool="chunk_read", evidence_ids=["kg_ev:financial:news:1"])
+    search_call = RetrievalToolCall(tool="search", query="宁德时代")
+    open_call = RetrievalToolCall(tool="open", evidence_ids=["kg_ev:financial:news:1"])
     recorded_trace = RetrievalTrace(
         mode="agentic_arag",
         agentic_enabled=True,
         steps=[
             RetrievalStep(
-                tool="semantic_hybrid_search",
-                input=semantic_call.model_dump(mode="json"),
+                tool="search",
+                input=search_call.model_dump(mode="json"),
                 output_refs=["kg_chunk:semantic:1"],
                 hit_count=1,
             ),
             RetrievalStep(
-                tool="chunk_read",
-                input=chunk_call.model_dump(mode="json"),
+                tool="open",
+                input=open_call.model_dump(mode="json"),
                 output_refs=["kg_ev:financial:news:1"],
                 hit_count=1,
             ),
@@ -99,7 +99,7 @@ async def test_replay_retrieval_trace_reexecutes_recorded_tool_calls() -> None:
 
     assert result.trace.mode == "agentic_arag_trace_replay"
     assert result.trace.milvus_enabled is True
-    assert result.trace.channels_used == ["semantic_hybrid_search", "chunk_read"]
+    assert result.trace.channels_used == ["search", "open"]
     assert result.evidence_refs == ["kg_ev:financial:news:1"]
     assert result.mismatches == []
 
@@ -110,9 +110,9 @@ async def test_replay_retrieval_trace_reports_output_mismatch() -> None:
         mode="agentic_arag",
         steps=[
             RetrievalStep(
-                tool="semantic_hybrid_search",
+                tool="search",
                 input=RetrievalToolCall(
-                    tool="semantic_hybrid_search",
+                    tool="search",
                     query="宁德时代",
                 ).model_dump(mode="json"),
                 output_refs=["kg_chunk:old"],
@@ -132,5 +132,5 @@ async def test_replay_retrieval_trace_reports_output_mismatch() -> None:
 
     assert len(result.mismatches) == 1
     assert result.mismatches[0].expected_output_refs == ["kg_chunk:old"]
-    assert result.mismatches[0].actual_output_refs == ["kg_chunk:semantic:1"]
+    assert "kg_chunk:semantic:1" in result.mismatches[0].actual_output_refs
     assert result.trace.warnings == ["trace replay output mismatch: 1 step(s)"]

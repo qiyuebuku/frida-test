@@ -6,6 +6,7 @@ import pytest
 
 from src.domain.knowledge.enums import ConfidenceLabel, EdgeStatus, NodeStatus
 from src.domain.knowledge.retrieval import RetrievalOptions
+from src.domain.knowledge.retrieval_document import RetrievalDocument
 from src.domain.knowledge.schemas import CompiledEdge, CompiledNode, EvidenceChunk
 from src.domain.knowledge.wiki import WikiPage
 from src.infrastructure.vector_store import semantic_hybrid_retriever as retriever_module
@@ -54,6 +55,9 @@ class _Store:
         self.documents = kwargs["documents"]
         self.calls.append(kwargs)
         return len(self.documents)
+
+    def delete_evidence(self, **kwargs):
+        self.calls.append(kwargs)
 
 
 @pytest.mark.asyncio
@@ -199,6 +203,66 @@ async def test_upsert_index_only_writes_changed_lightrag_documents(monkeypatch) 
 
 
 @pytest.mark.asyncio
+async def test_upsert_index_prefers_retrieval_documents(monkeypatch) -> None:
+    async def fake_embed_texts(texts):
+        return [[0.1, 0.2] for _ in texts]
+
+    monkeypatch.setattr(retriever_module, "embed_texts", fake_embed_texts)
+    store = _Store()
+    retrieval_document = RetrievalDocument(
+        document_id="kg_rdoc:prod:node:kg:financial:stock:300750",
+        adapter_name="financial",
+        target="prod",
+        source_fact_type="node",
+        source_fact_id="kg:financial:stock:300750",
+        title="宁德时代",
+        search_text="宁德时代 300750 海外产能扩张 affects 储能供应链",
+        key_phrases=["宁德时代", "海外产能扩张"],
+        aliases=["300750"],
+        readable_relations=["宁德时代海外产能扩张 affects 宁德时代"],
+        evidence_refs=["kg_ev:financial:news:1"],
+        answer_candidate_type="support",
+    )
+
+    count = await MilvusSemanticHybridRetriever(store=store).upsert_index(
+        adapter_name="financial",
+        target="prod",
+        chunks=[],
+        nodes=[],
+        edges=[],
+        wiki_pages=[],
+        retrieval_documents=[retrieval_document],
+    )
+
+    assert count == 1
+    assert store.documents[0].chunk_id == retrieval_document.document_id
+    assert store.documents[0].metadata == {
+        "source_type": "kg_retrieval_node",
+        "source_id": "kg:financial:stock:300750",
+    }
+    assert "Retrieval Key: 宁德时代" in store.documents[0].text
+    assert "宁德时代海外产能扩张 affects 宁德时代" in store.documents[0].text
+
+
+@pytest.mark.asyncio
+async def test_delete_evidence_deletes_unique_evidence_ids() -> None:
+    store = _Store()
+
+    count = await MilvusSemanticHybridRetriever(store=store).delete_evidence(
+        adapter_name="financial",
+        target="prod",
+        evidence_ids=["ev:1", "ev:1", "", "ev:2"],
+    )
+
+    assert count == 2
+    assert store.calls[-1] == {
+        "adapter_name": "financial",
+        "target": "prod",
+        "evidence_ids": ["ev:1", "ev:2"],
+    }
+
+
+@pytest.mark.asyncio
 async def test_semantic_hybrid_maps_lightrag_hits_to_graph_refs(monkeypatch) -> None:
     async def fake_embed_texts(_texts):
         return [[0.1, 0.2]]
@@ -251,3 +315,37 @@ async def test_semantic_hybrid_maps_lightrag_hits_to_graph_refs(monkeypatch) -> 
     assert hits[1].edge_refs == ["kg_edge:financial:affects:catl"]
     assert hits[1].evidence_refs == ["kg_ev:financial:news:1"]
     assert hits[2].hit_type == "wiki"
+
+
+@pytest.mark.asyncio
+async def test_semantic_hybrid_maps_retrieval_document_hits_to_fact_refs(monkeypatch) -> None:
+    async def fake_embed_texts(_texts):
+        return [[0.1, 0.2]]
+
+    monkeypatch.setattr(retriever_module, "embed_texts", fake_embed_texts)
+
+    class Store(_Store):
+        def hybrid_search(self, **kwargs):
+            return [
+                MilvusHybridHit(
+                    chunk_id="kg_rdoc:prod:node:kg:financial:stock:300750",
+                    evidence_id="kg_ev:financial:news:1",
+                    text="Retrieval Key: 宁德时代\nValue: 宁德时代 300750 海外产能",
+                    score=0.9,
+                    metadata={
+                        "source_type": "kg_retrieval_node",
+                        "source_id": "kg:financial:stock:300750",
+                    },
+                )
+            ]
+
+    hits = await MilvusSemanticHybridRetriever(store=Store()).search(
+        "宁德时代 300750",
+        RetrievalOptions(adapter_name="financial", target="prod", semantic_hybrid_limit=10),
+    )
+
+    assert hits[0].hit_id == "kg:financial:stock:300750"
+    assert hits[0].hit_type == "node"
+    assert hits[0].node_refs == ["kg:financial:stock:300750"]
+    assert hits[0].evidence_refs == ["kg_ev:financial:news:1"]
+    assert hits[0].matched_fields == ["retrieval_document.search_text"]

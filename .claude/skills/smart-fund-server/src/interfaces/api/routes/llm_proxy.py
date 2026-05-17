@@ -44,6 +44,8 @@ class ChatCompletionRequest(BaseModel):
     max_tokens: int | None = Field(None)
     stream: bool = Field(False)
     response_format: ResponseFormatConfig | None = Field(None)
+    tools: list[dict[str, Any]] | None = Field(None)
+    tool_choice: str | dict[str, Any] | None = Field(None)
     metadata: dict[str, Any] | None = Field(None)
 
     model_config = ConfigDict(extra="allow")
@@ -90,6 +92,8 @@ async def chat_completions(request: ChatCompletionRequest):
                 max_tokens=request.max_tokens,
                 json_schema=json_schema,
                 response_format=request.response_format.model_dump(mode="json") if request.response_format else None,
+                tools=request.tools,
+                tool_choice=request.tool_choice,
                 metadata=request.metadata or {},
             )
         )
@@ -108,6 +112,10 @@ async def chat_completions(request: ChatCompletionRequest):
 
     usage = _normalize_usage(result.usage)
     response_model = result.proxy.get("resolved_model") or request.model or settings.LLM_PROXY_DEFAULT_MODEL
+    raw_message = (result.raw_payload or {}).get("message") or {}
+    message = {"role": "assistant", "content": content}
+    if raw_message.get("tool_calls") is not None:
+        message["tool_calls"] = raw_message["tool_calls"]
     return {
         "id": f"chatcmpl-{uuid.uuid4().hex}",
         "object": "chat.completion",
@@ -116,8 +124,8 @@ async def chat_completions(request: ChatCompletionRequest):
         "choices": [
             {
                 "index": 0,
-                "message": {"role": "assistant", "content": content},
-                "finish_reason": "stop",
+                "message": message,
+                "finish_reason": (result.raw_payload or {}).get("finish_reason") or "stop",
             }
         ],
         "usage": usage,
@@ -141,17 +149,19 @@ async def embeddings(request: EmbeddingRequest):
         raise HTTPException(status_code=400, detail="input 必须是非空字符串或非空字符串数组")
 
     dim = request.dimensions or settings.EMBEDDING_DIM
-    if dim <= 0 or dim > settings.EMBEDDING_DIM:
+    min_dim = getattr(settings, "EMBEDDING_MIN_DIM", 32)
+    max_dim = getattr(settings, "EMBEDDING_MAX_DIM", 2560)
+    if dim < min_dim or dim > max_dim:
         raise HTTPException(
             status_code=400,
-            detail=f"dimensions 必须在 1..{settings.EMBEDDING_DIM} 范围内",
+            detail=f"dimensions 必须在 {min_dim}..{max_dim} 范围内",
         )
 
     vectors = await embed_texts(texts, dim=dim, normalize=True)
     if len(vectors) != len(texts) or any(vec is None for vec in vectors):
         raise HTTPException(status_code=502, detail="embedding 服务调用失败")
 
-    model = request.model or f"qwen3-embedding-{settings.EMBEDDING_DIM}d"
+    model = request.model or settings.EMBEDDING_MODEL
     prompt_tokens = _estimate_embedding_tokens(texts)
     return {
         "object": "list",
@@ -275,11 +285,20 @@ def _resolve_json_schema(response_format: ResponseFormatConfig | None) -> dict[s
 def _normalize_usage(usage: dict[str, Any]) -> dict[str, int]:
     prompt_tokens = int(usage.get("input_tokens", 0) or 0)
     completion_tokens = int(usage.get("output_tokens", 0) or 0)
-    return {
+    normalized = {
         "prompt_tokens": prompt_tokens,
         "completion_tokens": completion_tokens,
         "total_tokens": prompt_tokens + completion_tokens,
     }
+    if "prompt_cache_hit_tokens" in usage:
+        normalized["prompt_cache_hit_tokens"] = int(usage.get("prompt_cache_hit_tokens", 0) or 0)
+    if "prompt_cache_miss_tokens" in usage:
+        normalized["prompt_cache_miss_tokens"] = int(usage.get("prompt_cache_miss_tokens", 0) or 0)
+    if "reasoning_tokens" in usage:
+        normalized["completion_tokens_details"] = {
+            "reasoning_tokens": int(usage.get("reasoning_tokens", 0) or 0),
+        }
+    return normalized
 
 
 def _estimate_embedding_tokens(texts: list[str]) -> int:

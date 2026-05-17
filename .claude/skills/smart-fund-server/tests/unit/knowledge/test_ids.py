@@ -66,6 +66,39 @@ def test_make_evidence_id_is_stable_for_same_input() -> None:
     assert first.startswith("kg_ev:toy:note:n1:")
 
 
+def test_make_evidence_id_uses_fingerprint_as_revision_identity() -> None:
+    first = make_evidence_id(
+        "toy",
+        "note",
+        "n1",
+        EvidenceType.TEXT_SPAN,
+        "old content",
+        {"title": "old shape"},
+        {"fingerprint": "fp-1"},
+    )
+    second = make_evidence_id(
+        "toy",
+        "note",
+        "n1",
+        EvidenceType.TEXT_SPAN,
+        "new content after extraction changed",
+        {"title": "new shape", "mentioned_entities": [{"name": "Alice"}]},
+        {"fingerprint": "fp-1"},
+    )
+    changed = make_evidence_id(
+        "toy",
+        "note",
+        "n1",
+        EvidenceType.TEXT_SPAN,
+        "new content after source changed",
+        {"title": "new source content"},
+        {"fingerprint": "fp-2"},
+    )
+
+    assert first == second
+    assert first != changed
+
+
 @pytest.mark.parametrize(
     ("factory", "args"),
     [

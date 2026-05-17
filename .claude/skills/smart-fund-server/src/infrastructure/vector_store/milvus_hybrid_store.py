@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any
 
 from src.domain.knowledge.schemas import EvidenceChunk
+from src.domain.knowledge.retrieval_profile import profile_event, profile_span
 from src.infrastructure.config import settings
 
 logger = logging.getLogger(__name__)
@@ -61,14 +62,35 @@ class MilvusHybridStore:
             return False
 
     def ensure_ready(self) -> None:
-        self._load_imports()
-        self._get_client()
+        with profile_span("milvus_store.load_imports"):
+            self._load_imports()
+        with profile_span("milvus_store.get_client", uri=self.uri, collection=self.collection_name):
+            self._get_client()
+
+    def close(self) -> None:
+        if self._client is None:
+            return
+        try:
+            self._client.close()
+        except Exception:
+            logger.warning("Failed to close Milvus client", exc_info=True)
+        finally:
+            self._client = None
 
     def ensure_collection(self) -> None:
         imports = self._load_imports()
         client = self._get_client()
         if client.has_collection(self.collection_name):
-            return
+            existing_dim = _collection_dense_dim(client, self.collection_name)
+            if existing_dim in {None, self.dim}:
+                return
+            logger.warning(
+                "Milvus collection %s dense_vector dim mismatch: existing=%s configured=%s; recreating collection",
+                self.collection_name,
+                existing_dim,
+                self.dim,
+            )
+            client.drop_collection(self.collection_name)
 
         schema = client.create_schema()
         data_type = imports["DataType"]
@@ -143,24 +165,23 @@ class MilvusHybridStore:
         embedding_model: str,
         kg_version: str = "",
     ) -> int:
-        self.ensure_collection()
-        self.delete_scope(adapter_name=adapter_name, target=target)
-        rows = _document_rows(
-            adapter_name=adapter_name,
-            target=target,
-            documents=documents,
-            vectors=vectors,
-            embedding_model=embedding_model,
-            kg_version=kg_version,
-        )
+        with profile_span("milvus_store.replace_documents.ensure_collection", collection=self.collection_name):
+            self.ensure_collection()
+        with profile_span("milvus_store.replace_documents.delete_scope", adapter=adapter_name, target=target):
+            self.delete_scope(adapter_name=adapter_name, target=target)
+        with profile_span("milvus_store.replace_documents.build_rows", documents=len(documents)):
+            rows = _document_rows(
+                adapter_name=adapter_name,
+                target=target,
+                documents=documents,
+                vectors=vectors,
+                embedding_model=embedding_model,
+                kg_version=kg_version,
+            )
         if not rows:
             return 0
-        client = self._get_client()
-        for start in range(0, len(rows), settings.MILVUS_BATCH_SIZE):
-            client.insert(
-                collection_name=self.collection_name,
-                data=rows[start : start + settings.MILVUS_BATCH_SIZE],
-            )
+        with profile_span("milvus_store.replace_documents.insert", rows=len(rows)):
+            self._insert_rows(rows)
         return len(rows)
 
     def upsert_documents(
@@ -173,28 +194,27 @@ class MilvusHybridStore:
         embedding_model: str,
         kg_version: str = "",
     ) -> int:
-        self.ensure_collection()
-        self.delete_documents(
-            adapter_name=adapter_name,
-            target=target,
-            chunk_ids=[document.chunk_id for document in documents],
-        )
-        rows = _document_rows(
-            adapter_name=adapter_name,
-            target=target,
-            documents=documents,
-            vectors=vectors,
-            embedding_model=embedding_model,
-            kg_version=kg_version,
-        )
+        with profile_span("milvus_store.upsert_documents.ensure_collection", collection=self.collection_name):
+            self.ensure_collection()
+        with profile_span("milvus_store.upsert_documents.delete_existing", documents=len(documents)):
+            self.delete_documents(
+                adapter_name=adapter_name,
+                target=target,
+                chunk_ids=[document.chunk_id for document in documents],
+            )
+        with profile_span("milvus_store.upsert_documents.build_rows", documents=len(documents)):
+            rows = _document_rows(
+                adapter_name=adapter_name,
+                target=target,
+                documents=documents,
+                vectors=vectors,
+                embedding_model=embedding_model,
+                kg_version=kg_version,
+            )
         if not rows:
             return 0
-        client = self._get_client()
-        for start in range(0, len(rows), settings.MILVUS_BATCH_SIZE):
-            client.insert(
-                collection_name=self.collection_name,
-                data=rows[start : start + settings.MILVUS_BATCH_SIZE],
-            )
+        with profile_span("milvus_store.upsert_documents.insert", rows=len(rows)):
+            self._insert_rows(rows)
         return len(rows)
 
     def delete_scope(self, *, adapter_name: str, target: str) -> None:
@@ -213,15 +233,48 @@ class MilvusHybridStore:
         client = self._get_client()
         if not client.has_collection(self.collection_name):
             return
-        for chunk_id in chunk_ids:
+        for start in range(0, len(chunk_ids), settings.MILVUS_BATCH_SIZE):
+            batch = chunk_ids[start : start + settings.MILVUS_BATCH_SIZE]
             client.delete(
                 collection_name=self.collection_name,
-                filter=(
-                    f'adapter_name == "{_escape_filter_value(adapter_name)}" '
-                    f'and target == "{_escape_filter_value(target)}" '
-                    f'and chunk_id == "{_escape_filter_value(chunk_id)}"'
+                filter=_scoped_in_filter(
+                    adapter_name=adapter_name,
+                    target=target,
+                    field="chunk_id",
+                    values=batch,
                 ),
             )
+
+    def delete_evidence(self, *, adapter_name: str, target: str, evidence_ids: list[str]) -> None:
+        evidence_ids = [evidence_id for evidence_id in dict.fromkeys(evidence_ids) if evidence_id]
+        if not evidence_ids:
+            return
+        client = self._get_client()
+        if not client.has_collection(self.collection_name):
+            return
+        for start in range(0, len(evidence_ids), settings.MILVUS_BATCH_SIZE):
+            batch = evidence_ids[start : start + settings.MILVUS_BATCH_SIZE]
+            client.delete(
+                collection_name=self.collection_name,
+                filter=_scoped_in_filter(
+                    adapter_name=adapter_name,
+                    target=target,
+                    field="evidence_id",
+                    values=batch,
+                ),
+            )
+
+    def _insert_rows(self, rows: list[dict[str, Any]]) -> None:
+        client = self._get_client()
+        for start in range(0, len(rows), settings.MILVUS_BATCH_SIZE):
+            batch = rows[start : start + settings.MILVUS_BATCH_SIZE]
+            with profile_span(
+                "milvus_store.insert_batch",
+                batch_start=start,
+                batch_size=len(batch),
+                total=len(rows),
+            ):
+                client.insert(collection_name=self.collection_name, data=batch)
 
     def hybrid_search(
         self,
@@ -234,7 +287,8 @@ class MilvusHybridStore:
     ) -> list[MilvusHybridHit]:
         if not query_text.strip() or not query_vector:
             return []
-        self.ensure_collection()
+        with profile_span("milvus_store.ensure_collection", collection=self.collection_name):
+            self.ensure_collection()
         imports = self._load_imports()
         dense_req = imports["AnnSearchRequest"](
             data=[query_vector],
@@ -248,22 +302,31 @@ class MilvusHybridStore:
             param={"metric_type": "BM25"},
             limit=limit,
         )
-        results = self._get_client().hybrid_search(
-            collection_name=self.collection_name,
-            reqs=[dense_req, sparse_req],
-            ranker=imports["RRFRanker"](k=self.rrf_k),
-            filter=f'adapter_name == "{adapter_name}" and target == "{target}"',
+        with profile_span(
+            "milvus_store.hybrid_search_rpc",
+            collection=self.collection_name,
+            adapter=adapter_name,
+            target=target,
             limit=limit,
-            output_fields=[
-                "chunk_id",
-                "evidence_id",
-                "text",
-                "adapter_name",
-                "target",
-                "source_type",
-                "source_id",
-            ],
-        )
+            query_text_len=len(query_text),
+            vector_dim=len(query_vector),
+        ):
+            results = self._get_client().hybrid_search(
+                collection_name=self.collection_name,
+                reqs=[dense_req, sparse_req],
+                ranker=imports["RRFRanker"](k=self.rrf_k),
+                filter=f'adapter_name == "{adapter_name}" and target == "{target}"',
+                limit=limit,
+                output_fields=[
+                    "chunk_id",
+                    "evidence_id",
+                    "text",
+                    "adapter_name",
+                    "target",
+                    "source_type",
+                    "source_id",
+                ],
+            )
         hits: list[MilvusHybridHit] = []
         for hit in results[0] if results else []:
             entity = _hit_value(hit, "entity") or {}
@@ -276,10 +339,12 @@ class MilvusHybridStore:
                     metadata={key: value for key, value in entity.items() if key != "text"},
                 )
             )
+        profile_event("milvus_store.hybrid_search_result", hits=len(hits))
         return hits
 
     def _get_client(self):
         if self._client is not None:
+            profile_event("milvus_store.client_reuse", uri=self.uri)
             return self._client
         imports = self._load_imports()
         if self.uri.endswith(".db") or self.uri.startswith("./") or self.uri.startswith("/"):
@@ -287,7 +352,24 @@ class MilvusHybridStore:
         kwargs = {"uri": self.uri}
         if self.token:
             kwargs["token"] = self.token
-        self._client = imports["MilvusClient"](**kwargs)
+        # Use a dedicated client to avoid pymilvus reusing a stale Milvus Lite
+        # Unix socket kept in the process-wide connection manager.
+        kwargs["dedicated"] = True
+        profile_event("milvus_store.client_create", uri=self.uri, collection=self.collection_name)
+        for attempt in range(2):
+            try:
+                self._client = imports["MilvusClient"](**kwargs)
+                break
+            except Exception as exc:
+                self._client = None
+                if attempt > 0:
+                    raise
+                profile_event(
+                    "milvus_store.client_create_retry",
+                    uri=self.uri,
+                    error=type(exc).__name__,
+                )
+                self._close_connection_manager(imports)
         return self._client
 
     def _load_imports(self) -> dict[str, Any]:
@@ -302,10 +384,12 @@ class MilvusHybridStore:
                 MilvusClient,
                 RRFRanker,
             )
+            from pymilvus.client.connection_manager import ConnectionManager  # type: ignore
         except Exception as exc:  # pragma: no cover - depends on optional local package
             raise RuntimeError("pymilvus is required for Milvus hybrid retrieval") from exc
         self._imports = {
             "AnnSearchRequest": AnnSearchRequest,
+            "ConnectionManager": ConnectionManager,
             "DataType": DataType,
             "Function": Function,
             "FunctionType": FunctionType,
@@ -313,6 +397,12 @@ class MilvusHybridStore:
             "RRFRanker": RRFRanker,
         }
         return self._imports
+
+    def _close_connection_manager(self, imports: dict[str, Any]) -> None:
+        try:
+            imports["ConnectionManager"].get_instance().close_all()
+        except Exception:
+            logger.warning("Failed to close pymilvus connection manager", exc_info=True)
 
 
 def _content_hash(content: str) -> str:
@@ -367,6 +457,37 @@ def _document_from_chunk(chunk: EvidenceChunk) -> MilvusHybridDocument:
     )
 
 
+def _collection_dense_dim(client, collection_name: str) -> int | None:
+    describe = getattr(client, "describe_collection", None)
+    if describe is None:
+        return None
+    try:
+        info = describe(collection_name=collection_name)
+    except TypeError:
+        info = describe(collection_name)
+    except Exception:
+        logger.warning("Failed to inspect Milvus collection schema for %s", collection_name, exc_info=True)
+        return None
+    fields = info.get("fields") if isinstance(info, dict) else getattr(info, "fields", None)
+    if not isinstance(fields, list):
+        return None
+    for field in fields:
+        name = field.get("name") if isinstance(field, dict) else getattr(field, "name", None)
+        if name != "dense_vector":
+            continue
+        params = field.get("params") if isinstance(field, dict) else getattr(field, "params", None)
+        dim = None
+        if isinstance(params, dict):
+            dim = params.get("dim")
+        if dim is None and isinstance(field, dict):
+            dim = field.get("dim")
+        try:
+            return int(dim) if dim is not None else None
+        except (TypeError, ValueError):
+            return None
+    return None
+
+
 def _hit_value(hit: Any, key: str) -> Any:
     if isinstance(hit, dict):
         return hit.get(key)
@@ -378,3 +499,15 @@ def _hit_value(hit: Any, key: str) -> Any:
 
 def _escape_filter_value(value: str) -> str:
     return value.replace("\\", "\\\\").replace('"', '\\"')
+
+
+def _scoped_in_filter(*, adapter_name: str, target: str, field: str, values: list[str]) -> str:
+    scope = (
+        f'adapter_name == "{_escape_filter_value(adapter_name)}" '
+        f'and target == "{_escape_filter_value(target)}"'
+    )
+    unique_values = [value for value in dict.fromkeys(values) if value]
+    if len(unique_values) == 1:
+        return f'{scope} and {field} == "{_escape_filter_value(unique_values[0])}"'
+    quoted_values = ", ".join(f'"{_escape_filter_value(value)}"' for value in unique_values)
+    return f"{scope} and {field} in [{quoted_values}]"

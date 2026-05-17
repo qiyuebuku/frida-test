@@ -10,9 +10,11 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 from src.domain.knowledge.enums import (
     ConfidenceLabel,
     EdgeStatus,
+    EvidenceStatus,
     EvidenceType,
     InputType,
     NodeStatus,
+    RecordKind,
     ValidationSeverity,
 )
 
@@ -28,6 +30,7 @@ class KnowledgeInput(KnowledgeBaseModel):
     observed_at: datetime
     adapter_name: str
     adapter_version: str
+    record_kind: RecordKind | None = None
     payload: dict[str, Any] = Field(default_factory=dict)
     raw_text: str | None = None
     metadata: dict[str, Any] = Field(default_factory=dict)
@@ -41,6 +44,7 @@ class KnowledgeInput(KnowledgeBaseModel):
     def _has_content(self) -> "KnowledgeInput":
         if not self.payload and not _has_text(self.raw_text):
             raise ValueError("raw_text and payload cannot both be empty")
+        self.metadata.setdefault("source_ref", f"{self.source_type}:{self.source_id}")
         return self
 
 
@@ -184,6 +188,9 @@ class CompiledEvidence(KnowledgeBaseModel):
     span_end: int | None = None
     version: str
     metadata: dict[str, Any] = Field(default_factory=dict)
+    status: EvidenceStatus = EvidenceStatus.ACTIVE
+    source_fingerprint: str | None = None
+    superseded_by: str | None = None
 
     @field_validator("adapter_name", "source_type", "source_id", "version")
     @classmethod

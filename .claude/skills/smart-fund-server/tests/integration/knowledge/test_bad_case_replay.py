@@ -52,8 +52,8 @@ def test_bad_case_replay_and_rebuild_keeps_context_refs() -> None:
     _cleanup()
     repo = KnowledgeRepositoryImpl(target="test")
     records = json.loads((FIXTURE_DIR / "toy_records.json").read_text(encoding="utf-8"))
-    first = KnowledgeCompiler(repository=repo).compile(ToyProjectAdapter(), records)
-    second = KnowledgeCompiler(repository=repo).compile(ToyProjectAdapter(), records)
+    first = _compile_toy(repo, records)
+    second = _compile_toy(repo, records)
     service = KnowledgeService(repository=repo)
     asyncio.run(service.rebuild_wiki("toy"))
     asyncio.run(service.rebuild_indexes("toy"))
@@ -82,6 +82,11 @@ def test_bad_case_replay_and_rebuild_keeps_context_refs() -> None:
 
 def _ensure_tables() -> None:
     Base.metadata.create_all(get_engine("test"), tables=KG_TABLES)
+
+
+def _compile_toy(repo: KnowledgeRepositoryImpl, records: list[dict]):
+    adapter = ToyProjectAdapter()
+    return asyncio.run(KnowledgeCompiler(repository=repo).compile(adapter, adapter.normalize(records)))
 
 
 def _cleanup() -> None:

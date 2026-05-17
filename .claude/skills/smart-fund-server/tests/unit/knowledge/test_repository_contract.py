@@ -99,6 +99,8 @@ def test_repository_edge_and_evidence_value_mapping_uses_generic_schema() -> Non
     assert edge_values["confidence_label"] == "EXTRACTED"
     assert edge_values["status"] == "active"
     assert evidence_values["evidence_type"] == "text_span"
+    assert evidence_values["status"] == "active"
+    assert evidence_values["superseded_by"] is None
     assert evidence_values["metadata_"] == {}
 
 

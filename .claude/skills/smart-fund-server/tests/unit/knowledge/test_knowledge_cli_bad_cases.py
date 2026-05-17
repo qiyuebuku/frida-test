@@ -50,7 +50,7 @@ def test_financial_bad_case_suite_contains_expanded_coverage_cases() -> None:
     repo_root = Path(__file__).resolve().parents[3]
     path = (
         repo_root
-        / "docs/5. 设计方案/1. 知识图谱/bad_cases/financial_retrieval_bad_cases.json"
+        / "docs/3. 实施方案/4. 知识图谱/fixtures/financial_retrieval_bad_cases.json"
     )
 
     cases = _load_bad_case_cases(path)
