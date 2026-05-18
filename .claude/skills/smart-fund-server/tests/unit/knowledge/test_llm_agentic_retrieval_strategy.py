@@ -72,9 +72,16 @@ async def test_llm_agentic_strategy_returns_tool_call(monkeypatch) -> None:
     assert decision.search_plan.relation_intents == ["impact"]
     assert llm.requests[0].model == "deepseek-v4-pro"
     assert llm.requests[0].use_cache is True
-    prompt_payload = json.loads(llm.requests[0].prompt)
-    assert "current_date" in prompt_payload["runtime_time"]
-    assert "Do not invent numeric dates" in prompt_payload["runtime_time"]["time_rewrite_policy"]
+    assert llm.requests[0].prompt == ""
+    assert len(llm.requests[0].messages) == 3
+    stable_payload = json.loads(llm.requests[0].messages[1]["content"])
+    dynamic_payload = json.loads(llm.requests[0].messages[2]["content"])
+    assert "current_date" in stable_payload["runtime_time"]
+    assert "Do not invent numeric dates" in stable_payload["runtime_time"]["time_rewrite_policy"]
+    assert stable_payload["cache_policy"]["message_shape"] == (
+        "system + stable_task_context + dynamic_observation_context"
+    )
+    assert "working_set" in dynamic_payload
 
 
 @pytest.mark.asyncio

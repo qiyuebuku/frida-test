@@ -159,6 +159,7 @@ def _coverage_select(
     requirements = _coverage_requirements(search_plan)
     selected: list[RankedCandidate] = []
     selected_ids: set[str] = set()
+    selected_semantic_keys: set[str] = set()
     covered_terms: set[str] = set()
     used_evidence: set[str] = set()
     cluster_counts: Counter[str] = Counter()
@@ -170,11 +171,17 @@ def _coverage_select(
     background_count = 0
 
     for term in requirements:
-        candidate = _best_candidate_for_term(ranked, term, selected_ids)
+        candidate = _best_candidate_for_term(
+            ranked,
+            term,
+            selected_ids,
+            selected_semantic_keys,
+        )
         if candidate is not None:
             candidate.new_coverage_terms = [term for term in candidate.coverage_terms if term not in covered_terms]
             selected.append(candidate)
             selected_ids.add(candidate.candidate.candidate_id)
+            selected_semantic_keys.add(_selection_semantic_key(candidate))
             covered_terms.update(candidate.coverage_terms)
             used_evidence.update(candidate.candidate.evidence_refs)
             _record_cluster_selection(candidate, cluster_counts, cluster_edge_counts)
@@ -189,6 +196,8 @@ def _coverage_select(
         best_score = float("-inf")
         for candidate in ranked:
             if candidate.candidate.candidate_id in selected_ids:
+                continue
+            if _selection_semantic_key(candidate) in selected_semantic_keys:
                 continue
             role = _candidate_role(candidate.hit)
             if role == "answer" and answer_count >= answer_quota and not _adds_coverage(candidate, covered_terms):
@@ -217,6 +226,8 @@ def _coverage_select(
         if best is None:
             for candidate in ranked:
                 if candidate.candidate.candidate_id not in selected_ids:
+                    if _selection_semantic_key(candidate) in selected_semantic_keys:
+                        continue
                     if not _passes_diversity_limits(
                         candidate,
                         covered_terms=covered_terms,
@@ -233,6 +244,7 @@ def _coverage_select(
         best.new_coverage_terms = _new_coverage_terms(best, covered_terms)
         selected.append(best)
         selected_ids.add(best.candidate.candidate_id)
+        selected_semantic_keys.add(_selection_semantic_key(best))
         covered_terms.update(best.coverage_terms)
         used_evidence.update(best.candidate.evidence_refs)
         _record_cluster_selection(best, cluster_counts, cluster_edge_counts)
@@ -286,6 +298,7 @@ def _diversify_remaining_high_potential(
     limit: int,
 ) -> list[RankedCandidate]:
     selected_ids = {item.candidate.candidate_id for item in selected}
+    selected_semantic_keys = {_selection_semantic_key(item) for item in selected}
     selected_cluster_counts: Counter[str] = Counter(_candidate_cluster_key(item) for item in selected)
     selected_edge_counts: Counter[str] = Counter(
         _candidate_cluster_key(item) for item in selected if item.hit.hit_type == "edge"
@@ -297,7 +310,9 @@ def _diversify_remaining_high_potential(
     for candidate in remaining:
         if candidate.candidate.candidate_id in selected_ids:
             continue
-        semantic_key = _candidate_semantic_key(candidate)
+        semantic_key = _selection_semantic_key(candidate)
+        if semantic_key in selected_semantic_keys:
+            continue
         if semantic_key in seen_semantic_keys:
             continue
         cluster_key = _candidate_cluster_key(candidate)
@@ -334,6 +349,20 @@ def _candidate_semantic_key(candidate: RankedCandidate) -> str:
     if evidence_key and candidate.hit.hit_type in {"evidence", "wiki"}:
         return f"{candidate.hit.hit_type}:{evidence_key}:{title}"
     return f"{candidate.hit.hit_type}:{title or candidate.candidate.candidate_id}"
+
+
+def _selection_semantic_key(candidate: RankedCandidate) -> str:
+    """Collapse equivalent candidates before sending them to LLM judge.
+
+    Retrieval may surface the same fact as both a structured node and its backing
+    evidence document. They are useful as separate recall paths, but judging both
+    wastes topK budget and repeats context.
+    """
+
+    cluster = _event_cluster(candidate.hit)
+    if _candidate_role(candidate.hit) == "answer" and cluster:
+        return f"answer:{cluster}"
+    return _candidate_semantic_key(candidate)
 
 
 def _primary_evidence_ref(hit: RetrievalHit) -> str:
@@ -509,11 +538,14 @@ def _best_candidate_for_term(
     ranked: list[RankedCandidate],
     term: str,
     selected_ids: set[str],
+    selected_semantic_keys: set[str] | None = None,
 ) -> RankedCandidate | None:
+    selected_semantic_keys = selected_semantic_keys or set()
     candidates = [
         item
         for item in ranked
         if item.candidate.candidate_id not in selected_ids and term in item.coverage_terms
+        and _selection_semantic_key(item) not in selected_semantic_keys
     ]
     return candidates[0] if candidates else None
 

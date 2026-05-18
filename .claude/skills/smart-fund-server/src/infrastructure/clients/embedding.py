@@ -73,18 +73,18 @@ async def embed_texts(
             missing_texts.append(text)
 
     estimated_batches = (len(missing_texts) + EMBEDDING_BATCH_SIZE - 1) // EMBEDDING_BATCH_SIZE
-    logger.info(
-        "embedding 批量请求计划: texts=%d cache_hits=%d cache_misses=%d batch_size=%d "
-        "estimated_http_requests=%d dim=%d request_dimensions=%s file_cache=%s",
-        len(texts),
-        len(texts) - len(missing_texts),
-        len(missing_texts),
-        EMBEDDING_BATCH_SIZE,
-        estimated_batches,
-        dim,
-        EMBEDDING_REQUEST_DIMENSIONS,
-        EMBEDDING_FILE_CACHE_ENABLED,
-    )
+    # logger.info(
+    #     "embedding 批量请求计划: texts=%d cache_hits=%d cache_misses=%d batch_size=%d "
+    #     "estimated_http_requests=%d dim=%d request_dimensions=%s file_cache=%s",
+    #     len(texts),
+    #     len(texts) - len(missing_texts),
+    #     len(missing_texts),
+    #     EMBEDDING_BATCH_SIZE,
+    #     estimated_batches,
+    #     dim,
+    #     EMBEDDING_REQUEST_DIMENSIONS,
+    #     EMBEDDING_FILE_CACHE_ENABLED,
+    # )
     if not missing_texts:
         profile_event("embedding.embed_texts_result", total=len(texts), vectors=len(cached_vectors), cache_hits=len(texts))
         return cached_vectors  # type: ignore[return-value]
@@ -137,14 +137,14 @@ async def embed_texts(
             cache_hits=len(texts) - len(missing_texts),
             cache_misses=len(missing_texts),
         )
-    logger.info(
-        "embedding 文件缓存写入结果: cache_writes=%d cache_write_skips=%d failed_vectors=%d returned_dims=%s cache_dir=%s",
-        cache_writes,
-        cache_write_skips,
-        failed_vectors,
-        returned_dims,
-        EMBEDDING_FILE_CACHE_DIR,
-    )
+    # logger.info(
+    #     "embedding 文件缓存写入结果: cache_writes=%d cache_write_skips=%d failed_vectors=%d returned_dims=%s cache_dir=%s",
+    #     cache_writes,
+    #     cache_write_skips,
+    #     failed_vectors,
+    #     returned_dims,
+    #     EMBEDDING_FILE_CACHE_DIR,
+    # )
     return cached_vectors  # type: ignore[return-value]
 
 

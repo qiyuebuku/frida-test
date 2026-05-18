@@ -233,11 +233,16 @@ class AgenticRetrievalController:
         strategy: AgenticRetrievalStrategy,
         candidate_judge: CandidateJudge | None = None,
         constraints: AgenticRetrievalConstraints | None = None,
+        *,
+        bootstrap_first: bool = False,
+        trace_mode: str = "agentic_arag",
     ):
         self.registry = registry
         self.strategy = strategy
         self.candidate_judge = candidate_judge or DeterministicCandidateJudge()
         self.constraints = constraints or AgenticRetrievalConstraints()
+        self.bootstrap_first = bootstrap_first
+        self.trace_mode = trace_mode
 
     async def run(self, query: str) -> AgenticRetrievalResult:
         anchor = build_guarded_query_anchor(
@@ -253,6 +258,61 @@ class AgenticRetrievalController:
         judge_call_count = 0
         active_search_plan = RetrievalSearchPlan()
         preselect_summaries: list[dict[str, Any]] = []
+
+        if self.bootstrap_first and working_set.tool_call_count < self.constraints.max_tool_calls:
+            started = time.perf_counter()
+            bootstrap_call = RetrievalToolCall(
+                tool="search",
+                query=query,
+                limit=self.constraints.recall_pool_max_hits,
+            )
+            bootstrap_result = await self.registry.execute(bootstrap_call)
+            bootstrap_duration_ms = (time.perf_counter() - started) * 1000
+            observations.append(bootstrap_result)
+            working_set.tool_call_count += 1
+            tool_traces.append(
+                AgenticToolTrace(
+                    tool_name="search",
+                    tool_input={
+                        **bootstrap_call.model_dump(mode="json"),
+                        "mode": "bootstrap",
+                        "rewrite": False,
+                        "search_diagnostics": bootstrap_result.step.input.get("search_diagnostics", {}),
+                    },
+                    raw_candidate_count=len(bootstrap_result.hits),
+                    package_count=0,
+                    keep_count=0,
+                    weak_keep_count=0,
+                    drop_count=0,
+                    added_evidence_refs=[],
+                    decision_reason="bootstrap_raw_query_before_agent",
+                    tool_duration_ms=round(bootstrap_duration_ms, 1),
+                    auto_action="bootstrap_search",
+                    auto_action_reason="raw_query_first_recall",
+                    llm_calls_used=0,
+                    llm_call_budget=_controller_budget_for_query(
+                        query,
+                        active_search_plan,
+                        self.constraints,
+                    ),
+                    judge_top_k=0,
+                )
+            )
+            trace_agentic_event(
+                "agentic_bootstrap_search",
+                {
+                    "event_meaning": "raw query bootstrap recall ran before the LLM controller; no LLM request.",
+                    "_human_lines": [
+                        f"查询: {query}",
+                        "首轮: 使用原始 query 做 bootstrap 召回，未调用 LLM rewrite。",
+                        f"候选数: {len(bootstrap_result.hits)}",
+                    ],
+                    "query": query,
+                    "hits": _hit_summaries(bootstrap_result.hits[:10]),
+                    "search_diagnostics": bootstrap_result.step.input.get("search_diagnostics", {}),
+                    "tool_ms": round(bootstrap_duration_ms, 1),
+                },
+            )
 
         for _turn in range(self.constraints.max_turns):
             if working_set.tool_call_count >= self.constraints.max_tool_calls:
@@ -633,7 +693,7 @@ class AgenticRetrievalController:
             evidence_refs=evidence_refs,
             working_set=working_set,
             trace=RetrievalTrace(
-                mode="agentic_arag",
+                mode=self.trace_mode,
                 channels_enabled=list(self.registry.available_tools),
                 channels_used=_ordered_unique(item.tool for item in observations),
                 semantic_enabled=semantic_enabled,

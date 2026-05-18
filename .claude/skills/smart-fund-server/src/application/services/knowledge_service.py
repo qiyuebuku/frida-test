@@ -47,6 +47,9 @@ from src.application.services.knowledge_source_projection_service import (
 )
 from src.application.services.llm_agentic_retrieval_strategy import LLMAgenticRetrievalStrategy
 from src.application.services.llm_candidate_judge import LLMCandidateJudge
+from src.application.services.openai_agents_retrieval_runtime import (
+    OpenAIAgentsRetrievalRuntime,
+)
 from src.domain.knowledge.agentic_retrieval import (
     AgenticRetrievalConstraints,
     AgenticRetrievalController,
@@ -899,15 +902,35 @@ class KnowledgeService:
             repository,
             semantic_retriever=_semantic_hybrid_retriever(),
         )
-        if retrieval_mode == "agentic_arag":
+        if retrieval_mode in {"agentic_arag", "openai_agents_arag"}:
             registry = RetrievalToolRegistry(runtime, options)
-            with profile_span("kg_context.agentic_run", query=_clip_text(query, 120)):
-                agentic = await AgenticRetrievalController(
-                    registry,
-                    _agentic_retrieval_strategy(),
-                    _agentic_candidate_judge(),
-                    AgenticRetrievalConstraints(max_hits=options.max_hits),
-                ).run(query)
+            bootstrap_first = retrieval_mode == "openai_agents_arag"
+            with profile_span(
+                "kg_context.agentic_run",
+                mode=retrieval_mode,
+                bootstrap_first=bootstrap_first,
+                query=_clip_text(query, 120),
+            ):
+                if bootstrap_first:
+                    constraints = AgenticRetrievalConstraints(
+                        max_hits=options.max_hits,
+                        max_turns=12,
+                        max_tool_calls=12,
+                    )
+                    agentic = await OpenAIAgentsRetrievalRuntime(
+                        registry,
+                        _agentic_retrieval_strategy(),
+                        _agentic_candidate_judge(),
+                        constraints,
+                    ).run(query)
+                else:
+                    constraints = AgenticRetrievalConstraints(max_hits=options.max_hits)
+                    agentic = await AgenticRetrievalController(
+                        registry,
+                        _agentic_retrieval_strategy(),
+                        _agentic_candidate_judge(),
+                        constraints,
+                    ).run(query)
             hits = list(agentic.hits)
             trace = agentic.trace
             if agentic.evidence_refs and "open" not in trace.channels_used:
@@ -940,14 +963,19 @@ class KnowledgeService:
                     hits=hits,
                     options=options,
                     trace=trace,
+                    apply_judgement=retrieval_mode != "openai_agents_arag",
                 )
             _save_retrieval_trace_snapshot(
                 repository,
                 query=query,
                 options=options,
                 context=context,
-                strategy_name="agentic_arag",
-                strategy_version="rrf_feature_coverage_v1",
+                strategy_name=retrieval_mode,
+                strategy_version=(
+                    "bootstrap_first_agent_loop_v1"
+                    if bootstrap_first
+                    else "rrf_feature_coverage_v1"
+                ),
             )
             return context
         if retrieval_plan is None:

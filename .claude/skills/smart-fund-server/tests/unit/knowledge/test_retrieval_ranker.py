@@ -287,3 +287,63 @@ def test_judge_preselect_keeps_single_evidence_cluster_capped() -> None:
     assert 0 < len(result.selected) <= 5
     assert all(item.hit.evidence_refs == ["kg_ev:financial:ma"] for item in result.selected)
     assert not any("backfill_to_top_k" in item.rank_reasons for item in result.selected)
+
+
+def test_judge_preselect_collapses_same_answer_node_and_evidence() -> None:
+    hits = [
+        RetrievalHit(
+            hit_id="kg:financial:event:ma",
+            hit_type="node",
+            title="A股并购重组市场呈现三方面新变化",
+            snippet='{"type": "event"} 并购重组 新闻报道',
+            source="keyword",
+            score=100.0,
+            node_refs=["kg:financial:event:ma"],
+            evidence_refs=["kg_ev:financial:ma"],
+            matched_terms=["并购重组"],
+        ),
+        RetrievalHit(
+            hit_id="kg_ev:financial:ma",
+            hit_type="evidence",
+            title="A股并购重组市场呈现三方面新变化",
+            snippet="并购重组 新闻报道 原文摘要",
+            source="keyword",
+            score=99.0,
+            evidence_refs=["kg_ev:financial:ma"],
+            matched_terms=["并购重组"],
+        ),
+        RetrievalHit(
+            hit_id="kg:financial:event:broker",
+            hit_type="node",
+            title="券商角色升级为价值合伙人",
+            snippet='{"type": "event"} 并购重组 券商',
+            source="keyword",
+            score=90.0,
+            node_refs=["kg:financial:event:broker"],
+            evidence_refs=["kg_ev:financial:ma"],
+            matched_terms=["并购重组", "券商"],
+        ),
+    ]
+
+    result = judge_preselect(
+        hits,
+        query="A股并购重组市场呈现三方面新变化 这条新闻涉及哪些主体、行业或资产影响",
+        anchor=build_guarded_query_anchor(
+            "A股并购重组市场呈现三方面新变化 这条新闻涉及哪些主体、行业或资产影响",
+            known_nodes=[],
+        ),
+        search_plan=RetrievalSearchPlan(
+            answer_targets=["涉及的主体", "涉及的行业", "资产影响"],
+            expected_evidence=["新闻报道"],
+        ),
+        top_k_simple=8,
+        top_k_complex=8,
+        top_k_max=8,
+    )
+
+    selected_ids = {item.hit.hit_id for item in result.selected}
+    remaining_ids = {item.hit.hit_id for item in result.remaining_high_potential}
+    assert "kg:financial:event:ma" in selected_ids
+    assert "kg_ev:financial:ma" not in selected_ids
+    assert "kg:financial:event:broker" in selected_ids
+    assert "kg_ev:financial:ma" not in remaining_ids

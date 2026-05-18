@@ -63,9 +63,9 @@ class KGResearchContextRequest(BaseModel):
     query: str = Field(..., min_length=1, description="查询文本")
     adapter_name: str = Field("financial", description="adapter 名称")
     target: Target = Field("prod", description="数据库目标")
-    retrieval_mode: Literal["auto", "deterministic_plan", "agentic_arag"] = Field(
+    retrieval_mode: Literal["auto", "deterministic_plan", "agentic_arag", "openai_agents_arag"] = Field(
         "auto",
-        description="检索模式；auto 会自动路由到 deterministic_plan 或 agentic_arag",
+        description="检索模式；auto 会自动路由到 deterministic_plan 或 agentic_arag；openai_agents_arag 为 Agent SDK 方案灰度入口",
     )
     graph_depth: int = Field(3, ge=1, le=4)
     graph_limit: int = Field(20, ge=1, le=100)

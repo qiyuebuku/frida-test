@@ -13,6 +13,9 @@ dependencies = [
     "prometheus-client",
     "click>=8.0",
     "pymilvus[milvus_lite]>=2.6",
+    "openai-agents>=0.17,<1",
+    "langfuse>=3.0",
+    "openinference-instrumentation-openai-agents>=0.1",
     "setuptools<81",
 ]
 

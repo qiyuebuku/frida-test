@@ -9,8 +9,8 @@ from pydantic import Field
 from src.domain.knowledge.retrieval_anchor import QueryAnchor
 from src.domain.knowledge.schemas import KnowledgeBaseModel
 
-RetrievalMode = Literal["auto", "deterministic_plan", "agentic_arag"]
-ResolvedRetrievalMode = Literal["deterministic_plan", "agentic_arag"]
+RetrievalMode = Literal["auto", "deterministic_plan", "agentic_arag", "openai_agents_arag"]
+ResolvedRetrievalMode = Literal["deterministic_plan", "agentic_arag", "openai_agents_arag"]
 QueryComplexity = Literal["simple", "medium", "complex", "unknown"]
 
 
@@ -39,15 +39,15 @@ class QueryRoutingDecision(KnowledgeBaseModel):
 
 def fast_route(query: str, anchor: QueryAnchor, requested_mode: str | None = "auto") -> QueryRoutingDecision:
     requested = _normalize_requested_mode(requested_mode)
-    if requested in {"deterministic_plan", "agentic_arag"}:
+    if requested in {"deterministic_plan", "agentic_arag", "openai_agents_arag"}:
         return QueryRoutingDecision(
             requested_mode=requested,
             initial_mode=requested,
             final_mode=requested,
-            complexity="complex" if requested == "agentic_arag" else "simple",
+            complexity="complex" if requested in {"agentic_arag", "openai_agents_arag"} else "simple",
             confidence=1.0,
             reasons=["explicit_mode"],
-            max_tool_calls=10 if requested == "agentic_arag" else 6,
+            max_tool_calls=10 if requested in {"agentic_arag", "openai_agents_arag"} else 6,
         )
     if _has_complex_intent(query):
         complexity: QueryComplexity = "complex"
@@ -117,7 +117,7 @@ def upgrade_reason(metrics: RetrievalQualityMetrics, anchor: QueryAnchor) -> str
 
 
 def _normalize_requested_mode(value: str | None) -> RetrievalMode:
-    if value in {"deterministic_plan", "agentic_arag"}:
+    if value in {"deterministic_plan", "agentic_arag", "openai_agents_arag"}:
         return value
     return "auto"
 

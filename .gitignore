@@ -49,3 +49,4 @@ qidian/novel_kb/*
 # 采集的文档（体积大）
 scraped_docs/
 
+.claude/skills/smart-fund-server/data

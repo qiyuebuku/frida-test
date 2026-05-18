@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import math
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -77,13 +78,19 @@ class MilvusHybridStore:
         finally:
             self._client = None
 
-    def ensure_collection(self) -> None:
+    def ensure_collection(self, *, recreate_on_dim_mismatch: bool = False) -> None:
         imports = self._load_imports()
         client = self._get_client()
         if client.has_collection(self.collection_name):
             existing_dim = _collection_dense_dim(client, self.collection_name)
             if existing_dim in {None, self.dim}:
                 return
+            if not recreate_on_dim_mismatch:
+                raise RuntimeError(
+                    f"Milvus collection {self.collection_name} dense_vector dim mismatch: "
+                    f"existing={existing_dim} configured={self.dim}. "
+                    "Rebuild the semantic hybrid index before retrieval."
+                )
             logger.warning(
                 "Milvus collection %s dense_vector dim mismatch: existing=%s configured=%s; recreating collection",
                 self.collection_name,
@@ -165,8 +172,9 @@ class MilvusHybridStore:
         embedding_model: str,
         kg_version: str = "",
     ) -> int:
+        _validate_document_vectors(documents, vectors, dim=self.dim)
         with profile_span("milvus_store.replace_documents.ensure_collection", collection=self.collection_name):
-            self.ensure_collection()
+            self.ensure_collection(recreate_on_dim_mismatch=True)
         with profile_span("milvus_store.replace_documents.delete_scope", adapter=adapter_name, target=target):
             self.delete_scope(adapter_name=adapter_name, target=target)
         with profile_span("milvus_store.replace_documents.build_rows", documents=len(documents)):
@@ -194,8 +202,9 @@ class MilvusHybridStore:
         embedding_model: str,
         kg_version: str = "",
     ) -> int:
+        _validate_document_vectors(documents, vectors, dim=self.dim)
         with profile_span("milvus_store.upsert_documents.ensure_collection", collection=self.collection_name):
-            self.ensure_collection()
+            self.ensure_collection(recreate_on_dim_mismatch=True)
         with profile_span("milvus_store.upsert_documents.delete_existing", documents=len(documents)):
             self.delete_documents(
                 adapter_name=adapter_name,
@@ -287,8 +296,27 @@ class MilvusHybridStore:
     ) -> list[MilvusHybridHit]:
         if not query_text.strip() or not query_vector:
             return []
+        if not _finite_vector(query_vector):
+            logger.warning("Milvus hybrid search skipped because query vector contains NaN or Inf values")
+            return []
         with profile_span("milvus_store.ensure_collection", collection=self.collection_name):
             self.ensure_collection()
+        with profile_span("milvus_store.hybrid_search_scope_check", adapter=adapter_name, target=target):
+            if not self._scope_has_rows(adapter_name=adapter_name, target=target):
+                logger.warning(
+                    "Milvus hybrid search skipped because scoped vector index is empty: collection=%s adapter=%s target=%s. "
+                    "Rebuild the semantic hybrid index before expecting semantic_hybrid results.",
+                    self.collection_name,
+                    adapter_name,
+                    target,
+                )
+                profile_event(
+                    "milvus_store.hybrid_search_empty_scope",
+                    collection=self.collection_name,
+                    adapter=adapter_name,
+                    target=target,
+                )
+                return []
         imports = self._load_imports()
         dense_req = imports["AnnSearchRequest"](
             data=[query_vector],
@@ -302,6 +330,16 @@ class MilvusHybridStore:
             param={"metric_type": "BM25"},
             limit=limit,
         )
+        output_fields = [
+            "chunk_id",
+            "evidence_id",
+            "text",
+            "adapter_name",
+            "target",
+            "source_type",
+            "source_id",
+        ]
+        scope_filter = f'adapter_name == "{adapter_name}" and target == "{target}"'
         with profile_span(
             "milvus_store.hybrid_search_rpc",
             collection=self.collection_name,
@@ -311,22 +349,36 @@ class MilvusHybridStore:
             query_text_len=len(query_text),
             vector_dim=len(query_vector),
         ):
-            results = self._get_client().hybrid_search(
-                collection_name=self.collection_name,
-                reqs=[dense_req, sparse_req],
-                ranker=imports["RRFRanker"](k=self.rrf_k),
-                filter=f'adapter_name == "{adapter_name}" and target == "{target}"',
-                limit=limit,
-                output_fields=[
-                    "chunk_id",
-                    "evidence_id",
-                    "text",
-                    "adapter_name",
-                    "target",
-                    "source_type",
-                    "source_id",
-                ],
-            )
+            try:
+                results = self._get_client().hybrid_search(
+                    collection_name=self.collection_name,
+                    reqs=[dense_req, sparse_req],
+                    ranker=imports["RRFRanker"](k=self.rrf_k),
+                    filter=scope_filter,
+                    limit=limit,
+                    output_fields=output_fields,
+                )
+            except Exception as exc:
+                if not _is_sparse_row_error(exc):
+                    raise
+                logger.warning(
+                    "Milvus sparse BM25 hybrid search failed; falling back to dense-only search: %s",
+                    exc,
+                )
+                profile_event(
+                    "milvus_store.hybrid_search_dense_fallback",
+                    error=type(exc).__name__,
+                    reason="sparse_vector_nan_or_inf",
+                )
+                results = self._get_client().search(
+                    collection_name=self.collection_name,
+                    data=[query_vector],
+                    anns_field="dense_vector",
+                    search_params={"metric_type": self.metric_type},
+                    filter=scope_filter,
+                    limit=limit,
+                    output_fields=output_fields,
+                )
         hits: list[MilvusHybridHit] = []
         for hit in results[0] if results else []:
             entity = _hit_value(hit, "entity") or {}
@@ -341,6 +393,28 @@ class MilvusHybridStore:
             )
         profile_event("milvus_store.hybrid_search_result", hits=len(hits))
         return hits
+
+    def _scope_has_rows(self, *, adapter_name: str, target: str) -> bool:
+        client = self._get_client()
+        if not client.has_collection(self.collection_name):
+            return False
+        try:
+            rows = client.query(
+                collection_name=self.collection_name,
+                filter=f'adapter_name == "{_escape_filter_value(adapter_name)}" and target == "{_escape_filter_value(target)}"',
+                output_fields=["chunk_id"],
+                limit=1,
+            )
+        except Exception:
+            logger.warning(
+                "Failed to inspect Milvus scoped vector rows for collection=%s adapter=%s target=%s",
+                self.collection_name,
+                adapter_name,
+                target,
+                exc_info=True,
+            )
+            raise
+        return bool(rows)
 
     def _get_client(self):
         if self._client is not None:
@@ -422,8 +496,6 @@ def _document_rows(
 ) -> list[dict[str, Any]]:
     rows: list[dict[str, Any]] = []
     for document, vector in zip(documents, vectors, strict=False):
-        if not vector:
-            continue
         payload = dict(document.metadata or {})
         source_type = str(payload.get("source_type") or payload.get("source_table") or "")
         source_id = str(payload.get("source_id") or payload.get("source_pk") or "")
@@ -443,6 +515,36 @@ def _document_rows(
             }
         )
     return rows
+
+
+def _validate_document_vectors(
+    documents: list[MilvusHybridDocument],
+    vectors: list[list[float]],
+    *,
+    dim: int,
+) -> None:
+    if not documents:
+        if vectors:
+            raise ValueError(
+                f"Milvus index received {len(vectors)} vector(s) for 0 document(s); refusing inconsistent index write"
+            )
+        return
+    if len(vectors) != len(documents):
+        raise ValueError(
+            f"Milvus index vector/document count mismatch: documents={len(documents)} vectors={len(vectors)}. "
+            "Refusing to delete or replace the existing vector index."
+        )
+    invalid: list[str] = []
+    for document, vector in zip(documents, vectors, strict=True):
+        if not vector or len(vector) != dim or not _finite_vector(vector):
+            invalid.append(document.chunk_id)
+        if len(invalid) >= 5:
+            break
+    if invalid:
+        raise ValueError(
+            f"Milvus index received invalid dense vector(s): count>={len(invalid)} dim={dim} "
+            f"sample_chunk_ids={invalid}. Refusing to delete or replace the existing vector index."
+        )
 
 
 def _document_from_chunk(chunk: EvidenceChunk) -> MilvusHybridDocument:
@@ -486,6 +588,22 @@ def _collection_dense_dim(client, collection_name: str) -> int | None:
         except (TypeError, ValueError):
             return None
     return None
+
+
+def _is_sparse_row_error(exc: Exception) -> bool:
+    message = str(exc)
+    return (
+        "Invalid sparse row" in message
+        or "std::isfinite(element.val)" in message
+        or "NaN or Inf" in message
+    )
+
+
+def _finite_vector(vector: list[float]) -> bool:
+    try:
+        return all(math.isfinite(float(value)) for value in vector)
+    except (TypeError, ValueError):
+        return False
 
 
 def _hit_value(hit: Any, key: str) -> Any:

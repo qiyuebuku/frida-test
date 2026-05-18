@@ -164,7 +164,7 @@ class KnowledgeResearchContextCommand:
     query: str
     adapter_name: str = "financial"
     target: Target = "prod"
-    retrieval_mode: Literal["auto", "deterministic_plan", "agentic_arag"] = "auto"
+    retrieval_mode: Literal["auto", "deterministic_plan", "agentic_arag", "openai_agents_arag"] = "auto"
     graph_depth: int = 3
     graph_limit: int = 20
     wiki_limit: int = 10
@@ -216,7 +216,7 @@ class KnowledgeResearchContextBadCase:
     min_matched_nodes: int = 0
     min_matched_edges: int = 0
     max_forbidden_hits: int = 0
-    retrieval_mode: Literal["auto", "deterministic_plan", "agentic_arag"] = "auto"
+    retrieval_mode: Literal["auto", "deterministic_plan", "agentic_arag", "openai_agents_arag"] = "auto"
     replay_trace: bool = False
     recorded_trace: dict[str, Any] = field(default_factory=dict)
 

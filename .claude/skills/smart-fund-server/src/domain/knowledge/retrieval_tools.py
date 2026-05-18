@@ -16,7 +16,7 @@ from src.domain.knowledge.retrieval import (
 from src.domain.knowledge.retrieval_profile import profile_event, profile_span
 from src.domain.knowledge.schemas import KnowledgeBaseModel
 
-RetrievalToolName = Literal["search", "find", "open", "summarize"]
+RetrievalToolName = Literal["search", "find", "open", "summarize", "rerank"]
 
 
 class RetrievalToolCall(KnowledgeBaseModel):
@@ -30,6 +30,8 @@ class RetrievalToolCall(KnowledgeBaseModel):
     def _has_required_input(self) -> "RetrievalToolCall":
         if self.tool == "search" and not _has_text(self.query):
             raise ValueError("search requires query")
+        if self.tool == "rerank" and not _has_text(self.query):
+            raise ValueError("rerank requires query")
         if self.tool == "find" and (not _has_text(self.query) or not self.evidence_ids):
             raise ValueError("find requires query and evidence_ids")
         if self.tool == "open" and not self.evidence_ids and not self.candidate_ids:

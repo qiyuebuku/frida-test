@@ -16,6 +16,8 @@ if _env_file.exists():
             continue
         key, _, value = line.partition("=")
         key, value = key.strip(), value.strip()
+        if len(value) >= 2 and value[0] == value[-1] and value[0] in {"'", '"'}:
+            value = value[1:-1]
         if key and key not in os.environ:  # 不覆盖已设置的环境变量
             os.environ[key] = value
 
@@ -79,6 +81,15 @@ EMBEDDING_FILE_CACHE_DIR = str(
     if Path(_EMBEDDING_FILE_CACHE_DIR_RAW).is_absolute()
     else _env_file.parent / _EMBEDDING_FILE_CACHE_DIR_RAW
 )
+
+# ==================== Reranker 服务 ====================
+
+# Listwise reranker 服务，用于 KG 检索候选语义重排。
+# 该服务是检索质量链路的一部分；调用失败时由上层显式失败，不做静默降级。
+RERANKER_URL = os.getenv("RERANKER_URL", "http://119.23.227.187:8860")
+RERANKER_TIMEOUT = float(os.getenv("RERANKER_TIMEOUT", "15"))
+RERANKER_MAX_DOCUMENTS = int(os.getenv("RERANKER_MAX_DOCUMENTS", "100"))
+RERANKER_DEFAULT_TOP_N = int(os.getenv("RERANKER_DEFAULT_TOP_N", "0"))
 
 # ==================== Milvus Hybrid Retrieval ====================
 

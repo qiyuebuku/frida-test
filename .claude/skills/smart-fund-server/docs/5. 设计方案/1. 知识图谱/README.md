@@ -19,6 +19,8 @@
 | `5. Wiki与消费场景设计方案.md` | Wiki 派生层如何生成，以及投研问答、事件抽取、策略解释和复盘如何消费图谱。 |
 | `6. 检索与Query Context优化方案.md` | 第 4 篇的专项优化方案，说明如何约束图谱扩展、治理候选噪声、避免 Query Context 被无关 evidence/node/edge 污染。 |
 | `7. Agentic检索候选排序优化方案.md` | 说明 Agentic 检索中 recall pool 到 judge topK 的排序级联如何优化，重点覆盖系统级检索质量评估、写入期检索增强、关键词/BM25召回补齐、rank fusion、业务特征重排、覆盖感知选择和二批 judge。 |
+| `8. 基于OpenAI Agent驱动的检索方案.md` | 说明如何在现有投影、编译、写入和索引能力不变的前提下，新增基于 `openai-agents-python` 的检索运行时，把 keyword、semantic、graph、wiki、open、rank、judge、stop verifier 等能力封装成 Tool Kernel，由 OpenAI Agent 自主调度，并与现有固定工作流做 A/B 对比。 |
+| `9. 检索索引架构重构讨论.md` | 作为检索索引架构重构的设计侧文档，说明新增能力后系统应该长什么样、整体架构图、查询链路图、数据形态图，以及 PG 确定性查询、向量语义查询、graph 按需展开、事实归并和 reranker 的核心边界。 |
 
 ## 3. 总体设计结论
 

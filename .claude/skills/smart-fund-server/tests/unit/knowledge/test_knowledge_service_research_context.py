@@ -12,6 +12,7 @@ from src.application.dto.knowledge_dto import (
     KnowledgeResearchContextCommand,
 )
 from src.application.services import knowledge_service as knowledge_service_module
+from src.application.services import openai_agents_retrieval_runtime as openai_agents_runtime_module
 from src.application.services.knowledge_service import (
     KnowledgeService,
     _graph_time_window_for_plan,
@@ -226,6 +227,110 @@ class _StopAfterSemanticStrategy:
         return RetrievalControllerDecision(next_tool="stop", stop_reason="evidence_sufficient")
 
 
+class _BootstrapAwareStrategy:
+    def __init__(self) -> None:
+        self.first_observation_count = None
+
+    async def next_decision(self, *, query, working_set, observations, constraints):
+        if self.first_observation_count is None:
+            self.first_observation_count = len(observations)
+        if observations and observations[-1].tool == "search":
+            evidence_refs = [
+                ref
+                for hit in observations[-1].hits
+                for ref in hit.evidence_refs
+            ]
+            return RetrievalControllerDecision(
+                next_tool="open",
+                target_evidence_refs=evidence_refs[:1],
+                expected_gain="context_window",
+            )
+        return RetrievalControllerDecision(next_tool="stop", stop_reason="evidence_sufficient")
+
+
+class _ShouldNotCallStrategy:
+    async def next_decision(self, *, query, working_set, observations, constraints):  # pragma: no cover
+        raise AssertionError("hand-written controller strategy should not run in SDK branch")
+
+
+class _FakeSDK:
+    class ModelSettings:
+        def __init__(self, **kwargs):
+            self.kwargs = kwargs
+
+    class Agent:
+        def __init__(self, **kwargs):
+            self.__dict__.update(kwargs)
+
+    class Runner:
+        called = False
+
+        @classmethod
+        async def run(cls, agent, input, max_turns):
+            cls.called = True
+            await agent.tools[1](
+                evidence_ids=["kg_ev:financial:news:overseas_capacity"],
+                candidate_ids=[],
+                limit=5,
+            )
+            return type(
+                "RunResult",
+                (),
+                {
+                    "final_output": (
+                        '{"stop_reason":"fake_sdk_done",'
+                        '"selected_candidate_ids":["kg_ev:financial:news:overseas_capacity"],'
+                        '"evidence_ids":["kg_ev:financial:news:overseas_capacity"],'
+                        '"reason":"fake runner selected opened evidence"}'
+                    )
+                },
+            )()
+
+    class AsyncOpenAI:
+        def __init__(self, **kwargs):
+            self.kwargs = kwargs
+
+    class OpenAIChatCompletionsModel:
+        def __init__(self, **kwargs):
+            self.kwargs = kwargs
+
+    @staticmethod
+    def function_tool(func, **kwargs):
+        return func
+
+    @staticmethod
+    def set_tracing_disabled(disabled):
+        return None
+
+
+class _FakeRerankerClient:
+    def __init__(self, **kwargs):
+        self.kwargs = kwargs
+
+    async def rerank(self, *, query, documents, top_n=None):
+        count = min(len(documents), top_n or len(documents))
+        return type(
+            "RerankResponse",
+            (),
+            {
+                "model": "fake-reranker",
+                "latency_ms": 1.0,
+                "total_documents": len(documents),
+                "results": [
+                    type(
+                        "RerankResult",
+                        (),
+                        {
+                            "index": index,
+                            "relevance_score": 1.0 - index * 0.01,
+                        },
+                    )()
+                    for index in range(count)
+                ],
+            },
+        )()
+
+
 @pytest.mark.asyncio
 async def test_research_context_returns_financial_retrieval_plan(monkeypatch) -> None:
     monkeypatch.setattr(
@@ -355,6 +460,80 @@ async def test_research_context_auto_uses_agentic_semantic_judge_path(monkeypatc
     assert result.agentic_enabled is True
     assert result.planner_enabled is False
     assert result.retrieval_channels_used == ["search", "open"]
+
+
+@pytest.mark.asyncio
+async def test_openai_agents_mode_fails_when_sdk_is_unavailable(monkeypatch) -> None:
+    monkeypatch.setattr(
+        knowledge_service_module,
+        "_semantic_hybrid_retriever",
+        lambda: _FakeMilvusRetriever(),
+    )
+    monkeypatch.setattr(
+        knowledge_service_module,
+        "_agentic_retrieval_strategy",
+        lambda: _ShouldNotCallStrategy(),
+    )
+    monkeypatch.setattr(
+        knowledge_service_module,
+        "_agentic_candidate_judge",
+        lambda: DeterministicCandidateJudge(),
+    )
+    monkeypatch.setattr(openai_agents_runtime_module, "_load_agents_sdk", lambda: None)
+    service = KnowledgeService(repository=_Repo())
+
+    with pytest.raises(RuntimeError, match="openai-agents is not installed"):
+        await service.build_research_context_for(
+            KnowledgeResearchContextCommand(
+                query="宁德时代 300750 最近受哪些事件影响",
+                adapter_name="financial",
+                retrieval_mode="openai_agents_arag",
+                evidence_limit=5,
+            )
+        )
+
+
+@pytest.mark.asyncio
+async def test_openai_agents_mode_can_use_sdk_tool_loop(monkeypatch) -> None:
+    _FakeSDK.Runner.called = False
+    monkeypatch.setenv("KG_LANGFUSE_ENABLED", "0")
+    monkeypatch.setattr(
+        knowledge_service_module,
+        "_semantic_hybrid_retriever",
+        lambda: _FakeMilvusRetriever(),
+    )
+    monkeypatch.setattr(
+        knowledge_service_module,
+        "_agentic_retrieval_strategy",
+        lambda: _ShouldNotCallStrategy(),
+    )
+    monkeypatch.setattr(
+        knowledge_service_module,
+        "_agentic_candidate_judge",
+        lambda: DeterministicCandidateJudge(),
+    )
+    monkeypatch.setattr(openai_agents_runtime_module, "_load_agents_sdk", lambda: _FakeSDK)
+    monkeypatch.setattr(openai_agents_runtime_module, "RerankerClient", _FakeRerankerClient)
+    service = KnowledgeService(repository=_Repo())
+
+    result = await service.build_research_context_for(
+        KnowledgeResearchContextCommand(
+            query="宁德时代 300750 最近受哪些事件影响",
+            adapter_name="financial",
+            retrieval_mode="openai_agents_arag",
+            evidence_limit=5,
+        )
+    )
+
+    assert _FakeSDK.Runner.called is True
+    assert result.mode == "openai_agents_arag"
+    assert result.retrieval_channels_used == ["search", "rerank", "open"]
+    assert result.retrieval_trace["planner_enabled"] is True
+    assert result.retrieval_trace["controller_decisions"][1]["auto_action"] == "system_bootstrap"
+    assert result.retrieval_trace["controller_decisions"][2]["auto_action"] == "agent_tool"
+    assert result.retrieval_trace["controller_decisions"][-1]["auto_action"] == "agent_final"
+    assert result.retrieval_trace["candidate_judgements"] == []
+    assert result.retrieval_trace["warnings"] == []
 
 
 @pytest.mark.asyncio

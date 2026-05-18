@@ -526,6 +526,8 @@ class HybridRetrievalRuntime:
         hits: list[RetrievalHit],
         options: RetrievalOptions,
         trace: RetrievalTrace,
+        *,
+        apply_judgement: bool = True,
     ) -> AnswerContext:
         with profile_span("answer_context.build_from_hits", mode=trace.mode, hits=len(hits)):
             with profile_span("answer_context.anchor", adapter=options.adapter_name):
@@ -538,17 +540,27 @@ class HybridRetrievalRuntime:
             with profile_span("answer_context.preload_edges", adapter=options.adapter_name):
                 all_edges = self.repository.list_edges(options.adapter_name)
             with profile_span("answer_context.preload_evidence", adapter=options.adapter_name):
-                evidence_by_id = {
-                    evidence.evidence_id: evidence
-                    for evidence in self.repository.list_evidence(options.adapter_name)
-                }
-            with profile_span("answer_context.judgement_reuse", hits=len(hits)):
-                judgements, should_update_trace_judgements = _context_judgements_from_trace_or_default(
-                    trace,
-                    anchor=anchor,
-                    hits=hits,
+                list_evidence = getattr(self.repository, "list_evidence", None)
+                evidence_by_id = (
+                    {
+                        evidence.evidence_id: evidence
+                        for evidence in list_evidence(options.adapter_name)
+                    }
+                    if callable(list_evidence)
+                    else {}
                 )
-                judged_hits = filter_hits_by_judgement(hits, judgements)
+            with profile_span("answer_context.judgement_reuse", hits=len(hits), enabled=apply_judgement):
+                if apply_judgement:
+                    judgements, should_update_trace_judgements = _context_judgements_from_trace_or_default(
+                        trace,
+                        anchor=anchor,
+                        hits=hits,
+                    )
+                    judged_hits = filter_hits_by_judgement(hits, judgements)
+                else:
+                    judgements = []
+                    should_update_trace_judgements = False
+                    judged_hits = hits
             with profile_span("answer_context.metrics", hits=len(judged_hits), judgements=len(judgements)):
                 metrics = retrieval_quality_metrics(
                     anchor=anchor,

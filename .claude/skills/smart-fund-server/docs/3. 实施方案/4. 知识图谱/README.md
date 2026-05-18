@@ -18,6 +18,7 @@
 | `4. 实体标准化与规则治理技术方案.md` | 标准化规则、写入前决策、LLM 规则候选、审计和迁移。 |
 | `5. 检索与Query Context技术方案.md` | Query Anchor、三段式检索路由、候选裁判、受控图扩展、Chunk Window、Agentic Retrieval 和质量回放。 |
 | `6. Agentic检索候选排序优化技术方案.md` | Retrieval Quality Evaluation、Retrieval Document、Keyword/BM25、Rank Fusion、Feature Rerank、Coverage Selector、Stop Verifier 和排序验收。 |
+| `7. 检索索引架构重构实施方案.md` | 承接检索索引架构重构的最终设计结论，说明 PG deterministic search、Vector semantic search、Query Parser、enriched vector docs、relation preview、canonical merge、reranker、Agent graph expand 和索引一致性的实施方向。 |
 | `9. 待优化.md` | 实施偏差、降级、妥协和后续整改记录。 |
 
 ## 3. 实施规则

@@ -44,8 +44,7 @@ class LLMAgenticRetrievalStrategy(AgenticRetrievalStrategy):
         service = self._llm or get_llm_gateway_service()
         model = self._llm_model or resolve_kg_llm_model("kg_retrieval_controller")
         request = LLMProxyRequest(
-            system_prompt=_SYSTEM_PROMPT,
-            prompt=_prompt(query, working_set, observations, constraints),
+            messages=_messages(query, working_set, observations, constraints),
             model=model,
             json_schema=_DECISION_SCHEMA,
             metadata={"task": "kg_retrieval_controller", "observations": len(observations)},
@@ -128,44 +127,102 @@ def _prompt(
 ) -> str:
     return json.dumps(
         {
-            "constraints": constraints.model_dump(),
-            "available_tools": {
-                "search": "重新组织查询并多通道召回。",
-                "find": "在已知 evidence 内定位关键词或语义线索，必须指定 target_evidence_refs。",
-                "open": "打开已知 evidence 或候选的父证据/窗口，必须指定 target_evidence_refs 或 target_candidate_ids。",
-                "summarize": "压缩已验证 trace 和 evidence，不生成新事实。",
-                "stop": "证据足够或继续无收益时停止。",
+            **_stable_prompt_context(query, working_set, constraints),
+            **_dynamic_prompt_context(working_set, observations),
+        },
+        ensure_ascii=False,
+        separators=(",", ":"),
+    )
+
+
+def _messages(
+    query: str,
+    working_set: RetrievalWorkingSet,
+    observations: list[RetrievalToolResult],
+    constraints: AgenticRetrievalConstraints,
+) -> list[dict[str, str]]:
+    """Build a chat-shaped request with stable prefix for provider prompt cache.
+
+    Do not move dynamic observations into the first user message. DeepSeek's
+    prompt cache only helps when the message prefix is byte-for-byte stable.
+    """
+
+    return [
+        {"role": "system", "content": _SYSTEM_PROMPT},
+        {
+            "role": "user",
+            "content": json.dumps(
+                _stable_prompt_context(query, working_set, constraints),
+                ensure_ascii=False,
+                separators=(",", ":"),
+            ),
+        },
+        {
+            "role": "user",
+            "content": json.dumps(
+                _dynamic_prompt_context(working_set, observations),
+                ensure_ascii=False,
+                separators=(",", ":"),
+            ),
+        },
+    ]
+
+
+def _stable_prompt_context(
+    query: str,
+    working_set: RetrievalWorkingSet,
+    constraints: AgenticRetrievalConstraints,
+) -> dict[str, Any]:
+    return {
+        "constraints": constraints.model_dump(),
+        "available_tools": {
+            "search": "重新组织查询并多通道召回。",
+            "find": "在已知 evidence 内定位关键词或语义线索，必须指定 target_evidence_refs。",
+            "open": "打开已知 evidence 或候选的父证据/窗口，必须指定 target_evidence_refs 或 target_candidate_ids。",
+            "summarize": "压缩已验证 trace 和 evidence，不生成新事实。",
+            "stop": "证据足够或继续无收益时停止。",
+        },
+        "decision_contract": {
+            "search": {
+                "next_tool": "search",
+                "query_rewrites": ["query expression 1", "query expression 2"],
+                "search_plan": {
+                    "answer_targets": ["objects to answer"],
+                    "negative_boundaries": ["topics to avoid"],
+                    "expected_evidence": ["evidence or relation type expected"],
+                    "relation_intents": ["impact/beneficiary/cause/risk/etc"],
+                    "stop_condition": "what evidence is enough",
+                },
+                "expected_gain": "evidence_coverage",
             },
-            "observations": [_observation_payload(item) for item in observations[-4:]],
-            "decision_contract": {
-                "search": {
-                    "next_tool": "search",
-                    "query_rewrites": ["query expression 1", "query expression 2"],
-                    "search_plan": {
-                        "answer_targets": ["objects to answer"],
-                        "negative_boundaries": ["topics to avoid"],
-                        "expected_evidence": ["evidence or relation type expected"],
-                        "relation_intents": ["impact/beneficiary/cause/risk/etc"],
-                        "stop_condition": "what evidence is enough",
-                    },
-                    "expected_gain": "evidence_coverage",
-                },
-                "find": {
-                    "next_tool": "find",
-                    "target_evidence_refs": ["kg_ev:..."],
-                    "query_rewrites": ["term"],
-                    "expected_gain": "disambiguation",
-                },
-                "open": {
-                    "next_tool": "open",
-                    "target_evidence_refs": ["kg_ev:..."],
-                    "expected_gain": "context_window",
-                },
-                "stop": {"next_tool": "stop", "stop_reason": "evidence_sufficient"},
+            "find": {
+                "next_tool": "find",
+                "target_evidence_refs": ["kg_ev:..."],
+                "query_rewrites": ["term"],
+                "expected_gain": "disambiguation",
             },
-            "runtime_time": _runtime_time_context(),
-            "query": query,
-            "query_anchor": working_set.query_anchor.model_dump(mode="json"),
+            "open": {
+                "next_tool": "open",
+                "target_evidence_refs": ["kg_ev:..."],
+                "expected_gain": "context_window",
+            },
+            "stop": {"next_tool": "stop", "stop_reason": "evidence_sufficient"},
+        },
+        "runtime_time": _runtime_time_context(),
+        "query": query,
+        "query_anchor": working_set.query_anchor.model_dump(mode="json"),
+        "cache_policy": {
+            "message_shape": "system + stable_task_context + dynamic_observation_context",
+            "stable_prefix_rule": "历史 system 和 stable_task_context 不允许在后续轮次改写；只能追加或替换尾部 dynamic_observation_context。",
+        },
+    }
+
+
+def _dynamic_prompt_context(
+    working_set: RetrievalWorkingSet,
+    observations: list[RetrievalToolResult],
+) -> dict[str, Any]:
+    return {
             "working_set": {
                 "evidence_refs": working_set.evidence_refs,
                 "accepted": [_judgement_payload(item) for item in working_set.accepted_candidates[-8:]],
@@ -178,10 +235,7 @@ def _prompt(
                 "no_gain_rounds": working_set.no_gain_rounds,
             },
             "observations": [_observation_payload(item) for item in observations[-4:]],
-        },
-        ensure_ascii=False,
-        separators=(",", ":"),
-    )
+    }
 
 
 def _judgement_payload(item) -> dict[str, Any]:

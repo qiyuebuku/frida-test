@@ -15,7 +15,7 @@ set -e
 
 # ==================== 配置 ====================
 REMOTE_HOST="119.23.227.187"
-REMOTE_PORT="2222"
+REMOTE_PORT="1155"
 REMOTE_USER="yuyangruan"
 REMOTE_PASS="199848"
 CONDA_ENV="smart-fund"
