@@ -89,11 +89,16 @@ class _RecordingSemanticHybrid(_ManySemanticHits):
 class _ManyEvidenceRepo(_Repo):
     def get_evidence(self, evidence_id: str):
         if evidence_id.startswith("kg_ev:financial:news:"):
+            index = int(evidence_id.rsplit(":", 1)[-1])
             return self.evidence.model_copy(
                 update={
                     "evidence_id": evidence_id,
                     "source_id": evidence_id.rsplit(":", 1)[-1],
-                    "content": f"宁德时代海外产能候选 {evidence_id}",
+                    "content": (
+                        f"宁德时代海外产能候选 {evidence_id}"
+                        if index % 2 == 0
+                        else f"其他候选 {evidence_id}"
+                    ),
                 }
             )
         return super().get_evidence(evidence_id)
@@ -125,12 +130,12 @@ class _DropSemanticJudge:
         return [
             CandidateJudgement(
                 candidate_id=hit.hit_id,
-                decision="drop" if hit.hit_type == "semantic_hybrid" else "keep",
-                relevance_score=0.0 if hit.hit_type == "semantic_hybrid" else 0.9,
-                can_expand_graph=hit.hit_type != "semantic_hybrid",
-                anchor_coverage={"overall": 0.0 if hit.hit_type == "semantic_hybrid" else 0.9},
-                topic_drift=hit.hit_type == "semantic_hybrid",
-                reason="test_drop_semantic" if hit.hit_type == "semantic_hybrid" else "test_keep",
+                decision="drop" if _drop_test_hit(hit) else "keep",
+                relevance_score=0.0 if _drop_test_hit(hit) else 0.9,
+                can_expand_graph=not _drop_test_hit(hit),
+                anchor_coverage={"overall": 0.0 if _drop_test_hit(hit) else 0.9},
+                topic_drift=_drop_test_hit(hit),
+                reason="test_drop_noise" if _drop_test_hit(hit) else "test_keep",
                 judge_source="llm",
             )
             for hit in hits
@@ -150,6 +155,10 @@ def _answer(candidate_id: str) -> CandidateJudgement:
         reason_code="direct_answer",
         judge_source="llm",
     )
+
+
+def _drop_test_hit(hit: RetrievalHit) -> bool:
+    return "其他候选" in hit.snippet or hit.hit_id.endswith(":news:0")
 
 
 @pytest.mark.asyncio
@@ -173,9 +182,33 @@ async def test_agentic_controller_records_tool_trace_and_evidence_refs() -> None
     assert result.trace.milvus_enabled is True
     assert result.trace.channels_used == ["search", "open"]
     assert result.evidence_refs == ["kg_ev:financial:news:1"]
-    assert result.stop_reason == "auto_stop_context_sufficient"
-    assert [item["auto_action"] for item in result.trace.controller_decisions[-2:]] == ["open", "expand"]
-    assert result.trace.controller_decisions[-1]["stop_reason"] == "auto_stop_context_sufficient"
+    assert result.stop_reason == "evidence_sufficient"
+    assert result.trace.controller_decisions[-1]["auto_action"] == "open"
+
+
+@pytest.mark.asyncio
+async def test_agentic_controller_can_apply_scoped_search_decision() -> None:
+    controller = AgenticRetrievalController(
+        _registry(),
+        _ScriptedStrategy(
+            [
+                RetrievalControllerDecision(
+                    next_tool="scoped_search",
+                    query_rewrites=["海外产能"],
+                    target_candidate_ids=["kg:financial:stock:300750"],
+                )
+            ]
+        ),
+    )
+
+    result = await controller.run("宁德时代最近受哪些事件影响")
+
+    assert result.trace.steps[0].tool == "scoped_search"
+    assert "scoped_search" in result.trace.channels_used
+    assert result.trace.steps[0].input["search_diagnostics"]["scope"]["node_ids"] == [
+        "kg:financial:stock:300750",
+        "kg:financial:event:1",
+    ]
 
 
 @pytest.mark.asyncio
@@ -187,7 +220,7 @@ async def test_agentic_controller_does_not_invent_forced_low_level_calls() -> No
 
     assert result.trace.channels_used == ["search", "open"]
     assert result.evidence_refs == ["kg_ev:financial:news:1"]
-    assert result.stop_reason == "auto_stop_context_sufficient"
+    assert result.stop_reason == "evidence_sufficient"
 
 
 @pytest.mark.asyncio
@@ -416,13 +449,17 @@ async def test_agentic_controller_executes_multiple_search_rewrites() -> None:
         {"query": "300750 事件影响", "mode": "full", "semantic_enabled": True},
     ]
     assert result.trace.steps[0].input["query_modes"][0]["hit_count"] > 0
-    assert semantic.queries == ["宁德时代 海外产能", "300750 事件影响"]
+    assert semantic.queries == ["宁德时代 海外产能", "事件影响"]
 
 
 @pytest.mark.asyncio
 async def test_agentic_controller_keeps_dropped_candidates_out_of_context() -> None:
+    registry = RetrievalToolRegistry(
+        HybridRetrievalRuntime(_ManyEvidenceRepo(), semantic_retriever=_ManySemanticHits()),
+        RetrievalOptions(adapter_name="financial", semantic_hybrid_limit=30, max_hits=40),
+    )
     result = await AgenticRetrievalController(
-        _registry(),
+        registry,
         _SearchThenStopStrategy(),
         candidate_judge=_DropSemanticJudge(),
         constraints=AgenticRetrievalConstraints(max_tool_calls=1),
@@ -443,4 +480,4 @@ async def test_agentic_controller_backfills_evidence_from_kept_node_edges() -> N
 
     assert result.evidence_refs == ["kg_ev:financial:news:1"]
     assert result.trace.channels_used == ["search", "open"]
-    assert result.stop_reason == "auto_stop_context_sufficient"
+    assert result.stop_reason == "evidence_sufficient"

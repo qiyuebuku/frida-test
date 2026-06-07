@@ -5,9 +5,11 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
+from collections.abc import Awaitable, Callable
 from uuid import uuid4
 
 from src.domain.knowledge.adapter import DomainAdapter
+from src.domain.knowledge.chunking import build_chunks_for_compiled_evidence
 from src.domain.knowledge.evidence import EvidenceManager
 from src.domain.knowledge.relation_compiler import RelationCompiler
 from src.domain.knowledge.retrieval_profile import profile_span
@@ -15,6 +17,7 @@ from src.domain.knowledge.repositories import KnowledgeRepository
 from src.domain.knowledge.resolver import EntityResolver
 from src.domain.knowledge.schemas import (
     CompileResult,
+    CompiledEvidence,
     EdgeDraft,
     EvidenceDraft,
     FailedRecord,
@@ -26,6 +29,8 @@ from src.domain.knowledge.source_record import validate_source_record_contract
 
 logger = logging.getLogger(__name__)
 
+PreExtractionChunkMaterializer = Callable[[str, str, list[CompiledEvidence]], Awaitable[None]]
+
 
 class KnowledgeCompiler:
     def __init__(
@@ -35,6 +40,7 @@ class KnowledgeCompiler:
         relation_compiler: RelationCompiler | None = None,
         evidence_manager: EvidenceManager | None = None,
         concurrency: int = 1,
+        pre_extraction_chunk_materializer: PreExtractionChunkMaterializer | None = None,
     ):
         self.repository = repository
         self.entity_resolver = entity_resolver or EntityResolver()
@@ -43,6 +49,7 @@ class KnowledgeCompiler:
         # Controls per-record extraction concurrency. Keep it aligned with the
         # downstream LLM proxy/pool limit when adapters call remote models.
         self.concurrency = max(1, int(concurrency))
+        self.pre_extraction_chunk_materializer = pre_extraction_chunk_materializer
 
     async def compile(self, adapter: DomainAdapter, inputs: list[KnowledgeInput]) -> CompileResult:
         run_id = f"kg_run:{adapter.spec.name}:{uuid4()}"
@@ -66,6 +73,14 @@ class KnowledgeCompiler:
                 try:
                     validate_source_record_contract(item)
                     item_evidence = adapter.extract_evidence_drafts(item)
+                    compiled_item_evidence = self.evidence_manager.compile(
+                        adapter_name=adapter.spec.name,
+                        version=version,
+                        drafts=item_evidence,
+                    ).evidence
+                    item.metadata["_evidence_chunk_hints"] = _chunk_hints_for_compiled_evidence(compiled_item_evidence)
+                    if self.pre_extraction_chunk_materializer is not None and compiled_item_evidence:
+                        await self.pre_extraction_chunk_materializer(adapter.spec.name, version, compiled_item_evidence)
                     item_nodes = await adapter.extract_node_drafts(item)
                     item_edges = await adapter.extract_edge_drafts(item, item_nodes)
                 except Exception as exc:
@@ -168,10 +183,12 @@ class KnowledgeCompiler:
                     "status": "running",
                 }
             )
-        with profile_span("kg_compile.persist.upsert_nodes", nodes=len(result.nodes)):
-            self.repository.upsert_nodes(result.nodes)
         with profile_span("kg_compile.persist.upsert_evidence", evidence=len(result.evidence)):
             self.repository.upsert_evidence(result.evidence)
+        with profile_span("kg_compile.persist.upsert_evidence_chunks", evidence=len(result.evidence)):
+            self.repository.upsert_evidence_chunks(result.evidence)
+        with profile_span("kg_compile.persist.upsert_nodes", nodes=len(result.nodes)):
+            self.repository.upsert_nodes(result.nodes)
         with profile_span("kg_compile.persist.upsert_edges", edges=len(result.edges)):
             self.repository.upsert_edges(result.edges)
         with profile_span("kg_compile.persist.finish_run", run_id=result.run_id):
@@ -186,3 +203,20 @@ class KnowledgeCompiler:
                     "failed_count": len(result.failed_records),
                 },
             )
+
+
+def _chunk_hints_for_compiled_evidence(compiled_evidence: list[CompiledEvidence]) -> list[dict[str, object]]:
+    hints: list[dict[str, object]] = []
+    for evidence in compiled_evidence:
+        for chunk in build_chunks_for_compiled_evidence(evidence):
+            hints.append(
+                {
+                    "evidence_id": evidence.evidence_id,
+                    "chunk_id": chunk.chunk_id,
+                    "chunk_index": chunk.chunk_index,
+                    "start_offset": chunk.start_offset,
+                    "end_offset": chunk.end_offset,
+                    "text": chunk.content,
+                }
+            )
+    return hints

@@ -40,11 +40,11 @@ def test_judge_preselect_uses_complex_top_k_for_which_queries() -> None:
 def test_judge_preselect_promotes_answer_and_limits_background_when_possible() -> None:
     hits = [
         RetrievalHit(
-            hit_id="kg_wiki:financial:1",
-            hit_type="wiki",
+            hit_id="kg:financial:concept:1",
+            hit_type="node",
             title="快充电池",
             snippet="背景概念",
-            source="wiki",
+            source="semantic_hybrid",
             score=100.0,
         ),
         RetrievalHit(

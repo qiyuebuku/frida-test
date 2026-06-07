@@ -13,6 +13,47 @@ from src.domain.knowledge.retrieval_profile import profile_event, profile_span
 from src.infrastructure.config import settings
 
 logger = logging.getLogger(__name__)
+_EMPTY_SCOPE_WARNED: set[tuple[str, str, str]] = set()
+
+
+MILVUS_COLLECTION_CHUNK = "chunk"
+MILVUS_COLLECTION_ENTITY = "entity"
+MILVUS_COLLECTION_RELATION = "relation"
+MILVUS_COLLECTION_COMMUNITY = "community"
+MILVUS_COLLECTION_ROLES = (
+    MILVUS_COLLECTION_CHUNK,
+    MILVUS_COLLECTION_ENTITY,
+    MILVUS_COLLECTION_RELATION,
+    MILVUS_COLLECTION_COMMUNITY,
+)
+
+
+@dataclass(frozen=True)
+class MilvusCollectionRegistry:
+    chunk: str
+    entity: str
+    relation: str
+    community: str
+
+    @classmethod
+    def from_settings(cls) -> "MilvusCollectionRegistry":
+        return cls(
+            chunk=settings.MILVUS_CHUNK_COLLECTION,
+            entity=settings.MILVUS_ENTITY_COLLECTION,
+            relation=settings.MILVUS_RELATION_COLLECTION,
+            community=settings.MILVUS_COMMUNITY_COLLECTION,
+        )
+
+    def name_for(self, collection_role: str) -> str:
+        if collection_role == MILVUS_COLLECTION_CHUNK:
+            return self.chunk
+        if collection_role == MILVUS_COLLECTION_ENTITY:
+            return self.entity
+        if collection_role == MILVUS_COLLECTION_RELATION:
+            return self.relation
+        if collection_role == MILVUS_COLLECTION_COMMUNITY:
+            return self.community
+        raise ValueError(f"unsupported Milvus collection role: {collection_role}")
 
 
 @dataclass(frozen=True)
@@ -23,6 +64,10 @@ class MilvusHybridHit:
     score: float
     metadata: dict[str, Any]
 
+    @property
+    def target_id(self) -> str:
+        return str(self.metadata.get("target_id") or self.chunk_id)
+
 
 @dataclass(frozen=True)
 class MilvusHybridDocument:
@@ -30,6 +75,10 @@ class MilvusHybridDocument:
     text: str
     evidence_id: str = ""
     metadata: dict[str, Any] | None = None
+
+    @property
+    def target_id(self) -> str:
+        return str((self.metadata or {}).get("target_id") or self.chunk_id)
 
 
 class MilvusHybridStore:
@@ -83,28 +132,36 @@ class MilvusHybridStore:
         client = self._get_client()
         if client.has_collection(self.collection_name):
             existing_dim = _collection_dense_dim(client, self.collection_name)
-            if existing_dim in {None, self.dim}:
+            has_target_id = _collection_has_field(client, self.collection_name, "target_id")
+            has_metadata_json = _collection_has_field(client, self.collection_name, "metadata_json")
+            if existing_dim in {None, self.dim} and has_target_id and has_metadata_json:
                 return
             if not recreate_on_dim_mismatch:
                 raise RuntimeError(
-                    f"Milvus collection {self.collection_name} dense_vector dim mismatch: "
-                    f"existing={existing_dim} configured={self.dim}. "
+                    f"Milvus collection {self.collection_name} schema mismatch: "
+                    f"existing_dim={existing_dim} configured_dim={self.dim} "
+                    f"has_target_id={has_target_id} has_metadata_json={has_metadata_json}. "
                     "Rebuild the semantic hybrid index before retrieval."
                 )
             logger.warning(
-                "Milvus collection %s dense_vector dim mismatch: existing=%s configured=%s; recreating collection",
+                "Milvus collection %s schema mismatch: existing_dim=%s configured_dim=%s "
+                "has_target_id=%s has_metadata_json=%s; recreating collection",
                 self.collection_name,
                 existing_dim,
                 self.dim,
+                has_target_id,
+                has_metadata_json,
             )
             client.drop_collection(self.collection_name)
 
         schema = client.create_schema()
         data_type = imports["DataType"]
-        schema.add_field("chunk_id", data_type.VARCHAR, is_primary=True, max_length=220)
+        schema.add_field("target_id", data_type.VARCHAR, is_primary=True, max_length=260)
+        schema.add_field("chunk_id", data_type.VARCHAR, max_length=220)
         schema.add_field("evidence_id", data_type.VARCHAR, max_length=180)
         schema.add_field("adapter_name", data_type.VARCHAR, max_length=64)
         schema.add_field("target", data_type.VARCHAR, max_length=16)
+        schema.add_field("target_type", data_type.VARCHAR, max_length=64)
         schema.add_field("source_type", data_type.VARCHAR, max_length=80)
         schema.add_field("source_id", data_type.VARCHAR, max_length=160)
         schema.add_field("text", data_type.VARCHAR, max_length=8192, enable_analyzer=True)
@@ -113,6 +170,7 @@ class MilvusHybridStore:
         schema.add_field("content_hash", data_type.VARCHAR, max_length=64)
         schema.add_field("embedding_model", data_type.VARCHAR, max_length=80)
         schema.add_field("kg_version", data_type.VARCHAR, max_length=80)
+        schema.add_field("metadata_json", data_type.JSON)
 
         bm25_function = imports["Function"](
             name="bm25",
@@ -189,7 +247,7 @@ class MilvusHybridStore:
         if not rows:
             return 0
         with profile_span("milvus_store.replace_documents.insert", rows=len(rows)):
-            self._insert_rows(rows)
+            self._upsert_rows(rows)
         return len(rows)
 
     def upsert_documents(
@@ -205,12 +263,6 @@ class MilvusHybridStore:
         _validate_document_vectors(documents, vectors, dim=self.dim)
         with profile_span("milvus_store.upsert_documents.ensure_collection", collection=self.collection_name):
             self.ensure_collection(recreate_on_dim_mismatch=True)
-        with profile_span("milvus_store.upsert_documents.delete_existing", documents=len(documents)):
-            self.delete_documents(
-                adapter_name=adapter_name,
-                target=target,
-                chunk_ids=[document.chunk_id for document in documents],
-            )
         with profile_span("milvus_store.upsert_documents.build_rows", documents=len(documents)):
             rows = _document_rows(
                 adapter_name=adapter_name,
@@ -223,7 +275,7 @@ class MilvusHybridStore:
         if not rows:
             return 0
         with profile_span("milvus_store.upsert_documents.insert", rows=len(rows)):
-            self._insert_rows(rows)
+            self._upsert_rows(rows)
         return len(rows)
 
     def delete_scope(self, *, adapter_name: str, target: str) -> None:
@@ -249,7 +301,7 @@ class MilvusHybridStore:
                 filter=_scoped_in_filter(
                     adapter_name=adapter_name,
                     target=target,
-                    field="chunk_id",
+                    field="target_id",
                     values=batch,
                 ),
             )
@@ -273,17 +325,68 @@ class MilvusHybridStore:
                 ),
             )
 
-    def _insert_rows(self, rows: list[dict[str, Any]]) -> None:
+    def get_documents(
+        self,
+        *,
+        adapter_name: str,
+        target: str,
+        target_ids: list[str],
+    ) -> list[MilvusHybridHit]:
+        target_ids = [target_id for target_id in dict.fromkeys(target_ids) if target_id]
+        if not target_ids:
+            return []
+        with profile_span("milvus_store.get_documents.ensure_collection", collection=self.collection_name):
+            self.ensure_collection()
+        client = self._get_client()
+        if not client.has_collection(self.collection_name):
+            return []
+        output_fields = [
+            "target_id",
+            "chunk_id",
+            "evidence_id",
+            "text",
+            "adapter_name",
+            "target",
+            "target_type",
+            "source_type",
+            "source_id",
+            "metadata_json",
+        ]
+        hits: list[MilvusHybridHit] = []
+        for start in range(0, len(target_ids), settings.MILVUS_BATCH_SIZE):
+            batch = target_ids[start : start + settings.MILVUS_BATCH_SIZE]
+            with profile_span(
+                "milvus_store.get_documents.query",
+                batch_size=len(batch),
+                total=len(target_ids),
+            ):
+                rows = client.query(
+                    collection_name=self.collection_name,
+                    filter=_scoped_in_filter(
+                        adapter_name=adapter_name,
+                        target=target,
+                        field="target_id",
+                        values=batch,
+                    ),
+                    output_fields=output_fields,
+                    limit=len(batch),
+                )
+            for row in rows or []:
+                entity = row if isinstance(row, dict) else dict(row)
+                hits.append(_hit_from_entity(entity, score=1.0))
+        return hits
+
+    def _upsert_rows(self, rows: list[dict[str, Any]]) -> None:
         client = self._get_client()
         for start in range(0, len(rows), settings.MILVUS_BATCH_SIZE):
             batch = rows[start : start + settings.MILVUS_BATCH_SIZE]
             with profile_span(
-                "milvus_store.insert_batch",
+                "milvus_store.upsert_batch",
                 batch_start=start,
                 batch_size=len(batch),
                 total=len(rows),
             ):
-                client.insert(collection_name=self.collection_name, data=batch)
+                client.upsert(collection_name=self.collection_name, data=batch)
 
     def hybrid_search(
         self,
@@ -303,13 +406,7 @@ class MilvusHybridStore:
             self.ensure_collection()
         with profile_span("milvus_store.hybrid_search_scope_check", adapter=adapter_name, target=target):
             if not self._scope_has_rows(adapter_name=adapter_name, target=target):
-                logger.warning(
-                    "Milvus hybrid search skipped because scoped vector index is empty: collection=%s adapter=%s target=%s. "
-                    "Rebuild the semantic hybrid index before expecting semantic_hybrid results.",
-                    self.collection_name,
-                    adapter_name,
-                    target,
-                )
+                _log_empty_scope_once(self.collection_name, adapter_name, target)
                 profile_event(
                     "milvus_store.hybrid_search_empty_scope",
                     collection=self.collection_name,
@@ -331,13 +428,16 @@ class MilvusHybridStore:
             limit=limit,
         )
         output_fields = [
+            "target_id",
             "chunk_id",
             "evidence_id",
             "text",
             "adapter_name",
             "target",
+            "target_type",
             "source_type",
             "source_id",
+            "metadata_json",
         ]
         scope_filter = f'adapter_name == "{adapter_name}" and target == "{target}"'
         with profile_span(
@@ -383,12 +483,10 @@ class MilvusHybridStore:
         for hit in results[0] if results else []:
             entity = _hit_value(hit, "entity") or {}
             hits.append(
-                MilvusHybridHit(
-                    chunk_id=str(entity.get("chunk_id") or _hit_value(hit, "id") or ""),
-                    evidence_id=str(entity.get("evidence_id") or ""),
-                    text=str(entity.get("text") or ""),
+                _hit_from_entity(
+                    entity,
                     score=float(_hit_value(hit, "distance") or _hit_value(hit, "score") or 0.0),
-                    metadata={key: value for key, value in entity.items() if key != "text"},
+                    fallback_chunk_id=str(_hit_value(hit, "id") or ""),
                 )
             )
         profile_event("milvus_store.hybrid_search_result", hits=len(hits))
@@ -402,7 +500,7 @@ class MilvusHybridStore:
             rows = client.query(
                 collection_name=self.collection_name,
                 filter=f'adapter_name == "{_escape_filter_value(adapter_name)}" and target == "{_escape_filter_value(target)}"',
-                output_fields=["chunk_id"],
+                output_fields=["target_id"],
                 limit=1,
             )
         except Exception:
@@ -479,6 +577,145 @@ class MilvusHybridStore:
             logger.warning("Failed to close pymilvus connection manager", exc_info=True)
 
 
+class MilvusTypedHybridStore:
+    """Typed Milvus collection registry for KG semantic targets."""
+
+    def __init__(
+        self,
+        *,
+        registry: MilvusCollectionRegistry | None = None,
+        uri: str | None = None,
+        token: str | None = None,
+        dim: int | None = None,
+        metric_type: str | None = None,
+        rrf_k: int | None = None,
+    ):
+        self.registry = registry or MilvusCollectionRegistry.from_settings()
+        self._stores = {
+            role: MilvusHybridStore(
+                uri=uri,
+                token=token,
+                collection_name=self.registry.name_for(role),
+                dim=dim,
+                metric_type=metric_type,
+                rrf_k=rrf_k,
+            )
+            for role in MILVUS_COLLECTION_ROLES
+        }
+
+    @property
+    def available(self) -> bool:
+        try:
+            self.ensure_ready()
+            return True
+        except Exception:
+            return False
+
+    def ensure_ready(self) -> None:
+        for role, store in self._stores.items():
+            with profile_span("milvus_typed_store.ensure_ready", collection_role=role):
+                store.ensure_ready()
+
+    def close(self) -> None:
+        for store in self._stores.values():
+            store.close()
+
+    def store_for(self, collection_role: str) -> MilvusHybridStore:
+        try:
+            return self._stores[collection_role]
+        except KeyError as exc:
+            raise ValueError(f"unsupported Milvus collection role: {collection_role}") from exc
+
+    def hybrid_search(
+        self,
+        *,
+        collection_role: str,
+        query_text: str,
+        query_vector: list[float],
+        adapter_name: str,
+        target: str,
+        limit: int,
+    ) -> list[MilvusHybridHit]:
+        return self.store_for(collection_role).hybrid_search(
+            query_text=query_text,
+            query_vector=query_vector,
+            adapter_name=adapter_name,
+            target=target,
+            limit=limit,
+        )
+
+    def get_documents(
+        self,
+        *,
+        collection_role: str,
+        adapter_name: str,
+        target: str,
+        target_ids: list[str],
+    ) -> list[MilvusHybridHit]:
+        return self.store_for(collection_role).get_documents(
+            adapter_name=adapter_name,
+            target=target,
+            target_ids=target_ids,
+        )
+
+    def replace_documents_by_role(
+        self,
+        *,
+        adapter_name: str,
+        target: str,
+        documents_by_role: dict[str, list[MilvusHybridDocument]],
+        vectors_by_role: dict[str, list[list[float]]],
+        embedding_model: str,
+        kg_version: str = "",
+    ) -> int:
+        total = 0
+        for role in MILVUS_COLLECTION_ROLES:
+            total += self.store_for(role).replace_documents(
+                adapter_name=adapter_name,
+                target=target,
+                documents=documents_by_role.get(role, []),
+                vectors=vectors_by_role.get(role, []),
+                embedding_model=embedding_model,
+                kg_version=kg_version,
+            )
+        return total
+
+    def upsert_documents_by_role(
+        self,
+        *,
+        adapter_name: str,
+        target: str,
+        documents_by_role: dict[str, list[MilvusHybridDocument]],
+        vectors_by_role: dict[str, list[list[float]]],
+        embedding_model: str,
+        kg_version: str = "",
+    ) -> int:
+        total = 0
+        for role, documents in documents_by_role.items():
+            if not documents:
+                continue
+            total += self.store_for(role).upsert_documents(
+                adapter_name=adapter_name,
+                target=target,
+                documents=documents,
+                vectors=vectors_by_role.get(role, []),
+                embedding_model=embedding_model,
+                kg_version=kg_version,
+            )
+        return total
+
+    def delete_evidence(self, *, adapter_name: str, target: str, evidence_ids: list[str]) -> None:
+        for store in self._stores.values():
+            store.delete_evidence(adapter_name=adapter_name, target=target, evidence_ids=evidence_ids)
+
+    def delete_documents(self, *, adapter_name: str, target: str, chunk_ids: list[str]) -> None:
+        for store in self._stores.values():
+            store.delete_documents(adapter_name=adapter_name, target=target, chunk_ids=chunk_ids)
+
+    def delete_scope(self, *, adapter_name: str, target: str) -> None:
+        for store in self._stores.values():
+            store.delete_scope(adapter_name=adapter_name, target=target)
+
 def _content_hash(content: str) -> str:
     import hashlib
 
@@ -501,10 +738,12 @@ def _document_rows(
         source_id = str(payload.get("source_id") or payload.get("source_pk") or "")
         rows.append(
             {
+                "target_id": document.target_id,
                 "chunk_id": document.chunk_id,
                 "evidence_id": document.evidence_id,
                 "adapter_name": adapter_name,
                 "target": target,
+                "target_type": str(payload.get("target_type") or payload.get("document_type") or target)[:64],
                 "source_type": source_type[:80],
                 "source_id": source_id[:160],
                 "text": document.text[:8192],
@@ -512,9 +751,47 @@ def _document_rows(
                 "content_hash": _content_hash(document.text),
                 "embedding_model": embedding_model[:80],
                 "kg_version": kg_version[:80],
+                "metadata_json": _json_safe_metadata(payload),
             }
         )
     return rows
+
+
+def _hit_from_entity(
+    entity: dict[str, Any],
+    *,
+    score: float,
+    fallback_chunk_id: str = "",
+) -> MilvusHybridHit:
+    metadata = {key: value for key, value in entity.items() if key not in {"text", "metadata_json"}}
+    raw_metadata = entity.get("metadata_json")
+    if isinstance(raw_metadata, dict):
+        metadata.update(raw_metadata)
+    return MilvusHybridHit(
+        chunk_id=str(entity.get("chunk_id") or entity.get("target_id") or fallback_chunk_id or ""),
+        evidence_id=str(entity.get("evidence_id") or metadata.get("evidence_id") or ""),
+        text=str(entity.get("text") or ""),
+        score=score,
+        metadata=metadata,
+    )
+
+
+def _json_safe_metadata(value: dict[str, Any]) -> dict[str, Any]:
+    return {
+        str(key): _json_safe_value(item)
+        for key, item in value.items()
+        if key not in {"text", "dense_vector", "sparse_vector"}
+    }
+
+
+def _json_safe_value(value: Any) -> Any:
+    if value is None or isinstance(value, (str, int, float, bool)):
+        return value if not isinstance(value, float) or math.isfinite(value) else str(value)
+    if isinstance(value, dict):
+        return {str(key): _json_safe_value(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple, set)):
+        return [_json_safe_value(item) for item in value]
+    return str(value)
 
 
 def _validate_document_vectors(
@@ -560,17 +837,7 @@ def _document_from_chunk(chunk: EvidenceChunk) -> MilvusHybridDocument:
 
 
 def _collection_dense_dim(client, collection_name: str) -> int | None:
-    describe = getattr(client, "describe_collection", None)
-    if describe is None:
-        return None
-    try:
-        info = describe(collection_name=collection_name)
-    except TypeError:
-        info = describe(collection_name)
-    except Exception:
-        logger.warning("Failed to inspect Milvus collection schema for %s", collection_name, exc_info=True)
-        return None
-    fields = info.get("fields") if isinstance(info, dict) else getattr(info, "fields", None)
+    fields = _collection_fields(client, collection_name)
     if not isinstance(fields, list):
         return None
     for field in fields:
@@ -590,6 +857,32 @@ def _collection_dense_dim(client, collection_name: str) -> int | None:
     return None
 
 
+def _collection_has_field(client, collection_name: str, field_name: str) -> bool:
+    fields = _collection_fields(client, collection_name)
+    if not isinstance(fields, list):
+        return False
+    for field in fields:
+        name = field.get("name") if isinstance(field, dict) else getattr(field, "name", None)
+        if name == field_name:
+            return True
+    return False
+
+
+def _collection_fields(client, collection_name: str):
+    describe = getattr(client, "describe_collection", None)
+    if describe is None:
+        return None
+    try:
+        info = describe(collection_name=collection_name)
+    except TypeError:
+        info = describe(collection_name)
+    except Exception:
+        logger.warning("Failed to inspect Milvus collection schema for %s", collection_name, exc_info=True)
+        return None
+    fields = info.get("fields") if isinstance(info, dict) else getattr(info, "fields", None)
+    return fields if isinstance(fields, list) else None
+
+
 def _is_sparse_row_error(exc: Exception) -> bool:
     message = str(exc)
     return (
@@ -604,6 +897,20 @@ def _finite_vector(vector: list[float]) -> bool:
         return all(math.isfinite(float(value)) for value in vector)
     except (TypeError, ValueError):
         return False
+
+
+def _log_empty_scope_once(collection_name: str, adapter_name: str, target: str) -> None:
+    key = (collection_name, adapter_name, target)
+    message = (
+        "Milvus hybrid search skipped because scoped vector index is empty: "
+        "collection=%s adapter=%s target=%s. Rebuild the semantic hybrid index "
+        "before expecting semantic_hybrid results."
+    )
+    if key in _EMPTY_SCOPE_WARNED:
+        logger.debug(message, collection_name, adapter_name, target)
+        return
+    _EMPTY_SCOPE_WARNED.add(key)
+    logger.warning(message, collection_name, adapter_name, target)
 
 
 def _hit_value(hit: Any, key: str) -> Any:

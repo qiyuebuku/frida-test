@@ -81,6 +81,7 @@ async def test_llm_agentic_strategy_returns_tool_call(monkeypatch) -> None:
     assert stable_payload["cache_policy"]["message_shape"] == (
         "system + stable_task_context + dynamic_observation_context"
     )
+    assert "scoped_search" in stable_payload["available_tools"]
     assert "working_set" in dynamic_payload
 
 
@@ -108,6 +109,22 @@ def test_decision_parser_rejects_unknown_tool() -> None:
     )
 
     assert decision.next_tool == "stop"
+
+
+def test_decision_parser_accepts_scoped_search_tool() -> None:
+    decision = strategy_module._decision_from_payload(
+        {
+            "next_tool": "scoped_search",
+            "reason": "局部补齐影响链",
+            "target_candidate_ids": ["kg:financial:stock:300750"],
+            "query_rewrites": ["海外产能 负面事件"],
+            "confidence": 0.8,
+        },
+    )
+
+    assert decision.next_tool == "scoped_search"
+    assert decision.target_candidate_ids == ["kg:financial:stock:300750"]
+    assert decision.query_rewrites == ["海外产能 负面事件"]
 
 
 def test_decision_parser_removes_model_invented_years_from_query_rewrites() -> None:

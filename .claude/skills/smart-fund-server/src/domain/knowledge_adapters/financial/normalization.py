@@ -32,7 +32,12 @@ EMPTY_NORMALIZATION_RULES = NormalizationRules(
 )
 
 ENTITY_TYPE_ALIASES = {
+    "company": "institution",
+    "corp": "institution",
+    "corporation": "institution",
     "country": "region",
+    "issuer": "institution",
+    "listed_company": "institution",
     "nation": "region",
     "province": "region",
     "city": "region",
@@ -128,7 +133,7 @@ def _normalize_concept_taxonomy(
 ) -> str:
     if is_industry_chain_name_with_rules(canonical_name, rules):
         return rules.concept_taxonomy_industry_chain
-    if original_type == "policy":
+    if original_type == "policy" or _is_policy_theme_name(canonical_name, rules):
         return rules.concept_taxonomy_policy_theme
     return str(entity.get("taxonomy") or rules.concept_taxonomy_default)
 
@@ -145,6 +150,17 @@ def _is_concrete_policy(entity: dict[str, Any], canonical_name: str, rules: Norm
         any(hint in canonical_name for hint in concrete_policy_hints_without_generic)
         and len(canonical_name) >= 6
     )
+
+
+def _is_policy_theme_name(canonical_name: str, rules: NormalizationRules) -> bool:
+    name = _clean_text(canonical_name)
+    if not name:
+        return False
+    if any(hint in name for hint in rules.concrete_policy_hints):
+        return True
+    if re.search(r"[一二三四五六七八九十百千0-9]+条$", name):
+        return True
+    return False
 
 
 def _entity_name(entity: dict[str, Any]) -> str:

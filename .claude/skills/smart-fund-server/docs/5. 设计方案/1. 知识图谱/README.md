@@ -21,6 +21,11 @@
 | `7. Agentic检索候选排序优化方案.md` | 说明 Agentic 检索中 recall pool 到 judge topK 的排序级联如何优化，重点覆盖系统级检索质量评估、写入期检索增强、关键词/BM25召回补齐、rank fusion、业务特征重排、覆盖感知选择和二批 judge。 |
 | `8. 基于OpenAI Agent驱动的检索方案.md` | 说明如何在现有投影、编译、写入和索引能力不变的前提下，新增基于 `openai-agents-python` 的检索运行时，把 keyword、semantic、graph、wiki、open、rank、judge、stop verifier 等能力封装成 Tool Kernel，由 OpenAI Agent 自主调度，并与现有固定工作流做 A/B 对比。 |
 | `9. 检索索引架构重构讨论.md` | 作为检索索引架构重构的设计侧文档，说明新增能力后系统应该长什么样、整体架构图、查询链路图、数据形态图，以及 PG 确定性查询、向量语义查询、graph 按需展开、事实归并和 reranker 的核心边界。 |
+| `10. 写入侧语义索引材料设计方案.md` | 说明写入侧如何从 PG facts 派生 enriched vector docs、relation preview，并让旧 `kg_retrieval_*` / Wiki / retrieval document 退出核心检索链路。 |
+| `11. KG认知辅助层定位与证据优先检索重构讨论.md` | 明确知识图谱认知辅助层应该交付 evidence-backed cognitive package，而不是裸 node / edge。 |
+| `12. Milvus语义检索、PG关系展开与叙事图谱设计方案.md` | 收敛最新检索架构决策：Milvus 负责语义召回和按 ID 取回可读 chunk/card，PG 负责事实、关系、原文和不含 chunk text 的证据指针，叙事图谱负责异步 topic cluster / market narrative。 |
+| `13. GraphRAG数据编译入库与检索机制调研.md` | 调研 GraphRAG 如何以 TextUnit 为证据中枢构建 entity、relationship、community report 和多入口检索，并明确哪些机制可借鉴、哪些不能照搬。 |
+| `14. Graph Index增量构建与多索引分层设计方案.md` | 专门说明 Graph Index 如何分层、如何划分多类索引、如何用 dirty subgraph / delta view / 局部重算降低全局 community 重构成本。 |
 
 ## 3. 总体设计结论
 

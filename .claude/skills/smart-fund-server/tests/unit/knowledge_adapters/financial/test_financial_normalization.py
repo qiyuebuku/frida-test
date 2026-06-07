@@ -114,6 +114,25 @@ def test_entity_stable_key_uses_canonical_name_after_normalization() -> None:
     assert entity_stable_key({"type": "concept", "name": "高股息资产", "taxonomy": "strategy"}, normalization_rules=rules) == "strategy:高股息"
 
 
+def test_policy_theme_name_keeps_concept_taxonomy_stable() -> None:
+    rules = _rules()
+
+    business = normalize_entity_with_rules(
+        {"type": "concept", "name": "科创板八条", "taxonomy": "business"},
+        rules,
+    )
+    policy_theme = normalize_entity_with_rules(
+        {"type": "concept", "name": "科创板八条", "taxonomy": "policy_theme"},
+        rules,
+    )
+
+    assert business["type"] == "concept"
+    assert business["taxonomy"] == "policy_theme"
+    assert policy_theme["taxonomy"] == "policy_theme"
+    assert entity_stable_key(business, normalization_rules=rules) == "policy_theme:科创板八条"
+    assert entity_stable_key(policy_theme, normalization_rules=rules) == "policy_theme:科创板八条"
+
+
 @pytest.mark.asyncio
 async def test_financial_adapter_dedupes_alias_entities_and_edges() -> None:
     record = {

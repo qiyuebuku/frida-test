@@ -34,6 +34,37 @@ async def test_compiler_runs_toy_adapter_minimum_closed_loop() -> None:
 
 
 @pytest.mark.asyncio
+async def test_compiler_materializes_chunks_before_node_and_edge_extraction() -> None:
+    records = json.loads((FIXTURE_DIR / "toy_records.json").read_text(encoding="utf-8"))
+    materialized: list[str] = []
+
+    class ChunkFirstToyAdapter(ToyProjectAdapter):
+        async def extract_node_drafts(self, item):
+            assert materialized
+            assert item.metadata["_evidence_chunk_hints"][0]["chunk_id"] in materialized
+            return await super().extract_node_drafts(item)
+
+        async def extract_edge_drafts(self, item, nodes):
+            assert materialized
+            assert item.metadata["_evidence_chunk_hints"][0]["chunk_id"] in materialized
+            return await super().extract_edge_drafts(item, nodes)
+
+    async def materialize(_adapter_name, _version, evidence):
+        for item in evidence:
+            materialized.append(f"kg_chunk:{item.evidence_id}:0")
+
+    adapter = ChunkFirstToyAdapter()
+
+    result = await KnowledgeCompiler(pre_extraction_chunk_materializer=materialize).compile(
+        adapter,
+        adapter.normalize(records[:1]),
+    )
+
+    assert result.failed_records == []
+    assert materialized
+
+
+@pytest.mark.asyncio
 async def test_application_service_reports_normalize_failure() -> None:
     result = await KnowledgeService().compile(ToyProjectAdapter(), [{"payload": {}}])
 

@@ -15,7 +15,7 @@ from src.domain.knowledge.retrieval import (
 )
 from src.domain.knowledge.retrieval_tools import RetrievalToolCall, RetrievalToolRegistry
 from src.domain.knowledge.retrieval_trace_replay import replay_retrieval_trace
-from src.domain.knowledge.schemas import CompiledEvidence
+from src.domain.knowledge.schemas import CompiledEvidence, EvidenceChunk
 
 
 class _Repo:
@@ -35,11 +35,18 @@ class _Repo:
     def list_edges(self, adapter_name: str):
         return []
 
-    def search_wiki_pages(self, adapter_name: str, query: str, limit: int = 20):
-        return []
-
     def get_evidence(self, evidence_id: str):
         return self.evidence if evidence_id == self.evidence.evidence_id else None
+
+    def list_evidence_chunks(self, adapter_name: str):
+        return [
+            EvidenceChunk(
+                chunk_id="kg_chunk:semantic:1",
+                adapter_name="financial",
+                evidence_id=self.evidence.evidence_id,
+                content=self.evidence.content,
+            )
+        ]
 
     def get_node(self, node_id: str):
         return None
@@ -82,7 +89,7 @@ async def test_replay_retrieval_trace_reexecutes_recorded_tool_calls() -> None:
             RetrievalStep(
                 tool="open",
                 input=open_call.model_dump(mode="json"),
-                output_refs=["kg_ev:financial:news:1"],
+                output_refs=["kg_chunk:semantic:1"],
                 hit_count=1,
             ),
         ],

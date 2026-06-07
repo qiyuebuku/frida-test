@@ -1,0 +1,2435 @@
+{
+  "run_at": "2026-06-07T10:36:31.891702",
+  "duration_seconds": 107.47,
+  "completed": true,
+  "stage": "completed",
+  "config": {
+    "target": "prod",
+    "adapter": "financial",
+    "use_fixed_ft_news": true,
+    "fixed_ft_news_ids": [
+      83904,
+      59604,
+      74425,
+      66308,
+      76578
+    ],
+    "news_limit": 5,
+    "candidate_limit": 80,
+    "min_top_k": 5,
+    "default_top_k": 8,
+    "max_top_k": 15,
+    "default_max_attach": 3,
+    "complex_max_attach": 5,
+    "extraction_concurrency": 4,
+    "max_intents_per_news": 10,
+    "chunk_max_chars": 1600,
+    "resume_from_output": false,
+    "assignment_mode": "llm_for_each_topic_intent",
+    "cognitive_card_schema_version": "cognitive_card_v1_chunk_local_signals_20260607"
+  },
+  "stats": {
+    "news_count": 5,
+    "intent_count": 8,
+    "assignment_count": 8,
+    "assignment_validation_error_count": 0,
+    "community_count": 6,
+    "community_level_distribution": {
+      "L0": 6
+    },
+    "community_split_count": 0,
+    "assignment_actions": {
+      "create_new_l0": 6,
+      "attach_existing": 2
+    },
+    "decision_sources": {
+      "llm_assignment": 8
+    },
+    "effective_actions": {
+      "create_new_l0": 6,
+      "attach_existing": 2
+    },
+    "assignment_update_modes": {
+      "update_delta": 2,
+      "append_reference": 5,
+      "rewrite_summary": 1
+    },
+    "community_maturity": {
+      "single_evidence": 6
+    },
+    "multi_attach_news": 1,
+    "multi_intent_news": 2,
+    "communities": [
+      {
+        "title": "新质生产力产业链整合",
+        "source_count": 1,
+        "news_count": 1,
+        "maturity": "single_evidence",
+        "subtopic_count": 8
+      },
+      {
+        "title": "AI应用商业化",
+        "source_count": 1,
+        "news_count": 1,
+        "maturity": "single_evidence",
+        "subtopic_count": 3
+      },
+      {
+        "title": "光模块技术迭代",
+        "source_count": 1,
+        "news_count": 1,
+        "maturity": "single_evidence",
+        "subtopic_count": 3
+      },
+      {
+        "title": "AI芯片产业",
+        "source_count": 1,
+        "news_count": 1,
+        "maturity": "single_evidence",
+        "subtopic_count": 3
+      },
+      {
+        "title": "中国储能企业海外建厂",
+        "source_count": 1,
+        "news_count": 1,
+        "maturity": "single_evidence",
+        "subtopic_count": 3
+      },
+      {
+        "title": "金砖国家产业合作与出海服务",
+        "source_count": 1,
+        "news_count": 1,
+        "maturity": "single_evidence",
+        "subtopic_count": 4
+      }
+    ]
+  },
+  "items": [
+    {
+      "news_id": 83904,
+      "source_id": "ft_news:83904",
+      "title": "A股并购重组市场呈现三方面新变化",
+      "chunk_count": 1,
+      "cognitive_cards": [
+        {
+          "actor_signals": {
+            "actors": [
+              "A股上市公司",
+              "科创板",
+              "创业板",
+              "券商",
+              "头部券商",
+              "监管层"
+            ],
+            "commodities": [],
+            "companies": [],
+            "industries": [
+              "半导体",
+              "软件",
+              "生物医药",
+              "高端装备制造",
+              "汽车零部件",
+              "化学制品",
+              "电力"
+            ],
+            "policies": [
+              "并购六条",
+              "科创板八条"
+            ],
+            "regions": []
+          },
+          "local_impact_signals": [
+            {
+              "confidence": 0.9,
+              "importance": 0.8,
+              "local_impact_direction": "positive",
+              "local_impact_mechanism_text": "资源要素加速向新质生产力领域集聚",
+              "local_impact_mentions": "资源要素加速向新质生产力领域集聚，新兴产业占比超过九成",
+              "local_impact_target": [
+                "半导体",
+                "软件",
+                "生物医药",
+                "高端装备制造"
+              ],
+              "supporting_text": "资源要素加速向新质生产力领域集聚；科创板与创业板并购重组案例数量占比提升至37%"
+            },
+            {
+              "confidence": 0.9,
+              "importance": 0.7,
+              "local_impact_direction": "positive",
+              "local_impact_mechanism_text": "通过横向整合、战略合作优化产业结构，提升资源配置效率",
+              "local_impact_mentions": "传统行业横向整合加快、产业集中度提升",
+              "local_impact_target": [
+                "汽车零部件",
+                "化学制品",
+                "电力"
+              ],
+              "supporting_text": "传统行业的横向整合加快、产业集中度提升；汽车零部件、化学制品、电力等传统行业通过横向整合优化产业结构"
+            },
+            {
+              "confidence": 0.9,
+              "importance": 0.7,
+              "local_impact_direction": "positive",
+              "local_impact_mechanism_text": "券商深度参与交易方案设计、标的估值定价、交易撮合谈判及融资安排等关键环节",
+              "local_impact_mentions": "券商服务82家上市公司完成重大资产重组，交易金额超6000亿元",
+              "local_impact_target": [
+                "券商",
+                "上市公司"
+              ],
+              "supporting_text": "券商共服务82家上市公司完成重大资产重组，交易金额超6000亿元；通过参与产业链整合、跨区域或跨境并购等重大交易，助力上市公司实现外延式发展"
+            }
+          ],
+          "risk_signals": [],
+          "summary": "A股并购重组市场在2025年呈现数量增长、规模扩大的态势，资源向新质生产力领域集聚，产业并购回归本源，券商角色从交易通道向价值合伙人升级，市场生态发生深刻变革。",
+          "supporting_text": [
+            "截至4月23日晚间，年内A股上市公司首次披露的并购重组交易已达1104起，合计交易金额约3634.65亿元",
+            "资源要素加速向新质生产力领域集聚",
+            "科创板与创业板并购重组案例数量占A股总案例的比重由2020年的26%逐步提升至2025年的37%",
+            "横向整合并购事件达463起，交易金额4410亿元，同比增长27%",
+            "券商共服务82家上市公司完成重大资产重组，交易金额超6000亿元"
+          ],
+          "title_candidates": [
+            "A股并购重组市场生态变革",
+            "新质生产力领域并购整合",
+            "产业并购市场化回归",
+            "券商并购业务转型价值合伙人"
+          ],
+          "topic_intents": [
+            {
+              "actors": [
+                "A股上市公司",
+                "科创板",
+                "创业板",
+                "监管层"
+              ],
+              "driver": [
+                "并购六条",
+                "科创板八条",
+                "政策引导"
+              ],
+              "event_action": [
+                "并购重组交易首次披露",
+                "科创板与创业板并购数量占比提升",
+                "跨境并购频繁出现"
+              ],
+              "event_stage": "ongoing",
+              "event_thread": [
+                "A股并购重组活跃度提升",
+                "新质生产力产业链整合"
+              ],
+              "event_time": "2025年4月23日",
+              "impact_direction": "positive",
+              "impact_target": [
+                "半导体",
+                "软件",
+                "生物医药",
+                "高端装备制造",
+                "传统行业"
+              ],
+              "importance": 0.85,
+              "raw_theme": "新兴领域产业链深度整合",
+              "risk_type": [],
+              "summary": "在政策引导下，资源向新质生产力领域集聚，新兴产业并购占比提升，传统行业横向整合加快，形成双轮驱动格局。",
+              "supporting_text": "资源要素加速向新质生产力领域集聚；科创板与创业板并购重组案例数量占A股总案例的比重由2020年的26%逐步提升至2025年的37%；半导体、软件、生物医药、高端装备制造等新兴产业占比超过九成。",
+              "timeline_position": "follow_up",
+              "title_candidate": "新质生产力产业链整合"
+            },
+            {
+              "actors": [
+                "A股上市公司",
+                "监管层"
+              ],
+              "driver": [
+                "政策推动",
+                "价值投资导向"
+              ],
+              "event_action": [
+                "横向整合并购数增长",
+                "垂直整合案例大幅增加",
+                "主动退市选择"
+              ],
+              "event_stage": "ongoing",
+              "event_thread": [
+                "A股并购重组活跃度提升",
+                "产业并购价值回归"
+              ],
+              "event_time": "2025年",
+              "impact_direction": "positive",
+              "impact_target": [
+                "上市公司",
+                "退市渠道"
+              ],
+              "importance": 0.8,
+              "raw_theme": "并购重组回归产业本源",
+              "risk_type": [],
+              "summary": "并购市场加速转向产业协同与长期价值，横向与垂直整合案例增长，为上市公司提供退市新选择，优化资本市场生态。",
+              "supporting_text": "并购市场正加速转向追求产业协同与长期价值；横向整合并购事件达463起，交易金额4410亿元，同比增长27%；垂直整合案例从2023年的4起大幅增至2025年的20起。",
+              "timeline_position": "follow_up",
+              "title_candidate": "产业并购市场化回归"
+            },
+            {
+              "actors": [
+                "券商",
+                "头部券商",
+                "上市公司"
+              ],
+              "driver": [
+                "政策红利释放",
+                "市场需求",
+                "复杂交易执行"
+              ],
+              "event_action": [
+                "服务重大资产重组",
+                "参与产业链整合",
+                "聚焦新兴赛道",
+                "强化行业研究"
+              ],
+              "event_stage": "ongoing",
+              "event_thread": [
+                "A股并购重组活跃度提升",
+                "券商角色转型价值合伙人"
+              ],
+              "event_time": "2025年",
+              "impact_direction": "positive",
+              "impact_target": [
+                "券商",
+                "上市公司"
+              ],
+              "importance": 0.75,
+              "raw_theme": "券商角色升级",
+              "risk_type": [],
+              "summary": "券商从交易通道转向价值合伙人，深度参与交易方案设计、估值定价、交易撮合等，服务82家上市公司完成重大资产重组，交易金额超6000亿元。",
+              "supporting_text": "券商共服务82家上市公司完成重大资产重组，交易金额超6000亿元；多家头部券商已明确提出做全生命周期合伙人，聚焦新兴赛道，推动产业链整合。",
+              "timeline_position": "follow_up",
+              "title_candidate": "券商并购业务转型"
+            }
+          ],
+          "schema_version": "cognitive_card_v1_chunk_local_signals_20260607",
+          "cognitive_card_id": "validation_cognitive_card:8a5b25facd5282f7",
+          "news_id": 83904,
+          "source_title": "A股并购重组市场呈现三方面新变化",
+          "system_pointers": {
+            "source_id": "ft_news:83904",
+            "evidence_id": "validation_evidence:fe6461dacc825218",
+            "primary_chunk_id": "validation_chunk:75c1c28def470793",
+            "chunk_ids": [
+              "validation_chunk:75c1c28def470793"
+            ],
+            "chunk_index": 0,
+            "start_offset": 0,
+            "end_offset": 1378,
+            "previous_chunk_id": "",
+            "next_chunk_id": "",
+            "text_hash": "0bab98e16691eb5ce484bd86ad8bf205c56f07c4e467e0932d7efbcf1930a8ce",
+            "chunker_version": "validation_recursive_zh_v1"
+          }
+        }
+      ],
+      "intent_count": 3,
+      "intent_results": [
+        {
+          "intent_index": 1,
+          "topic_intent": {
+            "actors": [
+              "A股上市公司",
+              "科创板",
+              "创业板",
+              "监管层"
+            ],
+            "driver": [
+              "并购六条",
+              "科创板八条",
+              "政策引导"
+            ],
+            "event_action": [
+              "并购重组交易首次披露",
+              "科创板与创业板并购数量占比提升",
+              "跨境并购频繁出现"
+            ],
+            "event_stage": "ongoing",
+            "event_thread": [
+              "A股并购重组活跃度提升",
+              "新质生产力产业链整合"
+            ],
+            "event_time": "2025年4月23日",
+            "impact_direction": "positive",
+            "impact_target": [
+              "半导体",
+              "软件",
+              "生物医药",
+              "高端装备制造",
+              "传统行业"
+            ],
+            "importance": 0.85,
+            "raw_theme": "新兴领域产业链深度整合",
+            "risk_type": [],
+            "summary": "在政策引导下，资源向新质生产力领域集聚，新兴产业并购占比提升，传统行业横向整合加快，形成双轮驱动格局。",
+            "supporting_text": "资源要素加速向新质生产力领域集聚；科创板与创业板并购重组案例数量占A股总案例的比重由2020年的26%逐步提升至2025年的37%；半导体、软件、生物医药、高端装备制造等新兴产业占比超过九成。",
+            "timeline_position": "follow_up",
+            "title_candidate": "新质生产力产业链整合",
+            "source_id": "ft_news:83904",
+            "evidence_id": "validation_evidence:fe6461dacc825218",
+            "primary_chunk_id": "validation_chunk:75c1c28def470793",
+            "chunk_ids": [
+              "validation_chunk:75c1c28def470793"
+            ],
+            "chunk_index": 0,
+            "cognitive_card_id": "validation_cognitive_card:8a5b25facd5282f7",
+            "news_id": 83904,
+            "intent_id": "ft_news:83904:intent:1",
+            "card_summary": "A股并购重组市场在2025年呈现数量增长、规模扩大的态势，资源向新质生产力领域集聚，产业并购回归本源，券商角色从交易通道向价值合伙人升级，市场生态发生深刻变革。"
+          },
+          "recall_plan": {
+            "is_complex": true,
+            "theme_k": 8,
+            "thread_k": 7,
+            "max_k": 15,
+            "candidate_count": 0
+          },
+          "candidate_count": 0,
+          "candidates": [],
+          "decision": {
+            "assignments": [
+              {
+                "action": "create_new_l0",
+                "community_id": null,
+                "weight": 1.0,
+                "confidence": 0.95,
+                "matched_reason": "no_suitable_candidate",
+                "update_mode": "update_delta",
+                "reason": "无现有候选社区，创建新L0主题覆盖新质生产力产业链整合并购动态",
+                "new_community": {
+                  "level": 0,
+                  "title": "新质生产力产业链整合",
+                  "scope": "涵盖政策驱动下半导体、软件、生物医药等新兴产业及传统行业横向整合的并购重组活动",
+                  "title_quality": "broad_topic"
+                }
+              }
+            ],
+            "rejected_candidates": [],
+            "maintenance_hints": {
+              "suggest_split": false,
+              "suggest_merge_community_ids": [],
+              "reason": ""
+            }
+          },
+          "decision_source": "llm_assignment",
+          "assignment_error": "",
+          "applied": {
+            "community_ids": [
+              "validation_community:13af2a35a77119be"
+            ],
+            "effective_actions": [
+              "create_new_l0"
+            ],
+            "update_modes": [
+              "update_delta"
+            ]
+          }
+        },
+        {
+          "intent_index": 2,
+          "topic_intent": {
+            "actors": [
+              "A股上市公司",
+              "监管层"
+            ],
+            "driver": [
+              "政策推动",
+              "价值投资导向"
+            ],
+            "event_action": [
+              "横向整合并购数增长",
+              "垂直整合案例大幅增加",
+              "主动退市选择"
+            ],
+            "event_stage": "ongoing",
+            "event_thread": [
+              "A股并购重组活跃度提升",
+              "产业并购价值回归"
+            ],
+            "event_time": "2025年",
+            "impact_direction": "positive",
+            "impact_target": [
+              "上市公司",
+              "退市渠道"
+            ],
+            "importance": 0.8,
+            "raw_theme": "并购重组回归产业本源",
+            "risk_type": [],
+            "summary": "并购市场加速转向产业协同与长期价值，横向与垂直整合案例增长，为上市公司提供退市新选择，优化资本市场生态。",
+            "supporting_text": "并购市场正加速转向追求产业协同与长期价值；横向整合并购事件达463起，交易金额4410亿元，同比增长27%；垂直整合案例从2023年的4起大幅增至2025年的20起。",
+            "timeline_position": "follow_up",
+            "title_candidate": "产业并购市场化回归",
+            "source_id": "ft_news:83904",
+            "evidence_id": "validation_evidence:fe6461dacc825218",
+            "primary_chunk_id": "validation_chunk:75c1c28def470793",
+            "chunk_ids": [
+              "validation_chunk:75c1c28def470793"
+            ],
+            "chunk_index": 0,
+            "cognitive_card_id": "validation_cognitive_card:8a5b25facd5282f7",
+            "news_id": 83904,
+            "intent_id": "ft_news:83904:intent:2",
+            "card_summary": "A股并购重组市场在2025年呈现数量增长、规模扩大的态势，资源向新质生产力领域集聚，产业并购回归本源，券商角色从交易通道向价值合伙人升级，市场生态发生深刻变革。"
+          },
+          "recall_plan": {
+            "is_complex": false,
+            "theme_k": 5,
+            "thread_k": 3,
+            "max_k": 8,
+            "candidate_count": 1
+          },
+          "candidate_count": 1,
+          "candidates": [
+            {
+              "community_id": "validation_community:13af2a35a77119be",
+              "title": "新质生产力产业链整合",
+              "level": 0,
+              "parent_community_id": "",
+              "summary": "新质生产力产业链整合主题下，主要驱动包括并购六条、科创板八条、政策引导；影响对象覆盖半导体、软件、生物医药、高端装备制造、传统行业；关键动作包括并购重组交易首次披露、科创板与创业板并购数量占比提升、跨境并购频繁出现；可串联到A股并购重组活跃度提升、新质生产力产业链整合等事件线。",
+              "canonical_labels": [
+                "新质生产力产业链整合",
+                "新兴领域产业链深度整合",
+                "半导体",
+                "软件",
+                "生物医药",
+                "高端装备制造",
+                "传统行业",
+                "A股并购重组活跃度提升"
+              ],
+              "maturity": "single_evidence",
+              "retrieval_score": 0.4202,
+              "retrieval_lane": "thread",
+              "recent_examples": [
+                {
+                  "source_id": "ft_news:83904",
+                  "title": "新质生产力产业链整合",
+                  "summary": "在政策引导下，资源向新质生产力领域集聚，新兴产业并购占比提升，传统行业横向整合加快，形成双轮驱动格局。"
+                }
+              ]
+            }
+          ],
+          "decision": {
+            "assignments": [
+              {
+                "action": "attach_existing",
+                "community_id": "validation_community:13af2a35a77119be",
+                "weight": 0.75,
+                "confidence": 0.8,
+                "matched_reason": "shared_event_thread",
+                "update_mode": "update_delta",
+                "reason": "Topic intent shares event_thread 'A股并购重组活跃度提升' with candidate community, and focuses on industrial M&A return to fundamentals, which aligns with community's theme of integrating new quality productive forces.",
+                "new_community": null
+              }
+            ],
+            "rejected_candidates": [],
+            "maintenance_hints": {
+              "suggest_split": false,
+              "suggest_merge_community_ids": [],
+              "reason": "No need for splitting or merging at this stage."
+            }
+          },
+          "decision_source": "llm_assignment",
+          "assignment_error": "",
+          "applied": {
+            "community_ids": [
+              "validation_community:13af2a35a77119be"
+            ],
+            "effective_actions": [
+              "attach_existing"
+            ],
+            "update_modes": [
+              "update_delta"
+            ]
+          }
+        },
+        {
+          "intent_index": 3,
+          "topic_intent": {
+            "actors": [
+              "券商",
+              "头部券商",
+              "上市公司"
+            ],
+            "driver": [
+              "政策红利释放",
+              "市场需求",
+              "复杂交易执行"
+            ],
+            "event_action": [
+              "服务重大资产重组",
+              "参与产业链整合",
+              "聚焦新兴赛道",
+              "强化行业研究"
+            ],
+            "event_stage": "ongoing",
+            "event_thread": [
+              "A股并购重组活跃度提升",
+              "券商角色转型价值合伙人"
+            ],
+            "event_time": "2025年",
+            "impact_direction": "positive",
+            "impact_target": [
+              "券商",
+              "上市公司"
+            ],
+            "importance": 0.75,
+            "raw_theme": "券商角色升级",
+            "risk_type": [],
+            "summary": "券商从交易通道转向价值合伙人，深度参与交易方案设计、估值定价、交易撮合等，服务82家上市公司完成重大资产重组，交易金额超6000亿元。",
+            "supporting_text": "券商共服务82家上市公司完成重大资产重组，交易金额超6000亿元；多家头部券商已明确提出做全生命周期合伙人，聚焦新兴赛道，推动产业链整合。",
+            "timeline_position": "follow_up",
+            "title_candidate": "券商并购业务转型",
+            "source_id": "ft_news:83904",
+            "evidence_id": "validation_evidence:fe6461dacc825218",
+            "primary_chunk_id": "validation_chunk:75c1c28def470793",
+            "chunk_ids": [
+              "validation_chunk:75c1c28def470793"
+            ],
+            "chunk_index": 0,
+            "cognitive_card_id": "validation_cognitive_card:8a5b25facd5282f7",
+            "news_id": 83904,
+            "intent_id": "ft_news:83904:intent:3",
+            "card_summary": "A股并购重组市场在2025年呈现数量增长、规模扩大的态势，资源向新质生产力领域集聚，产业并购回归本源，券商角色从交易通道向价值合伙人升级，市场生态发生深刻变革。"
+          },
+          "recall_plan": {
+            "is_complex": false,
+            "theme_k": 5,
+            "thread_k": 3,
+            "max_k": 8,
+            "candidate_count": 1
+          },
+          "candidate_count": 1,
+          "candidates": [
+            {
+              "community_id": "validation_community:13af2a35a77119be",
+              "title": "新质生产力产业链整合",
+              "level": 0,
+              "parent_community_id": "",
+              "summary": "新质生产力产业链整合主题下，主要驱动包括并购六条、科创板八条、政策引导、政策推动；影响对象覆盖半导体、软件、生物医药、高端装备制造、传统行业；关键动作包括并购重组交易首次披露、科创板与创业板并购数量占比提升、跨境并购频繁出现、横向整合并购数增长；可串联到A股并购重组活跃度提升、新质生产力产业链整合、产业并购价值回归等事件线。",
+              "canonical_labels": [
+                "新质生产力产业链整合",
+                "新兴领域产业链深度整合",
+                "并购重组回归产业本源",
+                "产业并购市场化回归",
+                "半导体",
+                "软件",
+                "生物医药",
+                "高端装备制造",
+                "传统行业",
+                "上市公司",
+                "退市渠道",
+                "A股并购重组活跃度提升"
+              ],
+              "maturity": "single_evidence",
+              "retrieval_score": 0.2562,
+              "retrieval_lane": "theme",
+              "recent_examples": [
+                {
+                  "source_id": "ft_news:83904",
+                  "title": "新质生产力产业链整合",
+                  "summary": "在政策引导下，资源向新质生产力领域集聚，新兴产业并购占比提升，传统行业横向整合加快，形成双轮驱动格局。"
+                },
+                {
+                  "source_id": "ft_news:83904",
+                  "title": "产业并购市场化回归",
+                  "summary": "并购市场加速转向产业协同与长期价值，横向与垂直整合案例增长，为上市公司提供退市新选择，优化资本市场生态。"
+                }
+              ]
+            }
+          ],
+          "decision": {
+            "assignments": [
+              {
+                "action": "attach_existing",
+                "community_id": "validation_community:13af2a35a77119be",
+                "weight": 0.7,
+                "confidence": 0.8,
+                "matched_reason": "shared_raw_theme",
+                "update_mode": "append_reference",
+                "reason": "券商角色升级是并购重组主题下的一个子角度，与候选community的产业并购主题相关，可补充券商角色转型的视角。",
+                "new_community": null
+              }
+            ],
+            "rejected_candidates": [],
+            "maintenance_hints": {
+              "suggest_split": false,
+              "suggest_merge_community_ids": [],
+              "reason": ""
+            }
+          },
+          "decision_source": "llm_assignment",
+          "assignment_error": "",
+          "applied": {
+            "community_ids": [
+              "validation_community:13af2a35a77119be"
+            ],
+            "effective_actions": [
+              "attach_existing"
+            ],
+            "update_modes": [
+              "append_reference"
+            ]
+          }
+        }
+      ],
+      "applied": {
+        "community_ids": [
+          "validation_community:13af2a35a77119be"
+        ]
+      }
+    },
+    {
+      "news_id": 59604,
+      "source_id": "ft_news:59604",
+      "title": "AI应用异动拉升，蓝色光标领涨超10%，创业板人工智能ETF华宝（159363）再创新高，资金净流入持续扩大！",
+      "chunk_count": 1,
+      "cognitive_cards": [
+        {
+          "actor_signals": {
+            "actors": [
+              "Anthropic",
+              "蓝色光标",
+              "中文在线",
+              "中际旭创",
+              "长江证券",
+              "曹旭辰"
+            ],
+            "commodities": [],
+            "companies": [
+              "蓝色光标",
+              "中文在线",
+              "中际旭创",
+              "Anthropic"
+            ],
+            "industries": [
+              "AI应用",
+              "光模块CPO",
+              "人工智能"
+            ],
+            "policies": [],
+            "regions": [
+              "中国",
+              "美国"
+            ]
+          },
+          "local_impact_signals": [
+            {
+              "confidence": 0.9,
+              "importance": 0.7,
+              "local_impact_direction": "positive",
+              "local_impact_mechanism_text": "AI应用商业化加速预期推动",
+              "local_impact_mentions": "AI应用接力爆发，蓝色光标涨超10%，中文在线涨超6%",
+              "local_impact_target": [
+                "蓝色光标",
+                "中文在线"
+              ],
+              "supporting_text": "AI应用接力爆发，蓝色光标领涨超10%，中文在线涨超6%"
+            },
+            {
+              "confidence": 0.9,
+              "importance": 0.7,
+              "local_impact_direction": "positive",
+              "local_impact_mechanism_text": "AI算力需求高景气和技术迭代逻辑",
+              "local_impact_mentions": "光模块龙头中际旭创涨超2%迭创新高",
+              "local_impact_target": [
+                "中际旭创"
+              ],
+              "supporting_text": "光模块龙头维持活跃，中际旭创涨超2%迭创新高"
+            }
+          ],
+          "risk_signals": [],
+          "summary": "创业板人工智能指数上涨，AI应用和光模块CPO板块表现活跃。Anthropic发布新模型，长江证券预计AI应用2026年商业化拐点。基金经理看好光模块CPO技术迭代。",
+          "supporting_text": [
+            "AI应用接力爆发，蓝色光标领涨超10%，中文在线涨超6%",
+            "光模块龙头维持活跃，中际旭创涨超2%迭创新高",
+            "AI应用商业化加速，参考美国AI演绎，AI应用也即将在2026年迎来商业化拐点",
+            "光模块/CPO仍为技术迭代逻辑，当前抱团或未结束"
+          ],
+          "title_candidates": [
+            "人工智能产业链机会",
+            "AI应用商业化进程",
+            "光模块CPO技术迭代"
+          ],
+          "topic_intents": [
+            {
+              "actors": [
+                "Anthropic",
+                "蓝色光标",
+                "中文在线",
+                "长江证券"
+              ],
+              "driver": [
+                "AI应用商业化加速",
+                "2026年商业化拐点预期"
+              ],
+              "event_action": [
+                "推出"
+              ],
+              "event_stage": "uncertain",
+              "event_thread": [
+                "AI应用商业化",
+                "AI应用爆发"
+              ],
+              "event_time": "20日早盘",
+              "impact_direction": "positive",
+              "impact_target": [
+                "AI应用板块",
+                "蓝色光标",
+                "中文在线",
+                "Anthropic"
+              ],
+              "importance": 0.8,
+              "raw_theme": "AI应用商业化加速",
+              "risk_type": [],
+              "summary": "AI应用板块受Anthropic新模型发布和商业化加速预期推动上涨，长江证券预计2026年迎来商业化拐点。",
+              "supporting_text": "AI应用接力爆发；AI应用商业化加速，参考美国AI演绎，AI应用也即将在2026年迎来商业化拐点。",
+              "timeline_position": "trigger",
+              "title_candidate": "AI应用商业化进程"
+            },
+            {
+              "actors": [
+                "中际旭创",
+                "曹旭辰"
+              ],
+              "driver": [
+                "AI算力需求高景气",
+                "技术迭代逻辑"
+              ],
+              "event_action": [],
+              "event_stage": "uncertain",
+              "event_thread": [
+                "光模块CPO技术迭代",
+                "算力需求"
+              ],
+              "event_time": "20日早盘",
+              "impact_direction": "positive",
+              "impact_target": [
+                "光模块CPO",
+                "中际旭创",
+                "创业板人工智能ETF华宝"
+              ],
+              "importance": 0.8,
+              "raw_theme": "光模块CPO技术迭代逻辑",
+              "risk_type": [],
+              "summary": "光模块CPO龙头中际旭创迭创新高，基金经理认为技术迭代逻辑下抱团未结束，一季报业绩值得关注。",
+              "supporting_text": "光模块龙头维持活跃，中际旭创涨超2%迭创新高；光模块/CPO仍为技术迭代逻辑，当前抱团或未结束。",
+              "timeline_position": "trigger",
+              "title_candidate": "光模块CPO技术迭代"
+            }
+          ],
+          "schema_version": "cognitive_card_v1_chunk_local_signals_20260607",
+          "cognitive_card_id": "validation_cognitive_card:b11ec5696d0299a3",
+          "news_id": 59604,
+          "source_title": "AI应用异动拉升，蓝色光标领涨超10%，创业板人工智能ETF华宝（159363）再创新高，资金净流入持续扩大！",
+          "system_pointers": {
+            "source_id": "ft_news:59604",
+            "evidence_id": "validation_evidence:68cfd03b0d9ec1ee",
+            "primary_chunk_id": "validation_chunk:f1a9c93723a6b055",
+            "chunk_ids": [
+              "validation_chunk:f1a9c93723a6b055"
+            ],
+            "chunk_index": 0,
+            "start_offset": 0,
+            "end_offset": 1139,
+            "previous_chunk_id": "",
+            "next_chunk_id": "",
+            "text_hash": "99c642da4e1167efe61d5b583bfccbe1ebd75c8b5be3b179aa476db153865bac",
+            "chunker_version": "validation_recursive_zh_v1"
+          }
+        }
+      ],
+      "intent_count": 2,
+      "intent_results": [
+        {
+          "intent_index": 1,
+          "topic_intent": {
+            "actors": [
+              "Anthropic",
+              "蓝色光标",
+              "中文在线",
+              "长江证券"
+            ],
+            "driver": [
+              "AI应用商业化加速",
+              "2026年商业化拐点预期"
+            ],
+            "event_action": [
+              "推出"
+            ],
+            "event_stage": "uncertain",
+            "event_thread": [
+              "AI应用商业化",
+              "AI应用爆发"
+            ],
+            "event_time": "20日早盘",
+            "impact_direction": "positive",
+            "impact_target": [
+              "AI应用板块",
+              "蓝色光标",
+              "中文在线",
+              "Anthropic"
+            ],
+            "importance": 0.8,
+            "raw_theme": "AI应用商业化加速",
+            "risk_type": [],
+            "summary": "AI应用板块受Anthropic新模型发布和商业化加速预期推动上涨，长江证券预计2026年迎来商业化拐点。",
+            "supporting_text": "AI应用接力爆发；AI应用商业化加速，参考美国AI演绎，AI应用也即将在2026年迎来商业化拐点。",
+            "timeline_position": "trigger",
+            "title_candidate": "AI应用商业化进程",
+            "source_id": "ft_news:59604",
+            "evidence_id": "validation_evidence:68cfd03b0d9ec1ee",
+            "primary_chunk_id": "validation_chunk:f1a9c93723a6b055",
+            "chunk_ids": [
+              "validation_chunk:f1a9c93723a6b055"
+            ],
+            "chunk_index": 0,
+            "cognitive_card_id": "validation_cognitive_card:b11ec5696d0299a3",
+            "news_id": 59604,
+            "intent_id": "ft_news:59604:intent:1",
+            "card_summary": "创业板人工智能指数上涨，AI应用和光模块CPO板块表现活跃。Anthropic发布新模型，长江证券预计AI应用2026年商业化拐点。基金经理看好光模块CPO技术迭代。"
+          },
+          "recall_plan": {
+            "is_complex": true,
+            "theme_k": 8,
+            "thread_k": 7,
+            "max_k": 15,
+            "candidate_count": 0
+          },
+          "candidate_count": 0,
+          "candidates": [],
+          "decision": {
+            "assignments": [
+              {
+                "action": "create_new_l0",
+                "community_id": null,
+                "weight": 1.0,
+                "confidence": 1.0,
+                "matched_reason": "no_suitable_candidate",
+                "update_mode": "append_reference",
+                "reason": "无合适候选社区，创建新L0社区",
+                "new_community": {
+                  "level": 0,
+                  "title": "AI应用商业化",
+                  "scope": "AI应用领域的商业化进程及相关投资机会",
+                  "title_quality": "broad_topic"
+                }
+              }
+            ],
+            "rejected_candidates": [],
+            "maintenance_hints": {
+              "suggest_split": false,
+              "suggest_merge_community_ids": [],
+              "reason": ""
+            }
+          },
+          "decision_source": "llm_assignment",
+          "assignment_error": "",
+          "applied": {
+            "community_ids": [
+              "validation_community:cd523d8bb385a7b7"
+            ],
+            "effective_actions": [
+              "create_new_l0"
+            ],
+            "update_modes": [
+              "append_reference"
+            ]
+          }
+        },
+        {
+          "intent_index": 2,
+          "topic_intent": {
+            "actors": [
+              "中际旭创",
+              "曹旭辰"
+            ],
+            "driver": [
+              "AI算力需求高景气",
+              "技术迭代逻辑"
+            ],
+            "event_action": [],
+            "event_stage": "uncertain",
+            "event_thread": [
+              "光模块CPO技术迭代",
+              "算力需求"
+            ],
+            "event_time": "20日早盘",
+            "impact_direction": "positive",
+            "impact_target": [
+              "光模块CPO",
+              "中际旭创",
+              "创业板人工智能ETF华宝"
+            ],
+            "importance": 0.8,
+            "raw_theme": "光模块CPO技术迭代逻辑",
+            "risk_type": [],
+            "summary": "光模块CPO龙头中际旭创迭创新高，基金经理认为技术迭代逻辑下抱团未结束，一季报业绩值得关注。",
+            "supporting_text": "光模块龙头维持活跃，中际旭创涨超2%迭创新高；光模块/CPO仍为技术迭代逻辑，当前抱团或未结束。",
+            "timeline_position": "trigger",
+            "title_candidate": "光模块CPO技术迭代",
+            "source_id": "ft_news:59604",
+            "evidence_id": "validation_evidence:68cfd03b0d9ec1ee",
+            "primary_chunk_id": "validation_chunk:f1a9c93723a6b055",
+            "chunk_ids": [
+              "validation_chunk:f1a9c93723a6b055"
+            ],
+            "chunk_index": 0,
+            "cognitive_card_id": "validation_cognitive_card:b11ec5696d0299a3",
+            "news_id": 59604,
+            "intent_id": "ft_news:59604:intent:2",
+            "card_summary": "创业板人工智能指数上涨，AI应用和光模块CPO板块表现活跃。Anthropic发布新模型，长江证券预计AI应用2026年商业化拐点。基金经理看好光模块CPO技术迭代。"
+          },
+          "recall_plan": {
+            "is_complex": false,
+            "theme_k": 5,
+            "thread_k": 3,
+            "max_k": 8,
+            "candidate_count": 2
+          },
+          "candidate_count": 2,
+          "candidates": [
+            {
+              "community_id": "validation_community:cd523d8bb385a7b7",
+              "title": "AI应用商业化",
+              "level": 0,
+              "parent_community_id": "",
+              "summary": "AI应用商业化主题下，主要驱动包括AI应用商业化加速、2026年商业化拐点预期；影响对象覆盖AI应用板块、蓝色光标、中文在线、Anthropic；关键动作包括推出；可串联到AI应用商业化、AI应用爆发等事件线。",
+              "canonical_labels": [
+                "AI应用商业化",
+                "AI应用商业化加速",
+                "AI应用商业化进程",
+                "AI应用板块",
+                "蓝色光标",
+                "中文在线",
+                "Anthropic",
+                "AI应用爆发"
+              ],
+              "maturity": "single_evidence",
+              "retrieval_score": 0.3,
+              "retrieval_lane": "thread",
+              "recent_examples": [
+                {
+                  "source_id": "ft_news:59604",
+                  "title": "AI应用商业化进程",
+                  "summary": "AI应用板块受Anthropic新模型发布和商业化加速预期推动上涨，长江证券预计2026年迎来商业化拐点。"
+                }
+              ]
+            },
+            {
+              "community_id": "validation_community:13af2a35a77119be",
+              "title": "新质生产力产业链整合",
+              "level": 0,
+              "parent_community_id": "",
+              "summary": "新质生产力产业链整合主题下，主要驱动包括并购六条、科创板八条、政策引导、政策推动；影响对象覆盖半导体、软件、生物医药、高端装备制造、传统行业；关键动作包括并购重组交易首次披露、科创板与创业板并购数量占比提升、跨境并购频繁出现、横向整合并购数增长；可串联到A股并购重组活跃度提升、新质生产力产业链整合、产业并购价值回归等事件线。",
+              "canonical_labels": [
+                "新质生产力产业链整合",
+                "新兴领域产业链深度整合",
+                "并购重组回归产业本源",
+                "券商角色升级",
+                "产业并购市场化回归",
+                "券商并购业务转型",
+                "半导体",
+                "软件",
+                "生物医药",
+                "高端装备制造",
+                "传统行业",
+                "上市公司"
+              ],
+              "maturity": "single_evidence",
+              "retrieval_score": 0.075,
+              "retrieval_lane": "theme",
+              "recent_examples": [
+                {
+                  "source_id": "ft_news:83904",
+                  "title": "新质生产力产业链整合",
+                  "summary": "在政策引导下，资源向新质生产力领域集聚，新兴产业并购占比提升，传统行业横向整合加快，形成双轮驱动格局。"
+                },
+                {
+                  "source_id": "ft_news:83904",
+                  "title": "产业并购市场化回归",
+                  "summary": "并购市场加速转向产业协同与长期价值，横向与垂直整合案例增长，为上市公司提供退市新选择，优化资本市场生态。"
+                },
+                {
+                  "source_id": "ft_news:83904",
+                  "title": "券商并购业务转型",
+                  "summary": "券商从交易通道转向价值合伙人，深度参与交易方案设计、估值定价、交易撮合等，服务82家上市公司完成重大资产重组，交易金额超6000亿元。"
+                }
+              ]
+            }
+          ],
+          "decision": {
+            "assignments": [
+              {
+                "action": "create_new_l0",
+                "community_id": null,
+                "weight": 1.0,
+                "confidence": 0.95,
+                "matched_reason": "no_suitable_candidate",
+                "update_mode": "append_reference",
+                "reason": "当前主题涉及光模块CPO技术迭代，与候选社区的主题（AI应用商业化和新质生产力产业链整合）不匹配，需要建立新的L0社区。",
+                "new_community": {
+                  "level": 0,
+                  "title": "光模块技术迭代",
+                  "scope": "涵盖光模块、CPO等AI算力硬件技术发展及其对相关公司的影响",
+                  "title_quality": "broad_topic"
+                }
+              }
+            ],
+            "rejected_candidates": [
+              {
+                "community_id": "validation_community:cd523d8bb385a7b7",
+                "reason_code": "theme_mismatch",
+                "reason": "社区主题为AI应用商业化，主要关注AI应用板块、蓝色光标等，而当前主题聚焦光模块CPO技术迭代，属于算力基础设施硬件，角度不同。"
+              },
+              {
+                "community_id": "validation_community:13af2a35a77119be",
+                "reason_code": "theme_mismatch",
+                "reason": "社区主题为新质生产力产业链整合，涉及并购重组，而当前主题为光模块技术迭代，属于技术发展，与产业链整合不直接相关。"
+              }
+            ],
+            "maintenance_hints": {
+              "suggest_split": false,
+              "suggest_merge_community_ids": [],
+              "reason": ""
+            }
+          },
+          "decision_source": "llm_assignment",
+          "assignment_error": "",
+          "applied": {
+            "community_ids": [
+              "validation_community:d603cb5d53e64a76"
+            ],
+            "effective_actions": [
+              "create_new_l0"
+            ],
+            "update_modes": [
+              "append_reference"
+            ]
+          }
+        }
+      ],
+      "applied": {
+        "community_ids": [
+          "validation_community:cd523d8bb385a7b7",
+          "validation_community:d603cb5d53e64a76"
+        ]
+      }
+    },
+    {
+      "news_id": 74425,
+      "source_id": "ft_news:74425",
+      "title": "【特斯拉CEO马斯克：预计未来AI芯片将严重不足】特斯拉CEO马斯克在财报电话会上表示，特斯拉之所以启动Terafab芯片工厂项目，是因为公司预计未来AI芯片将",
+      "chunk_count": 1,
+      "cognitive_cards": [
+        {
+          "actor_signals": {
+            "actors": [
+              "特斯拉",
+              "马斯克"
+            ],
+            "commodities": [
+              "逻辑芯片",
+              "存储芯片"
+            ],
+            "companies": [
+              "特斯拉"
+            ],
+            "industries": [
+              "AI芯片",
+              "半导体"
+            ],
+            "policies": [],
+            "regions": []
+          },
+          "local_impact_signals": [
+            {
+              "confidence": 0.9,
+              "importance": 0.8,
+              "local_impact_direction": "negative",
+              "local_impact_mechanism_text": "如果不自己制造芯片，就会遇到瓶颈",
+              "local_impact_mentions": "特斯拉自建芯片工厂以避免瓶颈",
+              "local_impact_target": [
+                "特斯拉"
+              ],
+              "supporting_text": "如果我们不自己制造芯片，就会遇到瓶颈。这就是Terafab的诞生原因。"
+            }
+          ],
+          "risk_signals": [
+            {
+              "confidence": 0.6,
+              "importance": 0.7,
+              "risk_direction": "increasing",
+              "risk_scope": "AI芯片行业，尤其是对特斯拉等科技公司",
+              "risk_severity": 0.7,
+              "risk_type": "供应链风险",
+              "supporting_text": "预计未来AI芯片将严重不足",
+              "uncertainty": "马斯克个人预期，行业整体判断可能不同"
+            }
+          ],
+          "summary": "马斯克预计未来AI芯片将严重不足，特斯拉因此启动Terafab芯片工厂项目以避免瓶颈。",
+          "supporting_text": [
+            "预计未来AI芯片将严重不足",
+            "如果我们不自己制造芯片，就会遇到瓶颈。这就是Terafab的诞生原因。"
+          ],
+          "title_candidates": [
+            "AI芯片供给瓶颈",
+            "科技企业芯片自研趋势",
+            "半导体行业产能紧张"
+          ],
+          "topic_intents": [
+            {
+              "actors": [
+                "特斯拉",
+                "马斯克"
+              ],
+              "driver": [
+                "马斯克预期AI芯片将严重不足",
+                "行业增长速度导致芯片需求旺盛"
+              ],
+              "event_action": [
+                "启动Terafab芯片工厂项目",
+                "自建芯片制造"
+              ],
+              "event_stage": "preparation",
+              "event_thread": [
+                "特斯拉芯片战略"
+              ],
+              "event_time": "",
+              "impact_direction": "negative",
+              "impact_target": [
+                "特斯拉",
+                "AI芯片行业"
+              ],
+              "importance": 0.8,
+              "raw_theme": "AI芯片短缺预期与特斯拉自建芯片产能",
+              "risk_type": [
+                "供应链风险",
+                "技术瓶颈"
+              ],
+              "summary": "马斯克在财报电话会上预计未来AI芯片将严重不足，特斯拉因此启动Terafab芯片工厂项目以自建产能，避免供应瓶颈。",
+              "supporting_text": "预计未来AI芯片将严重不足；如果我们不自己制造芯片，就会遇到瓶颈。",
+              "timeline_position": "reaction",
+              "title_candidate": "AI芯片供给瓶颈"
+            }
+          ],
+          "schema_version": "cognitive_card_v1_chunk_local_signals_20260607",
+          "cognitive_card_id": "validation_cognitive_card:c81cb5ae7e9a1ac6",
+          "news_id": 74425,
+          "source_title": "【特斯拉CEO马斯克：预计未来AI芯片将严重不足】特斯拉CEO马斯克在财报电话会上表示，特斯拉之所以启动Terafab芯片工厂项目，是因为公司预计未来AI芯片将",
+          "system_pointers": {
+            "source_id": "ft_news:74425",
+            "evidence_id": "validation_evidence:4d2709cf9dcaed40",
+            "primary_chunk_id": "validation_chunk:7fb2ab38b7b59370",
+            "chunk_ids": [
+              "validation_chunk:7fb2ab38b7b59370"
+            ],
+            "chunk_index": 0,
+            "start_offset": 0,
+            "end_offset": 156,
+            "previous_chunk_id": "",
+            "next_chunk_id": "",
+            "text_hash": "8b5db102327741ae55d3bc0541c7d08e8ccade4292670f7be5773201e6f25586",
+            "chunker_version": "validation_recursive_zh_v1"
+          }
+        }
+      ],
+      "intent_count": 1,
+      "intent_results": [
+        {
+          "intent_index": 1,
+          "topic_intent": {
+            "actors": [
+              "特斯拉",
+              "马斯克"
+            ],
+            "driver": [
+              "马斯克预期AI芯片将严重不足",
+              "行业增长速度导致芯片需求旺盛"
+            ],
+            "event_action": [
+              "启动Terafab芯片工厂项目",
+              "自建芯片制造"
+            ],
+            "event_stage": "preparation",
+            "event_thread": [
+              "特斯拉芯片战略"
+            ],
+            "event_time": "",
+            "impact_direction": "negative",
+            "impact_target": [
+              "特斯拉",
+              "AI芯片行业"
+            ],
+            "importance": 0.8,
+            "raw_theme": "AI芯片短缺预期与特斯拉自建芯片产能",
+            "risk_type": [
+              "供应链风险",
+              "技术瓶颈"
+            ],
+            "summary": "马斯克在财报电话会上预计未来AI芯片将严重不足，特斯拉因此启动Terafab芯片工厂项目以自建产能，避免供应瓶颈。",
+            "supporting_text": "预计未来AI芯片将严重不足；如果我们不自己制造芯片，就会遇到瓶颈。",
+            "timeline_position": "reaction",
+            "title_candidate": "AI芯片供给瓶颈",
+            "source_id": "ft_news:74425",
+            "evidence_id": "validation_evidence:4d2709cf9dcaed40",
+            "primary_chunk_id": "validation_chunk:7fb2ab38b7b59370",
+            "chunk_ids": [
+              "validation_chunk:7fb2ab38b7b59370"
+            ],
+            "chunk_index": 0,
+            "cognitive_card_id": "validation_cognitive_card:c81cb5ae7e9a1ac6",
+            "news_id": 74425,
+            "intent_id": "ft_news:74425:intent:1",
+            "card_summary": "马斯克预计未来AI芯片将严重不足，特斯拉因此启动Terafab芯片工厂项目以避免瓶颈。"
+          },
+          "recall_plan": {
+            "is_complex": true,
+            "theme_k": 8,
+            "thread_k": 7,
+            "max_k": 15,
+            "candidate_count": 2
+          },
+          "candidate_count": 2,
+          "candidates": [
+            {
+              "community_id": "validation_community:cd523d8bb385a7b7",
+              "title": "AI应用商业化",
+              "level": 0,
+              "parent_community_id": "",
+              "summary": "AI应用商业化主题下，主要驱动包括AI应用商业化加速、2026年商业化拐点预期；影响对象覆盖AI应用板块、蓝色光标、中文在线、Anthropic；关键动作包括推出；可串联到AI应用商业化、AI应用爆发等事件线。",
+              "canonical_labels": [
+                "AI应用商业化",
+                "AI应用商业化加速",
+                "AI应用商业化进程",
+                "AI应用板块",
+                "蓝色光标",
+                "中文在线",
+                "Anthropic",
+                "AI应用爆发"
+              ],
+              "maturity": "single_evidence",
+              "retrieval_score": 0.3,
+              "retrieval_lane": "thread",
+              "recent_examples": [
+                {
+                  "source_id": "ft_news:59604",
+                  "title": "AI应用商业化进程",
+                  "summary": "AI应用板块受Anthropic新模型发布和商业化加速预期推动上涨，长江证券预计2026年迎来商业化拐点。"
+                }
+              ]
+            },
+            {
+              "community_id": "validation_community:d603cb5d53e64a76",
+              "title": "光模块技术迭代",
+              "level": 0,
+              "parent_community_id": "",
+              "summary": "光模块技术迭代主题下，主要驱动包括AI算力需求高景气、技术迭代逻辑；影响对象覆盖光模块CPO、中际旭创、创业板人工智能ETF华宝；可串联到光模块CPO技术迭代、算力需求等事件线。",
+              "canonical_labels": [
+                "光模块技术迭代",
+                "光模块CPO技术迭代逻辑",
+                "光模块CPO技术迭代",
+                "光模块CPO",
+                "中际旭创",
+                "创业板人工智能ETF华宝",
+                "算力需求"
+              ],
+              "maturity": "single_evidence",
+              "retrieval_score": 0.15,
+              "retrieval_lane": "theme",
+              "recent_examples": [
+                {
+                  "source_id": "ft_news:59604",
+                  "title": "光模块CPO技术迭代",
+                  "summary": "光模块CPO龙头中际旭创迭创新高，基金经理认为技术迭代逻辑下抱团未结束，一季报业绩值得关注。"
+                }
+              ]
+            }
+          ],
+          "decision": {
+            "assignments": [
+              {
+                "action": "create_new_l0",
+                "community_id": null,
+                "weight": 1.0,
+                "confidence": 0.9,
+                "matched_reason": "no_suitable_candidate",
+                "update_mode": "append_reference",
+                "reason": "当前主题关于AI芯片短缺和特斯拉自建产能，与现有候选主题（AI应用商业化、光模块技术迭代）不匹配，需新建L0社区。",
+                "new_community": {
+                  "level": 0,
+                  "title": "AI芯片产业",
+                  "scope": "涵盖AI芯片供给、产能扩张、自建芯片工厂等相关事件",
+                  "title_quality": "broad_topic"
+                }
+              }
+            ],
+            "rejected_candidates": [
+              {
+                "community_id": "validation_community:cd523d8bb385a7b7",
+                "reason_code": "theme_mismatch",
+                "reason": "该主题关注AI应用商业化，与AI芯片供给和制造无关。"
+              },
+              {
+                "community_id": "validation_community:d603cb5d53e64a76",
+                "reason_code": "theme_mismatch",
+                "reason": "该主题关注光模块技术迭代，与AI芯片短缺和特斯拉自建产能无直接关联。"
+              }
+            ],
+            "maintenance_hints": {
+              "suggest_split": false,
+              "suggest_merge_community_ids": [],
+              "reason": ""
+            }
+          },
+          "decision_source": "llm_assignment",
+          "assignment_error": "",
+          "applied": {
+            "community_ids": [
+              "validation_community:a06b792eea7a3c50"
+            ],
+            "effective_actions": [
+              "create_new_l0"
+            ],
+            "update_modes": [
+              "append_reference"
+            ]
+          }
+        }
+      ],
+      "applied": {
+        "community_ids": [
+          "validation_community:a06b792eea7a3c50"
+        ]
+      }
+    },
+    {
+      "news_id": 66308,
+      "source_id": "ft_news:66308",
+      "title": "【厦门海辰储能计划在西班牙建设一座大型储能电池及系统制造工厂 首期总投资约4亿欧元】厦门海辰储能科技股份有限公司与西班牙纳瓦拉自治区政府正式签署战略投资合作意向",
+      "chunk_count": 1,
+      "cognitive_cards": [
+        {
+          "actor_signals": {
+            "actors": [
+              "厦门海辰储能科技股份有限公司",
+              "纳瓦拉自治区政府",
+              "Sodena"
+            ],
+            "commodities": [
+              "储能电池"
+            ],
+            "companies": [
+              "厦门海辰储能"
+            ],
+            "industries": [
+              "储能"
+            ],
+            "policies": [],
+            "regions": [
+              "西班牙纳瓦拉自治区"
+            ]
+          },
+          "local_impact_signals": [
+            {
+              "confidence": 0.5,
+              "importance": 0.5,
+              "local_impact_direction": "neutral",
+              "local_impact_mechanism_text": "项目首期总投资约4亿欧元，将由海辰储能与纳瓦拉自治区政府下属公共发展机构Sodena共同成立合资企业推进。",
+              "local_impact_mentions": "西班牙纳瓦拉自治区将获得储能电池工厂投资",
+              "local_impact_target": [
+                "西班牙纳瓦拉自治区",
+                "储能产业"
+              ],
+              "supporting_text": "项目首期总投资约4亿欧元（约合31.7亿元人民币），将由海辰储能与纳瓦拉自治区政府下属公共发展机构Sodena共同成立合资企业推进。"
+            }
+          ],
+          "risk_signals": [],
+          "summary": "厦门海辰储能与西班牙纳瓦拉自治区政府签署备忘录，计划投资约4亿欧元建设储能电池及系统制造工厂。",
+          "supporting_text": [
+            "厦门海辰储能科技股份有限公司与西班牙纳瓦拉自治区政府正式签署战略投资合作意向备忘录，计划在当地建设一座大型储能电池及系统制造工厂。",
+            "项目首期总投资约4亿欧元（约合31.7亿元人民币），将由海辰储能与纳瓦拉自治区政府下属公共发展机构Sodena共同成立合资企业推进。"
+          ],
+          "title_candidates": [
+            "中国储能企业海外建厂",
+            "储能产业链全球化布局",
+            "新能源产能海外扩张",
+            "西班牙储能制造基地",
+            "海辰储能欧洲投资"
+          ],
+          "topic_intents": [
+            {
+              "actors": [
+                "厦门海辰储能科技股份有限公司",
+                "纳瓦拉自治区政府",
+                "Sodena"
+              ],
+              "driver": [],
+              "event_action": [
+                "签署战略投资合作意向备忘录",
+                "计划建设工厂"
+              ],
+              "event_stage": "planning",
+              "event_thread": [
+                "储能电池海外建厂",
+                "中国企业西班牙投资"
+              ],
+              "event_time": "",
+              "impact_direction": "uncertain",
+              "impact_target": [
+                "储能电池及系统制造工厂",
+                "西班牙纳瓦拉自治区",
+                "海辰储能"
+              ],
+              "importance": 0.5,
+              "raw_theme": "储能企业海外产能布局",
+              "risk_type": [],
+              "summary": "厦门海辰储能计划在西班牙建设大型储能电池及系统制造工厂，首期投资4亿欧元，与当地政府合作。",
+              "supporting_text": "厦门海辰储能科技股份有限公司与西班牙纳瓦拉自治区政府正式签署战略投资合作意向备忘录，计划在当地建设一座大型储能电池及系统制造工厂。",
+              "timeline_position": "trigger",
+              "title_candidate": "中国储能企业海外建厂"
+            }
+          ],
+          "schema_version": "cognitive_card_v1_chunk_local_signals_20260607",
+          "cognitive_card_id": "validation_cognitive_card:208817691ba37707",
+          "news_id": 66308,
+          "source_title": "【厦门海辰储能计划在西班牙建设一座大型储能电池及系统制造工厂 首期总投资约4亿欧元】厦门海辰储能科技股份有限公司与西班牙纳瓦拉自治区政府正式签署战略投资合作意向",
+          "system_pointers": {
+            "source_id": "ft_news:66308",
+            "evidence_id": "validation_evidence:7ed8b2c23f6383cd",
+            "primary_chunk_id": "validation_chunk:175df5469f3bd92a",
+            "chunk_ids": [
+              "validation_chunk:175df5469f3bd92a"
+            ],
+            "chunk_index": 0,
+            "start_offset": 0,
+            "end_offset": 173,
+            "previous_chunk_id": "",
+            "next_chunk_id": "",
+            "text_hash": "2a7e7c28830b7e08625e464ef98c640bc8ac384ce997afd92f1d058aa39c8f79",
+            "chunker_version": "validation_recursive_zh_v1"
+          }
+        }
+      ],
+      "intent_count": 1,
+      "intent_results": [
+        {
+          "intent_index": 1,
+          "topic_intent": {
+            "actors": [
+              "厦门海辰储能科技股份有限公司",
+              "纳瓦拉自治区政府",
+              "Sodena"
+            ],
+            "driver": [],
+            "event_action": [
+              "签署战略投资合作意向备忘录",
+              "计划建设工厂"
+            ],
+            "event_stage": "planning",
+            "event_thread": [
+              "储能电池海外建厂",
+              "中国企业西班牙投资"
+            ],
+            "event_time": "",
+            "impact_direction": "uncertain",
+            "impact_target": [
+              "储能电池及系统制造工厂",
+              "西班牙纳瓦拉自治区",
+              "海辰储能"
+            ],
+            "importance": 0.5,
+            "raw_theme": "储能企业海外产能布局",
+            "risk_type": [],
+            "summary": "厦门海辰储能计划在西班牙建设大型储能电池及系统制造工厂，首期投资4亿欧元，与当地政府合作。",
+            "supporting_text": "厦门海辰储能科技股份有限公司与西班牙纳瓦拉自治区政府正式签署战略投资合作意向备忘录，计划在当地建设一座大型储能电池及系统制造工厂。",
+            "timeline_position": "trigger",
+            "title_candidate": "中国储能企业海外建厂",
+            "source_id": "ft_news:66308",
+            "evidence_id": "validation_evidence:7ed8b2c23f6383cd",
+            "primary_chunk_id": "validation_chunk:175df5469f3bd92a",
+            "chunk_ids": [
+              "validation_chunk:175df5469f3bd92a"
+            ],
+            "chunk_index": 0,
+            "cognitive_card_id": "validation_cognitive_card:208817691ba37707",
+            "news_id": 66308,
+            "intent_id": "ft_news:66308:intent:1",
+            "card_summary": "厦门海辰储能与西班牙纳瓦拉自治区政府签署备忘录，计划投资约4亿欧元建设储能电池及系统制造工厂。"
+          },
+          "recall_plan": {
+            "is_complex": false,
+            "theme_k": 5,
+            "thread_k": 3,
+            "max_k": 8,
+            "candidate_count": 1
+          },
+          "candidate_count": 1,
+          "candidates": [
+            {
+              "community_id": "validation_community:a06b792eea7a3c50",
+              "title": "AI芯片产业",
+              "level": 0,
+              "parent_community_id": "",
+              "summary": "AI芯片产业主题下，主要驱动包括马斯克预期AI芯片将严重不足、行业增长速度导致芯片需求旺盛；影响对象覆盖特斯拉、AI芯片行业；关键动作包括启动Terafab芯片工厂项目、自建芯片制造；需要关注供应链风险、技术瓶颈等风险线索；可串联到特斯拉芯片战略等事件线。",
+              "canonical_labels": [
+                "AI芯片产业",
+                "AI芯片短缺预期与特斯拉自建芯片产能",
+                "AI芯片供给瓶颈",
+                "特斯拉",
+                "AI芯片行业",
+                "特斯拉芯片战略",
+                "供应链风险",
+                "技术瓶颈"
+              ],
+              "maturity": "single_evidence",
+              "retrieval_score": 0.15,
+              "retrieval_lane": "theme",
+              "recent_examples": [
+                {
+                  "source_id": "ft_news:74425",
+                  "title": "AI芯片供给瓶颈",
+                  "summary": "马斯克在财报电话会上预计未来AI芯片将严重不足，特斯拉因此启动Terafab芯片工厂项目以自建产能，避免供应瓶颈。"
+                }
+              ]
+            }
+          ],
+          "decision": {
+            "assignments": [
+              {
+                "action": "create_new_l0",
+                "community_id": null,
+                "weight": 1.0,
+                "confidence": 0.9,
+                "matched_reason": "no_suitable_candidate",
+                "update_mode": "rewrite_summary",
+                "reason": "中国储能企业海外建厂新主题，无匹配现有community",
+                "new_community": {
+                  "level": 0,
+                  "title": "中国储能企业海外建厂",
+                  "scope": "中国储能企业海外投资建厂",
+                  "title_quality": "broad_topic"
+                }
+              }
+            ],
+            "rejected_candidates": [],
+            "maintenance_hints": {
+              "suggest_split": false,
+              "suggest_merge_community_ids": [],
+              "reason": ""
+            }
+          },
+          "decision_source": "llm_assignment",
+          "assignment_error": "",
+          "applied": {
+            "community_ids": [
+              "validation_community:a06cb3b9ab772887"
+            ],
+            "effective_actions": [
+              "create_new_l0"
+            ],
+            "update_modes": [
+              "rewrite_summary"
+            ]
+          }
+        }
+      ],
+      "applied": {
+        "community_ids": [
+          "validation_community:a06cb3b9ab772887"
+        ]
+      }
+    },
+    {
+      "news_id": 76578,
+      "source_id": "ft_news:76578",
+      "title": "【福建：支持厦门建设金砖产业合作暨出海综合服务港】福建省人民政府发布关于支持金砖国家新工业革命伙伴关系创新基地高质量发展的意见。意见指出，支持厦门建设金砖产业合",
+      "chunk_count": 1,
+      "cognitive_cards": [
+        {
+          "actor_signals": {
+            "actors": [
+              "福建省人民政府",
+              "金砖创新基地",
+              "金砖国家工业能力中国中心",
+              "金砖国家工商理事会成员单位"
+            ],
+            "commodities": [],
+            "companies": [],
+            "industries": [
+              "工业能力",
+              "技术解决方案"
+            ],
+            "policies": [
+              "支持金砖国家新工业革命伙伴关系创新基地高质量发展的意见"
+            ],
+            "regions": [
+              "福建省",
+              "厦门",
+              "金砖国家"
+            ]
+          },
+          "local_impact_signals": [
+            {
+              "confidence": 0.8,
+              "importance": 0.6,
+              "local_impact_direction": "positive",
+              "local_impact_mechanism_text": "政策支持促进厦门成为金砖合作枢纽",
+              "local_impact_mentions": "支持厦门建设金砖产业合作暨出海综合服务港",
+              "local_impact_target": [
+                "厦门"
+              ],
+              "supporting_text": "支持厦门建设金砖产业合作暨出海综合服务港。"
+            }
+          ],
+          "risk_signals": [],
+          "summary": "福建省发布政策支持厦门建设金砖产业合作暨出海综合服务港，鼓励企业布局金砖国家供应链和海外工业园区，并遴选输出先进工业能力与技术解决方案。",
+          "supporting_text": [
+            "支持厦门建设金砖产业合作暨出海综合服务港。",
+            "鼓励企业在金砖国家布局建设供应链后备基地和资源保障渠道。"
+          ],
+          "title_candidates": [
+            "金砖产业合作与出海综合服务平台建设",
+            "中国-金砖国家供应链与工业能力合作",
+            "海外中资园区功能提升与能力输出",
+            "金砖国家新工业革命伙伴关系政策",
+            "福建省支持企业出海政策"
+          ],
+          "topic_intents": [
+            {
+              "actors": [
+                "福建省人民政府",
+                "金砖创新基地",
+                "金砖国家工业能力中国中心",
+                "金砖国家工商理事会成员单位",
+                "海外相关企业"
+              ],
+              "driver": [
+                "福建省政策支持",
+                "金砖国家新工业革命伙伴关系创新基地高质量发展意见"
+              ],
+              "event_action": [
+                "支持建设",
+                "鼓励布局",
+                "推动联动建设",
+                "遴选输出",
+                "引导参与"
+              ],
+              "event_stage": "policy_announcement",
+              "event_thread": [
+                "金砖国家产业合作",
+                "企业出海供应链布局"
+              ],
+              "event_time": "",
+              "impact_direction": "positive",
+              "impact_target": [
+                "厦门",
+                "金砖国家",
+                "企业",
+                "供应链后备基地",
+                "海外中资园区",
+                "金砖国家工业能力中国中心"
+              ],
+              "importance": 0.7,
+              "raw_theme": "金砖国家产业合作与出海综合服务",
+              "risk_type": [],
+              "summary": "福建省发布意见支持厦门建设金砖产业合作暨出海综合服务港，鼓励企业布局金砖国家供应链，推动海外中资园区功能提升与能力输出。",
+              "supporting_text": "支持厦门建设金砖产业合作暨出海综合服务港。",
+              "timeline_position": "trigger",
+              "title_candidate": "金砖产业合作与出海综合服务平台建设"
+            }
+          ],
+          "schema_version": "cognitive_card_v1_chunk_local_signals_20260607",
+          "cognitive_card_id": "validation_cognitive_card:bdd742060602c8fd",
+          "news_id": 76578,
+          "source_title": "【福建：支持厦门建设金砖产业合作暨出海综合服务港】福建省人民政府发布关于支持金砖国家新工业革命伙伴关系创新基地高质量发展的意见。意见指出，支持厦门建设金砖产业合",
+          "system_pointers": {
+            "source_id": "ft_news:76578",
+            "evidence_id": "validation_evidence:fcd7111b76d3ff97",
+            "primary_chunk_id": "validation_chunk:9cec4e5e7c1f7cdc",
+            "chunk_ids": [
+              "validation_chunk:9cec4e5e7c1f7cdc"
+            ],
+            "chunk_index": 0,
+            "start_offset": 0,
+            "end_offset": 278,
+            "previous_chunk_id": "",
+            "next_chunk_id": "",
+            "text_hash": "334185f4928d856e8df8f1d4b52194f5cc81dbe3c5fb061870a8920fb5561086",
+            "chunker_version": "validation_recursive_zh_v1"
+          }
+        }
+      ],
+      "intent_count": 1,
+      "intent_results": [
+        {
+          "intent_index": 1,
+          "topic_intent": {
+            "actors": [
+              "福建省人民政府",
+              "金砖创新基地",
+              "金砖国家工业能力中国中心",
+              "金砖国家工商理事会成员单位",
+              "海外相关企业"
+            ],
+            "driver": [
+              "福建省政策支持",
+              "金砖国家新工业革命伙伴关系创新基地高质量发展意见"
+            ],
+            "event_action": [
+              "支持建设",
+              "鼓励布局",
+              "推动联动建设",
+              "遴选输出",
+              "引导参与"
+            ],
+            "event_stage": "policy_announcement",
+            "event_thread": [
+              "金砖国家产业合作",
+              "企业出海供应链布局"
+            ],
+            "event_time": "",
+            "impact_direction": "positive",
+            "impact_target": [
+              "厦门",
+              "金砖国家",
+              "企业",
+              "供应链后备基地",
+              "海外中资园区",
+              "金砖国家工业能力中国中心"
+            ],
+            "importance": 0.7,
+            "raw_theme": "金砖国家产业合作与出海综合服务",
+            "risk_type": [],
+            "summary": "福建省发布意见支持厦门建设金砖产业合作暨出海综合服务港，鼓励企业布局金砖国家供应链，推动海外中资园区功能提升与能力输出。",
+            "supporting_text": "支持厦门建设金砖产业合作暨出海综合服务港。",
+            "timeline_position": "trigger",
+            "title_candidate": "金砖产业合作与出海综合服务平台建设",
+            "source_id": "ft_news:76578",
+            "evidence_id": "validation_evidence:fcd7111b76d3ff97",
+            "primary_chunk_id": "validation_chunk:9cec4e5e7c1f7cdc",
+            "chunk_ids": [
+              "validation_chunk:9cec4e5e7c1f7cdc"
+            ],
+            "chunk_index": 0,
+            "cognitive_card_id": "validation_cognitive_card:bdd742060602c8fd",
+            "news_id": 76578,
+            "intent_id": "ft_news:76578:intent:1",
+            "card_summary": "福建省发布政策支持厦门建设金砖产业合作暨出海综合服务港，鼓励企业布局金砖国家供应链和海外工业园区，并遴选输出先进工业能力与技术解决方案。"
+          },
+          "recall_plan": {
+            "is_complex": true,
+            "theme_k": 8,
+            "thread_k": 7,
+            "max_k": 15,
+            "candidate_count": 3
+          },
+          "candidate_count": 3,
+          "candidates": [
+            {
+              "community_id": "validation_community:a06cb3b9ab772887",
+              "title": "中国储能企业海外建厂",
+              "level": 0,
+              "parent_community_id": "",
+              "summary": "中国储能企业海外建厂主题下，影响对象覆盖储能电池及系统制造工厂、西班牙纳瓦拉自治区、海辰储能；关键动作包括签署战略投资合作意向备忘录、计划建设工厂；可串联到储能电池海外建厂、中国企业西班牙投资等事件线。",
+              "canonical_labels": [
+                "中国储能企业海外建厂",
+                "储能企业海外产能布局",
+                "储能电池及系统制造工厂",
+                "西班牙纳瓦拉自治区",
+                "海辰储能",
+                "储能电池海外建厂",
+                "中国企业西班牙投资"
+              ],
+              "maturity": "single_evidence",
+              "retrieval_score": 0.2025,
+              "retrieval_lane": "theme",
+              "recent_examples": [
+                {
+                  "source_id": "ft_news:66308",
+                  "title": "中国储能企业海外建厂",
+                  "summary": "厦门海辰储能计划在西班牙建设大型储能电池及系统制造工厂，首期投资4亿欧元，与当地政府合作。"
+                }
+              ]
+            },
+            {
+              "community_id": "validation_community:a06b792eea7a3c50",
+              "title": "AI芯片产业",
+              "level": 0,
+              "parent_community_id": "",
+              "summary": "AI芯片产业主题下，主要驱动包括马斯克预期AI芯片将严重不足、行业增长速度导致芯片需求旺盛；影响对象覆盖特斯拉、AI芯片行业；关键动作包括启动Terafab芯片工厂项目、自建芯片制造；需要关注供应链风险、技术瓶颈等风险线索；可串联到特斯拉芯片战略等事件线。",
+              "canonical_labels": [
+                "AI芯片产业",
+                "AI芯片短缺预期与特斯拉自建芯片产能",
+                "AI芯片供给瓶颈",
+                "特斯拉",
+                "AI芯片行业",
+                "特斯拉芯片战略",
+                "供应链风险",
+                "技术瓶颈"
+              ],
+              "maturity": "single_evidence",
+              "retrieval_score": 0.15,
+              "retrieval_lane": "theme",
+              "recent_examples": [
+                {
+                  "source_id": "ft_news:74425",
+                  "title": "AI芯片供给瓶颈",
+                  "summary": "马斯克在财报电话会上预计未来AI芯片将严重不足，特斯拉因此启动Terafab芯片工厂项目以自建产能，避免供应瓶颈。"
+                }
+              ]
+            },
+            {
+              "community_id": "validation_community:13af2a35a77119be",
+              "title": "新质生产力产业链整合",
+              "level": 0,
+              "parent_community_id": "",
+              "summary": "新质生产力产业链整合主题下，主要驱动包括并购六条、科创板八条、政策引导、政策推动；影响对象覆盖半导体、软件、生物医药、高端装备制造、传统行业；关键动作包括并购重组交易首次披露、科创板与创业板并购数量占比提升、跨境并购频繁出现、横向整合并购数增长；可串联到A股并购重组活跃度提升、新质生产力产业链整合、产业并购价值回归等事件线。",
+              "canonical_labels": [
+                "新质生产力产业链整合",
+                "新兴领域产业链深度整合",
+                "并购重组回归产业本源",
+                "券商角色升级",
+                "产业并购市场化回归",
+                "券商并购业务转型",
+                "半导体",
+                "软件",
+                "生物医药",
+                "高端装备制造",
+                "传统行业",
+                "上市公司"
+              ],
+              "maturity": "single_evidence",
+              "retrieval_score": 0.075,
+              "retrieval_lane": "theme",
+              "recent_examples": [
+                {
+                  "source_id": "ft_news:83904",
+                  "title": "新质生产力产业链整合",
+                  "summary": "在政策引导下，资源向新质生产力领域集聚，新兴产业并购占比提升，传统行业横向整合加快，形成双轮驱动格局。"
+                },
+                {
+                  "source_id": "ft_news:83904",
+                  "title": "产业并购市场化回归",
+                  "summary": "并购市场加速转向产业协同与长期价值，横向与垂直整合案例增长，为上市公司提供退市新选择，优化资本市场生态。"
+                },
+                {
+                  "source_id": "ft_news:83904",
+                  "title": "券商并购业务转型",
+                  "summary": "券商从交易通道转向价值合伙人，深度参与交易方案设计、估值定价、交易撮合等，服务82家上市公司完成重大资产重组，交易金额超6000亿元。"
+                }
+              ]
+            }
+          ],
+          "decision": {
+            "assignments": [
+              {
+                "action": "create_new_l0",
+                "community_id": null,
+                "weight": 1.0,
+                "confidence": 0.95,
+                "matched_reason": "no_suitable_candidate",
+                "update_mode": "append_reference",
+                "reason": "当前topic_intent主题为'金砖产业合作与出海综合服务平台建设'，与候选community（中国储能企业海外建厂、AI芯片产业、新质生产力产业链整合）均无直接关联，需创建新的L0 community以覆盖此主题。",
+                "new_community": {
+                  "level": 0,
+                  "title": "金砖国家产业合作与出海服务",
+                  "scope": "包括金砖国家产业合作、中资企业出海供应链布局、海外园区建设等政策与项目动态",
+                  "title_quality": "broad_topic"
+                }
+              }
+            ],
+            "rejected_candidates": [
+              {
+                "community_id": "validation_community:a06cb3b9ab772887",
+                "reason_code": "theme_mismatch",
+                "reason": "候选community主题为'中国储能企业海外建厂'，与当前金砖产业合作主题无直接关联。"
+              },
+              {
+                "community_id": "validation_community:a06b792eea7a3c50",
+                "reason_code": "theme_mismatch",
+                "reason": "候选community主题为'AI芯片产业'，与当前金砖产业合作主题无直接关联。"
+              },
+              {
+                "community_id": "validation_community:13af2a35a77119be",
+                "reason_code": "theme_mismatch",
+                "reason": "候选community主题为'新质生产力产业链整合'，虽涉及产业合作但聚焦国内并购整合，与金砖国家及出海服务主题不符。"
+              }
+            ],
+            "maintenance_hints": {
+              "suggest_split": false,
+              "suggest_merge_community_ids": [],
+              "reason": "当前无现有community可以合并，新创建的L0 community后续可根据事件发展进行拆分或合并。"
+            }
+          },
+          "decision_source": "llm_assignment",
+          "assignment_error": "",
+          "applied": {
+            "community_ids": [
+              "validation_community:41be517a711d0727"
+            ],
+            "effective_actions": [
+              "create_new_l0"
+            ],
+            "update_modes": [
+              "append_reference"
+            ]
+          }
+        }
+      ],
+      "applied": {
+        "community_ids": [
+          "validation_community:41be517a711d0727"
+        ]
+      }
+    }
+  ],
+  "communities": [
+    {
+      "community_id": "validation_community:13af2a35a77119be",
+      "title": "新质生产力产业链整合",
+      "level": 0,
+      "parent_community_id": "",
+      "scope": "涵盖政策驱动下半导体、软件、生物医药等新兴产业及传统行业横向整合的并购重组活动",
+      "summary": "新质生产力产业链整合主题下，主要驱动包括并购六条、科创板八条、政策引导、政策推动；影响对象覆盖半导体、软件、生物医药、高端装备制造、传统行业；关键动作包括并购重组交易首次披露、科创板与创业板并购数量占比提升、跨境并购频繁出现、横向整合并购数增长；可串联到A股并购重组活跃度提升、新质生产力产业链整合、产业并购价值回归等事件线。",
+      "source_count": 1,
+      "news_count": 1,
+      "signals": {
+        "raw_theme": [
+          "新兴领域产业链深度整合",
+          "并购重组回归产业本源",
+          "券商角色升级"
+        ],
+        "title_candidate": [
+          "新质生产力产业链整合",
+          "产业并购市场化回归",
+          "券商并购业务转型"
+        ],
+        "driver": [
+          "并购六条",
+          "科创板八条",
+          "政策引导",
+          "政策推动",
+          "价值投资导向",
+          "政策红利释放",
+          "市场需求",
+          "复杂交易执行"
+        ],
+        "impact_target": [
+          "半导体",
+          "软件",
+          "生物医药",
+          "高端装备制造",
+          "传统行业",
+          "上市公司",
+          "退市渠道",
+          "券商"
+        ],
+        "risk_type": [],
+        "event_thread": [
+          "A股并购重组活跃度提升",
+          "新质生产力产业链整合",
+          "产业并购价值回归",
+          "券商角色转型价值合伙人"
+        ],
+        "event_action": [
+          "并购重组交易首次披露",
+          "科创板与创业板并购数量占比提升",
+          "跨境并购频繁出现",
+          "横向整合并购数增长",
+          "垂直整合案例大幅增加",
+          "主动退市选择",
+          "服务重大资产重组",
+          "参与产业链整合",
+          "聚焦新兴赛道",
+          "强化行业研究"
+        ],
+        "actors": [
+          "A股上市公司",
+          "科创板",
+          "创业板",
+          "监管层",
+          "券商",
+          "头部券商",
+          "上市公司"
+        ]
+      },
+      "subtopics": [
+        {
+          "title": "新兴领域产业链深度整合",
+          "source_count": 1
+        },
+        {
+          "title": "A股并购重组",
+          "source_count": 1
+        },
+        {
+          "title": "产业并购市场化回归",
+          "source_count": 1
+        },
+        {
+          "title": "并购重组回归产业本源",
+          "source_count": 1
+        },
+        {
+          "title": "产业并购价值回归",
+          "source_count": 1
+        },
+        {
+          "title": "A股并购重组",
+          "source_count": 1
+        },
+        {
+          "title": "券商角色升级",
+          "source_count": 1
+        },
+        {
+          "title": "券商角色转型价值合伙人",
+          "source_count": 1
+        }
+      ],
+      "source_ids": [
+        "ft_news:83904"
+      ],
+      "news_ids": [
+        83904
+      ],
+      "created_from_source_id": "ft_news:83904",
+      "assignment_count": 3,
+      "assigned_intent_count": 3,
+      "report": null
+    },
+    {
+      "community_id": "validation_community:cd523d8bb385a7b7",
+      "title": "AI应用商业化",
+      "level": 0,
+      "parent_community_id": "",
+      "scope": "AI应用领域的商业化进程及相关投资机会",
+      "summary": "AI应用商业化主题下，主要驱动包括AI应用商业化加速、2026年商业化拐点预期；影响对象覆盖AI应用板块、蓝色光标、中文在线、Anthropic；关键动作包括推出；可串联到AI应用商业化、AI应用爆发等事件线。",
+      "source_count": 1,
+      "news_count": 1,
+      "signals": {
+        "raw_theme": [
+          "AI应用商业化加速"
+        ],
+        "title_candidate": [
+          "AI应用商业化进程"
+        ],
+        "driver": [
+          "AI应用商业化加速",
+          "2026年商业化拐点预期"
+        ],
+        "impact_target": [
+          "AI应用板块",
+          "蓝色光标",
+          "中文在线",
+          "Anthropic"
+        ],
+        "risk_type": [],
+        "event_thread": [
+          "AI应用商业化",
+          "AI应用爆发"
+        ],
+        "event_action": [
+          "推出"
+        ],
+        "actors": [
+          "Anthropic",
+          "蓝色光标",
+          "中文在线",
+          "长江证券"
+        ]
+      },
+      "subtopics": [
+        {
+          "title": "AI应用商业化进程",
+          "source_count": 1
+        },
+        {
+          "title": "AI应用商业化加速",
+          "source_count": 1
+        },
+        {
+          "title": "AI应用爆发",
+          "source_count": 1
+        }
+      ],
+      "source_ids": [
+        "ft_news:59604"
+      ],
+      "news_ids": [
+        59604
+      ],
+      "created_from_source_id": "ft_news:59604",
+      "assignment_count": 1,
+      "assigned_intent_count": 1,
+      "report": null
+    },
+    {
+      "community_id": "validation_community:d603cb5d53e64a76",
+      "title": "光模块技术迭代",
+      "level": 0,
+      "parent_community_id": "",
+      "scope": "涵盖光模块、CPO等AI算力硬件技术发展及其对相关公司的影响",
+      "summary": "光模块技术迭代主题下，主要驱动包括AI算力需求高景气、技术迭代逻辑；影响对象覆盖光模块CPO、中际旭创、创业板人工智能ETF华宝；可串联到光模块CPO技术迭代、算力需求等事件线。",
+      "source_count": 1,
+      "news_count": 1,
+      "signals": {
+        "raw_theme": [
+          "光模块CPO技术迭代逻辑"
+        ],
+        "title_candidate": [
+          "光模块CPO技术迭代"
+        ],
+        "driver": [
+          "AI算力需求高景气",
+          "技术迭代逻辑"
+        ],
+        "impact_target": [
+          "光模块CPO",
+          "中际旭创",
+          "创业板人工智能ETF华宝"
+        ],
+        "risk_type": [],
+        "event_thread": [
+          "光模块CPO技术迭代",
+          "算力需求"
+        ],
+        "event_action": [],
+        "actors": [
+          "中际旭创",
+          "曹旭辰"
+        ]
+      },
+      "subtopics": [
+        {
+          "title": "AI算力链",
+          "source_count": 1
+        },
+        {
+          "title": "AI算力链",
+          "source_count": 1
+        },
+        {
+          "title": "AI算力链",
+          "source_count": 1
+        }
+      ],
+      "source_ids": [
+        "ft_news:59604"
+      ],
+      "news_ids": [
+        59604
+      ],
+      "created_from_source_id": "ft_news:59604",
+      "assignment_count": 1,
+      "assigned_intent_count": 1,
+      "report": null
+    },
+    {
+      "community_id": "validation_community:a06b792eea7a3c50",
+      "title": "AI芯片产业",
+      "level": 0,
+      "parent_community_id": "",
+      "scope": "涵盖AI芯片供给、产能扩张、自建芯片工厂等相关事件",
+      "summary": "AI芯片产业主题下，主要驱动包括马斯克预期AI芯片将严重不足、行业增长速度导致芯片需求旺盛；影响对象覆盖特斯拉、AI芯片行业；关键动作包括启动Terafab芯片工厂项目、自建芯片制造；需要关注供应链风险、技术瓶颈等风险线索；可串联到特斯拉芯片战略等事件线。",
+      "source_count": 1,
+      "news_count": 1,
+      "signals": {
+        "raw_theme": [
+          "AI芯片短缺预期与特斯拉自建芯片产能"
+        ],
+        "title_candidate": [
+          "AI芯片供给瓶颈"
+        ],
+        "driver": [
+          "马斯克预期AI芯片将严重不足",
+          "行业增长速度导致芯片需求旺盛"
+        ],
+        "impact_target": [
+          "特斯拉",
+          "AI芯片行业"
+        ],
+        "risk_type": [
+          "供应链风险",
+          "技术瓶颈"
+        ],
+        "event_thread": [
+          "特斯拉芯片战略"
+        ],
+        "event_action": [
+          "启动Terafab芯片工厂项目",
+          "自建芯片制造"
+        ],
+        "actors": [
+          "特斯拉",
+          "马斯克"
+        ]
+      },
+      "subtopics": [
+        {
+          "title": "AI算力链",
+          "source_count": 1
+        },
+        {
+          "title": "AI算力链",
+          "source_count": 1
+        },
+        {
+          "title": "AI算力链",
+          "source_count": 1
+        }
+      ],
+      "source_ids": [
+        "ft_news:74425"
+      ],
+      "news_ids": [
+        74425
+      ],
+      "created_from_source_id": "ft_news:74425",
+      "assignment_count": 1,
+      "assigned_intent_count": 1,
+      "report": null
+    },
+    {
+      "community_id": "validation_community:a06cb3b9ab772887",
+      "title": "中国储能企业海外建厂",
+      "level": 0,
+      "parent_community_id": "",
+      "scope": "中国储能企业海外投资建厂",
+      "summary": "中国储能企业海外建厂主题下，影响对象覆盖储能电池及系统制造工厂、西班牙纳瓦拉自治区、海辰储能；关键动作包括签署战略投资合作意向备忘录、计划建设工厂；可串联到储能电池海外建厂、中国企业西班牙投资等事件线。",
+      "source_count": 1,
+      "news_count": 1,
+      "signals": {
+        "raw_theme": [
+          "储能企业海外产能布局"
+        ],
+        "title_candidate": [
+          "中国储能企业海外建厂"
+        ],
+        "driver": [],
+        "impact_target": [
+          "储能电池及系统制造工厂",
+          "西班牙纳瓦拉自治区",
+          "海辰储能"
+        ],
+        "risk_type": [],
+        "event_thread": [
+          "储能电池海外建厂",
+          "中国企业西班牙投资"
+        ],
+        "event_action": [
+          "签署战略投资合作意向备忘录",
+          "计划建设工厂"
+        ],
+        "actors": [
+          "厦门海辰储能科技股份有限公司",
+          "纳瓦拉自治区政府",
+          "Sodena"
+        ]
+      },
+      "subtopics": [
+        {
+          "title": "新能源出海",
+          "source_count": 1
+        },
+        {
+          "title": "新能源出海",
+          "source_count": 1
+        },
+        {
+          "title": "中国企业西班牙投资",
+          "source_count": 1
+        }
+      ],
+      "source_ids": [
+        "ft_news:66308"
+      ],
+      "news_ids": [
+        66308
+      ],
+      "created_from_source_id": "ft_news:66308",
+      "assignment_count": 1,
+      "assigned_intent_count": 1,
+      "report": null
+    },
+    {
+      "community_id": "validation_community:41be517a711d0727",
+      "title": "金砖国家产业合作与出海服务",
+      "level": 0,
+      "parent_community_id": "",
+      "scope": "包括金砖国家产业合作、中资企业出海供应链布局、海外园区建设等政策与项目动态",
+      "summary": "金砖国家产业合作与出海服务主题下，主要驱动包括福建省政策支持、金砖国家新工业革命伙伴关系创新基地高质量发展意见；影响对象覆盖厦门、金砖国家、企业、供应链后备基地、海外中资园区；关键动作包括支持建设、鼓励布局、推动联动建设、遴选输出；可串联到金砖国家产业合作、企业出海供应链布局等事件线。",
+      "source_count": 1,
+      "news_count": 1,
+      "signals": {
+        "raw_theme": [
+          "金砖国家产业合作与出海综合服务"
+        ],
+        "title_candidate": [
+          "金砖产业合作与出海综合服务平台建设"
+        ],
+        "driver": [
+          "福建省政策支持",
+          "金砖国家新工业革命伙伴关系创新基地高质量发展意见"
+        ],
+        "impact_target": [
+          "厦门",
+          "金砖国家",
+          "企业",
+          "供应链后备基地",
+          "海外中资园区",
+          "金砖国家工业能力中国中心"
+        ],
+        "risk_type": [],
+        "event_thread": [
+          "金砖国家产业合作",
+          "企业出海供应链布局"
+        ],
+        "event_action": [
+          "支持建设",
+          "鼓励布局",
+          "推动联动建设",
+          "遴选输出",
+          "引导参与"
+        ],
+        "actors": [
+          "福建省人民政府",
+          "金砖创新基地",
+          "金砖国家工业能力中国中心",
+          "金砖国家工商理事会成员单位",
+          "海外相关企业"
+        ]
+      },
+      "subtopics": [
+        {
+          "title": "企业出海服务",
+          "source_count": 1
+        },
+        {
+          "title": "企业出海服务",
+          "source_count": 1
+        },
+        {
+          "title": "企业出海服务",
+          "source_count": 1
+        },
+        {
+          "title": "企业出海服务",
+          "source_count": 1
+        }
+      ],
+      "source_ids": [
+        "ft_news:76578"
+      ],
+      "news_ids": [
+        76578
+      ],
+      "created_from_source_id": "ft_news:76578",
+      "assignment_count": 1,
+      "assigned_intent_count": 1,
+      "report": null
+    }
+  ]
+}

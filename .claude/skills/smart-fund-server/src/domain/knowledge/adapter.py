@@ -103,25 +103,6 @@ class ReviewRule(KnowledgeBaseModel):
         return _not_blank(value)
 
 
-class WikiPageSpec(KnowledgeBaseModel):
-    page_type: str
-    subject_types: list[str]
-    sections: list[str] = Field(default_factory=list)
-    requires_evidence: bool = True
-
-    @field_validator("page_type")
-    @classmethod
-    def _required_page_type(cls, value: str) -> str:
-        return _not_blank(value)
-
-    @field_validator("subject_types")
-    @classmethod
-    def _non_empty_subject_types(cls, value: list[str]) -> list[str]:
-        if not value:
-            raise ValueError("subject_types cannot be empty")
-        return [_not_blank(item) for item in value]
-
-
 class AdapterSpec(KnowledgeBaseModel):
     name: str
     version: str
@@ -130,7 +111,6 @@ class AdapterSpec(KnowledgeBaseModel):
     sources: list[SourceTypeSpec] = Field(default_factory=list)
     consumption_rules: list[ConsumptionRule] = Field(default_factory=list)
     review_rules: list[ReviewRule] = Field(default_factory=list)
-    wiki_pages: list[WikiPageSpec] = Field(default_factory=list)
 
     @field_validator("name", "version")
     @classmethod
@@ -160,11 +140,6 @@ class AdapterSpec(KnowledgeBaseModel):
             for name in rule.relation_types:
                 if name not in relation_set:
                     raise ValueError(f"review rule {rule.trigger} references unknown relation {name}")
-
-        for page in self.wiki_pages:
-            for name in page.subject_types:
-                if name not in entity_set:
-                    raise ValueError(f"wiki page {page.page_type} references unknown entity {name}")
 
         return self
 

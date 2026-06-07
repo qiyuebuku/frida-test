@@ -9,7 +9,7 @@ import re
 import threading
 import time
 import traceback
-from contextlib import nullcontext
+from contextlib import ExitStack, nullcontext
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -22,20 +22,14 @@ from src.domain.knowledge.agentic_retrieval import (
     AgenticRetrievalStrategy,
     RetrievalWorkingSet,
 )
-from src.domain.knowledge.retrieval import RetrievalHit, RetrievalStep, RetrievalTrace, dedupe_hits
+from src.domain.knowledge.retrieval import RetrievalHit, RetrievalTrace, dedupe_hits
 from src.domain.knowledge.retrieval_anchor import build_guarded_query_anchor
 from src.domain.knowledge.retrieval_judge import CandidateJudge
-from src.domain.knowledge.retrieval_rerank import (
-    RerankScoredIndex,
-    apply_rerank_scores,
-    prepare_rerank_candidates,
-    rerank_index_payload,
-)
+from src.domain.knowledge.retrieval_rerank import prepare_rerank_candidates
 from src.domain.knowledge.retrieval_stop_verifier import verify_stop_condition
 from src.domain.knowledge.retrieval_trace_log import trace_agentic_event
 from src.domain.knowledge.retrieval_tools import RetrievalToolCall, RetrievalToolResult
 from src.domain.knowledge.retrieval_tools import RetrievalToolRegistry
-from src.infrastructure.clients.reranker import RerankerClient
 from src.infrastructure.config import settings
 
 logger = logging.getLogger(__name__)
@@ -46,24 +40,27 @@ _SYSTEM_INSTRUCTIONS = """你是基于工具的知识图谱 Agentic RAG 检索 A
 
 工作方式：
 1. 系统已经先用原始 query 做了一次 bootstrap 召回，并经过候选清洗和 reranker 重排，你必须先阅读 bootstrap_observation。
-2. 如果 bootstrap 中已有与用户 query 标题精确匹配的 evidence/node/edge，并且 evidence_refs 指向同一证据，优先 kg_open 这个 evidence。
+2. bootstrap 中的候选已经统一追溯为 evidence chunk；如果标题或片段与用户 query 精确匹配，优先 kg_open 该 evidence。
 3. 打开直连证据后，如果证据已经能回答“涉及哪些主体、行业或资产影响”，必须直接返回最终 JSON；不要继续搜索同一主题。
 4. 只有在 bootstrap 和已打开证据都缺少关键覆盖项时，才调用 kg_search 改写查询或补充召回。
-5. kg_search 返回的候选如果数量多、主题混杂、或你需要重新比较相关性，应调用 kg_rerank_candidates 后再打开证据或最终选择。
-6. kg_find 只用于在已打开证据中定位具体词句；不要用 kg_find 代替最终收敛。
-7. 停止前如果不确定，可以调用一次 kg_stop_check；如果已经确定，直接最终回答，不需要 stop_check。
-8. 最终只返回 JSON 对象，字段包含 stop_reason、selected_candidate_ids、evidence_ids、reason。
+5. 当已有候选方向正确但范围过大时，调用 kg_scoped_search 在这些 candidate/evidence 的局部范围内继续检索。
+6. 只有当已命中的 evidence chunk 暗示存在相关主体、行业、资产或影响链但证据不足时，才调用 kg_expand_graph；工具会通过 PG 图关系展开并返回新的 evidence chunk。
+7. kg_search 返回的 evidence chunk 如果数量多、主题混杂、或你需要重新比较相关性，应调用 kg_rerank_candidates 后再打开证据或最终选择。
+8. kg_find 只用于在已打开证据中定位具体词句；不要用 kg_find 代替最终收敛。
+9. 停止前如果不确定，可以调用一次 kg_stop_check；如果已经确定，直接最终回答，不需要 stop_check。
+10. 最终只返回 JSON 对象，字段包含 stop_reason、selected_candidate_ids、evidence_ids、reason。
 
 硬预算和去重：
 - 不要重复打开同一个 evidence_id。
 - 不要重复搜索同一表达或同义改写。
-- 常规查询最多额外 kg_search 2 次、kg_open 2 次、kg_find 2 次；达到预算后必须返回最终 JSON。
-- 最终 JSON 可以直接选择 bootstrap/search 中的 node、edge、evidence id；不需要为每个实体再额外搜索。
+- 常规查询最多额外 kg_search 2 次、kg_scoped_search 2 次、kg_expand_graph 2 次、kg_open 2 次、kg_find 2 次；达到预算后必须返回最终 JSON。
+- 最终 JSON 应选择 bootstrap/search/open/expand 中的 evidence chunk 或 evidence id；不要把裸 node/edge 当最终证据。
 
 选择标准：
 - 需要覆盖 query 中的主体、行业、资产影响、关系意图和证据来源。
-- 对“这条新闻涉及哪些主体、行业或资产影响”类问题，优先选择原始新闻 evidence、标题事件 node、与该新闻直接相连的 mentions/affects/related_to 边，以及这些边指向的主体/行业/资产节点。
+- 对“这条新闻涉及哪些主体、行业或资产影响”类问题，优先选择原始新闻 evidence chunk；node/edge 只作为命中线索和展开依据，不作为最终证据。
 - 如果同一 evidence 支撑多个主体/行业/资产，可以一次性选中这些候选，不要反复打开同一 evidence。
+- kg_search 的首轮来源是向量语义检索；只有 query 包含强标识时才会附加 PG exact resolver。graph 不会默认全局展开，必须由你基于候选质量显式调用 kg_expand_graph。
 - 不要生成知识图谱中没有的事实。
 - 如果只有泛词命中或主题漂移，不要把它当答案。
 - 最终输出必须是裸 JSON，不要 Markdown 代码块，不要前置解释，不要在 JSON 字符串里使用未转义的双引号。
@@ -120,33 +117,42 @@ class OpenAIAgentsRetrievalRuntime:
         tool_traces: list[AgenticToolTrace] = []
         raw_hits: list[RetrievalHit] = []
 
+        langfuse_context = ExitStack()
+        langfuse_context.enter_context(
+            _langfuse_run_context(query, adapter=self.registry.options.adapter_name)
+        )
+        langfuse_context.enter_context(
+            _langfuse_agent_observation(
+                langfuse_client,
+                query=query,
+                adapter=self.registry.options.adapter_name,
+                bootstrap_hits=0,
+                max_turns=self.constraints.max_turns,
+            )
+        )
         bootstrap_started = time.perf_counter()
         bootstrap_call = RetrievalToolCall(
             tool="search",
             query=query,
             limit=self.constraints.recall_pool_max_hits,
         )
-        bootstrap_result = await self.registry.execute(bootstrap_call)
-        bootstrap_ms = (time.perf_counter() - bootstrap_started) * 1000
-        observations.append(bootstrap_result)
-        raw_hits.extend(bootstrap_result.hits)
-        working_set.tool_call_count += 1
-        tool_traces.append(
-            AgenticToolTrace(
-                tool_name="search",
-                tool_input={
-                    **bootstrap_call.model_dump(mode="json"),
-                    "mode": "bootstrap",
-                    "agent_sdk": True,
-                    "search_diagnostics": bootstrap_result.step.input.get("search_diagnostics", {}),
-                },
-                raw_candidate_count=len(bootstrap_result.hits),
-                decision_reason="bootstrap_raw_query_before_agent",
-                tool_duration_ms=round(bootstrap_ms, 1),
+        try:
+            await _execute_sdk_tool(
+                registry=self.registry,
+                observations=observations,
+                raw_hits=raw_hits,
+                tool_traces=tool_traces,
+                working_set=working_set,
+                transcript=None,
+                call=bootstrap_call,
+                reason="bootstrap_raw_query_before_agent",
                 auto_action="bootstrap_search",
-                auto_action_reason="raw_query_first_recall",
             )
-        )
+        except BaseException:
+            langfuse_context.close()
+            raise
+        bootstrap_ms = (time.perf_counter() - bootstrap_started) * 1000
+        bootstrap_result = observations[-1]
         trace_agentic_event(
             "openai_agents_bootstrap_search",
             {
@@ -164,23 +170,31 @@ class OpenAIAgentsRetrievalRuntime:
                 "tool_ms": round(bootstrap_ms, 1),
             },
         )
-        rerank_result = await _execute_rerank_tool(
-            query=query,
-            hits=bootstrap_result.hits,
-            trigger="system_bootstrap",
-            reason="bootstrap_search_before_agent",
-            limit=self.constraints.recall_pool_max_hits,
-            observations=observations,
-            raw_hits=raw_hits,
-            tool_traces=tool_traces,
-            working_set=working_set,
-            transcript=None,
-        )
-        bootstrap_result_for_agent = rerank_result
+        try:
+            await _execute_sdk_tool(
+                registry=self.registry,
+                observations=observations,
+                raw_hits=raw_hits,
+                tool_traces=tool_traces,
+                working_set=working_set,
+                transcript=None,
+                call=RetrievalToolCall(
+                    tool="rerank",
+                    query=query,
+                    candidate_pool=bootstrap_result.hits,
+                    limit=self.constraints.recall_pool_max_hits,
+                ),
+                reason="bootstrap_search_before_agent",
+                auto_action="system_bootstrap",
+            )
+        except BaseException:
+            langfuse_context.close()
+            raise
+        bootstrap_result_for_agent = observations[-1]
         transcript: _AgentTranscript | None = _start_agent_transcript(query, bootstrap_result_for_agent)
 
         async def kg_search(query: str, limit: int = 0) -> str:
-            """Search KG retrieval documents, semantic vectors, graph, wiki, and entity resolver."""
+            """Search KG facts through PG deterministic search and vector semantic search."""
 
             return await _execute_sdk_tool(
                 registry=self.registry,
@@ -197,12 +211,90 @@ class OpenAIAgentsRetrievalRuntime:
                 reason="agent_sdk_tool_call",
             )
 
-        async def kg_open(
-            evidence_ids: list[str] | None = None,
+        async def kg_scoped_search(
+            query: str,
             candidate_ids: list[str] | None = None,
+            evidence_ids: list[str] | None = None,
             limit: int = 0,
         ) -> str:
-            """Open evidence windows for evidence ids or candidate ids."""
+            """Search within the local scope of known candidates or evidence."""
+
+            return await _execute_sdk_tool(
+                registry=self.registry,
+                observations=observations,
+                raw_hits=raw_hits,
+                tool_traces=tool_traces,
+                working_set=working_set,
+                transcript=transcript,
+                call=RetrievalToolCall(
+                    tool="scoped_search",
+                    query=query,
+                    candidate_ids=candidate_ids or [],
+                    evidence_ids=evidence_ids or [],
+                    limit=limit or self.constraints.recall_pool_max_hits,
+                ),
+                reason="agent_sdk_tool_call",
+            )
+
+        async def kg_expand_graph(candidate_ids: list[str], limit: int = 0) -> str:
+            """Expand selected evidence-backed candidates through local KG relations and return evidence chunks."""
+
+            return await _execute_sdk_tool(
+                registry=self.registry,
+                observations=observations,
+                raw_hits=raw_hits,
+                tool_traces=tool_traces,
+                working_set=working_set,
+                transcript=transcript,
+                call=RetrievalToolCall(
+                    tool="expand",
+                    candidate_ids=candidate_ids,
+                    limit=limit or self.registry.options.graph_limit,
+                ),
+                reason="agent_sdk_tool_call",
+            )
+
+        async def kg_expand_graph_scoped(
+            candidate_ids: list[str] | None = None,
+            seed_node_ids: list[str] | None = None,
+            seed_edge_ids: list[str] | None = None,
+            seed_chunk_ids: list[str] | None = None,
+            evidence_ids: list[str] | None = None,
+            relation_filters: list[str] | None = None,
+            hop_limit: int = 0,
+            limit: int = 0,
+        ) -> str:
+            """Expand PG graph from explicit node/edge/chunk/evidence seeds and return evidence chunks."""
+
+            return await _execute_sdk_tool(
+                registry=self.registry,
+                observations=observations,
+                raw_hits=raw_hits,
+                tool_traces=tool_traces,
+                working_set=working_set,
+                transcript=transcript,
+                call=RetrievalToolCall(
+                    tool="expand",
+                    candidate_ids=candidate_ids or [],
+                    seed_node_ids=seed_node_ids or [],
+                    seed_edge_ids=seed_edge_ids or [],
+                    seed_chunk_ids=seed_chunk_ids or [],
+                    evidence_ids=evidence_ids or [],
+                    relation_filters=relation_filters or [],
+                    hop_limit=hop_limit or None,
+                    limit=limit or self.registry.options.graph_limit,
+                ),
+                reason="agent_sdk_tool_call",
+            )
+
+        async def kg_open(
+            evidence_ids: list[str] | None = None,
+            chunk_ids: list[str] | None = None,
+            candidate_ids: list[str] | None = None,
+            include_neighbors: str = "none",
+            limit: int = 0,
+        ) -> str:
+            """Open evidence chunk text by evidence ids, chunk ids, or candidate ids."""
 
             return await _execute_sdk_tool(
                 registry=self.registry,
@@ -214,13 +306,20 @@ class OpenAIAgentsRetrievalRuntime:
                 call=RetrievalToolCall(
                     tool="open",
                     evidence_ids=evidence_ids or [],
+                    chunk_ids=chunk_ids or [],
                     candidate_ids=candidate_ids or [],
+                    include_neighbors=_normalize_include_neighbors(include_neighbors),
                     limit=limit or None,
                 ),
                 reason="agent_sdk_tool_call",
             )
 
-        async def kg_find(query: str, evidence_ids: list[str], limit: int = 0) -> str:
+        async def kg_find(
+            query: str,
+            evidence_ids: list[str] | None = None,
+            chunk_ids: list[str] | None = None,
+            limit: int = 0,
+        ) -> str:
             """Find local snippets inside opened or known evidence ids."""
 
             return await _execute_sdk_tool(
@@ -233,7 +332,8 @@ class OpenAIAgentsRetrievalRuntime:
                 call=RetrievalToolCall(
                     tool="find",
                     query=query,
-                    evidence_ids=evidence_ids,
+                    evidence_ids=evidence_ids or [],
+                    chunk_ids=chunk_ids or [],
                     limit=limit or None,
                 ),
                 reason="agent_sdk_tool_call",
@@ -244,7 +344,7 @@ class OpenAIAgentsRetrievalRuntime:
             top_n: int = 0,
             reason: str = "",
         ) -> str:
-            """Rerank currently known KG candidates with the external semantic reranker."""
+            """Rerank currently known evidence chunks with the external semantic reranker."""
 
             pool = dedupe_hits(raw_hits)
             ids = set(candidate_ids or [])
@@ -252,25 +352,22 @@ class OpenAIAgentsRetrievalRuntime:
                 pool = [hit for hit in pool if hit.hit_id in ids]
                 if not pool:
                     raise ValueError("kg_rerank_candidates received no known candidate_ids")
-            result = await _execute_rerank_tool(
-                query=query,
-                hits=pool,
-                trigger="agent_requested",
-                reason=reason or "agent_requested_rerank",
-                limit=top_n or self.constraints.recall_pool_max_hits,
+            return await _execute_sdk_tool(
+                registry=self.registry,
                 observations=observations,
                 raw_hits=raw_hits,
                 tool_traces=tool_traces,
                 working_set=working_set,
                 transcript=transcript,
+                call=RetrievalToolCall(
+                    tool="rerank",
+                    query=query,
+                    candidate_pool=pool,
+                    limit=top_n or self.constraints.recall_pool_max_hits,
+                ),
+                reason=reason or "agent_requested_rerank",
+                auto_action="agent_requested",
             )
-            payload = {
-                "tool": "rerank",
-                "hit_count": len(result.hits),
-                "rerank_diagnostics": result.step.input.get("rerank_diagnostics", {}),
-                "hits": _hit_payloads(result.hits[:12]),
-            }
-            return json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
 
         def kg_stop_check() -> str:
             """Check whether current evidence is enough to stop."""
@@ -305,6 +402,9 @@ class OpenAIAgentsRetrievalRuntime:
                 sdk.function_tool(kg_search, strict_mode=False),
                 sdk.function_tool(kg_open, strict_mode=False),
                 sdk.function_tool(kg_find, strict_mode=False),
+                sdk.function_tool(kg_scoped_search, strict_mode=False),
+                sdk.function_tool(kg_expand_graph, strict_mode=False),
+                sdk.function_tool(kg_expand_graph_scoped, strict_mode=False),
                 sdk.function_tool(kg_rerank_candidates, strict_mode=False),
                 sdk.function_tool(kg_stop_check, strict_mode=False),
             ],
@@ -322,51 +422,45 @@ class OpenAIAgentsRetrievalRuntime:
         )
         run_started = time.perf_counter()
         try:
-            with _langfuse_run_context(query, adapter=self.registry.options.adapter_name):
-                with _langfuse_agent_observation(
+            try:
+                run_result = await sdk.Runner.run(
+                    agent,
+                    run_input,
+                    max_turns=max(1, self.constraints.max_turns),
+                )
+            except BaseException as exc:
+                _update_langfuse_agent_observation(
                     langfuse_client,
-                    query=query,
-                    adapter=self.registry.options.adapter_name,
-                    bootstrap_hits=len(bootstrap_result_for_agent.hits),
-                    max_turns=self.constraints.max_turns,
-                ):
-                    try:
-                        run_result = await sdk.Runner.run(
-                            agent,
-                            run_input,
-                            max_turns=max(1, self.constraints.max_turns),
-                        )
-                    except BaseException as exc:
-                        _update_langfuse_agent_observation(
-                            langfuse_client,
-                            level="ERROR",
-                            status_message=f"{type(exc).__name__}: {exc}",
-                            output={
-                                "status": "failed",
-                                "error_type": type(exc).__name__,
-                                "error": str(exc),
-                                "tool_calls": len(observations),
-                                "raw_hits": len(dedupe_hits(raw_hits)),
-                            },
-                        )
-                        raise
-                    else:
-                        _update_langfuse_agent_observation(
-                            langfuse_client,
-                            level="DEFAULT",
-                            status_message="OpenAI Agents SDK retrieval completed",
-                            output={
-                                "status": "completed",
-                                "tool_calls": len(observations),
-                                "raw_hits": len(dedupe_hits(raw_hits)),
-                                "final_output_preview": _clip(
-                                    str(getattr(run_result, "final_output", "")),
-                                    1200,
-                                ),
-                            },
-                        )
+                    level="ERROR",
+                    status_message=f"{type(exc).__name__}: {exc}",
+                    output={
+                        "status": "failed",
+                        "error_type": type(exc).__name__,
+                        "error": str(exc),
+                        "tool_calls": len(observations),
+                        "raw_hits": len(dedupe_hits(raw_hits)),
+                    },
+                )
+                raise
+            else:
+                _update_langfuse_agent_observation(
+                    langfuse_client,
+                    level="DEFAULT",
+                    status_message="OpenAI Agents SDK retrieval completed",
+                    output={
+                        "status": "completed",
+                        "bootstrap_hits": len(bootstrap_result_for_agent.hits),
+                        "tool_calls": len(observations),
+                        "raw_hits": len(dedupe_hits(raw_hits)),
+                        "final_output_preview": _clip(
+                            str(getattr(run_result, "final_output", "")),
+                            1200,
+                        ),
+                    },
+                )
         except BaseException as exc:
             runner_ms = (time.perf_counter() - run_started) * 1000
+            langfuse_context.close()
             _flush_sdk_traces(sdk)
             _flush_langfuse(langfuse_client)
             _abort_agent_transcript(
@@ -388,6 +482,7 @@ class OpenAIAgentsRetrievalRuntime:
             )
             raise
         runner_ms = (time.perf_counter() - run_started) * 1000
+        langfuse_context.close()
         _flush_sdk_traces(sdk)
         _flush_langfuse(langfuse_client)
         _append_agent_run_items(transcript, run_result)
@@ -501,10 +596,15 @@ async def _execute_sdk_tool(
     transcript: _AgentTranscript | None,
     call: RetrievalToolCall,
     reason: str,
+    auto_action: str = "agent_tool",
 ) -> str:
-    _append_tool_call(transcript, call)
+    call_input = call.model_dump(mode="json")
+    if call.tool == "rerank":
+        call_input["input_hit_count"] = len(call.candidate_pool)
+        call_input["documents"] = _rerank_document_samples(call, registry)
+    _append_tool_call(transcript, call_input)
     langfuse_client = _langfuse_client_or_none()
-    with _langfuse_tool_observation(langfuse_client, call):
+    with _langfuse_tool_observation(langfuse_client, call_input):
         started = time.perf_counter()
         try:
             result = await registry.execute(call)
@@ -532,6 +632,7 @@ async def _execute_sdk_tool(
             "search_diagnostics": _search_diagnostics_summary(
                 result.step.input.get("search_diagnostics", {})
             ),
+            "rerank_diagnostics": result.step.input.get("rerank_diagnostics", {}),
             "hit_samples": _hit_summary_payloads(result.hits[:8]),
         }
         _update_langfuse_agent_observation(
@@ -560,11 +661,12 @@ async def _execute_sdk_tool(
     tool_traces.append(
         AgenticToolTrace(
             tool_name=call.tool,
-            tool_input=call.model_dump(mode="json"),
+            tool_input=call_input,
             raw_candidate_count=len(result.hits),
+            package_count=len(result.hits) if call.tool == "rerank" else 0,
             decision_reason=reason,
             tool_duration_ms=round(duration_ms, 1),
-            auto_action="agent_tool",
+            auto_action=auto_action,
             auto_action_reason="openai_agents_sdk",
         )
     )
@@ -572,151 +674,22 @@ async def _execute_sdk_tool(
         "tool": call.tool,
         "hit_count": len(result.hits),
         "search_diagnostics": result.step.input.get("search_diagnostics", {}),
+        "rerank_diagnostics": result.step.input.get("rerank_diagnostics", {}),
         "hits": _hit_payloads(result.hits[:12]),
     }
-    _append_tool_result(transcript, call, duration_ms=round(duration_ms, 1), payload=payload)
+    _append_tool_result(transcript, call_input, duration_ms=round(duration_ms, 1), payload=payload)
     trace_payload = _compact_trace_tool_payload(payload)
     trace_agentic_event(
         "openai_agents_tool_result",
         {
             "event_meaning": "OpenAI Agents SDK called a KG retrieval tool.",
             "tool": call.tool,
-            "input": call.model_dump(mode="json"),
+            "input": call_input,
             "duration_ms": round(duration_ms, 1),
             **trace_payload,
         },
     )
     return json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
-
-
-async def _execute_rerank_tool(
-    *,
-    query: str,
-    hits: list[RetrievalHit],
-    trigger: str,
-    reason: str,
-    limit: int,
-    observations: list[RetrievalToolResult],
-    raw_hits: list[RetrievalHit],
-    tool_traces: list[AgenticToolTrace],
-    working_set: RetrievalWorkingSet,
-    transcript: _AgentTranscript | None,
-) -> RetrievalToolResult:
-    call_payload = {
-        "tool": "rerank",
-        "query": query,
-        "trigger": trigger,
-        "reason": reason,
-        "limit": limit,
-        "input_hit_count": len(hits),
-    }
-    _append_tool_call(transcript, call_payload)
-    langfuse_client = _langfuse_client_or_none()
-    started = time.perf_counter()
-    with _langfuse_tool_observation(langfuse_client, call_payload):
-        preparation = prepare_rerank_candidates(
-            query,
-            hits,
-            max_documents=settings.RERANKER_MAX_DOCUMENTS,
-        )
-        if not preparation.candidates:
-            raise RuntimeError(
-                "reranker hygiene produced no candidates; "
-                f"input_hit_count={len(hits)} diagnostics={preparation.diagnostics}"
-            )
-
-        top_n = limit if limit and limit > 0 else settings.RERANKER_DEFAULT_TOP_N
-        top_n = min(top_n, len(preparation.candidates)) if top_n and top_n > 0 else None
-        client = RerankerClient(
-            base_url=settings.RERANKER_URL,
-            timeout=settings.RERANKER_TIMEOUT,
-            max_documents=settings.RERANKER_MAX_DOCUMENTS,
-        )
-        response = await client.rerank(
-            query=query,
-            documents=[candidate.document for candidate in preparation.candidates],
-            top_n=top_n,
-        )
-        scored_indexes = [
-            RerankScoredIndex(index=item.index, relevance_score=item.relevance_score)
-            for item in response.results
-        ]
-        reranked_hits = apply_rerank_scores(preparation.candidates, scored_indexes)
-        duration_ms = (time.perf_counter() - started) * 1000
-        _update_langfuse_agent_observation(
-            langfuse_client,
-            level="DEFAULT",
-            status_message="KG rerank tool completed",
-            output={
-                "status": "completed",
-                "tool": "rerank",
-                "trigger": trigger,
-                "duration_ms": round(duration_ms, 1),
-                "input_hit_count": len(hits),
-                "prepared_count": len(preparation.candidates),
-                "ranked_count": len(reranked_hits),
-            },
-        )
-    diagnostics = {
-        **preparation.diagnostics,
-        "trigger": trigger,
-        "top_n": top_n or "all",
-        "model": response.model,
-        "service_latency_ms": round(response.latency_ms, 1),
-        "total_documents": response.total_documents,
-        "ranked_count": len(reranked_hits),
-        "ranking": rerank_index_payload(preparation.candidates, scored_indexes[:12]),
-    }
-    result = RetrievalToolResult(
-        tool="rerank",
-        hits=reranked_hits,
-        step=RetrievalStep(
-            tool="rerank",
-            input={
-                **call_payload,
-                "rerank_diagnostics": diagnostics,
-            },
-            output_refs=[hit.hit_id for hit in reranked_hits],
-            hit_count=len(reranked_hits),
-        ),
-    )
-    observations.append(result)
-    raw_hits.extend(reranked_hits)
-    working_set.tool_call_count += 1
-    tool_traces.append(
-        AgenticToolTrace(
-            tool_name="rerank",
-            tool_input=result.step.input,
-            raw_candidate_count=len(hits),
-            package_count=len(reranked_hits),
-            decision_reason=reason,
-            tool_duration_ms=round(duration_ms, 1),
-            auto_action=trigger,
-            auto_action_reason=reason,
-        )
-    )
-    payload = {
-        "tool": "rerank",
-        "hit_count": len(reranked_hits),
-        "rerank_diagnostics": diagnostics,
-        "hits": _hit_payloads(reranked_hits[:12]),
-    }
-    _append_tool_result(transcript, call_payload, duration_ms=round(duration_ms, 1), payload=payload)
-    trace_agentic_event(
-        "openai_agents_rerank_result",
-        {
-            "event_meaning": "KG retrieval candidates were cleaned and semantically reranked before Agent selection.",
-            "trigger": trigger,
-            "reason": reason,
-            "duration_ms": round(duration_ms, 1),
-            "input_hit_count": len(hits),
-            "prepared_count": preparation.diagnostics.get("prepared_count"),
-            "ranked_count": len(reranked_hits),
-            "rerank_diagnostics": diagnostics,
-            "hit_samples": _hit_summary_payloads(reranked_hits[:8]),
-        },
-    )
-    return result
 
 
 def _load_agents_sdk() -> Any | None:
@@ -780,9 +753,9 @@ def _hit_payloads(hits: list[RetrievalHit]) -> list[dict[str, Any]]:
             "id": hit.hit_id,
             "type": hit.hit_type,
             "title": hit.title,
-            "score": round(float(hit.score or 0.0), 3),
-            "source": hit.source,
             "channels": hit.source_channels or [hit.source],
+            "raw_scores": _rounded_score_map(hit.raw_scores),
+            "channel_ranks": dict(hit.channel_ranks or {}),
             "evidence_refs": hit.evidence_refs[:5],
             "matched_terms": hit.matched_terms[:8],
             "matched_fields": hit.matched_fields[:8],
@@ -792,19 +765,44 @@ def _hit_payloads(hits: list[RetrievalHit]) -> list[dict[str, Any]]:
     ]
 
 
+def _rerank_document_samples(call: RetrievalToolCall, registry: RetrievalToolRegistry, *, limit: int = 8) -> list[str]:
+    if call.tool != "rerank" or not call.candidate_pool or not call.query:
+        return []
+    try:
+        preparation = prepare_rerank_candidates(
+            call.query,
+            call.candidate_pool,
+            max_documents=registry.reranker_max_documents,
+        )
+    except Exception:
+        return []
+    return [candidate.document for candidate in preparation.candidates[:limit]]
+
+
 def _hit_summary_payloads(hits: list[RetrievalHit]) -> list[dict[str, Any]]:
     return [
         {
             "id": hit.hit_id,
             "type": hit.hit_type,
             "title": hit.title,
-            "score": round(float(hit.score or 0.0), 3),
-            "source": hit.source,
             "channels": hit.source_channels or [hit.source],
+            "raw_scores": _rounded_score_map(hit.raw_scores),
+            "channel_ranks": dict(hit.channel_ranks or {}),
             "evidence_refs": hit.evidence_refs[:3],
         }
         for hit in hits
     ]
+
+
+def _rounded_score_map(value: dict[str, float] | None) -> dict[str, float]:
+    return {str(key): round(float(score or 0.0), 4) for key, score in (value or {}).items()}
+
+
+def _normalize_include_neighbors(value: str) -> str:
+    normalized = str(value or "").strip().lower()
+    if normalized in {"one_hop", "window"}:
+        return normalized
+    return "none"
 
 
 def _search_diagnostics_summary(value: Any) -> dict[str, Any]:
@@ -812,10 +810,10 @@ def _search_diagnostics_summary(value: Any) -> dict[str, Any]:
         return {}
     keep_keys = [
         "pre_dedupe_counts",
-        "post_dedupe_primary_source_counts",
-        "selected_primary_source_counts",
         "merged_channel_counts",
         "selected_merged_channel_counts",
+        "query_parser",
+        "vector_semantic",
         "semantic_hybrid",
         "graph_seed_nodes",
         "max_hits",
@@ -829,6 +827,7 @@ def _compact_trace_tool_payload(payload: dict[str, Any]) -> dict[str, Any]:
         "tool": payload.get("tool"),
         "hit_count": payload.get("hit_count"),
         "search_diagnostics": _search_diagnostics_summary(payload.get("search_diagnostics")),
+        "rerank_diagnostics": payload.get("rerank_diagnostics") or {},
         "hit_samples": _compact_hit_payloads_for_trace(hits if isinstance(hits, list) else []),
     }
 
@@ -843,9 +842,9 @@ def _compact_hit_payloads_for_trace(hits: list[dict[str, Any]]) -> list[dict[str
                 "id": hit.get("id"),
                 "type": hit.get("type"),
                 "title": hit.get("title"),
-                "score": hit.get("score"),
-                "source": hit.get("source"),
                 "channels": hit.get("channels"),
+                "raw_scores": hit.get("raw_scores"),
+                "channel_ranks": hit.get("channel_ranks"),
                 "evidence_refs": (hit.get("evidence_refs") or [])[:3],
             }
         )
@@ -1373,6 +1372,9 @@ def _configure_sdk_tracing(sdk: Any) -> None:
         if hasattr(sdk, "set_trace_processors"):
             sdk.set_trace_processors([_LocalJsonlTraceProcessor(local_trace_file)])
         return
+    if _langfuse_enabled():
+        sdk.set_tracing_disabled(False)
+        return
     if _agent_trace_to_openai_enabled():
         sdk.set_tracing_disabled(False)
         return
@@ -1448,13 +1450,15 @@ def _langfuse_run_context(query: str, *, adapter: str):
         from langfuse import propagate_attributes
     except Exception:
         return nullcontext()
+    session_id = _langfuse_session_id()
     return propagate_attributes(
-        session_id=os.getenv("KG_LANGFUSE_SESSION_ID", "").strip() or None,
+        session_id=session_id,
         tags=_langfuse_tags(),
         metadata={
             "component": "kg_openai_agents_arag",
             "adapter": adapter,
             "query": query,
+            "session_id": session_id,
             "base_url": _agent_base_url_for_trace(),
             "model": _agent_model_name(),
         },
@@ -1481,6 +1485,7 @@ def _langfuse_agent_observation(
             metadata={
                 "component": "kg_openai_agents_arag",
                 "adapter": adapter,
+                "session_id": _langfuse_session_id(),
                 "bootstrap_hits": bootstrap_hits,
                 "max_turns": max_turns,
                 "base_url": _agent_base_url_for_trace(),
@@ -1570,6 +1575,24 @@ def _langfuse_tags() -> list[str]:
     raw = os.getenv("KG_LANGFUSE_TAGS", "").strip()
     tags = [item.strip() for item in raw.split(",") if item.strip()]
     return _ordered_unique([*tags, "kg", "openai-agents", "agentic-rag"])
+
+
+def _langfuse_session_id() -> str | None:
+    raw = (
+        os.getenv("KG_LANGFUSE_SESSION_ID", "").strip()
+        or os.getenv("LANGFUSE_SESSION_ID", "").strip()
+    )
+    return _normalize_langfuse_session_id(raw)
+
+
+def _normalize_langfuse_session_id(value: str) -> str | None:
+    if not value:
+        return None
+    normalized = "".join(char if 32 <= ord(char) <= 126 else "-" for char in value)
+    normalized = re.sub(r"\s+", "-", normalized).strip("-")
+    if not normalized:
+        return None
+    return normalized[:199]
 
 
 def _sdk_disabled() -> bool:

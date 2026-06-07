@@ -1,8 +1,8 @@
 # KG Real Replay AI Diagnostic
 
-- status: success
-- started_at: 2026-05-17T15:45:19+0800
-- finished_at: 2026-05-17T15:46:15+0800
+- status: failed
+- started_at: 2026-05-17T16:40:22+0800
+- finished_at: 2026-05-17T16:46:17+0800
 - script: docs/6. 使用说明/知识图谱/3_kg_real_replay_quality_baseline.py
 - full_log: /home/yuyang/frida-test/.claude/skills/smart-fund-server/docs/6. 使用说明/知识图谱/generated_real_replay_full.log
 - llm_full_trace: /home/yuyang/frida-test/.claude/skills/smart-fund-server/docs/6. 使用说明/知识图谱/generated_real_replay_llm_full_trace.log
@@ -50,7 +50,7 @@
   {
     "name": "configure retrieval LLM trace",
     "status": "done",
-    "duration_s": 0.001
+    "duration_s": 0.0
   },
   {
     "name": "print LLM routing config",
@@ -60,57 +60,47 @@
   {
     "name": "check Milvus",
     "status": "done",
-    "duration_s": 1.067
+    "duration_s": 1.135
   },
   {
     "name": "check KG service health",
     "status": "done",
-    "duration_s": 0.07
+    "duration_s": 0.072
   },
   {
     "name": "Step 0 reset generated KG data before write",
     "status": "done",
-    "duration_s": 0.656
+    "duration_s": 0.639
   },
   {
     "name": "Step 0.5 ensure system baseline normalization rules",
     "status": "done",
-    "duration_s": 0.034
+    "duration_s": 0.04
   },
   {
     "name": "Step 1 compile real ft_news projection records",
     "status": "done",
-    "duration_s": 4.497
+    "duration_s": 4.608
   },
   {
     "name": "write bad case file",
     "status": "done",
-    "duration_s": 0.001
+    "duration_s": 0.0
   },
   {
     "name": "Step 1.6 inspect retrieval documents",
     "status": "done",
-    "duration_s": 0.317
+    "duration_s": 0.336
   },
   {
     "name": "Step 1.7 retrieval document quality report",
     "status": "done",
-    "duration_s": 0.304
+    "duration_s": 0.341
   },
   {
     "name": "Step 1.8 check database persistence",
     "status": "done",
-    "duration_s": 0.022
-  },
-  {
-    "name": "Step 4 replay auto-routed quality baseline",
-    "status": "done",
-    "duration_s": 48.612
-  },
-  {
-    "name": "Step 4.5 persist retrieval quality evaluation",
-    "status": "done",
-    "duration_s": 0.159
+    "duration_s": 0.026
   }
 ]
 ```
@@ -156,7 +146,7 @@
       "label": "ft_news",
       "summary": {
         "adapter_name": "financial",
-        "run_id": "kg_run:financial:7974e4f4-b860-431a-84bd-d0172edac4e7",
+        "run_id": "kg_run:financial:1997c385-6127-4be4-a8ed-66b13359e3f5",
         "nodes": 546,
         "edges": 651,
         "evidence": 100,
@@ -200,7 +190,7 @@
           "wiki_pages": 555,
           "hybrid_chunks": 1852,
           "retrieval_documents": 1852,
-          "retrieval_document_version_id": "kg_rt_doc_version:9c1a5907-ed63-43e8-aaaf-910e575046a9",
+          "retrieval_document_version_id": "kg_rt_doc_version:6567be49-1b2a-4198-b5eb-a0dc46f68369",
           "stale_evidence_cleanup": {
             "evidence": 0,
             "edges": 0,
@@ -850,7 +840,7 @@
     },
     "latest_versions": [
       {
-        "version_id": "kg_rt_doc_version:9c1a5907-ed63-43e8-aaaf-910e575046a9",
+        "version_id": "kg_rt_doc_version:6567be49-1b2a-4198-b5eb-a0dc46f68369",
         "generation_version": "retrieval_doc_v2",
         "field_coverage": {
           "filled_counts": {
@@ -957,28 +947,7 @@
 
 ```json
 {
-  "summary": {
-    "total": 12,
-    "passed": 12,
-    "failed": 0,
-    "metrics": {
-      "pass_rate": 1.0,
-      "channel_coverage": {
-        "search": 12,
-        "open": 12
-      },
-      "route_coverage": {
-        "agentic_arag": 12
-      },
-      "upgraded": 0,
-      "avg_hits": 9.666666666666666,
-      "avg_evidence_refs": 3.4166666666666665,
-      "avg_matched_nodes": 87.91666666666667,
-      "avg_matched_edges": 28.5,
-      "avg_forbidden_hits": 0.0,
-      "avg_context_precision": 0.5201831927714006
-    }
-  },
+  "summary": {},
   "failed_cases": []
 }
 ```
@@ -986,207 +955,36 @@
 ## Quality Eval
 
 ```json
+{}
+```
+
+## Error
+
+```json
 {
-  "run_id": "kg_rt_eval:f2b89407-d777-4dd8-92ec-81ca65eac463",
-  "strategy": "real_replay_quality_baseline:v1",
-  "labels": 12,
-  "snapshots": 12,
-  "metrics": 36,
-  "upserted": 36,
-  "aggregate": {
-    "case_count": 12,
-    "metric_count": 36,
-    "failure_count": 36,
-    "avg_preselect_recall_at_k": 0.3117063492063492,
-    "avg_preselect_precision_at_k": 0.21582383665716998,
-    "avg_wasted_slots_at_k": 7.194444444444445,
-    "avg_expected_candidates": 4.5,
-    "avg_selected_candidates": 8.5,
-    "avg_hit_candidates": 1.3055555555555556,
-    "avg_missed_candidates": 3.1944444444444446,
-    "avg_snapshot_found": 1.0,
-    "avg_k": 11.666666666666666,
-    "labels": 12,
-    "snapshots_available": 12,
-    "metrics_upserted": 36
-  },
-  "metric_sample": [
-    {
-      "metric_id": "kg_rt_metric:3b127999-4de5-4fe2-bfd2-972522bfc20b",
-      "run_id": "kg_rt_eval:f2b89407-d777-4dd8-92ec-81ca65eac463",
-      "case_id": "real_ft_news_ft_news_83904@8",
-      "query": "A股并购重组市场呈现三方面新变化 这条新闻涉及哪些主体、行业或资产影响",
-      "metrics": {
-        "preselect_recall_at_k": 0.3333333333333333,
-        "preselect_precision_at_k": 0.16666666666666666,
-        "wasted_slots_at_k": 5,
-        "expected_candidates": 3,
-        "selected_candidates": 6,
-        "hit_candidates": 1,
-        "missed_candidates": 2,
-        "snapshot_found": 1,
-        "k": 8
-      },
-      "failure_stage": "preselect",
-      "failure_details": {
-        "missed_candidate_ids": [
-          "kg_edge:financial:mentions:2c98471255cf44a7",
-          "A股并购重组市场呈现三方面新变化"
-        ],
-        "wasted_candidate_ids": [
-          "kg_ev:financial:news_articles:ft_news:83904:a8934858d26f15da",
-          "kg:financial:concept:5223b7f613456aa9",
-          "kg:financial:event:e8a50bb3aca0545b",
-          "kg:financial:event:a0f8f9de7750b5d3",
-          "kg_wiki:financial:relation_page:ed961fe88461d1fd"
-        ],
-        "base_case_id": "real_ft_news_ft_news_83904",
-        "snapshot_id": "kg_rt_snapshot:860b320c-06a9-432f-ba53-fdcab130e812"
-      },
-      "created_at": null
-    },
-    {
-      "metric_id": "kg_rt_metric:16a327bd-1388-49c1-a9fa-7e11abe92d8e",
-      "run_id": "kg_rt_eval:f2b89407-d777-4dd8-92ec-81ca65eac463",
-      "case_id": "real_ft_news_ft_news_83904@12",
-      "query": "A股并购重组市场呈现三方面新变化 这条新闻涉及哪些主体、行业或资产影响",
-      "metrics": {
-        "preselect_recall_at_k": 0.3333333333333333,
-        "preselect_precision_at_k": 0.16666666666666666,
-        "wasted_slots_at_k": 5,
-        "expected_candidates": 3,
-        "selected_candidates": 6,
-        "hit_candidates": 1,
-        "missed_candidates": 2,
-        "snapshot_found": 1,
-        "k": 12
-      },
-      "failure_stage": "preselect",
-      "failure_details": {
-        "missed_candidate_ids": [
-          "kg_edge:financial:mentions:2c98471255cf44a7",
-          "A股并购重组市场呈现三方面新变化"
-        ],
-        "wasted_candidate_ids": [
-          "kg_ev:financial:news_articles:ft_news:83904:a8934858d26f15da",
-          "kg:financial:concept:5223b7f613456aa9",
-          "kg:financial:event:e8a50bb3aca0545b",
-          "kg:financial:event:a0f8f9de7750b5d3",
-          "kg_wiki:financial:relation_page:ed961fe88461d1fd"
-        ],
-        "base_case_id": "real_ft_news_ft_news_83904",
-        "snapshot_id": "kg_rt_snapshot:860b320c-06a9-432f-ba53-fdcab130e812"
-      },
-      "created_at": null
-    },
-    {
-      "metric_id": "kg_rt_metric:4369ada3-2c7a-4d28-ae34-1ff2d6e12182",
-      "run_id": "kg_rt_eval:f2b89407-d777-4dd8-92ec-81ca65eac463",
-      "case_id": "real_ft_news_ft_news_83904@15",
-      "query": "A股并购重组市场呈现三方面新变化 这条新闻涉及哪些主体、行业或资产影响",
-      "metrics": {
-        "preselect_recall_at_k": 0.3333333333333333,
-        "preselect_precision_at_k": 0.16666666666666666,
-        "wasted_slots_at_k": 5,
-        "expected_candidates": 3,
-        "selected_candidates": 6,
-        "hit_candidates": 1,
-        "missed_candidates": 2,
-        "snapshot_found": 1,
-        "k": 15
-      },
-      "failure_stage": "preselect",
-      "failure_details": {
-        "missed_candidate_ids": [
-          "kg_edge:financial:mentions:2c98471255cf44a7",
-          "A股并购重组市场呈现三方面新变化"
-        ],
-        "wasted_candidate_ids": [
-          "kg_ev:financial:news_articles:ft_news:83904:a8934858d26f15da",
-          "kg:financial:concept:5223b7f613456aa9",
-          "kg:financial:event:e8a50bb3aca0545b",
-          "kg:financial:event:a0f8f9de7750b5d3",
-          "kg_wiki:financial:relation_page:ed961fe88461d1fd"
-        ],
-        "base_case_id": "real_ft_news_ft_news_83904",
-        "snapshot_id": "kg_rt_snapshot:860b320c-06a9-432f-ba53-fdcab130e812"
-      },
-      "created_at": null
-    },
-    {
-      "metric_id": "kg_rt_metric:2461df3a-f95d-421b-ba31-e3b28f203c5d",
-      "run_id": "kg_rt_eval:f2b89407-d777-4dd8-92ec-81ca65eac463",
-      "case_id": "real_ft_news_ft_news_78253@8",
-      "query": "2025年年报点评：25年储能业务实现量利齐升，静待海外产能&新兴业务兑现业绩 这条新闻涉及哪些主体、行业或资产影响",
-      "metrics": {
-        "preselect_recall_at_k": 0.5,
-        "preselect_precision_at_k": 0.125,
-        "wasted_slots_at_k": 7,
-        "expected_candidates": 2,
-        "selected_candidates": 8,
-        "hit_candidates": 1,
-        "missed_candidates": 1,
-        "snapshot_found": 1,
-        "k": 8
-      },
-      "failure_stage": "preselect",
-      "failure_details": {
-        "missed_candidate_ids": [
-          "2025年年报点评：25年储能业务实现量利齐升，静待海外产能&新兴业务兑现业绩"
-        ],
-        "wasted_candidate_ids": [
-          "kg_ev:financial:news_articles:ft_news:78253:9826dbf7affb1a80",
-          "kg:financial:concept:2784eb007f3e659e",
-          "kg:financial:concept:834952ec423a6807",
-          "kg:financial:concept:e3c814f87b09626c",
-          "kg_ev:financial:news_articles:ft_news:74422:74ef719388442da8",
-          "kg_wiki:financial:timeline_page:5068713baedb7308",
-          "kg:financial:event:9db80dafad282cbe"
-        ],
-        "base_case_id": "real_ft_news_ft_news_78253",
-        "snapshot_id": "kg_rt_snapshot:205774f3-fddb-48e4-a44f-389e97113458"
-      },
-      "created_at": null
-    },
-    {
-      "metric_id": "kg_rt_metric:837b51b8-460f-4362-b24d-b7720e748493",
-      "run_id": "kg_rt_eval:f2b89407-d777-4dd8-92ec-81ca65eac463",
-      "case_id": "real_ft_news_ft_news_78253@12",
-      "query": "2025年年报点评：25年储能业务实现量利齐升，静待海外产能&新兴业务兑现业绩 这条新闻涉及哪些主体、行业或资产影响",
-      "metrics": {
-        "preselect_recall_at_k": 0.5,
-        "preselect_precision_at_k": 0.08333333333333333,
-        "wasted_slots_at_k": 11,
-        "expected_candidates": 2,
-        "selected_candidates": 12,
-        "hit_candidates": 1,
-        "missed_candidates": 1,
-        "snapshot_found": 1,
-        "k": 12
-      },
-      "failure_stage": "preselect",
-      "failure_details": {
-        "missed_candidate_ids": [
-          "2025年年报点评：25年储能业务实现量利齐升，静待海外产能&新兴业务兑现业绩"
-        ],
-        "wasted_candidate_ids": [
-          "kg_ev:financial:news_articles:ft_news:78253:9826dbf7affb1a80",
-          "kg:financial:concept:2784eb007f3e659e",
-          "kg:financial:concept:834952ec423a6807",
-          "kg:financial:concept:e3c814f87b09626c",
-          "kg_ev:financial:news_articles:ft_news:74422:74ef719388442da8",
-          "kg_wiki:financial:timeline_page:5068713baedb7308",
-          "kg:financial:event:9db80dafad282cbe",
-          "kg_wiki:financial:relation_page:93447f0bc2efd9e4",
-          "kg_ev:financial:news_articles:ft_news:74409:62064351d47f57ac",
-          "kg_ev:financial:news_articles:ft_news:74414:5d901cf4621d1ad5",
-          "kg_ev:financial:news_articles:ft_news:74416:077d9aedd8fdfa40"
-        ],
-        "base_case_id": "real_ft_news_ft_news_78253",
-        "snapshot_id": "kg_rt_snapshot:205774f3-fddb-48e4-a44f-389e97113458"
-      },
-      "created_at": null
-    }
+  "type": "KeyboardInterrupt",
+  "message": "",
+  "traceback": [
+    "  File \"/home/yuyang/.local/lib/python3.12/site-packages/httpx/_client.py\", line 176, in __aiter__\n    async for chunk in self._stream:\n",
+    "  File \"/home/yuyang/.local/lib/python3.12/site-packages/httpx/_transports/default.py\", line 271, in __aiter__\n    async for part in self._httpcore_stream:\n",
+    "  File \"/home/yuyang/.local/lib/python3.12/site-packages/httpcore/_async/connection_pool.py\", line 407, in __aiter__\n    raise exc from None\n",
+    "  File \"/home/yuyang/.local/lib/python3.12/site-packages/httpcore/_async/connection_pool.py\", line 403, in __aiter__\n    async for part in self._stream:\n",
+    "  File \"/home/yuyang/.local/lib/python3.12/site-packages/httpcore/_async/http11.py\", line 342, in __aiter__\n    raise exc\n",
+    "  File \"/home/yuyang/.local/lib/python3.12/site-packages/httpcore/_async/http11.py\", line 334, in __aiter__\n    async for chunk in self._connection._receive_response_body(**kwargs):\n",
+    "  File \"/home/yuyang/.local/lib/python3.12/site-packages/httpcore/_async/http11.py\", line 203, in _receive_response_body\n    event = await self._receive_event(timeout=timeout)\n            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n",
+    "  File \"/home/yuyang/.local/lib/python3.12/site-packages/httpcore/_async/http11.py\", line 217, in _receive_event\n    data = await self._network_stream.read(\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n",
+    "  File \"/home/yuyang/.local/lib/python3.12/site-packages/httpcore/_backends/anyio.py\", line 35, in read\n    return await self._stream.receive(max_bytes=max_bytes)\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n",
+    "  File \"/home/yuyang/.local/lib/python3.12/site-packages/anyio/streams/tls.py\", line 244, in receive\n    data = await self._call_sslobject_method(self._ssl_object.read, max_bytes)\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n",
+    "  File \"/home/yuyang/.local/lib/python3.12/site-packages/anyio/streams/tls.py\", line 187, in _call_sslobject_method\n    data = await self.transport_stream.receive()\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n",
+    "  File \"/home/yuyang/.local/lib/python3.12/site-packages/anyio/_backends/_asyncio.py\", line 1269, in receive\n    await self._protocol.read_event.wait()\n",
+    "  File \"/home/yuyang/anaconda3/envs/frida-test/lib/python3.12/asyncio/locks.py\", line 212, in wait\n    await fut\n",
+    "asyncio.exceptions.CancelledError\n",
+    "\nDuring handling of the above exception, another exception occurred:\n\n",
+    "Traceback (most recent call last):\n",
+    "  File \"/home/yuyang/frida-test/.claude/skills/smart-fund-server/docs/6. 使用说明/知识图谱/3_kg_real_replay_quality_baseline.py\", line 2000, in <module>\n    asyncio.run(main())\n",
+    "  File \"/home/yuyang/anaconda3/envs/frida-test/lib/python3.12/asyncio/runners.py\", line 195, in run\n    return runner.run(main)\n           ^^^^^^^^^^^^^^^^\n",
+    "  File \"/home/yuyang/anaconda3/envs/frida-test/lib/python3.12/asyncio/runners.py\", line 123, in run\n    raise KeyboardInterrupt()\n",
+    "KeyboardInterrupt\n"
   ]
 }
 ```

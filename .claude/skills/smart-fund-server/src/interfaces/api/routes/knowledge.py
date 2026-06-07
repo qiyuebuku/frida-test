@@ -12,7 +12,6 @@ from src.application.dto.knowledge_dto import (
     KnowledgeIncrementalRefreshCommand,
     KnowledgeQualityScanCommand,
     KnowledgeRebuildIndexesCommand,
-    KnowledgeRebuildWikiCommand,
     KnowledgeResearchContextCommand,
     KnowledgeReviewActionCommand,
     KnowledgeSourceProjectionCommand,
@@ -43,12 +42,6 @@ class KGSourceProjectionRequest(BaseModel):
     include_skipped: bool = Field(True, description="是否返回跳过行明细")
 
 
-class KGRebuildWikiRequest(BaseModel):
-    adapter_name: str = Field("financial", description="adapter 名称")
-    target: Target = Field("prod", description="数据库目标")
-    scope: str = Field("all", description="第一版仅支持 all")
-
-
 class KGRebuildIndexesRequest(BaseModel):
     adapter_name: str = Field("financial", description="adapter 名称")
     target: Target = Field("prod", description="数据库目标")
@@ -56,7 +49,7 @@ class KGRebuildIndexesRequest(BaseModel):
         default_factory=lambda: ["graph_adjacency", "evidence_chunks"],
         description="索引类型：graph_adjacency / evidence_chunks / hybrid_chunks",
     )
-    scope: str = Field("all", description="第一版仅支持 all")
+    scope: str = Field("all", description="索引重建范围：all 或 projection:<projection_name>")
 
 
 class KGResearchContextRequest(BaseModel):
@@ -149,20 +142,6 @@ async def project_sources(req: KGSourceProjectionRequest):
                 codes=req.codes,
                 limit=req.limit,
                 include_skipped=req.include_skipped,
-            )
-        )
-    )
-
-
-@router.post("/rebuild-wiki", summary="重建知识 Wiki")
-async def rebuild_wiki(req: KGRebuildWikiRequest):
-    service = create_knowledge_service(target=req.target)
-    return await _call(
-        service.rebuild_wiki_for(
-            KnowledgeRebuildWikiCommand(
-                adapter_name=req.adapter_name,
-                target=req.target,
-                scope=req.scope,
             )
         )
     )

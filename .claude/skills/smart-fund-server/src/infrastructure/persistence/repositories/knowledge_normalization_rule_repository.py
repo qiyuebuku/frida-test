@@ -122,6 +122,64 @@ class KnowledgeNormalizationRuleRepository:
             for row in rows
         ]
 
+    def get_active_decision(self, adapter_name: str, *, object_kind: str, raw_signature: str) -> dict | None:
+        self.ensure_table()
+        rule_type = _decision_rule_type(object_kind)
+        with get_session(self.target) as session:
+            row = session.scalar(
+                select(KnowledgeNormalizationRule)
+                .where(
+                    KnowledgeNormalizationRule.adapter_name == adapter_name,
+                    KnowledgeNormalizationRule.rule_type == rule_type,
+                    KnowledgeNormalizationRule.raw_value == raw_signature,
+                    KnowledgeNormalizationRule.status == "active",
+                )
+                .limit(1)
+            )
+        if row is None:
+            return None
+        return {
+            "rule_id": row.rule_id,
+            "adapter_name": row.adapter_name,
+            "rule_type": row.rule_type,
+            "raw_signature": row.raw_value,
+            "canonical_value": row.canonical_value,
+            "status": row.status,
+            "confidence": row.confidence,
+            "source": row.source,
+            "version": row.version,
+            "payload": dict(row.payload or {}),
+        }
+
+    def upsert_decision(
+        self,
+        adapter_name: str,
+        *,
+        object_kind: str,
+        raw_signature: str,
+        canonical_value: str,
+        confidence: float,
+        source: str,
+        payload: dict,
+    ) -> int:
+        self.ensure_table()
+        rule_type = _decision_rule_type(object_kind)
+        return self.upsert_rules(
+            adapter_name,
+            [
+                {
+                    "rule_id": f"kg_norm_decision:{adapter_name}:{object_kind}:{stable_hash([raw_signature, 'active'])}",
+                    "rule_type": rule_type,
+                    "raw_value": raw_signature,
+                    "canonical_value": canonical_value,
+                    "status": "active",
+                    "confidence": confidence,
+                    "source": source,
+                    "payload": payload,
+                }
+            ],
+        )
+
     def upsert_rules(self, adapter_name: str, rules: list[dict]) -> int:
         self.ensure_table()
         rows = []
@@ -205,3 +263,10 @@ def _rule_key(item: dict) -> tuple[str, str, str]:
         str(item["raw_value"]),
         str(item.get("status") or "candidate"),
     )
+
+
+def _decision_rule_type(object_kind: str) -> str:
+    kind = str(object_kind or "").strip()
+    if kind not in {"entity", "relation"}:
+        raise ValueError(f"unsupported normalization decision object_kind: {object_kind}")
+    return f"{kind}_decision"

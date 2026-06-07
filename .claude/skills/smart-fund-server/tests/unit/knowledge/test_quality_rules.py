@@ -5,7 +5,6 @@ from __future__ import annotations
 from src.domain.knowledge.enums import ConfidenceLabel, EdgeStatus, EvidenceType, NodeStatus
 from src.domain.knowledge.quality import KnowledgeQualityScanner
 from src.domain.knowledge.schemas import CompiledEdge, CompiledEvidence, CompiledNode
-from src.domain.knowledge.wiki import WikiPage
 
 
 def test_quality_scan_flags_active_edge_without_evidence() -> None:
@@ -31,37 +30,10 @@ def test_quality_scan_flags_active_edge_without_evidence() -> None:
         nodes=nodes,
         edges=[edge],
         evidence=[],
-        wiki_pages=[],
     )
 
     assert any(issue.category == "active_edge_missing_evidence" for issue in report.issues)
     assert report.metrics["active_edge_evidence_coverage"] == 0.0
-
-
-def test_quality_scan_flags_stale_wiki() -> None:
-    nodes = _nodes(version="v2")
-    page = WikiPage(
-        page_id="kg_wiki:toy:entity:a",
-        adapter_name="toy",
-        page_type="entity_page",
-        subject_type="item",
-        subject_id=nodes[0].node_id,
-        title="A",
-        summary="A",
-        content="A",
-        source_node_ids=[nodes[0].node_id],
-        version="v1",
-    )
-
-    report = KnowledgeQualityScanner().scan(
-        adapter_name="toy",
-        nodes=nodes,
-        edges=[],
-        evidence=[],
-        wiki_pages=[page],
-    )
-
-    assert any(issue.category == "stale_wiki_page" for issue in report.issues)
 
 
 def test_quality_scan_flags_missing_edge_evidence_reference() -> None:
@@ -93,7 +65,6 @@ def test_quality_scan_flags_missing_edge_evidence_reference() -> None:
         nodes=nodes,
         edges=[edge],
         evidence=[evidence],
-        wiki_pages=[],
     )
 
     assert any(issue.category == "edge_evidence_missing" for issue in report.issues)

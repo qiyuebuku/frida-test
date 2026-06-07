@@ -7,6 +7,7 @@ back to RetrievalHit objects.
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -39,7 +40,6 @@ def prepare_rerank_candidates(
     hits: list[RetrievalHit],
     *,
     max_documents: int = 100,
-    max_per_family: int = 8,
 ) -> RerankPreparation:
     """Clean and convert retrieval hits into short reranker documents."""
 
@@ -53,11 +53,7 @@ def prepare_rerank_candidates(
             reason_counts[reason] = reason_counts.get(reason, 0) + 1
             continue
         family_key = _family_key(hit)
-        count = family_counts.get(family_key, 0)
-        if count >= max_per_family:
-            reason_counts["family_diversity_cap"] = reason_counts.get("family_diversity_cap", 0) + 1
-            continue
-        family_counts[family_key] = count + 1
+        family_counts[family_key] = family_counts.get(family_key, 0) + 1
         filtered.append(hit)
         if len(filtered) >= max_documents:
             break
@@ -78,11 +74,11 @@ def prepare_rerank_candidates(
         "prepared_count": len(candidates),
         "filtered_count": len(deduped) - len(filtered),
         "filter_reason_counts": reason_counts,
-        "family_cap": max_per_family,
         "family_count": len(family_counts),
         "max_documents": max_documents,
         "type_counts": _type_counts(filtered),
         "source_channel_counts": _source_channel_counts(filtered),
+        "document_samples": _document_samples(candidates),
     }
     return RerankPreparation(candidates=candidates, diagnostics=diagnostics)
 
@@ -90,34 +86,17 @@ def prepare_rerank_candidates(
 def build_rerank_document(query: str, hit: RetrievalHit) -> str:
     """Build a compact, query-aware reranker document for one candidate."""
 
-    channels = hit.source_channels or [hit.source]
-    evidence_refs = hit.evidence_refs[:4]
-    matched_terms = hit.matched_terms[:8]
-    relation_or_title = hit.title.strip()
     lines = [
-        f"query: {query.strip()}",
-        f"candidate_id: {hit.hit_id}",
-        f"type: {hit.hit_type}",
-        f"title: {relation_or_title}",
-        f"meaning: {_candidate_meaning(hit)}",
-        f"channels: {', '.join(item for item in channels if item)}",
+        "候选类型: 证据分片",
+        f"标题: {hit.title.strip()}",
     ]
-    if hit.node_refs:
-        lines.append(f"node_refs: {', '.join(hit.node_refs[:5])}")
-    if hit.edge_refs:
-        lines.append(f"edge_refs: {', '.join(hit.edge_refs[:5])}")
-    if evidence_refs:
-        lines.append(f"evidence_refs: {', '.join(evidence_refs)}")
-    if matched_terms:
-        lines.append(f"matched_terms: {', '.join(matched_terms)}")
-    if hit.matched_fields:
-        lines.append(f"matched_fields: {', '.join(hit.matched_fields[:8])}")
     if hit.snippet:
-        lines.append(f"evidence_summary: {_clip_whitespace(hit.snippet, 900)}")
-    if hit.hit_type == "wiki":
-        lines.append("background_policy: wiki/background candidate; useful only when it supports the query.")
-    if not evidence_refs:
-        lines.append("lineage_warning: no direct evidence_ref attached.")
+        lines.append(f"片段: {_clip_whitespace(hit.snippet, 900)}")
+    channel_summary = _channel_summary(hit)
+    if channel_summary:
+        lines.append(f"命中线索: {channel_summary}")
+    if not hit.evidence_refs:
+        lines.append("证据警告: 当前候选没有直接证据引用，相关性应保守判断。")
     return "\n".join(lines)
 
 
@@ -178,8 +157,10 @@ def _hard_filter_reason(hit: RetrievalHit) -> str:
         return "missing_id"
     if not hit.title.strip() and not hit.snippet.strip():
         return "missing_readable_content"
-    if hit.hit_type not in {"node", "edge", "path", "wiki", "evidence", "semantic_hybrid"}:
-        return "unsupported_hit_type"
+    if hit.hit_type != "evidence":
+        return "non_evidence_chunk"
+    if not (hit.hit_id.startswith("kg_chunk:") or hit.evidence_refs):
+        return "missing_evidence_chain"
     return ""
 
 
@@ -187,23 +168,132 @@ def _hygiene_flags(hit: RetrievalHit) -> list[str]:
     flags: list[str] = []
     if not hit.evidence_refs:
         flags.append("no_evidence_refs")
-    if hit.hit_type == "wiki":
-        flags.append("background")
     if len(hit.source_channels or []) > 1:
         flags.append("multi_channel")
     return flags
 
 
-def _candidate_meaning(hit: RetrievalHit) -> str:
+def _channel_summary(hit: RetrievalHit) -> str:
+    channels = hit.source_channels or [hit.source]
+    parts: list[str] = []
+    if channels:
+        parts.append("召回通道=" + ",".join(channels))
+    if hit.node_refs:
+        parts.append(f"关联节点数={len(hit.node_refs)}")
+    if hit.edge_refs:
+        parts.append(f"关联关系数={len(hit.edge_refs)}")
+    if hit.matched_terms:
+        parts.append("命中词=" + ",".join(hit.matched_terms[:6]))
+    return "；".join(parts)
+
+
+def _hit_type_label(hit_type: str) -> str:
+    labels = {
+        "node": "图谱节点",
+        "edge": "图谱关系",
+        "path": "图路径",
+        "wiki": "背景知识",
+        "evidence": "原始证据",
+        "semantic_hybrid": "语义候选",
+    }
+    return labels.get(hit_type, hit_type)
+
+
+def _relation_summary(hit: RetrievalHit) -> str:
+    if hit.hit_type != "edge":
+        return ""
+    relation_type = _relation_type_from_title(hit.title)
+    explanations = {
+        "affects": "影响；优先用于判断资产、行业、风险或利好利空。",
+        "benefits_from": "受益；优先用于判断利好、受益主体或资产影响。",
+        "hurt_by": "受损；优先用于判断负面事件、风险和利空影响。",
+        "related_to": "弱相关；需依赖证据短句确认相关性。",
+        "causal_hint": "因果线索；需证据精读确认。",
+        "belongs_to": "归属；用于定位分类，不等同于事件影响。",
+        "holds": "持有；用于资产暴露和持仓关联。",
+    }
+    explanation = explanations.get(relation_type)
+    if not explanation:
+        return ""
+    return f"{relation_type}: {explanation}"
+
+
+def _relation_type_from_title(title: str) -> str:
+    relation_types = [
+        "benefits_from",
+        "related_to",
+        "causal_hint",
+        "mentions",
+        "affects",
+        "hurt_by",
+        "belongs_to",
+        "holds",
+    ]
+    for relation_type in relation_types:
+        if f" {relation_type} " in title or f"--{relation_type}-->" in title:
+            return relation_type
+    return ""
+
+
+def _focus_summary(query: str, hit: RetrievalHit) -> str:
     if hit.hit_type == "edge":
-        return f"图谱关系候选，用于判断 query 中实体、行业或资产之间是否存在直接关系：{hit.title}"
-    if hit.hit_type == "evidence":
-        return f"原始证据候选，可能直接回答 query 或支撑相关节点：{hit.title}"
-    if hit.hit_type == "wiki":
-        return f"背景知识候选，只能补充解释，不能单独当作事实答案：{hit.title}"
-    if hit.hit_type == "path":
-        return f"图路径候选，用于解释多跳关系或影响链路：{hit.title}"
-    return f"图谱节点候选，需判断它是否是 query 所问的主体、行业、资产、事件或政策：{hit.title}"
+        edge_fact = _parse_edge_fact(hit)
+        if not edge_fact:
+            return ""
+        target_name = edge_fact["target_name"]
+        target_type = edge_fact["target_type"]
+        relation_type = edge_fact["relation_type"]
+        role = _node_role_label(target_type)
+        answer_fit = _answer_fit_summary(query, target_name=target_name, target_type=target_type)
+        return f"关系目标={target_name}；目标角色={role}；关系类型={relation_type}；{answer_fit}"
+    node_type = _node_type_from_snippet(hit.snippet)
+    if node_type:
+        return f"节点角色={_node_role_label(node_type)}；{_answer_fit_summary(query, target_name=hit.title, target_type=node_type)}"
+    return ""
+
+
+def _parse_edge_fact(hit: RetrievalHit) -> dict[str, str] | None:
+    text = hit.snippet or hit.title
+    match = re.search(r"关系事实:\s*(.*?)（(.*?)）\s*--([a-zA-Z_]+)-->\s*(.*?)（(.*?)）", text)
+    if match:
+        return {
+            "source_name": match.group(1).strip(),
+            "source_type": match.group(2).strip(),
+            "relation_type": match.group(3).strip(),
+            "target_name": match.group(4).strip(),
+            "target_type": match.group(5).strip(),
+        }
+    title_match = re.search(r"(.+?)\s+([a-zA-Z_]+)\s+(.+)", hit.title)
+    if not title_match:
+        return None
+    return {
+        "source_name": title_match.group(1).strip(),
+        "source_type": "unknown",
+        "relation_type": title_match.group(2).strip(),
+        "target_name": title_match.group(3).strip(),
+        "target_type": "unknown",
+    }
+
+
+def _node_type_from_snippet(snippet: str) -> str:
+    match = re.search(r"节点类型:\s*([^；\n]+)", snippet or "")
+    return match.group(1).strip() if match else ""
+
+
+def _node_role_label(node_type: str) -> str:
+    return node_type or "未知"
+
+
+def _answer_fit_summary(query: str, *, target_name: str, target_type: str) -> str:
+    query_text = query or ""
+    source_like_terms = ["资讯", "日报", "证券报", "新闻", "媒体", "数据"]
+    if any(term in target_name for term in source_like_terms):
+        return "答案适配=低：更像信息来源或数据来源，通常不应作为主体/行业/资产影响的主答案"
+    if target_name and target_name in query_text:
+        return "答案适配=高：候选名称直接出现在 query 中"
+    if any(term in query_text for term in ["主体", "行业", "板块", "产业", "资产", "标的", "影响", "利好", "利空", "受益", "风险", "负面"]):
+        return "答案适配=中高：query 明确询问对象或影响，需要结合证据判断"
+    return "答案适配=待判断：需要结合证据短句判断是否回答 query"
 
 
 def _family_key(hit: RetrievalHit) -> str:
@@ -230,6 +320,18 @@ def _source_channel_counts(hits: list[RetrievalHit]) -> dict[str, int]:
         for channel in channels:
             counts[channel] = counts.get(channel, 0) + 1
     return counts
+
+
+def _document_samples(candidates: list[RerankPreparedCandidate], *, limit: int = 8) -> list[dict[str, Any]]:
+    return [
+        {
+            "candidate_key": candidate.candidate_key,
+            "type": candidate.hit.hit_type,
+            "title": candidate.hit.title,
+            "document": _clip_whitespace(candidate.document, 1200),
+        }
+        for candidate in candidates[:limit]
+    ]
 
 
 def _clip_whitespace(value: str, limit: int) -> str:

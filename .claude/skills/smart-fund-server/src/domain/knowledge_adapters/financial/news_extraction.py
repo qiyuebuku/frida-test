@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import copy
 import json
 import logging
 from dataclasses import dataclass, field
@@ -13,6 +14,7 @@ from src.domain.knowledge.extraction import (
     CandidateFactEvent,
     CandidateFactPackage,
     CandidateFactRelation,
+    CandidateFactSignal,
     EvidenceSpan,
     ExtractedEntity,
     LLMFactExtractionPort,
@@ -85,6 +87,8 @@ _ENTITY_SCHEMA: dict[str, Any] = {
                     "text": {"type": "string"},
                     "start": {"type": "integer"},
                     "end": {"type": "integer"},
+                    "chunk_id": {"type": "string"},
+                    "evidence_id": {"type": "string"},
                 },
                 "required": ["field_name", "text"],
             },
@@ -126,17 +130,67 @@ _EXTRACTION_JSON_SCHEMA: dict[str, Any] = {
                     "target": {"type": "string"},
                     "direction": {"type": "string", "enum": ["positive", "negative", "neutral"]},
                     "reason": {"type": "string"},
+                    "relationship_strength": {"type": "number", "minimum": 0.0, "maximum": 1.0},
+                    "boundary_strength": {"type": "string", "enum": ["strong", "medium", "weak"]},
+                    "support_role": {"type": "string", "enum": ["core", "context", "mention"]},
                     "confidence": {"type": "number", "minimum": 0.0, "maximum": 1.0},
                     "evidence_spans": _ENTITY_SCHEMA["properties"]["evidence_spans"],
                 },
                 "required": ["relation_type", "source", "target", "evidence_spans"],
             },
         },
+        "fact_signals": {
+            "type": "array",
+            "description": "面向 Graph Index 聚合的语义信号，不替代事实关系，必须有 evidence_spans",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "signal_type": {"type": "string"},
+                    "topic_tags": {"type": "array", "items": {"type": "string"}},
+                    "impact_tags": {"type": "array", "items": {"type": "string"}},
+                    "risk_tags": {"type": "array", "items": {"type": "string"}},
+                    "narrative_tags": {"type": "array", "items": {"type": "string"}},
+                    "event_type_tags": {"type": "array", "items": {"type": "string"}},
+                    "policy_tags": {"type": "array", "items": {"type": "string"}},
+                    "asset_tags": {"type": "array", "items": {"type": "string"}},
+                    "industry_tags": {"type": "array", "items": {"type": "string"}},
+                    "governance_tags": {"type": "array", "items": {"type": "string"}},
+                    "target_tags": {"type": "array", "items": {"type": "string"}},
+                    "domain_tags": {"type": "array", "items": {"type": "string"}},
+                    "affected_entities": {"type": "array", "items": {"type": "string"}},
+                    "affected_assets": {"type": "array", "items": {"type": "string"}},
+                    "affected_industries": {"type": "array", "items": {"type": "string"}},
+                    "affected_targets": {"type": "array", "items": {"type": "string"}},
+                    "affected_domains": {"type": "array", "items": {"type": "string"}},
+                    "impact_direction": {"type": "string", "enum": ["positive", "negative", "neutral", "mixed"]},
+                    "impact_mechanism": {"type": "string"},
+                    "risk_type": {"type": "string"},
+                    "catalyst_type": {"type": "string"},
+                    "support_role": {"type": "string", "enum": ["core", "context", "mention"]},
+                    "boundary_strength": {"type": "string", "enum": ["strong", "medium", "weak"]},
+                    "sentiment": {"type": "string", "enum": ["positive", "negative", "neutral", "mixed"]},
+                    "confidence": {"type": "number", "minimum": 0.0, "maximum": 1.0},
+                    "evidence_spans": _ENTITY_SCHEMA["properties"]["evidence_spans"],
+                },
+                "required": ["signal_type", "evidence_spans"],
+            },
+        },
         "uncertainties": {"type": "array", "items": {"type": "string"}},
         "rule_suggestions": {"type": "array", "items": {"type": "string"}},
     },
-    "required": ["entities", "events", "relations", "uncertainties"],
+    "required": ["entities", "events", "relations", "fact_signals", "uncertainties"],
 }
+
+
+def _extraction_json_schema(
+    *,
+    allowed_entity_types: set[str],
+    allowed_relation_types: set[str],
+) -> dict[str, Any]:
+    schema = copy.deepcopy(_EXTRACTION_JSON_SCHEMA)
+    schema["properties"]["entities"]["items"]["properties"]["type"]["enum"] = sorted(allowed_entity_types)
+    schema["properties"]["relations"]["items"]["properties"]["relation_type"]["enum"] = sorted(allowed_relation_types)
+    return schema
 
 _EXTRACTION_CACHE_SCHEMA_VERSION = "financial_news_extraction.v3.typed_relation_endpoints"
 
@@ -147,8 +201,9 @@ _SYSTEM_PROMPT = """\
 1. entities：候选实体，必须有文本证据片段 evidence_spans
 2. events：候选事件，必须有文本证据片段 evidence_spans
 3. relations：候选关系，必须有 source、target、relation_type、evidence_spans
-4. uncertainties：无法确定的歧义说明
-5. rule_suggestions：可选的新规则建议，只作为候选建议，不代表事实
+4. fact_signals：面向社区聚合的语义信号，必须有 evidence_spans
+5. uncertainties：无法确定的歧义说明
+6. rule_suggestions：可选的新规则建议，只作为候选建议，不代表事实
 
 实体类型说明：
 - stock：股票，必须填写 exchange（SH/SZ/BJ/HK/US）和 code（股票代码）
@@ -165,11 +220,15 @@ _SYSTEM_PROMPT = """\
 抽取原则：
 - 只抽取有文本依据的实体，不凭空推断
 - 所有 entities、events、relations 都必须带 evidence_spans；没有证据片段就不要输出
+- 如果用户输入中提供了“证据分片索引”，evidence_spans 应优先填写对应 chunk_id；不要自造 chunk_id
 - 股票必须提供 code 和 exchange（不确定时可省略，不要填错）
 - 名称包含“产业链/供应链/生态链”时优先标为 concept，不要标为 industry
 - “并购重组/低利率/高股息/新质生产力”这类泛化主题优先标为 concept，不要标为 policy
 - confidence 为 0.6-1.0 之间的置信度
 - relations 中的 direction 根据业务逻辑判断（利好=positive/利空=negative/中性=neutral）
+- relations 中的 relationship_strength 表示 source 与 target 的业务相关性强弱，0.0-1.0；弱提及不要给高分
+- relations 中的 boundary_strength 表示该关系能否定义社区边界：strong/medium/weak
+- relations 中的 support_role 表示该关系在当前文本中的证据角色：core/context/mention
 - 如果无法确定精确关系类型，优先使用 related_to，不要自造 ontology 之外的关系类型
 - relations 的 source/target 必须精确等于本次输出的某个 entity.name、event.title 或当前新闻标题；否则先把该端点作为 entity/event 输出，仍不确定就不要输出该 relation
 - belongs_to 只用于股票/概念/地区等分类归属，不表示人物任职、机构所在地或事件主题；人物与机构、机构与地区、事件与主题的弱关系使用 related_to 或 mentions
@@ -179,7 +238,41 @@ _SYSTEM_PROMPT = """\
 - benefits_from/hurt_by 的 source 必须是 stock、industry、concept、fund 等受益或受损对象；不要用 event->stock 表达影响，应用 affects
 - belongs_to 只能表达稳定分类归属；不要用它表达人物任职、机构所在地、事件属于某主题
 - 候选实体最多抽取 10 个，聚焦最重要的
+
+Graph Index 信号要求：
+- fact_signals 用来帮助后续图算法聚合 community，不是单独事实，不要编造没有证据的主题
+- topic_tags 写可复用主题短语，如“并购重组政策窗口”“AI算力链”“新能源产能出海”
+- event_type_tags 写事件类型短语，如“政策窗口”“供应链短缺”“产业并购”“监管约束”“产能扩张”
+- impact_tags 写影响机制，如“产业链整合”“估值重估”“研发能力整合”“融资环境改善”
+- risk_tags 只写真实风险线索，如“商誉减值”“整合不及预期”“监管约束”“需求放缓”
+- narrative_tags 写市场叙事线索，如“硬科技资产重估”“价值投资回归”
+- affected_* 写直接受影响对象，优先使用本次 entities/events 中的名称
+- impact_direction/sentiment 必须基于文本判断，不确定用 neutral 或 mixed
+- support_role=core 表示该 signal 是当前文本核心事实，context 表示背景，mention 表示只是提及
+- boundary_strength=strong/medium/weak；只有强因果、强影响、明确风险或明确政策传导才写 strong，泛化行业共同出现只能写 weak
 """
+
+
+def _system_prompt_with_type_registry(base_prompt: str, registry: list[dict[str, Any]]) -> str:
+    if not registry:
+        return base_prompt
+    lines = [
+        "",
+        "Active type registry（可用的扩展类型，必须按定义谨慎使用）：",
+    ]
+    for item in registry[:80]:
+        if not isinstance(item, dict):
+            continue
+        type_kind = str(item.get("type_kind") or item.get("rule_type") or "").strip()
+        type_name = str(item.get("type_name") or item.get("raw_value") or "").strip()
+        definition = str(item.get("definition") or item.get("canonical_value") or "").strip()
+        if not type_kind or not type_name:
+            continue
+        suffix = f"：{definition}" if definition else ""
+        lines.append(f"- {type_kind}: {type_name}{suffix}")
+    if len(lines) == 2:
+        return base_prompt
+    return f"{base_prompt}\n" + "\n".join(lines)
 
 
 class FinancialNewsExtractionStrategy:
@@ -190,9 +283,20 @@ class FinancialNewsExtractionStrategy:
         self,
         llm_port: LLMFactExtractionPort | None = None,
         llm_model: str | None = None,
+        allowed_entity_types: set[str] | None = None,
+        allowed_relation_types: set[str] | None = None,
+        active_type_registry: list[dict[str, Any]] | None = None,
     ) -> None:
         self._llm = llm_port
         self._llm_model = llm_model
+        self._allowed_entity_types = set(CORE_ENTITY_TYPES) | set(allowed_entity_types or set())
+        self._allowed_relation_types = set(CORE_RELATION_TYPES) | set(allowed_relation_types or set())
+        self._active_type_registry = list(active_type_registry or [])
+        self._json_schema = _extraction_json_schema(
+            allowed_entity_types=self._allowed_entity_types,
+            allowed_relation_types=self._allowed_relation_types,
+        )
+        self._system_prompt = _system_prompt_with_type_registry(_SYSTEM_PROMPT, self._active_type_registry)
 
     async def extract(self, item: TextExtractionInput) -> TextExtractionResult:
         payload = dict(item.metadata.get("payload") or {})
@@ -243,6 +347,20 @@ class FinancialNewsExtractionStrategy:
         weak_hints = _weak_hint_text(payload.get("weak_entity_hints"))
         if weak_hints:
             parts.append(f"来源侧弱标签，仅作参考，必须在标题或正文中找到证据才可抽取：{weak_hints}")
+        if payload.get("chunk_first_extraction"):
+            parts.append(
+                "当前正文是单个 evidence chunk，不是整篇文章。"
+                "只抽取本 chunk 明确支持或可从本 chunk 合理推断的实体、事件和关系；"
+                "不要根据其他 chunk 或整篇标题扩展无文本依据的事实。"
+            )
+        chunk_hints = _chunk_hint_text(payload.get("evidence_chunk_hints"))
+        if chunk_hints:
+            parts.append(
+                "证据分片索引，用于定位 evidence_spans。抽取关系时优先引用能支持该关系的分片文本；"
+                "如果证据来自某个分片，evidence_spans 必须填写该分片的 chunk_id；"
+                "不要因为分片存在就抽取没有文本依据的事实，不要自造 chunk_id。\n"
+                f"{chunk_hints}"
+            )
 
         prompt = "\n".join(parts)
         request = self._build_llm_request(item, prompt, use_cache=True)
@@ -310,9 +428,9 @@ class FinancialNewsExtractionStrategy:
             source_id=item.source_id,
             source_type=item.source_type,
             prompt=prompt,
-            system_prompt=_SYSTEM_PROMPT,
+            system_prompt=self._system_prompt,
             model=self._llm_model,
-            json_schema=_EXTRACTION_JSON_SCHEMA,
+            json_schema=self._json_schema,
             temperature=0.0,
             max_tokens=_EXTRACTION_MAX_TOKENS,
             metadata=metadata,
@@ -332,7 +450,7 @@ class FinancialNewsExtractionStrategy:
         assistant_content = _llm_response_text_for_continuation(response)
         issues_payload = json.dumps(_issue_dicts(validation_issues[:12]), ensure_ascii=False, indent=2)
         messages = [
-            {"role": "system", "content": _SYSTEM_PROMPT},
+            {"role": "system", "content": self._system_prompt},
             {"role": "user", "content": prompt},
             {"role": "assistant", "content": assistant_content[:12000]},
             {
@@ -417,9 +535,17 @@ class FinancialNewsExtractionStrategy:
                 top_level_issues,
             )
 
-        normalization_warnings = _normalize_structured_relation_types(structured)
+        normalization_warnings = _normalize_structured_relation_types(
+            structured,
+            allowed_relation_types=self._allowed_relation_types,
+        )
         evidence_warnings = _repair_candidate_evidence_spans(structured, item)
-        relation_warnings = _repair_candidate_relations(structured, item)
+        relation_warnings = _repair_candidate_relations(
+            structured,
+            item,
+            allowed_entity_types=self._allowed_entity_types,
+            allowed_relation_types=self._allowed_relation_types,
+        )
         if relation_warnings:
             logger.info(
                 "[news_extraction] repaired candidate relation(s), source_id=%s retry=%s count=%s sample=%s",
@@ -428,7 +554,12 @@ class FinancialNewsExtractionStrategy:
                 len(relation_warnings),
                 relation_warnings[:5],
             )
-        schema_issues = _candidate_package_schema_issues(structured, item)
+        schema_issues = _candidate_package_schema_issues(
+            structured,
+            item,
+            allowed_entity_types=self._allowed_entity_types,
+            allowed_relation_types=self._allowed_relation_types,
+        )
         if schema_issues:
             warning = f"llm candidate package schema invalid: {len(schema_issues)} issue(s)"
             raw_preview = _llm_raw_text_preview_for_response(response, structured)
@@ -461,12 +592,12 @@ class FinancialNewsExtractionStrategy:
         invalid_entities = [
             entity.entity_type
             for entity in result.mentioned_entities + result.affected_entities
-            if entity.entity_type not in CORE_ENTITY_TYPES
+            if entity.entity_type not in self._allowed_entity_types
         ]
         invalid_relations = [
             relation.relation_type
             for relation in result.relations
-            if relation.relation_type not in CORE_RELATION_TYPES
+            if relation.relation_type not in self._allowed_relation_types
         ]
         if invalid_entities or invalid_relations:
             return ValidationResult.error(
@@ -493,26 +624,36 @@ async def enrich_financial_text_payload(
     has_entity_hints = any(payload.get(name) for name in ("symbols", "entity_hints", "mentioned_entities", "affected_entities"))
     if not title and not text and not has_entity_hints:
         return payload
-    item = TextExtractionInput(
+    chunk_items = _chunk_first_items(
         source_id=source_id,
         source_type=source_type,
         title=title,
-        text=text,
-        fields={
-            name: value
-            for name, value in {
-                "summary": _optional_text(payload.get("summary")),
-                "content": _optional_text(payload.get("content")),
-                "payload": "structured entity hints" if has_entity_hints else None,
-            }.items()
-            if value
-        },
-        metadata={
-            "payload": payload,
-            **({"semantic_certainty": semantic_assessment.model_dump()} if semantic_assessment else {}),
-        },
+        payload=payload,
+        semantic_assessment=semantic_assessment,
     )
-    result = await pipeline.extract(item, strategy)
+    if chunk_items:
+        result = await _extract_chunk_first(chunk_items, pipeline=pipeline, strategy=strategy)
+    else:
+        item = TextExtractionInput(
+            source_id=source_id,
+            source_type=source_type,
+            title=title,
+            text=text,
+            fields={
+                name: value
+                for name, value in {
+                    "summary": _optional_text(payload.get("summary")),
+                    "content": _optional_text(payload.get("content")),
+                    "payload": "structured entity hints" if has_entity_hints else None,
+                }.items()
+                if value
+            },
+            metadata={
+                "payload": payload,
+                **({"semantic_certainty": semantic_assessment.model_dump()} if semantic_assessment else {}),
+            },
+        )
+        result = await pipeline.extract(item, strategy)
     enriched = dict(payload)
     enriched["mentioned_entities"] = _merge_entities(
         payload.get("mentioned_entities", []),
@@ -527,6 +668,145 @@ async def enrich_financial_text_payload(
     if result.warnings:
         enriched["_extraction_warnings"] = result.warnings
     return enriched
+
+
+def _chunk_first_items(
+    *,
+    source_id: str,
+    source_type: str,
+    title: str | None,
+    payload: dict[str, Any],
+    semantic_assessment: SemanticCertaintyAssessment | None,
+) -> list[TextExtractionInput]:
+    chunk_hints = payload.get("evidence_chunk_hints")
+    if not isinstance(chunk_hints, list):
+        return []
+    items: list[TextExtractionInput] = []
+    for hint in chunk_hints:
+        if not isinstance(hint, dict):
+            continue
+        chunk_id = _optional_text(hint.get("chunk_id"))
+        chunk_text = _optional_text(hint.get("text"))
+        if not chunk_id or not chunk_text:
+            continue
+        chunk_payload = {
+            **payload,
+            "text": chunk_text,
+            "content": chunk_text,
+            "chunk_first_extraction": True,
+            "evidence_chunk_hints": [hint],
+        }
+        items.append(
+            TextExtractionInput(
+                source_id=source_id,
+                source_type=source_type,
+                title=title,
+                text=chunk_text,
+                fields={
+                    "content": chunk_text,
+                    "chunk_id": chunk_id,
+                    **(
+                        {"summary": _optional_text(payload.get("summary"))}
+                        if _optional_text(payload.get("summary"))
+                        else {}
+                    ),
+                },
+                metadata={
+                    "payload": chunk_payload,
+                    "chunk_id": chunk_id,
+                    **({"semantic_certainty": semantic_assessment.model_dump()} if semantic_assessment else {}),
+                },
+            )
+        )
+    return items
+
+
+async def _extract_chunk_first(
+    items: list[TextExtractionInput],
+    *,
+    pipeline: TextExtractionPipeline,
+    strategy: FinancialNewsExtractionStrategy,
+) -> TextExtractionResult:
+    results = [await pipeline.extract(item, strategy) for item in items]
+    return TextExtractionResult(
+        mentioned_entities=_dedupe_extracted(
+            [entity for result in results for entity in result.mentioned_entities]
+        ),
+        affected_entities=_dedupe_extracted(
+            [entity for result in results for entity in result.affected_entities]
+        ),
+        candidate_package=_merge_candidate_packages(
+            [result.candidate_package for result in results if result.candidate_package is not None]
+        ),
+        warnings=[
+            f"chunk-first extraction used chunks={len(items)}",
+            *(warning for result in results for warning in result.warnings),
+        ],
+    )
+
+
+def _merge_candidate_packages(packages: list[CandidateFactPackage]) -> CandidateFactPackage | None:
+    entities: list[CandidateFactEntity] = []
+    events: list[CandidateFactEvent] = []
+    relations: list[CandidateFactRelation] = []
+    fact_signals: list[CandidateFactSignal] = []
+    uncertainties: list[str] = []
+    rule_suggestions: list[str] = []
+    seen_entities: set[str] = set()
+    seen_events: set[str] = set()
+    seen_relations: set[str] = set()
+    seen_signals: set[str] = set()
+    for package in packages:
+        for entity in package.entities:
+            key = _package_item_key(entity.model_dump(mode="json"))
+            if key not in seen_entities:
+                seen_entities.add(key)
+                entities.append(entity)
+        for event in package.events:
+            key = _package_item_key(event.model_dump(mode="json"))
+            if key not in seen_events:
+                seen_events.add(key)
+                events.append(event)
+        for relation in package.relations:
+            key = _package_item_key(relation.model_dump(mode="json"))
+            if key not in seen_relations:
+                seen_relations.add(key)
+                relations.append(relation)
+        for signal in package.fact_signals:
+            key = _package_item_key(signal.model_dump(mode="json"))
+            if key not in seen_signals:
+                seen_signals.add(key)
+                fact_signals.append(signal)
+        uncertainties.extend(package.uncertainties)
+        rule_suggestions.extend(package.rule_suggestions)
+    if not entities and not events and not relations and not fact_signals:
+        return None
+    return CandidateFactPackage(
+        entities=entities,
+        events=events,
+        relations=relations,
+        fact_signals=fact_signals,
+        uncertainties=_ordered_unique_texts(uncertainties),
+        rule_suggestions=_ordered_unique_texts(rule_suggestions),
+    )
+
+
+def _package_item_key(item: dict[str, Any]) -> str:
+    item = dict(item)
+    item.pop("confidence", None)
+    return json.dumps(item, ensure_ascii=False, sort_keys=True, default=str)
+
+
+def _ordered_unique_texts(values: list[str]) -> list[str]:
+    result: list[str] = []
+    seen: set[str] = set()
+    for value in values:
+        text = str(value or "").strip()
+        if not text or text in seen:
+            continue
+        seen.add(text)
+        result.append(text)
+    return result
 
 
 def _entity_to_extracted(entity: dict[str, Any]) -> ExtractedEntity:
@@ -563,6 +843,8 @@ def _entity_to_extracted(entity: dict[str, Any]) -> ExtractedEntity:
             text=str(span["text"]),
             start=span.get("start"),
             end=span.get("end"),
+            chunk_id=_optional_text(span.get("chunk_id")),
+            evidence_id=_optional_text(span.get("evidence_id")),
         )
         for span in entity.get("evidence_spans", [])
         if span.get("text")
@@ -590,6 +872,24 @@ def _weak_hint_text(value: Any) -> str:
         if text and text not in hints:
             hints.append(text)
     return "、".join(hints)
+
+
+def _chunk_hint_text(value: Any) -> str:
+    if not isinstance(value, list):
+        return ""
+    lines: list[str] = []
+    for item in value[:8]:
+        if not isinstance(item, dict):
+            continue
+        chunk_id = str(item.get("chunk_id") or "").strip()
+        text = str(item.get("text") or "").strip()
+        if not chunk_id or not text:
+            continue
+        offsets = ""
+        if item.get("start_offset") is not None and item.get("end_offset") is not None:
+            offsets = f" offsets={item.get('start_offset')}-{item.get('end_offset')}"
+        lines.append(f"- chunk_id={chunk_id}{offsets}: {text[:360]}")
+    return "\n".join(lines)
 
 
 def _symbol_entities(symbols: Any) -> list[ExtractedEntity]:
@@ -642,16 +942,26 @@ def _candidate_package_from_structured(structured: dict[str, Any]) -> CandidateF
                 )
             )
 
+    fact_signals: list[CandidateFactSignal] = []
+    for signal in structured.get("fact_signals") or []:
+        if isinstance(signal, dict) and _has_evidence_spans(signal):
+            fact_signals.append(_candidate_fact_signal(signal))
+
     return CandidateFactPackage(
         entities=entities,
         events=events,
         relations=relations,
+        fact_signals=fact_signals,
         uncertainties=[str(item) for item in structured.get("uncertainties", []) if str(item).strip()],
         rule_suggestions=[str(item) for item in structured.get("rule_suggestions", []) if str(item).strip()],
     )
 
 
-def _normalize_structured_relation_types(structured: dict[str, Any]) -> list[str]:
+def _normalize_structured_relation_types(
+    structured: dict[str, Any],
+    *,
+    allowed_relation_types: set[str] | None = None,
+) -> list[str]:
     warnings: list[str] = []
     for index, relation in enumerate(structured.get("relations") or []):
         if not isinstance(relation, dict):
@@ -660,6 +970,7 @@ def _normalize_structured_relation_types(structured: dict[str, Any]) -> list[str
         normalized, metadata = normalize_candidate_relation_type(
             original,
             direction=relation.get("direction"),
+            allowed_relation_types=allowed_relation_types,
         )
         relation["relation_type"] = normalized
         if metadata.get("direction") and not relation.get("direction"):
@@ -685,6 +996,67 @@ def _candidate_entity(entity: dict[str, Any]) -> CandidateFactEntity:
         evidence_spans=extracted.evidence_spans,
         properties=extracted.properties,
     )
+
+
+def _candidate_fact_signal(signal: dict[str, Any]) -> CandidateFactSignal:
+    excluded = {
+        "signal_type",
+        "topic_tags",
+        "impact_tags",
+        "risk_tags",
+        "narrative_tags",
+        "event_type_tags",
+        "policy_tags",
+        "asset_tags",
+        "industry_tags",
+        "governance_tags",
+        "target_tags",
+        "domain_tags",
+        "affected_entities",
+        "affected_assets",
+        "affected_industries",
+        "affected_targets",
+        "affected_domains",
+        "impact_direction",
+        "impact_mechanism",
+        "risk_type",
+        "catalyst_type",
+        "support_role",
+        "boundary_strength",
+        "sentiment",
+        "confidence",
+        "evidence_spans",
+    }
+    return CandidateFactSignal(
+        signal_type=str(signal["signal_type"]),
+        topic_tags=_string_list(signal.get("topic_tags")),
+        impact_tags=_string_list(signal.get("impact_tags")),
+        risk_tags=_string_list(signal.get("risk_tags")),
+        narrative_tags=_string_list(signal.get("narrative_tags")),
+        event_type_tags=_string_list(signal.get("event_type_tags")),
+        governance_tags=_string_list(signal.get("governance_tags")) or _string_list(signal.get("policy_tags")),
+        target_tags=_string_list(signal.get("target_tags")) or _string_list(signal.get("asset_tags")),
+        domain_tags=_string_list(signal.get("domain_tags")) or _string_list(signal.get("industry_tags")),
+        affected_entities=_string_list(signal.get("affected_entities")),
+        affected_targets=_string_list(signal.get("affected_targets")) or _string_list(signal.get("affected_assets")),
+        affected_domains=_string_list(signal.get("affected_domains")) or _string_list(signal.get("affected_industries")),
+        impact_direction=_optional_text(signal.get("impact_direction")),
+        impact_mechanism=_optional_text(signal.get("impact_mechanism")),
+        risk_type=_optional_text(signal.get("risk_type")),
+        catalyst_type=_optional_text(signal.get("catalyst_type")),
+        support_role=_optional_text(signal.get("support_role")),
+        boundary_strength=_optional_text(signal.get("boundary_strength")),
+        sentiment=_optional_text(signal.get("sentiment")),
+        confidence=float(signal.get("confidence", 0.7)),
+        evidence_spans=_evidence_spans(signal),
+        properties={name: value for name, value in signal.items() if name not in excluded},
+    )
+
+
+def _string_list(value: Any) -> list[str]:
+    if not isinstance(value, list):
+        return []
+    return [str(item).strip() for item in value if str(item or "").strip()]
 
 
 def _llm_response_diagnostics(metadata: dict[str, Any]) -> list[str]:
@@ -754,7 +1126,7 @@ def _should_retry_with_feedback(response: Any, *, retry: bool) -> bool:
 
 
 def _normalize_structured_defaults(structured: dict[str, Any]) -> None:
-    for field in ("entities", "events", "relations", "uncertainties"):
+    for field in ("entities", "events", "relations", "fact_signals", "uncertainties"):
         if field not in structured:
             structured[field] = []
     if "rule_suggestions" not in structured:
@@ -763,7 +1135,7 @@ def _normalize_structured_defaults(structured: dict[str, Any]) -> None:
 
 def _top_level_schema_issues(structured: dict[str, Any]) -> list[CandidateValidationIssue]:
     issues: list[CandidateValidationIssue] = []
-    for field in ("entities", "events", "relations", "uncertainties"):
+    for field in ("entities", "events", "relations", "fact_signals", "uncertainties"):
         if not isinstance(structured.get(field), list):
             value = structured.get(field)
             issues.append(
@@ -852,13 +1224,21 @@ def _repair_candidate_evidence_spans(structured: dict[str, Any], item: TextExtra
     return warnings
 
 
-def _repair_candidate_relations(structured: dict[str, Any], item: TextExtractionInput) -> list[str]:
+def _repair_candidate_relations(
+    structured: dict[str, Any],
+    item: TextExtractionInput,
+    *,
+    allowed_entity_types: set[str] | None = None,
+    allowed_relation_types: set[str] | None = None,
+) -> list[str]:
     relations = structured.get("relations")
     if not isinstance(relations, list):
         return []
     if not isinstance(structured.get("entities"), list):
         structured["entities"] = []
-    endpoint_types = _candidate_endpoint_types(structured, item)
+    allowed_entity_types = allowed_entity_types or CORE_ENTITY_TYPES
+    allowed_relation_types = allowed_relation_types or CORE_RELATION_TYPES
+    endpoint_types = _candidate_endpoint_types(structured, item, allowed_entity_types=allowed_entity_types)
     warnings: list[str] = []
 
     for index, relation in enumerate(relations):
@@ -899,9 +1279,19 @@ def _repair_candidate_relations(structured: dict[str, Any], item: TextExtraction
         target_type = endpoint_types.get(target_name)
         if not relation_type or not source_type or not target_type:
             continue
-        if _relation_endpoint_allowed(relation_type, source_type, target_type):
+        if _relation_endpoint_allowed(
+            relation_type,
+            source_type,
+            target_type,
+            allowed_relation_types=allowed_relation_types,
+        ):
             continue
-        fallback_relation = _fallback_relation_type_for_endpoints(relation_type, source_type, target_type)
+        fallback_relation = _fallback_relation_type_for_endpoints(
+            relation_type,
+            source_type,
+            target_type,
+            allowed_relation_types=allowed_relation_types,
+        )
         if fallback_relation != relation_type:
             relation["original_relation_type"] = relation.get("original_relation_type") or relation_type
             relation["relation_type"] = fallback_relation
@@ -920,16 +1310,43 @@ def _fallback_relation_type_for_endpoints(
     relation_type: str,
     source_type: str,
     target_type: str,
+    *,
+    allowed_relation_types: set[str] | None = None,
 ) -> str:
-    if relation_type in {"benefits_from", "hurt_by"} and _relation_endpoint_allowed("affects", source_type, target_type):
+    if relation_type in {"benefits_from", "hurt_by"} and _relation_endpoint_allowed(
+        "affects",
+        source_type,
+        target_type,
+        allowed_relation_types=allowed_relation_types,
+    ):
         return "affects"
-    if relation_type == "belongs_to" and _relation_endpoint_allowed("mentions", source_type, target_type):
+    if relation_type == "belongs_to" and _relation_endpoint_allowed(
+        "mentions",
+        source_type,
+        target_type,
+        allowed_relation_types=allowed_relation_types,
+    ):
         return "mentions"
-    if _relation_endpoint_allowed("related_to", source_type, target_type):
+    if _relation_endpoint_allowed(
+        "related_to",
+        source_type,
+        target_type,
+        allowed_relation_types=allowed_relation_types,
+    ):
         return "related_to"
-    if _relation_endpoint_allowed("mentions", source_type, target_type):
+    if _relation_endpoint_allowed(
+        "mentions",
+        source_type,
+        target_type,
+        allowed_relation_types=allowed_relation_types,
+    ):
         return "mentions"
-    if _relation_endpoint_allowed("affects", source_type, target_type):
+    if _relation_endpoint_allowed(
+        "affects",
+        source_type,
+        target_type,
+        allowed_relation_types=allowed_relation_types,
+    ):
         return "affects"
     return relation_type
 
@@ -1025,7 +1442,12 @@ def _candidate_package_is_fallback(package: CandidateFactPackage) -> bool:
 def _candidate_package_schema_issues(
     structured: dict[str, Any],
     item: TextExtractionInput,
+    *,
+    allowed_entity_types: set[str] | None = None,
+    allowed_relation_types: set[str] | None = None,
 ) -> list[CandidateValidationIssue]:
+    allowed_entity_types = allowed_entity_types or CORE_ENTITY_TYPES
+    allowed_relation_types = allowed_relation_types or CORE_RELATION_TYPES
     issues: list[CandidateValidationIssue] = []
     for index, entity in enumerate(structured.get("entities") or []):
         path = f"entities[{index}]"
@@ -1043,7 +1465,7 @@ def _candidate_package_schema_issues(
         if entity.get("type"):
             entity["type"] = normalize_entity_type(entity.get("type"))
         _require_candidate_fields(issues, path, entity, ("type", "name", "evidence_spans"))
-        if entity.get("type") not in CORE_ENTITY_TYPES:
+        if entity.get("type") not in allowed_entity_types:
             issues.append(
                 CandidateValidationIssue(
                     path=f"{path}.type",
@@ -1052,7 +1474,7 @@ def _candidate_package_schema_issues(
                     obj=entity,
                     details={
                         "value": entity.get("type"),
-                        "allowed_types": sorted(CORE_ENTITY_TYPES),
+                        "allowed_types": sorted(allowed_entity_types),
                         "allowed_actions": ["rewrite_type", "drop_object"],
                     },
                 )
@@ -1092,7 +1514,7 @@ def _candidate_package_schema_issues(
             relation,
             ("relation_type", "source", "target", "evidence_spans"),
         )
-        if relation.get("relation_type") not in CORE_RELATION_TYPES:
+        if relation.get("relation_type") not in allowed_relation_types:
             issues.append(
                 CandidateValidationIssue(
                     path=f"{path}.relation_type",
@@ -1101,12 +1523,34 @@ def _candidate_package_schema_issues(
                     obj=relation,
                     details={
                         "value": relation.get("relation_type"),
-                        "allowed_types": sorted(CORE_RELATION_TYPES),
+                        "allowed_types": sorted(allowed_relation_types),
                         "allowed_actions": ["rewrite_relation", "drop_relation"],
                     },
                 )
             )
-    issues.extend(_relation_endpoint_schema_issues(structured, item))
+
+    for index, signal in enumerate(structured.get("fact_signals") or []):
+        path = f"fact_signals[{index}]"
+        if not isinstance(signal, dict):
+            issues.append(
+                CandidateValidationIssue(
+                    path=path,
+                    code="object_type_invalid",
+                    message=f"{path} must be object",
+                    obj=signal,
+                    details={"expected_type": "object", "actual_type": type(signal).__name__},
+                )
+            )
+            continue
+        _require_candidate_fields(issues, path, signal, ("signal_type", "evidence_spans"))
+    issues.extend(
+        _relation_endpoint_schema_issues(
+            structured,
+            item,
+            allowed_entity_types=allowed_entity_types,
+            allowed_relation_types=allowed_relation_types,
+        )
+    )
 
     return issues
 
@@ -1118,8 +1562,13 @@ def _candidate_package_schema_errors(structured: dict[str, Any], item: TextExtra
 def _relation_endpoint_schema_issues(
     structured: dict[str, Any],
     item: TextExtractionInput,
+    *,
+    allowed_entity_types: set[str] | None = None,
+    allowed_relation_types: set[str] | None = None,
 ) -> list[CandidateValidationIssue]:
-    endpoint_types = _candidate_endpoint_types(structured, item)
+    allowed_entity_types = allowed_entity_types or CORE_ENTITY_TYPES
+    allowed_relation_types = allowed_relation_types or CORE_RELATION_TYPES
+    endpoint_types = _candidate_endpoint_types(structured, item, allowed_entity_types=allowed_entity_types)
     issues: list[CandidateValidationIssue] = []
     relations = structured.get("relations")
     if not isinstance(relations, list):
@@ -1167,8 +1616,17 @@ def _relation_endpoint_schema_issues(
                 )
             )
             continue
-        if not _relation_endpoint_allowed(relation_type, source_type, target_type):
-            allowed_relation_types = _allowed_relation_types_for_endpoint(source_type, target_type)
+        if not _relation_endpoint_allowed(
+            relation_type,
+            source_type,
+            target_type,
+            allowed_relation_types=allowed_relation_types,
+        ):
+            endpoint_allowed_relation_types = _allowed_relation_types_for_endpoint(
+                source_type,
+                target_type,
+                allowed_relation_types=allowed_relation_types,
+            )
             issues.append(
                 CandidateValidationIssue(
                     path=path,
@@ -1181,7 +1639,7 @@ def _relation_endpoint_schema_issues(
                         "target": target_name,
                         "source_type": source_type,
                         "target_type": target_type,
-                        "allowed_relation_types": allowed_relation_types,
+                        "allowed_relation_types": endpoint_allowed_relation_types,
                         "allowed_actions": ["rewrite_relation", "reverse_relation", "drop_relation"],
                     },
                 )
@@ -1193,7 +1651,13 @@ def _relation_endpoint_schema_errors(structured: dict[str, Any], item: TextExtra
     return _issue_messages(_relation_endpoint_schema_issues(structured, item))
 
 
-def _candidate_endpoint_types(structured: dict[str, Any], item: TextExtractionInput) -> dict[str, str]:
+def _candidate_endpoint_types(
+    structured: dict[str, Any],
+    item: TextExtractionInput,
+    *,
+    allowed_entity_types: set[str] | None = None,
+) -> dict[str, str]:
+    allowed_entity_types = allowed_entity_types or CORE_ENTITY_TYPES
     source_node_type = "policy" if item.source_type == "policy_news" else "event"
     endpoint_types: dict[str, str] = {}
     document_title = str(item.title or "").strip()
@@ -1204,7 +1668,7 @@ def _candidate_endpoint_types(structured: dict[str, Any], item: TextExtractionIn
             continue
         name = str(entity.get("name") or entity.get("canonical_name") or "").strip()
         entity_type = normalize_entity_type(entity.get("type") or entity.get("entity_type"))
-        if name and entity_type in CORE_ENTITY_TYPES:
+        if name and entity_type in allowed_entity_types:
             endpoint_types[name] = entity_type
     for event in structured.get("events") or []:
         if not isinstance(event, dict):
@@ -1215,19 +1679,37 @@ def _candidate_endpoint_types(structured: dict[str, Any], item: TextExtractionIn
     return endpoint_types
 
 
-def _relation_endpoint_allowed(relation_type: str, source_type: str, target_type: str) -> bool:
+def _relation_endpoint_allowed(
+    relation_type: str,
+    source_type: str,
+    target_type: str,
+    *,
+    allowed_relation_types: set[str] | None = None,
+) -> bool:
+    if allowed_relation_types is not None and relation_type not in allowed_relation_types:
+        return False
     for relation in FINANCIAL_ADAPTER_SPEC.relations:
         if relation.name == relation_type:
             return source_type in relation.source_types and target_type in relation.target_types
+    if allowed_relation_types is not None and relation_type in allowed_relation_types:
+        return True
     return False
 
 
-def _allowed_relation_types_for_endpoint(source_type: str, target_type: str) -> list[str]:
-    return sorted(
+def _allowed_relation_types_for_endpoint(
+    source_type: str,
+    target_type: str,
+    *,
+    allowed_relation_types: set[str] | None = None,
+) -> list[str]:
+    result = {
         relation.name
         for relation in FINANCIAL_ADAPTER_SPEC.relations
         if source_type in relation.source_types and target_type in relation.target_types
-    )
+    }
+    if allowed_relation_types is not None:
+        result.update(allowed_relation_types - CORE_RELATION_TYPES)
+    return sorted(result)
 
 
 def _require_candidate_fields(
@@ -1276,6 +1758,8 @@ def _evidence_spans(value: dict[str, Any]) -> list[EvidenceSpan]:
             text=str(span["text"]),
             start=span.get("start"),
             end=span.get("end"),
+            chunk_id=_optional_text(span.get("chunk_id")),
+            evidence_id=_optional_text(span.get("evidence_id")),
         )
         for span in value.get("evidence_spans", [])
         if isinstance(span, dict) and span.get("text")
@@ -1319,16 +1803,23 @@ def _extracted_to_entity(entity: ExtractedEntity) -> dict[str, Any]:
         if name in entity.properties:
             result[name] = entity.properties[name]
     if entity.evidence_spans:
-        result["evidence_spans"] = [
-            {
-                "field": span.field_name,
-                "text": span.text,
-                "start": span.start,
-                "end": span.end,
-            }
-            for span in entity.evidence_spans
-        ]
+        result["evidence_spans"] = [_span_payload(span) for span in entity.evidence_spans]
     return result
+
+
+def _span_payload(span: EvidenceSpan) -> dict[str, Any]:
+    return {
+        name: value
+        for name, value in {
+            "field": span.field_name,
+            "text": span.text,
+            "start": span.start,
+            "end": span.end,
+            "chunk_id": span.chunk_id,
+            "evidence_id": span.evidence_id,
+        }.items()
+        if value is not None
+    }
 
 
 def _infer_stock_exchange(code: str) -> str:

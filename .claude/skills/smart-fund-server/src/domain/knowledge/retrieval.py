@@ -11,7 +11,7 @@ from typing import Any, Literal
 
 from pydantic import Field
 
-from src.domain.knowledge.enums import ConfidenceLabel, EdgeStatus
+from src.domain.knowledge.enums import ConfidenceLabel, EdgeStatus, EvidenceStatus, NodeStatus
 from src.domain.knowledge.repositories import KnowledgeRepository
 from src.domain.knowledge.retrieval_anchor import build_guarded_query_anchor
 from src.domain.knowledge.retrieval_judge import (
@@ -20,19 +20,18 @@ from src.domain.knowledge.retrieval_judge import (
     judge_hits,
     retrieval_quality_metrics,
 )
-from src.domain.knowledge.retrieval_document import RetrievalDocument
-from src.domain.knowledge.retrieval_keyword import build_keyword_match
 from src.domain.knowledge.retrieval_profile import profile_span
 from src.domain.knowledge.schemas import (
     CompiledEdge,
     CompiledEvidence,
     CompiledNode,
+    EvidenceChunk,
     KnowledgeBaseModel,
 )
 
 logger = logging.getLogger(__name__)
 
-HitType = Literal["node", "edge", "path", "wiki", "evidence", "semantic_hybrid"]
+HitType = Literal["node", "edge", "path", "evidence", "semantic_hybrid"]
 GraphDirection = Literal["incoming", "outgoing", "undirected", "path"]
 
 
@@ -48,6 +47,7 @@ class RetrievalHit(KnowledgeBaseModel):
     raw_scores: dict[str, float] = Field(default_factory=dict)
     node_refs: list[str] = Field(default_factory=list)
     edge_refs: list[str] = Field(default_factory=list)
+    chunk_refs: list[str] = Field(default_factory=list)
     evidence_refs: list[str] = Field(default_factory=list)
     path_node_refs: list[str] = Field(default_factory=list)
     path_edge_refs: list[str] = Field(default_factory=list)
@@ -101,6 +101,13 @@ class RetrievalOptions(KnowledgeBaseModel):
     max_chars: int = Field(default=4000, ge=200)
 
 
+class ParsedRetrievalQuery(KnowledgeBaseModel):
+    raw_query: str
+    vector_query: str
+    strong_identifiers: list[str] = Field(default_factory=list)
+    has_strong_identifiers: bool = False
+
+
 class BudgetUsage(KnowledgeBaseModel):
     max_chars: int
     used_chars: int
@@ -113,7 +120,6 @@ class AnswerContext(KnowledgeBaseModel):
     hits: list[RetrievalHit] = Field(default_factory=list)
     matched_nodes: list[CompiledNode] = Field(default_factory=list)
     matched_edges: list[CompiledEdge] = Field(default_factory=list)
-    wiki_pages: list[RetrievalHit] = Field(default_factory=list)
     evidence_chunks: list[RetrievalHit] = Field(default_factory=list)
     low_confidence_items: list[RetrievalHit] = Field(default_factory=list)
     budget_usage: BudgetUsage
@@ -125,6 +131,9 @@ class SemanticHybridRetriever:
     backend_name: str = "none"
 
     async def search(self, query: str, options: RetrievalOptions) -> list[RetrievalHit]:
+        return []
+
+    async def get_by_ids(self, target_ids: list[str], options: RetrievalOptions) -> list[RetrievalHit]:
         return []
 
 
@@ -160,23 +169,179 @@ class HybridRetrievalRuntime:
         options: RetrievalOptions,
         limit: int | None = None,
     ) -> list[RetrievalHit]:
+        return self.pg_deterministic_search(query, options, limit=limit)
+
+    def pg_deterministic_search(
+        self,
+        query: str,
+        options: RetrievalOptions,
+        limit: int | None = None,
+    ) -> list[RetrievalHit]:
+        """Search canonical KG facts directly from PG-backed facts.
+
+        This replaces retrieval-document keyword search as the deterministic
+        first-stage entry. It is intentionally broad: exact identifiers, codes,
+        source ids, node names, aliases, edge context, and evidence text can all
+        produce candidates. Semantic understanding stays in the vector branch.
+        """
+
         max_hits = limit or options.keyword_limit
         if max_hits <= 0:
             return []
+        parsed = parse_retrieval_query(query)
         terms = _terms(query)
-        if not terms:
+        identifiers = [item.lower() for item in parsed.strong_identifiers]
+        if not terms and not identifiers:
             return []
-        search = getattr(self.repository, "search_retrieval_documents", None)
-        if search is None:
-            return []
-        with profile_span("retrieval.keyword_search", query=query, limit=max_hits):
-            documents = search(
-                options.adapter_name,
-                query,
-                target=options.target,
-                limit=max_hits,
+
+        node_by_id = {
+            node.node_id: node
+            for node in self.repository.list_nodes(options.adapter_name)
+            if node.status in _RETRIEVABLE_NODE_STATUSES
+        }
+        evidence_by_id = {
+            evidence.evidence_id: evidence
+            for evidence in _list_evidence(self.repository, options.adapter_name)
+            if evidence.status == EvidenceStatus.ACTIVE
+        }
+        chunks_by_evidence = _chunks_by_evidence(self.repository, options.adapter_name)
+        hits: list[RetrievalHit] = []
+
+        for node in node_by_id.values():
+            score, matched_terms, matched_fields = _deterministic_match(
+                query_terms=terms,
+                identifiers=identifiers,
+                field_values={
+                    "node_id": [node.node_id],
+                    "canonical_name": [node.canonical_name],
+                    "aliases": node.aliases,
+                    "external_ids": list(node.external_ids.values()),
+                    "properties": [_json_text(node.properties)],
+                    "node_type": [node.node_type],
+                },
+                field_weights={
+                    "node_id": 30.0,
+                    "canonical_name": 8.0,
+                    "aliases": 8.0,
+                    "external_ids": 25.0,
+                    "node_type": 2.0,
+                    "properties": 0.8,
+                },
+                identifier_weights={
+                    "node_id": 35.0,
+                    "external_ids": 35.0,
+                    "canonical_name": 20.0,
+                    "aliases": 20.0,
+                },
             )
-        return [_keyword_hit(document, terms) for document in documents]
+            if score <= 0:
+                continue
+            hits.append(
+                _node_hit(node, score=score, source="pg_deterministic").model_copy(
+                    update={
+                        "matched_terms": matched_terms,
+                        "matched_fields": matched_fields,
+                    }
+                )
+            )
+
+        for evidence in evidence_by_id.values():
+            score, matched_terms, matched_fields = _deterministic_match(
+                query_terms=terms,
+                identifiers=identifiers,
+                field_values={
+                    "evidence_id": [evidence.evidence_id],
+                    "source_ref": [f"{evidence.source_type}:{evidence.source_id}"],
+                    "source_id": [evidence.source_id],
+                    "content": [_evidence_text(evidence)],
+                    "payload": [_json_text(evidence.payload)],
+                },
+                field_weights={
+                    "evidence_id": 30.0,
+                    "source_ref": 30.0,
+                    "source_id": 25.0,
+                    "content": 0.35,
+                    "payload": 0.2,
+                },
+                identifier_weights={
+                    "evidence_id": 40.0,
+                    "source_ref": 40.0,
+                    "source_id": 35.0,
+                },
+            )
+            if score <= 0:
+                continue
+            hits.append(
+                _evidence_hit(evidence, source="pg_deterministic").model_copy(
+                    update={
+                        "score": score,
+                        "matched_terms": matched_terms,
+                        "matched_fields": matched_fields,
+                    }
+                )
+            )
+
+        list_edges = getattr(self.repository, "list_edges", None)
+        edges = list_edges(options.adapter_name) if callable(list_edges) else []
+        for edge in edges:
+            if edge.status not in _RETRIEVABLE_EDGE_STATUSES:
+                continue
+            score, matched_terms, matched_fields = _deterministic_match(
+                query_terms=terms,
+                identifiers=identifiers,
+                field_values={
+                    "edge_id": [edge.edge_id],
+                    "relation_type": [edge.relation_type],
+                    "source_node": [_node_text(node_by_id[edge.source_node_id])]
+                    if edge.source_node_id in node_by_id
+                    else [edge.source_node_id],
+                    "target_node": [_node_text(node_by_id[edge.target_node_id])]
+                    if edge.target_node_id in node_by_id
+                    else [edge.target_node_id],
+                    "evidence": [
+                        _evidence_text(evidence_by_id[evidence_id])
+                        for evidence_id in edge.evidence_ids
+                        if evidence_id in evidence_by_id
+                    ],
+                    "properties": [_json_text(edge.properties)],
+                },
+                field_weights={
+                    "edge_id": 30.0,
+                    "relation_type": 2.0,
+                    "source_node": 5.0,
+                    "target_node": 5.0,
+                    "evidence": 0.25,
+                    "properties": 0.5,
+                },
+                identifier_weights={
+                    "edge_id": 40.0,
+                    "source_node": 25.0,
+                    "target_node": 25.0,
+                    "evidence": 8.0,
+                },
+            )
+            if score <= 0:
+                continue
+            score += _edge_relation_intent_score(edge, query=query, query_terms=terms)
+            score += min(max(float(edge.confidence_score or 0.0), 0.0), 1.0)
+            hits.append(
+                _edge_hit(edge, source="pg_deterministic").model_copy(
+                    update={
+                        "score": max(score, float(edge.confidence_score or 0.0)),
+                        "title": _edge_title(edge, node_by_id=node_by_id),
+                        "snippet": _edge_snippet(
+                            edge,
+                            node_by_id=node_by_id,
+                            evidence_by_id=evidence_by_id,
+                            chunks_by_evidence=chunks_by_evidence,
+                        ),
+                        "matched_terms": matched_terms,
+                        "matched_fields": matched_fields,
+                    }
+                )
+            )
+
+        return sorted(hits, key=lambda hit: (-hit.score, hit.hit_id))[:max_hits]
 
     async def semantic_hybrid_search(
         self,
@@ -264,41 +429,6 @@ class HybridRetrievalRuntime:
                     break
         return hits
 
-    def wiki_search(
-        self,
-        query: str,
-        options: RetrievalOptions,
-        limit: int | None = None,
-    ) -> list[RetrievalHit]:
-        max_hits = limit or options.wiki_limit
-        pages_by_id = {}
-        for term in _terms(query) or [query]:
-            for page in self.repository.search_wiki_pages(
-                options.adapter_name,
-                term,
-                limit=max_hits,
-            ):
-                pages_by_id.setdefault(page.page_id, page)
-                if len(pages_by_id) >= max_hits:
-                    break
-            if len(pages_by_id) >= max_hits:
-                break
-        pages = list(pages_by_id.values())
-        return [
-            RetrievalHit(
-                hit_id=page.page_id,
-                hit_type="wiki",
-                title=page.title,
-                snippet=_clip(page.summary or page.content, 500),
-                score=1.0,
-                source="wiki",
-                node_refs=page.source_node_ids,
-                edge_refs=page.source_edge_ids,
-                evidence_refs=page.source_evidence_ids,
-            )
-            for page in pages
-        ]
-
     def chunk_read(
         self,
         evidence_ids: list[str],
@@ -306,13 +436,20 @@ class HybridRetrievalRuntime:
         limit: int | None = None,
     ) -> list[RetrievalHit]:
         hits: list[RetrievalHit] = []
+        chunks_by_evidence = _chunks_by_evidence(self.repository, options.adapter_name)
         for evidence_id in evidence_ids:
-            evidence = self.repository.get_evidence(evidence_id)
-            if evidence is None:
+            chunks = chunks_by_evidence.get(evidence_id) or []
+            if chunks:
+                for chunk in chunks:
+                    hits.append(_evidence_chunk_hit(chunk, repository=self.repository))
+                    if len(hits) >= (limit or options.evidence_limit):
+                        return hits
                 continue
-            hits.append(_evidence_hit(evidence, source="chunk"))
-            if len(hits) >= (limit or options.evidence_limit):
-                break
+            evidence = self.repository.get_evidence(evidence_id)
+            if evidence is not None:
+                hits.append(_evidence_hit(evidence, source="chunk"))
+                if len(hits) >= (limit or options.evidence_limit):
+                    return hits
         return hits
 
     def build_answer_context(self, query: str, options: RetrievalOptions) -> AnswerContext:
@@ -326,15 +463,13 @@ class HybridRetrievalRuntime:
         keyword_raw = self.keyword_search(query, options)
         seed_nodes = _ordered_unique(node_id for hit in [*entity_hits, *keyword_raw] for node_id in hit.node_refs)
         graph_raw = self.graph_search(seed_nodes, options)
-        wiki_raw = self.wiki_search(query, options)
         semantic_hits: list[RetrievalHit] = []
-        pre_evidence_hits = [*entity_hits, *keyword_raw, *graph_raw, *wiki_raw, *semantic_hits]
+        pre_evidence_hits = [*entity_hits, *keyword_raw, *graph_raw, *semantic_hits]
         pre_judgements = judge_hits(anchor, pre_evidence_hits)
         judged_pre_hits = filter_hits_by_judgement(pre_evidence_hits, pre_judgements)
         expandable_pre_hits = _expandable_hits(pre_evidence_hits, pre_judgements)
         keyword_hits = [hit for hit in judged_pre_hits if hit.source == "keyword"]
         graph_hits = [hit for hit in expandable_pre_hits if hit.source == "graph"]
-        wiki_hits = [hit for hit in judged_pre_hits if hit.hit_type == "wiki"]
         evidence_ids = _ordered_unique(
             evidence_id
             for hit in expandable_pre_hits
@@ -358,12 +493,11 @@ class HybridRetrievalRuntime:
             entity_hits=entity_hits,
             keyword_hits=keyword_hits,
             graph_hits=graph_hits,
-            wiki_hits=wiki_hits,
             semantic_hits=semantic_hits,
             evidence_hits=evidence_hits,
         )
         fused = reciprocal_rank_fusion(
-            [entity_hits, keyword_hits, graph_hits, wiki_hits, semantic_hits, evidence_hits]
+            [entity_hits, keyword_hits, graph_hits, semantic_hits, evidence_hits]
         )
         all_judgements = [*entity_judgements, *pre_judgements, *evidence_judgements]
         metrics = retrieval_quality_metrics(
@@ -376,7 +510,6 @@ class HybridRetrievalRuntime:
             entity_hits=entity_hits,
             keyword_hits=keyword_hits,
             graph_hits=graph_hits,
-            wiki_hits=wiki_hits,
             semantic_hits=semantic_hits,
             evidence_hits=evidence_hits,
             semantic_retriever=self.semantic_retriever,
@@ -409,7 +542,6 @@ class HybridRetrievalRuntime:
             hits=hard_hits,
             matched_nodes=self._load_nodes(hard_hits, matched_edges),
             matched_edges=matched_edges,
-            wiki_pages=[hit for hit in hard_hits if hit.hit_type == "wiki"],
             evidence_chunks=[hit for hit in hard_hits if hit.hit_type == "evidence"],
             low_confidence_items=low_confidence,
             budget_usage=usage,
@@ -431,15 +563,13 @@ class HybridRetrievalRuntime:
         keyword_raw = self.keyword_search(query, options)
         seed_nodes = _ordered_unique(node_id for hit in [*entity_hits, *keyword_raw] for node_id in hit.node_refs)
         graph_raw = self.graph_search(seed_nodes, options)
-        wiki_raw = self.wiki_search(query, options)
         semantic_raw = await self.semantic_hybrid_search(query, options)
-        pre_evidence_hits = [*entity_hits, *keyword_raw, *graph_raw, *wiki_raw, *semantic_raw]
+        pre_evidence_hits = [*entity_hits, *keyword_raw, *graph_raw, *semantic_raw]
         pre_judgements = judge_hits(anchor, pre_evidence_hits)
         judged_pre_hits = filter_hits_by_judgement(pre_evidence_hits, pre_judgements)
         expandable_pre_hits = _expandable_hits(pre_evidence_hits, pre_judgements)
         keyword_hits = [hit for hit in judged_pre_hits if hit.source == "keyword"]
         graph_hits = [hit for hit in expandable_pre_hits if hit.source == "graph"]
-        wiki_hits = [hit for hit in judged_pre_hits if hit.hit_type == "wiki"]
         semantic_hits = [hit for hit in judged_pre_hits if hit.source == "semantic_hybrid"]
         evidence_ids = _ordered_unique(
             evidence_id
@@ -464,12 +594,11 @@ class HybridRetrievalRuntime:
             entity_hits=entity_hits,
             keyword_hits=keyword_hits,
             graph_hits=graph_hits,
-            wiki_hits=wiki_hits,
             semantic_hits=semantic_hits,
             evidence_hits=evidence_hits,
         )
         fused = reciprocal_rank_fusion(
-            [entity_hits, keyword_hits, semantic_hits, graph_hits, wiki_hits, evidence_hits]
+            [entity_hits, keyword_hits, semantic_hits, graph_hits, evidence_hits]
         )
         all_judgements = [*entity_judgements, *pre_judgements, *evidence_judgements]
         metrics = retrieval_quality_metrics(
@@ -482,7 +611,6 @@ class HybridRetrievalRuntime:
             entity_hits=entity_hits,
             keyword_hits=keyword_hits,
             graph_hits=graph_hits,
-            wiki_hits=wiki_hits,
             semantic_hits=semantic_hits,
             evidence_hits=evidence_hits,
             semantic_retriever=self.semantic_retriever,
@@ -513,7 +641,6 @@ class HybridRetrievalRuntime:
             hits=hard_hits,
             matched_nodes=self._load_nodes(hard_hits, matched_edges),
             matched_edges=matched_edges,
-            wiki_pages=[hit for hit in hard_hits if hit.hit_type == "wiki"],
             evidence_chunks=[hit for hit in hard_hits if hit.hit_type == "evidence"],
             low_confidence_items=low_confidence,
             budget_usage=usage,
@@ -609,7 +736,6 @@ class HybridRetrievalRuntime:
                 hits=hard_hits,
                 matched_nodes=matched_nodes,
                 matched_edges=matched_edges,
-                wiki_pages=[hit for hit in hard_hits if hit.hit_type == "wiki"],
                 evidence_chunks=[hit for hit in hard_hits if hit.hit_type == "evidence"],
                 low_confidence_items=low_confidence,
                 budget_usage=usage,
@@ -685,6 +811,11 @@ class HybridRetrievalRuntime:
                     for evidence in self.repository.list_evidence(adapter_name)
                     if evidence.evidence_id in evidence_refs
                 }
+                active_evidence_ids.update(
+                    evidence_id
+                    for evidence_id in evidence_refs - active_evidence_ids
+                    if self.repository.get_evidence(evidence_id) is not None
+                )
             except AttributeError:
                 active_evidence_ids = {
                     evidence_id
@@ -765,6 +896,7 @@ def _merge_duplicate_hit(existing: RetrievalHit, incoming: RetrievalHit) -> Retr
     )
 
 
+_RETRIEVABLE_NODE_STATUSES = {NodeStatus.ACTIVE, NodeStatus.CANDIDATE, NodeStatus.AMBIGUOUS}
 _RETRIEVABLE_EDGE_STATUSES = {EdgeStatus.ACTIVE, EdgeStatus.CANDIDATE}
 
 
@@ -986,7 +1118,6 @@ def _log_retrieval_channels(
     entity_hits: list[RetrievalHit],
     keyword_hits: list[RetrievalHit],
     graph_hits: list[RetrievalHit],
-    wiki_hits: list[RetrievalHit],
     semantic_hits: list[RetrievalHit],
     evidence_hits: list[RetrievalHit],
 ) -> None:
@@ -997,7 +1128,6 @@ def _log_retrieval_channels(
         "keyword_search": keyword_hits,
         "semantic_hybrid_search": semantic_hits,
         "graph_search": graph_hits,
-        "wiki_search": wiki_hits,
         "chunk_read": evidence_hits,
     }
     logger.info(
@@ -1081,7 +1211,6 @@ def _trace_for(
     entity_hits: list[RetrievalHit],
     keyword_hits: list[RetrievalHit],
     graph_hits: list[RetrievalHit],
-    wiki_hits: list[RetrievalHit],
     semantic_hits: list[RetrievalHit],
     evidence_hits: list[RetrievalHit],
     semantic_retriever: SemanticHybridRetriever,
@@ -1095,7 +1224,6 @@ def _trace_for(
             graph_hits,
             {"adapter_name": options.adapter_name, "graph_depth": options.graph_depth},
         ),
-        _step("wiki_search", wiki_hits, {"adapter_name": options.adapter_name}),
         _step("chunk_read", evidence_hits, {"adapter_name": options.adapter_name}),
     ]
     warnings: list[str] = []
@@ -1112,7 +1240,6 @@ def _trace_for(
                 else []
             ),
             "graph_search",
-            "wiki_search",
             "chunk_read",
         ],
         channels_used=[
@@ -1191,12 +1318,174 @@ def _step(tool: str, hits: list[RetrievalHit], input_: dict[str, Any]) -> Retrie
     )
 
 
+_STRONG_IDENTIFIER_RE = re.compile(
+    r"kg_ev:[^\s,，;；]+|kg_edge:[^\s,，;；]+|kg:[^\s,，;；]+|"
+    r"ft_news:\d+|[A-Z]{1,6}:\d{2,8}|US:[A-Z.]{1,8}|\b\d{6}\b"
+)
+
+
+def parse_retrieval_query(query: str) -> ParsedRetrievalQuery:
+    raw_query = (query or "").strip()
+    identifiers = _ordered_unique(match.group(0) for match in _STRONG_IDENTIFIER_RE.finditer(raw_query))
+    vector_query = _STRONG_IDENTIFIER_RE.sub(" ", raw_query)
+    vector_query = re.sub(r"\s+", " ", vector_query).strip()
+    if not vector_query:
+        vector_query = raw_query
+    return ParsedRetrievalQuery(
+        raw_query=raw_query,
+        vector_query=vector_query,
+        strong_identifiers=identifiers,
+        has_strong_identifiers=bool(identifiers),
+    )
+
+
+def _deterministic_match(
+    *,
+    query_terms: list[str],
+    identifiers: list[str],
+    field_values: dict[str, list[str]],
+    field_weights: dict[str, float] | None = None,
+    identifier_weights: dict[str, float] | None = None,
+) -> tuple[float, list[str], list[str]]:
+    score = 0.0
+    matched_terms: list[str] = []
+    matched_fields: list[str] = []
+    field_weights = field_weights or {}
+    identifier_weights = identifier_weights or {}
+    normalized_fields = {
+        field: [str(value).lower() for value in values if str(value).strip()]
+        for field, values in field_values.items()
+    }
+    for identifier in identifiers:
+        best_field = ""
+        best_weight = 0.0
+        for field, values in normalized_fields.items():
+            if any(identifier == value or identifier in value for value in values):
+                weight = float(identifier_weights.get(field, 25.0))
+                if weight > best_weight:
+                    best_field = field
+                    best_weight = weight
+        if best_field:
+            score += best_weight
+            matched_terms.append(identifier)
+            matched_fields.append(best_field)
+    for term in query_terms:
+        best_field = ""
+        best_weight = 0.0
+        for field, values in normalized_fields.items():
+            if any(term in value for value in values):
+                weight = float(field_weights.get(field, 1.0))
+                if weight > best_weight:
+                    best_field = field
+                    best_weight = weight
+        if best_field:
+            score += best_weight
+            matched_terms.append(term)
+            matched_fields.append(best_field)
+    return score, _ordered_unique(matched_terms), _ordered_unique(matched_fields)
+
+
+def _edge_relation_intent_score(edge: CompiledEdge, *, query: str, query_terms: list[str]) -> float:
+    """Score an edge's relation type against obvious query intent.
+
+    This is a deterministic recall prior, not a final relevance judgement.
+    It keeps broad evidence matches from flattening all edges to the same score.
+    """
+
+    relation_type = edge.relation_type
+    query_text = query.lower()
+    terms = set(query_terms)
+    involvement_terms = {
+        "涉及",
+        "主体",
+        "行业",
+        "资产",
+        "提及",
+        "相关",
+        "哪些",
+        "涉及哪",
+        "哪些主",
+        "些主体",
+    }
+    impact_terms = {
+        "影响",
+        "资产影响",
+        "受影响",
+        "风险",
+        "利好",
+        "利空",
+        "受益",
+        "负面",
+        "正面",
+        "拖累",
+    }
+    has_involvement_intent = any(term in query_text or term in terms for term in involvement_terms)
+    has_impact_intent = any(term in query_text or term in terms for term in impact_terms)
+
+    score = 0.0
+    if has_involvement_intent:
+        score += {
+            "mentions": 6.0,
+            "belongs_to": 4.0,
+            "related_to": 2.0,
+            "holds": 2.0,
+            "affects": 1.5,
+            "benefits_from": 1.5,
+            "hurt_by": 1.5,
+        }.get(relation_type, 0.5)
+    if has_impact_intent:
+        score += {
+            "affects": 8.0,
+            "benefits_from": 7.0,
+            "hurt_by": 7.0,
+            "causal_hint": 5.0,
+            "holds": 3.0,
+            "related_to": 2.0,
+            "mentions": 1.0,
+        }.get(relation_type, 0.5)
+    if not has_involvement_intent and not has_impact_intent:
+        score += {
+            "affects": 2.0,
+            "benefits_from": 2.0,
+            "hurt_by": 2.0,
+            "mentions": 1.5,
+            "related_to": 1.0,
+        }.get(relation_type, 0.5)
+    direction = str(edge.properties.get("direction") or "").lower()
+    if direction in {"positive", "negative"} and has_impact_intent:
+        score += 1.0
+    return score
+
+
+def _list_evidence(repository: KnowledgeRepository, adapter_name: str) -> list[CompiledEvidence]:
+    list_evidence = getattr(repository, "list_evidence", None)
+    if list_evidence is None:
+        return []
+    return list_evidence(adapter_name)
+
+
+def _chunks_by_evidence(repository: KnowledgeRepository, adapter_name: str) -> dict[str, list[EvidenceChunk]]:
+    list_chunks = getattr(repository, "list_evidence_chunks", None)
+    if list_chunks is None:
+        return {}
+    result: dict[str, list[EvidenceChunk]] = {}
+    for chunk in list_chunks(adapter_name):
+        result.setdefault(chunk.evidence_id, []).append(chunk)
+    for chunks in result.values():
+        chunks.sort(key=lambda item: item.chunk_id)
+    return result
+
+
+def _json_text(value: Any) -> str:
+    return json.dumps(value or {}, ensure_ascii=False, sort_keys=True)
+
+
 def _node_hit(node: CompiledNode, *, score: float, source: str) -> RetrievalHit:
     return RetrievalHit(
         hit_id=node.node_id,
         hit_type="node",
         title=node.canonical_name,
-        snippet=_clip(_node_text(node), 500),
+        snippet=_clip(_node_snippet(node), 500),
         score=score,
         source=source,
         node_refs=[node.node_id],
@@ -1219,22 +1508,101 @@ def _edge_hit(edge: CompiledEdge, *, source: str) -> RetrievalHit:
     )
 
 
-def _keyword_hit(document: RetrievalDocument, terms: list[str]) -> RetrievalHit:
-    match = build_keyword_match(document, terms)
-    return RetrievalHit(
-        hit_id=document.source_fact_id,
-        hit_type=match.hit_type,
-        title=document.title,
-        snippet=_clip(document.evidence_summary or document.search_text, 500),
-        score=match.score,
-        source="keyword",
-        node_refs=document.node_refs,
-        edge_refs=document.edge_refs,
-        evidence_refs=document.evidence_refs,
-        matched_terms=match.matched_terms,
-        matched_fields=match.matched_fields,
-        consumption_scope="context",
+def _edge_title(edge: CompiledEdge, *, node_by_id: dict[str, CompiledNode]) -> str:
+    source = node_by_id.get(edge.source_node_id)
+    target = node_by_id.get(edge.target_node_id)
+    source_name = source.canonical_name if source is not None else edge.source_node_id
+    target_name = target.canonical_name if target is not None else edge.target_node_id
+    return f"{source_name} {edge.relation_type} {target_name}"
+
+
+def _edge_snippet(
+    edge: CompiledEdge,
+    *,
+    node_by_id: dict[str, CompiledNode],
+    evidence_by_id: dict[str, CompiledEvidence],
+    chunks_by_evidence: dict[str, list[EvidenceChunk]] | None = None,
+) -> str:
+    source = node_by_id.get(edge.source_node_id)
+    target = node_by_id.get(edge.target_node_id)
+    source_name = source.canonical_name if source is not None else edge.source_node_id
+    target_name = target.canonical_name if target is not None else edge.target_node_id
+    source_type = source.node_type if source is not None else "unknown"
+    target_type = target.node_type if target is not None else "unknown"
+    relation_line = (
+        f"关系事实: {source_name}（{source_type}） "
+        f"--{edge.relation_type}--> {target_name}（{target_type}）"
     )
+    focus_line = f"关系焦点: {target_name}；焦点类型: {_node_role_label(target_type)}"
+    property_summary = _edge_property_summary(edge.properties)
+    evidence_parts: list[str] = []
+    for evidence_id in edge.evidence_ids[:1]:
+        chunks = (chunks_by_evidence or {}).get(evidence_id) or []
+        if chunks:
+            evidence_parts.append(_edge_chunk_summary(chunks[0]))
+        elif evidence_id in evidence_by_id:
+            evidence_parts.append(_edge_evidence_summary(evidence_by_id[evidence_id]))
+    parts = [relation_line, focus_line, property_summary, *evidence_parts]
+    return _clip("\n".join(part for part in parts if part), 800)
+
+
+def _node_snippet(node: CompiledNode) -> str:
+    parts = [
+        f"节点事实: {node.canonical_name}",
+        f"节点类型: {node.node_type}",
+    ]
+    aliases = _ordered_unique([item for item in [*node.aliases, *node.external_ids.values()] if item])
+    if aliases:
+        parts.append(f"别名/标识: {', '.join(aliases[:8])}")
+    readable_properties = _readable_properties(node.properties)
+    if readable_properties:
+        parts.append(f"属性摘要: {readable_properties}")
+    return "；".join(parts)
+
+
+def _readable_properties(properties: dict[str, Any]) -> str:
+    values: list[str] = []
+    for key, value in sorted((properties or {}).items()):
+        if value in (None, "", [], {}):
+            continue
+        if isinstance(value, (dict, list)):
+            text = _json_text(value)
+        else:
+            text = str(value)
+        values.append(f"{key}={text}")
+        if len(values) >= 6:
+            break
+    return "；".join(values)
+
+
+def _node_role_label(node_type: str) -> str:
+    return node_type or "未知"
+
+
+def _edge_property_summary(properties: dict[str, Any]) -> str:
+    if not properties:
+        return ""
+    values: list[str] = []
+    for key in ["direction", "reason", "summary", "impact", "stance"]:
+        value = properties.get(key)
+        if value in (None, "", [], {}):
+            continue
+        values.append(f"{key}={value}")
+    if not values:
+        return ""
+    return f"关系属性: {'；'.join(values[:4])}"
+
+
+def _edge_evidence_summary(evidence: CompiledEvidence) -> str:
+    text = " ".join(str(evidence.content or "").split())
+    if not text:
+        text = " ".join(_evidence_text(evidence).split())
+    return f"证据摘要: {_clip(text, 220)}"
+
+
+def _edge_chunk_summary(chunk: EvidenceChunk) -> str:
+    text = " ".join(str(chunk.content or "").split())
+    return f"证据分片: {_clip(text, 220)}"
 
 
 def _path_hit(
@@ -1365,9 +1733,28 @@ def _evidence_hit(evidence: CompiledEvidence, *, source: str) -> RetrievalHit:
     )
 
 
+def _evidence_chunk_hit(chunk: EvidenceChunk, *, repository: KnowledgeRepository) -> RetrievalHit:
+    evidence = repository.get_evidence(chunk.evidence_id)
+    title = f"evidence:{chunk.evidence_id}"
+    if evidence is not None:
+        title = f"{evidence.source_type}:{evidence.source_id}"
+    return RetrievalHit(
+        hit_id=chunk.chunk_id,
+        hit_type="evidence",
+        title=title,
+        snippet=_clip(chunk.content, 800),
+        score=1.0,
+        source="chunk",
+        evidence_refs=[chunk.evidence_id],
+        matched_fields=["kg_evidence_chunks.manifest", "kg_evidence.content"],
+    )
+
+
 def _canonical_key(hit: RetrievalHit) -> str:
     if hit.hit_type == "edge" and hit.edge_refs:
         return f"edge:{hit.edge_refs[0]}"
+    if hit.hit_type in {"evidence", "semantic_hybrid"} and hit.hit_id.startswith("kg_chunk:"):
+        return f"chunk:{hit.hit_id}"
     if hit.hit_type in {"evidence", "semantic_hybrid"} and hit.evidence_refs:
         return f"evidence:{hit.evidence_refs[0]}"
     if hit.hit_type == "node" and hit.node_refs:

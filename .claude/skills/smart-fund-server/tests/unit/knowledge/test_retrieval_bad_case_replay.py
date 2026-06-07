@@ -64,9 +64,6 @@ class _Repo:
     def list_edges(self, adapter_name: str):
         return [self.edge]
 
-    def search_wiki_pages(self, adapter_name: str, query: str, limit: int = 20):
-        return []
-
     def get_evidence(self, evidence_id: str):
         return self.evidence if evidence_id == self.evidence.evidence_id else None
 

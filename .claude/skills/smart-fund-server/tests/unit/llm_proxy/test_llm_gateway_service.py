@@ -36,6 +36,25 @@ class EchoProvider:
         return True
 
 
+class SequenceProvider(EchoProvider):
+    def __init__(self, name, outputs):
+        super().__init__(name)
+        self.outputs = list(outputs)
+
+    async def generate(self, request, route):
+        self.calls.append((request, route))
+        output = self.outputs.pop(0)
+        return LLMProxyResponse(
+            text=output.get("text", ""),
+            structured_output=output.get("structured_output"),
+            usage={"input_tokens": 1, "output_tokens": 1},
+            session_id=None,
+            duration_ms=1,
+            raw_payload={},
+            proxy={"provider": self.name},
+        )
+
+
 def _service():
     registry = ProviderRegistry()
     deepseek = EchoProvider("deepseek")
@@ -124,7 +143,7 @@ def test_gateway_does_not_cache_unstructured_json_response():
 
     assert first.cache_hit is False
     assert second.cache_hit is False
-    assert len(deepseek.calls) == 2
+    assert len(deepseek.calls) == 4
 
 
 def test_gateway_ignores_bad_file_cache_for_json_request(tmp_path):
@@ -149,7 +168,7 @@ def test_gateway_ignores_bad_file_cache_for_json_request(tmp_path):
 
     assert response.cache_hit is False
     assert response.text == "deepseek:deepseek-v4-flash"
-    assert len(deepseek.calls) == 1
+    assert len(deepseek.calls) == 2
 
 
 def test_gateway_no_cache_retry_overwrites_original_cache_key(tmp_path):
@@ -207,6 +226,108 @@ def test_gateway_no_cache_retry_overwrites_original_cache_key(tmp_path):
     assert cached_response.cache_hit is True
     assert cached_response.structured_output == {"ok": True}
     assert len(deepseek.calls) == 1
+
+
+def test_gateway_repairs_json_schema_invalid_response_and_caches_repaired_result(tmp_path):
+    registry = ProviderRegistry()
+    deepseek = SequenceProvider(
+        "deepseek",
+        [
+            {"structured_output": {"decision": "create_new_canonical_entity"}},
+            {
+                "structured_output": {
+                    "decision": "create_new_canonical_entity",
+                    "canonical_name": "广东",
+                    "confidence": 0.85,
+                }
+            },
+        ],
+    )
+    registry.register(deepseek)
+    router = ModelRouter(
+        ModelRouterConfig(
+            default_model="deepseek-v4-flash",
+            default_provider="deepseek",
+            model_routes={"deepseek-v4-flash": ["deepseek"]},
+            model_aliases={},
+        )
+    )
+    service = LLMGatewayService(
+        router=router,
+        registry=registry,
+        cache_ttl_seconds=60,
+        cache_max_size=16,
+        file_cache=LLMPersistentFileCache(tmp_path, enabled=True),
+    )
+    request = LLMProxyRequest(
+        prompt='{"entity":"广东"}',
+        system_prompt="只输出 JSON",
+        model="deepseek-v4-flash",
+        json_schema={
+            "type": "object",
+            "properties": {
+                "decision": {"type": "string"},
+                "canonical_name": {"type": "string"},
+                "confidence": {"type": "number", "minimum": 0, "maximum": 1},
+            },
+            "required": ["decision", "canonical_name", "confidence"],
+            "additionalProperties": False,
+        },
+    )
+
+    repaired = asyncio.run(service.generate(request))
+    cached = asyncio.run(service.generate(request))
+
+    assert repaired.cache_hit is False
+    assert repaired.structured_output["canonical_name"] == "广东"
+    assert repaired.proxy["schema_repair_attempted"] is True
+    assert repaired.proxy["schema_repair_success"] is True
+    assert cached.cache_hit is True
+    assert cached.structured_output["canonical_name"] == "广东"
+    assert len(deepseek.calls) == 2
+    repair_request = deepseek.calls[1][0]
+    assert repair_request.use_cache is False
+    assert repair_request.response_format == {"type": "json_object"}
+    assert repair_request.metadata["retry_reason"] == "json_schema_invalid"
+    assert "validation_issues" in repair_request.messages[-1]["content"]
+
+
+def test_gateway_ignores_schema_invalid_file_cache(tmp_path):
+    service, deepseek, _claude = _service()
+    service._file_cache = LLMPersistentFileCache(tmp_path, enabled=True)
+    request = LLMProxyRequest(
+        prompt="hello",
+        model="deepseek-v4-flash",
+        json_schema={
+            "type": "object",
+            "properties": {"ok": {"type": "boolean"}},
+            "required": ["ok"],
+        },
+    )
+    normalized_request = LLMProxyRequest(
+        prompt="hello",
+        model="deepseek-v4-flash",
+        json_schema=request.json_schema,
+        response_format={"type": "json_object"},
+    )
+    key = service._cache_key(normalized_request, "deepseek", "deepseek-v4-flash")
+    service._file_cache.set(
+        key,
+        LLMProxyResponse(
+            text='{"bad": true}',
+            structured_output={"bad": True},
+            usage={},
+            session_id=None,
+            duration_ms=1,
+            raw_payload={},
+            proxy={"provider": "deepseek"},
+        ),
+    )
+
+    response = asyncio.run(service.generate(request))
+
+    assert response.cache_hit is False
+    assert len(deepseek.calls) == 2
 
 
 def test_gateway_health_lists_routes_and_providers():

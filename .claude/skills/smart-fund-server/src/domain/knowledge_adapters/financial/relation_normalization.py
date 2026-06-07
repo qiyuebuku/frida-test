@@ -48,6 +48,7 @@ def normalize_candidate_relation_type(
     relation_type: Any,
     *,
     direction: Any = None,
+    allowed_relation_types: set[str] | None = None,
 ) -> tuple[str, dict[str, Any]]:
     """Map LLM-friendly relation labels to ontology relation types.
 
@@ -57,11 +58,12 @@ def normalize_candidate_relation_type(
     """
 
     original = str(relation_type or "").strip()
+    allowed = allowed_relation_types or CORE_RELATION_TYPES
     normalized_key = _normalize_key(original)
     mapped = _RELATION_ALIASES.get(normalized_key)
-    relation = mapped if mapped in CORE_RELATION_TYPES else None
+    relation = mapped if mapped in allowed else None
     if relation is None:
-        relation = normalized_key if normalized_key in CORE_RELATION_TYPES else "related_to"
+        relation = normalized_key if normalized_key in allowed else "related_to"
 
     metadata: dict[str, Any] = {}
     if original and relation != original:
@@ -71,7 +73,7 @@ def normalize_candidate_relation_type(
         metadata["direction"] = "negative"
     elif normalized_key in _POSITIVE_RELATIONS and not direction:
         metadata["direction"] = "positive"
-    if mapped is None and normalized_key not in CORE_RELATION_TYPES:
+    if mapped is None and normalized_key not in allowed:
         metadata["relation_type_fallback"] = "unknown_to_related_to"
     return relation, metadata
 

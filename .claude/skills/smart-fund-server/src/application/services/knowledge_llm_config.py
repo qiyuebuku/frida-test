@@ -42,5 +42,8 @@ def kg_llm_config_summary() -> dict:
             "kg_retrieval_controller": resolve_kg_llm_model("kg_retrieval_controller"),
             "kg_candidate_judge": resolve_kg_llm_model("kg_candidate_judge"),
             "kg_agentic_retrieval": resolve_kg_llm_model("kg_agentic_retrieval"),
+            "kg_community_report": resolve_kg_llm_model("kg_community_report"),
+            "kg_delta_finding": resolve_kg_llm_model("kg_delta_finding"),
+            "kg_finding_evidence_validate": resolve_kg_llm_model("kg_finding_evidence_validate"),
         },
     }

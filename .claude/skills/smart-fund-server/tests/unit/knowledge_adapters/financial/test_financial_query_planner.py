@@ -16,10 +16,7 @@ def test_planner_parses_entity_impact_query() -> None:
     assert {"text": "300750", "type_hint": "stock"} in [
         entity.model_dump() for entity in plan.entities
     ]
-    assert [step.tool for step in plan.steps] == [
-        "entity_resolve",
-        "semantic_hybrid_search",
-    ]
+    assert [step.tool for step in plan.steps] == ["search"]
 
 
 def test_planner_parses_topic_targets_query_without_keyword_tool() -> None:
@@ -28,12 +25,7 @@ def test_planner_parses_topic_targets_query_without_keyword_tool() -> None:
     assert plan.intent == "affected_targets_for_topic"
     assert plan.direction == "outgoing"
     assert "benefits_from" in plan.relation_filters
-    assert "keyword_search" not in [step.tool for step in plan.steps]
-    assert [step.tool for step in plan.steps] == [
-        "entity_resolve",
-        "semantic_hybrid_search",
-        "wiki_search",
-    ]
+    assert [step.tool for step in plan.steps] == ["search"]
 
 
 def test_planner_parses_path_explanation_query() -> None:
@@ -50,7 +42,4 @@ def test_planner_parses_macro_beneficiary_query() -> None:
 
     assert plan.intent == "macro_beneficiaries"
     assert plan.direction == "outgoing"
-    assert [step.tool for step in plan.steps] == [
-        "entity_resolve",
-        "semantic_hybrid_search",
-    ]
+    assert [step.tool for step in plan.steps] == ["search"]

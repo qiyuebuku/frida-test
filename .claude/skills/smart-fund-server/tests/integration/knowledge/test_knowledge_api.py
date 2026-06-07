@@ -16,14 +16,18 @@ from src.infrastructure.persistence.models.knowledge import (
     KnowledgeCompilationRun,
     KnowledgeEdge,
     KnowledgeEdgeEvidence,
+    KnowledgeEdgeEvidenceChunk,
     KnowledgeEvidence,
     KnowledgeEvidenceChunk,
     KnowledgeGraphAdjacency,
+    KnowledgeGraphCommunity,
+    KnowledgeGraphDelta,
+    KnowledgeGraphFinding,
     KnowledgeNode,
     KnowledgeReviewItem,
     KnowledgeVersion,
-    KnowledgeWikiPage,
 )
+from src.application.services import knowledge_service as knowledge_service_module
 from src.interfaces.api.routes.knowledge import router as knowledge_router
 
 
@@ -35,18 +39,22 @@ KG_TABLES = [
     KnowledgeEvidence.__table__,
     KnowledgeEdge.__table__,
     KnowledgeEdgeEvidence.__table__,
+    KnowledgeEdgeEvidenceChunk.__table__,
     KnowledgeVersion.__table__,
     KnowledgeReviewItem.__table__,
     KnowledgeCompilationRun.__table__,
-    KnowledgeWikiPage.__table__,
     KnowledgeGraphAdjacency.__table__,
     KnowledgeEvidenceChunk.__table__,
+    KnowledgeGraphFinding.__table__,
+    KnowledgeGraphDelta.__table__,
+    KnowledgeGraphCommunity.__table__,
 ]
 
 
-def test_knowledge_api_minimal_service_flow() -> None:
+def test_knowledge_api_minimal_service_flow(monkeypatch) -> None:
     _ensure_tables()
     _cleanup()
+    monkeypatch.setattr(knowledge_service_module, "GraphIndexLLMReporter", lambda: _FakeGraphIndexReporter())
     client = _client()
     try:
         health = client.get("/api/kg/health")
@@ -63,13 +71,6 @@ def test_knowledge_api_minimal_service_flow() -> None:
         assert compile_body["nodes"] > 0
         assert compile_body["edges"] > 0
         assert compile_body["evidence"] > 0
-
-        wiki_resp = client.post(
-            "/api/kg/rebuild-wiki",
-            json={"adapter_name": "financial", "target": "test"},
-        )
-        assert wiki_resp.status_code == 200
-        assert wiki_resp.json()["pages"] > 0
 
         index_resp = client.post(
             "/api/kg/rebuild-indexes",
@@ -108,6 +109,11 @@ def test_knowledge_api_minimal_service_flow() -> None:
         _cleanup()
 
 
+class _FakeGraphIndexReporter:
+    async def enrich(self, *, graph_index, nodes, edges, chunks):
+        return graph_index
+
+
 def test_knowledge_api_rejects_unknown_adapter() -> None:
     client = _client()
 
@@ -135,8 +141,21 @@ def _cleanup() -> None:
         edge_ids = select(KnowledgeEdge.edge_id).where(KnowledgeEdge.adapter_name == "financial")
         session.execute(delete(KnowledgeEdgeEvidence).where(KnowledgeEdgeEvidence.edge_id.in_(edge_ids)))
         session.execute(delete(KnowledgeGraphAdjacency).where(KnowledgeGraphAdjacency.adapter_name == "financial"))
+        session.execute(
+
+            delete(KnowledgeEdgeEvidenceChunk).where(
+
+                KnowledgeEdgeEvidenceChunk.evidence_id.in_(
+
+                    select(KnowledgeEvidence.evidence_id).where(KnowledgeEvidence.adapter_name == "financial")
+
+                )
+
+            )
+
+        )
+
         session.execute(delete(KnowledgeEvidenceChunk).where(KnowledgeEvidenceChunk.adapter_name == "financial"))
-        session.execute(delete(KnowledgeWikiPage).where(KnowledgeWikiPage.adapter_name == "financial"))
         session.execute(delete(KnowledgeReviewItem).where(KnowledgeReviewItem.object_id.like("kg:%")))
         session.execute(delete(KnowledgeEdge).where(KnowledgeEdge.adapter_name == "financial"))
         session.execute(delete(KnowledgeEvidence).where(KnowledgeEvidence.adapter_name == "financial"))

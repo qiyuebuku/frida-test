@@ -217,6 +217,13 @@ class EvidenceChunk(KnowledgeBaseModel):
     adapter_name: str
     evidence_id: str
     content: str
+    chunk_index: int = 0
+    start_offset: int | None = None
+    end_offset: int | None = None
+    previous_chunk_id: str | None = None
+    next_chunk_id: str | None = None
+    text_hash: str | None = None
+    chunker_version: str | None = None
     payload: dict[str, Any] = Field(default_factory=dict)
 
     @field_validator("chunk_id", "adapter_name", "evidence_id", "content")

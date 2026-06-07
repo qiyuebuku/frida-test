@@ -16,6 +16,8 @@ dependencies = [
     "openai-agents>=0.17,<1",
     "langfuse>=3.0",
     "openinference-instrumentation-openai-agents>=0.1",
+    "networkx>=3.0",
+    "graspologic-native>=1.2,<2",
     "setuptools<81",
 ]
 

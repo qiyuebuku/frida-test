@@ -23,7 +23,7 @@ import struct
 import tempfile
 import time
 from pathlib import Path
-from typing import Optional
+from typing import Any, Optional
 
 import httpx
 
@@ -37,6 +37,11 @@ from src.infrastructure.config.settings import (
     EMBEDDING_REQUEST_DIMENSIONS,
     EMBEDDING_TIMEOUT,
     EMBEDDING_URL,
+)
+from src.infrastructure.observability.langfuse_tracing import (
+    clip_trace_text,
+    langfuse_observation,
+    langfuse_update_span,
 )
 
 logger = logging.getLogger(__name__)
@@ -87,6 +92,19 @@ async def embed_texts(
     # )
     if not missing_texts:
         profile_event("embedding.embed_texts_result", total=len(texts), vectors=len(cached_vectors), cache_hits=len(texts))
+        with langfuse_observation(
+            name="embedding.embed_texts:cache_hit",
+            as_type="span",
+            input=_embedding_trace_input(texts),
+            output={"vectors": len(cached_vectors), "cache_hits": len(texts), "cache_misses": 0},
+            metadata={
+                "model": EMBEDDING_MODEL,
+                "dim": dim,
+                "normalize": normalize,
+                "file_cache": EMBEDDING_FILE_CACHE_ENABLED,
+            },
+        ):
+            pass
         return cached_vectors  # type: ignore[return-value]
 
     cache_writes = 0
@@ -261,34 +279,63 @@ async def _post_embeddings(client: httpx.AsyncClient, batch: list[str], *, dim: 
     should_request_dimensions = EMBEDDING_REQUEST_DIMENSIONS and _REMOTE_DIMENSIONS_SUPPORTED is not False
     if should_request_dimensions:
         payload["dimensions"] = dim
-    resp = await client.post(_embedding_endpoint(), json=payload)
-    logger.info(
-        "embedding http request done: batch_size=%d latency=%.2fs request_dimensions=%s status_code=%d",
-        len(batch),
-        time.time() - start_time,
-        should_request_dimensions,
-        resp.status_code,
-    )
-    if resp.status_code != 400:
-        resp.raise_for_status()
-        return resp.json()
+    with langfuse_observation(
+        name="embedding.http_request",
+        as_type="span",
+        input=_embedding_trace_input(batch),
+        metadata={
+            "endpoint": _embedding_endpoint(),
+            "model": EMBEDDING_MODEL,
+            "dim": dim,
+            "batch_size": len(batch),
+            "request_dimensions": should_request_dimensions,
+        },
+    ):
+        try:
+            resp = await client.post(_embedding_endpoint(), json=payload)
+            latency = time.time() - start_time
+            logger.info(
+                "embedding http request done: batch_size=%d latency=%.2fs request_dimensions=%s status_code=%d",
+                len(batch),
+                latency,
+                should_request_dimensions,
+                resp.status_code,
+            )
+            langfuse_update_span(
+                output={"status_code": resp.status_code, "latency_s": round(latency, 4)},
+                metadata={"status_code": resp.status_code, "latency_s": latency},
+            )
+            if resp.status_code != 400:
+                resp.raise_for_status()
+                return resp.json()
 
-    body = resp.text
-    if not should_request_dimensions or ("matryoshka" not in body and "dimensions" not in body):
-        resp.raise_for_status()
+            body = resp.text
+            if not should_request_dimensions or ("matryoshka" not in body and "dimensions" not in body):
+                resp.raise_for_status()
 
-    _REMOTE_DIMENSIONS_SUPPORTED = False
-    logger.warning(
-        "embedding 服务拒绝 dimensions 参数，后续请求将不再发送 dimensions，并改为本地截断: %s",
-        _clip_log(body),
-    )
-    fallback_payload = {
-        "model": EMBEDDING_MODEL,
-        "input": batch,
-    }
-    fallback_resp = await client.post(_embedding_endpoint(), json=fallback_payload)
-    fallback_resp.raise_for_status()
-    return fallback_resp.json()
+            _REMOTE_DIMENSIONS_SUPPORTED = False
+            logger.warning(
+                "embedding 服务拒绝 dimensions 参数，后续请求将不再发送 dimensions，并改为本地截断: %s",
+                _clip_log(body),
+            )
+            fallback_payload = {
+                "model": EMBEDDING_MODEL,
+                "input": batch,
+            }
+            fallback_resp = await client.post(_embedding_endpoint(), json=fallback_payload)
+            fallback_resp.raise_for_status()
+            langfuse_update_span(
+                output={"status_code": fallback_resp.status_code, "fallback_without_dimensions": True},
+                metadata={"fallback_without_dimensions": True, "status_code": fallback_resp.status_code},
+            )
+            return fallback_resp.json()
+        except Exception as exc:
+            langfuse_update_span(
+                metadata={"error_type": exc.__class__.__name__},
+                level="ERROR",
+                status_message=str(exc),
+            )
+            raise
 
 
 def _openai_embeddings_from_response(data: object) -> list[list[float]] | None:
@@ -323,6 +370,13 @@ def _prepare_embedding_vector(vector: list[float], *, dim: int, normalize: bool)
 
 def _clip_log(text: str, limit: int = 500) -> str:
     return text if len(text) <= limit else text[:limit] + "...[truncated]"
+
+
+def _embedding_trace_input(texts: list[str]) -> dict[str, Any]:
+    return {
+        "count": len(texts),
+        "samples": [clip_trace_text(text, limit=1000) for text in texts[:3]],
+    }
 
 
 def _cache_get(text: str, *, dim: int, normalize: bool) -> list[float] | None:

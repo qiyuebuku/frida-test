@@ -15,10 +15,21 @@ class EvidenceSpan(KnowledgeBaseModel):
     text: str
     start: int | None = None
     end: int | None = None
+    chunk_id: str | None = None
+    evidence_id: str | None = None
 
     @field_validator("field_name", "text")
     @classmethod
     def _required_text(cls, value: str) -> str:
+        if not isinstance(value, str) or not value.strip():
+            raise ValueError("value must be a non-empty string")
+        return value
+
+    @field_validator("chunk_id", "evidence_id")
+    @classmethod
+    def _optional_text(cls, value: str | None) -> str | None:
+        if value is None:
+            return value
         if not isinstance(value, str) or not value.strip():
             raise ValueError("value must be a non-empty string")
         return value
@@ -120,10 +131,45 @@ class CandidateFactRelation(KnowledgeBaseModel):
         return value
 
 
+class CandidateFactSignal(KnowledgeBaseModel):
+    """Query-facing semantic signals extracted before graph-index clustering."""
+
+    signal_type: str
+    topic_tags: list[str] = Field(default_factory=list)
+    impact_tags: list[str] = Field(default_factory=list)
+    risk_tags: list[str] = Field(default_factory=list)
+    narrative_tags: list[str] = Field(default_factory=list)
+    event_type_tags: list[str] = Field(default_factory=list)
+    governance_tags: list[str] = Field(default_factory=list)
+    target_tags: list[str] = Field(default_factory=list)
+    domain_tags: list[str] = Field(default_factory=list)
+    affected_entities: list[str] = Field(default_factory=list)
+    affected_targets: list[str] = Field(default_factory=list)
+    affected_domains: list[str] = Field(default_factory=list)
+    impact_direction: str | None = None
+    impact_mechanism: str | None = None
+    risk_type: str | None = None
+    catalyst_type: str | None = None
+    support_role: str | None = None
+    boundary_strength: str | None = None
+    sentiment: str | None = None
+    confidence: float = Field(0.0, ge=0.0, le=1.0)
+    evidence_spans: list[EvidenceSpan] = Field(default_factory=list)
+    properties: dict[str, Any] = Field(default_factory=dict)
+
+    @field_validator("signal_type")
+    @classmethod
+    def _required_text(cls, value: str) -> str:
+        if not isinstance(value, str) or not value.strip():
+            raise ValueError("value must be a non-empty string")
+        return value
+
+
 class CandidateFactPackage(KnowledgeBaseModel):
     entities: list[CandidateFactEntity] = Field(default_factory=list)
     events: list[CandidateFactEvent] = Field(default_factory=list)
     relations: list[CandidateFactRelation] = Field(default_factory=list)
+    fact_signals: list[CandidateFactSignal] = Field(default_factory=list)
     uncertainties: list[str] = Field(default_factory=list)
     rule_suggestions: list[str] = Field(default_factory=list)
 
@@ -246,6 +292,8 @@ def _span_warnings(item: TextExtractionInput, result: TextExtractionResult) -> l
             spans.extend(event.evidence_spans)
         for relation in result.candidate_package.relations:
             spans.extend(relation.evidence_spans)
+        for signal in result.candidate_package.fact_signals:
+            spans.extend(signal.evidence_spans)
 
     for span in spans:
         field_value = item.lookup_field(span.field_name)

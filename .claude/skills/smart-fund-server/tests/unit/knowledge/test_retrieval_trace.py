@@ -29,9 +29,6 @@ class _Repo:
     def list_edges(self, adapter_name: str):
         return []
 
-    def search_wiki_pages(self, adapter_name: str, query: str, limit: int = 20):
-        return []
-
     def get_evidence(self, evidence_id: str):
         return None
 

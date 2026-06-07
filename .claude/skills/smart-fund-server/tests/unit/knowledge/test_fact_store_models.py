@@ -7,6 +7,7 @@ from src.infrastructure.persistence.models.knowledge import (
     KnowledgeCompilationRun,
     KnowledgeEdge,
     KnowledgeEdgeEvidence,
+    KnowledgeEdgeEvidenceChunk,
     KnowledgeEvidenceChunk,
     KnowledgeEvidence,
     KnowledgeGraphAdjacency,
@@ -14,7 +15,6 @@ from src.infrastructure.persistence.models.knowledge import (
     KnowledgeNormalizationRule,
     KnowledgeReviewItem,
     KnowledgeVersion,
-    KnowledgeWikiPage,
 )
 
 
@@ -24,11 +24,11 @@ def test_knowledge_tables_registered_on_base_metadata() -> None:
         "kg_edges",
         "kg_evidence",
         "kg_edge_evidence",
+        "kg_edge_evidence_chunks",
         "kg_versions",
         "kg_review_items",
         "kg_normalization_rules",
         "kg_compilation_runs",
-        "kg_wiki_pages",
         "kg_graph_adjacency",
         "kg_evidence_chunks",
     }
@@ -89,6 +89,9 @@ def test_knowledge_evidence_and_link_tables_exist() -> None:
         "superseded_by",
     }.issubset(evidence_columns)
     assert {"edge_id", "evidence_id"}.issubset(link_columns)
+    assert {"edge_id", "evidence_id", "chunk_id"}.issubset(
+        set(KnowledgeEdgeEvidenceChunk.__table__.columns.keys())
+    )
 
 
 def test_knowledge_audit_tables_exist() -> None:
@@ -99,12 +102,9 @@ def test_knowledge_audit_tables_exist() -> None:
 
 
 def test_knowledge_generated_tables_exist() -> None:
-    assert {"page_id", "content", "source_evidence_ids"}.issubset(
-        set(KnowledgeWikiPage.__table__.columns.keys())
-    )
     assert {"source_node_id", "target_node_id", "edge_id"}.issubset(
         set(KnowledgeGraphAdjacency.__table__.columns.keys())
     )
-    assert {"chunk_id", "evidence_id", "content"}.issubset(
+    assert {"chunk_id", "evidence_id", "chunk_index", "start_offset", "end_offset"}.issubset(
         set(KnowledgeEvidenceChunk.__table__.columns.keys())
     )

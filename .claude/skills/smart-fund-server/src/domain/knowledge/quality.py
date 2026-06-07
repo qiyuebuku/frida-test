@@ -15,7 +15,6 @@ from src.domain.knowledge.schemas import (
     CompiledNode,
     KnowledgeBaseModel,
 )
-from src.domain.knowledge.wiki import WikiPage
 
 
 ReviewAction = Literal[
@@ -77,12 +76,10 @@ class KnowledgeQualityScanner:
         nodes: list[CompiledNode],
         edges: list[CompiledEdge],
         evidence: list[CompiledEvidence],
-        wiki_pages: list[WikiPage],
         hub_degree_threshold: int = 50,
     ) -> QualityReport:
         node_ids = {node.node_id for node in nodes}
         evidence_ids = {item.evidence_id for item in evidence}
-        edge_ids = {edge.edge_id for edge in edges}
         issues: list[QualityIssue] = []
 
         for edge in edges:
@@ -167,33 +164,6 @@ class KnowledgeQualityScanner:
                 )
             )
 
-        latest_version = _latest_version(nodes, edges, evidence)
-        for page in wiki_pages:
-            if page.version != latest_version:
-                issues.append(
-                    _issue(
-                        "stale_wiki_page",
-                        "wiki_page",
-                        page.page_id,
-                        "wiki page version is stale",
-                        ValidationSeverity.WARNING,
-                        {"page_version": page.version, "latest_version": latest_version},
-                    )
-                )
-            missing_edges = sorted(set(page.source_edge_ids) - edge_ids)
-            missing_page_evidence = sorted(set(page.source_evidence_ids) - evidence_ids)
-            if missing_edges or missing_page_evidence:
-                issues.append(
-                    _issue(
-                        "wiki_reference_missing",
-                        "wiki_page",
-                        page.page_id,
-                        "wiki page references missing source objects",
-                        ValidationSeverity.ERROR,
-                        {"missing_edges": missing_edges, "missing_evidence": missing_page_evidence},
-                    )
-                )
-
         metrics = _metrics(nodes, edges, evidence, issues, degree)
         return QualityReport(adapter_name=adapter_name, issues=issues, metrics=metrics)
 
@@ -259,21 +229,6 @@ def _duplicate_name_groups(nodes: list[CompiledNode]) -> dict[str, list[str]]:
         key = f"{node.node_type}:{node.canonical_name.lower()}"
         groups.setdefault(key, []).append(node.node_id)
     return {key: ids for key, ids in groups.items() if len(set(ids)) > 1}
-
-
-def _latest_version(
-    nodes: list[CompiledNode],
-    edges: list[CompiledEdge],
-    evidence: list[CompiledEvidence],
-) -> str:
-    versions = sorted(
-        {
-            item.version
-            for item in [*nodes, *edges, *evidence]
-            if item.version
-        }
-    )
-    return versions[-1] if versions else "v1"
 
 
 def _metrics(

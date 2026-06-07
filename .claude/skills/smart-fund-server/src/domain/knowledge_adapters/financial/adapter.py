@@ -6,6 +6,7 @@ from datetime import datetime
 from typing import Any
 
 from src.domain.knowledge.enums import EvidenceType, RecordKind
+from src.domain.knowledge.adapter import AdapterSpec
 from src.domain.knowledge.extraction import TextExtractionPipeline
 from src.domain.knowledge.schemas import EdgeDraft, EvidenceDraft, KnowledgeInput, NodeDraft
 from src.domain.knowledge.source_record import resolve_record_kind
@@ -52,7 +53,9 @@ class FinancialKGAdapter:
         enable_text_extraction: bool = True,
         normalization_rules: NormalizationRules = EMPTY_NORMALIZATION_RULES,
         normalization_decision_strategy: FinancialPayloadNormalizationStrategy | None = None,
+        adapter_spec: AdapterSpec | None = None,
     ) -> None:
+        self.spec = adapter_spec or FINANCIAL_ADAPTER_SPEC
         self.text_extraction_pipeline = text_extraction_pipeline or TextExtractionPipeline()
         self.news_extraction_strategy = news_extraction_strategy or FinancialNewsExtractionStrategy()
         self.enable_text_extraction = enable_text_extraction
@@ -86,9 +89,23 @@ class FinancialKGAdapter:
         if record_kind == RecordKind.RELATION_ASSERTION:
             return _relation_assertion_edges(item.source_type, payload, evidence_ref, self.normalization_rules)
         if record_kind == RecordKind.TEXT_DOCUMENT:
-            return _text_document_edges(item.source_type, payload, item.source_id, evidence_ref, self.normalization_rules)
+            return _text_document_edges(
+                item.source_type,
+                payload,
+                item.source_id,
+                evidence_ref,
+                self.normalization_rules,
+                self.spec,
+            )
         if record_kind == RecordKind.EVENT_ASSERTION:
-            return _event_assertion_edges(item.source_type, payload, item.source_id, evidence_ref, self.normalization_rules)
+            return _event_assertion_edges(
+                item.source_type,
+                payload,
+                item.source_id,
+                evidence_ref,
+                self.normalization_rules,
+                self.spec,
+            )
         if record_kind == RecordKind.STRUCTURED_SIGNAL:
             return _structured_signal_edges(item.source_type, payload, item.source_id, evidence_ref, self.normalization_rules)
         return []
@@ -116,6 +133,9 @@ class FinancialKGAdapter:
         weak_hints = item.metadata.get("weak_entity_hints")
         if weak_hints and "weak_entity_hints" not in payload:
             payload = {**payload, "weak_entity_hints": weak_hints}
+        chunk_hints = item.metadata.get("_evidence_chunk_hints")
+        if chunk_hints and "evidence_chunk_hints" not in payload:
+            payload = {**payload, "evidence_chunk_hints": chunk_hints}
         assessment = assess_semantic_certainty(item)
         item.metadata["_semantic_certainty"] = assessment.model_dump()
         if self.enable_text_extraction and item.record_kind == RecordKind.TEXT_DOCUMENT:
@@ -240,11 +260,12 @@ def _text_document_edges(
     source_id: str,
     evidence_ref: str,
     normalization_rules: NormalizationRules,
+    adapter_spec: AdapterSpec,
 ) -> list[EdgeDraft]:
     if source_type == "news_articles":
-        return _document_edges(payload, source_id, "event", evidence_ref, normalization_rules)
+        return _document_edges(payload, source_id, "event", evidence_ref, normalization_rules, adapter_spec)
     if source_type == "policy_news":
-        return _document_edges(payload, source_id, "policy", evidence_ref, normalization_rules)
+        return _document_edges(payload, source_id, "policy", evidence_ref, normalization_rules, adapter_spec)
     return []
 
 
@@ -254,9 +275,10 @@ def _event_assertion_edges(
     source_id: str,
     evidence_ref: str,
     normalization_rules: NormalizationRules,
+    adapter_spec: AdapterSpec,
 ) -> list[EdgeDraft]:
     if source_type == "l1_events":
-        return _document_edges(payload, source_id, "event", evidence_ref, normalization_rules)
+        return _document_edges(payload, source_id, "event", evidence_ref, normalization_rules, adapter_spec)
     return []
 
 
@@ -591,6 +613,7 @@ def _document_edges(
     source_node_type: str,
     evidence_ref: str,
     normalization_rules: NormalizationRules,
+    adapter_spec: AdapterSpec = FINANCIAL_ADAPTER_SPEC,
 ) -> list[EdgeDraft]:
     source_key = str(payload.get("document_id") or payload.get("event_id") or payload.get("source_id") or source_id)
     source_ref = typed_ref(source_node_type, source_key)
@@ -656,6 +679,7 @@ def _document_edges(
             source_ref,
             evidence_ref,
             normalization_rules,
+            adapter_spec,
         )
     )
     return edges
@@ -668,10 +692,12 @@ def _candidate_package_relation_edges(
     document_source_ref: str,
     evidence_ref: str,
     normalization_rules: NormalizationRules,
+    adapter_spec: AdapterSpec,
 ) -> list[EdgeDraft]:
     package = _candidate_package(payload)
     if not package:
         return []
+    fact_signals = _candidate_package_fact_signals(payload)
     entity_map = _candidate_endpoint_map(payload, source_id, source_node_type, normalization_rules)
     edges: list[EdgeDraft] = []
     for relation_payload in package.get("relations", []):
@@ -685,32 +711,47 @@ def _candidate_package_relation_edges(
         relation_type, relation_metadata = normalize_candidate_relation_type(
             relation_payload.get("relation_type"),
             direction=relation_payload.get("direction"),
+            allowed_relation_types={relation.name for relation in adapter_spec.relations},
         )
         target_name = str(relation_payload.get("target") or "").strip()
         if not relation_type or not target_name:
             continue
         source_name = str(relation_payload.get("source") or "").strip()
-        source_ref = entity_map.get(source_name) or document_source_ref
-        target_ref = entity_map.get(target_name)
+        source_ref = _resolve_candidate_endpoint_ref(
+            source_name,
+            entity_map=entity_map,
+            normalization_rules=normalization_rules,
+        ) or document_source_ref
+        target_ref = _resolve_candidate_endpoint_ref(
+            target_name,
+            entity_map=entity_map,
+            normalization_rules=normalization_rules,
+        )
         if target_ref is None:
-            fallback_target = {
-                "type": "concept",
-                "name": target_name,
-                "confidence": relation_payload.get("confidence", 0.6),
-            }
-            fallback_target = normalize_entity_with_rules(fallback_target, normalization_rules)
-            target_ref = typed_ref(
-                fallback_target["type"],
-                entity_stable_key(fallback_target, normalization_rules=normalization_rules),
+            fallback_target = _candidate_relation_endpoint_entity(
+                relation_payload,
+                "target",
+                fallback_type="concept",
             )
+            target_ref = _entity_typed_ref(fallback_target, normalization_rules)
+        if target_ref is None:
+            continue
         direction = relation_payload.get("direction") or relation_metadata.get("direction")
         relation_type, endpoint_metadata = _normalize_relation_for_endpoints(
             relation_type,
             source_ref=source_ref,
             target_ref=target_ref,
+            adapter_spec=adapter_spec,
         )
         relation_metadata = {**relation_metadata, **endpoint_metadata}
         relation = default_relation_confidence(relation_type, source_type=source_node_type)
+        edge_fact_signals = _candidate_package_fact_signals_for_relation(
+            fact_signals,
+            relation_payload=relation_payload,
+            source_name=source_name,
+            target_name=target_name,
+        )
+        fact_signal_tags = _candidate_package_fact_signal_tags(edge_fact_signals)
         edges.append(
             EdgeDraft(
                 source_ref=source_ref,
@@ -725,6 +766,15 @@ def _candidate_package_relation_edges(
                     for name, value in {
                         "direction": direction,
                         "reason": relation_payload.get("reason"),
+                        "relationship_strength": relation_payload.get("relationship_strength")
+                        or relation_payload_properties.get("relationship_strength"),
+                        "boundary_strength": relation_payload.get("boundary_strength")
+                        or relation_payload_properties.get("boundary_strength"),
+                        "support_role": relation_payload.get("support_role")
+                        or relation_payload_properties.get("support_role"),
+                        "evidence_spans": relation_payload.get("evidence_spans"),
+                        "fact_signals": edge_fact_signals or None,
+                        **fact_signal_tags,
                         "candidate_fact_package": True,
                         "original_relation_type": relation_payload.get("original_relation_type")
                         or relation_payload_properties.get("original_relation_type"),
@@ -754,10 +804,11 @@ def _normalize_relation_for_endpoints(
     *,
     source_ref: str,
     target_ref: str,
+    adapter_spec: AdapterSpec = FINANCIAL_ADAPTER_SPEC,
 ) -> tuple[str, dict[str, Any]]:
     source_type = _typed_ref_type(source_ref)
     target_type = _typed_ref_type(target_ref)
-    if _relation_endpoint_allowed(relation_type, source_type, target_type):
+    if _relation_endpoint_allowed(relation_type, source_type, target_type, adapter_spec=adapter_spec):
         return relation_type, {}
     if relation_type == "mentions" and source_type not in {"event", "policy"}:
         return "related_to", {
@@ -775,7 +826,12 @@ def _normalize_relation_for_endpoints(
             "original_source_type": source_type,
             "original_target_type": target_type,
         }
-    fallback_relation = _fallback_relation_for_invalid_endpoints(relation_type, source_type, target_type)
+    fallback_relation = _fallback_relation_for_invalid_endpoints(
+        relation_type,
+        source_type,
+        target_type,
+        adapter_spec=adapter_spec,
+    )
     return fallback_relation, {
         "original_relation_type": relation_type,
         "relation_type_normalized": True,
@@ -789,22 +845,30 @@ def _fallback_relation_for_invalid_endpoints(
     relation_type: str,
     source_type: str,
     target_type: str,
+    *,
+    adapter_spec: AdapterSpec = FINANCIAL_ADAPTER_SPEC,
 ) -> str:
-    if relation_type == "belongs_to" and _relation_endpoint_allowed("mentions", source_type, target_type):
+    if relation_type == "belongs_to" and _relation_endpoint_allowed("mentions", source_type, target_type, adapter_spec=adapter_spec):
         return "mentions"
-    if relation_type == "benefits_from" and _relation_endpoint_allowed("affects", source_type, target_type):
+    if relation_type == "benefits_from" and _relation_endpoint_allowed("affects", source_type, target_type, adapter_spec=adapter_spec):
         return "affects"
-    if relation_type == "hurt_by" and _relation_endpoint_allowed("affects", source_type, target_type):
+    if relation_type == "hurt_by" and _relation_endpoint_allowed("affects", source_type, target_type, adapter_spec=adapter_spec):
         return "affects"
-    if relation_type == "holds" and _relation_endpoint_allowed("related_to", source_type, target_type):
+    if relation_type == "holds" and _relation_endpoint_allowed("related_to", source_type, target_type, adapter_spec=adapter_spec):
         return "related_to"
-    if _relation_endpoint_allowed("related_to", source_type, target_type):
+    if _relation_endpoint_allowed("related_to", source_type, target_type, adapter_spec=adapter_spec):
         return "related_to"
     return "related_to"
 
 
-def _relation_endpoint_allowed(relation_type: str, source_type: str, target_type: str) -> bool:
-    for relation in FINANCIAL_ADAPTER_SPEC.relations:
+def _relation_endpoint_allowed(
+    relation_type: str,
+    source_type: str,
+    target_type: str,
+    *,
+    adapter_spec: AdapterSpec = FINANCIAL_ADAPTER_SPEC,
+) -> bool:
+    for relation in adapter_spec.relations:
         if relation.name == relation_type:
             return source_type in relation.source_types and target_type in relation.target_types
     return False
@@ -826,18 +890,79 @@ def _candidate_endpoint_map(
     document_title = str(payload.get("title") or payload.get("event_type") or "").strip()
     document_key = str(payload.get("document_id") or payload.get("event_id") or payload.get("source_id") or source_id)
     if document_title:
-        mapping[document_title] = typed_ref(source_node_type, document_key)
-    for entity in _candidate_package_entities(payload):
+        _register_endpoint_mapping(mapping, document_title, typed_ref(source_node_type, document_key), normalization_rules)
+    for entity in payload.get("mentioned_entities", []) + payload.get("affected_entities", []) + _candidate_package_entities(payload):
         normalized = normalize_entity_with_rules(entity, normalization_rules)
-        name = str(normalized.get("name") or "").strip()
         entity_ref = _entity_typed_ref(normalized, normalization_rules)
-        if name and entity_ref is not None:
-            mapping[name] = entity_ref
+        if entity_ref is not None:
+            for key in _entity_lookup_keys(normalized, normalization_rules):
+                _register_endpoint_mapping(mapping, key, entity_ref, normalization_rules)
     for index, event in enumerate(_candidate_package_events(payload, source_id, node_type=source_node_type)):
         title = str(event.get("title") or "").strip()
         if title:
-            mapping[title] = typed_ref(source_node_type, _candidate_event_stable_key(event, source_id, index=index))
+            _register_endpoint_mapping(
+                mapping,
+                title,
+                typed_ref(source_node_type, _candidate_event_stable_key(event, source_id, index=index)),
+                normalization_rules,
+            )
     return mapping
+
+
+def _resolve_candidate_endpoint_ref(
+    name: str,
+    *,
+    entity_map: dict[str, str],
+    normalization_rules: NormalizationRules,
+) -> str | None:
+    for key in _name_lookup_keys(name, normalization_rules):
+        ref = entity_map.get(key)
+        if ref:
+            return ref
+    return None
+
+
+def _register_endpoint_mapping(
+    mapping: dict[str, str],
+    name: Any,
+    ref: str,
+    normalization_rules: NormalizationRules,
+) -> None:
+    for key in _name_lookup_keys(name, normalization_rules):
+        mapping.setdefault(key, ref)
+
+
+def _entity_lookup_keys(entity: dict[str, Any], normalization_rules: NormalizationRules) -> list[str]:
+    values: list[Any] = [
+        entity.get("name"),
+        entity.get("canonical_name"),
+        entity.get("code"),
+        entity.get("fund_code"),
+        entity.get("indicator_code"),
+    ]
+    aliases = entity.get("aliases")
+    if isinstance(aliases, list):
+        values.extend(aliases)
+    result: list[str] = []
+    for value in values:
+        for key in _name_lookup_keys(value, normalization_rules):
+            if key not in result:
+                result.append(key)
+    return result
+
+
+def _name_lookup_keys(value: Any, normalization_rules: NormalizationRules) -> list[str]:
+    text = str(value or "").strip()
+    if not text:
+        return []
+    normalized = normalize_term_name_with_rules(text, normalization_rules)
+    compact = "".join(text.split())
+    keys = [text]
+    if normalized and normalized not in keys:
+        keys.append(normalized)
+    if compact and compact not in keys:
+        keys.append(compact)
+    return keys
 
 
 def _derived_signal_edges(
@@ -875,6 +1000,183 @@ def _candidate_package(payload: dict[str, Any]) -> dict[str, Any]:
     return package if isinstance(package, dict) else {}
 
 
+def _candidate_package_fact_signals(payload: dict[str, Any]) -> list[dict[str, Any]]:
+    package = _candidate_package(payload)
+    signals = package.get("fact_signals")
+    if not isinstance(signals, list):
+        return []
+    return [
+        signal
+        for signal in signals
+        if isinstance(signal, dict) and str(signal.get("signal_type") or "").strip()
+    ]
+
+
+def _candidate_package_fact_signals_for_relation(
+    signals: list[dict[str, Any]],
+    *,
+    relation_payload: dict[str, Any],
+    source_name: str,
+    target_name: str,
+) -> list[dict[str, Any]]:
+    if not signals:
+        return []
+    relation_chunks = _chunk_ids_from_spans(relation_payload.get("evidence_spans"))
+    relation_text = " ".join(_text_values_from_spans(relation_payload.get("evidence_spans")))
+    relation_terms = _unique(
+        item
+        for item in [
+            source_name,
+            target_name,
+            str(relation_payload.get("source") or ""),
+            str(relation_payload.get("target") or ""),
+            str(relation_payload.get("relation_type") or ""),
+            str(relation_payload.get("reason") or ""),
+        ]
+        if item.strip()
+    )
+    return [
+        signal
+        for signal in signals
+        if _signal_is_supported_by_relation(
+            signal,
+            relation_chunks=relation_chunks,
+            relation_terms=relation_terms,
+            relation_text=relation_text,
+        )
+    ]
+
+
+def _signal_is_supported_by_relation(
+    signal: dict[str, Any],
+    *,
+    relation_chunks: set[str],
+    relation_terms: list[str],
+    relation_text: str,
+) -> bool:
+    """Attach a graph-index signal only when it is grounded in this relation.
+
+    A source can have one broad fact_signal and many unrelated relations. Treating
+    the sole signal as globally applicable pollutes community boundaries and
+    makes weak side topics look like mature themes. Signal attachment therefore
+    requires both compatible chunk scope and textual/endpoint overlap.
+    """
+
+    return _signal_shares_chunk(signal, relation_chunks) and _signal_mentions_relation(
+        signal,
+        relation_terms,
+        relation_text,
+    )
+
+
+def _signal_shares_chunk(signal: dict[str, Any], relation_chunks: set[str]) -> bool:
+    if not relation_chunks:
+        return False
+    signal_chunks = _chunk_ids_from_spans(signal.get("evidence_spans"))
+    if not signal_chunks:
+        return False
+    return bool(signal_chunks.intersection(relation_chunks))
+
+
+def _signal_mentions_relation(signal: dict[str, Any], relation_terms: list[str], relation_text: str) -> bool:
+    signal_text = " ".join(_signal_text_values(signal))
+    for term in relation_terms:
+        term = term.strip()
+        if term and (term in signal_text or signal_text in term):
+            return True
+    signal_tokens = set(_signal_token_values(signal))
+    if any(term in signal_tokens for term in relation_terms if term.strip()):
+        return True
+    return any(token and token in relation_text for token in signal_tokens)
+
+
+def _chunk_ids_from_spans(value: Any) -> set[str]:
+    if not isinstance(value, list):
+        return set()
+    return {
+        str(item.get("chunk_id") or "").strip()
+        for item in value
+        if isinstance(item, dict) and str(item.get("chunk_id") or "").strip()
+    }
+
+
+def _text_values_from_spans(value: Any) -> list[str]:
+    if not isinstance(value, list):
+        return []
+    return [
+        str(item.get("text") or "").strip()
+        for item in value
+        if isinstance(item, dict) and str(item.get("text") or "").strip()
+    ]
+
+
+def _signal_text_values(signal: dict[str, Any]) -> list[str]:
+    values: list[str] = []
+    for key, value in signal.items():
+        if isinstance(value, str):
+            values.append(value)
+        elif isinstance(value, list):
+            values.extend(str(item) for item in value if isinstance(item, str | int | float))
+    values.extend(_text_values_from_spans(signal.get("evidence_spans")))
+    return values
+
+
+def _signal_token_values(signal: dict[str, Any]) -> set[str]:
+    return {
+        item.strip()
+        for item in _signal_text_values(signal)
+        if item.strip()
+    }
+
+
+def _candidate_package_fact_signal_tags(signals: list[dict[str, Any]]) -> dict[str, list[str]]:
+    field_aliases = {
+        "topic_tags": ("topic_tags",),
+        "impact_tags": ("impact_tags",),
+        "risk_tags": ("risk_tags",),
+        "narrative_tags": ("narrative_tags",),
+        "event_type_tags": ("event_type_tags",),
+        "governance_tags": ("governance_tags", "policy_tags"),
+        "target_tags": ("target_tags", "asset_tags"),
+        "domain_tags": ("domain_tags", "industry_tags"),
+        "affected_entities": ("affected_entities",),
+        "affected_targets": ("affected_targets", "affected_assets"),
+        "affected_domains": ("affected_domains", "affected_industries"),
+    }
+    debug_fields = (
+        "topic_tags",
+        "impact_tags",
+        "risk_tags",
+        "narrative_tags",
+        "event_type_tags",
+        "policy_tags",
+        "asset_tags",
+        "industry_tags",
+        "affected_entities",
+        "affected_assets",
+        "affected_industries",
+    )
+    result: dict[str, list[str]] = {}
+    for output_field, aliases in field_aliases.items():
+        values = _unique(
+            str(value)
+            for signal in signals
+            for alias in aliases
+            for value in (signal.get(alias) if isinstance(signal.get(alias), list) else [])
+        )
+        if values:
+            result[output_field] = values
+    for field in debug_fields:
+        values = _unique(
+            str(value)
+            for signal in signals
+            for value in (signal.get(field) if isinstance(signal.get(field), list) else [])
+        )
+        if values:
+            result[field] = values
+    return result
+
+
 def _candidate_package_entities(payload: dict[str, Any]) -> list[dict[str, Any]]:
     package = _candidate_package(payload)
     entities = package.get("entities")
@@ -897,11 +1199,9 @@ def _candidate_relation_endpoint_entities(
     relations = package.get("relations")
     if not isinstance(relations, list):
         return []
-    existing_names = {
-        str(entity.get("name") or entity.get("canonical_name") or "").strip()
-        for entity in existing_entities
-        if str(entity.get("name") or entity.get("canonical_name") or "").strip()
-    }
+    existing_names: set[str] = set()
+    for entity in existing_entities:
+        existing_names.update(_raw_entity_name_keys(entity))
     document_title = str(payload.get("title") or payload.get("event_type") or "").strip()
     if document_title:
         existing_names.add(document_title)
@@ -914,27 +1214,98 @@ def _candidate_relation_endpoint_entities(
     for relation in relations:
         if not isinstance(relation, dict):
             continue
-        evidence_spans = relation.get("evidence_spans")
-        if not evidence_spans:
-            continue
         for side in ("source", "target"):
             name = str(relation.get(side) or "").strip()
             if not name or name in existing_names:
                 continue
             existing_names.add(name)
-            fallback_entities.append(
-                {
-                    "type": "concept",
-                    "name": name,
-                    "confidence": relation.get("confidence", 0.6),
-                    "evidence_spans": evidence_spans,
-                    "properties": {
-                        "candidate_relation_endpoint": True,
-                        "endpoint_side": side,
-                    },
-                }
-            )
+            fallback_entities.append(_candidate_relation_endpoint_entity(relation, side, fallback_type="concept"))
     return fallback_entities
+
+
+def _raw_entity_name_keys(entity: dict[str, Any]) -> set[str]:
+    values: list[Any] = [entity.get("name"), entity.get("canonical_name"), entity.get("code"), entity.get("fund_code")]
+    aliases = entity.get("aliases")
+    if isinstance(aliases, list):
+        values.extend(aliases)
+    return {str(value).strip() for value in values if str(value or "").strip()}
+
+
+def _candidate_relation_endpoint_entity(
+    relation: dict[str, Any],
+    side: str,
+    *,
+    fallback_type: str,
+) -> dict[str, Any]:
+    name = str(relation.get(side) or "").strip()
+    endpoint_type = _candidate_relation_endpoint_type(relation, side, fallback_type=fallback_type)
+    entity: dict[str, Any] = {
+        "type": endpoint_type,
+        "name": name,
+        "confidence": relation.get("confidence", 0.6),
+        "properties": {
+            "candidate_relation_endpoint": True,
+            "endpoint_side": side,
+        },
+    }
+    identifiers = _candidate_relation_endpoint_identifiers(relation, side)
+    entity.update(identifiers)
+    evidence_spans = relation.get("evidence_spans")
+    if evidence_spans:
+        entity["evidence_spans"] = evidence_spans
+    original_type = _candidate_relation_endpoint_raw_type(relation, side)
+    if original_type and original_type != endpoint_type:
+        entity["properties"]["original_endpoint_type"] = original_type
+        entity["properties"]["endpoint_type_fallback"] = endpoint_type
+    return entity
+
+
+def _candidate_relation_endpoint_type(
+    relation: dict[str, Any],
+    side: str,
+    *,
+    fallback_type: str,
+) -> str:
+    raw_type = _candidate_relation_endpoint_raw_type(relation, side) or fallback_type
+    node_type = _normalize_endpoint_node_type(raw_type)
+    identifiers = _candidate_relation_endpoint_identifiers(relation, side)
+    if node_type == "stock" and not identifiers.get("code"):
+        return "institution"
+    if node_type == "fund" and not identifiers.get("fund_code"):
+        return "institution"
+    return node_type
+
+
+def _candidate_relation_endpoint_raw_type(relation: dict[str, Any], side: str) -> str:
+    for field_name in (
+        f"{side}_entity_type",
+        f"{side}_type",
+        f"original_{side}_type",
+    ):
+        value = str(relation.get(field_name) or "").strip()
+        if value:
+            return value
+    return ""
+
+
+def _candidate_relation_endpoint_identifiers(relation: dict[str, Any], side: str) -> dict[str, Any]:
+    result: dict[str, Any] = {}
+    for field_name in (f"{side}_identifiers", f"{side}_properties"):
+        value = relation.get(field_name)
+        if isinstance(value, dict):
+            for key in ("code", "exchange", "fund_code", "indicator_code"):
+                if value.get(key) is not None:
+                    result[key] = value[key]
+    return result
+
+
+def _normalize_endpoint_node_type(value: Any) -> str:
+    node_type = str(value or "").strip().lower()
+    if node_type in {"company", "listed_company", "issuer", "corp", "corporation"}:
+        return "institution"
+    if node_type in {"country", "nation", "province", "city", "location", "area"}:
+        return "region"
+    return node_type or "concept"
 
 
 def _candidate_package_events(

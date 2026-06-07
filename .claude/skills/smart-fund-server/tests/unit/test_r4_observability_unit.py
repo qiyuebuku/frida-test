@@ -106,3 +106,28 @@ def test_r4_2_metrics_text_format():
     assert isinstance(body, bytes)
     assert "text/plain" in ctype or "openmetrics" in ctype.lower()
     assert b"# HELP" in body or b"# TYPE" in body
+
+
+@pytest.mark.unit
+def test_langfuse_propagated_metadata_clips_long_values(monkeypatch):
+    """Langfuse propagated attributes have a short value limit; metadata must not trigger SDK drops."""
+    from src.infrastructure.observability.langfuse_tracing import _attribute_metadata
+
+    monkeypatch.setenv("KG_LANGFUSE_PROPAGATED_ATTRIBUTE_MAX_CHARS", "80")
+    metadata = _attribute_metadata(
+        {
+            "source_samples": [
+                {
+                    "source_type": "news_articles",
+                    "source_id": f"ft_news:{index}",
+                    "title": "A股并购重组市场呈现三方面新变化" * 3,
+                }
+                for index in range(5)
+            ],
+            "query": "半导体产业链整合影响" * 20,
+        }
+    )
+
+    assert set(metadata) == {"source_samples", "query"}
+    assert all(len(value) <= 80 for value in metadata.values())
+    assert all("[truncated sha256=" in value for value in metadata.values())

@@ -45,6 +45,87 @@ class _LLM:
         return _LLMResponse()
 
 
+class _LLMWithChunkIdEvidenceSpan:
+    def __init__(self, chunk_id: str) -> None:
+        self.chunk_id = chunk_id
+        self.requests = []
+
+    async def extract(self, request):
+        self.requests.append(request)
+        chunk_id = self.chunk_id
+        structured_output = {
+            "entities": [
+                {
+                    "type": "industry",
+                    "name": "半导体",
+                    "confidence": 0.82,
+                    "evidence_spans": [
+                        {"field_name": "text", "text": "半导体受到政策支持", "chunk_id": chunk_id}
+                    ],
+                },
+                {
+                    "type": "policy",
+                    "name": "科创板八条",
+                    "confidence": 0.8,
+                    "evidence_spans": [
+                        {"field_name": "text", "text": "科创板八条支持半导体", "chunk_id": chunk_id}
+                    ],
+                },
+            ],
+            "events": [],
+            "relations": [
+                {
+                    "relation_type": "benefits_from",
+                    "source": "半导体",
+                    "target": "科创板八条",
+                    "confidence": 0.78,
+                    "evidence_spans": [
+                        {"field_name": "text", "text": "半导体受到政策支持", "chunk_id": chunk_id}
+                    ],
+                }
+            ],
+            "uncertainties": [],
+        }
+
+        response = type("Response", (), {})()
+        response.text = ""
+        response.structured_output = structured_output
+        return response
+
+
+class _LLMChunkFirst:
+    def __init__(self) -> None:
+        self.requests = []
+
+    async def extract(self, request):
+        self.requests.append(request)
+        prompt = request.prompt
+        if "chunk_id=chunk-A" in prompt:
+            chunk_id = "chunk-A"
+            name = "半导体"
+            span = "半导体景气度回升"
+        else:
+            chunk_id = "chunk-B"
+            name = "生物医药"
+            span = "生物医药并购活跃"
+        response = type("Response", (), {})()
+        response.text = ""
+        response.structured_output = {
+            "entities": [
+                {
+                    "type": "industry",
+                    "name": name,
+                    "confidence": 0.83,
+                    "evidence_spans": [{"field_name": "text", "text": span, "chunk_id": chunk_id}],
+                }
+            ],
+            "events": [],
+            "relations": [],
+            "uncertainties": [],
+        }
+        return response
+
+
 class _LLMResponseWithoutEvidence:
     text = ""
     structured_output = {
@@ -716,6 +797,95 @@ async def test_financial_adapter_passes_source_record_weak_hints_to_text_extract
     await adapter.extract_node_drafts(item)
 
     assert "快充" in llm.requests[0].prompt
+
+
+@pytest.mark.asyncio
+async def test_financial_adapter_passes_compiled_chunk_hints_to_llm_prompt() -> None:
+    llm = _LLM()
+    adapter = FinancialKGAdapter(news_extraction_strategy=FinancialNewsExtractionStrategy(llm_port=llm))
+    record = {
+        "source_type": "news_articles",
+        "payload": {
+            "source_id": "news-chunk-hints",
+            "title": "A股并购重组市场呈现三方面新变化",
+            "published_at": "2026-04-24T09:30:00+08:00",
+            "text": "半导体、生物医药和高端装备制造等行业在并购重组市场中受到关注。",
+        },
+    }
+
+    result = await KnowledgeCompiler().compile(adapter, adapter.normalize([record]))
+
+    assert result.failed_records == []
+    assert llm.requests
+    prompt = llm.requests[0].prompt
+    assert "证据分片索引" in prompt
+    assert "chunk_id=kg_chunk:" in prompt
+    assert "offsets=" in prompt
+    assert "半导体、生物医药和高端装备制造" in prompt
+
+
+@pytest.mark.asyncio
+async def test_financial_news_strategy_extracts_each_chunk_separately_when_chunk_hints_exist() -> None:
+    llm = _LLMChunkFirst()
+    payload = {
+        "source_id": "news-chunk-first",
+        "title": "并购重组行业观察",
+        "published_at": "2026-04-24T09:30:00+08:00",
+        "text": "半导体景气度回升。\n\n生物医药并购活跃。",
+        "evidence_chunk_hints": [
+            {"evidence_id": "ev-1", "chunk_id": "chunk-A", "chunk_index": 0, "text": "半导体景气度回升。"},
+            {"evidence_id": "ev-1", "chunk_id": "chunk-B", "chunk_index": 1, "text": "生物医药并购活跃。"},
+        ],
+    }
+
+    enriched = await enrich_financial_text_payload(
+        payload,
+        source_id="news-chunk-first",
+        source_type="news_articles",
+        pipeline=FinancialKGAdapter().text_extraction_pipeline,
+        strategy=FinancialNewsExtractionStrategy(llm_port=llm),
+    )
+
+    assert len(llm.requests) == 2
+    assert all("当前正文是单个 evidence chunk" in request.prompt for request in llm.requests)
+    package = enriched["candidate_fact_package"]
+    names = {entity["canonical_name"] for entity in package["entities"]}
+    chunk_ids = {
+        span["chunk_id"]
+        for entity in package["entities"]
+        for span in entity["evidence_spans"]
+    }
+    assert names == {"半导体", "生物医药"}
+    assert chunk_ids == {"chunk-A", "chunk-B"}
+    assert any("chunk-first extraction used chunks=2" in warning for warning in enriched["_extraction_warnings"])
+
+
+@pytest.mark.asyncio
+async def test_financial_adapter_preserves_llm_chunk_id_in_relation_evidence_spans() -> None:
+    llm = _LLMWithChunkIdEvidenceSpan("kg_chunk:llm-returned:0")
+    adapter = FinancialKGAdapter(news_extraction_strategy=FinancialNewsExtractionStrategy(llm_port=llm))
+    record = {
+        "source_type": "news_articles",
+        "payload": {
+            "source_id": "news-chunk-span",
+            "title": "科创板八条支持半导体并购",
+            "published_at": "2026-04-24T09:30:00+08:00",
+            "text": "科创板八条支持半导体。半导体受到政策支持。",
+        },
+    }
+
+    result = await KnowledgeCompiler().compile(adapter, adapter.normalize([record]))
+
+    assert result.failed_records == []
+    relation_edges = [
+        edge
+        for edge in result.edges
+        if edge.relation_type in {"benefits_from", "related_to"}
+        and edge.properties.get("candidate_fact_package") is True
+    ]
+    assert relation_edges
+    spans = relation_edges[0].properties["evidence_spans"]
+    assert spans[0]["chunk_id"] == "kg_chunk:llm-returned:0"
 
 
 @pytest.mark.asyncio

@@ -5,8 +5,13 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from typing import Any
 
+from src.domain.knowledge.graph_index import (
+    GraphIndexCommunity,
+    GraphIndexDelta,
+    GraphIndexFinding,
+    GraphIndexUnassignedSignal,
+)
 from src.domain.knowledge.quality import ReviewAction, ReviewEntry
-from src.domain.knowledge.retrieval_document import RetrievalDocument, RetrievalDocumentVersion
 from src.domain.knowledge.retrieval_eval import (
     RetrievalEvalMetric,
     RetrievalEvalRun,
@@ -14,7 +19,6 @@ from src.domain.knowledge.retrieval_eval import (
     RetrievalTraceSnapshot,
 )
 from src.domain.knowledge.schemas import CompiledEdge, CompiledEvidence, CompiledNode, EvidenceChunk
-from src.domain.knowledge.wiki import WikiPage
 
 
 class KnowledgeRepository(ABC):
@@ -71,22 +75,6 @@ class KnowledgeRepository(ABC):
         """Mark stale same-source evidence versions inactive/superseded."""
 
     @abstractmethod
-    def rebuild_wiki_pages(self, adapter_name: str, pages: list[WikiPage]) -> int:
-        """Replace generated wiki pages for one adapter."""
-
-    @abstractmethod
-    def upsert_wiki_pages(self, adapter_name: str, pages: list[WikiPage]) -> int:
-        """Insert or update generated wiki pages for one adapter."""
-
-    @abstractmethod
-    def list_wiki_pages(self, adapter_name: str) -> list[WikiPage]:
-        """Load generated wiki pages for one adapter."""
-
-    @abstractmethod
-    def search_wiki_pages(self, adapter_name: str, query: str, limit: int = 20) -> list[WikiPage]:
-        """Search generated wiki pages."""
-
-    @abstractmethod
     def rebuild_graph_adjacency(self, adapter_name: str) -> int:
         """Replace generated adjacency records for one adapter."""
 
@@ -111,37 +99,71 @@ class KnowledgeRepository(ABC):
         """Load generated evidence chunks for one adapter."""
 
     @abstractmethod
-    def upsert_retrieval_documents(self, documents: list[RetrievalDocument]) -> int:
-        """Insert or update generated retrieval documents."""
+    def count_graph_index_materials(self, adapter_name: str) -> dict[str, int]:
+        """Count nodes, edges and chunks used by Graph Index planning."""
 
     @abstractmethod
-    def list_retrieval_documents(self, adapter_name: str, *, target: str = "prod") -> list[RetrievalDocument]:
-        """Load generated retrieval documents for one adapter and target."""
-
-    @abstractmethod
-    def search_retrieval_documents(
-        self,
-        adapter_name: str,
-        query: str,
-        *,
-        target: str = "prod",
-        limit: int = 20,
-    ) -> list[RetrievalDocument]:
-        """Lexically search generated retrieval documents."""
-
-    @abstractmethod
-    def save_retrieval_document_version(self, version: RetrievalDocumentVersion) -> str:
-        """Persist retrieval document generation metadata and return its version ID."""
-
-    @abstractmethod
-    def list_retrieval_document_versions(
+    def list_graph_index_materials(
         self,
         adapter_name: str,
         *,
-        target: str = "prod",
-        limit: int = 20,
-    ) -> list[RetrievalDocumentVersion]:
-        """Load retrieval document generation metadata."""
+        node_ids: list[str],
+        edge_ids: list[str],
+        evidence_ids: list[str],
+        chunk_ids: list[str],
+    ) -> dict[str, list[Any]]:
+        """Load scoped nodes, edges and chunks for Graph Index local rebuild."""
+
+    @abstractmethod
+    def list_graph_communities(self, adapter_name: str) -> list[GraphIndexCommunity]:
+        """Load current Graph Index communities for one adapter."""
+
+    @abstractmethod
+    def list_graph_findings(self, adapter_name: str) -> list[GraphIndexFinding]:
+        """Load current Graph Index findings for one adapter."""
+
+    @abstractmethod
+    def list_graph_deltas(self, adapter_name: str) -> list[GraphIndexDelta]:
+        """Load current Graph Index rolling deltas for one adapter."""
+
+    @abstractmethod
+    def list_graph_unassigned_signals(
+        self,
+        adapter_name: str,
+        *,
+        status: str = "active",
+    ) -> list[GraphIndexUnassignedSignal]:
+        """Load weak graph signals that are not yet publishable communities."""
+
+    @abstractmethod
+    def mark_graph_index_dirty(self, adapter_name: str, *, reason: str) -> int:
+        """Mark current Graph Index state as needing rebuild after a failed refresh."""
+
+    @abstractmethod
+    def replace_graph_index(
+        self,
+        adapter_name: str,
+        *,
+        communities: list[GraphIndexCommunity],
+        findings: list[GraphIndexFinding],
+        deltas: list[GraphIndexDelta] | None = None,
+        unassigned_signals: list[GraphIndexUnassignedSignal] | None = None,
+    ) -> dict[str, Any]:
+        """Replace generated graph-index communities/findings/deltas for one adapter."""
+
+    @abstractmethod
+    def replace_graph_index_scope(
+        self,
+        adapter_name: str,
+        *,
+        remove_community_ids: list[str],
+        communities: list[GraphIndexCommunity],
+        findings: list[GraphIndexFinding],
+        deltas: list[GraphIndexDelta] | None = None,
+        unassigned_signals: list[GraphIndexUnassignedSignal] | None = None,
+        promoted_signals: dict[str, str] | None = None,
+    ) -> dict[str, Any]:
+        """Replace one dirty Graph Index scope for one adapter."""
 
     @abstractmethod
     def save_retrieval_trace_snapshot(self, snapshot: RetrievalTraceSnapshot) -> str:

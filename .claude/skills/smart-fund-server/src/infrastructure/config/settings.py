@@ -9,6 +9,7 @@ from pathlib import Path
 
 # 自动加载 .env 文件（项目根目录）
 _env_file = Path(__file__).resolve().parents[3] / ".env"
+_project_root = _env_file.parent
 if _env_file.exists():
     for line in _env_file.read_text().splitlines():
         line = line.strip()
@@ -20,6 +21,20 @@ if _env_file.exists():
             value = value[1:-1]
         if key and key not in os.environ:  # 不覆盖已设置的环境变量
             os.environ[key] = value
+
+
+def _resolve_local_path_setting(value: str) -> str:
+    """Resolve local file settings against the project root, not process cwd."""
+
+    raw = str(value or "").strip()
+    if not raw:
+        return raw
+    if "://" in raw or raw.startswith("unix:"):
+        return raw
+    path = Path(raw).expanduser()
+    if path.is_absolute():
+        return str(path)
+    return str((_project_root / path).resolve())
 
 
 # ==================== 数据库 ====================
@@ -97,12 +112,20 @@ RERANKER_DEFAULT_TOP_N = int(os.getenv("RERANKER_DEFAULT_TOP_N", "0"))
 # Do not gate it behind an environment flag: if pymilvus or the configured
 # Milvus endpoint is unavailable, the service should fail loudly.
 MILVUS_ENABLED = True
-MILVUS_URI = os.getenv("MILVUS_URI", "./data/milvus/kg_vectors.db")
+MILVUS_URI = _resolve_local_path_setting(os.getenv("MILVUS_URI", "./data/milvus/kg_vectors.db"))
 MILVUS_TOKEN = os.getenv("MILVUS_TOKEN", "")
 MILVUS_COLLECTION = os.getenv("MILVUS_COLLECTION", "kg_evidence_chunk_vectors")
+MILVUS_CHUNK_COLLECTION = os.getenv("MILVUS_CHUNK_COLLECTION", "kg_evidence_chunks")
+MILVUS_ENTITY_COLLECTION = os.getenv("MILVUS_ENTITY_COLLECTION", "kg_entity_cards")
+MILVUS_RELATION_COLLECTION = os.getenv("MILVUS_RELATION_COLLECTION", "kg_relation_cards")
+MILVUS_COMMUNITY_COLLECTION = os.getenv("MILVUS_COMMUNITY_COLLECTION", "kg_community_reports")
 MILVUS_METRIC_TYPE = os.getenv("MILVUS_METRIC_TYPE", "COSINE")
 MILVUS_RRF_K = int(os.getenv("MILVUS_RRF_K", "60"))
 MILVUS_BATCH_SIZE = int(os.getenv("MILVUS_BATCH_SIZE", "128"))
+MILVUS_SEMANTIC_CHUNK_TOPK = int(os.getenv("MILVUS_SEMANTIC_CHUNK_TOPK", "0"))
+MILVUS_SEMANTIC_ENTITY_TOPK = int(os.getenv("MILVUS_SEMANTIC_ENTITY_TOPK", "15"))
+MILVUS_SEMANTIC_RELATION_TOPK = int(os.getenv("MILVUS_SEMANTIC_RELATION_TOPK", "20"))
+MILVUS_SEMANTIC_COMMUNITY_TOPK = int(os.getenv("MILVUS_SEMANTIC_COMMUNITY_TOPK", "8"))
 
 # ==================== Claude / Skill ====================
 
@@ -285,6 +308,9 @@ def _load_kg_llm_plans() -> dict[str, dict[str, str]]:
         "complex_extraction": "deepseek-v4-flash",
         "query_planning": "deepseek-v4-flash",
         "summarization": "deepseek-v4-flash",
+        "kg_community_report": "deepseek-v4-flash",
+        "kg_delta_finding": "deepseek-v4-flash",
+        "kg_finding_evidence_validate": "deepseek-v4-flash",
         "quality_review": "deepseek-v4-flash",
     }
     plans: dict[str, dict[str, str]] = {
@@ -298,6 +324,9 @@ def _load_kg_llm_plans() -> dict[str, dict[str, str]]:
             "complex_extraction": "deepseek-v4-pro",
             "query_planning": "deepseek-v4-pro",
             "summarization": "deepseek-v4-pro",
+            "kg_community_report": "deepseek-v4-pro",
+            "kg_delta_finding": "deepseek-v4-flash",
+            "kg_finding_evidence_validate": "deepseek-v4-flash",
             "quality_review": "deepseek-v4-pro",
         },
         "glm_subscription": {

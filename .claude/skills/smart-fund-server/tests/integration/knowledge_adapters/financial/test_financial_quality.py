@@ -18,13 +18,13 @@ from src.infrastructure.persistence.models.knowledge import (
     KnowledgeCompilationRun,
     KnowledgeEdge,
     KnowledgeEdgeEvidence,
+    KnowledgeEdgeEvidenceChunk,
     KnowledgeEvidenceChunk,
     KnowledgeEvidence,
     KnowledgeGraphAdjacency,
     KnowledgeNode,
     KnowledgeReviewItem,
     KnowledgeVersion,
-    KnowledgeWikiPage,
 )
 from src.infrastructure.persistence.repositories.knowledge_repository_impl import KnowledgeRepositoryImpl
 
@@ -37,10 +37,10 @@ KG_TABLES = [
     KnowledgeEvidence.__table__,
     KnowledgeEdge.__table__,
     KnowledgeEdgeEvidence.__table__,
+    KnowledgeEdgeEvidenceChunk.__table__,
     KnowledgeVersion.__table__,
     KnowledgeReviewItem.__table__,
     KnowledgeCompilationRun.__table__,
-    KnowledgeWikiPage.__table__,
     KnowledgeGraphAdjacency.__table__,
     KnowledgeEvidenceChunk.__table__,
 ]
@@ -52,7 +52,6 @@ def test_financial_quality_keeps_hard_edges_supported() -> None:
     repo = KnowledgeRepositoryImpl(target="test")
     _compile_financial(repo, _load_all())
     service = KnowledgeService(repository=repo)
-    asyncio.run(service.rebuild_wiki("financial"))
     asyncio.run(service.rebuild_indexes("financial"))
 
     quality = asyncio.run(service.quality_scan("financial", persist_review=False))
@@ -61,7 +60,6 @@ def test_financial_quality_keeps_hard_edges_supported() -> None:
     assert quality.metrics["active_edge_evidence_coverage"] == 1.0
     assert all(edge.evidence_ids for edge in context["hard_score_edges"])
     assert all(edge.relation_type not in {"related_to", "causal_hint", "alias_of"} for edge in context["hard_score_edges"])
-    assert context["explanation_edges"]
 
     _cleanup()
 
@@ -80,8 +78,15 @@ def _cleanup() -> None:
         edge_ids = select(KnowledgeEdge.edge_id).where(KnowledgeEdge.adapter_name == "financial")
         session.execute(delete(KnowledgeEdgeEvidence).where(KnowledgeEdgeEvidence.edge_id.in_(edge_ids)))
         session.execute(delete(KnowledgeGraphAdjacency).where(KnowledgeGraphAdjacency.adapter_name == "financial"))
+        session.execute(
+            delete(KnowledgeEdgeEvidenceChunk).where(
+                KnowledgeEdgeEvidenceChunk.evidence_id.in_(
+                    select(KnowledgeEvidence.evidence_id).where(KnowledgeEvidence.adapter_name == "financial")
+                )
+            )
+        )
+
         session.execute(delete(KnowledgeEvidenceChunk).where(KnowledgeEvidenceChunk.adapter_name == "financial"))
-        session.execute(delete(KnowledgeWikiPage).where(KnowledgeWikiPage.adapter_name == "financial"))
         session.execute(delete(KnowledgeReviewItem).where(KnowledgeReviewItem.object_id.like("kg:financial:%")))
         session.execute(delete(KnowledgeEdge).where(KnowledgeEdge.adapter_name == "financial"))
         session.execute(delete(KnowledgeEvidence).where(KnowledgeEvidence.adapter_name == "financial"))

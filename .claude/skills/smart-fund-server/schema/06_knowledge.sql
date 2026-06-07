@@ -22,8 +22,8 @@ CREATE TABLE IF NOT EXISTS public.kg_edges (
     edge_id character varying(160) PRIMARY KEY,
     adapter_name character varying(64) NOT NULL,
     adapter_version character varying(32) NOT NULL DEFAULT '',
-    source_node_id character varying(128) NOT NULL REFERENCES public.kg_nodes(node_id),
-    target_node_id character varying(128) NOT NULL REFERENCES public.kg_nodes(node_id),
+    source_node_id character varying(128) NOT NULL,
+    target_node_id character varying(128) NOT NULL,
     relation_type character varying(64) NOT NULL,
     properties jsonb NOT NULL DEFAULT '{}'::jsonb,
     confidence_label character varying(32) NOT NULL,
@@ -56,10 +56,18 @@ CREATE TABLE IF NOT EXISTS public.kg_evidence (
 );
 
 CREATE TABLE IF NOT EXISTS public.kg_edge_evidence (
-    edge_id character varying(160) NOT NULL REFERENCES public.kg_edges(edge_id),
-    evidence_id character varying(180) NOT NULL REFERENCES public.kg_evidence(evidence_id),
+    edge_id character varying(160) NOT NULL,
+    evidence_id character varying(180) NOT NULL,
     created_at timestamp with time zone DEFAULT now(),
     PRIMARY KEY (edge_id, evidence_id)
+);
+
+CREATE TABLE IF NOT EXISTS public.kg_edge_evidence_chunks (
+    edge_id character varying(160) NOT NULL,
+    evidence_id character varying(180) NOT NULL,
+    chunk_id character varying(220) NOT NULL,
+    created_at timestamp with time zone DEFAULT now(),
+    PRIMARY KEY (edge_id, evidence_id, chunk_id)
 );
 
 CREATE TABLE IF NOT EXISTS public.kg_versions (
@@ -118,23 +126,6 @@ CREATE TABLE IF NOT EXISTS public.kg_compilation_runs (
     metadata jsonb NOT NULL DEFAULT '{}'::jsonb
 );
 
-CREATE TABLE IF NOT EXISTS public.kg_wiki_pages (
-    page_id character varying(160) PRIMARY KEY,
-    adapter_name character varying(64) NOT NULL,
-    page_type character varying(64) NOT NULL,
-    subject_type character varying(64),
-    subject_id character varying(180),
-    title text NOT NULL,
-    summary text NOT NULL,
-    content text NOT NULL,
-    source_node_ids jsonb NOT NULL DEFAULT '[]'::jsonb,
-    source_edge_ids jsonb NOT NULL DEFAULT '[]'::jsonb,
-    source_evidence_ids jsonb NOT NULL DEFAULT '[]'::jsonb,
-    version character varying(64) NOT NULL,
-    created_at timestamp with time zone DEFAULT now(),
-    updated_at timestamp with time zone DEFAULT now()
-);
-
 CREATE TABLE IF NOT EXISTS public.kg_graph_adjacency (
     adapter_name character varying(64) NOT NULL,
     source_node_id character varying(128) NOT NULL,
@@ -148,51 +139,104 @@ CREATE TABLE IF NOT EXISTS public.kg_graph_adjacency (
 CREATE TABLE IF NOT EXISTS public.kg_evidence_chunks (
     chunk_id character varying(220) PRIMARY KEY,
     adapter_name character varying(64) NOT NULL,
-    evidence_id character varying(180) NOT NULL REFERENCES public.kg_evidence(evidence_id),
-    content text NOT NULL,
-    payload jsonb NOT NULL DEFAULT '{}'::jsonb,
+    evidence_id character varying(180) NOT NULL,
+    chunk_index integer NOT NULL DEFAULT 0,
+    start_offset integer,
+    end_offset integer,
+    previous_chunk_id character varying(220),
+    next_chunk_id character varying(220),
+    text_hash character varying(64) NOT NULL DEFAULT '',
+    chunker_version character varying(64) NOT NULL DEFAULT '',
     created_at timestamp with time zone DEFAULT now()
 );
 
-CREATE TABLE IF NOT EXISTS public.kg_retrieval_documents (
-    document_id character varying(260) PRIMARY KEY,
+CREATE TABLE IF NOT EXISTS public.kg_graph_communities (
+    community_id character varying(180) PRIMARY KEY,
+    version_id character varying(220) NOT NULL,
     adapter_name character varying(64) NOT NULL,
-    target character varying(16) NOT NULL DEFAULT 'prod',
-    source_fact_type character varying(32) NOT NULL,
-    source_fact_id character varying(220) NOT NULL,
-    evidence_refs jsonb NOT NULL DEFAULT '[]'::jsonb,
-    node_refs jsonb NOT NULL DEFAULT '[]'::jsonb,
-    edge_refs jsonb NOT NULL DEFAULT '[]'::jsonb,
+    projection character varying(64) NOT NULL,
+    level integer NOT NULL DEFAULT 0,
+    parent_community_id character varying(180) NOT NULL DEFAULT '',
     title text NOT NULL,
-    search_text text NOT NULL,
-    key_phrases jsonb NOT NULL DEFAULT '[]'::jsonb,
-    aliases jsonb NOT NULL DEFAULT '[]'::jsonb,
-    event_type character varying(96),
-    relation_intents jsonb NOT NULL DEFAULT '[]'::jsonb,
-    impact_direction character varying(16) NOT NULL DEFAULT 'unknown',
-    asset_classes jsonb NOT NULL DEFAULT '[]'::jsonb,
-    time_tags jsonb NOT NULL DEFAULT '[]'::jsonb,
-    source_type_tags jsonb NOT NULL DEFAULT '[]'::jsonb,
-    readable_relations jsonb NOT NULL DEFAULT '[]'::jsonb,
-    evidence_summary text NOT NULL DEFAULT '',
-    answer_candidate_type character varying(32) NOT NULL DEFAULT 'unknown',
-    confidence double precision NOT NULL DEFAULT 0.0,
-    generated_by character varying(16) NOT NULL DEFAULT 'rule',
-    generation_version character varying(64) NOT NULL,
-    metadata jsonb NOT NULL DEFAULT '{}'::jsonb,
+    summary text NOT NULL DEFAULT '',
+    member_node_ids jsonb NOT NULL DEFAULT '[]'::jsonb,
+    member_edge_ids jsonb NOT NULL DEFAULT '[]'::jsonb,
+    evidence_ids jsonb NOT NULL DEFAULT '[]'::jsonb,
+    chunk_ids jsonb NOT NULL DEFAULT '[]'::jsonb,
+    metrics jsonb NOT NULL DEFAULT '{}'::jsonb,
+    status character varying(32) NOT NULL DEFAULT 'active',
+    previous_version_id character varying(220) NOT NULL DEFAULT '',
+    change_reason character varying(64) NOT NULL DEFAULT 'build',
+    lineage_id character varying(180) NOT NULL DEFAULT '',
+    previous_community_ids jsonb NOT NULL DEFAULT '[]'::jsonb,
     created_at timestamp with time zone DEFAULT now(),
     updated_at timestamp with time zone DEFAULT now()
 );
 
-CREATE TABLE IF NOT EXISTS public.kg_retrieval_document_versions (
-    version_id character varying(128) PRIMARY KEY,
+CREATE TABLE IF NOT EXISTS public.kg_graph_findings (
+    finding_id character varying(180) PRIMARY KEY,
+    community_id character varying(180) NOT NULL,
     adapter_name character varying(64) NOT NULL,
-    target character varying(16) NOT NULL DEFAULT 'prod',
-    generation_version character varying(64) NOT NULL,
-    changed_fact_set jsonb NOT NULL DEFAULT '{}'::jsonb,
-    field_coverage jsonb NOT NULL DEFAULT '{}'::jsonb,
-    config jsonb NOT NULL DEFAULT '{}'::jsonb,
-    created_at timestamp with time zone DEFAULT now()
+    projection character varying(64) NOT NULL,
+    finding_type character varying(64) NOT NULL,
+    title text NOT NULL,
+    statement text NOT NULL,
+    cited_chunk_ids jsonb NOT NULL DEFAULT '[]'::jsonb,
+    cited_evidence_ids jsonb NOT NULL DEFAULT '[]'::jsonb,
+    supporting_edge_ids jsonb NOT NULL DEFAULT '[]'::jsonb,
+    node_ids jsonb NOT NULL DEFAULT '[]'::jsonb,
+    confidence double precision NOT NULL DEFAULT 0.0,
+    status character varying(32) NOT NULL DEFAULT 'active',
+    version character varying(220) NOT NULL DEFAULT '',
+    payload jsonb NOT NULL DEFAULT '{}'::jsonb,
+    created_at timestamp with time zone DEFAULT now(),
+    updated_at timestamp with time zone DEFAULT now()
+);
+
+CREATE TABLE IF NOT EXISTS public.kg_graph_deltas (
+    delta_id character varying(180) PRIMARY KEY,
+    adapter_name character varying(64) NOT NULL,
+    projection character varying(64) NOT NULL,
+    window_name character varying(32) NOT NULL,
+    started_at timestamp with time zone NOT NULL,
+    ended_at timestamp with time zone NOT NULL,
+    title text NOT NULL,
+    summary text NOT NULL DEFAULT '',
+    community_ids jsonb NOT NULL DEFAULT '[]'::jsonb,
+    finding_ids jsonb NOT NULL DEFAULT '[]'::jsonb,
+    cited_chunk_ids jsonb NOT NULL DEFAULT '[]'::jsonb,
+    cited_evidence_ids jsonb NOT NULL DEFAULT '[]'::jsonb,
+    supporting_edge_ids jsonb NOT NULL DEFAULT '[]'::jsonb,
+    node_ids jsonb NOT NULL DEFAULT '[]'::jsonb,
+    metrics jsonb NOT NULL DEFAULT '{}'::jsonb,
+    status character varying(32) NOT NULL DEFAULT 'active',
+    version character varying(220) NOT NULL DEFAULT '',
+    created_at timestamp with time zone DEFAULT now(),
+    updated_at timestamp with time zone DEFAULT now()
+);
+
+CREATE TABLE IF NOT EXISTS public.kg_graph_unassigned_signals (
+    signal_id character varying(180) PRIMARY KEY,
+    adapter_name character varying(64) NOT NULL,
+    projection character varying(64) NOT NULL,
+    title text NOT NULL DEFAULT '',
+    reason character varying(96) NOT NULL DEFAULT '',
+    node_ids jsonb NOT NULL DEFAULT '[]'::jsonb,
+    edge_ids jsonb NOT NULL DEFAULT '[]'::jsonb,
+    evidence_ids jsonb NOT NULL DEFAULT '[]'::jsonb,
+    chunk_ids jsonb NOT NULL DEFAULT '[]'::jsonb,
+    topic_tags jsonb NOT NULL DEFAULT '[]'::jsonb,
+    impact_tags jsonb NOT NULL DEFAULT '[]'::jsonb,
+    event_type_tags jsonb NOT NULL DEFAULT '[]'::jsonb,
+    relation_types jsonb NOT NULL DEFAULT '[]'::jsonb,
+    support_score double precision NOT NULL DEFAULT 0.0,
+    metrics jsonb NOT NULL DEFAULT '{}'::jsonb,
+    status character varying(32) NOT NULL DEFAULT 'active',
+    promoted_community_id character varying(180) NOT NULL DEFAULT '',
+    promotion_attempts integer NOT NULL DEFAULT 0,
+    last_checked_at timestamp with time zone,
+    created_at timestamp with time zone DEFAULT now(),
+    updated_at timestamp with time zone DEFAULT now()
 );
 
 CREATE TABLE IF NOT EXISTS public.kg_retrieval_trace_snapshots (
@@ -259,6 +303,11 @@ CREATE INDEX IF NOT EXISTS ix_kg_edges_target ON public.kg_edges(target_node_id)
 CREATE INDEX IF NOT EXISTS ix_kg_edges_relation ON public.kg_edges(relation_type);
 CREATE INDEX IF NOT EXISTS ix_kg_edges_status ON public.kg_edges(status);
 
+CREATE INDEX IF NOT EXISTS ix_kg_edge_evidence_chunks_evidence
+    ON public.kg_edge_evidence_chunks(evidence_id);
+CREATE INDEX IF NOT EXISTS ix_kg_edge_evidence_chunks_chunk
+    ON public.kg_edge_evidence_chunks(chunk_id);
+
 CREATE INDEX IF NOT EXISTS ix_kg_evidence_source ON public.kg_evidence(source_type, source_id);
 CREATE INDEX IF NOT EXISTS ix_kg_evidence_adapter ON public.kg_evidence(adapter_name);
 CREATE INDEX IF NOT EXISTS ix_kg_evidence_status ON public.kg_evidence(status);
@@ -277,11 +326,6 @@ CREATE INDEX IF NOT EXISTS ix_kg_compilation_runs_adapter
     ON public.kg_compilation_runs(adapter_name, adapter_version);
 CREATE INDEX IF NOT EXISTS ix_kg_compilation_runs_status ON public.kg_compilation_runs(status);
 
-CREATE INDEX IF NOT EXISTS ix_kg_wiki_pages_adapter_type
-    ON public.kg_wiki_pages(adapter_name, page_type);
-CREATE INDEX IF NOT EXISTS ix_kg_wiki_pages_subject
-    ON public.kg_wiki_pages(subject_type, subject_id);
-
 CREATE INDEX IF NOT EXISTS ix_kg_graph_adjacency_adapter_source
     ON public.kg_graph_adjacency(adapter_name, source_node_id);
 CREATE INDEX IF NOT EXISTS ix_kg_graph_adjacency_target
@@ -291,21 +335,37 @@ CREATE INDEX IF NOT EXISTS ix_kg_evidence_chunks_adapter
     ON public.kg_evidence_chunks(adapter_name);
 CREATE INDEX IF NOT EXISTS ix_kg_evidence_chunks_evidence
     ON public.kg_evidence_chunks(evidence_id);
+CREATE INDEX IF NOT EXISTS ix_kg_evidence_chunks_evidence_index
+    ON public.kg_evidence_chunks(evidence_id, chunk_index);
 
-CREATE INDEX IF NOT EXISTS ix_kg_retrieval_documents_adapter_target
-    ON public.kg_retrieval_documents(adapter_name, target);
-CREATE INDEX IF NOT EXISTS ix_kg_retrieval_documents_source
-    ON public.kg_retrieval_documents(source_fact_type, source_fact_id);
-CREATE INDEX IF NOT EXISTS ix_kg_retrieval_documents_answer_type
-    ON public.kg_retrieval_documents(answer_candidate_type);
-CREATE EXTENSION IF NOT EXISTS pg_trgm;
-CREATE INDEX IF NOT EXISTS ix_kg_retrieval_documents_search_text_trgm
-    ON public.kg_retrieval_documents USING gin (search_text gin_trgm_ops);
-CREATE INDEX IF NOT EXISTS ix_kg_retrieval_documents_title_trgm
-    ON public.kg_retrieval_documents USING gin (title gin_trgm_ops);
+CREATE INDEX IF NOT EXISTS ix_kg_graph_communities_adapter_projection
+    ON public.kg_graph_communities(adapter_name, projection);
+CREATE INDEX IF NOT EXISTS ix_kg_graph_communities_parent
+    ON public.kg_graph_communities(parent_community_id);
+CREATE INDEX IF NOT EXISTS ix_kg_graph_communities_status
+    ON public.kg_graph_communities(status);
 
-CREATE INDEX IF NOT EXISTS ix_kg_retrieval_document_versions_adapter
-    ON public.kg_retrieval_document_versions(adapter_name, target);
+CREATE INDEX IF NOT EXISTS ix_kg_graph_findings_adapter_projection
+    ON public.kg_graph_findings(adapter_name, projection);
+CREATE INDEX IF NOT EXISTS ix_kg_graph_findings_community
+    ON public.kg_graph_findings(community_id);
+CREATE INDEX IF NOT EXISTS ix_kg_graph_findings_status
+    ON public.kg_graph_findings(status);
+
+CREATE INDEX IF NOT EXISTS ix_kg_graph_deltas_adapter_projection
+    ON public.kg_graph_deltas(adapter_name, projection);
+CREATE INDEX IF NOT EXISTS ix_kg_graph_deltas_window
+    ON public.kg_graph_deltas(window_name);
+CREATE INDEX IF NOT EXISTS ix_kg_graph_deltas_status
+    ON public.kg_graph_deltas(status);
+
+CREATE INDEX IF NOT EXISTS ix_kg_graph_unassigned_signals_adapter_status
+    ON public.kg_graph_unassigned_signals(adapter_name, status);
+CREATE INDEX IF NOT EXISTS ix_kg_graph_unassigned_signals_projection
+    ON public.kg_graph_unassigned_signals(projection);
+CREATE INDEX IF NOT EXISTS ix_kg_graph_unassigned_signals_promoted
+    ON public.kg_graph_unassigned_signals(promoted_community_id);
+
 CREATE INDEX IF NOT EXISTS ix_kg_retrieval_trace_snapshots_adapter
     ON public.kg_retrieval_trace_snapshots(adapter_name, target);
 CREATE INDEX IF NOT EXISTS ix_kg_retrieval_trace_snapshots_query_hash

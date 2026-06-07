@@ -17,7 +17,6 @@ from src.application.dto.knowledge_dto import (
     KnowledgeIncrementalRefreshCommand,
     KnowledgeQualityScanCommand,
     KnowledgeRebuildIndexesCommand,
-    KnowledgeRebuildWikiCommand,
     KnowledgeResearchContextCommand,
     KnowledgeResearchContextBadCase,
     KnowledgeSourceProjectionCommand,
@@ -209,26 +208,11 @@ def incremental_refresh(
     _echo(result, json_output, _incremental_summary)
 
 
-@kg.command("rebuild-wiki")
-@click.option("--adapter", "adapter_name", default="financial", help="adapter 名称")
-@click.option("--target", type=click.Choice(["prod", "test"]), default="prod")
-@click.option("--scope", default="all", help="第一版仅支持 all")
-@click.option("--json", "json_output", is_flag=True, help="输出 JSON")
-def rebuild_wiki(adapter_name: str, target: Target, scope: str, json_output: bool):
-    """Rebuild knowledge wiki pages."""
-    result = _run(
-        create_knowledge_service(target=target).rebuild_wiki_for(
-            KnowledgeRebuildWikiCommand(adapter_name=adapter_name, target=target, scope=scope)
-        )
-    )
-    _echo(result, json_output, _wiki_summary)
-
-
 @kg.command("rebuild-indexes")
 @click.option("--adapter", "adapter_name", default="financial", help="adapter 名称")
 @click.option("--target", type=click.Choice(["prod", "test"]), default="prod")
 @click.option("--index-type", "index_types", multiple=True, help="可重复传入")
-@click.option("--scope", default="all", help="第一版仅支持 all")
+@click.option("--scope", default="all", help="索引重建范围：all 或 projection:<projection_name>")
 @click.option("--json", "json_output", is_flag=True, help="输出 JSON")
 def rebuild_indexes(
     adapter_name: str,
@@ -486,10 +470,6 @@ def _source_projection_summary(data: dict[str, Any]) -> str:
         f"skipped={len(data.get('skipped', []))} "
         f"warnings={len(data.get('warnings', []))}"
     )
-
-
-def _wiki_summary(data: dict[str, Any]) -> str:
-    return f"adapter={data.get('adapter_name')} pages={data.get('pages')} issues={data.get('issues')}"
 
 
 def _indexes_summary(data: dict[str, Any]) -> str:

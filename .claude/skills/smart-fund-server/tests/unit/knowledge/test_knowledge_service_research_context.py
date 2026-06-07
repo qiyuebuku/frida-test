@@ -28,7 +28,7 @@ from src.domain.knowledge.retrieval import (
 )
 from src.domain.knowledge.retrieval_judge import DeterministicCandidateJudge
 from src.domain.knowledge.retrieval_tools import RetrievalToolCall
-from src.domain.knowledge.schemas import CompiledEdge, CompiledEvidence, CompiledNode
+from src.domain.knowledge.schemas import CompiledEdge, CompiledEvidence, CompiledNode, EvidenceChunk
 from src.domain.knowledge_adapters.financial.query_planner import FinancialQueryPlanner
 
 
@@ -81,12 +81,19 @@ class _Repo:
         assert adapter_name == "financial"
         return [self.edge]
 
-    def search_wiki_pages(self, adapter_name: str, query: str, limit: int = 20):
-        assert adapter_name == "financial"
-        return []
-
     def get_evidence(self, evidence_id: str):
         return self.evidence if evidence_id == self.evidence.evidence_id else None
+
+    def list_evidence_chunks(self, adapter_name: str):
+        assert adapter_name == "financial"
+        return [
+            EvidenceChunk(
+                chunk_id="kg_chunk:fake",
+                adapter_name="financial",
+                evidence_id=self.evidence.evidence_id,
+                content=self.evidence.content,
+            )
+        ]
 
     def get_node(self, node_id: str):
         return {self.stock.node_id: self.stock, self.event.node_id: self.event}.get(node_id)
@@ -513,7 +520,7 @@ async def test_openai_agents_mode_can_use_sdk_tool_loop(monkeypatch) -> None:
         lambda: DeterministicCandidateJudge(),
     )
     monkeypatch.setattr(openai_agents_runtime_module, "_load_agents_sdk", lambda: _FakeSDK)
-    monkeypatch.setattr(openai_agents_runtime_module, "RerankerClient", _FakeRerankerClient)
+    monkeypatch.setattr(knowledge_service_module, "RerankerClient", _FakeRerankerClient)
     service = KnowledgeService(repository=_Repo())
 
     result = await service.build_research_context_for(
@@ -534,6 +541,17 @@ async def test_openai_agents_mode_can_use_sdk_tool_loop(monkeypatch) -> None:
     assert result.retrieval_trace["controller_decisions"][-1]["auto_action"] == "agent_final"
     assert result.retrieval_trace["candidate_judgements"] == []
     assert result.retrieval_trace["warnings"] == []
+
+
+def test_langfuse_session_id_is_ascii_and_short(monkeypatch) -> None:
+    monkeypatch.setenv("KG_LANGFUSE_SESSION_ID", "会话 session " + "x" * 240)
+
+    session_id = openai_agents_runtime_module._langfuse_session_id()
+
+    assert session_id is not None
+    assert session_id.isascii()
+    assert len(session_id) < 200
+    assert "session" in session_id
 
 
 @pytest.mark.asyncio
@@ -590,18 +608,13 @@ async def test_bad_case_replay_can_replay_recorded_agentic_trace(monkeypatch) ->
             RetrievalStep(
                 tool="search",
                 input=semantic_call.model_dump(mode="json"),
-                output_refs=[
-                    "kg:financial:stock:300750",
-                    "kg:financial:event:overseas_capacity",
-                    "kg_edge:financial:affects:overseas_capacity:300750",
-                    "kg_chunk:fake",
-                ],
-                hit_count=4,
+                output_refs=["kg_chunk:fake"],
+                hit_count=1,
             ),
             RetrievalStep(
                 tool="open",
                 input=chunk_call.model_dump(mode="json"),
-                output_refs=["kg_ev:financial:news:overseas_capacity"],
+                output_refs=["kg_chunk:fake"],
                 hit_count=1,
             ),
         ],

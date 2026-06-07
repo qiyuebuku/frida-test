@@ -113,7 +113,7 @@ CREATE TABLE IF NOT EXISTS ft_run_log (
 
 CREATE TABLE IF NOT EXISTS ft_reviews (
     id SERIAL PRIMARY KEY,
-    decision_id INT REFERENCES ft_decisions(id),
+    decision_id INT,
     fund_code VARCHAR(10) NOT NULL,
     decision_date DATE NOT NULL,
     decision_action VARCHAR(10),

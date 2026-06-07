@@ -19,7 +19,13 @@
 | `5. 检索与Query Context技术方案.md` | Query Anchor、三段式检索路由、候选裁判、受控图扩展、Chunk Window、Agentic Retrieval 和质量回放。 |
 | `6. Agentic检索候选排序优化技术方案.md` | Retrieval Quality Evaluation、Retrieval Document、Keyword/BM25、Rank Fusion、Feature Rerank、Coverage Selector、Stop Verifier 和排序验收。 |
 | `7. 检索索引架构重构实施方案.md` | 承接检索索引架构重构的最终设计结论，说明 PG deterministic search、Vector semantic search、Query Parser、enriched vector docs、relation preview、canonical merge、reranker、Agent graph expand 和索引一致性的实施方向。 |
+| `8. 写入侧语义索引材料适配实施方案.md` | 承接写入侧语义索引材料设计，说明 relation preview、enriched vector docs、旧派生检索材料退出和索引刷新侧的实施边界。 |
 | `9. 待优化.md` | 实施偏差、降级、妥协和后续整改记录。 |
+| `10. Milvus语义检索与PG关系展开双层架构实施方案.md` | 承接最新双层架构设计，说明 PG 不存 chunk text、Milvus 保存可读 target、PG refs 连接关系展开和 Milvus get-by-id 的实施方向。 |
+| `11. Milvus语义检索与PG关系展开写入链路实施方案.md` | 细化双层架构的写入链路，说明 Evidence、Recursive Chunk、AI 抽取、embedding 候选召回、AI 归一、PG 事实图、Milvus semantic target 和 Community/Finding 高级索引如何落地。 |
+| `12. Milvus语义检索与PG关系展开查询链路实施方案.md` | 细化双层架构的查询链路，说明 Query Parser、多入口召回、PG exact / graph expand、Milvus get-by-id、chunk pool、rerank、Agent tools、Langfuse trace 和查询回归测试。 |
+| `13. Milvus多集合语义索引拆分优化方案.md` | 说明 Milvus chunk/entity/relation/community 多集合拆分、各集合职责、写入刷新和查询聚合方式。 |
+| `14. Graph Index增量构建与多索引分层实施方案.md` | 承接 Graph Index 增量构建设计，说明基础分析图、Projection、层级 Community、Lineage、Dirty Subgraph、Community Change Score、Report、Delta、Finding 和 Milvus 发布的实施方案。 |
 
 ## 3. 实施规则
 

@@ -20,6 +20,8 @@ import threading
 import time
 import uuid
 from collections import OrderedDict
+from contextlib import nullcontext
+from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
@@ -41,6 +43,11 @@ from src.infrastructure.llm_proxy.types import (
     LLMProxyError,
     LLMProxyRequest,
     LLMProxyResponse,
+)
+from src.infrastructure.observability.langfuse_tracing import (
+    clip_trace_text,
+    langfuse_observation,
+    langfuse_update_generation,
 )
 
 logger = logging.getLogger(__name__)
@@ -183,6 +190,135 @@ def _log_llm_call_failed(
     )
 
 
+def _llm_generation_observation(fields: dict[str, Any], request: LLMProxyRequest):
+    return langfuse_observation(
+        name=f"llm:{fields['task']}",
+        as_type="generation",
+        input=_llm_trace_input(request),
+        metadata={
+            **fields,
+            "timeout": request.timeout,
+            "tools_count": len(request.tools or []),
+            "has_tool_choice": request.tool_choice is not None,
+            "cache_store": "miss",
+        },
+        model=str(fields.get("model") or request.model or "-"),
+        model_parameters={
+            "temperature": request.temperature,
+            "max_tokens": request.max_tokens,
+            "response_format": request.response_format,
+            "json_schema": bool(request.json_schema),
+        },
+    )
+
+
+def _trace_llm_cache_hit(
+    fields: dict[str, Any],
+    request: LLMProxyRequest,
+    response: LLMProxyResponse,
+) -> None:
+    with langfuse_observation(
+        name=f"llm:{fields['task']}:cache_hit",
+        as_type="generation",
+        input=_llm_trace_input(request),
+        output=_llm_trace_output(response),
+        metadata={
+            **fields,
+            "cache_hit": True,
+            "cache_store": response.proxy.get("cache_store") or "memory",
+            "duration_ms": response.duration_ms,
+        },
+        model=str(fields.get("model") or request.model or "-"),
+        model_parameters={
+            "temperature": request.temperature,
+            "max_tokens": request.max_tokens,
+            "response_format": request.response_format,
+            "json_schema": bool(request.json_schema),
+        },
+        usage_details=_llm_usage_details(response.usage),
+    ):
+        pass
+
+
+def _trace_llm_response(response: LLMProxyResponse) -> None:
+    langfuse_update_generation(
+        output=_llm_trace_output(response),
+        metadata={
+            "cache_hit": response.cache_hit,
+            "duration_ms": response.duration_ms,
+            "proxy": response.proxy,
+            "session_id": response.session_id,
+        },
+        usage_details=_llm_usage_details(response.usage),
+        level="DEFAULT",
+        status_message="completed",
+    )
+
+
+def _trace_llm_error(error: Exception) -> None:
+    langfuse_update_generation(
+        metadata={"error_type": error.__class__.__name__},
+        level="ERROR",
+        status_message=str(error),
+    )
+
+
+def _llm_trace_input(request: LLMProxyRequest) -> dict[str, Any]:
+    metadata = {
+        key: value
+        for key, value in (request.metadata or {}).items()
+        if not key.startswith("_cache_key_")
+    }
+    return {
+        "prompt": clip_trace_text(request.prompt),
+        "system_prompt": clip_trace_text(request.system_prompt),
+        "messages": _clip_json_trace(request.messages),
+        "prompt_text_preview": clip_trace_text(request.prompt_text(), limit=8000),
+        "metadata": metadata,
+        "json_schema": _clip_json_trace(request.json_schema),
+        "response_format": request.response_format,
+        "use_cache": request.use_cache,
+    }
+
+
+def _llm_trace_output(response: LLMProxyResponse) -> dict[str, Any]:
+    return {
+        "text": clip_trace_text(response.text),
+        "structured_output": _clip_json_trace(response.structured_output),
+        "usage": response.usage,
+        "duration_ms": response.duration_ms,
+        "cache_hit": response.cache_hit,
+        "proxy": response.proxy,
+    }
+
+
+def _clip_json_trace(value: Any, *, limit: int = 16000) -> Any:
+    if value is None:
+        return None
+    try:
+        rendered = json.dumps(value, ensure_ascii=False, default=str)
+    except Exception:
+        rendered = str(value)
+    return clip_trace_text(rendered, limit=limit)
+
+
+def _llm_usage_details(usage: dict[str, Any] | None) -> dict[str, int]:
+    result: dict[str, int] = {}
+    for key in (
+        "input_tokens",
+        "output_tokens",
+        "total_tokens",
+        "prompt_cache_hit_tokens",
+        "prompt_cache_miss_tokens",
+    ):
+        value = (usage or {}).get(key)
+        if isinstance(value, int):
+            result[key] = value
+        elif isinstance(value, float):
+            result[key] = int(value)
+    return result
+
+
 class _TTLCache:
     def __init__(self, ttl_seconds: int, max_size: int):
         self.ttl_seconds = ttl_seconds
@@ -279,87 +415,94 @@ class ClaudeProxyService:
 
     async def generate(self, request: ClaudeProxyRequest) -> ClaudeProxyResponse:
         cache_key = self._cache_key(request)
-        if request.use_cache:
-            with self._cache_lock:
-                cached = self._cache.get(cache_key)
-            if cached:
-                return cached.clone(cache_hit=True)
-
         log_fields = _llm_call_log_fields(
             request,
             provider="claude_proxy",
             model=self._resolve_model(request.model),
             backend=self.backend,
         )
+        if request.use_cache:
+            with self._cache_lock:
+                cached = self._cache.get(cache_key)
+            if cached:
+                cached_response = cached.clone(cache_hit=True)
+                _trace_llm_cache_hit(log_fields, request, cached_response)
+                return cached_response
+
         call_started_at = time.perf_counter()
         _log_llm_call_start(log_fields)
         _append_llm_full_trace(event="request", fields=log_fields, request=request)
 
         # 失败重试一次：tmux session 偶发返回 usage 为空、API 抖动等。
         # 限流类失败不重试（已经在 _record_rate_limit 里冷却）。
-        try:
-            response = await asyncio.to_thread(self._invoke_with_limit, request)
-        except LLMProxyError as exc:
-            msg = str(exc)
-            if self._looks_like_rate_limit(msg):
-                _log_llm_call_failed(
-                    log_fields,
-                    duration_ms=int((time.perf_counter() - call_started_at) * 1000),
-                    error=exc,
-                )
-                _append_llm_full_trace(
-                    event="failed",
-                    fields=log_fields,
-                    request=request,
-                    error=exc,
-                )
-                raise
-            logger.warning("[llm_proxy] first attempt failed, retrying once: %s", msg)
+        with _llm_generation_observation(log_fields, request):
             try:
                 response = await asyncio.to_thread(self._invoke_with_limit, request)
-            except Exception as retry_exc:
+            except LLMProxyError as exc:
+                msg = str(exc)
+                if self._looks_like_rate_limit(msg):
+                    _log_llm_call_failed(
+                        log_fields,
+                        duration_ms=int((time.perf_counter() - call_started_at) * 1000),
+                        error=exc,
+                    )
+                    _append_llm_full_trace(
+                        event="failed",
+                        fields=log_fields,
+                        request=request,
+                        error=exc,
+                    )
+                    _trace_llm_error(exc)
+                    raise
+                logger.warning("[llm_proxy] first attempt failed, retrying once: %s", msg)
+                try:
+                    response = await asyncio.to_thread(self._invoke_with_limit, request)
+                except Exception as retry_exc:
+                    _log_llm_call_failed(
+                        log_fields,
+                        duration_ms=int((time.perf_counter() - call_started_at) * 1000),
+                        error=retry_exc,
+                    )
+                    _append_llm_full_trace(
+                        event="failed",
+                        fields=log_fields,
+                        request=request,
+                        error=retry_exc,
+                    )
+                    _trace_llm_error(retry_exc)
+                    raise
+            except Exception as exc:
                 _log_llm_call_failed(
                     log_fields,
                     duration_ms=int((time.perf_counter() - call_started_at) * 1000),
-                    error=retry_exc,
+                    error=exc,
                 )
                 _append_llm_full_trace(
                     event="failed",
                     fields=log_fields,
                     request=request,
-                    error=retry_exc,
+                    error=exc,
                 )
+                _trace_llm_error(exc)
                 raise
-        except Exception as exc:
-            _log_llm_call_failed(
+
+            _log_llm_call_done(
                 log_fields,
                 duration_ms=int((time.perf_counter() - call_started_at) * 1000),
-                error=exc,
+                usage=response.usage,
             )
             _append_llm_full_trace(
-                event="failed",
+                event="response",
                 fields=log_fields,
                 request=request,
-                error=exc,
+                response=response,
             )
-            raise
+            _trace_llm_response(response)
 
-        _log_llm_call_done(
-            log_fields,
-            duration_ms=int((time.perf_counter() - call_started_at) * 1000),
-            usage=response.usage,
-        )
-        _append_llm_full_trace(
-            event="response",
-            fields=log_fields,
-            request=request,
-            response=response,
-        )
-
-        if request.use_cache:
-            with self._cache_lock:
-                self._cache.set(cache_key, response.clone())
-        return response
+            if request.use_cache:
+                with self._cache_lock:
+                    self._cache.set(cache_key, response.clone())
+            return response
 
     def _invoke_with_limit(self, request: ClaudeProxyRequest) -> ClaudeProxyResponse:
         with self._sem:
@@ -866,6 +1009,8 @@ class LLMGatewayService:
         self._file_cache = file_cache
 
     async def generate(self, request: LLMProxyRequest) -> LLMProxyResponse:
+        if request.json_schema and not request.response_format:
+            request = replace(request, response_format={"type": "json_object"})
         route = self.router.resolve(request.model)
         provider = self.registry.select_first_available(route.provider_candidates)
         route = type(route)(
@@ -876,12 +1021,20 @@ class LLMGatewayService:
             route_reason=route.route_reason if provider.name == route.selected_provider else "fallback",
             fallback_allowed=route.fallback_allowed,
         )
+        log_fields = _llm_call_log_fields(
+            request,
+            provider=provider.name,
+            model=route.resolved_model,
+            backend=provider.name,
+        )
         cache_key = self._cache_key(request, route.selected_provider or "", route.resolved_model)
         if request.use_cache:
             with self._cache_lock:
                 cached = self._cache.get(cache_key)
             if cached and _is_usable_cached_response(request, cached):
-                return cached.clone(cache_hit=True)
+                cached_response = cached.clone(cache_hit=True)
+                _trace_llm_cache_hit(log_fields, request, cached_response)
+                return cached_response
             if self._file_cache is not None:
                 cached = self._file_cache.get(cache_key)
                 if cached and _is_usable_cached_response(request, cached):
@@ -892,59 +1045,91 @@ class LLMGatewayService:
                     cached.proxy["cache_store"] = "file"
                     with self._cache_lock:
                         self._cache.set(cache_key, cached.clone(cache_hit=False))
-                    return cached.clone(cache_hit=True)
+                    cached_response = cached.clone(cache_hit=True)
+                    _trace_llm_cache_hit(log_fields, request, cached_response)
+                    return cached_response
 
         gateway_logs_call = provider.name != "claude_tmux"
-        log_fields = _llm_call_log_fields(
-            request,
-            provider=provider.name,
-            model=route.resolved_model,
-            backend=provider.name,
-        )
         call_started_at = time.perf_counter()
         if gateway_logs_call:
             _log_llm_call_start(log_fields)
             _append_llm_full_trace(event="request", fields=log_fields, request=request)
-        try:
-            response = await provider.generate(request, route)
-        except Exception as exc:
+        generation_context = _llm_generation_observation(log_fields, request) if gateway_logs_call else nullcontext()
+        with generation_context:
+            try:
+                response = await provider.generate(request, route)
+                response = await self._repair_schema_invalid_response(
+                    request,
+                    route,
+                    provider,
+                    response,
+                )
+            except Exception as exc:
+                if gateway_logs_call:
+                    _log_llm_call_failed(
+                        log_fields,
+                        duration_ms=int((time.perf_counter() - call_started_at) * 1000),
+                        error=exc,
+                    )
+                    _append_llm_full_trace(
+                        event="failed",
+                        fields=log_fields,
+                        request=request,
+                        error=exc,
+                    )
+                    _trace_llm_error(exc)
+                raise
+            response.proxy.setdefault("provider", provider.name)
+            response.proxy.setdefault("requested_model", route.requested_model)
+            response.proxy.setdefault("resolved_model", route.resolved_model)
+            response.proxy.setdefault("route_reason", route.route_reason)
+            response.proxy.setdefault("retry_count", 0)
             if gateway_logs_call:
-                _log_llm_call_failed(
+                _log_llm_call_done(
                     log_fields,
                     duration_ms=int((time.perf_counter() - call_started_at) * 1000),
-                    error=exc,
+                    usage=response.usage,
                 )
                 _append_llm_full_trace(
-                    event="failed",
+                    event="response",
                     fields=log_fields,
                     request=request,
-                    error=exc,
+                    response=response,
                 )
-            raise
-        response.proxy.setdefault("provider", provider.name)
-        response.proxy.setdefault("requested_model", route.requested_model)
-        response.proxy.setdefault("resolved_model", route.resolved_model)
-        response.proxy.setdefault("route_reason", route.route_reason)
-        response.proxy.setdefault("retry_count", 0)
-        if gateway_logs_call:
-            _log_llm_call_done(
-                log_fields,
-                duration_ms=int((time.perf_counter() - call_started_at) * 1000),
-                usage=response.usage,
-            )
-            _append_llm_full_trace(
-                event="response",
-                fields=log_fields,
-                request=request,
-                response=response,
-            )
+                _trace_llm_response(response)
 
-        if _should_write_cache(request) and _is_cacheable_response(request, response):
-            with self._cache_lock:
-                self._cache.set(cache_key, response.clone())
-            if self._file_cache is not None:
-                self._file_cache.set(cache_key, response.clone())
-        return response
+            if _should_write_cache(request) and _is_cacheable_response(request, response):
+                with self._cache_lock:
+                    self._cache.set(cache_key, response.clone())
+                if self._file_cache is not None:
+                    self._file_cache.set(cache_key, response.clone())
+            return response
+
+    async def _repair_schema_invalid_response(
+        self,
+        request: LLMProxyRequest,
+        route: LLMRouteDecision,
+        provider: Any,
+        response: LLMProxyResponse,
+    ) -> LLMProxyResponse:
+        if not request.json_schema:
+            return response
+        issues = _json_schema_validation_issues(response.structured_output, request.json_schema)
+        if not issues:
+            return response
+        repair_request = _schema_repair_request(request, response, issues)
+        repaired = await provider.generate(repair_request, route)
+        repaired_issues = _json_schema_validation_issues(repaired.structured_output, request.json_schema)
+        repaired.proxy.setdefault("schema_repair_attempted", True)
+        repaired.proxy.setdefault("schema_repair_issues", issues)
+        repaired.proxy.setdefault("schema_repair_success", not repaired_issues)
+        if repaired_issues:
+            response.proxy.setdefault("schema_repair_attempted", True)
+            response.proxy.setdefault("schema_repair_issues", issues)
+            response.proxy.setdefault("schema_repair_success", False)
+            response.proxy.setdefault("schema_repair_retry_issues", repaired_issues)
+            return response
+        return repaired
 
     def health(self) -> dict[str, Any]:
         return {
@@ -1004,11 +1189,15 @@ def _is_json_request(request: LLMProxyRequest) -> bool:
 def _is_usable_cached_response(request: LLMProxyRequest, response: LLMProxyResponse) -> bool:
     if _is_json_request(request) and response.structured_output is None:
         return False
+    if request.json_schema and _json_schema_validation_issues(response.structured_output, request.json_schema):
+        return False
     return bool(response.text or response.structured_output is not None)
 
 
 def _is_cacheable_response(request: LLMProxyRequest, response: LLMProxyResponse) -> bool:
     if _is_json_request(request) and response.structured_output is None:
+        return False
+    if request.json_schema and _json_schema_validation_issues(response.structured_output, request.json_schema):
         return False
     return bool(response.text or response.structured_output is not None)
 
@@ -1025,6 +1214,126 @@ def _cache_key_metadata(metadata: dict[str, Any]) -> dict[str, Any]:
         for key, value in (metadata or {}).items()
         if key != "retry_reason" and not key.startswith("_cache_key_")
     }
+
+
+def _schema_repair_request(
+    request: LLMProxyRequest,
+    response: LLMProxyResponse,
+    issues: list[str],
+) -> LLMProxyRequest:
+    original_messages = _messages_for_schema_repair(request)
+    previous = response.text or json.dumps(response.structured_output, ensure_ascii=False, default=str)
+    schema = json.dumps(request.json_schema or {}, ensure_ascii=False, indent=2)
+    metadata = {
+        **(request.metadata or {}),
+        "retry_reason": "json_schema_invalid",
+        "validation_issues": issues,
+        "_cache_key_prompt": request.prompt,
+        "_cache_key_system_prompt": request.system_prompt,
+        "_cache_key_messages": request.messages,
+    }
+    return LLMProxyRequest(
+        prompt=request.prompt,
+        system_prompt=request.system_prompt,
+        model=request.model,
+        messages=[
+            *original_messages,
+            {"role": "assistant", "content": previous[:12000]},
+            {
+                "role": "user",
+                "content": (
+                    "你上一次输出是合法 JSON，但不符合系统要求的 JSON Schema。"
+                    f"validation_issues={issues}。\n"
+                    f"JSON Schema:\n{schema}\n"
+                    "请只重新输出一个合法 JSON 对象。必须补齐 required 字段，遵守 enum/type/range，"
+                    "不要输出 Markdown、解释文字或代码块。"
+                ),
+            },
+        ],
+        temperature=request.temperature,
+        max_tokens=request.max_tokens,
+        json_schema=request.json_schema,
+        response_format=request.response_format or {"type": "json_object"},
+        tools=request.tools,
+        tool_choice=request.tool_choice,
+        metadata=metadata,
+        timeout=request.timeout,
+        use_cache=False,
+    )
+
+
+def _messages_for_schema_repair(request: LLMProxyRequest) -> list[dict[str, Any]]:
+    if request.messages:
+        return list(request.messages)
+    messages: list[dict[str, Any]] = []
+    if request.system_prompt:
+        messages.append({"role": "system", "content": request.system_prompt})
+    messages.append({"role": "user", "content": request.prompt or request.prompt_text()})
+    return messages
+
+
+def _json_schema_validation_issues(value: Any, schema: dict[str, Any] | None) -> list[str]:
+    if not schema:
+        return []
+    return _validate_json_schema_value(value, schema, path="$")
+
+
+def _validate_json_schema_value(value: Any, schema: dict[str, Any], *, path: str) -> list[str]:
+    issues: list[str] = []
+    if "enum" in schema and value not in (schema.get("enum") or []):
+        issues.append(f"{path}:enum_invalid")
+    schema_type = schema.get("type")
+    if schema_type is not None and not _json_schema_type_matches(value, schema_type):
+        issues.append(f"{path}:type_invalid:{schema_type}")
+        return issues
+    if isinstance(value, dict):
+        required = schema.get("required") or []
+        for field in required:
+            if field not in value or value.get(field) is None:
+                issues.append(f"{path}.{field}:required_missing")
+        properties = schema.get("properties") or {}
+        if isinstance(properties, dict):
+            for field, field_schema in properties.items():
+                if field in value and isinstance(field_schema, dict):
+                    issues.extend(_validate_json_schema_value(value[field], field_schema, path=f"{path}.{field}"))
+        if schema.get("additionalProperties") is False and isinstance(properties, dict):
+            allowed = set(properties)
+            for field in value:
+                if field not in allowed:
+                    issues.append(f"{path}.{field}:additional_property")
+    elif isinstance(value, list):
+        item_schema = schema.get("items")
+        if isinstance(item_schema, dict):
+            for index, item in enumerate(value):
+                issues.extend(_validate_json_schema_value(item, item_schema, path=f"{path}[{index}]"))
+    if isinstance(value, (int, float)) and not isinstance(value, bool):
+        minimum = schema.get("minimum")
+        maximum = schema.get("maximum")
+        if minimum is not None and value < minimum:
+            issues.append(f"{path}:below_minimum")
+        if maximum is not None and value > maximum:
+            issues.append(f"{path}:above_maximum")
+    return issues
+
+
+def _json_schema_type_matches(value: Any, schema_type: Any) -> bool:
+    if isinstance(schema_type, list):
+        return any(_json_schema_type_matches(value, item) for item in schema_type)
+    if schema_type == "object":
+        return isinstance(value, dict)
+    if schema_type == "array":
+        return isinstance(value, list)
+    if schema_type == "string":
+        return isinstance(value, str)
+    if schema_type == "number":
+        return isinstance(value, (int, float)) and not isinstance(value, bool)
+    if schema_type == "integer":
+        return isinstance(value, int) and not isinstance(value, bool)
+    if schema_type == "boolean":
+        return isinstance(value, bool)
+    if schema_type == "null":
+        return value is None
+    return True
 
 
 def get_llm_gateway_service() -> LLMGatewayService:

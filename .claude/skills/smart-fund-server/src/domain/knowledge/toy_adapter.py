@@ -10,7 +10,6 @@ from src.domain.knowledge.adapter import (
     EntityTypeSpec,
     RelationTypeSpec,
     SourceTypeSpec,
-    WikiPageSpec,
 )
 from src.domain.knowledge.enums import ConfidenceLabel, EdgeStatus, EvidenceType, InputType, RecordKind
 from src.domain.knowledge.schemas import EdgeDraft, EvidenceDraft, KnowledgeInput, NodeDraft
@@ -61,7 +60,6 @@ class ToyProjectAdapter:
                 required_fields=["owner", "project", "document"],
             )
         ],
-        wiki_pages=[WikiPageSpec(page_type="project_page", subject_types=["project"])],
     )
 
     def normalize(self, raw: Any) -> list[KnowledgeInput]:

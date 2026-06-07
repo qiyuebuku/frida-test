@@ -9,12 +9,39 @@ from src.domain.knowledge_adapters.financial.ontology import (
     CORE_ENTITY_TYPES,
     CORE_RELATION_TYPES,
     FINANCIAL_ADAPTER_SPEC,
+    extend_financial_adapter_spec,
 )
 
 
 def test_financial_ontology_declares_core_entities_and_relations() -> None:
     assert CORE_ENTITY_TYPES.issubset({item.name for item in FINANCIAL_ADAPTER_SPEC.entities})
     assert CORE_RELATION_TYPES.issubset({item.name for item in FINANCIAL_ADAPTER_SPEC.relations})
+
+
+def test_type_registry_can_extend_financial_adapter_spec() -> None:
+    spec = extend_financial_adapter_spec(
+        extra_entity_types={"infrastructure_theme"},
+        extra_relation_types={"constrains"},
+    )
+
+    assert "infrastructure_theme" in {item.name for item in spec.entities}
+    assert "constrains" in {item.name for item in spec.relations}
+    result = validate_edge_against_adapter(
+        spec,
+        EdgeDraft(
+            source_ref="event:news-001",
+            target_ref="infrastructure_theme:ai-compute",
+            relation_type="mentions",
+            confidence_label=ConfidenceLabel.EXTRACTED,
+            confidence_score=0.8,
+            status=EdgeStatus.CANDIDATE,
+            evidence_refs=["news:x"],
+        ),
+        NodeDraft(node_type="event", stable_key="news-001", canonical_name="新闻"),
+        NodeDraft(node_type="infrastructure_theme", stable_key="ai-compute", canonical_name="AI算力基础设施"),
+    )
+
+    assert result.ok
 
 
 def test_holds_fund_to_stock_is_valid() -> None:

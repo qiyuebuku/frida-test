@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from sqlalchemy import DateTime, Float, ForeignKey, Index, Integer, String, Text, UniqueConstraint
+from sqlalchemy import DateTime, Float, Index, Integer, String, Text, UniqueConstraint
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 from sqlalchemy.sql import func
@@ -60,12 +60,8 @@ class KnowledgeEdge(Base):
     edge_id: Mapped[str] = mapped_column(String(160), primary_key=True)
     adapter_name: Mapped[str] = mapped_column(String(64), nullable=False)
     adapter_version: Mapped[str] = mapped_column(String(32), nullable=False, default="")
-    source_node_id: Mapped[str] = mapped_column(
-        String(128), ForeignKey("kg_nodes.node_id"), nullable=False
-    )
-    target_node_id: Mapped[str] = mapped_column(
-        String(128), ForeignKey("kg_nodes.node_id"), nullable=False
-    )
+    source_node_id: Mapped[str] = mapped_column(String(128), nullable=False)
+    target_node_id: Mapped[str] = mapped_column(String(128), nullable=False)
     relation_type: Mapped[str] = mapped_column(String(64), nullable=False)
     properties: Mapped[dict] = mapped_column(JSONB, default=dict, nullable=False)
     confidence_label: Mapped[str] = mapped_column(String(32), nullable=False)
@@ -120,12 +116,25 @@ class KnowledgeEdgeEvidence(Base):
 
     __tablename__ = "kg_edge_evidence"
 
-    edge_id: Mapped[str] = mapped_column(
-        String(160), ForeignKey("kg_edges.edge_id"), primary_key=True
+    edge_id: Mapped[str] = mapped_column(String(160), primary_key=True)
+    evidence_id: Mapped[str] = mapped_column(String(180), primary_key=True)
+    created_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
     )
-    evidence_id: Mapped[str] = mapped_column(
-        String(180), ForeignKey("kg_evidence.evidence_id"), primary_key=True
+
+
+class KnowledgeEdgeEvidenceChunk(Base):
+    """Chunk-level refs for edge evidence links."""
+
+    __tablename__ = "kg_edge_evidence_chunks"
+    __table_args__ = (
+        Index("ix_kg_edge_evidence_chunks_evidence", "evidence_id"),
+        Index("ix_kg_edge_evidence_chunks_chunk", "chunk_id"),
     )
+
+    edge_id: Mapped[str] = mapped_column(String(160), primary_key=True)
+    evidence_id: Mapped[str] = mapped_column(String(180), primary_key=True)
+    chunk_id: Mapped[str] = mapped_column(String(220), primary_key=True)
     created_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )
@@ -233,35 +242,6 @@ class KnowledgeCompilationRun(Base):
     metadata_: Mapped[dict] = mapped_column("metadata", JSONB, default=dict, nullable=False)
 
 
-class KnowledgeWikiPage(Base):
-    """Generated page derived from fact store records."""
-
-    __tablename__ = "kg_wiki_pages"
-    __table_args__ = (
-        Index("ix_kg_wiki_pages_adapter_type", "adapter_name", "page_type"),
-        Index("ix_kg_wiki_pages_subject", "subject_type", "subject_id"),
-    )
-
-    page_id: Mapped[str] = mapped_column(String(160), primary_key=True)
-    adapter_name: Mapped[str] = mapped_column(String(64), nullable=False)
-    page_type: Mapped[str] = mapped_column(String(64), nullable=False)
-    subject_type: Mapped[str | None] = mapped_column(String(64))
-    subject_id: Mapped[str | None] = mapped_column(String(180))
-    title: Mapped[str] = mapped_column(Text, nullable=False)
-    summary: Mapped[str] = mapped_column(Text, nullable=False)
-    content: Mapped[str] = mapped_column(Text, nullable=False)
-    source_node_ids: Mapped[list] = mapped_column(JSONB, default=list, nullable=False)
-    source_edge_ids: Mapped[list] = mapped_column(JSONB, default=list, nullable=False)
-    source_evidence_ids: Mapped[list] = mapped_column(JSONB, default=list, nullable=False)
-    version: Mapped[str] = mapped_column(String(64), nullable=False)
-    created_at: Mapped[datetime | None] = mapped_column(
-        DateTime(timezone=True), server_default=func.now()
-    )
-    updated_at: Mapped[datetime | None] = mapped_column(
-        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
-    )
-
-
 class KnowledgeGraphAdjacency(Base):
     """Generated graph adjacency row derived from directed edges."""
 
@@ -282,61 +262,58 @@ class KnowledgeGraphAdjacency(Base):
 
 
 class KnowledgeEvidenceChunk(Base):
-    """Generated readable chunk derived from evidence."""
+    """Chunk manifest derived from evidence; readable text lives in Milvus."""
 
     __tablename__ = "kg_evidence_chunks"
     __table_args__ = (
         Index("ix_kg_evidence_chunks_adapter", "adapter_name"),
         Index("ix_kg_evidence_chunks_evidence", "evidence_id"),
+        Index("ix_kg_evidence_chunks_evidence_index", "evidence_id", "chunk_index"),
     )
 
     chunk_id: Mapped[str] = mapped_column(String(220), primary_key=True)
     adapter_name: Mapped[str] = mapped_column(String(64), nullable=False)
-    evidence_id: Mapped[str] = mapped_column(
-        String(180), ForeignKey("kg_evidence.evidence_id"), nullable=False
-    )
-    content: Mapped[str] = mapped_column(Text, nullable=False)
-    payload: Mapped[dict] = mapped_column(JSONB, default=dict, nullable=False)
+    evidence_id: Mapped[str] = mapped_column(String(180), nullable=False)
+    chunk_index: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    start_offset: Mapped[int | None] = mapped_column(Integer)
+    end_offset: Mapped[int | None] = mapped_column(Integer)
+    previous_chunk_id: Mapped[str | None] = mapped_column(String(220))
+    next_chunk_id: Mapped[str | None] = mapped_column(String(220))
+    text_hash: Mapped[str] = mapped_column(String(64), nullable=False, default="")
+    chunker_version: Mapped[str] = mapped_column(String(64), nullable=False, default="")
     created_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )
 
 
-class KnowledgeRetrievalDocument(Base):
-    """Generated retrieval document derived from fact store records."""
+class KnowledgeGraphCommunity(Base):
+    """Graph Index community identity/version state."""
 
-    __tablename__ = "kg_retrieval_documents"
+    __tablename__ = "kg_graph_communities"
     __table_args__ = (
-        Index("ix_kg_retrieval_documents_adapter_target", "adapter_name", "target"),
-        Index("ix_kg_retrieval_documents_source", "source_fact_type", "source_fact_id"),
-        Index("ix_kg_retrieval_documents_answer_type", "answer_candidate_type"),
+        Index("ix_kg_graph_communities_adapter_projection", "adapter_name", "projection"),
+        Index("ix_kg_graph_communities_parent", "parent_community_id"),
+        Index("ix_kg_graph_communities_status", "status"),
     )
 
-    document_id: Mapped[str] = mapped_column(String(260), primary_key=True)
+    community_id: Mapped[str] = mapped_column(String(180), primary_key=True)
+    version_id: Mapped[str] = mapped_column(String(220), nullable=False)
     adapter_name: Mapped[str] = mapped_column(String(64), nullable=False)
-    target: Mapped[str] = mapped_column(String(16), nullable=False, default="prod")
-    source_fact_type: Mapped[str] = mapped_column(String(32), nullable=False)
-    source_fact_id: Mapped[str] = mapped_column(String(220), nullable=False)
-    evidence_refs: Mapped[list] = mapped_column(JSONB, default=list, nullable=False)
-    node_refs: Mapped[list] = mapped_column(JSONB, default=list, nullable=False)
-    edge_refs: Mapped[list] = mapped_column(JSONB, default=list, nullable=False)
+    projection: Mapped[str] = mapped_column(String(64), nullable=False)
+    level: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    parent_community_id: Mapped[str] = mapped_column(String(180), nullable=False, default="")
     title: Mapped[str] = mapped_column(Text, nullable=False)
-    search_text: Mapped[str] = mapped_column(Text, nullable=False)
-    key_phrases: Mapped[list] = mapped_column(JSONB, default=list, nullable=False)
-    aliases: Mapped[list] = mapped_column(JSONB, default=list, nullable=False)
-    event_type: Mapped[str | None] = mapped_column(String(96))
-    relation_intents: Mapped[list] = mapped_column(JSONB, default=list, nullable=False)
-    impact_direction: Mapped[str] = mapped_column(String(16), nullable=False, default="unknown")
-    asset_classes: Mapped[list] = mapped_column(JSONB, default=list, nullable=False)
-    time_tags: Mapped[list] = mapped_column(JSONB, default=list, nullable=False)
-    source_type_tags: Mapped[list] = mapped_column(JSONB, default=list, nullable=False)
-    readable_relations: Mapped[list] = mapped_column(JSONB, default=list, nullable=False)
-    evidence_summary: Mapped[str] = mapped_column(Text, nullable=False, default="")
-    answer_candidate_type: Mapped[str] = mapped_column(String(32), nullable=False, default="unknown")
-    confidence: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
-    generated_by: Mapped[str] = mapped_column(String(16), nullable=False, default="rule")
-    generation_version: Mapped[str] = mapped_column(String(64), nullable=False)
-    metadata_: Mapped[dict] = mapped_column("metadata", JSONB, default=dict, nullable=False)
+    summary: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    member_node_ids: Mapped[list] = mapped_column(JSONB, default=list, nullable=False)
+    member_edge_ids: Mapped[list] = mapped_column(JSONB, default=list, nullable=False)
+    evidence_ids: Mapped[list] = mapped_column(JSONB, default=list, nullable=False)
+    chunk_ids: Mapped[list] = mapped_column(JSONB, default=list, nullable=False)
+    metrics: Mapped[dict] = mapped_column(JSONB, default=dict, nullable=False)
+    status: Mapped[str] = mapped_column(String(32), nullable=False, default="active")
+    previous_version_id: Mapped[str] = mapped_column(String(220), nullable=False, default="")
+    change_reason: Mapped[str] = mapped_column(String(64), nullable=False, default="build")
+    lineage_id: Mapped[str] = mapped_column(String(180), nullable=False, default="")
+    previous_community_ids: Mapped[list] = mapped_column(JSONB, default=list, nullable=False)
     created_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )
@@ -345,23 +322,108 @@ class KnowledgeRetrievalDocument(Base):
     )
 
 
-class KnowledgeRetrievalDocumentVersion(Base):
-    """Generation metadata for retrieval document batches."""
+class KnowledgeGraphFinding(Base):
+    """Graph Index finding/narrative state with chunk refs."""
 
-    __tablename__ = "kg_retrieval_document_versions"
+    __tablename__ = "kg_graph_findings"
     __table_args__ = (
-        Index("ix_kg_retrieval_document_versions_adapter", "adapter_name", "target"),
+        Index("ix_kg_graph_findings_adapter_projection", "adapter_name", "projection"),
+        Index("ix_kg_graph_findings_community", "community_id"),
+        Index("ix_kg_graph_findings_status", "status"),
     )
 
-    version_id: Mapped[str] = mapped_column(String(128), primary_key=True)
+    finding_id: Mapped[str] = mapped_column(String(180), primary_key=True)
+    community_id: Mapped[str] = mapped_column(String(180), nullable=False)
     adapter_name: Mapped[str] = mapped_column(String(64), nullable=False)
-    target: Mapped[str] = mapped_column(String(16), nullable=False, default="prod")
-    generation_version: Mapped[str] = mapped_column(String(64), nullable=False)
-    changed_fact_set: Mapped[dict] = mapped_column(JSONB, default=dict, nullable=False)
-    field_coverage: Mapped[dict] = mapped_column(JSONB, default=dict, nullable=False)
-    config: Mapped[dict] = mapped_column(JSONB, default=dict, nullable=False)
+    projection: Mapped[str] = mapped_column(String(64), nullable=False)
+    finding_type: Mapped[str] = mapped_column(String(64), nullable=False)
+    title: Mapped[str] = mapped_column(Text, nullable=False)
+    statement: Mapped[str] = mapped_column(Text, nullable=False)
+    cited_chunk_ids: Mapped[list] = mapped_column(JSONB, default=list, nullable=False)
+    cited_evidence_ids: Mapped[list] = mapped_column(JSONB, default=list, nullable=False)
+    supporting_edge_ids: Mapped[list] = mapped_column(JSONB, default=list, nullable=False)
+    node_ids: Mapped[list] = mapped_column(JSONB, default=list, nullable=False)
+    confidence: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    status: Mapped[str] = mapped_column(String(32), nullable=False, default="active")
+    version: Mapped[str] = mapped_column(String(220), nullable=False, default="")
+    payload: Mapped[dict] = mapped_column(JSONB, default=dict, nullable=False)
     created_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
+    )
+    updated_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+
+class KnowledgeGraphDelta(Base):
+    """Rolling Graph Index delta window state."""
+
+    __tablename__ = "kg_graph_deltas"
+    __table_args__ = (
+        Index("ix_kg_graph_deltas_adapter_projection", "adapter_name", "projection"),
+        Index("ix_kg_graph_deltas_window", "window_name"),
+        Index("ix_kg_graph_deltas_status", "status"),
+    )
+
+    delta_id: Mapped[str] = mapped_column(String(180), primary_key=True)
+    adapter_name: Mapped[str] = mapped_column(String(64), nullable=False)
+    projection: Mapped[str] = mapped_column(String(64), nullable=False)
+    window_name: Mapped[str] = mapped_column(String(32), nullable=False)
+    started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    ended_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    title: Mapped[str] = mapped_column(Text, nullable=False)
+    summary: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    community_ids: Mapped[list] = mapped_column(JSONB, default=list, nullable=False)
+    finding_ids: Mapped[list] = mapped_column(JSONB, default=list, nullable=False)
+    cited_chunk_ids: Mapped[list] = mapped_column(JSONB, default=list, nullable=False)
+    cited_evidence_ids: Mapped[list] = mapped_column(JSONB, default=list, nullable=False)
+    supporting_edge_ids: Mapped[list] = mapped_column(JSONB, default=list, nullable=False)
+    node_ids: Mapped[list] = mapped_column(JSONB, default=list, nullable=False)
+    metrics: Mapped[dict] = mapped_column(JSONB, default=dict, nullable=False)
+    status: Mapped[str] = mapped_column(String(32), nullable=False, default="active")
+    version: Mapped[str] = mapped_column(String(220), nullable=False, default="")
+    created_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+    updated_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+
+class KnowledgeGraphUnassignedSignal(Base):
+    """Graph Index weak signal state waiting for future community promotion."""
+
+    __tablename__ = "kg_graph_unassigned_signals"
+    __table_args__ = (
+        Index("ix_kg_graph_unassigned_signals_adapter_status", "adapter_name", "status"),
+        Index("ix_kg_graph_unassigned_signals_projection", "projection"),
+        Index("ix_kg_graph_unassigned_signals_promoted", "promoted_community_id"),
+    )
+
+    signal_id: Mapped[str] = mapped_column(String(180), primary_key=True)
+    adapter_name: Mapped[str] = mapped_column(String(64), nullable=False)
+    projection: Mapped[str] = mapped_column(String(64), nullable=False)
+    title: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    reason: Mapped[str] = mapped_column(String(96), nullable=False, default="")
+    node_ids: Mapped[list] = mapped_column(JSONB, default=list, nullable=False)
+    edge_ids: Mapped[list] = mapped_column(JSONB, default=list, nullable=False)
+    evidence_ids: Mapped[list] = mapped_column(JSONB, default=list, nullable=False)
+    chunk_ids: Mapped[list] = mapped_column(JSONB, default=list, nullable=False)
+    topic_tags: Mapped[list] = mapped_column(JSONB, default=list, nullable=False)
+    impact_tags: Mapped[list] = mapped_column(JSONB, default=list, nullable=False)
+    event_type_tags: Mapped[list] = mapped_column(JSONB, default=list, nullable=False)
+    relation_types: Mapped[list] = mapped_column(JSONB, default=list, nullable=False)
+    support_score: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    metrics: Mapped[dict] = mapped_column(JSONB, default=dict, nullable=False)
+    status: Mapped[str] = mapped_column(String(32), nullable=False, default="active")
+    promoted_community_id: Mapped[str] = mapped_column(String(180), nullable=False, default="")
+    promotion_attempts: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    last_checked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+    updated_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
     )
 
 

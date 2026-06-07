@@ -15,11 +15,19 @@ from src.application.dto.knowledge_dto import (
     KnowledgeIncrementalRefreshResultDTO,
     KnowledgeRebuildIndexesCommand,
     KnowledgeRebuildIndexesResultDTO,
-    KnowledgeRebuildWikiCommand,
-    KnowledgeRebuildWikiResultDTO,
 )
 from src.application.services import knowledge_service as service_module
 from src.application.services.knowledge_service import KnowledgeService
+from src.domain.knowledge.chunking import build_chunks_for_compiled_evidence
+from src.domain.knowledge.enums import ConfidenceLabel, EdgeStatus, NodeStatus
+from src.domain.knowledge.graph_index import (
+    GraphIndexCommunity,
+    GraphIndexDirtyRefs,
+    GraphIndexFinding,
+    GraphIndexRefreshPlan,
+    GraphIndexUnassignedSignal,
+)
+from src.domain.knowledge.schemas import CompileResult, CompiledEdge, CompiledNode, EvidenceChunk
 from src.domain.knowledge.toy_adapter import ToyProjectAdapter
 
 
@@ -55,15 +63,6 @@ class _Service(KnowledgeService):
             dry_run=command.dry_run,
         )
 
-    async def rebuild_wiki_for(self, command: KnowledgeRebuildWikiCommand):
-        self.calls.append(f"wiki:{command.adapter_name}")
-        return KnowledgeRebuildWikiResultDTO(
-            adapter_name=command.adapter_name,
-            run_id="kg_run:wiki",
-            pages=3,
-            issues=0,
-        )
-
     async def rebuild_indexes_for(self, command: KnowledgeRebuildIndexesCommand):
         self.calls.append("indexes:" + ",".join(command.index_types))
         return KnowledgeRebuildIndexesResultDTO(
@@ -76,7 +75,7 @@ class _Service(KnowledgeService):
 
 
 @pytest.mark.asyncio
-async def test_incremental_refresh_runs_compile_wiki_and_indexes() -> None:
+async def test_incremental_refresh_runs_compile_and_indexes() -> None:
     service = _Service()
 
     result = await service.refresh_financial_incremental(
@@ -94,13 +93,12 @@ async def test_incremental_refresh_runs_compile_wiki_and_indexes() -> None:
     assert [step["name"] for step in result.steps] == [
         "bootstrap_stocks",
         "bootstrap_stock_news",
-        "rebuild_wiki",
+        "incremental_indexes",
         "rebuild_indexes",
     ]
     assert service.calls == [
         "stocks:test:300750",
         "news:7:2",
-        "wiki:financial",
         "indexes:graph_adjacency,evidence_chunks,hybrid_chunks",
     ]
 
@@ -117,7 +115,7 @@ async def test_incremental_refresh_dry_run_skips_rebuild_steps() -> None:
         )
     )
 
-    assert [step["status"] for step in result.steps] == ["ok", "ok", "skipped", "skipped"]
+    assert [step["status"] for step in result.steps] == ["ok", "ok", "skipped"]
     assert service.calls == ["stocks:test:300750", "news:20:1"]
 
 
@@ -128,17 +126,23 @@ async def test_compile_kg_refreshes_changed_indexes_incrementally(monkeypatch) -
     hybrid_calls: list[dict] = []
 
     class FakeRetriever:
+        async def delete_evidence(self, **_kwargs):
+            return 0
+
+        async def delete_documents(self, **_kwargs):
+            return 0
+
         async def upsert_index(self, **kwargs):
             hybrid_calls.append(kwargs)
-            return (
-                len(kwargs["chunks"])
-                + len(kwargs["nodes"])
-                + len(kwargs["edges"])
-                + len(kwargs["wiki_pages"])
-            )
+            return len(kwargs["chunks"]) + len(kwargs["nodes"]) + len(kwargs["edges"])
+
+        async def upsert_semantic_documents(self, **kwargs):
+            hybrid_calls.append(kwargs)
+            return len(kwargs["documents"])
 
     monkeypatch.setattr(service_module, "get_adapter", lambda _name, **_kwargs: ToyProjectAdapter())
     monkeypatch.setattr(service_module, "MilvusSemanticHybridRetriever", lambda: FakeRetriever())
+    monkeypatch.setattr(service_module, "GraphIndexLLMReporter", lambda: _FakeGraphIndexReporter())
 
     result = await KnowledgeService(repository=repository).compile_kg(
         service_module.KnowledgeCompileCommand(
@@ -151,15 +155,454 @@ async def test_compile_kg_refreshes_changed_indexes_incrementally(monkeypatch) -
     assert result.index_refresh["mode"] == "incremental"
     assert result.index_refresh["graph_adjacency"] == 3
     assert result.index_refresh["evidence_chunks"] == 1
-    assert result.index_refresh["wiki_pages"] >= 1
-    assert result.index_refresh["retrieval_documents"] >= 1
-    assert result.index_refresh["hybrid_chunks"] == len(hybrid_calls[0]["chunks"]) + len(
-        hybrid_calls[0]["nodes"]
-    ) + len(hybrid_calls[0]["edges"]) + len(hybrid_calls[0]["wiki_pages"])
-    assert repository.calls[:3] == ["create_run", "upsert_nodes:4", "upsert_evidence:1"]
+    refresh_call = [call for call in hybrid_calls if "chunks" in call][-1]
+    assert result.index_refresh["hybrid_chunks"] == len(refresh_call["chunks"]) + len(
+        refresh_call["nodes"]
+    ) + len(refresh_call["edges"])
+    assert "graph_index" in result.index_refresh
+    assert result.index_refresh["graph_index"]["status"] == "deferred"
+    assert result.index_refresh["graph_index"]["reason"] == "graph_index_is_async_or_manual"
+    assert result.index_refresh["graph_index"]["dirty_refs"] == {
+        "nodes": 4,
+        "edges": 3,
+        "evidence": 1,
+        "chunks": 1,
+    }
+    assert hybrid_calls[0]["target"] == "test"
+    assert refresh_call["target"] == "test"
+    assert hybrid_calls[0]["chunks"]
+    assert hybrid_calls[0]["nodes"] == []
+    assert hybrid_calls[0]["edges"] == []
+    assert repository.calls[:2] == ["upsert_evidence:1", "upsert_evidence_chunks:1"]
+    assert "create_run" in repository.calls
+    assert repository.calls.index("upsert_evidence:1") < repository.calls.index("upsert_nodes:4")
     assert "upsert_graph_adjacency:3" in repository.calls
     assert "upsert_evidence_chunks:1" in repository.calls
-    assert any(call.startswith("upsert_retrieval_documents:") for call in repository.calls)
+    assert "mark_graph_index_dirty:compile_changed_refs" in repository.calls
+    assert not any(call.startswith("replace_graph_index") for call in repository.calls)
+
+
+def test_semantic_index_materials_include_edges_related_to_changed_node() -> None:
+    repository = _CompileRefreshRepository()
+    changed_node = CompiledNode(
+        node_id="kg:toy:node:changed",
+        adapter_name="toy",
+        node_type="company",
+        canonical_name="Changed",
+        status=NodeStatus.ACTIVE,
+        version="v1",
+    )
+    neighbor = CompiledNode(
+        node_id="kg:toy:node:neighbor",
+        adapter_name="toy",
+        node_type="industry",
+        canonical_name="Neighbor",
+        status=NodeStatus.ACTIVE,
+        version="v1",
+    )
+    existing_edge = CompiledEdge(
+        edge_id="kg_edge:toy:related_to:1",
+        adapter_name="toy",
+        source_node_id=changed_node.node_id,
+        target_node_id=neighbor.node_id,
+        relation_type="related_to",
+        confidence_label=ConfidenceLabel.EXTRACTED,
+        confidence_score=0.9,
+        status=EdgeStatus.ACTIVE,
+        evidence_ids=["kg_ev:toy:1"],
+        version="v1",
+    )
+    repository.nodes = [changed_node, neighbor]
+    repository.edges = [existing_edge]
+
+    materials = service_module._semantic_index_materials_for_result(
+        repository,
+        CompileResult(
+            run_id="kg_run:test",
+            adapter_name="toy",
+            adapter_version="v1",
+            version="v1",
+            nodes=[changed_node],
+            edges=[],
+            evidence=[],
+        ),
+    )
+
+    assert [node.node_id for node in materials.nodes] == [changed_node.node_id, neighbor.node_id]
+    assert [edge.edge_id for edge in materials.edges] == [existing_edge.edge_id]
+    assert f"kg_card:node_card:{changed_node.node_id}" in materials.stale_chunk_ids
+    assert f"kg_card:edge:{existing_edge.edge_id}" in materials.stale_chunk_ids
+
+
+def test_semantic_index_materials_delete_stale_cards_for_deprecated_edge() -> None:
+    repository = _CompileRefreshRepository()
+    source = CompiledNode(
+        node_id="kg:toy:node:source",
+        adapter_name="toy",
+        node_type="company",
+        canonical_name="Source",
+        status=NodeStatus.ACTIVE,
+        version="v1",
+    )
+    target = CompiledNode(
+        node_id="kg:toy:node:target",
+        adapter_name="toy",
+        node_type="industry",
+        canonical_name="Target",
+        status=NodeStatus.ACTIVE,
+        version="v1",
+    )
+    deprecated_edge = CompiledEdge(
+        edge_id="kg_edge:toy:related_to:deprecated",
+        adapter_name="toy",
+        source_node_id=source.node_id,
+        target_node_id=target.node_id,
+        relation_type="related_to",
+        confidence_label=ConfidenceLabel.EXTRACTED,
+        confidence_score=0.9,
+        status=EdgeStatus.DEPRECATED,
+        evidence_ids=["kg_ev:toy:1"],
+        version="v2",
+    )
+    repository.nodes = [source, target]
+    repository.edges = [deprecated_edge]
+
+    materials = service_module._semantic_index_materials_for_result(
+        repository,
+        CompileResult(
+            run_id="kg_run:test",
+            adapter_name="toy",
+            adapter_version="v1",
+            version="v2",
+            nodes=[],
+            edges=[deprecated_edge],
+            evidence=[],
+        ),
+    )
+
+    assert [edge.edge_id for edge in materials.edges] == [deprecated_edge.edge_id]
+    assert f"kg_card:edge:{deprecated_edge.edge_id}" in materials.stale_chunk_ids
+
+
+def test_graph_index_build_scope_uses_dirty_subgraph_not_full_graph() -> None:
+    dirty = CompiledNode(
+        node_id="kg:toy:node:dirty",
+        adapter_name="toy",
+        node_type="company",
+        canonical_name="Dirty",
+        status=NodeStatus.ACTIVE,
+        version="v1",
+    )
+    neighbor = CompiledNode(
+        node_id="kg:toy:node:neighbor",
+        adapter_name="toy",
+        node_type="company",
+        canonical_name="Neighbor",
+        status=NodeStatus.ACTIVE,
+        version="v1",
+    )
+    unrelated = CompiledNode(
+        node_id="kg:toy:node:unrelated",
+        adapter_name="toy",
+        node_type="company",
+        canonical_name="Unrelated",
+        status=NodeStatus.ACTIVE,
+        version="v1",
+    )
+    unrelated_peer = CompiledNode(
+        node_id="kg:toy:node:unrelated_peer",
+        adapter_name="toy",
+        node_type="company",
+        canonical_name="Unrelated Peer",
+        status=NodeStatus.ACTIVE,
+        version="v1",
+    )
+    dirty_edge = CompiledEdge(
+        edge_id="kg_edge:toy:related_to:dirty",
+        adapter_name="toy",
+        source_node_id=dirty.node_id,
+        target_node_id=neighbor.node_id,
+        relation_type="related_to",
+        confidence_label=ConfidenceLabel.EXTRACTED,
+        confidence_score=0.9,
+        status=EdgeStatus.ACTIVE,
+        evidence_ids=["ev-dirty"],
+        version="v1",
+    )
+    unrelated_edge = CompiledEdge(
+        edge_id="kg_edge:toy:related_to:unrelated",
+        adapter_name="toy",
+        source_node_id=unrelated.node_id,
+        target_node_id=unrelated_peer.node_id,
+        relation_type="related_to",
+        confidence_label=ConfidenceLabel.EXTRACTED,
+        confidence_score=0.9,
+        status=EdgeStatus.ACTIVE,
+        evidence_ids=["ev-unrelated"],
+        version="v1",
+    )
+    existing = _graph_community_for_scope(
+        nodes=[dirty.node_id, neighbor.node_id],
+        edges=[dirty_edge.edge_id],
+        evidence=["ev-dirty"],
+        chunks=["chunk-dirty"],
+    )
+
+    scope = service_module._graph_index_build_scope(
+        chunks=[
+            EvidenceChunk(chunk_id="chunk-dirty", adapter_name="toy", evidence_id="ev-dirty", content="dirty"),
+            EvidenceChunk(chunk_id="chunk-unrelated", adapter_name="toy", evidence_id="ev-unrelated", content="unrelated"),
+        ],
+        nodes=[dirty, neighbor, unrelated, unrelated_peer],
+        edges=[dirty_edge, unrelated_edge],
+        existing_communities=[existing],
+        dirty_refs=GraphIndexDirtyRefs(edge_ids=[dirty_edge.edge_id]),
+        refresh_plan=GraphIndexRefreshPlan(
+            action="local_recompute_required",
+            score=0.1,
+            affected_community_ids=[existing.community_id],
+            affected_projection_counts={existing.projection: 1},
+            changed_counts={"nodes": 0, "edges": 1, "evidence": 0, "chunks": 0},
+            metrics={},
+            reasons=["localized_dirty_subgraph"],
+        ),
+        force_rebuild=False,
+    )
+
+    assert scope["diagnostics"]["strategy"] == "dirty_subgraph_build"
+    assert {node.node_id for node in scope["nodes"]} == {dirty.node_id, neighbor.node_id}
+    assert {edge.edge_id for edge in scope["edges"]} == {dirty_edge.edge_id}
+    assert [chunk.chunk_id for chunk in scope["chunks"]] == ["chunk-dirty"]
+
+
+def test_graph_index_projection_scope_replaces_only_selected_projection() -> None:
+    default = _graph_community_for_scope(
+        nodes=["n-default"],
+        edges=["e-default"],
+        evidence=["ev-default"],
+        chunks=["chunk-default"],
+    )
+    policy = GraphIndexCommunity(
+        community_id="kg_community:policy_impact:l0:policy",
+        version_id="kg_community:policy_impact:l0:policy:v1",
+        adapter_name="financial",
+        projection="policy_impact",
+        level=0,
+        parent_community_id="",
+        title="policy",
+        summary="",
+        member_node_ids=["n-policy"],
+        member_edge_ids=["e-policy"],
+        evidence_ids=["ev-policy"],
+        chunk_ids=["chunk-policy"],
+        metrics={},
+    )
+    rebuilt_policy = GraphIndexCommunity(
+        community_id="kg_community:policy_impact:l0:policy-new",
+        version_id="kg_community:policy_impact:l0:policy-new:v1",
+        adapter_name="financial",
+        projection="policy_impact",
+        level=0,
+        parent_community_id="",
+        title="policy new",
+        summary="",
+        member_node_ids=["n-policy"],
+        member_edge_ids=["e-policy"],
+        evidence_ids=["ev-policy"],
+        chunk_ids=["chunk-policy"],
+        metrics={},
+    )
+
+    scope = service_module._graph_index_replacement_scope(
+        existing_communities=[default, policy],
+        rebuilt_communities=[rebuilt_policy],
+        rebuilt_findings=[],
+        rebuilt_deltas=[],
+        dirty_refs=GraphIndexDirtyRefs(),
+        refresh_plan=GraphIndexRefreshPlan(
+            action="full_rebuild",
+            score=1.0,
+            affected_community_ids=[],
+            affected_projection_counts={},
+            changed_counts={},
+            metrics={},
+            reasons=["manual_rebuild_indexes"],
+        ),
+        force_rebuild=True,
+        scope_projection="policy_impact",
+    )
+
+    assert scope["strategy"] == "global_calibration_projection_replace"
+    assert scope["remove_community_ids"] == [policy.community_id]
+    assert scope["communities"] == [rebuilt_policy]
+
+
+def test_graph_index_replacement_scope_uses_local_unassigned_promotion() -> None:
+    rebuilt = _graph_community_for_scope(
+        nodes=["n-policy", "n-energy", "n-industry"],
+        edges=["e-policy-energy", "e-policy-industry"],
+        evidence=["ev-new", "ev-old"],
+        chunks=["chunk-new", "chunk-old"],
+    )
+    scope = service_module._graph_index_replacement_scope(
+        existing_communities=[],
+        rebuilt_communities=[rebuilt],
+        rebuilt_findings=[],
+        rebuilt_deltas=[],
+        dirty_refs=GraphIndexDirtyRefs(edge_ids=["e-policy-industry"]),
+        refresh_plan=GraphIndexRefreshPlan(
+            action="local_recompute_required",
+            score=0.34,
+            affected_community_ids=[],
+            affected_projection_counts={},
+            changed_counts={"nodes": 1, "edges": 1, "evidence": 1, "chunks": 1},
+            metrics={"related_unassigned_signal_ids": ["signal-1"]},
+            reasons=["related_unassigned_signal_promotion"],
+        ),
+        force_rebuild=False,
+        related_unassigned_signal_ids=["signal-1"],
+    )
+
+    assert scope["strategy"] == "local_unassigned_promotion"
+    assert scope["remove_community_ids"] == []
+    assert scope["communities"] == [rebuilt]
+
+
+def test_graph_index_material_seed_includes_related_unassigned_signal_refs() -> None:
+    signal = GraphIndexUnassignedSignal(
+        signal_id="signal-1",
+        adapter_name="financial",
+        projection="default_graph_projection",
+        title="新能源弱信号",
+        reason="insufficient_root_structure",
+        node_ids=["n-old"],
+        edge_ids=["e-old"],
+        evidence_ids=["ev-old"],
+        chunk_ids=["chunk-old"],
+        topic_tags=["十五五规划"],
+        impact_tags=["政策利好"],
+        event_type_tags=["政策规划"],
+        relation_types=["affects"],
+        support_score=0.4,
+        metrics={},
+    )
+
+    seed = service_module._graph_index_material_seed(
+        [],
+        GraphIndexDirtyRefs(node_ids=["n-new"], edge_ids=["e-new"], evidence_ids=["ev-new"], chunk_ids=["chunk-new"]),
+        GraphIndexRefreshPlan(
+            action="local_recompute_required",
+            score=0.34,
+            affected_community_ids=[],
+            affected_projection_counts={},
+            changed_counts={},
+            metrics={},
+            reasons=["related_unassigned_signal_promotion"],
+        ),
+        related_unassigned_signals=[signal],
+    )
+
+    assert seed["node_ids"] == ["n-new", "n-old"]
+    assert seed["edge_ids"] == ["e-new", "e-old"]
+    assert seed["evidence_ids"] == ["ev-new", "ev-old"]
+    assert seed["chunk_ids"] == ["chunk-new", "chunk-old"]
+
+
+@pytest.mark.asyncio
+async def test_graph_index_light_refresh_uses_delta_reporter(monkeypatch) -> None:
+    community = GraphIndexCommunity(
+        community_id="kg_community:market:l0:semi",
+        version_id="kg_community:market:l0:semi:v1",
+        adapter_name="financial",
+        projection="market_narrative",
+        level=0,
+        parent_community_id="",
+        title="半导体",
+        summary="半导体主题",
+        member_node_ids=["kg:financial:industry:semi"],
+        member_edge_ids=["kg_edge:financial:mentions:semi"],
+        evidence_ids=["kg_ev:financial:news:1"],
+        chunk_ids=["kg_chunk:kg_ev:financial:news:1:0"],
+        metrics={},
+    )
+    finding = GraphIndexFinding(
+        finding_id="kg_finding:semi",
+        community_id=community.community_id,
+        adapter_name="financial",
+        projection=community.projection,
+        finding_type="market_narrative",
+        title="半导体叙事增强",
+        statement="半导体相关叙事增强。",
+        cited_chunk_ids=community.chunk_ids,
+        cited_evidence_ids=community.evidence_ids,
+        supporting_edge_ids=community.member_edge_ids,
+        node_ids=community.member_node_ids,
+        confidence=0.8,
+        version=community.version_id,
+        payload={"source": "llm_community_report"},
+    )
+    node = CompiledNode(
+        node_id="kg:financial:industry:semi",
+        adapter_name="financial",
+        node_type="industry",
+        canonical_name="半导体",
+        status=NodeStatus.ACTIVE,
+        version="v1",
+    )
+    chunk = EvidenceChunk(
+        chunk_id="kg_chunk:kg_ev:financial:news:1:0",
+        adapter_name="financial",
+        evidence_id="kg_ev:financial:news:1",
+        content="半导体相关叙事增强。",
+        payload={"published_at": "2026-05-30T00:00:00+00:00"},
+    )
+    plan = GraphIndexRefreshPlan(
+        action="light_refresh_required",
+        score=0.01,
+        affected_community_ids=[community.community_id],
+        affected_projection_counts={"market_narrative": 1},
+        changed_counts={"nodes": 0, "edges": 1, "evidence": 0, "chunks": 0},
+        metrics={},
+        reasons=["localized_dirty_subgraph"],
+    )
+
+    fake_reporter = _FakeDeltaRefreshReporter()
+    monkeypatch.setattr(service_module, "GraphIndexLLMReporter", lambda: fake_reporter)
+
+    result = await service_module._light_refresh_graph_index(
+        existing_communities=[community],
+        existing_findings=[finding],
+        chunks=[chunk],
+        nodes=[node],
+        edges=[],
+        dirty_refs=GraphIndexDirtyRefs(edge_ids=community.member_edge_ids),
+        refresh_plan=plan,
+    )
+
+    assert fake_reporter.calls == ["enrich_delta_refresh"]
+    assert result.diagnostics["community_algorithm"] == "none_light_refresh"
+    assert result.communities[0].change_reason == "light_refresh"
+    assert result.findings[0].payload["source"] == "llm_delta_finding"
+    assert result.deltas
+
+
+def _graph_community_for_scope(*, nodes: list[str], edges: list[str], evidence: list[str], chunks: list[str]):
+    return GraphIndexCommunity(
+        community_id="kg_community:test:l0:dirty",
+        version_id="kg_community:test:l0:dirty:v1",
+        adapter_name="toy",
+        projection="default_graph_projection",
+        level=0,
+        parent_community_id="",
+        title="dirty",
+        summary="",
+        member_node_ids=nodes,
+        member_edge_ids=edges,
+        evidence_ids=evidence,
+        chunk_ids=chunks,
+        metrics={},
+    )
+    assert f"kg_card:node_card:{source.node_id}" in materials.stale_chunk_ids
 
 
 @pytest.mark.asyncio
@@ -205,7 +648,7 @@ class _CompileRefreshRepository:
         self.nodes = []
         self.edges = []
         self.evidence = []
-        self.wiki_pages = []
+        self.chunks = []
 
     def create_compilation_run(self, _run):
         self.calls.append("create_run")
@@ -235,16 +678,8 @@ class _CompileRefreshRepository:
 
     def upsert_evidence_chunks(self, evidence):
         self.calls.append(f"upsert_evidence_chunks:{len(evidence)}")
+        self.chunks = [chunk for item in evidence for chunk in build_chunks_for_compiled_evidence(item)]
         return len(evidence)
-
-    def upsert_wiki_pages(self, _adapter_name, pages):
-        self.calls.append(f"upsert_wiki_pages:{len(pages)}")
-        self.wiki_pages = pages
-        return len(pages)
-
-    def upsert_retrieval_documents(self, documents):
-        self.calls.append(f"upsert_retrieval_documents:{len(documents)}")
-        return len(documents)
 
     def get_node(self, node_id):
         return next((node for node in self.nodes if node.node_id == node_id), None)
@@ -258,8 +693,135 @@ class _CompileRefreshRepository:
     def list_evidence(self, _adapter_name):
         return self.evidence
 
+    def list_evidence_chunks(self, _adapter_name):
+        return self.chunks
+
+    def count_graph_index_materials(self, _adapter_name):
+        return {"nodes": len(self.nodes), "edges": len(self.edges), "chunks": len(self.chunks)}
+
+    def list_graph_index_materials(self, _adapter_name, *, node_ids, edge_ids, evidence_ids, chunk_ids):
+        node_set = set(node_ids)
+        edge_set = set(edge_ids)
+        evidence_set = set(evidence_ids)
+        chunk_set = set(chunk_ids)
+        edges = [
+            edge
+            for edge in self.edges
+            if edge.edge_id in edge_set or edge.source_node_id in node_set or edge.target_node_id in node_set
+        ]
+        for edge in edges:
+            node_set.add(edge.source_node_id)
+            node_set.add(edge.target_node_id)
+            evidence_set.update(edge.evidence_ids)
+        return {
+            "nodes": [node for node in self.nodes if node.node_id in node_set],
+            "edges": edges,
+            "chunks": [
+                chunk
+                for chunk in self.chunks
+                if chunk.chunk_id in chunk_set or chunk.evidence_id in evidence_set
+            ],
+        }
+
+    def list_graph_communities(self, _adapter_name):
+        return []
+
+    def list_graph_findings(self, _adapter_name):
+        return []
+
+    def list_graph_deltas(self, _adapter_name):
+        return []
+
+    def list_graph_unassigned_signals(self, _adapter_name, *, status="active"):
+        return []
+
+    def mark_graph_index_dirty(self, _adapter_name, *, reason):
+        self.calls.append(f"mark_graph_index_dirty:{reason}")
+        return 0
+
+    def replace_graph_index(self, _adapter_name, *, communities, findings, deltas=None, unassigned_signals=None):
+        self.calls.append(
+            f"replace_graph_index:{len(communities)}:{len(findings)}:{len(deltas or [])}:{len(unassigned_signals or [])}"
+        )
+        return {
+            "communities": len(communities),
+            "findings": len(findings),
+            "deltas": len(deltas or []),
+            "unassigned_signals": len(unassigned_signals or []),
+            "stale_target_ids": [],
+        }
+
+    def replace_graph_index_scope(
+        self,
+        _adapter_name,
+        *,
+        remove_community_ids,
+        communities,
+        findings,
+        deltas=None,
+        unassigned_signals=None,
+        promoted_signals=None,
+    ):
+        self.calls.append(
+            "replace_graph_index_scope:"
+            f"{len(remove_community_ids)}:{len(communities)}:{len(findings)}:"
+            f"{len(deltas or [])}:{len(unassigned_signals or [])}:{len(promoted_signals or {})}"
+        )
+        return {
+            "communities": len(communities),
+            "findings": len(findings),
+            "deltas": len(deltas or []),
+            "unassigned_signals": len(unassigned_signals or []),
+            "promoted_unassigned_signals": len(promoted_signals or {}),
+            "stale_target_ids": [],
+            "removed_community_ids": len(remove_community_ids),
+            "removed_finding_ids": 0,
+            "removed_delta_ids": 0,
+        }
+
     def attach_edge_evidence(self, *_args):
         return 0
+
+
+class _FakeGraphIndexReporter:
+    async def enrich(self, *, graph_index, nodes, edges, chunks):
+        return graph_index
+
+
+class _FakeDeltaRefreshReporter:
+    def __init__(self) -> None:
+        self.calls: list[str] = []
+
+    async def enrich_delta_refresh(self, *, graph_index, nodes, edges, chunks):
+        self.calls.append("enrich_delta_refresh")
+        community = graph_index.communities[0]
+        chunk = chunks[0]
+        finding = GraphIndexFinding(
+            finding_id="kg_finding:delta:test",
+            community_id=community.community_id,
+            adapter_name=community.adapter_name,
+            projection=community.projection,
+            finding_type="recent_change",
+            title="近期变化",
+            statement="delta reporter 基于新增 chunk 生成近期变化。",
+            cited_chunk_ids=[chunk.chunk_id],
+            cited_evidence_ids=[chunk.evidence_id],
+            supporting_edge_ids=community.member_edge_ids,
+            node_ids=community.member_node_ids,
+            confidence=0.8,
+            version=community.version_id,
+            payload={"source": "llm_delta_finding"},
+        )
+        return graph_index.__class__(
+            communities=graph_index.communities,
+            findings=[finding],
+            deltas=graph_index.deltas,
+            documents=[],
+            diagnostics={
+                **graph_index.diagnostics,
+                "community_report_generator": "llm_delta_refresh",
+            },
+        )
 
 
 class _TaskRepository:

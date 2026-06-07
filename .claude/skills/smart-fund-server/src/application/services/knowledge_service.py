@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+from dataclasses import dataclass, replace
 from datetime import datetime, timedelta, timezone
 from typing import Any, Literal
 from uuid import uuid4
@@ -22,8 +23,6 @@ from src.application.dto.knowledge_dto import (
     KnowledgeQualityScanResultDTO,
     KnowledgeRebuildIndexesCommand,
     KnowledgeRebuildIndexesResultDTO,
-    KnowledgeRebuildWikiCommand,
-    KnowledgeRebuildWikiResultDTO,
     KnowledgeResearchContextCommand,
     KnowledgeResearchContextDTO,
     KnowledgeReviewActionCommand,
@@ -47,6 +46,8 @@ from src.application.services.knowledge_source_projection_service import (
 )
 from src.application.services.llm_agentic_retrieval_strategy import LLMAgenticRetrievalStrategy
 from src.application.services.llm_candidate_judge import LLMCandidateJudge
+from src.application.services.graph_index_reporter import GraphIndexLLMReporter
+from src.application.services.graph_index_profiles import FINANCIAL_GRAPH_PROJECTIONS, GRAPH_INDEX_PUBLIC_LENS_ALIASES
 from src.application.services.openai_agents_retrieval_runtime import (
     OpenAIAgentsRetrievalRuntime,
 )
@@ -55,7 +56,22 @@ from src.domain.knowledge.agentic_retrieval import (
     AgenticRetrievalController,
 )
 from src.domain.knowledge.adapter import DomainAdapter
+from src.domain.knowledge.chunking import build_chunks_for_compiled_evidence
 from src.domain.knowledge.compiler import KnowledgeCompiler
+from src.domain.knowledge.enums import EvidenceStatus
+from src.domain.knowledge.graph_index import (
+    GraphIndexBuildResult,
+    GraphIndexDirtyRefs,
+    GraphIndexRefreshPlan,
+    GraphIndexUnassignedSignal,
+    GraphIndexVectorDocument,
+    expand_community_scope,
+    build_graph_index,
+    build_graph_index_documents,
+    build_rolling_delta_index,
+    plan_graph_index_refresh,
+    resolve_graph_index_lineage,
+)
 from src.domain.knowledge.quality import (
     BadCaseReplay,
     KnowledgeQualityScanner,
@@ -70,7 +86,6 @@ from src.domain.knowledge.retrieval import (
     RetrievalTrace,
     _inherit_evidence_scores,
 )
-from src.domain.knowledge.retrieval_document import build_retrieval_document_version, build_retrieval_documents
 from src.domain.knowledge.retrieval_profile import profile_span
 from src.domain.knowledge.retrieval_anchor import build_guarded_query_anchor
 from src.domain.knowledge.retrieval_router import (
@@ -90,6 +105,7 @@ from src.domain.knowledge.repositories import (
     KnowledgeRepository,
     KnowledgeSourceProjectionRepository,
 )
+from src.domain.knowledge.semantic_index_materials import SemanticVectorDocument
 from src.domain.knowledge.schemas import (
     CompileResult,
     CompiledEdge,
@@ -99,10 +115,16 @@ from src.domain.knowledge.schemas import (
     FailedRecord,
     KnowledgeInput,
 )
-from src.domain.knowledge.wiki import KnowledgeWikiBuilder, WikiBuildResult, WikiPage
 from src.domain.knowledge_adapters.financial.consumption import can_hard_consume
 from src.domain.knowledge_adapters.financial.query_planner import FinancialQueryPlanner
 from src.infrastructure.config import settings
+from src.infrastructure.clients.reranker import RerankerClient
+from src.infrastructure.observability.langfuse_tracing import (
+    langfuse_flush,
+    langfuse_observation,
+    langfuse_propagation_context,
+    langfuse_update_span,
+)
 from src.infrastructure.vector_store.semantic_hybrid_retriever import (
     MilvusSemanticHybridRetriever,
 )
@@ -129,8 +151,10 @@ class KnowledgeService:
         self.compiler = KnowledgeCompiler(
             repository=repository,
             concurrency=settings.CLAUDE_PROXY_MAX_CONCURRENCY,
+            pre_extraction_chunk_materializer=(
+                self._materialize_pre_extraction_chunks if repository is not None else None
+            ),
         )
-        self.wiki_builder = KnowledgeWikiBuilder()
         self.quality_scanner = KnowledgeQualityScanner()
 
     async def health(self) -> KnowledgeHealthDTO:
@@ -151,7 +175,6 @@ class KnowledgeService:
             implemented=[
                 "health",
                 "compile",
-                "rebuild_wiki",
                 "rebuild_indexes",
                 "research_context",
                 "incremental_refresh",
@@ -170,11 +193,65 @@ class KnowledgeService:
         return self.source_projection_service.project(command)
 
     async def compile_kg(self, command: KnowledgeCompileCommand) -> KnowledgeCompileResultDTO:
+        metadata = _knowledge_command_metadata(command)
+        with langfuse_propagation_context(
+            trace_name=f"kg.compile:{command.adapter_name}",
+            tags=["kg", "write-path", "compile"],
+            metadata=metadata,
+        ):
+            with langfuse_observation(
+                name="kg.compile_kg",
+                as_type="chain",
+                input=metadata,
+                metadata=metadata,
+            ):
+                try:
+                    result = await self._compile_kg_impl(command)
+                    langfuse_update_span(
+                        output={
+                            "run_id": result.run_id,
+                            "nodes": result.nodes,
+                            "edges": result.edges,
+                            "evidence": result.evidence,
+                            "failed_records": result.failed_records,
+                            "dry_run": result.dry_run,
+                            "index_refresh": result.index_refresh,
+                        },
+                        metadata={"status": "completed"},
+                        status_message="completed",
+                    )
+                    return result
+                except Exception as exc:
+                    langfuse_update_span(
+                        metadata={"error_type": exc.__class__.__name__},
+                        level="ERROR",
+                        status_message=str(exc),
+                    )
+                    raise
+                finally:
+                    langfuse_flush()
+
+    async def _compile_kg_impl(self, command: KnowledgeCompileCommand) -> KnowledgeCompileResultDTO:
         adapter = get_adapter(command.adapter_name, target=command.target)
         inputs, normalize_failures = _normalize_records(adapter, command.records)
+        pre_extraction_materializer = None
+        if not command.dry_run and self.repository is not None:
+            async def pre_extraction_materializer(
+                adapter_name: str,
+                version: str,
+                evidence: list[CompiledEvidence],
+            ) -> None:
+                await self._materialize_pre_extraction_chunks(
+                    adapter_name,
+                    version,
+                    evidence,
+                    target=command.target,
+                )
+
         compiler = KnowledgeCompiler(
             repository=None if command.dry_run else self.repository,
             concurrency=_compile_concurrency(command),
+            pre_extraction_chunk_materializer=pre_extraction_materializer,
         )
         result = await compiler.compile(adapter, inputs)
         result.failed_records[:0] = normalize_failures
@@ -285,7 +362,6 @@ class KnowledgeService:
         steps.append(_incremental_step("bootstrap_stock_news", news_result))
 
         if command.dry_run:
-            steps.append({"name": "rebuild_wiki", "status": "skipped", "reason": "dry_run"})
             steps.append({"name": "rebuild_indexes", "status": "skipped", "reason": "dry_run"})
             return KnowledgeIncrementalRefreshResultDTO(
                 adapter_name="financial",
@@ -309,13 +385,7 @@ class KnowledgeService:
                 }
             )
         else:
-            wiki_result = await self.rebuild_wiki_for(
-                KnowledgeRebuildWikiCommand(
-                    adapter_name="financial",
-                    target=command.target,
-                )
-            )
-            steps.append(_incremental_step("rebuild_wiki", wiki_result))
+            steps.append({"name": "incremental_indexes", "status": "skipped", "reason": "no_changes"})
 
         if command.rebuild_indexes and not refresh_summaries:
             index_result = await self.rebuild_indexes_for(
@@ -470,35 +540,62 @@ class KnowledgeService:
             raise ValueError(f"incremental refresh task not found: {run_id}")
         return _incremental_task_dto(run)
 
-    async def rebuild_wiki_for(
-        self,
-        command: KnowledgeRebuildWikiCommand,
-    ) -> KnowledgeRebuildWikiResultDTO:
-        _ensure_scope_supported(command.scope)
-        get_adapter(command.adapter_name, target=command.target)
-        result = await self.rebuild_wiki(command.adapter_name)
-        return KnowledgeRebuildWikiResultDTO(
-            adapter_name=command.adapter_name,
-            run_id=f"kg_run:rebuild_wiki:{uuid4()}",
-            pages=len(result.pages),
-            issues=len(result.issues),
-            warnings=[dto_to_dict(item) for item in result.issues],
-        )
-
     async def rebuild_indexes_for(
+        self,
+        command: KnowledgeRebuildIndexesCommand,
+    ) -> KnowledgeRebuildIndexesResultDTO:
+        metadata = _knowledge_command_metadata(command)
+        with langfuse_propagation_context(
+            trace_name=f"kg.rebuild_indexes:{command.adapter_name}",
+            tags=["kg", "index", "rebuild"],
+            metadata=metadata,
+        ):
+            with langfuse_observation(
+                name="kg.rebuild_indexes",
+                as_type="chain",
+                input=metadata,
+                metadata=metadata,
+            ):
+                try:
+                    result = await self._rebuild_indexes_for_impl(command)
+                    langfuse_update_span(
+                        output={
+                            "run_id": result.run_id,
+                            "graph_adjacency": result.graph_adjacency,
+                            "evidence_chunks": result.evidence_chunks,
+                            "hybrid_chunks": result.hybrid_chunks,
+                            "graph_index": result.graph_index,
+                            "warnings": result.warnings,
+                        },
+                        metadata={"status": "completed"},
+                        status_message="completed",
+                    )
+                    return result
+                except Exception as exc:
+                    langfuse_update_span(
+                        metadata={"error_type": exc.__class__.__name__},
+                        level="ERROR",
+                        status_message=str(exc),
+                    )
+                    raise
+                finally:
+                    langfuse_flush()
+
+    async def _rebuild_indexes_for_impl(
         self,
         command: KnowledgeRebuildIndexesCommand,
     ) -> KnowledgeRebuildIndexesResultDTO:
         _ensure_scope_supported(command.scope)
         get_adapter(command.adapter_name, target=command.target)
         repository = self._require_repository()
-        allowed = {"graph_adjacency", "evidence_chunks", "hybrid_chunks", "vector_chunks"}
+        allowed = {"graph_adjacency", "evidence_chunks", "hybrid_chunks", "vector_chunks", "graph_index"}
         unknown = sorted(set(command.index_types) - allowed)
         if unknown:
             raise ValueError(f"unsupported index_types: {', '.join(unknown)}")
 
         _cleanup_evidence_versions(repository, command.adapter_name)
         result = {"graph_adjacency": 0, "evidence_chunks": 0, "hybrid_chunks": 0}
+        graph_index: dict[str, Any] = {}
         warnings: list[str] = []
         if "graph_adjacency" in command.index_types:
             result["graph_adjacency"] = repository.rebuild_graph_adjacency(command.adapter_name)
@@ -506,27 +603,32 @@ class KnowledgeService:
             result["evidence_chunks"] = repository.rebuild_evidence_chunks(command.adapter_name)
         if {"hybrid_chunks", "vector_chunks"} & set(command.index_types):
             chunks = repository.list_evidence_chunks(command.adapter_name)
-            list_retrieval_documents = getattr(repository, "list_retrieval_documents", None)
-            retrieval_documents = (
-                list_retrieval_documents(command.adapter_name, target=command.target)
-                if callable(list_retrieval_documents)
-                else []
-            )
             result["hybrid_chunks"] = await _semantic_hybrid_retriever().rebuild_index(
                 adapter_name=command.adapter_name,
                 target=command.target,
                 chunks=chunks,
                 nodes=repository.list_nodes(command.adapter_name),
                 edges=repository.list_edges(command.adapter_name),
-                wiki_pages=repository.list_wiki_pages(command.adapter_name),
-                retrieval_documents=retrieval_documents,
             )
+        if "graph_index" in command.index_types:
+            try:
+                graph_index = await _refresh_graph_index(
+                    repository=repository,
+                    adapter_name=command.adapter_name,
+                    target=command.target,
+                    force_rebuild_reason="manual_rebuild_indexes",
+                    graph_index_scope=command.scope,
+                )
+            except Exception:
+                repository.mark_graph_index_dirty(command.adapter_name, reason="manual_rebuild_failed")
+                raise
         return KnowledgeRebuildIndexesResultDTO(
             adapter_name=command.adapter_name,
             run_id=f"kg_run:rebuild_indexes:{uuid4()}",
             graph_adjacency=result["graph_adjacency"],
             evidence_chunks=result["evidence_chunks"],
             hybrid_chunks=result["hybrid_chunks"],
+            graph_index=graph_index,
             warnings=warnings,
         )
 
@@ -541,6 +643,47 @@ class KnowledgeService:
         return cleanup
 
     async def build_research_context_for(
+        self,
+        command: KnowledgeResearchContextCommand,
+    ) -> KnowledgeResearchContextDTO:
+        metadata = _knowledge_command_metadata(command)
+        with langfuse_propagation_context(
+            trace_name=f"kg.research_context:{command.adapter_name}",
+            tags=["kg", "retrieval", "research-context"],
+            metadata=metadata,
+        ):
+            with langfuse_observation(
+                name="kg.build_research_context",
+                as_type="chain",
+                input=metadata,
+                metadata=metadata,
+            ):
+                try:
+                    result = await self._build_research_context_for_impl(command)
+                    langfuse_update_span(
+                        output={
+                            "hits": len(result.hits),
+                            "matched_nodes": len(result.matched_nodes),
+                            "matched_edges": len(result.matched_edges),
+                            "evidence_refs": len(result.evidence_refs),
+                            "mode": result.mode,
+                            "channels": result.retrieval_channels_enabled,
+                        },
+                        metadata={"status": "completed"},
+                        status_message="completed",
+                    )
+                    return result
+                except Exception as exc:
+                    langfuse_update_span(
+                        metadata={"error_type": exc.__class__.__name__},
+                        level="ERROR",
+                        status_message=str(exc),
+                    )
+                    raise
+                finally:
+                    langfuse_flush()
+
+    async def _build_research_context_for_impl(
         self,
         command: KnowledgeResearchContextCommand,
     ) -> KnowledgeResearchContextDTO:
@@ -802,7 +945,7 @@ class KnowledgeService:
         replay = await replay_retrieval_trace(
             query=case.query,
             recorded_trace=RetrievalTrace.model_validate(case.recorded_trace),
-            registry=RetrievalToolRegistry(runtime, options),
+            registry=_retrieval_tool_registry(runtime, options),
         )
         context = runtime.build_answer_context_from_hits(
             query=case.query,
@@ -851,23 +994,6 @@ class KnowledgeService:
     async def search(self, *args, **kwargs):
         raise NotImplementedError("Knowledge search is planned for a later step")
 
-    async def rebuild_wiki(self, adapter_name: str) -> WikiBuildResult:
-        repository = self._require_repository()
-        _cleanup_evidence_versions(repository, adapter_name)
-        nodes = repository.list_nodes(adapter_name)
-        result = self.wiki_builder.build(
-            adapter_name=adapter_name,
-            version=_latest_version(nodes),
-            nodes=nodes,
-            edges=repository.list_edges(adapter_name),
-            evidence=repository.list_evidence(adapter_name),
-        )
-        errors = [issue for issue in result.issues if issue.severity.value == "error"]
-        if errors:
-            raise ValueError(f"wiki lint failed: {len(errors)} error(s)")
-        repository.rebuild_wiki_pages(adapter_name, result.pages)
-        return result
-
     async def rebuild_indexes(self, adapter_name: str) -> dict[str, int]:
         repository = self._require_repository()
         _cleanup_evidence_versions(repository, adapter_name)
@@ -903,7 +1029,7 @@ class KnowledgeService:
             semantic_retriever=_semantic_hybrid_retriever(),
         )
         if retrieval_mode in {"agentic_arag", "openai_agents_arag"}:
-            registry = RetrievalToolRegistry(runtime, options)
+            registry = _retrieval_tool_registry(runtime, options)
             bootstrap_first = retrieval_mode == "openai_agents_arag"
             with profile_span(
                 "kg_context.agentic_run",
@@ -933,7 +1059,7 @@ class KnowledgeService:
                     ).run(query)
             hits = list(agentic.hits)
             trace = agentic.trace
-            if agentic.evidence_refs and "open" not in trace.channels_used:
+            if retrieval_mode != "openai_agents_arag" and agentic.evidence_refs and "open" not in trace.channels_used:
                 with profile_span(
                     "kg_context.agentic_missing_open",
                     evidence_count=len(agentic.evidence_refs),
@@ -990,7 +1116,7 @@ class KnowledgeService:
             )
             return context
         execution = await RetrievalPlanExecutor(
-            RetrievalToolRegistry(runtime, options)
+            _retrieval_tool_registry(runtime, options)
         ).execute(query=query, plan=retrieval_plan)
         context = runtime.build_answer_context_from_hits(
             query=query,
@@ -1106,7 +1232,6 @@ class KnowledgeService:
             nodes=nodes,
             edges=edges,
             evidence=evidence,
-            wiki_pages=repository.list_wiki_pages(adapter_name),
         )
         if adapter_name == "financial":
             from src.infrastructure.persistence.repositories.knowledge_normalization_rule_repository import (
@@ -1171,158 +1296,141 @@ class KnowledgeService:
                 "mode": "incremental",
                 "graph_adjacency": 0,
                 "evidence_chunks": 0,
-                "wiki_pages": 0,
-                "retrieval_documents": 0,
                 "hybrid_chunks": 0,
+                "graph_index": {},
             }
 
         with profile_span("kg_incremental_index.cleanup_evidence_versions", adapter=result.adapter_name):
             cleanup = _cleanup_evidence_versions(repository, result.adapter_name)
+        evidence_ids_to_delete = _ordered_unique(
+            [*(cleanup.get("evidence_ids") or []), *[item.evidence_id for item in result.evidence]]
+        )
         with profile_span(
             "kg_incremental_index.delete_stale_hybrid_vectors",
-            evidence=len(cleanup.get("evidence_ids") or []),
+            evidence=len(evidence_ids_to_delete),
         ):
             stale_hybrid_vectors = await _delete_hybrid_evidence_vectors(
                 adapter_name=result.adapter_name,
                 target=target,
-                evidence_ids=cleanup.get("evidence_ids") or [],
+                evidence_ids=evidence_ids_to_delete,
             )
 
         with profile_span("kg_incremental_index.upsert_graph_adjacency", edges=len(result.edges)):
             graph_adjacency = repository.upsert_graph_adjacency(result.edges)
         with profile_span("kg_incremental_index.upsert_evidence_chunks", evidence=len(result.evidence)):
             evidence_chunks = repository.upsert_evidence_chunks(result.evidence)
-        with profile_span("kg_incremental_index.changed_wiki_pages"):
-            wiki_pages = self._changed_wiki_pages(result)
-        with profile_span("kg_incremental_index.upsert_wiki_pages", wiki_pages=len(wiki_pages)):
-            wiki_count = repository.upsert_wiki_pages(result.adapter_name, wiki_pages)
-        with profile_span("kg_incremental_index.build_hybrid_evidence_chunks", evidence=len(result.evidence)):
-            hybrid_evidence_chunks = _evidence_chunks_from_compiled(result.evidence)
-        with profile_span("kg_incremental_index.collect_hybrid_nodes", nodes=len(result.nodes), edges=len(result.edges)):
-            hybrid_nodes = _milvus_nodes_for_result(repository, result)
         with profile_span(
-            "kg_incremental_index.build_retrieval_documents",
-            nodes=len(hybrid_nodes),
+            "kg_incremental_index.collect_semantic_materials",
+            nodes=len(result.nodes),
             edges=len(result.edges),
             evidence=len(result.evidence),
-            wiki_pages=len(wiki_pages),
         ):
-            retrieval_documents = build_retrieval_documents(
+            semantic_materials = _semantic_index_materials_for_result(repository, result)
+        with profile_span(
+            "kg_incremental_index.delete_stale_semantic_documents",
+            chunk_ids=len(semantic_materials.stale_chunk_ids),
+        ):
+            stale_semantic_documents = await _delete_hybrid_documents(
                 adapter_name=result.adapter_name,
                 target=target,
-                nodes=hybrid_nodes,
-                edges=result.edges,
-                evidence=result.evidence,
-                wiki_pages=wiki_pages,
+                chunk_ids=semantic_materials.stale_chunk_ids,
             )
-        with profile_span("kg_incremental_index.upsert_retrieval_documents", documents=len(retrieval_documents)):
-            retrieval_document_count = repository.upsert_retrieval_documents(retrieval_documents)
-        retrieval_document_version_id = ""
-        save_document_version = getattr(repository, "save_retrieval_document_version", None)
-        if callable(save_document_version):
-            with profile_span("kg_incremental_index.save_retrieval_document_version", documents=len(retrieval_documents)):
-                retrieval_document_version = build_retrieval_document_version(
-                    adapter_name=result.adapter_name,
-                    target=target,
-                    documents=retrieval_documents,
-                    nodes=hybrid_nodes,
-                    edges=result.edges,
-                    evidence=result.evidence,
-                    wiki_pages=wiki_pages,
-                    config={
-                        "compile_run_id": result.run_id,
-                        "kg_version": result.version,
-                        "builder": "build_retrieval_documents",
-                    },
-                )
-                retrieval_document_version_id = save_document_version(retrieval_document_version)
         with profile_span(
             "kg_incremental_index.hybrid_upsert_index",
-            chunks=len(hybrid_evidence_chunks),
-            nodes=len(hybrid_nodes),
-            edges=len(result.edges),
-            wiki_pages=len(wiki_pages),
+            chunks=len(semantic_materials.chunks),
+            nodes=len(semantic_materials.nodes),
+            edges=len(semantic_materials.edges),
         ):
             hybrid_chunks = await _semantic_hybrid_retriever().upsert_index(
                 adapter_name=result.adapter_name,
                 target=target,
-                chunks=hybrid_evidence_chunks,
-                nodes=hybrid_nodes,
-                edges=result.edges,
-                wiki_pages=wiki_pages,
-                retrieval_documents=retrieval_documents,
+                chunks=semantic_materials.chunks,
+                nodes=semantic_materials.nodes,
+                edges=semantic_materials.edges,
                 kg_version=result.version,
+                graph_projections=FINANCIAL_GRAPH_PROJECTIONS if result.adapter_name == "financial" else None,
             )
+        with profile_span("kg_incremental_index.mark_graph_index_dirty", adapter=result.adapter_name):
+            dirty_rows = repository.mark_graph_index_dirty(
+                result.adapter_name,
+                reason="compile_changed_refs",
+            )
+            graph_index = {
+                "status": "deferred",
+                "reason": "graph_index_is_async_or_manual",
+                "dirty_rows": dirty_rows,
+                "dirty_refs": {
+                    "nodes": len(result.nodes),
+                    "edges": len(result.edges),
+                    "evidence": len(result.evidence),
+                    "chunks": len(semantic_materials.chunks),
+                },
+            }
         summary = {
             "mode": "incremental",
             "graph_adjacency": graph_adjacency,
             "evidence_chunks": evidence_chunks,
-            "wiki_pages": wiki_count,
             "hybrid_chunks": hybrid_chunks,
+            "graph_index": graph_index,
             "node_ids": [node.node_id for node in result.nodes],
             "edge_ids": [edge.edge_id for edge in result.edges],
             "evidence_ids": [item.evidence_id for item in result.evidence],
-            "retrieval_documents": retrieval_document_count,
-            "retrieval_document_version_id": retrieval_document_version_id,
             "stale_evidence_cleanup": cleanup,
             "stale_hybrid_vectors_deleted": stale_hybrid_vectors,
+            "stale_semantic_documents_deleted": stale_semantic_documents,
+            "semantic_materials": {
+                "chunks": len(semantic_materials.chunks),
+                "nodes": len(semantic_materials.nodes),
+                "edges": len(semantic_materials.edges),
+                "stale_chunk_ids": semantic_materials.stale_chunk_ids,
+            },
         }
         logger.info(
             "[kg_incremental_index] adapter=%s target=%s graph_adjacency=%d "
-            "evidence_chunks=%d wiki_pages=%d retrieval_documents=%d hybrid_chunks=%d nodes=%d edges=%d evidence=%d",
+            "evidence_chunks=%d hybrid_chunks=%d graph_index_status=%s nodes=%d edges=%d evidence=%d",
             result.adapter_name,
             target,
             graph_adjacency,
             evidence_chunks,
-            wiki_count,
-            retrieval_document_count,
             hybrid_chunks,
+            str(graph_index.get("status") or ""),
             len(result.nodes),
             len(result.edges),
             len(result.evidence),
         )
         return summary
 
-    def _changed_wiki_pages(self, result: CompileResult) -> list[WikiPage]:
+    async def _materialize_pre_extraction_chunks(
+        self,
+        adapter_name: str,
+        version: str,
+        evidence: list[CompiledEvidence],
+        *,
+        target: Target | None = None,
+    ) -> None:
+        """Persist evidence/chunk readable targets before relation extraction.
+
+        This keeps the write path genuinely chunk-first: the extractor receives
+        chunk ids that already have PG manifests and Milvus chunk targets.
+        """
         repository = self._require_repository()
-        with profile_span("kg_incremental_index.changed_wiki_pages.load_nodes"):
-            nodes = repository.list_nodes(result.adapter_name)
-        with profile_span("kg_incremental_index.changed_wiki_pages.load_edges"):
-            edges = repository.list_edges(result.adapter_name)
-        with profile_span("kg_incremental_index.changed_wiki_pages.load_evidence"):
-            evidence = repository.list_evidence(result.adapter_name)
-        with profile_span(
-            "kg_incremental_index.changed_wiki_pages.build_all",
-            nodes=len(nodes),
-            edges=len(edges),
-            evidence=len(evidence),
-        ):
-            build_result = self.wiki_builder.build(
-                adapter_name=result.adapter_name,
-                version=_latest_version(nodes),
-                nodes=nodes,
-                edges=edges,
-                evidence=evidence,
+        with profile_span("kg_pre_extraction_chunks.upsert_evidence", evidence=len(evidence)):
+            repository.upsert_evidence(evidence)
+        with profile_span("kg_pre_extraction_chunks.upsert_chunk_manifest", evidence=len(evidence)):
+            repository.upsert_evidence_chunks(evidence)
+        chunks = [chunk for item in evidence for chunk in build_chunks_for_compiled_evidence(item)]
+        if not chunks:
+            return
+        with profile_span("kg_pre_extraction_chunks.milvus_upsert", chunks=len(chunks)):
+            await _semantic_hybrid_retriever().upsert_index(
+                adapter_name=adapter_name,
+                target=target or self.target,
+                chunks=chunks,
+                nodes=[],
+                edges=[],
+                kg_version=version,
+                graph_projections=FINANCIAL_GRAPH_PROJECTIONS if adapter_name == "financial" else None,
             )
-        errors = [issue for issue in build_result.issues if issue.severity.value == "error"]
-        if errors:
-            raise ValueError(f"wiki lint failed during incremental refresh: {len(errors)} error(s)")
-        changed_node_ids = {node.node_id for node in result.nodes}
-        changed_edge_ids = {edge.edge_id for edge in result.edges}
-        changed_evidence_ids = {item.evidence_id for item in result.evidence}
-        for edge in result.edges:
-            changed_node_ids.add(edge.source_node_id)
-            changed_node_ids.add(edge.target_node_id)
-            changed_evidence_ids.update(edge.evidence_ids)
-        with profile_span("kg_incremental_index.changed_wiki_pages.filter", pages=len(build_result.pages)):
-            return [
-                page
-                for page in build_result.pages
-                if page.page_type == "index_page"
-                or set(page.source_node_ids) & changed_node_ids
-                or set(page.source_edge_ids) & changed_edge_ids
-                or set(page.source_evidence_ids) & changed_evidence_ids
-            ]
 
     def _require_repository(self) -> KnowledgeRepository:
         if self.repository is None:
@@ -1331,6 +1439,14 @@ class KnowledgeService:
 
 
 Target = Literal["prod", "test"]
+
+
+@dataclass(frozen=True)
+class _SemanticIndexMaterials:
+    chunks: list[EvidenceChunk]
+    nodes: list[CompiledNode]
+    edges: list[CompiledEdge]
+    stale_chunk_ids: list[str]
 
 
 def create_knowledge_service(target: Target | None = None) -> KnowledgeService:
@@ -1348,14 +1464,31 @@ def create_knowledge_service(target: Target | None = None) -> KnowledgeService:
     )
 
 
-def _latest_version(nodes) -> str:
-    versions = sorted({node.version for node in nodes})
-    return versions[-1] if versions else "v1"
-
-
 def _ensure_scope_supported(scope: str) -> None:
-    if scope != "all":
-        raise ValueError("scope 第一版仅支持 all")
+    _graph_index_scope_projection(scope)
+
+
+def _graph_index_scope_projection(scope: str) -> str | None:
+    normalized = (scope or "all").strip()
+    if normalized in {"", "all"}:
+        return None
+    if normalized.startswith("projection:"):
+        normalized = normalized.split(":", 1)[1].strip()
+    known = {profile.projection for profile in FINANCIAL_GRAPH_PROJECTIONS}
+    if normalized not in known:
+        raise ValueError(
+            "unsupported scope: "
+            f"{scope}. supported scopes: all, "
+            + ", ".join(f"projection:{profile.projection}" for profile in FINANCIAL_GRAPH_PROJECTIONS)
+        )
+    return normalized
+
+
+def _graph_index_selected_projections(scope: str) -> tuple[Any, ...]:
+    projection = _graph_index_scope_projection(scope)
+    if projection is None:
+        return FINANCIAL_GRAPH_PROJECTIONS
+    return tuple(profile for profile in FINANCIAL_GRAPH_PROJECTIONS if profile.projection == projection)
 
 
 def _compile_concurrency(command: KnowledgeCompileCommand) -> int:
@@ -1382,6 +1515,829 @@ async def _delete_hybrid_evidence_vectors(*, adapter_name: str, target: str, evi
             exc,
         )
         return 0
+
+
+async def _delete_hybrid_documents(*, adapter_name: str, target: str, chunk_ids: list[str]) -> int:
+    if not chunk_ids:
+        return 0
+    try:
+        return await _semantic_hybrid_retriever().delete_documents(
+            adapter_name=adapter_name,
+            target=target,
+            chunk_ids=chunk_ids,
+        )
+    except Exception as exc:
+        logger.warning(
+            "[kg_cleanup] failed to delete stale semantic documents adapter=%s target=%s chunk_ids=%d error=%s",
+            adapter_name,
+            target,
+            len(chunk_ids),
+            exc,
+        )
+        return 0
+
+
+async def _refresh_graph_index(
+    *,
+    repository: KnowledgeRepository,
+    adapter_name: str,
+    target: str,
+    kg_version: str = "",
+    changed_node_ids: list[str] | None = None,
+    changed_edge_ids: list[str] | None = None,
+    changed_evidence_ids: list[str] | None = None,
+    changed_chunk_ids: list[str] | None = None,
+    force_rebuild_reason: str = "",
+    graph_index_scope: str = "all",
+) -> dict[str, Any]:
+    scope_projection = _graph_index_scope_projection(graph_index_scope)
+    existing_communities = repository.list_graph_communities(adapter_name)
+    existing_findings = repository.list_graph_findings(adapter_name)
+    existing_unassigned_signals = repository.list_graph_unassigned_signals(adapter_name, status="active")
+    material_counts = repository.count_graph_index_materials(adapter_name)
+    dirty_refs = GraphIndexDirtyRefs(
+        node_ids=changed_node_ids or [],
+        edge_ids=changed_edge_ids or [],
+        evidence_ids=changed_evidence_ids or [],
+        chunk_ids=changed_chunk_ids or [],
+    )
+    related_unassigned_signals = _related_graph_unassigned_signals(existing_unassigned_signals, dirty_refs)
+    with langfuse_observation(
+        name="graph_index.change_score",
+        as_type="span",
+        input={
+            "changed_node_ids": changed_node_ids or [],
+            "changed_edge_ids": changed_edge_ids or [],
+            "changed_evidence_ids": changed_evidence_ids or [],
+            "changed_chunk_ids": changed_chunk_ids or [],
+            "existing_communities": len(existing_communities),
+            "existing_unassigned_signals": len(existing_unassigned_signals),
+            "related_unassigned_signals": len(related_unassigned_signals),
+            "material_counts": material_counts,
+        },
+        metadata={"adapter_name": adapter_name, "target": target},
+    ):
+        refresh_plan = plan_graph_index_refresh(
+            existing_communities=existing_communities,
+            changed_node_ids=changed_node_ids,
+            changed_edge_ids=changed_edge_ids,
+            changed_evidence_ids=changed_evidence_ids,
+            changed_chunk_ids=changed_chunk_ids,
+            total_node_count=material_counts.get("nodes", 0),
+            total_edge_count=material_counts.get("edges", 0),
+            total_chunk_count=material_counts.get("chunks", 0),
+        )
+        langfuse_update_span(output=refresh_plan.as_dict(), status_message=refresh_plan.action)
+    if (
+        not force_rebuild_reason
+        and related_unassigned_signals
+        and refresh_plan.action == "full_rebuild"
+        and "changed_refs_not_attached_to_existing_community" in refresh_plan.reasons
+    ):
+        refresh_plan = GraphIndexRefreshPlan(
+            action="local_recompute_required",
+            score=min(refresh_plan.score, 0.34),
+            affected_community_ids=[],
+            affected_projection_counts=refresh_plan.affected_projection_counts,
+            changed_counts=refresh_plan.changed_counts,
+            metrics={
+                **refresh_plan.metrics,
+                "related_unassigned_signal_ids": [
+                    signal.signal_id for signal in related_unassigned_signals
+                ],
+            },
+            reasons=["related_unassigned_signal_promotion", *refresh_plan.reasons],
+        )
+    if force_rebuild_reason and refresh_plan.action == "noop":
+        refresh_plan = GraphIndexRefreshPlan(
+            action="full_rebuild",
+            score=1.0,
+            affected_community_ids=[],
+            affected_projection_counts={},
+            changed_counts=refresh_plan.changed_counts,
+            metrics={**refresh_plan.metrics, "existing_communities": len(existing_communities)},
+            reasons=[force_rebuild_reason],
+        )
+    if force_rebuild_reason or refresh_plan.action in {"noop", "full_rebuild"}:
+        chunks = repository.list_evidence_chunks(adapter_name)
+        nodes = repository.list_nodes(adapter_name)
+        edges = repository.list_edges(adapter_name)
+    else:
+        seed_refs = _graph_index_material_seed(
+            existing_communities,
+            dirty_refs,
+            refresh_plan,
+            related_unassigned_signals=related_unassigned_signals,
+        )
+        scoped_materials = repository.list_graph_index_materials(
+            adapter_name,
+            node_ids=seed_refs["node_ids"],
+            edge_ids=seed_refs["edge_ids"],
+            evidence_ids=seed_refs["evidence_ids"],
+            chunk_ids=seed_refs["chunk_ids"],
+        )
+        chunks = list(scoped_materials.get("chunks") or [])
+        nodes = list(scoped_materials.get("nodes") or [])
+        edges = list(scoped_materials.get("edges") or [])
+    with langfuse_observation(
+        name="graph_index.dirty_subgraph",
+        as_type="span",
+        input={"refresh_plan": refresh_plan.as_dict(), "dirty_refs": dirty_refs.__dict__},
+        metadata={"adapter_name": adapter_name, "target": target},
+    ):
+        build_scope = _graph_index_build_scope(
+            chunks=chunks,
+            nodes=nodes,
+            edges=edges,
+            existing_communities=existing_communities,
+            dirty_refs=dirty_refs,
+            related_unassigned_signals=related_unassigned_signals,
+            refresh_plan=refresh_plan,
+            force_rebuild=bool(force_rebuild_reason),
+            graph_index_scope=graph_index_scope,
+        )
+        langfuse_update_span(output=build_scope["diagnostics"], status_message=build_scope["diagnostics"]["strategy"])
+
+    if refresh_plan.action == "light_refresh_required" and not force_rebuild_reason:
+        graph_index = await _light_refresh_graph_index(
+            existing_communities=existing_communities,
+            existing_findings=existing_findings,
+            chunks=chunks,
+            nodes=nodes,
+            edges=edges,
+            dirty_refs=dirty_refs,
+            refresh_plan=refresh_plan,
+        )
+    elif refresh_plan.action == "local_review_required" and not force_rebuild_reason:
+        graph_index = await _local_review_graph_index(
+            existing_communities=existing_communities,
+            chunks=build_scope["chunks"],
+            nodes=build_scope["nodes"],
+            edges=build_scope["edges"],
+            dirty_refs=dirty_refs,
+            refresh_plan=refresh_plan,
+        )
+    else:
+        with langfuse_observation(
+            name="graph_index.community_detect",
+            as_type="span",
+            input=build_scope["diagnostics"],
+            metadata={"adapter_name": adapter_name, "target": target},
+        ):
+            graph_index = build_graph_index(
+                chunks=build_scope["chunks"],
+                nodes=build_scope["nodes"],
+                edges=build_scope["edges"],
+                projections=build_scope["projections"],
+            )
+            langfuse_update_span(output=graph_index.diagnostics, status_message="completed")
+        with langfuse_observation(
+            name="graph_index.report_generate_batch",
+            as_type="span",
+            input={
+                "communities": len(graph_index.communities),
+                "chunks": len(build_scope["chunks"]),
+                "nodes": len(build_scope["nodes"]),
+                "edges": len(build_scope["edges"]),
+            },
+            metadata={"adapter_name": adapter_name, "target": target},
+        ):
+            graph_index = await GraphIndexLLMReporter().enrich(
+                graph_index=graph_index,
+                nodes=build_scope["nodes"],
+                edges=build_scope["edges"],
+                chunks=build_scope["chunks"],
+            )
+            langfuse_update_span(output=graph_index.diagnostics, status_message="completed")
+        with langfuse_observation(
+            name="graph_index.lineage_resolve",
+            as_type="span",
+            input={
+                "new_communities": [community.community_id for community in graph_index.communities],
+                "existing_communities": [community.community_id for community in existing_communities],
+            },
+            metadata={"adapter_name": adapter_name, "target": target},
+        ):
+            resolved_communities = resolve_graph_index_lineage(
+                communities=graph_index.communities,
+                existing_communities=existing_communities,
+            )
+            langfuse_update_span(
+                output={
+                    "communities": len(resolved_communities),
+                    "change_reasons": _count_by([community.change_reason for community in resolved_communities]),
+                },
+                status_message="completed",
+            )
+        graph_index = graph_index.__class__(
+            communities=resolved_communities,
+            findings=graph_index.findings,
+            deltas=graph_index.deltas,
+            documents=[],
+            diagnostics={
+                **graph_index.diagnostics,
+                "build_scope": build_scope["diagnostics"],
+            },
+            unassigned_signals=graph_index.unassigned_signals,
+        )
+        with langfuse_observation(
+            name="graph_index.rolling_delta_build",
+            as_type="span",
+            input={"communities": len(graph_index.communities), "findings": len(graph_index.findings)},
+            metadata={"adapter_name": adapter_name, "target": target},
+        ):
+            deltas = build_rolling_delta_index(
+                communities=graph_index.communities,
+                findings=graph_index.findings,
+                chunks=build_scope["chunks"],
+            )
+            langfuse_update_span(output={"deltas": len(deltas)}, status_message="completed")
+        graph_index = graph_index.__class__(
+            communities=graph_index.communities,
+            findings=graph_index.findings,
+            deltas=deltas,
+            documents=build_graph_index_documents(
+                communities=graph_index.communities,
+                findings=graph_index.findings,
+                deltas=deltas,
+                nodes=build_scope["nodes"],
+            ),
+            diagnostics=graph_index.diagnostics,
+            unassigned_signals=graph_index.unassigned_signals,
+        )
+    scope = _graph_index_replacement_scope(
+        existing_communities=existing_communities,
+        rebuilt_communities=graph_index.communities,
+        rebuilt_findings=graph_index.findings,
+        rebuilt_deltas=graph_index.deltas,
+        dirty_refs=dirty_refs,
+        refresh_plan=refresh_plan,
+        force_rebuild=bool(force_rebuild_reason),
+        scope_projection=scope_projection,
+        related_unassigned_signal_ids=[signal.signal_id for signal in related_unassigned_signals],
+    )
+    promoted_signals = _promoted_graph_unassigned_signals(
+        related_unassigned_signals,
+        scope["communities"],
+    )
+    if scope["strategy"] in {"local_recompute_scoped_replace", "local_unassigned_promotion"}:
+        selected_community_ids = {community.community_id for community in scope["communities"]}
+        selected_finding_ids = {finding.finding_id for finding in scope["findings"]}
+        persisted = repository.replace_graph_index_scope(
+            adapter_name,
+            remove_community_ids=scope["remove_community_ids"],
+            communities=scope["communities"],
+            findings=scope["findings"],
+            deltas=scope["deltas"],
+            unassigned_signals=graph_index.unassigned_signals,
+            promoted_signals=promoted_signals,
+        )
+        graph_documents = [
+            document
+            for document in graph_index.documents
+            if document.document_id in selected_community_ids
+            or document.document_id in selected_finding_ids
+            or document.document_id in {delta.delta_id for delta in scope["deltas"]}
+        ]
+    else:
+        persisted = repository.replace_graph_index(
+            adapter_name,
+            communities=graph_index.communities,
+            findings=graph_index.findings,
+            deltas=graph_index.deltas,
+            unassigned_signals=graph_index.unassigned_signals,
+        )
+        graph_documents = graph_index.documents
+    stale_target_ids = [str(item) for item in persisted.get("stale_target_ids") or [] if item]
+    stale_deleted = await _delete_hybrid_documents(
+        adapter_name=adapter_name,
+        target=target,
+        chunk_ids=stale_target_ids,
+    )
+    documents = [_semantic_document_from_graph_index_document(document) for document in graph_documents]
+    documents_written = await _semantic_hybrid_retriever().upsert_semantic_documents(
+        adapter_name=adapter_name,
+        target=target,
+        documents=documents,
+        kg_version=kg_version,
+    )
+    summary = {
+        "communities": len(scope["communities"]),
+        "findings": len(scope["findings"]),
+        "deltas": len(scope["deltas"]),
+        "built_communities": len(graph_index.communities),
+        "built_findings": len(graph_index.findings),
+        "built_deltas": len(graph_index.deltas),
+        "documents": len(documents),
+        "built_unassigned_signals": len(graph_index.unassigned_signals),
+        "related_unassigned_signals": len(related_unassigned_signals),
+        "promoted_unassigned_signals": len(promoted_signals),
+        "documents_written": documents_written,
+        "stale_documents_deleted": stale_deleted,
+        "persisted": {
+            "communities": persisted.get("communities", 0),
+            "findings": persisted.get("findings", 0),
+            "deltas": persisted.get("deltas", 0),
+            "unassigned_signals": persisted.get("unassigned_signals", 0),
+            "promoted_unassigned_signals": persisted.get("promoted_unassigned_signals", 0),
+            "stale_target_ids": len(stale_target_ids),
+        },
+        "refresh_plan": refresh_plan.as_dict(),
+        "actual_refresh_strategy": scope["strategy"],
+        "replacement_scope": {
+            "remove_community_ids": len(scope["remove_community_ids"]),
+            "communities": len(scope["communities"]),
+            "findings": len(scope["findings"]),
+            "deltas": len(scope["deltas"]),
+            "projection": scope_projection or "all",
+        },
+        "diagnostics": graph_index.diagnostics,
+    }
+    logger.info(
+        "[kg_graph_index] adapter=%s target=%s plan=%s strategy=%s score=%.4f affected=%d "
+        "communities=%d/%d findings=%d/%d documents_written=%d stale_deleted=%d",
+        adapter_name,
+        target,
+        refresh_plan.action,
+        scope["strategy"],
+        refresh_plan.score,
+        len(refresh_plan.affected_community_ids),
+        len(scope["communities"]),
+        len(graph_index.communities),
+        len(scope["findings"]),
+        len(graph_index.findings),
+        documents_written,
+        stale_deleted,
+    )
+    return summary
+
+
+def _graph_index_replacement_scope(
+    *,
+    existing_communities: list[Any],
+    rebuilt_communities: list[Any],
+    rebuilt_findings: list[Any],
+    rebuilt_deltas: list[Any],
+    dirty_refs: GraphIndexDirtyRefs,
+    refresh_plan: GraphIndexRefreshPlan,
+    force_rebuild: bool,
+    scope_projection: str | None = None,
+    related_unassigned_signal_ids: list[str] | None = None,
+) -> dict[str, Any]:
+    if force_rebuild and scope_projection:
+        remove_community_ids = [
+            community.community_id for community in existing_communities if community.projection == scope_projection
+        ]
+        replacement_ids = {community.community_id for community in rebuilt_communities}
+        return {
+            "strategy": "global_calibration_projection_replace",
+            "remove_community_ids": remove_community_ids,
+            "communities": rebuilt_communities,
+            "findings": [finding for finding in rebuilt_findings if finding.community_id in replacement_ids],
+            "deltas": [
+                delta for delta in rebuilt_deltas if set(delta.community_ids).intersection(replacement_ids)
+            ],
+            "replacement_community_ids": replacement_ids,
+        }
+    if force_rebuild or refresh_plan.action in {"noop", "full_rebuild"}:
+        return {
+            "strategy": "global_calibration_full_replace" if force_rebuild else "full_replace",
+            "remove_community_ids": [],
+            "communities": rebuilt_communities,
+            "findings": rebuilt_findings,
+            "deltas": rebuilt_deltas,
+        }
+    remove_community_ids = expand_community_scope(existing_communities, refresh_plan.affected_community_ids)
+    if not remove_community_ids:
+        if related_unassigned_signal_ids:
+            replacement_ids = {community.community_id for community in rebuilt_communities}
+            return {
+                "strategy": "local_unassigned_promotion",
+                "remove_community_ids": [],
+                "communities": rebuilt_communities,
+                "findings": [finding for finding in rebuilt_findings if finding.community_id in replacement_ids],
+                "deltas": [
+                    delta for delta in rebuilt_deltas if set(delta.community_ids).intersection(replacement_ids)
+                ],
+                "replacement_community_ids": replacement_ids,
+                "related_unassigned_signal_ids": related_unassigned_signal_ids,
+            }
+        return {
+            "strategy": "full_replace",
+            "remove_community_ids": [],
+            "communities": rebuilt_communities,
+            "findings": rebuilt_findings,
+            "deltas": rebuilt_deltas,
+        }
+    replacement_communities = rebuilt_communities
+    replacement_ids = {community.community_id for community in replacement_communities}
+    replacement_findings = [finding for finding in rebuilt_findings if finding.community_id in replacement_ids]
+    replacement_deltas = [
+        delta
+        for delta in rebuilt_deltas
+        if set(delta.community_ids).intersection(replacement_ids)
+    ]
+    return {
+        "strategy": "local_recompute_scoped_replace",
+        "remove_community_ids": remove_community_ids,
+        "communities": replacement_communities,
+        "findings": replacement_findings,
+        "deltas": replacement_deltas,
+        "replacement_community_ids": replacement_ids,
+    }
+
+
+def _graph_index_material_seed(
+    existing_communities: list[Any],
+    dirty_refs: GraphIndexDirtyRefs,
+    refresh_plan: GraphIndexRefreshPlan,
+    *,
+    related_unassigned_signals: list[GraphIndexUnassignedSignal] | None = None,
+) -> dict[str, list[str]]:
+    scoped_ids = set(expand_community_scope(existing_communities, refresh_plan.affected_community_ids))
+    node_ids = list(dirty_refs.node_ids)
+    edge_ids = list(dirty_refs.edge_ids)
+    evidence_ids = list(dirty_refs.evidence_ids)
+    chunk_ids = list(dirty_refs.chunk_ids)
+    for community in existing_communities:
+        if community.community_id not in scoped_ids:
+            continue
+        node_ids.extend(community.member_node_ids)
+        edge_ids.extend(community.member_edge_ids)
+        evidence_ids.extend(community.evidence_ids)
+        chunk_ids.extend(community.chunk_ids)
+    for signal in related_unassigned_signals or []:
+        node_ids.extend(signal.node_ids)
+        edge_ids.extend(signal.edge_ids)
+        evidence_ids.extend(signal.evidence_ids)
+        chunk_ids.extend(signal.chunk_ids)
+    return {
+        "node_ids": _ordered_unique(node_ids),
+        "edge_ids": _ordered_unique(edge_ids),
+        "evidence_ids": _ordered_unique(evidence_ids),
+        "chunk_ids": _ordered_unique(chunk_ids),
+    }
+
+
+def _related_graph_unassigned_signals(
+    signals: list[GraphIndexUnassignedSignal],
+    dirty_refs: GraphIndexDirtyRefs,
+) -> list[GraphIndexUnassignedSignal]:
+    if not signals:
+        return []
+    dirty_nodes = set(dirty_refs.node_ids)
+    dirty_edges = set(dirty_refs.edge_ids)
+    dirty_evidence = set(dirty_refs.evidence_ids)
+    dirty_chunks = set(dirty_refs.chunk_ids)
+    result = [
+        signal
+        for signal in signals
+        if (
+            dirty_nodes.intersection(signal.node_ids)
+            or dirty_edges.intersection(signal.edge_ids)
+            or dirty_evidence.intersection(signal.evidence_ids)
+            or dirty_chunks.intersection(signal.chunk_ids)
+        )
+    ]
+    return sorted(result, key=lambda item: (item.projection, item.signal_id))
+
+
+def _promoted_graph_unassigned_signals(
+    signals: list[GraphIndexUnassignedSignal],
+    communities: list[Any],
+) -> dict[str, str]:
+    if not signals or not communities:
+        return {}
+    promoted: dict[str, str] = {}
+    for signal in signals:
+        signal_edges = set(signal.edge_ids)
+        signal_chunks = set(signal.chunk_ids)
+        signal_evidence = set(signal.evidence_ids)
+        signal_nodes = set(signal.node_ids)
+        for community in communities:
+            community_edges = set(community.member_edge_ids)
+            community_chunks = set(community.chunk_ids)
+            community_evidence = set(community.evidence_ids)
+            community_nodes = set(community.member_node_ids)
+            if signal_edges and signal_edges.issubset(community_edges):
+                promoted[signal.signal_id] = community.community_id
+                break
+            if signal_chunks and signal_chunks.issubset(community_chunks) and signal_nodes.issubset(community_nodes):
+                promoted[signal.signal_id] = community.community_id
+                break
+            if (
+                signal_evidence
+                and signal_evidence.issubset(community_evidence)
+                and signal_nodes
+                and signal_nodes.issubset(community_nodes)
+            ):
+                promoted[signal.signal_id] = community.community_id
+                break
+    return promoted
+
+
+async def _light_refresh_graph_index(
+    *,
+    existing_communities: list[Any],
+    existing_findings: list[Any],
+    chunks: list[Any],
+    nodes: list[Any],
+    edges: list[Any],
+    dirty_refs: GraphIndexDirtyRefs,
+    refresh_plan: GraphIndexRefreshPlan,
+) -> GraphIndexBuildResult:
+    scoped_ids = expand_community_scope(existing_communities, refresh_plan.affected_community_ids)
+    scoped_set = set(scoped_ids)
+    changed_counts = refresh_plan.changed_counts
+    now = datetime.now(timezone.utc)
+    updated_communities = []
+    for community in existing_communities:
+        if community.community_id not in scoped_set:
+            continue
+        version_id = (
+            f"{community.community_id}:v:light:"
+            f"{_stable_digest([community.version_id, now.isoformat(), *dirty_refs.node_ids, *dirty_refs.edge_ids, *dirty_refs.chunk_ids])}"
+        )
+        updated_communities.append(
+            replace(
+                community,
+                version_id=version_id,
+                previous_version_id=community.version_id,
+                change_reason="light_refresh",
+                metrics={
+                    **community.metrics,
+                    "last_light_refresh": now.isoformat(),
+                    "changed_counts": changed_counts,
+                    "refresh_plan_score": refresh_plan.score,
+                    "refresh_plan_reasons": refresh_plan.reasons,
+                },
+            )
+        )
+    version_by_community = {community.community_id: community.version_id for community in updated_communities}
+    updated_findings = [
+        replace(
+            finding,
+            version=version_by_community.get(finding.community_id, finding.version),
+            payload={
+                **(finding.payload or {}),
+                "last_light_refresh": now.isoformat(),
+                "refresh_plan_score": refresh_plan.score,
+            },
+        )
+        for finding in existing_findings
+        if finding.community_id in scoped_set
+    ]
+    deltas = build_rolling_delta_index(communities=updated_communities, findings=updated_findings, chunks=chunks, now=now)
+    seed = GraphIndexBuildResult(
+        communities=updated_communities,
+        findings=updated_findings,
+        deltas=deltas,
+        documents=[],
+        diagnostics={
+            "community_algorithm": "none_light_refresh",
+            "community_report_generator": "pending_delta_refresh",
+            "build_scope": {
+                "strategy": "light_refresh_existing_scope",
+                "affected_community_ids": scoped_ids,
+                "changed_counts": changed_counts,
+            },
+            "rolling_delta_count": len(deltas),
+        },
+    )
+    return await GraphIndexLLMReporter().enrich_delta_refresh(
+        graph_index=seed,
+        nodes=nodes,
+        edges=edges,
+        chunks=chunks,
+    )
+
+
+async def _local_review_graph_index(
+    *,
+    existing_communities: list[Any],
+    chunks: list[Any],
+    nodes: list[Any],
+    edges: list[Any],
+    dirty_refs: GraphIndexDirtyRefs,
+    refresh_plan: GraphIndexRefreshPlan,
+) -> GraphIndexBuildResult:
+    scoped_ids = expand_community_scope(existing_communities, refresh_plan.affected_community_ids)
+    scoped_set = set(scoped_ids)
+    now = datetime.now(timezone.utc)
+    communities = []
+    for community in existing_communities:
+        if community.community_id not in scoped_set:
+            continue
+        version_id = (
+            f"{community.community_id}:v:review:"
+            f"{_stable_digest([community.version_id, now.isoformat(), *dirty_refs.node_ids, *dirty_refs.edge_ids, *dirty_refs.chunk_ids])}"
+        )
+        communities.append(
+            replace(
+                community,
+                version_id=version_id,
+                previous_version_id=community.version_id,
+                change_reason="local_review",
+                metrics={
+                    **community.metrics,
+                    "last_local_review": now.isoformat(),
+                    "refresh_plan_score": refresh_plan.score,
+                    "refresh_plan_reasons": refresh_plan.reasons,
+                },
+            )
+        )
+    seed = GraphIndexBuildResult(
+        communities=communities,
+        findings=[],
+        deltas=[],
+        documents=[],
+        diagnostics={
+            "community_algorithm": "none_local_review",
+            "build_scope": {
+                "strategy": "local_review_existing_scope",
+                "affected_community_ids": scoped_ids,
+                "changed_counts": refresh_plan.changed_counts,
+            },
+        },
+    )
+    with langfuse_observation(
+        name="graph_index.local_review_report_generate",
+        as_type="span",
+        input={"communities": len(communities), "chunks": len(chunks), "nodes": len(nodes), "edges": len(edges)},
+    ):
+        reviewed = await GraphIndexLLMReporter().enrich(graph_index=seed, nodes=nodes, edges=edges, chunks=chunks)
+        langfuse_update_span(output=reviewed.diagnostics, status_message="completed")
+    return reviewed
+
+
+def _graph_index_build_scope(
+    *,
+    chunks: list[Any],
+    nodes: list[Any],
+    edges: list[Any],
+    existing_communities: list[Any],
+    dirty_refs: GraphIndexDirtyRefs,
+    related_unassigned_signals: list[GraphIndexUnassignedSignal] | None = None,
+    refresh_plan: GraphIndexRefreshPlan,
+    force_rebuild: bool,
+    graph_index_scope: str = "all",
+) -> dict[str, Any]:
+    selected_projections = _graph_index_selected_projections(graph_index_scope)
+    if force_rebuild or refresh_plan.action in {"noop", "full_rebuild"}:
+        return {
+            "chunks": chunks,
+            "nodes": nodes,
+            "edges": edges,
+            "projections": selected_projections,
+            "diagnostics": {
+                "strategy": "full_build",
+                "input_nodes": len(nodes),
+                "input_edges": len(edges),
+                "input_chunks": len(chunks),
+                "related_unassigned_signals": len(related_unassigned_signals or []),
+                "graph_index_scope": graph_index_scope,
+                "projections": [profile.projection for profile in selected_projections],
+            },
+        }
+    remove_community_ids = expand_community_scope(existing_communities, refresh_plan.affected_community_ids)
+    if not remove_community_ids:
+        return {
+            "chunks": chunks,
+            "nodes": nodes,
+            "edges": edges,
+            "projections": selected_projections,
+            "diagnostics": {
+                "strategy": "full_build_no_dirty_scope",
+                "input_nodes": len(nodes),
+                "input_edges": len(edges),
+                "input_chunks": len(chunks),
+                "related_unassigned_signals": len(related_unassigned_signals or []),
+                "graph_index_scope": graph_index_scope,
+                "projections": [profile.projection for profile in selected_projections],
+            },
+        }
+    scoped_communities = [
+        community for community in existing_communities if community.community_id in set(remove_community_ids)
+    ]
+    seed_node_ids = set(dirty_refs.node_ids)
+    seed_edge_ids = set(dirty_refs.edge_ids)
+    seed_evidence_ids = set(dirty_refs.evidence_ids)
+    seed_chunk_ids = set(dirty_refs.chunk_ids)
+    for community in scoped_communities:
+        seed_node_ids.update(community.member_node_ids)
+        seed_edge_ids.update(community.member_edge_ids)
+        seed_evidence_ids.update(community.evidence_ids)
+        seed_chunk_ids.update(community.chunk_ids)
+    for signal in related_unassigned_signals or []:
+        seed_node_ids.update(signal.node_ids)
+        seed_edge_ids.update(signal.edge_ids)
+        seed_evidence_ids.update(signal.evidence_ids)
+        seed_chunk_ids.update(signal.chunk_ids)
+    edges_by_id = {edge.edge_id: edge for edge in edges}
+    for edge in edges:
+        if edge.edge_id in seed_edge_ids or edge.source_node_id in seed_node_ids or edge.target_node_id in seed_node_ids:
+            seed_edge_ids.add(edge.edge_id)
+            seed_node_ids.add(edge.source_node_id)
+            seed_node_ids.add(edge.target_node_id)
+            seed_evidence_ids.update(edge.evidence_ids)
+    scoped_nodes = [node for node in nodes if node.node_id in seed_node_ids]
+    scoped_edges = [
+        edge
+        for edge in (edges_by_id[edge_id] for edge_id in seed_edge_ids if edge_id in edges_by_id)
+        if edge.source_node_id in seed_node_ids and edge.target_node_id in seed_node_ids
+    ]
+    for edge in scoped_edges:
+        seed_evidence_ids.update(edge.evidence_ids)
+    scoped_chunks = [
+        chunk
+        for chunk in chunks
+        if chunk.chunk_id in seed_chunk_ids or chunk.evidence_id in seed_evidence_ids
+    ]
+    affected_projections = set(refresh_plan.affected_projection_counts)
+    projections = tuple(
+        profile
+        for profile in selected_projections
+        if not affected_projections or profile.projection in affected_projections
+    )
+    return {
+        "chunks": scoped_chunks,
+        "nodes": scoped_nodes,
+        "edges": scoped_edges,
+        "projections": projections,
+        "diagnostics": {
+            "strategy": "dirty_subgraph_build",
+            "remove_community_ids": len(remove_community_ids),
+            "input_nodes": len(nodes),
+            "input_edges": len(edges),
+            "input_chunks": len(chunks),
+            "related_unassigned_signals": len(related_unassigned_signals or []),
+            "scoped_nodes": len(scoped_nodes),
+            "scoped_edges": len(scoped_edges),
+            "scoped_chunks": len(scoped_chunks),
+            "projections": [profile.projection for profile in projections],
+        },
+    }
+
+
+def _count_by(values: list[str]) -> dict[str, int]:
+    counts: dict[str, int] = {}
+    for value in values:
+        key = str(value or "")
+        if not key:
+            continue
+        counts[key] = counts.get(key, 0) + 1
+    return counts
+
+
+def _stable_digest(parts: list[str]) -> str:
+    import hashlib
+
+    data = "\n".join(str(part) for part in parts)
+    return hashlib.sha256(data.encode("utf-8")).hexdigest()[:16]
+
+
+def _semantic_document_from_graph_index_document(document: GraphIndexVectorDocument) -> SemanticVectorDocument:
+    metadata = _graph_index_public_lens_metadata(document.metadata)
+    text = document.text
+    public_tags = metadata.get("public_projection_tags") or metadata.get("public_lens_tags") or []
+    if public_tags:
+        text = f"{text}\nPublic Lens Tags: {'；'.join(str(item) for item in public_tags)}"
+    return SemanticVectorDocument(
+        document_id=document.document_id,
+        document_type=document.document_type,
+        collection_role=document.collection_role,
+        source_type=document.source_type,
+        source_id=document.source_id,
+        evidence_id=document.evidence_id,
+        text=text,
+        metadata=metadata,
+    )
+
+
+def _graph_index_public_lens_metadata(metadata: dict[str, Any]) -> dict[str, Any]:
+    result = dict(metadata or {})
+    projection = str(result.get("projection") or "")
+    if projection in GRAPH_INDEX_PUBLIC_LENS_ALIASES:
+        result["public_projection"] = GRAPH_INDEX_PUBLIC_LENS_ALIASES[projection]
+    metrics = result.get("metrics")
+    if isinstance(metrics, dict):
+        projection_scores = metrics.get("projection_scores")
+        if isinstance(projection_scores, dict):
+            public_scores = {
+                GRAPH_INDEX_PUBLIC_LENS_ALIASES.get(str(key), str(key)): value
+                for key, value in projection_scores.items()
+            }
+            result["public_projection_scores"] = public_scores
+        projection_tags = metrics.get("projection_tags")
+        if isinstance(projection_tags, list):
+            result["public_projection_tags"] = [
+                GRAPH_INDEX_PUBLIC_LENS_ALIASES.get(str(item), str(item))
+                for item in projection_tags
+            ]
+    finding_type = str(result.get("finding_type") or "")
+    if finding_type in GRAPH_INDEX_PUBLIC_LENS_ALIASES:
+        result["public_finding_type"] = GRAPH_INDEX_PUBLIC_LENS_ALIASES[finding_type]
+    return result
 
 
 def _cleanup_evidence_versions(repository: KnowledgeRepository, adapter_name: str) -> dict[str, Any]:
@@ -1445,43 +2401,74 @@ def _semantic_hybrid_retriever():
     return _SEMANTIC_HYBRID_RETRIEVER
 
 
+def _semantic_index_materials_for_result(
+    repository: KnowledgeRepository,
+    result: CompileResult,
+) -> _SemanticIndexMaterials:
+    changed_node_ids = {node.node_id for node in result.nodes}
+    changed_edge_ids = {edge.edge_id for edge in result.edges}
+    changed_evidence_ids = {item.evidence_id for item in result.evidence}
+
+    all_edges = list(repository.list_edges(result.adapter_name))
+    edge_by_id = {edge.edge_id: edge for edge in all_edges}
+    edge_by_id.update({edge.edge_id: edge for edge in result.edges})
+
+    impacted_edge_ids: set[str] = set(changed_edge_ids)
+    for edge in edge_by_id.values():
+        if edge.source_node_id in changed_node_ids or edge.target_node_id in changed_node_ids:
+            impacted_edge_ids.add(edge.edge_id)
+        if changed_evidence_ids and set(edge.evidence_ids) & changed_evidence_ids:
+            impacted_edge_ids.add(edge.edge_id)
+
+    impacted_edges = [edge_by_id[edge_id] for edge_id in sorted(impacted_edge_ids) if edge_id in edge_by_id]
+    impacted_node_ids = set(changed_node_ids)
+    for edge in impacted_edges:
+        impacted_node_ids.add(edge.source_node_id)
+        impacted_node_ids.add(edge.target_node_id)
+
+    all_nodes = list(repository.list_nodes(result.adapter_name))
+    node_by_id = {node.node_id: node for node in all_nodes}
+    node_by_id.update({node.node_id: node for node in result.nodes})
+    impacted_nodes = [node_by_id[node_id] for node_id in sorted(impacted_node_ids) if node_id in node_by_id]
+
+    chunks = _evidence_chunks_from_compiled(result.evidence)
+    stale_chunk_ids = _semantic_vector_chunk_ids(
+        node_ids=impacted_node_ids,
+        edge_ids=impacted_edge_ids,
+        evidence_ids=changed_evidence_ids,
+    )
+    return _SemanticIndexMaterials(
+        chunks=chunks,
+        nodes=impacted_nodes,
+        edges=impacted_edges,
+        stale_chunk_ids=stale_chunk_ids,
+    )
+
+
+def _semantic_vector_chunk_ids(
+    *,
+    node_ids: set[str],
+    edge_ids: set[str],
+    evidence_ids: set[str],
+) -> list[str]:
+    chunk_ids: list[str] = []
+    for evidence_id in sorted(evidence_ids):
+        chunk_ids.append(f"kg_chunk:{evidence_id}:0")
+    for node_id in sorted(node_ids):
+        chunk_ids.append(f"kg_card:node_card:{node_id}")
+        chunk_ids.append(f"kg_card:event_card:{node_id}")
+    for edge_id in sorted(edge_ids):
+        chunk_ids.append(f"kg_card:edge:{edge_id}")
+    return _ordered_unique(chunk_ids)
+
+
 def _evidence_chunks_from_compiled(evidence: list[CompiledEvidence]) -> list[EvidenceChunk]:
     chunks: list[EvidenceChunk] = []
     for item in evidence:
-        content = _compiled_evidence_chunk_content(item)
-        if not content:
+        if item.status != EvidenceStatus.ACTIVE:
             continue
-        chunks.append(
-            EvidenceChunk(
-                chunk_id=f"kg_chunk:{item.evidence_id}:0",
-                adapter_name=item.adapter_name,
-                evidence_id=item.evidence_id,
-                content=content,
-                payload=item.payload or {},
-            )
-        )
+        chunks.extend(build_chunks_for_compiled_evidence(item))
     return chunks
-
-
-def _compiled_evidence_chunk_content(evidence: CompiledEvidence) -> str:
-    import json
-
-    payload = evidence.payload or {}
-    parts: list[str] = []
-    if isinstance(payload, dict):
-        parts.extend(
-            str(payload.get(name) or "")
-            for name in ("title", "source_name", "signal_type")
-            if payload.get(name)
-        )
-        parts.extend(_entity_search_terms(payload.get("mentioned_entities")))
-        parts.extend(_entity_search_terms(payload.get("affected_entities")))
-        parts.extend(_entity_search_terms([payload.get("target_ref")]))
-    if evidence.content and evidence.content.strip():
-        parts.append(evidence.content)
-    elif payload:
-        parts.append(json.dumps(payload, ensure_ascii=False, sort_keys=True))
-    return "\n".join(_ordered_unique(part.strip() for part in parts if part and part.strip()))
 
 
 def _entity_search_terms(value: Any) -> list[str]:
@@ -1498,35 +2485,18 @@ def _entity_search_terms(value: Any) -> list[str]:
     return terms
 
 
-def _milvus_nodes_for_result(
-    repository: KnowledgeRepository,
-    result: CompileResult,
-) -> list[CompiledNode]:
-    node_by_id = {node.node_id: node for node in result.nodes}
-    for edge in result.edges:
-        for node_id in (edge.source_node_id, edge.target_node_id):
-            if node_id in node_by_id:
-                continue
-            node = repository.get_node(node_id)
-            if node is not None:
-                node_by_id[node_id] = node
-    return list(node_by_id.values())
-
-
 def _merge_index_refresh_summaries(summaries: list[dict[str, Any]]) -> dict[str, Any]:
     merged: dict[str, Any] = {
         "mode": "incremental",
         "graph_adjacency": 0,
         "evidence_chunks": 0,
-        "wiki_pages": 0,
-        "retrieval_documents": 0,
         "hybrid_chunks": 0,
         "node_ids": [],
         "edge_ids": [],
         "evidence_ids": [],
     }
     for summary in summaries:
-        for key in ("graph_adjacency", "evidence_chunks", "wiki_pages", "retrieval_documents", "hybrid_chunks"):
+        for key in ("graph_adjacency", "evidence_chunks", "hybrid_chunks"):
             merged[key] += int(summary.get(key) or 0)
         for key in ("node_ids", "edge_ids", "evidence_ids"):
             merged[key].extend(summary.get(key) or [])
@@ -1945,6 +2915,23 @@ def _as_financial_source(source_type: str, payload: dict[str, Any]) -> dict[str,
     }
 
 
+def _retrieval_tool_registry(
+    runtime: HybridRetrievalRuntime,
+    options: RetrievalOptions,
+) -> RetrievalToolRegistry:
+    return RetrievalToolRegistry(
+        runtime,
+        options,
+        reranker_client=RerankerClient(
+            base_url=settings.RERANKER_URL,
+            timeout=settings.RERANKER_TIMEOUT,
+            max_documents=settings.RERANKER_MAX_DOCUMENTS,
+        ),
+        reranker_max_documents=settings.RERANKER_MAX_DOCUMENTS,
+        reranker_default_top_n=settings.RERANKER_DEFAULT_TOP_N,
+    )
+
+
 def _find_financial_paths(
     *,
     seed_node_ids: list[str],
@@ -2008,6 +2995,36 @@ def _path_result(
             edge.edge_id for edge in explanation_edges if not edge.evidence_ids or edge.status.value != "active"
         ],
     }
+
+
+def _knowledge_command_metadata(command: Any) -> dict[str, Any]:
+    metadata: dict[str, Any] = {
+        "command": command.__class__.__name__,
+        "adapter_name": getattr(command, "adapter_name", "-"),
+        "target": getattr(command, "target", "-"),
+        "request_id": getattr(command, "request_id", None),
+        "dry_run": getattr(command, "dry_run", None),
+    }
+    if hasattr(command, "records"):
+        records = getattr(command, "records") or []
+        metadata["records"] = len(records)
+        metadata["source_samples"] = [
+            {
+                "source_type": getattr(item, "source_type", None),
+                "source_id": getattr(item, "source_id", None),
+                "title": (getattr(item, "title", "") or "")[:120],
+            }
+            for item in records[:5]
+        ]
+    if hasattr(command, "query"):
+        metadata["query"] = getattr(command, "query")
+    if hasattr(command, "retrieval_mode"):
+        metadata["retrieval_mode"] = getattr(command, "retrieval_mode")
+    if hasattr(command, "index_types"):
+        metadata["index_types"] = list(getattr(command, "index_types") or [])
+    if hasattr(command, "scope"):
+        metadata["scope"] = getattr(command, "scope")
+    return {key: value for key, value in metadata.items() if value is not None}
 
 
 def _ordered_unique(values) -> list[str]:

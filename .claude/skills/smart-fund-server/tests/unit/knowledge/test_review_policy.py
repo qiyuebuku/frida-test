@@ -43,7 +43,7 @@ def test_review_entries_created_for_review_required_issues() -> None:
     )
 
     scanner = KnowledgeQualityScanner()
-    report = scanner.scan(adapter_name="toy", nodes=nodes, edges=[edge], evidence=[], wiki_pages=[])
+    report = scanner.scan(adapter_name="toy", nodes=nodes, edges=[edge], evidence=[])
     entries = scanner.review_entries_for(report)
 
     assert entries

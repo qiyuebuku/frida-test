@@ -70,7 +70,7 @@ def _retrieval_llm_cache_enabled() -> bool:
     return raw not in {"0", "false", "no", "off"}
 
 
-_SYSTEM_PROMPT = """你是知识图谱检索控制器。你只能选择 search、find、open、summarize、stop。
+_SYSTEM_PROMPT = """你是知识图谱检索控制器。你只能选择 search、scoped_search、find、open、expand、summarize、stop。
 你不能回答用户问题，不能生成事实，不能绕过候选裁判。每次只返回一个 JSON 决策。
 你的价值不是把 query 改写成一句相似搜索词，而是产出可执行的 Search Plan：
 - answer_targets: 本轮要补齐或回答的对象。
@@ -79,7 +79,9 @@ _SYSTEM_PROMPT = """你是知识图谱检索控制器。你只能选择 search�
 - expected_evidence: 希望找到的证据类型或关系形态。
 - relation_intents: 本轮关注的关系意图。
 如果已有证据足够，选择 stop；如果需要精读已知 evidence，选择 open/find，不要重复 search。
-如果 pending_expand_candidates 非空，除非已有答案显然覆盖 stop_condition，否则不要直接 stop；优先 open 这些候选的 target_candidate_ids 或其 evidence_refs，让系统展开候选证据。
+如果已有候选或证据方向正确，但全局搜索太宽、需要在局部范围内继续补齐主体/行业/资产影响，选择 scoped_search，并指定 target_candidate_ids 或 target_evidence_refs。
+如果命中的 node/edge/evidence 暗示存在相关主体、行业、资产或影响链但证据不足，选择 expand 并指定 target_candidate_ids。
+如果 pending_expand_candidates 非空，除非已有答案显然覆盖 stop_condition，否则不要直接 stop；优先 expand 这些候选的 target_candidate_ids，或 open 其 evidence_refs 精读证据。
 时间约束：
 - 不要凭模型记忆或训练截止时间生成任何年份、月份、日期。
 - 只有用户原 query 明确包含年份/日期，query_rewrites 才能保留该时间。
@@ -92,7 +94,7 @@ _DECISION_SCHEMA = {
     "properties": {
         "next_tool": {
             "type": "string",
-            "enum": ["search", "find", "open", "summarize", "stop"],
+            "enum": ["search", "scoped_search", "find", "open", "expand", "summarize", "stop"],
         },
         "reason": {"type": "string"},
         "target_candidate_ids": {"type": "array", "items": {"type": "string"}},
@@ -177,8 +179,10 @@ def _stable_prompt_context(
         "constraints": constraints.model_dump(),
         "available_tools": {
             "search": "重新组织查询并多通道召回。",
+            "scoped_search": "在已知 candidate/evidence 的局部范围内继续检索，必须指定 target_candidate_ids 或 target_evidence_refs。",
             "find": "在已知 evidence 内定位关键词或语义线索，必须指定 target_evidence_refs。",
             "open": "打开已知 evidence 或候选的父证据/窗口，必须指定 target_evidence_refs 或 target_candidate_ids。",
+            "expand": "对已知 node/edge/evidence 候选执行局部图谱关系展开，必须指定 target_candidate_ids。",
             "summarize": "压缩已验证 trace 和 evidence，不生成新事实。",
             "stop": "证据足够或继续无收益时停止。",
         },
@@ -201,10 +205,22 @@ def _stable_prompt_context(
                 "query_rewrites": ["term"],
                 "expected_gain": "disambiguation",
             },
+            "scoped_search": {
+                "next_tool": "scoped_search",
+                "target_candidate_ids": ["kg:..."],
+                "target_evidence_refs": ["kg_ev:..."],
+                "query_rewrites": ["scoped query expression"],
+                "expected_gain": "evidence_coverage",
+            },
             "open": {
                 "next_tool": "open",
                 "target_evidence_refs": ["kg_ev:..."],
                 "expected_gain": "context_window",
+            },
+            "expand": {
+                "next_tool": "expand",
+                "target_candidate_ids": ["kg:..."],
+                "expected_gain": "evidence_coverage",
             },
             "stop": {"next_tool": "stop", "stop_reason": "evidence_sufficient"},
         },
@@ -315,7 +331,7 @@ def _expand_marker(candidate_id: str) -> str:
 
 def _decision_from_payload(payload: dict[str, Any], *, query: str = "") -> RetrievalControllerDecision:
     next_tool = str(payload.get("next_tool") or "").strip()
-    if next_tool not in {"search", "find", "open", "summarize", "stop"}:
+    if next_tool not in {"search", "scoped_search", "find", "open", "expand", "summarize", "stop"}:
         next_tool = "stop"
     expected_gain = str(payload.get("expected_gain") or "none")
     if expected_gain not in {"evidence_coverage", "disambiguation", "context_window", "compression", "none"}:

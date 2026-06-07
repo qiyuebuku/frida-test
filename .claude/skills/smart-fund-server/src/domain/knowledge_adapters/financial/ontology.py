@@ -6,7 +6,6 @@ from src.domain.knowledge.adapter import (
     EntityTypeSpec,
     RelationTypeSpec,
     SourceTypeSpec,
-    WikiPageSpec,
 )
 from src.domain.knowledge.enums import ConfidenceLabel, EdgeStatus, InputType
 
@@ -40,6 +39,76 @@ CORE_RELATION_TYPES = {
     "related_to",
     "causal_hint",
 }
+
+
+def extend_financial_adapter_spec(
+    *,
+    extra_entity_types: set[str] | None = None,
+    extra_relation_types: set[str] | None = None,
+) -> AdapterSpec:
+    """Return a financial adapter spec extended by active type registry entries."""
+
+    entity_types = {item.name for item in FINANCIAL_ADAPTER_SPEC.entities}
+    relation_types = {item.name for item in FINANCIAL_ADAPTER_SPEC.relations}
+    extra_entities = sorted((extra_entity_types or set()) - entity_types)
+    extra_relations = sorted((extra_relation_types or set()) - relation_types)
+    if not extra_entities and not extra_relations:
+        return FINANCIAL_ADAPTER_SPEC
+
+    entities = [
+        *FINANCIAL_ADAPTER_SPEC.entities,
+        *[
+            EntityTypeSpec(
+                name=entity_type,
+                stable_id_fields=["canonical_name"],
+                allow_auto_create=True,
+                allow_auto_merge=False,
+            )
+            for entity_type in extra_entities
+        ],
+    ]
+    all_entity_types = [item.name for item in entities]
+    flexible_relations = {
+        "mentions",
+        "affects",
+        "benefits_from",
+        "hurt_by",
+        "alias_of",
+        "related_to",
+        "causal_hint",
+    }
+    relations = []
+    for relation in FINANCIAL_ADAPTER_SPEC.relations:
+        if relation.name in flexible_relations and extra_entities:
+            relations.append(
+                relation.model_copy(
+                    update={
+                        "source_types": _ordered_unique([*relation.source_types, *extra_entities]),
+                        "target_types": _ordered_unique([*relation.target_types, *extra_entities]),
+                    }
+                )
+            )
+        else:
+            relations.append(relation)
+    relations.extend(
+        RelationTypeSpec(
+            name=relation_type,
+            source_types=all_entity_types,
+            target_types=all_entity_types,
+            allow_inferred=True,
+            allowed_statuses=[EdgeStatus.CANDIDATE, EdgeStatus.REVIEW_REQUIRED, EdgeStatus.ACTIVE],
+        )
+        for relation_type in extra_relations
+    )
+    return FINANCIAL_ADAPTER_SPEC.model_copy(update={"entities": entities, "relations": relations})
+
+
+def _ordered_unique(values: list[str]) -> list[str]:
+    result: list[str] = []
+    for value in values:
+        if value and value not in result:
+            result.append(value)
+    return result
 
 FINANCIAL_ADAPTER_SPEC = AdapterSpec(
     name="financial",
@@ -243,9 +312,5 @@ FINANCIAL_ADAPTER_SPEC = AdapterSpec(
             ],
             allowed_edge_statuses=[EdgeStatus.ACTIVE, EdgeStatus.CANDIDATE, EdgeStatus.REVIEW_REQUIRED],
         ),
-    ],
-    wiki_pages=[
-        WikiPageSpec(page_type="financial_entity_page", subject_types=["stock", "fund", "industry", "concept"]),
-        WikiPageSpec(page_type="financial_event_page", subject_types=["event", "policy"]),
     ],
 )

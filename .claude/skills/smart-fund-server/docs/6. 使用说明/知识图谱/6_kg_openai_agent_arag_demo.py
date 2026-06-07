@@ -4,10 +4,13 @@
 本脚本只演示 `openai_agents_arag` 这一条新路线，不对比旧路线，也不做写入、
 reset、rebuild index。它默认假设写入期已经完成了这些前置工作：
 
-- `kg_nodes / kg_edges / kg_evidence` 已经有图谱事实。
-- `kg_retrieval_documents` 已经写入 search_text、key_phrases、aliases、
-  readable_relations、evidence_summary 等检索增强字段。
-- graph adjacency、wiki pages、Milvus hybrid vectors 已经刷新。
+- `kg_nodes / kg_edges / kg_evidence` 已经有图谱事实，PG 负责确定性检索和回表。
+- graph adjacency 已经刷新，PG graph 只负责从命中结果继续展开关系。
+- Milvus hybrid vectors 已经刷新，里面写入的是 enriched semantic vector docs：
+  Evidence Chunk、Node Card、Event Card、Edge Card。它们是语义检索主入口，
+  不再依赖 `kg_retrieval_documents`、Wiki 或 retrieval document 作为核心检索层。
+- Reranker 服务可用时会参与 bootstrap 和 Agent 请求的候选重排；不可用时按系统配置
+  直接失败或由上层显式处理，本 demo 不做本地 fallback。
 
 运行方式固定为：
 
@@ -32,6 +35,9 @@ Step 1: 配置日志和 trace
     - `LANGFUSE_SECRET_KEY`
     - `LANGFUSE_BASE_URL` 或 `LANGFUSE_HOST`，自托管时填你的 Langfuse 地址。
     Langfuse 会展示 Agent、LLM 请求、工具调用、工具结果、错误和耗时。
+    脚本默认会为每次 demo run 生成 `KG_LANGFUSE_SESSION_ID`。同一次运行中的
+    多个 query 会进入同一个 Langfuse Session；也可以通过 `LANGFUSE_SESSION_ID`
+    或 `KG_LANGFUSE_SESSION_ID` 环境变量手动指定会话。
 
     本地输出文件：
     - `generated_openai_agent_arag_console.log`：终端镜像日志，内容和 console 输出一致，防止 bash 滚动丢失。
@@ -47,7 +53,7 @@ Step 1: 配置日志和 trace
 
 Step 2: 检查运行环境
     输出 OpenAI Agent 相关环境变量、`openai-agents` 包是否安装、KG 表数量、
-    Milvus 状态。这里的目标是先确认“数据和运行时是否具备演示条件”。
+    Milvus 状态、Reranker 配置。这里的目标是先确认“数据和运行时是否具备演示条件”。
 
 Step 3: 准备 demo queries
     默认使用 DEFAULT_QUERIES。需要临时补问题时，编辑 EXTRA_QUERIES。
@@ -57,9 +63,10 @@ Step 3: 准备 demo queries
 Step 4: 执行 OpenAI Agent RAG
     对每个 query 调用 `KnowledgeService.build_research_context_for()`，
     retrieval_mode 固定为 `openai_agents_arag`。运行时会先做 raw query
-    bootstrap recall，然后由 OpenAI Agent 决定是否继续调用 KG search、open、
-    find、stop_check 等工具。Agent 的最终 JSON 就是交付结果；代码只做 ID
-    映射、结构校验和 trace 记录，不再做 CandidateJudge 二次语义过滤。
+    bootstrap recall：PG deterministic search 和向量语义检索并行召回、去重清洗，
+    再进入 rerank。随后由 OpenAI Agent 决定何时继续 search、rerank、open、
+    find、expand_graph、stop_check 等工具。Agent 的最终 JSON 就是交付结果；
+    代码只做 ID 映射、结构校验和 trace 记录，不再做 CandidateJudge 二次语义过滤。
 
 Step 5: 输出结果摘要
     终端打印每个 query 的 Agent 状态、channels_used、top_hits、evidence_refs、
@@ -80,6 +87,7 @@ import importlib.util
 import json
 import logging
 import os
+import re
 import sys
 import traceback
 from datetime import datetime
@@ -129,6 +137,7 @@ PRINT_JSON_SUMMARY = False
 FROM_FT_NEWS_LIMIT = 0
 LANGFUSE_ENABLED = True
 LANGFUSE_AUTH_CHECK = False
+LANGFUSE_SESSION_ID = ""
 LOCAL_TRANSCRIPT_ENABLED = False
 LOCAL_SDK_TRACE_ENABLED = False
 SUMMARY_FILE = DEFAULT_SUMMARY_FILE
@@ -180,7 +189,12 @@ def restore_console_log(handle, original_stdout, original_stderr) -> None:
     handle.close()
 
 
-def configure_logging(trace_file: str, transcript_file: str, sdk_trace_file: str) -> None:
+def configure_logging(
+    trace_file: str,
+    transcript_file: str,
+    sdk_trace_file: str,
+    langfuse_session_id: str | None,
+) -> None:
     logging.basicConfig(
         level=logging.INFO,
         format="%(asctime)s %(levelname)s %(name)s: %(message)s",
@@ -194,6 +208,8 @@ def configure_logging(trace_file: str, transcript_file: str, sdk_trace_file: str
     os.environ["KG_RETRIEVAL_LLM_TRACE_FILE"] = trace_file
     os.environ["KG_LANGFUSE_ENABLED"] = "1" if LANGFUSE_ENABLED else "0"
     os.environ["KG_LANGFUSE_AUTH_CHECK"] = "1" if LANGFUSE_AUTH_CHECK else "0"
+    if langfuse_session_id:
+        os.environ["KG_LANGFUSE_SESSION_ID"] = langfuse_session_id
     os.environ["KG_OPENAI_AGENTS_TRANSCRIPT"] = "1" if LOCAL_TRANSCRIPT_ENABLED else "0"
     if LOCAL_TRANSCRIPT_ENABLED:
         os.environ["KG_OPENAI_AGENTS_TRANSCRIPT_FILE"] = transcript_file
@@ -221,10 +237,11 @@ async def main() -> None:
     summary_file = str(SUMMARY_FILE)
     console_log_file = str(CONSOLE_LOG_FILE)
     sdk_trace_file = str(SDK_TRACE_FILE)
+    langfuse_session_id = build_langfuse_session_id(TARGET)
     LEGACY_FULL_LOG_FILE.unlink(missing_ok=True)
     console_log_handle, original_stdout, original_stderr = configure_console_log(console_log_file)
     try:
-        configure_logging(trace_file, transcript_file, sdk_trace_file)
+        configure_logging(trace_file, transcript_file, sdk_trace_file, langfuse_session_id)
         Path(trace_file).parent.mkdir(parents=True, exist_ok=True)
         Path(trace_file).write_text("", encoding="utf-8")
         if LOCAL_TRANSCRIPT_ENABLED:
@@ -259,6 +276,7 @@ async def main() -> None:
             "adapter": ADAPTER,
             "runtime": runtime_status(TARGET),
             "langfuse_enabled": LANGFUSE_ENABLED,
+            "langfuse_session_id": langfuse_session_id,
             "trace_file": trace_file,
             "console_log_file": console_log_file,
             "transcript_file": transcript_file if LOCAL_TRANSCRIPT_ENABLED else None,
@@ -302,6 +320,8 @@ async def main() -> None:
             print(f"transcript: {transcript_file}")
         if LOCAL_SDK_TRACE_ENABLED:
             print(f"sdk_trace:  {sdk_trace_file}")
+        if langfuse_session_id:
+            print(f"session:    {langfuse_session_id}")
         print("优先看 Langfuse；console 保留终端镜像，trace 保留机器排查结构化事件。")
 
         if PRINT_JSON_SUMMARY:
@@ -398,8 +418,12 @@ def runtime_status(target: str) -> dict[str, Any]:
             "KG_OPENAI_AGENTS_BASE_URL": _redact_url(os.getenv("KG_OPENAI_AGENTS_BASE_URL", "") or settings.DEEPSEEK_BASE_URL),
             "KG_OPENAI_AGENTS_MAX_TOKENS": os.getenv("KG_OPENAI_AGENTS_MAX_TOKENS", ""),
             "KG_LANGFUSE_ENABLED": os.getenv("KG_LANGFUSE_ENABLED", "1" if LANGFUSE_ENABLED else "0"),
+            "KG_LANGFUSE_SESSION_ID": os.getenv("KG_LANGFUSE_SESSION_ID", ""),
             "LANGFUSE_BASE_URL": _redact_url(os.getenv("LANGFUSE_BASE_URL", "")),
             "LANGFUSE_HOST": _redact_url(os.getenv("LANGFUSE_HOST", "")),
+            "RERANKER_URL": _redact_url(settings.RERANKER_URL),
+            "RERANKER_MAX_DOCUMENTS": str(settings.RERANKER_MAX_DOCUMENTS),
+            "RERANKER_DEFAULT_TOP_N": str(settings.RERANKER_DEFAULT_TOP_N),
         },
         "openai_agents_installed": _module_installed("agents"),
         "langfuse_installed": _module_installed("langfuse"),
@@ -409,13 +433,23 @@ def runtime_status(target: str) -> dict[str, Any]:
     }
 
 
+def build_langfuse_session_id(target: str) -> str | None:
+    explicit = (
+        os.getenv("KG_LANGFUSE_SESSION_ID", "").strip()
+        or os.getenv("LANGFUSE_SESSION_ID", "").strip()
+        or LANGFUSE_SESSION_ID.strip()
+    )
+    if explicit:
+        return _normalize_langfuse_session_id(explicit)
+    created_at = datetime.now().strftime("%Y%m%dT%H%M%S")
+    return _normalize_langfuse_session_id(f"kg-openai-agent-arag.{target}.{created_at}")
+
+
 def kg_counts(target: str) -> dict[str, int | str]:
     tables = [
         "kg_nodes",
         "kg_edges",
         "kg_evidence",
-        "kg_retrieval_documents",
-        "kg_wiki_pages",
         "kg_graph_adjacency",
     ]
     result: dict[str, int | str] = {}
@@ -510,6 +544,14 @@ def _module_installed(name: str) -> bool:
         return importlib.util.find_spec(name) is not None
     except ModuleNotFoundError:
         return False
+
+
+def _normalize_langfuse_session_id(value: str) -> str | None:
+    if not value:
+        return None
+    normalized = "".join(char if 32 <= ord(char) <= 126 else "-" for char in value)
+    normalized = re.sub(r"\s+", "-", normalized).strip("-")
+    return normalized[:199] if normalized else None
 
 
 def _ordered_unique(values) -> list:

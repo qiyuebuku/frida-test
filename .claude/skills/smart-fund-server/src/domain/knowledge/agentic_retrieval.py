@@ -1,4 +1,4 @@
-"""Agentic retrieval controller for KG search/find/open/summarize tools."""
+"""Agentic retrieval controller for KG search/find/open/expand/summarize tools."""
 
 from __future__ import annotations
 
@@ -32,7 +32,7 @@ from src.domain.knowledge.retrieval_trace_log import trace_agentic_event
 from src.domain.knowledge.retrieval_tools import RetrievalToolCall, RetrievalToolRegistry, RetrievalToolResult
 from src.domain.knowledge.schemas import KnowledgeBaseModel
 
-ControllerTool = Literal["search", "find", "open", "summarize", "stop"]
+ControllerTool = Literal["search", "scoped_search", "find", "open", "expand", "summarize", "stop"]
 ExpectedGain = Literal["evidence_coverage", "disambiguation", "context_window", "compression", "none"]
 
 
@@ -357,7 +357,7 @@ class AgenticRetrievalController:
                     "applied_tool": call.tool,
                     "applied_query": call.query,
                     "applied_queries": _search_queries_from_decision(decision, fallback=call.query or query)
-                    if call.tool == "search"
+                    if call.tool in {"search", "scoped_search"}
                     else [],
                     "search_plan": decision.search_plan.model_dump(mode="json"),
                     "target_evidence_refs": call.evidence_ids,
@@ -528,7 +528,7 @@ class AgenticRetrievalController:
                     hits.extend(auto_result)
             pending_expand = _pending_expand_candidate_summaries(working_set, hits)
             if pending_expand:
-                auto_expand_result = await self._auto_expand_candidates(
+                auto_open_expand_evidence_result = await self._auto_open_expand_evidence(
                     working_set=working_set,
                     observations=observations,
                     hits=hits,
@@ -537,8 +537,8 @@ class AgenticRetrievalController:
                     controller_call_count=controller_call_count,
                     judge_call_count=judge_call_count,
                 )
-                if auto_expand_result is not None:
-                    hits.extend(auto_expand_result)
+                if auto_open_expand_evidence_result is not None:
+                    hits.extend(auto_open_expand_evidence_result)
                 pending_expand = _pending_expand_candidate_summaries(working_set, hits)
             controller_budget = _controller_budget_for_query(query, active_search_plan, self.constraints)
             can_ask_controller = controller_call_count < controller_budget
@@ -775,7 +775,7 @@ class AgenticRetrievalController:
         )
         return result.hits
 
-    async def _auto_expand_candidates(
+    async def _auto_open_expand_evidence(
         self,
         *,
         working_set: RetrievalWorkingSet,
@@ -824,20 +824,20 @@ class AgenticRetrievalController:
                 package_count=len(result.hits),
                 keep_count=len(result.hits),
                 added_evidence_refs=_ordered_unique(ref for hit in result.hits for ref in hit.evidence_refs),
-                decision_reason="auto_expand_judged_candidates",
+                decision_reason="auto_open_expand_evidence_for_judged_candidates",
                 tool_duration_ms=round(tool_duration_ms, 1),
-                auto_action="expand",
-                auto_action_reason="candidate_judge_requested_expand",
+                auto_action="open_expand_evidence",
+                auto_action_reason="candidate_judge_requested_evidence_open",
                 llm_calls_used=controller_call_count + judge_call_count,
                 llm_call_budget=self.constraints.max_llm_calls_normal_query,
                 judge_top_k=0,
             )
         )
         trace_agentic_event(
-            "agentic_auto_expand",
+            "agentic_auto_open_expand_evidence",
             {
-                "event_meaning": "program opened evidence for answer/support candidates marked expand=true; no LLM request.",
-                "_human_lines": _human_auto_expand_lines(
+                "event_meaning": "program opened evidence windows for answer/support candidates marked expand=true; no graph expansion was executed.",
+                "_human_lines": _human_auto_open_expand_evidence_lines(
                     pending_expand=pending_expand,
                     opened_hits=_hit_summaries(result.hits[:10]),
                 ),
@@ -845,7 +845,7 @@ class AgenticRetrievalController:
                 "pending_expand_candidates": pending_expand,
                 "opened_hits": _hit_summaries(result.hits[:10]),
                 "tool_ms": round(tool_duration_ms, 1),
-                "reason": "candidate_judge_requested_expand",
+                "reason": "candidate_judge_requested_evidence_open",
             },
         )
         return result.hits
@@ -860,6 +860,18 @@ def _tool_call_from_decision(
     if decision.next_tool == "search":
         query_text = (decision.query_rewrites[0] if decision.query_rewrites else query).strip()
         return RetrievalToolCall(tool="search", query=query_text)
+    if decision.next_tool == "scoped_search":
+        query_text = (decision.query_rewrites[0] if decision.query_rewrites else query).strip()
+        candidate_ids = decision.target_candidate_ids
+        evidence_ids = decision.target_evidence_refs or working_set.evidence_refs
+        if not candidate_ids and not evidence_ids:
+            return None
+        return RetrievalToolCall(
+            tool="scoped_search",
+            query=query_text,
+            evidence_ids=evidence_ids,
+            candidate_ids=candidate_ids,
+        )
     if decision.next_tool == "find":
         evidence_ids = decision.target_evidence_refs or working_set.evidence_refs
         if not evidence_ids:
@@ -874,6 +886,11 @@ def _tool_call_from_decision(
         if not evidence_ids and not candidate_ids:
             return None
         return RetrievalToolCall(tool="open", evidence_ids=evidence_ids, candidate_ids=candidate_ids)
+    if decision.next_tool == "expand":
+        candidate_ids = decision.target_candidate_ids
+        if not candidate_ids:
+            return None
+        return RetrievalToolCall(tool="expand", candidate_ids=candidate_ids)
     if decision.next_tool == "summarize":
         return RetrievalToolCall(tool="summarize")
     return None
@@ -909,7 +926,8 @@ async def _execute_tool_call(
             "merged_channel_counts": diagnostics.get("merged_channel_counts") or {},
             "selected_merged_channel_counts": diagnostics.get("selected_merged_channel_counts") or {},
             "source_samples": diagnostics.get("source_samples") or {},
-            "semantic_hybrid": diagnostics.get("semantic_hybrid") or {},
+            "semantic_hybrid": diagnostics.get("semantic_hybrid") or diagnostics.get("vector_semantic") or {},
+            "query_parser": diagnostics.get("query_parser") or {},
         }
         trace_agentic_event(
             "agentic_search_result",
@@ -965,7 +983,10 @@ async def _execute_tool_call(
                 diagnostics.get("selected_merged_channel_counts") or {}
             )
             query_modes[-1]["source_samples"] = diagnostics.get("source_samples") or {}
-            query_modes[-1]["semantic_hybrid"] = diagnostics.get("semantic_hybrid") or {}
+            query_modes[-1]["semantic_hybrid"] = (
+                diagnostics.get("semantic_hybrid") or diagnostics.get("vector_semantic") or {}
+            )
+            query_modes[-1]["query_parser"] = diagnostics.get("query_parser") or {}
     combined_hits = dedupe_hits([hit for result in results for hit in result.hits])
     hits = _rerank_hits_for_search_plan(combined_hits, decision.search_plan, fallback_query=fallback_query)[
         : search_limit
@@ -1023,7 +1044,13 @@ async def _execute_tool_call(
 
 def _cheap_search_registry(registry: RetrievalToolRegistry) -> RetrievalToolRegistry:
     options = registry.options.model_copy(update={"semantic_hybrid_limit": 0})
-    return RetrievalToolRegistry(registry.runtime, options)
+    return RetrievalToolRegistry(
+        registry.runtime,
+        options,
+        reranker_client=registry.reranker_client,
+        reranker_max_documents=registry.reranker_max_documents,
+        reranker_default_top_n=registry.reranker_default_top_n,
+    )
 
 
 def _search_queries_from_decision(decision: RetrievalControllerDecision, *, fallback: str) -> list[str]:
@@ -1099,6 +1126,13 @@ def _aggregate_search_diagnostics(query_modes: list[dict[str, object]]) -> dict[
             {
                 "query": item.get("query"),
                 **(item.get("semantic_hybrid") if isinstance(item.get("semantic_hybrid"), dict) else {}),
+            }
+            for item in query_modes
+        ],
+        "query_parser": [
+            {
+                "query": item.get("query"),
+                **(item.get("query_parser") if isinstance(item.get("query_parser"), dict) else {}),
             }
             for item in query_modes
         ],
@@ -1339,14 +1373,16 @@ def _human_auto_stop_skipped_lines(
     return lines
 
 
-def _human_auto_expand_lines(
+def _human_auto_open_expand_evidence_lines(
     *,
     pending_expand: list[dict[str, object]],
     opened_hits: list[dict[str, object]],
 ) -> list[str]:
-    lines = ["自动展开: 对 answer/support 且 expand=True 的候选执行 open(candidate_ids)。"]
+    lines = [
+        "自动打开待展开候选证据: 对 answer/support 且 expand=True 的候选执行 open(candidate_ids)，不是 graph expand。"
+    ]
     if pending_expand:
-        lines.append("展开候选:")
+        lines.append("待打开证据候选:")
         for index, item in enumerate(pending_expand[:5], start=1):
             lines.append(f"  {index}. {_human_candidate_line(item)}")
     if opened_hits:

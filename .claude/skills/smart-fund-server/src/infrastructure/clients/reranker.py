@@ -14,6 +14,11 @@ from src.infrastructure.config.settings import (
     RERANKER_TIMEOUT,
     RERANKER_URL,
 )
+from src.infrastructure.observability.langfuse_tracing import (
+    clip_trace_text,
+    langfuse_observation,
+    langfuse_update_span,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -73,29 +78,83 @@ class RerankerClient:
             payload["top_n"] = top_n
 
         started = time.perf_counter()
-        async with httpx.AsyncClient(timeout=self.timeout) as client:
-            response = await client.post(f"{self.base_url}/v1/rerank", json=payload)
-        latency_ms = (time.perf_counter() - started) * 1000
-        logger.info(
-            "reranker http request done: documents=%d top_n=%s latency=%.2fs status_code=%d endpoint=%s",
-            len(documents),
-            top_n or "all",
-            latency_ms / 1000,
-            response.status_code,
-            f"{self.base_url}/v1/rerank",
-        )
-        try:
-            response.raise_for_status()
-        except httpx.HTTPStatusError as exc:
-            raise RerankerError(
-                f"reranker request failed: status={response.status_code} body={response.text[:1000]}"
-            ) from exc
+        with langfuse_observation(
+            name="reranker.http_request",
+            as_type="span",
+            input={
+                "query": query,
+                "documents": [clip_trace_text(document, limit=2000) for document in documents[:10]],
+                "document_count": len(documents),
+                "top_n": top_n,
+            },
+            metadata={
+                "endpoint": f"{self.base_url}/v1/rerank",
+                "max_documents": self.max_documents,
+                "timeout": self.timeout,
+            },
+        ):
+            try:
+                async with httpx.AsyncClient(timeout=self.timeout) as client:
+                    response = await client.post(f"{self.base_url}/v1/rerank", json=payload)
+                latency_ms = (time.perf_counter() - started) * 1000
+                logger.info(
+                    "reranker http request done: documents=%d top_n=%s latency=%.2fs status_code=%d endpoint=%s",
+                    len(documents),
+                    top_n or "all",
+                    latency_ms / 1000,
+                    response.status_code,
+                    f"{self.base_url}/v1/rerank",
+                )
+                langfuse_update_span(
+                    output={
+                        "status_code": response.status_code,
+                        "latency_ms": round(latency_ms, 2),
+                        "documents": len(documents),
+                        "top_n": top_n or "all",
+                    },
+                    metadata={"status_code": response.status_code, "latency_ms": latency_ms},
+                )
+                try:
+                    response.raise_for_status()
+                except httpx.HTTPStatusError as exc:
+                    raise RerankerError(
+                        f"reranker request failed: status={response.status_code} body={response.text[:1000]}"
+                    ) from exc
+            except Exception as exc:
+                langfuse_update_span(
+                    metadata={"error_type": exc.__class__.__name__},
+                    level="ERROR",
+                    status_message=str(exc),
+                )
+                raise
 
-        try:
-            data = response.json()
-        except ValueError as exc:
-            raise RerankerError(f"reranker response is not JSON: {response.text[:1000]}") from exc
-        return _parse_rerank_response(data, fallback_latency_ms=latency_ms)
+            try:
+                data = response.json()
+            except ValueError as exc:
+                langfuse_update_span(
+                    metadata={"error_type": exc.__class__.__name__},
+                    level="ERROR",
+                    status_message=f"reranker response is not JSON: {response.text[:1000]}",
+                )
+                raise RerankerError(f"reranker response is not JSON: {response.text[:1000]}") from exc
+            parsed = _parse_rerank_response(data, fallback_latency_ms=latency_ms)
+            langfuse_update_span(
+                output={
+                    "model": parsed.model,
+                    "ranked_count": len(parsed.results),
+                    "top_results": [
+                        {
+                            "index": item.index,
+                            "score": item.relevance_score,
+                            "document": clip_trace_text(item.document, limit=1200),
+                        }
+                        for item in parsed.results[:10]
+                    ],
+                    "latency_ms": parsed.latency_ms,
+                },
+                status_message="completed",
+            )
+            return parsed
 
 
 def _parse_rerank_response(data: Any, *, fallback_latency_ms: float) -> RerankResponse:

@@ -126,22 +126,6 @@ class KnowledgeIncrementalRefreshTaskDTO(KnowledgeDTO):
 
 
 @dataclass
-class KnowledgeRebuildWikiCommand:
-    adapter_name: str = "financial"
-    target: Target = "prod"
-    scope: str = "all"
-
-
-@dataclass
-class KnowledgeRebuildWikiResultDTO(KnowledgeDTO):
-    adapter_name: str
-    run_id: str | None
-    pages: int
-    issues: int
-    warnings: list[dict[str, Any]] = field(default_factory=list)
-
-
-@dataclass
 class KnowledgeRebuildIndexesCommand:
     adapter_name: str = "financial"
     target: Target = "prod"
@@ -156,6 +140,7 @@ class KnowledgeRebuildIndexesResultDTO(KnowledgeDTO):
     graph_adjacency: int = 0
     evidence_chunks: int = 0
     hybrid_chunks: int = 0
+    graph_index: dict[str, Any] = field(default_factory=dict)
     warnings: list[str] = field(default_factory=list)
 
 
