@@ -292,6 +292,71 @@ def test_gateway_repairs_json_schema_invalid_response_and_caches_repaired_result
     assert "validation_issues" in repair_request.messages[-1]["content"]
 
 
+def test_gateway_repairs_with_caller_feedback_and_overwrites_original_cache(tmp_path):
+    registry = ProviderRegistry()
+    deepseek = SequenceProvider(
+        "deepseek",
+        [
+            {"structured_output": {"title": "单公司项目"}},
+            {"structured_output": {"title": "影视产业转型"}},
+        ],
+    )
+    registry.register(deepseek)
+    router = ModelRouter(
+        ModelRouterConfig(
+            default_model="deepseek-v4-flash",
+            default_provider="deepseek",
+            model_routes={"deepseek-v4-flash": ["deepseek"]},
+            model_aliases={},
+        )
+    )
+    service = LLMGatewayService(
+        router=router,
+        registry=registry,
+        cache_ttl_seconds=60,
+        cache_max_size=16,
+        file_cache=LLMPersistentFileCache(tmp_path, enabled=True),
+    )
+    request = LLMProxyRequest(
+        prompt='{"topic":"横店影视"}',
+        system_prompt="只输出 JSON",
+        model="deepseek-v4-flash",
+        json_schema={
+            "type": "object",
+            "properties": {"title": {"type": "string"}},
+            "required": ["title"],
+            "additionalProperties": False,
+        },
+    )
+
+    first = asyncio.run(service.generate(request))
+    repaired = asyncio.run(
+        service.repair_with_feedback(
+            request,
+            first,
+            ["new_community.title is not a valid broad L0 title"],
+            instruction="请把单公司项目标题上提为可复用父级主题。",
+            retry_reason="community_assignment_validation_invalid",
+        )
+    )
+    cached = asyncio.run(service.generate(request))
+
+    assert first.structured_output == {"title": "单公司项目"}
+    assert repaired.structured_output == {"title": "影视产业转型"}
+    assert repaired.proxy["retry_count"] == 0
+    assert cached.cache_hit is True
+    assert cached.structured_output == {"title": "影视产业转型"}
+    assert len(deepseek.calls) == 2
+    repair_request = deepseek.calls[1][0]
+    assert repair_request.use_cache is False
+    assert repair_request.metadata["retry_reason"] == "community_assignment_validation_invalid"
+    assert repair_request.metadata["validation_issues"] == ["new_community.title is not a valid broad L0 title"]
+    assert repair_request.messages[0]["role"] == "system"
+    assert repair_request.messages[1]["role"] == "user"
+    assert repair_request.messages[2]["role"] == "assistant"
+    assert "validation_issues" in repair_request.messages[-1]["content"]
+
+
 def test_gateway_ignores_schema_invalid_file_cache(tmp_path):
     service, deepseek, _claude = _service()
     service._file_cache = LLMPersistentFileCache(tmp_path, enabled=True)

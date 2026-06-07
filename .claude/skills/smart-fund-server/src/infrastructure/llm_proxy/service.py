@@ -1105,6 +1105,33 @@ class LLMGatewayService:
                     self._file_cache.set(cache_key, response.clone())
             return response
 
+    async def repair_with_feedback(
+        self,
+        request: LLMProxyRequest,
+        response: LLMProxyResponse,
+        validation_issues: list[str],
+        *,
+        instruction: str | None = None,
+        retry_reason: str = "business_validation_invalid",
+    ) -> LLMProxyResponse:
+        """Continue the original request with caller-provided validation feedback.
+
+        This is for business/domain validation failures that JSON parsing and
+        JSON Schema cannot express. The repair call keeps the original request
+        prefix, appends the previous assistant output, then asks the model to
+        repair only the invalid parts. The repaired response is cached under the
+        original request cache key.
+        """
+
+        repair_request = _feedback_repair_request(
+            request,
+            response,
+            validation_issues,
+            instruction=instruction,
+            retry_reason=retry_reason,
+        )
+        return await self.generate(repair_request)
+
     async def _repair_schema_invalid_response(
         self,
         request: LLMProxyRequest,
@@ -1212,7 +1239,7 @@ def _cache_key_metadata(metadata: dict[str, Any]) -> dict[str, Any]:
     return {
         key: value
         for key, value in (metadata or {}).items()
-        if key != "retry_reason" and not key.startswith("_cache_key_")
+        if key not in {"retry_reason", "validation_issues"} and not key.startswith("_cache_key_")
     }
 
 
@@ -1254,6 +1281,57 @@ def _schema_repair_request(
         max_tokens=request.max_tokens,
         json_schema=request.json_schema,
         response_format=request.response_format or {"type": "json_object"},
+        tools=request.tools,
+        tool_choice=request.tool_choice,
+        metadata=metadata,
+        timeout=request.timeout,
+        use_cache=False,
+    )
+
+
+def _feedback_repair_request(
+    request: LLMProxyRequest,
+    response: LLMProxyResponse,
+    issues: list[str],
+    *,
+    instruction: str | None,
+    retry_reason: str,
+) -> LLMProxyRequest:
+    original_messages = _messages_for_schema_repair(request)
+    previous = response.text or json.dumps(response.structured_output, ensure_ascii=False, default=str)
+    default_instruction = (
+        "你上一次输出没有通过调用方的业务校验。请基于同一个任务上下文继续修复输出。"
+        "只修复 validation_issues 指出的字段或判断，不要新增外部事实，"
+        "不要输出 Markdown、解释文字或代码块。"
+    )
+    metadata = {
+        **(request.metadata or {}),
+        "retry_reason": retry_reason,
+        "validation_issues": issues,
+        "_cache_key_prompt": request.prompt,
+        "_cache_key_system_prompt": request.system_prompt,
+        "_cache_key_messages": request.messages,
+    }
+    return LLMProxyRequest(
+        prompt=request.prompt,
+        system_prompt=request.system_prompt,
+        model=request.model,
+        messages=[
+            *original_messages,
+            {"role": "assistant", "content": previous[:12000]},
+            {
+                "role": "user",
+                "content": (
+                    f"{instruction or default_instruction}\n"
+                    f"validation_issues={issues}\n"
+                    "请只重新输出一个符合原任务要求的 JSON 对象。"
+                ),
+            },
+        ],
+        temperature=request.temperature,
+        max_tokens=request.max_tokens,
+        json_schema=request.json_schema,
+        response_format=request.response_format or ({"type": "json_object"} if request.json_schema else None),
         tools=request.tools,
         tool_choice=request.tool_choice,
         metadata=metadata,

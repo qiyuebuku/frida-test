@@ -109,6 +109,8 @@ MAX_REPORT_COMMUNITIES = int(os.getenv("COMMUNITY_TOPIC_MAX_REPORT_COMMUNITIES",
 EXTRACTION_CONCURRENCY = int(os.getenv("COMMUNITY_TOPIC_EXTRACTION_CONCURRENCY", "4"))
 MAX_INTENTS_PER_NEWS = int(os.getenv("COMMUNITY_TOPIC_MAX_INTENTS_PER_NEWS", "10"))
 CHUNK_MAX_CHARS = int(os.getenv("COMMUNITY_TOPIC_CHUNK_MAX_CHARS", "1600"))
+COGNITIVE_CARD_MAX_TOKENS = int(os.getenv("COMMUNITY_TOPIC_COGNITIVE_CARD_MAX_TOKENS", "5000"))
+ASSIGNMENT_MAX_TOKENS = int(os.getenv("COMMUNITY_TOPIC_ASSIGNMENT_MAX_TOKENS", "2400"))
 RESUME_FROM_OUTPUT = os.getenv("COMMUNITY_TOPIC_RESUME", "0").strip() in {"1", "true", "True"}
 OUTPUT_FILE = Path(__file__).with_name("generated_community_topic_validation.json")
 
@@ -160,36 +162,21 @@ WEAK_IMPACT_TARGET_TERMS: tuple[str, ...] = (
     "A股市场",
     "港股市场",
 )
-
-PARENT_TOPIC_RULES: tuple[tuple[str, tuple[str, ...], tuple[str, ...]], ...] = (
-    ("A股并购重组", ("并购", "重组", "资产注入", "横向整合", "垂直整合", "产业整合", "集中度提升"), ("A股", "上市公司", "科创板", "创业板", "券商", "并购六条", "科创板八条")),
-    ("AI算力链", ("算力", "光模块", "gpu", "芯片", "数据中心", "超节点"), ()),
-    ("资本市场融资", ("港股", "a+h", "ipo", "上市融资", "港股上市", "再融资", "reits", "etf", "资本市场融资", "股权融资"), ()),
-    ("实体经济金融支持", ("中小微", "小微", "贷款", "贴息", "再贷款", "存贷款", "社会融资", "养老金融", "金融支持"), ()),
-    ("新能源出海", ("新能源", "储能", "电池", "光伏"), ("出海", "海外", "欧洲", "西班牙")),
-    ("企业出海服务", ("出海", "海外", "金砖", "供应链后备基地", "工业园区"), ()),
-    ("中东地缘政治风险", ("中东", "伊朗", "以色列", "霍尔木兹", "美伊", "海湾", "战争"), ()),
-    ("美联储政策路径", ("美联储", "美债", "降息", "沃什"), ()),
-    ("大宗商品供应风险", ("铜", "硫酸", "原油", "黄金", "有色", "大宗商品"), ()),
-    ("资本市场监管", ("证监会", "立案", "信披", "退市", "资本市场监管", "上市公司监管"), ()),
-    ("区域资本市场建设", ("区域性股权市场", "股权交易中心", "挂牌", "专精特新"), ()),
-    ("高端装备与机器人", ("工业机器人", "自动化", "智能制造", "高端装备"), ()),
+NARROW_L0_TITLE_MARKERS: tuple[str, ...] = (
+    "动态",
+    "事件",
+    "项目",
+    "公告",
+    "数据",
+    "概念",
+    "进展",
+    "目标",
+    "审批",
+    "干预",
+    "午盘",
+    "早盘",
+    "收盘",
 )
-
-PARENT_TOPIC_SCOPES: dict[str, str] = {
-    "A股并购重组": "围绕A股并购重组、资产注入、产业整合、监管政策和上市公司质量改善的主题索引。",
-    "AI算力链": "围绕AI应用、算力基础设施、AI芯片、光模块、数据中心和相关资金行情的主题索引。",
-    "资本市场融资": "围绕IPO、再融资、REITs、ETF、港股/A+H上市和资本市场融资工具的主题索引。",
-    "实体经济金融支持": "围绕贷款、贴息、再贷款、小微企业融资、养老金融和金融支持实体经济政策的主题索引。",
-    "新能源出海": "围绕新能源企业海外建厂、产能布局、供应链本地化、贸易政策和执行风险的主题索引。",
-    "企业出海服务": "围绕企业出海服务、跨境产业合作、海外供应链后备基地和地方政策支持的主题索引。",
-    "中东地缘政治风险": "围绕中东冲突、伊朗与以色列局势、霍尔木兹海峡、能源通道和全球市场冲击的主题索引。",
-    "美联储政策路径": "围绕美联储人事、利率路径、通胀、美元流动性和美债市场预期的主题索引。",
-    "大宗商品供应风险": "围绕原油、有色、化工原料等大宗商品供应扰动、价格波动和产业链影响的主题索引。",
-    "资本市场监管": "围绕上市公司信披、证监会立案、退市风险、公司治理和资本市场监管事件的主题索引。",
-    "区域资本市场建设": "围绕区域性股权市场、地方资本市场服务、企业培育和专精特新融资支持的主题索引。",
-    "高端装备与机器人": "围绕工业机器人、智能制造、高端装备、自动化产线和制造业升级的主题索引。",
-}
 
 SEMANTIC_TOKEN_GROUPS: dict[str, tuple[str, ...]] = {
     "merger_restructuring": ("并购", "重组", "收购", "资产注入", "控制权", "横向整合", "垂直整合", "产业整合", "集中度提升"),
@@ -207,8 +194,8 @@ SEMANTIC_TOKEN_GROUPS: dict[str, tuple[str, ...]] = {
 COGNITIVE_CARD_SCHEMA = {
     "type": "object",
     "properties": {
-        "summary": {"type": "string"},
-        "title_candidates": {"type": "array", "items": {"type": "string"}},
+        "summary": {"type": "string", "maxLength": 180},
+        "title_candidates": {"type": "array", "maxItems": 5, "items": {"type": "string", "maxLength": 24}},
         "topic_intents": {
             "type": "array",
             "minItems": 1,
@@ -216,20 +203,27 @@ COGNITIVE_CARD_SCHEMA = {
             "items": {
                 "type": "object",
                 "properties": {
-                    "raw_theme": {"type": "string"},
-                    "title_candidate": {"type": "string"},
-                    "driver": {"type": "array", "items": {"type": "string"}},
-                    "impact_target": {"type": "array", "items": {"type": "string"}},
-                    "risk_type": {"type": "array", "items": {"type": "string"}},
-                    "event_thread": {"type": "array", "items": {"type": "string"}},
-                    "event_action": {"type": "array", "items": {"type": "string"}},
-                    "actors": {"type": "array", "items": {"type": "string"}},
+                    "raw_theme": {"type": "string", "maxLength": 48},
+                    "title_candidate": {"type": "string", "maxLength": 32},
+                    "broad_topics": {"type": "array", "maxItems": 4, "items": {"type": "string", "maxLength": 24}},
+                    "mid_topics": {"type": "array", "maxItems": 5, "items": {"type": "string", "maxLength": 28}},
+                    "specific_topics": {"type": "array", "maxItems": 5, "items": {"type": "string", "maxLength": 36}},
+                    "topic_level_hint": {
+                        "type": "string",
+                        "enum": ["broad", "mid", "specific", "mixed", "uncertain"],
+                    },
+                    "driver": {"type": "array", "maxItems": 5, "items": {"type": "string", "maxLength": 32}},
+                    "impact_target": {"type": "array", "maxItems": 6, "items": {"type": "string", "maxLength": 28}},
+                    "risk_type": {"type": "array", "maxItems": 4, "items": {"type": "string", "maxLength": 28}},
+                    "event_thread": {"type": "array", "maxItems": 4, "items": {"type": "string", "maxLength": 32}},
+                    "event_action": {"type": "array", "maxItems": 4, "items": {"type": "string", "maxLength": 32}},
+                    "actors": {"type": "array", "maxItems": 6, "items": {"type": "string", "maxLength": 28}},
                     "importance": {"type": "number", "minimum": 0, "maximum": 1},
                     "impact_direction": {
                         "type": "string",
                         "enum": ["positive", "negative", "mixed", "uncertain"],
                     },
-                    "event_stage": {"type": "string"},
+                    "event_stage": {"type": "string", "maxLength": 24},
                     "timeline_position": {
                         "type": "string",
                         "enum": [
@@ -242,13 +236,17 @@ COGNITIVE_CARD_SCHEMA = {
                             "uncertain",
                         ],
                     },
-                    "event_time": {"type": "string"},
-                    "summary": {"type": "string"},
-                    "supporting_text": {"type": "string"},
+                    "event_time": {"type": "string", "maxLength": 32},
+                    "summary": {"type": "string", "maxLength": 120},
+                    "supporting_text": {"type": "string", "maxLength": 120},
                 },
                 "required": [
                     "raw_theme",
                     "title_candidate",
+                    "broad_topics",
+                    "mid_topics",
+                    "specific_topics",
+                    "topic_level_hint",
                     "driver",
                     "impact_target",
                     "risk_type",
@@ -268,18 +266,19 @@ COGNITIVE_CARD_SCHEMA = {
         },
         "risk_signals": {
             "type": "array",
+            "maxItems": 6,
             "items": {
                 "type": "object",
                 "properties": {
-                    "risk_type": {"type": "string"},
+                    "risk_type": {"type": "string", "maxLength": 32},
                     "risk_direction": {
                         "type": "string",
                         "enum": ["increasing", "decreasing", "neutral", "uncertain"],
                     },
-                    "risk_scope": {"type": "string"},
+                    "risk_scope": {"type": "string", "maxLength": 48},
                     "risk_severity": {"type": "number", "minimum": 0, "maximum": 1},
-                    "uncertainty": {"type": "string"},
-                    "supporting_text": {"type": "string"},
+                    "uncertainty": {"type": "string", "maxLength": 80},
+                    "supporting_text": {"type": "string", "maxLength": 120},
                     "confidence": {"type": "number", "minimum": 0, "maximum": 1},
                     "importance": {"type": "number", "minimum": 0, "maximum": 1},
                 },
@@ -298,17 +297,18 @@ COGNITIVE_CARD_SCHEMA = {
         },
         "local_impact_signals": {
             "type": "array",
+            "maxItems": 8,
             "items": {
                 "type": "object",
                 "properties": {
-                    "local_impact_mentions": {"type": "string"},
-                    "local_impact_target": {"type": "array", "items": {"type": "string"}},
+                    "local_impact_mentions": {"type": "string", "maxLength": 100},
+                    "local_impact_target": {"type": "array", "maxItems": 5, "items": {"type": "string", "maxLength": 32}},
                     "local_impact_direction": {
                         "type": "string",
                         "enum": ["positive", "negative", "mixed", "neutral", "uncertain"],
                     },
-                    "local_impact_mechanism_text": {"type": "string"},
-                    "supporting_text": {"type": "string"},
+                    "local_impact_mechanism_text": {"type": "string", "maxLength": 120},
+                    "supporting_text": {"type": "string", "maxLength": 120},
                     "confidence": {"type": "number", "minimum": 0, "maximum": 1},
                     "importance": {"type": "number", "minimum": 0, "maximum": 1},
                 },
@@ -327,17 +327,17 @@ COGNITIVE_CARD_SCHEMA = {
         "actor_signals": {
             "type": "object",
             "properties": {
-                "actors": {"type": "array", "items": {"type": "string"}},
-                "companies": {"type": "array", "items": {"type": "string"}},
-                "industries": {"type": "array", "items": {"type": "string"}},
-                "regions": {"type": "array", "items": {"type": "string"}},
-                "policies": {"type": "array", "items": {"type": "string"}},
-                "commodities": {"type": "array", "items": {"type": "string"}},
+                "actors": {"type": "array", "maxItems": 8, "items": {"type": "string", "maxLength": 32}},
+                "companies": {"type": "array", "maxItems": 8, "items": {"type": "string", "maxLength": 32}},
+                "industries": {"type": "array", "maxItems": 8, "items": {"type": "string", "maxLength": 32}},
+                "regions": {"type": "array", "maxItems": 6, "items": {"type": "string", "maxLength": 32}},
+                "policies": {"type": "array", "maxItems": 6, "items": {"type": "string", "maxLength": 48}},
+                "commodities": {"type": "array", "maxItems": 6, "items": {"type": "string", "maxLength": 32}},
             },
             "required": ["actors", "companies", "industries", "regions", "policies", "commodities"],
             "additionalProperties": False,
         },
-        "supporting_text": {"type": "array", "items": {"type": "string"}},
+        "supporting_text": {"type": "array", "maxItems": 5, "items": {"type": "string", "maxLength": 120}},
     },
     "required": [
         "summary",
@@ -375,8 +375,21 @@ ASSIGNMENT_SCHEMA = {
                             "title": {"type": "string"},
                             "scope": {"type": "string"},
                             "title_quality": {"type": "string", "enum": ["broad_topic"]},
+                            "level_rationale": {"type": "string"},
+                            "future_coverage": {"type": "array", "items": {"type": "string"}},
+                            "intent_role": {"type": "string"},
+                            "candidate_fit_summary": {"type": "string"},
                         },
-                        "required": ["level", "title", "scope", "title_quality"],
+                        "required": [
+                            "level",
+                            "title",
+                            "scope",
+                            "title_quality",
+                            "level_rationale",
+                            "future_coverage",
+                            "intent_role",
+                            "candidate_fit_summary",
+                        ],
                         "additionalProperties": False,
                     },
                 },
@@ -418,6 +431,75 @@ ASSIGNMENT_SCHEMA = {
         },
     },
     "required": ["assignments", "rejected_candidates", "maintenance_hints"],
+    "additionalProperties": False,
+}
+
+COMMUNITY_CONSOLIDATION_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "merge_groups": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "target_title": {"type": "string", "maxLength": 32},
+                    "target_scope": {"type": "string", "maxLength": 160},
+                    "source_community_ids": {
+                        "type": "array",
+                        "minItems": 2,
+                        "items": {"type": "string"},
+                    },
+                    "reason": {"type": "string", "maxLength": 240},
+                    "level_rationale": {"type": "string", "maxLength": 240},
+                    "future_coverage": {
+                        "type": "array",
+                        "minItems": 2,
+                        "maxItems": 6,
+                        "items": {"type": "string", "maxLength": 48},
+                    },
+                },
+                "required": [
+                    "target_title",
+                    "target_scope",
+                    "source_community_ids",
+                    "reason",
+                    "level_rationale",
+                    "future_coverage",
+                ],
+                "additionalProperties": False,
+            },
+        },
+        "rename_communities": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "community_id": {"type": "string"},
+                    "new_title": {"type": "string", "maxLength": 32},
+                    "new_scope": {"type": "string", "maxLength": 160},
+                    "reason": {"type": "string", "maxLength": 240},
+                    "level_rationale": {"type": "string", "maxLength": 240},
+                    "future_coverage": {
+                        "type": "array",
+                        "minItems": 2,
+                        "maxItems": 6,
+                        "items": {"type": "string", "maxLength": 48},
+                    },
+                },
+                "required": [
+                    "community_id",
+                    "new_title",
+                    "new_scope",
+                    "reason",
+                    "level_rationale",
+                    "future_coverage",
+                ],
+                "additionalProperties": False,
+            },
+        },
+        "no_change_reason": {"type": "string", "maxLength": 240},
+    },
+    "required": ["merge_groups", "rename_communities", "no_change_reason"],
     "additionalProperties": False,
 }
 
@@ -497,6 +579,9 @@ class DraftCommunity:
         keys = [
             "raw_theme",
             "title_candidate",
+            "broad_topics",
+            "mid_topics",
+            "specific_topics",
             "driver",
             "impact_target",
             "risk_type",
@@ -531,6 +616,9 @@ class DraftCommunity:
         canonical_labels = _dedupe(
             [
                 self.title,
+                *signals.get("broad_topics", []),
+                *signals.get("mid_topics", []),
+                *signals.get("specific_topics", []),
                 *signals.get("raw_theme", []),
                 *signals.get("title_candidate", []),
                 *signals.get("impact_target", []),
@@ -540,8 +628,9 @@ class DraftCommunity:
         )[:12]
         recent_examples = [
             {
-                "source_id": str(card.get("source_id") or ""),
-                "title": str(card.get("title_candidate") or card.get("raw_theme") or ""),
+                "title": str(
+                    (_as_list(card.get("broad_topics"))[:1] or _as_list(card.get("mid_topics"))[:1] or [card.get("title_candidate") or card.get("raw_theme") or ""])[0]
+                ),
                 "summary": clip_text(str(card.get("summary") or ""), 120),
             }
             for card in self.assigned_intents[-3:]
@@ -556,7 +645,7 @@ class DraftCommunity:
             "maturity": maturity_label(len(set(self.source_ids))),
             "retrieval_score": round(float(score or 0), 4),
             "retrieval_lane": lane,
-            "recent_examples": [item for item in recent_examples if item["source_id"] or item["summary"]],
+            "recent_examples": [item for item in recent_examples if item["title"] or item["summary"]],
         }
 
     def to_output(self) -> dict[str, Any]:
@@ -724,6 +813,23 @@ async def run_validation() -> None:
             stage=f"after_item_{index}",
         )
 
+    consolidation_result: dict[str, Any] | None = None
+    if len(communities) > 1:
+        print_section("Step 1C. Community Maintenance 合并与上提裁决")
+        consolidation_result = await consolidate_communities(
+            llm,
+            communities,
+            model=assignment_model,
+        )
+        apply_community_consolidation(communities, rows_output, consolidation_result)
+        pprint(
+            {
+                "merge_groups": len(consolidation_result.get("merge_groups") or []),
+                "rename_communities": len(consolidation_result.get("rename_communities") or []),
+                "community_count_after": len(communities),
+            }
+        )
+
     if GENERATE_REPORTS and communities:
         print_section("Step 2. Community Report 草案")
         for community in list(communities.values())[:MAX_REPORT_COMMUNITIES]:
@@ -737,6 +843,7 @@ async def run_validation() -> None:
         started=started,
         completed=True,
         stage="completed",
+        community_consolidation=consolidation_result,
     )
     OUTPUT_FILE.write_text(json.dumps(output, ensure_ascii=False, indent=2, default=str), encoding="utf-8")
     print_section("Step 3. 结果摘要")
@@ -769,6 +876,7 @@ def build_output_payload(
     started: float,
     completed: bool,
     stage: str,
+    community_consolidation: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     return {
         "run_at": datetime.now().isoformat(),
@@ -795,6 +903,7 @@ def build_output_payload(
             "cognitive_card_schema_version": COGNITIVE_CARD_SCHEMA_VERSION,
         },
         "stats": build_stats(rows_output, communities),
+        "community_consolidation": community_consolidation,
         "items": rows_output,
         "communities": [community.to_output() for community in communities.values()],
     }
@@ -821,7 +930,11 @@ def load_resume_state() -> tuple[list[dict[str, Any]], dict[str, DraftCommunity]
             intent = result.get("topic_intent")
             decision = result.get("decision")
             if isinstance(intent, dict) and isinstance(decision, dict):
-                validate_assignment_decision(decision, assignment_candidates_from_communities(communities))
+                validate_assignment_decision(
+                    decision,
+                    assignment_candidates_from_communities(communities),
+                    topic_intent=intent,
+                )
                 apply_assignment(communities, row, intent, decision)
     if rows_output:
         print(f"[resume] loaded processed_news={len(completed_news_ids)} communities={len(communities)}")
@@ -901,29 +1014,52 @@ async def extract_cognitive_card(
     prompt = {
         "chunk_text": clip_text(chunk.text, CHUNK_MAX_CHARS + 200),
     }
-    response = await llm.generate(
-        LLMProxyRequest(
-            model=model,
-            system_prompt=COGNITIVE_CARD_SYSTEM_PROMPT,
-            prompt=json.dumps(prompt, ensure_ascii=False, indent=2),
-            temperature=0,
-            max_tokens=2200,
-            json_schema=COGNITIVE_CARD_SCHEMA,
-            metadata={
-                "task": "kg_cognitive_card",
-                "source_id": source_id(row),
-                "chunk_id": chunk.chunk_id,
-                "chunk_index": chunk.chunk_index,
-            },
-            use_cache=True,
-        )
+    request = LLMProxyRequest(
+        model=model,
+        system_prompt=COGNITIVE_CARD_SYSTEM_PROMPT,
+        prompt=json.dumps(prompt, ensure_ascii=False, indent=2),
+        temperature=0,
+        max_tokens=COGNITIVE_CARD_MAX_TOKENS,
+        json_schema=COGNITIVE_CARD_SCHEMA,
+        metadata={
+            "task": "kg_cognitive_card",
+            "source_id": source_id(row),
+            "chunk_id": chunk.chunk_id,
+            "chunk_index": chunk.chunk_index,
+        },
+        use_cache=True,
     )
+    response = await llm.generate(request)
     card = response.structured_output
-    if not isinstance(card, dict):
-        raise RuntimeError(f"cognitive card output is not object: chunk_id={chunk.chunk_id}")
-    card = normalize_cognitive_card_text(card)
-    card = complete_local_impact_signals(card)
-    validate_cognitive_card(card, chunk)
+    try:
+        if not isinstance(card, dict):
+            raise RuntimeError(
+                f"cognitive card output is not object: "
+                f"chunk_id={chunk.chunk_id}; output={clip_text(str(getattr(response, 'text', card)), 500)}"
+            )
+        card = normalize_cognitive_card_text(card)
+        card = complete_local_impact_signals(card)
+        validate_cognitive_card(card, chunk)
+    except Exception as exc:
+        repair_response = await llm.repair_with_feedback(
+            request,
+            response,
+            [str(exc)],
+            instruction=(
+                "上一轮 Cognitive Card 输出未通过业务校验。请只修复 JSON 结构和字段合规性，"
+                "不添加外部事实，不改变当前 chunk 能支撑的业务含义。"
+            ),
+            retry_reason="cognitive_card_validation_invalid",
+        )
+        repaired = repair_response.structured_output
+        if not isinstance(repaired, dict):
+            raise RuntimeError(
+                f"cognitive card repair output is not object: "
+                f"chunk_id={chunk.chunk_id}; output={clip_text(str(getattr(repair_response, 'text', repaired)), 500)}"
+            ) from exc
+        card = normalize_cognitive_card_text(repaired)
+        card = complete_local_impact_signals(card)
+        validate_cognitive_card(card, chunk)
     card["schema_version"] = COGNITIVE_CARD_SCHEMA_VERSION
     card["cognitive_card_id"] = f"validation_cognitive_card:{stable_digest(chunk.chunk_id)}"
     card["news_id"] = int(row["id"])
@@ -977,6 +1113,10 @@ def validate_cognitive_card(card: dict[str, Any], chunk: ChunkRecord) -> None:
     required_intent_fields = [
         "raw_theme",
         "title_candidate",
+        "broad_topics",
+        "mid_topics",
+        "specific_topics",
+        "topic_level_hint",
         "driver",
         "impact_target",
         "risk_type",
@@ -1000,15 +1140,42 @@ def validate_cognitive_card(card: dict[str, Any], chunk: ChunkRecord) -> None:
         missing = [key for key in required_intent_fields if key not in intent]
         if missing:
             raise RuntimeError(f"topic_intents[{index}] missing fields {missing}: chunk_id={chunk.chunk_id}; card={card}")
-        for key in ["raw_theme", "title_candidate", "impact_direction", "event_stage", "timeline_position", "event_time", "summary", "supporting_text"]:
+        for key in [
+            "raw_theme",
+            "title_candidate",
+            "topic_level_hint",
+            "impact_direction",
+            "event_stage",
+            "timeline_position",
+            "event_time",
+            "summary",
+            "supporting_text",
+        ]:
             if not isinstance(intent.get(key), str):
                 raise RuntimeError(f"topic_intents[{index}].{key} must be string: chunk_id={chunk.chunk_id}; card={card}")
-        for key in ["driver", "impact_target", "risk_type", "event_thread", "event_action", "actors"]:
+        if intent.get("topic_level_hint") not in {"broad", "mid", "specific", "mixed", "uncertain"}:
+            raise RuntimeError(
+                f"topic_intents[{index}].topic_level_hint invalid: "
+                f"chunk_id={chunk.chunk_id}; card={card}"
+            )
+        for key in [
+            "broad_topics",
+            "mid_topics",
+            "specific_topics",
+            "driver",
+            "impact_target",
+            "risk_type",
+            "event_thread",
+            "event_action",
+            "actors",
+        ]:
             if not isinstance(intent.get(key), list) or not all(isinstance(item, str) for item in intent.get(key)):
                 raise RuntimeError(f"topic_intents[{index}].{key} must be string array: chunk_id={chunk.chunk_id}; card={card}")
         importance = intent.get("importance")
         if not isinstance(importance, (int, float)) or isinstance(importance, bool) or not 0 <= float(importance) <= 1:
             raise RuntimeError(f"topic_intents[{index}].importance must be number 0..1: chunk_id={chunk.chunk_id}; card={card}")
+        validate_topic_intent_granularity(intent, index=index, chunk=chunk, card=card)
+    validate_topic_intent_collection_granularity(intents, chunk=chunk, card=card)
     actor_signals = card.get("actor_signals")
     if not isinstance(actor_signals, dict):
         raise RuntimeError(f"actor_signals must be object: chunk_id={chunk.chunk_id}; card={card}")
@@ -1027,6 +1194,91 @@ def validate_cognitive_card(card: dict[str, Any], chunk: ChunkRecord) -> None:
             raise RuntimeError(f"topic_intents[{index}].supporting_text contains implementation perspective: chunk_id={chunk.chunk_id}; card={card}")
 
 
+def validate_topic_intent_granularity(
+    intent: dict[str, Any],
+    *,
+    index: int,
+    chunk: ChunkRecord,
+    card: dict[str, Any],
+) -> None:
+    title = normalize_display_title(intent.get("title_candidate") or intent.get("raw_theme"))
+    raw_theme = normalize_display_title(intent.get("raw_theme"))
+    broad_topics = _as_list(intent.get("broad_topics"))
+    mid_topics = _as_list(intent.get("mid_topics"))
+    level_hint = str(intent.get("topic_level_hint") or "").strip().lower()
+    if not broad_topics and not mid_topics:
+        raise RuntimeError(
+            f"topic_intents[{index}] has no broad_topics or mid_topics; fine facts must be nested under a reusable theme: "
+            f"chunk_id={chunk.chunk_id}; card={card}"
+        )
+    actor_names = _as_list(intent.get("actors")) + _as_list(card.get("actor_signals", {}).get("companies"))
+    if is_too_specific_intent_title(title, actors=actor_names) and level_hint in {"specific", "uncertain"}:
+        raise RuntimeError(
+            f"topic_intents[{index}].title_candidate is too specific for a standalone intent; "
+            f"move this detail into specific_topics/event_action/supporting_text under a broader topic_intent: "
+            f"title={title}; chunk_id={chunk.chunk_id}; card={card}"
+        )
+    if raw_theme and title and normalize_label(raw_theme) == normalize_label(title) and is_too_specific_intent_title(title, actors=actor_names):
+        raise RuntimeError(
+            f"topic_intents[{index}] raw_theme/title_candidate duplicate a fine-grained fact; "
+            f"merge it into a broader topic_intent instead of making a separate intent: "
+            f"title={title}; chunk_id={chunk.chunk_id}; card={card}"
+        )
+
+
+def validate_topic_intent_collection_granularity(
+    intents: list[dict[str, Any]],
+    *,
+    chunk: ChunkRecord,
+    card: dict[str, Any],
+) -> None:
+    if len(intents) <= 1:
+        return
+    broad_keys = [
+        normalize_label("|".join(_as_list(intent.get("broad_topics"))[:2]))
+        for intent in intents
+    ]
+    non_empty_broad_keys = [key for key in broad_keys if key]
+    if non_empty_broad_keys and len(set(non_empty_broad_keys)) == 1 and len(intents) > 3:
+        raise RuntimeError(
+            f"too many topic_intents share the same broad_topics; merge fine-grained facts into fewer intents: "
+            f"chunk_id={chunk.chunk_id}; broad_key={non_empty_broad_keys[0]}; card={card}"
+        )
+
+
+def is_too_specific_intent_title(title: str, *, actors: Sequence[str] | None = None) -> bool:
+    if not title:
+        return True
+    normalized = normalize_label(title)
+    if any(marker in title for marker in MARKET_NOISE_TERMS):
+        return True
+    if re.search(r"\d{3,}|[0-9]+(?:\\.[0-9]+)?(?:%|亿元|万亿|万美元|亿美元|韩元|欧元|美元)", title):
+        return True
+    if len(title) > 24:
+        return True
+    actor_labels = [normalize_display_title(item) for item in (actors or []) if normalize_display_title(item)]
+    if actor_labels and any(actor and actor in title for actor in actor_labels):
+        actor_bound_markers = (
+            "项目",
+            "公告",
+            "审批",
+            "干预",
+            "设立",
+            "收购",
+            "上市",
+            "恢复",
+            "获批",
+            "投产",
+            "营收",
+            "利润",
+            "业绩",
+            "财报",
+        )
+        if any(marker in title for marker in actor_bound_markers):
+            return True
+    return False
+
+
 def normalize_cognitive_card_text(card: dict[str, Any]) -> dict[str, Any]:
     normalized = copy.deepcopy(card)
     normalized["summary"] = clean_model_text(normalized.get("summary"))
@@ -1037,9 +1289,29 @@ def normalize_cognitive_card_text(card: dict[str, Any]) -> dict[str, Any]:
             intents.append(raw_intent)
             continue
         intent = dict(raw_intent)
-        for key in ["raw_theme", "title_candidate", "impact_direction", "event_stage", "timeline_position", "event_time", "summary", "supporting_text"]:
+        for key in [
+            "raw_theme",
+            "title_candidate",
+            "topic_level_hint",
+            "impact_direction",
+            "event_stage",
+            "timeline_position",
+            "event_time",
+            "summary",
+            "supporting_text",
+        ]:
             intent[key] = clean_model_text(intent.get(key))
-        for key in ["driver", "impact_target", "risk_type", "event_thread", "event_action", "actors"]:
+        for key in [
+            "broad_topics",
+            "mid_topics",
+            "specific_topics",
+            "driver",
+            "impact_target",
+            "risk_type",
+            "event_thread",
+            "event_action",
+            "actors",
+        ]:
             intent[key] = [clean_model_text(item) for item in _as_list(intent.get(key)) if clean_model_text(item)]
         intent["impact_target"] = clean_impact_targets(intent.get("impact_target"))
         intent["event_action"] = clean_event_actions(intent.get("event_action"))
@@ -1181,30 +1453,50 @@ async def decide_assignment(
 ) -> dict[str, Any]:
     max_attach = COMPLEX_MAX_ATTACH if recall_plan["is_complex"] else DEFAULT_MAX_ATTACH
     topic_intent = build_assignment_topic_intent(row, intent, max_attach=max_attach)
+    candidate_alias_map, prompt_candidates = build_assignment_candidate_aliases(candidates)
     prompt = {
         "max_attach": max_attach,
-        "candidate_communities": candidates,
+        "candidate_communities": prompt_candidates,
         "source": {
             "news_title": row["title"],
         },
         "topic_intent": topic_intent,
     }
-    response = await llm.generate(
-        LLMProxyRequest(
-            model=model,
-            system_prompt=ASSIGNMENT_SYSTEM_PROMPT,
-            prompt=json.dumps(prompt, ensure_ascii=False, indent=2),
-            temperature=0,
-            max_tokens=1800,
-            json_schema=ASSIGNMENT_SCHEMA,
-            metadata={"task": "kg_community_assignment", "source_id": source_id(row)},
-            use_cache=True,
-        )
+    request = LLMProxyRequest(
+        model=model,
+        system_prompt=ASSIGNMENT_SYSTEM_PROMPT,
+        prompt=json.dumps(prompt, ensure_ascii=False, indent=2),
+        temperature=0,
+        max_tokens=ASSIGNMENT_MAX_TOKENS,
+        json_schema=ASSIGNMENT_SCHEMA,
+        metadata={"task": "kg_community_assignment", "source_id": source_id(row)},
+        use_cache=True,
     )
+    response = await llm.generate(request)
     decision = response.structured_output
     if not isinstance(decision, dict):
         raise RuntimeError(f"assignment output is not object: source_id={source_id(row)}")
-    validate_assignment_decision(decision, candidates)
+    decision = resolve_assignment_aliases(decision, candidate_alias_map)
+    try:
+        validate_assignment_decision(decision, candidates, topic_intent=topic_intent)
+    except Exception as exc:
+        repair_response = await llm.repair_with_feedback(
+            request,
+            response,
+            [str(exc)],
+            instruction=(
+                "上一轮 Community Assignment 输出未通过业务校验。请只修复 JSON 结构和字段合规性，"
+                "不改变业务裁决含义；如果原裁决无法合规表达，重新给出符合规则的 "
+                "attach_existing 或 create_new_l0 裁决。"
+            ),
+            retry_reason="community_assignment_validation_invalid",
+        )
+        repaired = repair_response.structured_output
+        if not isinstance(repaired, dict):
+            raise RuntimeError(f"assignment repair output is not object: source_id={source_id(row)}") from exc
+        repaired = resolve_assignment_aliases(repaired, candidate_alias_map)
+        validate_assignment_decision(repaired, candidates, topic_intent=topic_intent)
+        decision = repaired
     return decision
 
 
@@ -1214,6 +1506,10 @@ def build_assignment_topic_intent(row: dict[str, Any], intent_payload: dict[str,
     intent: dict[str, Any] = {
         "raw_theme": raw_theme,
         "title_candidate": title_candidate,
+        "broad_topics": _dedupe(_as_list(intent_payload.get("broad_topics")))[:5],
+        "mid_topics": _dedupe(_as_list(intent_payload.get("mid_topics")))[:6],
+        "specific_topics": _dedupe(_as_list(intent_payload.get("specific_topics")))[:6],
+        "topic_level_hint": str(intent_payload.get("topic_level_hint") or "uncertain").strip() or "uncertain",
         "summary": clip_text(str(intent_payload.get("summary") or row.get("summary") or row.get("title") or ""), 280),
         "driver": _dedupe(_as_list(intent_payload.get("driver")))[:6],
         "impact_target": _dedupe(_as_list(intent_payload.get("impact_target")))[:8],
@@ -1346,8 +1642,14 @@ def recall_candidates(intent: dict[str, Any], communities: list[DraftCommunity])
 def candidate_score(intent: dict[str, Any], community: DraftCommunity, *, lane: str) -> float:
     signals = community.signal_values()
     if lane == "theme":
-        left = labels_for(intent, ["raw_theme", "title_candidate", "impact_target", "driver", "risk_type"])
-        right = labels_for(signals, ["raw_theme", "title_candidate", "impact_target", "driver", "risk_type"])
+        left = labels_for(
+            intent,
+            ["broad_topics", "mid_topics", "specific_topics", "raw_theme", "title_candidate", "impact_target", "driver", "risk_type"],
+        )
+        right = labels_for(
+            signals,
+            ["broad_topics", "mid_topics", "specific_topics", "raw_theme", "title_candidate", "impact_target", "driver", "risk_type"],
+        )
         title_text = f"{community.title} {community.scope} {community.summary}"
         return (
             overlap_score(left, right) * 0.50
@@ -1365,11 +1667,35 @@ def candidate_score(intent: dict[str, Any], community: DraftCommunity, *, lane: 
         )
     left = labels_for(
         intent,
-        ["raw_theme", "title_candidate", "impact_target", "driver", "risk_type", "event_thread", "actors", "event_action"],
+        [
+            "broad_topics",
+            "mid_topics",
+            "specific_topics",
+            "raw_theme",
+            "title_candidate",
+            "impact_target",
+            "driver",
+            "risk_type",
+            "event_thread",
+            "actors",
+            "event_action",
+        ],
     )
     right = labels_for(
         signals,
-        ["raw_theme", "title_candidate", "impact_target", "driver", "risk_type", "event_thread", "actors", "event_action"],
+        [
+            "broad_topics",
+            "mid_topics",
+            "specific_topics",
+            "raw_theme",
+            "title_candidate",
+            "impact_target",
+            "driver",
+            "risk_type",
+            "event_thread",
+            "actors",
+            "event_action",
+        ],
     )
     return overlap_score(left, right) * 0.65 + semantic_token_score(left, right) * 0.35
 
@@ -1446,6 +1772,328 @@ def get_or_create_community_from_assignment(
     return community, True
 
 
+async def consolidate_communities(
+    llm: Any,
+    communities: dict[str, DraftCommunity],
+    *,
+    model: str,
+) -> dict[str, Any]:
+    alias_map, community_payloads = build_consolidation_payloads(communities)
+    payload = {
+        "communities": community_payloads,
+    }
+    request = LLMProxyRequest(
+        model=model,
+        system_prompt=COMMUNITY_CONSOLIDATION_SYSTEM_PROMPT,
+        prompt=json.dumps(payload, ensure_ascii=False, indent=2),
+        temperature=0,
+        max_tokens=3600,
+        json_schema=COMMUNITY_CONSOLIDATION_SCHEMA,
+        metadata={"task": "kg_community_consolidation"},
+        use_cache=True,
+    )
+    response = await llm.generate(request)
+    decision = response.structured_output
+    try:
+        if not isinstance(decision, dict):
+            raise RuntimeError(f"community consolidation output is not object: output={clip_text(str(response.text), 500)}")
+        decision = resolve_consolidation_aliases(decision, alias_map)
+        validate_community_consolidation(decision, communities)
+    except Exception as exc:
+        repair_response = await llm.repair_with_feedback(
+            request,
+            response,
+            [str(exc)],
+            instruction=(
+                "上一轮 Community Maintenance 输出未通过业务校验。请只修复 JSON 结构和字段合规性，"
+                "不要添加输入 communities 之外的 community_id，不要把细主题包装成 L0。"
+            ),
+            retry_reason="community_consolidation_validation_invalid",
+        )
+        repaired = repair_response.structured_output
+        if not isinstance(repaired, dict):
+            raise RuntimeError(
+                f"community consolidation repair output is not object: output={clip_text(str(repair_response.text), 500)}"
+            ) from exc
+        repaired = resolve_consolidation_aliases(repaired, alias_map)
+        validate_community_consolidation(repaired, communities)
+        decision = repaired
+    return decision
+
+
+def build_consolidation_payloads(
+    communities: dict[str, DraftCommunity],
+) -> tuple[dict[str, str], list[dict[str, Any]]]:
+    alias_map: dict[str, str] = {}
+    payloads: list[dict[str, Any]] = []
+    for index, community in enumerate(communities.values(), start=1):
+        alias = f"c{index}"
+        alias_map[alias] = community.community_id
+        payload = community.to_assignment_candidate_payload()
+        payload["community_id"] = alias
+        payload["community_key"] = alias
+        payloads.append(payload)
+    return alias_map, payloads
+
+
+def build_assignment_candidate_aliases(candidates: list[dict[str, Any]]) -> tuple[dict[str, str], list[dict[str, Any]]]:
+    alias_map: dict[str, str] = {}
+    aliased: list[dict[str, Any]] = []
+    for index, candidate in enumerate(candidates, start=1):
+        alias = f"c{index}"
+        real_id = str(candidate.get("community_id") or "")
+        alias_map[alias] = real_id
+        payload = copy.deepcopy(candidate)
+        payload["community_id"] = alias
+        payload["community_key"] = alias
+        aliased.append(payload)
+    return alias_map, aliased
+
+
+def resolve_assignment_aliases(decision: dict[str, Any], alias_map: dict[str, str]) -> dict[str, Any]:
+    resolved = copy.deepcopy(decision)
+    for assignment in resolved.get("assignments") or []:
+        if not isinstance(assignment, dict):
+            continue
+        if assignment.get("action") == "attach_existing":
+            assignment["community_id"] = alias_map.get(str(assignment.get("community_id")), str(assignment.get("community_id")))
+    for item in resolved.get("rejected_candidates") or []:
+        if isinstance(item, dict):
+            item["community_id"] = alias_map.get(str(item.get("community_id")), str(item.get("community_id")))
+    hints = resolved.get("maintenance_hints")
+    if isinstance(hints, dict) and isinstance(hints.get("suggest_merge_community_ids"), list):
+        hints["suggest_merge_community_ids"] = [
+            alias_map.get(str(item), str(item)) for item in hints["suggest_merge_community_ids"]
+        ]
+    return resolved
+
+
+def resolve_consolidation_aliases(decision: dict[str, Any], alias_map: dict[str, str]) -> dict[str, Any]:
+    resolved = copy.deepcopy(decision)
+    for group in resolved.get("merge_groups") or []:
+        if isinstance(group, dict) and isinstance(group.get("source_community_ids"), list):
+            group["source_community_ids"] = [alias_map.get(str(item), str(item)) for item in group["source_community_ids"]]
+    for item in resolved.get("rename_communities") or []:
+        if isinstance(item, dict):
+            item["community_id"] = alias_map.get(str(item.get("community_id")), str(item.get("community_id")))
+    return resolved
+
+
+def validate_community_consolidation(decision: dict[str, Any], communities: dict[str, DraftCommunity]) -> None:
+    required_top = ["merge_groups", "rename_communities", "no_change_reason"]
+    missing = [key for key in required_top if key not in decision]
+    if missing:
+        raise RuntimeError(f"community consolidation missing top-level fields: {missing}; decision={decision}")
+    extra = sorted(set(decision) - set(required_top))
+    if extra:
+        raise RuntimeError(f"community consolidation has extra top-level fields: {extra}; decision={decision}")
+    if not isinstance(decision["merge_groups"], list):
+        raise RuntimeError(f"merge_groups must be array; decision={decision}")
+    if not isinstance(decision["rename_communities"], list):
+        raise RuntimeError(f"rename_communities must be array; decision={decision}")
+    _validate_non_empty_string(decision.get("no_change_reason"), "no_change_reason", decision)
+    known_ids = set(communities)
+    used_in_merge: set[str] = set()
+    for index, group in enumerate(decision["merge_groups"], start=1):
+        if not isinstance(group, dict):
+            raise RuntimeError(f"merge_groups[{index}] must be object: {group}; decision={decision}")
+        for key in ["target_title", "target_scope", "source_community_ids", "reason", "level_rationale", "future_coverage"]:
+            if key not in group:
+                raise RuntimeError(f"merge_groups[{index}] missing {key}; decision={decision}")
+        title = str(group.get("target_title") or "")
+        _validate_non_empty_string(title, f"merge_groups[{index}].target_title", decision)
+        if not is_broad_title(title):
+            raise RuntimeError(f"merge_groups[{index}].target_title is not broad L0 title: {title}; decision={decision}")
+        _validate_non_empty_string(group.get("target_scope"), f"merge_groups[{index}].target_scope", decision)
+        _validate_non_empty_string(group.get("reason"), f"merge_groups[{index}].reason", decision)
+        _validate_non_empty_string(group.get("level_rationale"), f"merge_groups[{index}].level_rationale", decision)
+        source_ids = group.get("source_community_ids")
+        if not isinstance(source_ids, list) or len(source_ids) < 2:
+            raise RuntimeError(f"merge_groups[{index}].source_community_ids must contain at least 2 ids; decision={decision}")
+        for community_id in source_ids:
+            if str(community_id) not in known_ids:
+                raise RuntimeError(f"merge_groups[{index}] uses unknown community_id={community_id}; decision={decision}")
+            if str(community_id) in used_in_merge:
+                raise RuntimeError(f"community_id appears in multiple merge groups: {community_id}; decision={decision}")
+            used_in_merge.add(str(community_id))
+        validate_future_coverage(group.get("future_coverage"), f"merge_groups[{index}]", decision)
+    for index, item in enumerate(decision["rename_communities"], start=1):
+        if not isinstance(item, dict):
+            raise RuntimeError(f"rename_communities[{index}] must be object: {item}; decision={decision}")
+        for key in ["community_id", "new_title", "new_scope", "reason", "level_rationale", "future_coverage"]:
+            if key not in item:
+                raise RuntimeError(f"rename_communities[{index}] missing {key}; decision={decision}")
+        community_id = str(item.get("community_id") or "")
+        if community_id not in known_ids:
+            raise RuntimeError(f"rename_communities[{index}] unknown community_id={community_id}; decision={decision}")
+        if community_id in used_in_merge:
+            raise RuntimeError(f"rename_communities[{index}] references merged community_id={community_id}; decision={decision}")
+        title = str(item.get("new_title") or "")
+        _validate_non_empty_string(title, f"rename_communities[{index}].new_title", decision)
+        if not is_broad_title(title):
+            raise RuntimeError(f"rename_communities[{index}].new_title is not broad L0 title: {title}; decision={decision}")
+        _validate_non_empty_string(item.get("new_scope"), f"rename_communities[{index}].new_scope", decision)
+        _validate_non_empty_string(item.get("reason"), f"rename_communities[{index}].reason", decision)
+        _validate_non_empty_string(item.get("level_rationale"), f"rename_communities[{index}].level_rationale", decision)
+        validate_future_coverage(item.get("future_coverage"), f"rename_communities[{index}]", decision)
+    validate_consolidated_l0_quality(decision, communities)
+
+
+def validate_future_coverage(value: Any, path: str, decision: dict[str, Any]) -> None:
+    if not isinstance(value, list) or len(value) < 2:
+        raise RuntimeError(f"{path}.future_coverage must contain at least 2 items; decision={decision}")
+    for item in value:
+        _validate_non_empty_string(item, f"{path}.future_coverage[]", decision)
+
+
+def validate_consolidated_l0_quality(decision: dict[str, Any], communities: dict[str, DraftCommunity]) -> None:
+    final_titles = projected_consolidated_titles(decision, communities)
+    for community_id, title in final_titles.items():
+        if not is_broad_title(title):
+            raise RuntimeError(
+                f"community remains with non-broad L0 title after consolidation: "
+                f"community_id={community_id} title={title}; decision={decision}"
+            )
+    ids = list(final_titles)
+    for left_index, left_id in enumerate(ids):
+        left_title = final_titles[left_id]
+        left_key = normalize_label(left_title)
+        if len(left_key) < 4:
+            continue
+        for right_id in ids[left_index + 1 :]:
+            right_title = final_titles[right_id]
+            right_key = normalize_label(right_title)
+            if len(right_key) < 4:
+                continue
+            if left_key in right_key or right_key in left_key:
+                raise RuntimeError(
+                    f"community consolidation leaves nested/similar L0 titles unmerged: "
+                    f"{left_title} <-> {right_title}; decision={decision}"
+                )
+
+
+def projected_consolidated_titles(decision: dict[str, Any], communities: dict[str, DraftCommunity]) -> dict[str, str]:
+    result = {community_id: community.title for community_id, community in communities.items()}
+    for group in decision.get("merge_groups") or []:
+        source_ids = [str(item) for item in group.get("source_community_ids") or []]
+        if not source_ids:
+            continue
+        target_id = source_ids[0]
+        for source_id_value in source_ids[1:]:
+            result.pop(source_id_value, None)
+        result[target_id] = normalize_display_title(group.get("target_title"))
+    for item in decision.get("rename_communities") or []:
+        community_id = str(item.get("community_id") or "")
+        if community_id in result:
+            result[community_id] = normalize_display_title(item.get("new_title"))
+    return result
+
+
+def apply_community_consolidation(
+    communities: dict[str, DraftCommunity],
+    rows_output: list[dict[str, Any]],
+    decision: dict[str, Any],
+) -> None:
+    id_mapping: dict[str, str] = {}
+    for group in decision.get("merge_groups") or []:
+        source_ids = [str(item) for item in group["source_community_ids"]]
+        target_title = normalize_display_title(group["target_title"])
+        target_id = find_or_build_consolidated_community_id(communities, target_title, source_ids)
+        target = communities.get(target_id)
+        if target is None:
+            target = DraftCommunity(
+                community_id=target_id,
+                title=target_title,
+                scope=normalize_display_title(group.get("target_scope")),
+            )
+            communities[target_id] = target
+        else:
+            target.title = target_title
+            target.scope = normalize_display_title(group.get("target_scope")) or target.scope
+        target.assignments.append({"maintenance_action": "merge", **group})
+        for source_id_value in source_ids:
+            source = communities.get(source_id_value)
+            if source is None or source.community_id == target.community_id:
+                continue
+            merge_community_into(target, source)
+            id_mapping[source.community_id] = target.community_id
+            del communities[source.community_id]
+        target.summary = build_community_summary(target)
+
+    for item in decision.get("rename_communities") or []:
+        community_id = str(item["community_id"])
+        community = communities.get(community_id)
+        if community is None:
+            continue
+        new_title = normalize_display_title(item["new_title"])
+        new_id = f"validation_community:{stable_digest(new_title)}"
+        old_id = community.community_id
+        community.title = new_title
+        community.scope = normalize_display_title(item.get("new_scope")) or community.scope
+        community.assignments.append({"maintenance_action": "rename", **item})
+        community.summary = build_community_summary(community)
+        if new_id != old_id:
+            if new_id in communities:
+                existing = communities[new_id]
+                merge_community_into(existing, community)
+                existing.summary = build_community_summary(existing)
+                del communities[old_id]
+            else:
+                del communities[old_id]
+                community.community_id = new_id
+                communities[new_id] = community
+            id_mapping[old_id] = new_id
+
+    if id_mapping:
+        remap_rows_output_community_ids(rows_output, id_mapping)
+
+
+def find_or_build_consolidated_community_id(
+    communities: dict[str, DraftCommunity],
+    title: str,
+    source_ids: list[str],
+) -> str:
+    existing = find_community_by_title(communities, title)
+    if existing is not None:
+        return existing.community_id
+    for community_id in source_ids:
+        if community_id in communities:
+            return community_id
+    return f"validation_community:{stable_digest(title)}"
+
+
+def merge_community_into(target: DraftCommunity, source: DraftCommunity) -> None:
+    for item in source.source_ids:
+        if item not in target.source_ids:
+            target.source_ids.append(item)
+    for item in source.news_ids:
+        if item not in target.news_ids:
+            target.news_ids.append(item)
+    existing_intent_ids = {str(item.get("intent_id") or "") for item in target.assigned_intents}
+    for item in source.assigned_intents:
+        intent_id = str(item.get("intent_id") or "")
+        if intent_id and intent_id in existing_intent_ids:
+            continue
+        target.assigned_intents.append(item)
+        if intent_id:
+            existing_intent_ids.add(intent_id)
+    target.assignments.extend(source.assignments)
+    target.rejected.extend(source.rejected)
+
+
+def remap_rows_output_community_ids(rows_output: list[dict[str, Any]], id_mapping: dict[str, str]) -> None:
+    for item in rows_output:
+        applied = item.get("applied")
+        if isinstance(applied, dict):
+            applied["community_ids"] = _dedupe([id_mapping.get(str(cid), str(cid)) for cid in _as_list(applied.get("community_ids"))])
+        for result in item.get("intent_results") or []:
+            applied_result = result.get("applied")
+            if isinstance(applied_result, dict):
+                applied_result["community_ids"] = _dedupe(
+                    [id_mapping.get(str(cid), str(cid)) for cid in _as_list(applied_result.get("community_ids"))]
+                )
+
+
 def add_intent_to_community(
     community: DraftCommunity,
     row: dict[str, Any],
@@ -1486,6 +2134,9 @@ def build_community_summary(community: DraftCommunity) -> str:
     if not parts:
         fallback = select_summary_terms(
             [
+                *_as_list(signals.get("broad_topics")),
+                *_as_list(signals.get("mid_topics")),
+                *_as_list(signals.get("specific_topics")),
                 *_as_list(signals.get("raw_theme")),
                 *_as_list(signals.get("title_candidate")),
             ],
@@ -1525,7 +2176,12 @@ def join_terms(values: list[str]) -> str:
     return "、".join(values)
 
 
-def validate_assignment_decision(decision: dict[str, Any], candidates: list[dict[str, Any]]) -> None:
+def validate_assignment_decision(
+    decision: dict[str, Any],
+    candidates: list[dict[str, Any]],
+    *,
+    topic_intent: dict[str, Any] | None = None,
+) -> None:
     required_top = ["assignments", "rejected_candidates", "maintenance_hints"]
     missing_top = [key for key in required_top if key not in decision]
     if missing_top:
@@ -1553,6 +2209,7 @@ def validate_assignment_decision(decision: dict[str, Any], candidates: list[dict
             candidates=candidate_ids,
             path=f"assignments[{index}]",
             decision=decision,
+            topic_intent=topic_intent,
         )
         if assignment["action"] == "create_new_l0":
             create_count += 1
@@ -1599,6 +2256,7 @@ def _validate_assignment_payload(
     candidates: set[str],
     path: str,
     decision: dict[str, Any],
+    topic_intent: dict[str, Any] | None = None,
 ) -> None:
     required_assignment = [
         "action",
@@ -1638,21 +2296,70 @@ def _validate_assignment_payload(
     else:
         if community_id is not None:
             raise RuntimeError(f"{path}.community_id must be null when creating new L0; decision={decision}")
-        validate_new_community_payload(new_community, decision)
+        validate_new_community_payload(new_community, decision, topic_intent=topic_intent)
 
-def validate_new_community_payload(payload: Any, decision: dict[str, Any]) -> None:
+def validate_new_community_payload(
+    payload: Any,
+    decision: dict[str, Any],
+    *,
+    topic_intent: dict[str, Any] | None = None,
+) -> None:
     if not isinstance(payload, dict):
         raise RuntimeError(f"create_new_l0 requires new_community object; decision={decision}")
-    for key in ["level", "title", "scope", "title_quality"]:
+    for key in [
+        "level",
+        "title",
+        "scope",
+        "title_quality",
+        "level_rationale",
+        "future_coverage",
+        "intent_role",
+        "candidate_fit_summary",
+    ]:
         if key not in payload:
             raise RuntimeError(f"new_community missing field {key}; decision={decision}")
     level = payload.get("level")
     if not isinstance(level, (int, float)) or isinstance(level, bool) or float(level) != 0:
         raise RuntimeError(f"new_community.level must be numeric 0; decision={decision}")
-    _validate_non_empty_string(payload.get("title"), "new_community.title", decision)
+    title = str(payload.get("title") or "")
+    _validate_non_empty_string(title, "new_community.title", decision)
+    if not is_broad_title(title):
+        raise RuntimeError(f"new_community.title is not a valid broad L0 title; decision={decision}")
     _validate_non_empty_string(payload.get("scope"), "new_community.scope", decision)
     if payload.get("title_quality") != "broad_topic":
         raise RuntimeError(f"new_community.title_quality must be broad_topic; decision={decision}")
+    _validate_non_empty_string(payload.get("level_rationale"), "new_community.level_rationale", decision)
+    _validate_non_empty_string(payload.get("intent_role"), "new_community.intent_role", decision)
+    _validate_non_empty_string(payload.get("candidate_fit_summary"), "new_community.candidate_fit_summary", decision)
+    future_coverage = payload.get("future_coverage")
+    if not isinstance(future_coverage, list) or not future_coverage:
+        raise RuntimeError(f"new_community.future_coverage must be non-empty string array; decision={decision}")
+    for item in future_coverage:
+        _validate_non_empty_string(item, "new_community.future_coverage[]", decision)
+    if topic_intent is not None:
+        validate_l0_title_against_topic_intent(title, topic_intent, decision)
+
+
+def validate_l0_title_against_topic_intent(title: str, topic_intent: dict[str, Any], decision: dict[str, Any]) -> None:
+    normalized_title = normalize_label(title)
+    specific_titles = {normalize_label(item) for item in _as_list(topic_intent.get("specific_topics"))}
+    if normalized_title and normalized_title in specific_titles:
+        raise RuntimeError(
+            f"new_community.title duplicates a specific topic and is too narrow for L0: "
+            f"title={title}; decision={decision}"
+        )
+    level_hint = str(topic_intent.get("topic_level_hint") or "").strip().lower()
+    if level_hint in {"specific", "mid"}:
+        narrow_candidates = {
+            normalize_label(topic_intent.get("raw_theme")),
+            normalize_label(topic_intent.get("title_candidate")),
+            *specific_titles,
+        }
+        if normalized_title in {item for item in narrow_candidates if item}:
+            raise RuntimeError(
+                f"new_community.title copies a {level_hint} intent label instead of a parent L0 topic: "
+                f"title={title}; decision={decision}"
+            )
 
 
 def _validate_non_empty_string(value: Any, field_name: str, decision: dict[str, Any]) -> None:
@@ -1710,7 +2417,7 @@ def build_stats(rows_output: list[dict[str, Any]], communities: dict[str, DraftC
                 "maturity": (
                     community.report.get("maturity")
                     if community.report and community.report.get("maturity")
-                    else ("single_evidence" if len(set(community.source_ids)) <= 1 else "multi_evidence")
+                    else maturity_label(len(set(community.source_ids)))
                 ),
                 "subtopic_count": len(community_subtopics(community)),
             }
@@ -1722,20 +2429,22 @@ def build_stats(rows_output: list[dict[str, Any]], communities: dict[str, DraftC
 def community_subtopics(community: DraftCommunity) -> list[dict[str, Any]]:
     values: list[str] = []
     for card in community.assigned_intents:
+        values.extend(_as_list(card.get("mid_topics")))
+        values.extend(_as_list(card.get("specific_topics")))
         values.extend(_as_list(card.get("title_candidate")))
-        values.extend(_as_list(card.get("raw_theme")))
         values.extend(_as_list(card.get("event_thread")))
     community_key = normalize_label(community.title)
     result: list[dict[str, Any]] = []
     for value in _dedupe(values):
         raw_title = normalize_display_title(value)
-        canonical_title = canonicalize_broad_title(raw_title)
         if not raw_title:
             continue
         if normalize_label(raw_title) == community_key:
             continue
-        title = raw_title if normalize_label(canonical_title) == community_key else canonical_title
+        title = normalize_broad_title_text(raw_title)
         if not title or normalize_label(title) == community_key:
+            continue
+        if not is_subtopic_title(title):
             continue
         result.append({"title": title, "source_count": subtopic_source_count(community, raw_title)})
     return result[:12]
@@ -1749,6 +2458,9 @@ def subtopic_source_count(community: DraftCommunity, value: str) -> int:
         if any(
             key == normalize_label(candidate) or key in normalize_label(candidate) or normalize_label(candidate) in key
             for candidate in [
+                *_as_list(card.get("broad_topics")),
+                *_as_list(card.get("mid_topics")),
+                *_as_list(card.get("specific_topics")),
                 *_as_list(card.get("title_candidate")),
                 *_as_list(card.get("raw_theme")),
                 *_as_list(card.get("event_thread")),
@@ -1760,7 +2472,9 @@ def subtopic_source_count(community: DraftCommunity, value: str) -> int:
 
 def is_complex_topic_intent(intent: dict[str, Any]) -> bool:
     return (
-        len(_as_list(intent.get("impact_target"))) >= 4
+        len(_as_list(intent.get("broad_topics"))) + len(_as_list(intent.get("mid_topics"))) >= 3
+        or len(_as_list(intent.get("specific_topics"))) >= 3
+        or len(_as_list(intent.get("impact_target"))) >= 4
         or len(_as_list(intent.get("actors"))) >= 4
         or (bool(_as_list(intent.get("risk_type"))) and bool(_as_list(intent.get("event_thread"))))
     )
@@ -1768,8 +2482,15 @@ def is_complex_topic_intent(intent: dict[str, Any]) -> bool:
 
 def infer_topic_importance(intent: dict[str, Any]) -> float:
     score = 0.58
-    if _as_list(intent.get("raw_theme")) or _as_list(intent.get("title_candidate")):
+    if (
+        _as_list(intent.get("broad_topics"))
+        or _as_list(intent.get("mid_topics"))
+        or _as_list(intent.get("raw_theme"))
+        or _as_list(intent.get("title_candidate"))
+    ):
         score += 0.1
+    if _as_list(intent.get("specific_topics")):
+        score += 0.04
     if _as_list(intent.get("impact_target")):
         score += 0.1
     if _as_list(intent.get("driver")):
@@ -1789,52 +2510,35 @@ def maturity_label(source_count: int) -> str:
     return "mature_topic"
 
 
-def broad_title_from_card(intent: dict[str, Any]) -> str:
-    parent_topic = parent_topic_from_intent(intent)
-    if parent_topic:
-        return parent_topic
-    candidates = [normalize_display_title(item) for item in _as_list(intent.get("title_candidate"))]
-    for candidate in candidates:
-        candidate = canonicalize_broad_title(candidate)
-        if is_broad_title(candidate):
-            return candidate
-    themes = [normalize_display_title(item) for item in _as_list(intent.get("raw_theme"))]
-    threads = [normalize_display_title(item) for item in _as_list(intent.get("event_thread"))]
-    targets = [normalize_display_title(item) for item in _as_list(intent.get("impact_target"))]
-    for candidate in [*themes, *threads, *targets]:
-        candidate = canonicalize_broad_title(candidate)
-        if is_broad_title(candidate):
-            return candidate
-    parts = [part for part in [*(themes[:1]), *(targets[:1])] if part]
-    return canonicalize_broad_title(" / ".join(parts)) if parts else "未命名金融主题"
-
-
 def is_broad_title(title: str) -> bool:
-    if not title or len(title) < 4:
+    if not title or len(title) < 2:
         return False
     if len(title) > 24:
         return False
-    specific_markers = (
-        "公司",
-        "项目",
-        "建厂",
-        "签约",
-        "发布",
-        "公告",
-        "季度",
-        "一季度",
-        "半年报",
-        "午盘",
-        "早盘",
-        "收盘",
-        "最近",
-        "今日",
-        "盘中",
+    return not any(marker in title for marker in NARROW_L0_TITLE_MARKERS)
+
+
+def is_subtopic_title(title: str) -> bool:
+    if not title or len(title) < 2:
+        return False
+    if len(title) > 32:
+        return False
+    noisy_markers = (
+        "，",
+        "。",
+        "；",
+        "：",
+        "、",
+        "呈现",
+        "显示",
+        "表示",
+        "预计",
+        "认为",
     )
-    return not any(marker in title for marker in specific_markers)
+    return not any(marker in title for marker in noisy_markers)
 
 
-def canonicalize_broad_title(title: str) -> str:
+def normalize_broad_title_text(title: str) -> str:
     text = normalize_display_title(title)
     replacements = (
         ("市场动态", ""),
@@ -1848,55 +2552,7 @@ def canonicalize_broad_title(title: str) -> str:
     for old, new in replacements:
         text = text.replace(old, new)
     text = re.sub(r"\s+", "", text)
-    for parent, required, optional in PARENT_TOPIC_RULES:
-        if _matches_topic_rule(text, required, optional):
-            return parent
     return text.strip(" /，。；;、")
-
-
-def parent_topic_from_intent(intent: dict[str, Any]) -> str:
-    weighted_fields = (
-        ("title_candidate", 3.0),
-        ("raw_theme", 3.0),
-        ("event_thread", 4.0),
-        ("risk_type", 1.5),
-        ("driver", 1.5),
-        ("impact_target", 1.0),
-        ("actors", 1.0),
-        ("event_action", 1.2),
-    )
-    scored: list[tuple[float, str]] = []
-    all_text = normalize_label(" ".join(labels_for(intent, [field for field, _ in weighted_fields])))
-    for parent, required, optional in PARENT_TOPIC_RULES:
-        if optional and not any(keyword_in_text(item, all_text) for item in optional):
-            continue
-        score = 0.0
-        required_score = 0.0
-        for field, weight in weighted_fields:
-            for label in _as_list(intent.get(field)):
-                text = normalize_label(label)
-                if any(keyword_in_text(item, text) for item in required):
-                    score += weight
-                    required_score += weight
-                if optional and any(keyword_in_text(item, text) for item in optional):
-                    score += weight * 0.25
-        if required_score <= 0:
-            continue
-        if score > 0:
-            scored.append((score, parent))
-    if not scored:
-        return ""
-    scored.sort(key=lambda item: item[0], reverse=True)
-    return scored[0][1]
-
-
-def _matches_topic_rule(text: str, required: tuple[str, ...], optional: tuple[str, ...]) -> bool:
-    lowered = normalize_label(text)
-    if not any(keyword_in_text(item, lowered) for item in required):
-        return False
-    if optional and not any(keyword_in_text(item, lowered) for item in optional):
-        return False
-    return True
 
 
 def semantic_token_score(left: list[str], right: list[str]) -> float:
@@ -2093,11 +2749,20 @@ COGNITIVE_CARD_SYSTEM_PROMPT = """你是金融知识图谱的 Cognitive Card 抽
 - 不要输出 source_id、evidence_id、chunk_id、offset、previous_chunk_id、next_chunk_id、text_hash、chunker_version；这些证据定位字段由系统注入。
 - 必须输出 topic_intents，数量 1-10 个；每个 topic_intent 表示当前 chunk 支撑的一个主题意图。
 - topic_intents 必须是对象数组，禁止输出字符串数组。
-- 每个 topic_intent 对象必须包含 raw_theme、title_candidate、driver、impact_target、risk_type、event_thread、event_action、actors、importance、impact_direction、event_stage、timeline_position、event_time、summary、supporting_text。
-- raw_theme / event_thread 必须是可复用的大词，不要直接照抄新闻标题。
-- title_candidate 必须是适合作为 community 的大词标题。
+- 每个 topic_intent 对象必须包含 raw_theme、title_candidate、broad_topics、mid_topics、specific_topics、topic_level_hint、driver、impact_target、risk_type、event_thread、event_action、actors、importance、impact_direction、event_stage、timeline_position、event_time、summary、supporting_text。
+- topic_intent 只表示高维主题意图，不表示单个公司动作、单个数字、单个项目、单条审批、单次行情或单个数据点。
+- 细事实应放入 specific_topics、event_action、actors、supporting_text，不要为细事实单独创建 topic_intent。
+- 不要因为出现多个公司、多个数字、多个动作就拆多个 topic_intents；除非它们属于不同父级主题、不同影响对象、不同风险类型或不同事件线。
+- 输出必须紧凑：summary 是短摘要，不写长段背景；数组字段只保留最关键项。
+- 不要为每个公司、每个主体写长篇解释；并列主体放入 actor_signals，主题层只保留可复用信号。
+- raw_theme 必须是当前 chunk 能支撑的主题表达，不要直接照抄新闻标题。
+- title_candidate 必须是适合作为 community 的候选主题标题。
+- broad_topics 写可长期复用的父级主题，适合 L0 Community。
+- mid_topics 写父级主题下的子方向，适合未来 L1/L2。
+- specific_topics 写具体项目、公司动作、单笔交易、单个产品、单次行情或单条事件线索；这些不是 L0 标题。
+- topic_level_hint 只能写 broad / mid / specific / mixed / uncertain，表示该 intent 主要支撑的主题层级。
 - impact_target 只写当前 chunk 明确提到的行业、资产、公司、商品、产业链环节。
-- event_thread 用于给后续事件流提供局部线索，例如“特朗普关税政策”“新能源海外产能布局”。
+- event_thread 用于给后续事件流提供局部线索，应是可跨多条资料复用的政策线、产业线、地缘线、公司事件线或市场事件线名称。
 - timeline_position / event_time 继续抽取并保留给后续事件流；但它们不会传给 Community Assignment LLM。
 - risk_signals 只抽当前 chunk 明确支撑的风险线索；证据不足时保守输出。
 - local_impact_signals 只抽当前 chunk 明确提到的局部影响线索，不要改写成完整影响链。
@@ -2105,13 +2770,12 @@ COGNITIVE_CARD_SYSTEM_PROMPT = """你是金融知识图谱的 Cognitive Card 抽
 - 当文本出现“第一/第二/第三”“一方面/另一方面”“从...看”“主要包括”等多条变化、多个影响对象或多个机制时，应拆成多个 topic_intents，而不是压成一个总主题。
 - summary、topic_intent.summary、local_impact_mentions 不允许出现“当前chunk”“当前 chunk”“本chunk”“该chunk”“这段chunk”等实现视角词。
 - actor_signals 只抽当前 chunk 明确出现的主体、公司、行业、区域、政策、商品。
-- supporting_text 只写当前 chunk 中支撑判断的短句，不要整段复制。
-- title_candidates 给 3-5 个全局候选大词标题。
-- title_candidates 第一个值应优先给父主题大词；如果当前 chunk 只能支撑细主题，可以先给细主题，但必须避免新闻标题化。
+- supporting_text 只写当前 chunk 中支撑判断的关键短句，不要整段复制，不要超过一句。
+- title_candidates 给 3-5 个候选主题标题，优先覆盖 broad_topics，其次覆盖 mid_topics。
 - title_candidates 必须是主题名，不要使用新闻标题、单一公司项目名、单一交易名、盘面描述或“动态/事件/项目/公告”这类尾词。
 - 标题质量判断标准：可被多条新闻复用、能表达市场主线、不是单一主体动作、不是单条新闻标题、不是短期盘面描述。
-- 示例只用于边界说明，不是候选集合：主题名可以是“某行业链”“某政策影响”“某地缘风险”；新闻标题化表达和单一项目名不合格。
-- 只有当主题驱动、影响对象、事件线或风险类型明显不同，才拆成多个 topic_intents；不要为了凑数量过拆。
+- 只有当父级主题、主题驱动、影响对象、事件线或风险类型明显不同，才拆成多个 topic_intents；不要为了凑数量过拆。
+- 如果多个细线索共享同一个 broad_topics，应优先合并为一个 topic_intent，并把差异放入 specific_topics/event_action。
 - 不要输出 primary / secondary 之类主次判断；主题强弱由后续 assignment weight 表达。
 - 输出必须符合 JSON Schema，不要 Markdown。
 
@@ -2123,6 +2787,10 @@ COGNITIVE_CARD_SYSTEM_PROMPT = """你是金融知识图谱的 Cognitive Card 抽
     {
       "raw_theme": "当前文本支撑的主题表达",
       "title_candidate": "适合归档的可复用主题名",
+      "broad_topics": ["可长期复用的父级主题"],
+      "mid_topics": ["父级主题下的子方向"],
+      "specific_topics": ["具体项目、主体动作或单条事件线索"],
+      "topic_level_hint": "broad / mid / specific / mixed / uncertain",
       "driver": ["明确提到的驱动因素"],
       "impact_target": ["明确提到的影响对象"],
       "risk_type": [],
@@ -2180,13 +2848,19 @@ ASSIGNMENT_SYSTEM_PROMPT = """你是金融知识图谱的 Community 归档裁决
 你的任务：
 - 在候选 community 中判断是否应该挂入已有主题；
 - 如果候选都不适合，第一阶段只能创建新的 L0 community；
+- 输入候选 community_id 会使用 c1、c2、c3 这类短 alias；attach_existing、rejected_candidates、maintenance_hints 中引用候选时必须原样使用这些 alias，禁止输出 hash、标题或自造 ID。
 - 一个 topic_intent 可以归属到一个或多个 community；
 - 不区分 primary / secondary；
 - 每条归属必须输出 weight，表示这个 topic_intent 和 community 的关联强度；
 - assignments 数量不要超过 max_attach 限制；
 - 不要输出 uncertain，不走人工 pending；
 - 低置信也必须在 attach_existing 或 create_new_l0 中二选一；
-- 如果创建新 L0，title 必须是大词，不能是新闻标题、公司项目名、单一交易名；
+- 归档判断必须综合 broad_topics、mid_topics、specific_topics、raw_theme、title_candidate、driver、impact_target、risk_type、event_thread、event_action、actors。
+- broad_topics、mid_topics、specific_topics 都只是候选信号，不是标题指令；你必须判断它们的真实层级是否适合作为 L0。
+- L0 community 是可长期复用的父级主题，应该能承载多条不同来源、不同时间、不同主体的资料，并且未来可以继续拆出 L1/L2。
+- 如果当前 topic_intent 是 mid/specific 层级，不能直接把细主题包装成 L0；必须先寻找已有父级或子级 community 是否可挂入，没有合适候选时再提炼更高一层的父级 L0。
+- 如果当前 topic_intent 是 broad 层级，也必须先判断是否可以挂入已有相近 L0/L1/L2；只有候选都不适合时才创建新 L0。
+- 如果创建新 L0，title 必须是可长期复用的父级主题，不能是新闻标题、公司项目名、单一交易名、单个产品、单次行情、单个技术细节，也不能带“动态/事件/项目/公告/数据/概念/进展/目标/审批/干预/月度/季度”等细标题尾词。
 - 如果当前 topic_intent 是子主题，优先挂入已有 L1/L2；如果没有合适子层级，再挂入或新建父主题 L0。
 - 不要直接为单条新消息创建 L1/L2；L1/L2 由 Community Maintenance 从 L0 历史 Cognitive Cards 中拆分生成。
 - 不要因为两个 topic_intent 出现在同一条新闻里，就把它们互相归入对方的 community；归属必须由当前 topic_intent 自身的 raw_theme、title_candidate、driver、impact_target、event_thread、actors 支持。
@@ -2212,7 +2886,11 @@ update_mode 选择：
 - 如果 assignment.action=create_new_l0，assignment.new_community 必须是对象，且包含 level/title/scope/title_quality。
 - 如果 assignment.action=create_new_l0，assignment.new_community.level 必须输出数字 0，不能输出 "L0"、"theme" 等字符串。
 - 如果 assignment.action=create_new_l0，assignment.new_community.title_quality 必须输出 "broad_topic"，不能输出 "good"、"direct_match" 等其他值。
-- 如果 assignment.action=create_new_l0，assignment.new_community.title 优先使用 Topic Intent 的父主题大词；不要把子主题当 L0。
+- 如果 assignment.action=create_new_l0，assignment.new_community 必须包含 level_rationale、future_coverage、intent_role、candidate_fit_summary。
+- level_rationale 必须说明为什么这个 title 是父级主题，而不是细主题。
+- future_coverage 必须列出这个 L0 未来可以承载的资料类型。
+- intent_role 必须说明当前 topic_intent 在这个 L0 中扮演什么角色。
+- candidate_fit_summary 必须说明为什么输入候选 community 都不适合直接挂入。
 - 如果 assignment.action=attach_existing，assignment.new_community 必须是 null。
 
 输出模板必须稳定遵守：
@@ -2236,6 +2914,61 @@ update_mode 选择：
     "reason": ""
   }
 }
+
+当 action=create_new_l0 时，new_community 必须改为完整对象：
+{
+  "level": 0,
+  "title": "可长期复用的父级主题",
+  "scope": "该主题覆盖的归档边界",
+  "title_quality": "broad_topic",
+  "level_rationale": "为什么这是父级主题而不是细主题",
+  "future_coverage": ["未来可承载的资料类型"],
+  "intent_role": "当前 topic_intent 在该 L0 中的角色",
+  "candidate_fit_summary": "为什么候选 community 不适合直接挂入"
+}
+"""
+
+COMMUNITY_CONSOLIDATION_SYSTEM_PROMPT = """你是金融知识图谱的 Community Maintenance 裁决器。
+
+你会收到一批已经由 Assignment 阶段生成的 L0 community 草案。
+
+你的任务：
+- 找出语义上属于同一父级主题、应该合并的 L0；
+- 找出标题过细但不需要与其他 community 合并、只需要上提重命名的 L0；
+- 保留确实独立的 L0；
+- 不要创建全新的孤立 community，只能 merge 或 rename 输入里已有的 community。
+- 输入 community_id 会使用 c1、c2、c3 这类短 alias；输出 source_community_ids 和 community_id 时必须原样使用这些 alias，禁止输出 hash、标题或自造 ID。
+
+判断原则：
+- L0 是可长期复用的父级主题，不是单条新闻标题、公司项目、单笔交易、单次行情或单个技术细节，也不应带“动态/事件/项目/公告/数据/概念/进展/目标/审批/干预/月度/季度”等细标题尾词。
+- 如果最终列表中存在互相包含或明显嵌套的 L0 标题，必须 merge 或 rename，不能同时保留。
+- 如果多个 community 共享同一市场主线、政策链条、产业链条、风险主线或事件线，应合并到一个更稳定的父级 L0。
+- 如果某个 community 只是父级主题下的细方向，但没有可合并对象，应 rename 到更上层的父级主题。
+- 如果合并会混淆不同资产类别、不同监管主题、不同地缘事件或不同产业链，应保持独立。
+- 不要因为都属于“金融市场”或“政策”这种过泛标签就合并；合并必须有清晰业务主线。
+
+输出必须符合 JSON Schema，不要 Markdown。
+
+输出字段：
+- merge_groups: 需要合并的 community 组。
+- rename_communities: 只需要上提标题的 community。
+- no_change_reason: 如果某些 community 保持不变，说明整体保留边界的理由。
+
+merge_groups 每个元素必须包含：
+- target_title: 合并后的父级 L0 标题。
+- target_scope: 合并后的归档边界。
+- source_community_ids: 需要合并的已有 community_id，至少 2 个。
+- reason: 为什么这些 community 应该合并。
+- level_rationale: 为什么 target_title 是父级主题。
+- future_coverage: 该 L0 未来可以承载的资料类型。
+
+rename_communities 每个元素必须包含：
+- community_id: 输入中已有 community_id。
+- new_title: 上提后的父级 L0 标题。
+- new_scope: 新标题的归档边界。
+- reason: 为什么需要重命名。
+- level_rationale: 为什么 new_title 是父级主题。
+- future_coverage: 该 L0 未来可以承载的资料类型。
 """
 
 REPORT_SYSTEM_PROMPT = """你是金融知识图谱的 Community Report 生成器。
