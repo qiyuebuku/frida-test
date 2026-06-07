@@ -1358,8 +1358,25 @@ def _json_schema_validation_issues(value: Any, schema: dict[str, Any] | None) ->
 
 def _validate_json_schema_value(value: Any, schema: dict[str, Any], *, path: str) -> list[str]:
     issues: list[str] = []
+    if "const" in schema and value != schema.get("const"):
+        issues.append(f"{path}:const_invalid")
+        return issues
     if "enum" in schema and value not in (schema.get("enum") or []):
         issues.append(f"{path}:enum_invalid")
+    all_of = schema.get("allOf")
+    if isinstance(all_of, list):
+        for index, sub_schema in enumerate(all_of):
+            if isinstance(sub_schema, dict):
+                issues.extend(_validate_json_schema_value(value, sub_schema, path=path))
+    if_schema = schema.get("if")
+    if isinstance(if_schema, dict):
+        if not _validate_json_schema_value(value, if_schema, path=path):
+            then_schema = schema.get("then")
+            if isinstance(then_schema, dict):
+                issues.extend(_validate_json_schema_value(value, then_schema, path=path))
+        else_schema = schema.get("else")
+        if isinstance(else_schema, dict) and _validate_json_schema_value(value, if_schema, path=path):
+            issues.extend(_validate_json_schema_value(value, else_schema, path=path))
     schema_type = schema.get("type")
     if schema_type is not None and not _json_schema_type_matches(value, schema_type):
         issues.append(f"{path}:type_invalid:{schema_type}")
@@ -1367,7 +1384,7 @@ def _validate_json_schema_value(value: Any, schema: dict[str, Any], *, path: str
     if isinstance(value, dict):
         required = schema.get("required") or []
         for field in required:
-            if field not in value or value.get(field) is None:
+            if field not in value:
                 issues.append(f"{path}.{field}:required_missing")
         properties = schema.get("properties") or {}
         if isinstance(properties, dict):

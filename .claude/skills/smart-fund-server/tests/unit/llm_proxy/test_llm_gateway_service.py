@@ -3,7 +3,7 @@ import asyncio
 from src.infrastructure.llm_proxy.registry import ProviderRegistry
 from src.infrastructure.llm_proxy.router import ModelRouter, ModelRouterConfig
 from src.infrastructure.llm_proxy.cache import LLMPersistentFileCache
-from src.infrastructure.llm_proxy.service import LLMGatewayService
+from src.infrastructure.llm_proxy.service import LLMGatewayService, _json_schema_validation_issues
 from src.infrastructure.llm_proxy.types import LLMProxyRequest, LLMProxyResponse
 
 
@@ -355,6 +355,51 @@ def test_gateway_repairs_with_caller_feedback_and_overwrites_original_cache(tmp_
     assert repair_request.messages[1]["role"] == "user"
     assert repair_request.messages[2]["role"] == "assistant"
     assert "validation_issues" in repair_request.messages[-1]["content"]
+
+
+def test_json_schema_validation_supports_conditional_assignment_schema():
+    schema = {
+        "type": "object",
+        "properties": {
+            "action": {"type": "string", "enum": ["attach_existing", "create_new_l0"]},
+            "community_id": {"type": ["string", "null"]},
+            "new_community": {
+                "type": ["object", "null"],
+                "properties": {"title": {"type": "string"}},
+                "required": ["title"],
+                "additionalProperties": False,
+            },
+        },
+        "allOf": [
+            {
+                "if": {"properties": {"action": {"const": "attach_existing"}}, "required": ["action"]},
+                "then": {"properties": {"community_id": {"type": "string"}, "new_community": {"type": "null"}}},
+            },
+            {
+                "if": {"properties": {"action": {"const": "create_new_l0"}}, "required": ["action"]},
+                "then": {"properties": {"community_id": {"type": "null"}, "new_community": {"type": "object"}}},
+            },
+        ],
+        "required": ["action", "community_id", "new_community"],
+        "additionalProperties": False,
+    }
+
+    assert not _json_schema_validation_issues(
+        {"action": "attach_existing", "community_id": "c1", "new_community": None},
+        schema,
+    )
+    assert not _json_schema_validation_issues(
+        {"action": "create_new_l0", "community_id": None, "new_community": {"title": "服务贸易政策"}},
+        schema,
+    )
+    assert _json_schema_validation_issues(
+        {"action": "attach_existing", "community_id": "c1", "new_community": {"title": "placeholder"}},
+        schema,
+    )
+    assert _json_schema_validation_issues(
+        {"action": "create_new_l0", "community_id": "c1", "new_community": None},
+        schema,
+    )
 
 
 def test_gateway_ignores_schema_invalid_file_cache(tmp_path):

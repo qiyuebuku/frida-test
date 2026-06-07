@@ -162,12 +162,22 @@ WEAK_IMPACT_TARGET_TERMS: tuple[str, ...] = (
     "A股市场",
     "港股市场",
 )
-NARROW_L0_TITLE_MARKERS: tuple[str, ...] = (
+NARROW_L0_TITLE_EXACT_MARKERS: tuple[str, ...] = (
+    "数据",
+    "概念",
     "动态",
     "事件",
     "项目",
     "公告",
-    "数据",
+    "进展",
+    "目标",
+    "审批",
+)
+NARROW_L0_TITLE_SUFFIX_MARKERS: tuple[str, ...] = (
+    "动态",
+    "事件",
+    "项目",
+    "公告",
     "概念",
     "进展",
     "目标",
@@ -176,6 +186,15 @@ NARROW_L0_TITLE_MARKERS: tuple[str, ...] = (
     "午盘",
     "早盘",
     "收盘",
+)
+ALLOWED_DATA_TITLE_SUFFIXES: tuple[str, ...] = (
+    "数据中心",
+    "数据安全",
+    "数据要素",
+    "数据治理",
+    "数据跨境",
+    "数据资产",
+    "大数据",
 )
 
 SEMANTIC_TOKEN_GROUPS: dict[str, tuple[str, ...]] = {
@@ -393,6 +412,32 @@ ASSIGNMENT_SCHEMA = {
                         "additionalProperties": False,
                     },
                 },
+                "allOf": [
+                    {
+                        "if": {
+                            "properties": {"action": {"const": "attach_existing"}},
+                            "required": ["action"],
+                        },
+                        "then": {
+                            "properties": {
+                                "community_id": {"type": "string"},
+                                "new_community": {"type": "null"},
+                            }
+                        },
+                    },
+                    {
+                        "if": {
+                            "properties": {"action": {"const": "create_new_l0"}},
+                            "required": ["action"],
+                        },
+                        "then": {
+                            "properties": {
+                                "community_id": {"type": "null"},
+                                "new_community": {"type": "object"},
+                            }
+                        },
+                    },
+                ],
                 "required": [
                     "action",
                     "community_id",
@@ -1488,6 +1533,9 @@ async def decide_assignment(
                 "上一轮 Community Assignment 输出未通过业务校验。请只修复 JSON 结构和字段合规性，"
                 "不改变业务裁决含义；如果原裁决无法合规表达，重新给出符合规则的 "
                 "attach_existing 或 create_new_l0 裁决。"
+                "强制规则：当 action=attach_existing 时，new_community 必须严格输出 null，"
+                "禁止输出 placeholder、空对象或任何 new_community object；"
+                "只有 action=create_new_l0 时，new_community 才能是完整对象且 community_id 必须是 null。"
             ),
             retry_reason="community_assignment_validation_invalid",
         )
@@ -2200,7 +2248,6 @@ def validate_assignment_decision(
 
     candidate_ids = {str(candidate["community_id"]) for candidate in candidates}
     seen_assignment_keys: set[str] = set()
-    create_count = 0
     for index, assignment in enumerate(decision["assignments"], start=1):
         if not isinstance(assignment, dict):
             raise RuntimeError(f"assignment must be object: {assignment}; decision={decision}")
@@ -2212,15 +2259,12 @@ def validate_assignment_decision(
             topic_intent=topic_intent,
         )
         if assignment["action"] == "create_new_l0":
-            create_count += 1
             dedupe_key = "create:" + normalize_label((assignment.get("new_community") or {}).get("title"))
         else:
             dedupe_key = "attach:" + str(assignment.get("community_id"))
         if dedupe_key in seen_assignment_keys:
             raise RuntimeError(f"duplicate assignment target: {dedupe_key}; decision={decision}")
         seen_assignment_keys.add(dedupe_key)
-    if create_count > 1:
-        raise RuntimeError(f"only one create_new_l0 assignment is allowed per intent; decision={decision}")
 
     for item in decision["rejected_candidates"]:
         if not isinstance(item, dict):
@@ -2511,11 +2555,18 @@ def maturity_label(source_count: int) -> str:
 
 
 def is_broad_title(title: str) -> bool:
-    if not title or len(title) < 2:
+    normalized = normalize_display_title(title)
+    if not normalized or len(normalized) < 2:
         return False
-    if len(title) > 24:
+    if len(normalized) > 24:
         return False
-    return not any(marker in title for marker in NARROW_L0_TITLE_MARKERS)
+    if any(punctuation in normalized for punctuation in ("，", "。", "；", "：", "\n")):
+        return False
+    if normalized in NARROW_L0_TITLE_EXACT_MARKERS:
+        return False
+    if normalized.endswith("数据") and not normalized.endswith(ALLOWED_DATA_TITLE_SUFFIXES):
+        return False
+    return not any(normalized.endswith(marker) for marker in NARROW_L0_TITLE_SUFFIX_MARKERS)
 
 
 def is_subtopic_title(title: str) -> bool:
