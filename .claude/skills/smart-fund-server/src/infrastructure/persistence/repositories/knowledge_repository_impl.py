@@ -16,6 +16,7 @@ from sqlalchemy.orm import Session
 
 from src.domain.knowledge.enums import ConfidenceLabel, EdgeStatus, EvidenceStatus, EvidenceType, NodeStatus
 from src.domain.knowledge.chunking import build_evidence_chunks, evidence_content_for_chunking
+from src.domain.knowledge.cognitive_index import CognitiveCard, CommunityAssignment
 from src.domain.knowledge.graph_index import (
     GraphIndexCommunity,
     GraphIndexDelta,
@@ -35,6 +36,8 @@ from src.domain.knowledge.schemas import CompiledEdge, CompiledEvidence, Compile
 from src.infrastructure.connections import get_session
 from src.infrastructure.persistence.models.knowledge import (
     KnowledgeCompilationRun,
+    KnowledgeCognitiveCard,
+    KnowledgeCommunityAssignment,
     KnowledgeEdge,
     KnowledgeEdgeEvidence,
     KnowledgeEdgeEvidenceChunk,
@@ -525,16 +528,12 @@ class KnowledgeRepositoryImpl(KnowledgeRepository):
                         for row_values in _chunk_values(evidence_row)
                     ]
                 if not rows:
-                    with profile_span("kg_repository.rebuild_evidence_chunks.refresh_edge_refs"):
-                        _refresh_edge_evidence_chunk_refs_for_adapter(session, adapter_name)
                     return 0
                 with profile_span("kg_repository.rebuild_evidence_chunks.insert", rows=len(rows)):
                     result = _insert_evidence_chunk_rows(
                         session,
                         rows,
                     )
-                with profile_span("kg_repository.rebuild_evidence_chunks.refresh_edge_refs"):
-                    _refresh_edge_evidence_chunk_refs_for_adapter(session, adapter_name)
                 return result.rowcount or 0
 
     def upsert_evidence_chunks(self, evidence: list[CompiledEvidence]) -> int:
@@ -562,16 +561,12 @@ class KnowledgeRepositoryImpl(KnowledgeRepository):
                         delete(KnowledgeEvidenceChunk).where(KnowledgeEvidenceChunk.evidence_id.in_(evidence_ids))
                     )
                 if not rows:
-                    with profile_span("kg_repository.upsert_evidence_chunks.refresh_edge_refs"):
-                        _refresh_edge_evidence_chunk_refs_for_evidence(session, evidence_ids)
                     return 0
                 with profile_span("kg_repository.upsert_evidence_chunks.insert", rows=len(rows)):
                     result = _insert_evidence_chunk_rows(
                         session,
                         rows,
                     )
-                with profile_span("kg_repository.upsert_evidence_chunks.refresh_edge_refs"):
-                    _refresh_edge_evidence_chunk_refs_for_evidence(session, evidence_ids)
                 return result.rowcount or 0
 
     def list_evidence_chunks(self, adapter_name: str) -> list[EvidenceChunk]:
@@ -585,6 +580,110 @@ class KnowledgeRepositoryImpl(KnowledgeRepository):
                     .order_by(KnowledgeEvidenceChunk.evidence_id, KnowledgeEvidenceChunk.chunk_index)
                 ).all()
                 return [_chunk_schema(chunk, evidence) for chunk, evidence in rows]
+
+    def replace_cognitive_cards_for_evidence(
+        self,
+        adapter_name: str,
+        *,
+        evidence_ids: list[str],
+        cards: list[CognitiveCard],
+    ) -> dict[str, Any]:
+        unique_evidence_ids = _ordered_unique(evidence_ids)
+        with profile_span(
+            "kg_repository.replace_cognitive_cards_for_evidence",
+            adapter=adapter_name,
+            evidence=len(unique_evidence_ids),
+            cards=len(cards),
+        ):
+            with self._session_scope() as session:
+                old_card_ids: list[str] = []
+                if unique_evidence_ids:
+                    old_card_ids = [
+                        str(item)
+                        for item in session.scalars(
+                            select(KnowledgeCognitiveCard.cognitive_card_id).where(
+                                KnowledgeCognitiveCard.adapter_name == adapter_name,
+                                KnowledgeCognitiveCard.evidence_id.in_(unique_evidence_ids),
+                            )
+                        ).all()
+                    ]
+                if old_card_ids:
+                    session.execute(
+                        delete(KnowledgeCommunityAssignment).where(
+                            KnowledgeCommunityAssignment.adapter_name == adapter_name,
+                            KnowledgeCommunityAssignment.cognitive_card_id.in_(old_card_ids),
+                        )
+                    )
+                if unique_evidence_ids:
+                    session.execute(
+                        delete(KnowledgeCognitiveCard).where(
+                            KnowledgeCognitiveCard.adapter_name == adapter_name,
+                            KnowledgeCognitiveCard.evidence_id.in_(unique_evidence_ids),
+                        )
+                    )
+                card_count = 0
+                if cards:
+                    result = session.execute(
+                        pg_insert(KnowledgeCognitiveCard).values(
+                            [_cognitive_card_values(item) for item in cards]
+                        )
+                    )
+                    card_count = result.rowcount or 0
+                return {
+                    "deleted_cards": len(old_card_ids),
+                    "inserted_cards": card_count,
+                    "evidence_ids": unique_evidence_ids,
+                }
+
+    def list_cognitive_cards(self, adapter_name: str, *, status: str = "active") -> list[CognitiveCard]:
+        with profile_span("kg_repository.list_cognitive_cards", adapter=adapter_name, status=status):
+            with self._session_scope() as session:
+                query = select(KnowledgeCognitiveCard).where(
+                    KnowledgeCognitiveCard.adapter_name == adapter_name
+                )
+                if status:
+                    query = query.where(KnowledgeCognitiveCard.status == status)
+                rows = list(
+                    session.scalars(
+                        query.order_by(
+                            KnowledgeCognitiveCard.source_id,
+                            KnowledgeCognitiveCard.chunk_index,
+                            KnowledgeCognitiveCard.cognitive_card_id,
+                        )
+                    ).all()
+                )
+                return [_cognitive_card_schema(row) for row in rows]
+
+    def replace_community_assignments_for_cards(
+        self,
+        adapter_name: str,
+        *,
+        cognitive_card_ids: list[str],
+        assignments: list[CommunityAssignment],
+    ) -> int:
+        unique_card_ids = _ordered_unique(cognitive_card_ids)
+        with profile_span(
+            "kg_repository.replace_community_assignments_for_cards",
+            adapter=adapter_name,
+            cards=len(unique_card_ids),
+            assignments=len(assignments),
+        ):
+            with self._session_scope() as session:
+                if unique_card_ids:
+                    session.execute(
+                        delete(KnowledgeCommunityAssignment).where(
+                            KnowledgeCommunityAssignment.adapter_name == adapter_name,
+                            KnowledgeCommunityAssignment.cognitive_card_id.in_(unique_card_ids),
+                        )
+                    )
+                if not assignments:
+                    return 0
+                result = session.execute(
+                    pg_insert(KnowledgeCommunityAssignment).values(
+                        [_community_assignment_values(item) for item in assignments]
+                    )
+                )
+                return result.rowcount or 0
 
     def replace_graph_index(
         self,
@@ -2107,6 +2206,76 @@ def _graph_community_values(item: GraphIndexCommunity) -> dict[str, Any]:
         "change_reason": item.change_reason,
         "lineage_id": item.lineage_id,
         "previous_community_ids": item.previous_community_ids,
+        "updated_at": datetime.now(timezone.utc),
+    }
+
+
+def _cognitive_card_values(item: CognitiveCard) -> dict[str, Any]:
+    return {
+        "cognitive_card_id": item.cognitive_card_id,
+        "adapter_name": item.adapter_name,
+        "source_type": item.source_type,
+        "source_id": item.source_id,
+        "evidence_id": item.evidence_id,
+        "primary_chunk_id": item.primary_chunk_id,
+        "chunk_ids": item.chunk_ids,
+        "chunk_index": item.chunk_index,
+        "summary": item.summary,
+        "title_candidates": item.title_candidates,
+        "topic_intents": item.topic_intents,
+        "risk_signals": item.risk_signals,
+        "local_impact_signals": item.local_impact_signals,
+        "actor_signals": item.actor_signals,
+        "supporting_text": item.supporting_text,
+        "system_pointers": item.system_pointers,
+        "payload": item.payload,
+        "schema_version": item.schema_version,
+        "status": item.status,
+        "updated_at": datetime.now(timezone.utc),
+    }
+
+
+def _cognitive_card_schema(row: KnowledgeCognitiveCard) -> CognitiveCard:
+    return CognitiveCard(
+        cognitive_card_id=row.cognitive_card_id,
+        adapter_name=row.adapter_name,
+        source_type=row.source_type or "",
+        source_id=row.source_id or "",
+        evidence_id=row.evidence_id,
+        primary_chunk_id=row.primary_chunk_id,
+        chunk_ids=[str(item) for item in row.chunk_ids or [] if item],
+        chunk_index=row.chunk_index,
+        summary=row.summary or "",
+        title_candidates=[str(item) for item in row.title_candidates or [] if item],
+        topic_intents=[item for item in row.topic_intents or [] if isinstance(item, dict)],
+        risk_signals=[item for item in row.risk_signals or [] if isinstance(item, dict)],
+        local_impact_signals=[item for item in row.local_impact_signals or [] if isinstance(item, dict)],
+        actor_signals=dict(row.actor_signals or {}),
+        supporting_text=[str(item) for item in row.supporting_text or [] if item],
+        system_pointers=dict(row.system_pointers or {}),
+        payload=dict(row.payload or {}),
+        schema_version=row.schema_version or "",
+        status=row.status or "active",
+    )
+
+
+def _community_assignment_values(item: CommunityAssignment) -> dict[str, Any]:
+    return {
+        "assignment_id": item.assignment_id,
+        "adapter_name": item.adapter_name,
+        "cognitive_card_id": item.cognitive_card_id,
+        "intent_index": item.intent_index,
+        "intent_id": item.intent_id,
+        "community_id": item.community_id,
+        "action": item.action,
+        "weight": item.weight,
+        "confidence": item.confidence,
+        "matched_reason": item.matched_reason,
+        "update_mode": item.update_mode,
+        "reason": item.reason,
+        "topic_intent": item.topic_intent,
+        "decision": item.decision,
+        "status": item.status,
         "updated_at": datetime.now(timezone.utc),
     }
 

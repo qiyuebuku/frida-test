@@ -1,0 +1,953 @@
+"""Cognitive-card first community index.
+
+This module owns the formal write-side flow:
+
+    EvidenceChunk -> CognitiveCard -> CommunityCard
+
+It intentionally does not depend on node/edge graph facts. Node/edge facts may
+exist elsewhere in the KG, but community topics are built from chunk-level
+cognitive signals.
+"""
+
+from __future__ import annotations
+
+import hashlib
+import json
+import re
+from dataclasses import dataclass, field
+from typing import Any
+
+from src.domain.knowledge.graph_index import GraphIndexCommunity, GraphIndexVectorDocument
+from src.domain.knowledge.schemas import EvidenceChunk
+
+
+DEFAULT_MAX_ATTACH = 3
+COMPLEX_MAX_ATTACH = 5
+COGNITIVE_CARD_SCHEMA_VERSION = "cognitive_card_v1"
+COMMUNITY_ASSIGNMENT_SCHEMA_VERSION = "community_assignment_v1"
+COMMUNITY_PROJECTION = "cognitive_topic"
+
+
+@dataclass(frozen=True)
+class CognitiveCard:
+    cognitive_card_id: str
+    adapter_name: str
+    source_type: str
+    source_id: str
+    evidence_id: str
+    primary_chunk_id: str
+    chunk_ids: list[str]
+    chunk_index: int
+    summary: str
+    title_candidates: list[str]
+    topic_intents: list[dict[str, Any]]
+    risk_signals: list[dict[str, Any]]
+    local_impact_signals: list[dict[str, Any]]
+    actor_signals: dict[str, Any]
+    supporting_text: list[str]
+    system_pointers: dict[str, Any]
+    payload: dict[str, Any]
+    schema_version: str = COGNITIVE_CARD_SCHEMA_VERSION
+    status: str = "active"
+
+
+@dataclass(frozen=True)
+class CommunityAssignment:
+    assignment_id: str
+    adapter_name: str
+    cognitive_card_id: str
+    intent_index: int
+    intent_id: str
+    community_id: str
+    action: str
+    weight: float
+    confidence: float
+    matched_reason: str
+    update_mode: str
+    reason: str
+    topic_intent: dict[str, Any]
+    decision: dict[str, Any]
+    status: str = "active"
+
+
+@dataclass
+class CommunityDraft:
+    community_id: str
+    title: str
+    scope: str
+    level: int = 0
+    parent_community_id: str = ""
+    summary: str = ""
+    source_ids: list[str] = field(default_factory=list)
+    evidence_ids: list[str] = field(default_factory=list)
+    chunk_ids: list[str] = field(default_factory=list)
+    cognitive_card_ids: list[str] = field(default_factory=list)
+    assigned_intents: list[dict[str, Any]] = field(default_factory=list)
+    assignments: list[dict[str, Any]] = field(default_factory=list)
+    rejected_candidates: list[dict[str, Any]] = field(default_factory=list)
+    future_coverage: list[str] = field(default_factory=list)
+    created_from_source_id: str = ""
+
+    def signal_values(self) -> dict[str, list[str]]:
+        keys = (
+            "raw_theme",
+            "title_candidate",
+            "parent_themes",
+            "broad_topics",
+            "mid_topics",
+            "specific_topics",
+            "driver",
+            "impact_target",
+            "risk_type",
+            "event_thread",
+            "event_action",
+            "actors",
+        )
+        result: dict[str, list[str]] = {key: [] for key in keys}
+        for intent in self.assigned_intents:
+            for key in keys:
+                result[key].extend(_as_list(intent.get(key)))
+        return {key: _dedupe(values) for key, values in result.items()}
+
+    def to_assignment_candidate(self, *, score: float = 0.0, lane: str = "") -> dict[str, Any]:
+        signals = self.signal_values()
+        labels = _dedupe(
+            [
+                self.title,
+                *signals.get("parent_themes", []),
+                *signals.get("broad_topics", []),
+                *signals.get("mid_topics", []),
+                *signals.get("specific_topics", []),
+                *signals.get("raw_theme", []),
+                *signals.get("title_candidate", []),
+                *signals.get("impact_target", []),
+                *signals.get("event_thread", []),
+                *signals.get("risk_type", []),
+            ]
+        )[:12]
+        return {
+            "community_id": self.community_id,
+            "title": self.title,
+            "level": self.level,
+            "parent_community_id": self.parent_community_id,
+            "scope": _clip(self.scope, 220),
+            "summary": _clip(self.summary, 240),
+            "parent_themes": signals.get("parent_themes", [])[:8],
+            "broad_topics": signals.get("broad_topics", [])[:8],
+            "mid_topics": signals.get("mid_topics", [])[:10],
+            "specific_topics": signals.get("specific_topics", [])[:10],
+            "future_coverage": _dedupe([*self.future_coverage, *signals.get("mid_topics", []), *signals.get("specific_topics", [])])[:12],
+            "canonical_labels": labels,
+            "maturity": maturity_label(len(set(self.source_ids))),
+            "retrieval_score": round(float(score or 0), 4),
+            "retrieval_lane": lane,
+            "recent_examples": [
+                {
+                    "title": str(
+                        (
+                            _as_list(intent.get("broad_topics"))[:1]
+                            or _as_list(intent.get("mid_topics"))[:1]
+                            or [intent.get("title_candidate") or intent.get("raw_theme") or ""]
+                        )[0]
+                    ),
+                    "summary": _clip(str(intent.get("summary") or ""), 120),
+                }
+                for intent in self.assigned_intents[-3:]
+            ],
+        }
+
+
+@dataclass(frozen=True)
+class CognitiveCommunityBuildResult:
+    cards: list[CognitiveCard]
+    assignments: list[CommunityAssignment]
+    communities: list[GraphIndexCommunity]
+    documents: list[GraphIndexVectorDocument]
+    diagnostics: dict[str, Any]
+
+
+COGNITIVE_CARD_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "properties": {
+        "summary": {"type": "string", "maxLength": 180},
+        "title_candidates": {"type": "array", "maxItems": 5, "items": {"type": "string", "maxLength": 24}},
+        "topic_intents": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 10,
+            "items": {
+                "type": "object",
+                "properties": {
+                    "raw_theme": {"type": "string", "maxLength": 48},
+                    "title_candidate": {"type": "string", "maxLength": 32},
+                    "parent_themes": {"type": "array", "maxItems": 4, "items": {"type": "string", "maxLength": 24}},
+                    "broad_topics": {"type": "array", "maxItems": 4, "items": {"type": "string", "maxLength": 24}},
+                    "mid_topics": {"type": "array", "maxItems": 5, "items": {"type": "string", "maxLength": 28}},
+                    "specific_topics": {"type": "array", "maxItems": 5, "items": {"type": "string", "maxLength": 36}},
+                    "topic_level_hint": {"type": "string", "enum": ["broad", "mid", "specific", "mixed", "uncertain"]},
+                    "driver": {"type": "array", "maxItems": 5, "items": {"type": "string", "maxLength": 32}},
+                    "impact_target": {"type": "array", "maxItems": 6, "items": {"type": "string", "maxLength": 28}},
+                    "risk_type": {"type": "array", "maxItems": 4, "items": {"type": "string", "maxLength": 28}},
+                    "event_thread": {"type": "array", "maxItems": 4, "items": {"type": "string", "maxLength": 32}},
+                    "event_action": {"type": "array", "maxItems": 4, "items": {"type": "string", "maxLength": 32}},
+                    "actors": {"type": "array", "maxItems": 6, "items": {"type": "string", "maxLength": 28}},
+                    "importance": {"type": "number", "minimum": 0, "maximum": 1},
+                    "impact_direction": {"type": "string", "enum": ["positive", "negative", "mixed", "uncertain"]},
+                    "event_stage": {"type": "string", "maxLength": 24},
+                    "timeline_position": {
+                        "type": "string",
+                        "enum": ["trigger", "reaction", "escalation", "deescalation", "resolution", "follow_up", "uncertain"],
+                    },
+                    "event_time": {"type": "string", "maxLength": 32},
+                    "summary": {"type": "string", "maxLength": 120},
+                    "supporting_text": {"type": "string", "maxLength": 120},
+                },
+                "required": [
+                    "raw_theme",
+                    "title_candidate",
+                    "parent_themes",
+                    "broad_topics",
+                    "mid_topics",
+                    "specific_topics",
+                    "topic_level_hint",
+                    "driver",
+                    "impact_target",
+                    "risk_type",
+                    "event_thread",
+                    "event_action",
+                    "actors",
+                    "importance",
+                    "impact_direction",
+                    "event_stage",
+                    "timeline_position",
+                    "event_time",
+                    "summary",
+                    "supporting_text",
+                ],
+                "additionalProperties": False,
+            },
+        },
+        "risk_signals": {
+            "type": "array",
+            "maxItems": 6,
+            "items": {
+                "type": "object",
+                "properties": {
+                    "risk_type": {"type": "string", "maxLength": 32},
+                    "risk_direction": {"type": "string", "enum": ["increasing", "decreasing", "neutral", "uncertain"]},
+                    "risk_scope": {"type": "string", "maxLength": 48},
+                    "risk_severity": {"type": "number", "minimum": 0, "maximum": 1},
+                    "uncertainty": {"type": "string", "maxLength": 80},
+                    "supporting_text": {"type": "string", "maxLength": 120},
+                    "confidence": {"type": "number", "minimum": 0, "maximum": 1},
+                    "importance": {"type": "number", "minimum": 0, "maximum": 1},
+                },
+                "required": [
+                    "risk_type",
+                    "risk_direction",
+                    "risk_scope",
+                    "risk_severity",
+                    "uncertainty",
+                    "supporting_text",
+                    "confidence",
+                    "importance",
+                ],
+                "additionalProperties": False,
+            },
+        },
+        "local_impact_signals": {
+            "type": "array",
+            "maxItems": 8,
+            "items": {
+                "type": "object",
+                "properties": {
+                    "local_impact_mentions": {"type": "string", "maxLength": 100},
+                    "local_impact_target": {"type": "array", "maxItems": 5, "items": {"type": "string", "maxLength": 32}},
+                    "local_impact_direction": {
+                        "type": "string",
+                        "enum": ["positive", "negative", "mixed", "neutral", "uncertain"],
+                    },
+                    "local_impact_mechanism_text": {"type": "string", "maxLength": 120},
+                    "supporting_text": {"type": "string", "maxLength": 120},
+                    "confidence": {"type": "number", "minimum": 0, "maximum": 1},
+                    "importance": {"type": "number", "minimum": 0, "maximum": 1},
+                },
+                "required": [
+                    "local_impact_mentions",
+                    "local_impact_target",
+                    "local_impact_direction",
+                    "local_impact_mechanism_text",
+                    "supporting_text",
+                    "confidence",
+                    "importance",
+                ],
+                "additionalProperties": False,
+            },
+        },
+        "actor_signals": {
+            "type": "object",
+            "properties": {
+                "actors": {"type": "array", "maxItems": 8, "items": {"type": "string", "maxLength": 32}},
+                "companies": {"type": "array", "maxItems": 8, "items": {"type": "string", "maxLength": 32}},
+                "industries": {"type": "array", "maxItems": 8, "items": {"type": "string", "maxLength": 32}},
+                "regions": {"type": "array", "maxItems": 6, "items": {"type": "string", "maxLength": 32}},
+                "policies": {"type": "array", "maxItems": 6, "items": {"type": "string", "maxLength": 48}},
+                "commodities": {"type": "array", "maxItems": 6, "items": {"type": "string", "maxLength": 32}},
+            },
+            "required": ["actors", "companies", "industries", "regions", "policies", "commodities"],
+            "additionalProperties": False,
+        },
+        "supporting_text": {"type": "array", "maxItems": 5, "items": {"type": "string", "maxLength": 120}},
+    },
+    "required": [
+        "summary",
+        "title_candidates",
+        "topic_intents",
+        "risk_signals",
+        "local_impact_signals",
+        "actor_signals",
+        "supporting_text",
+    ],
+    "additionalProperties": False,
+}
+
+
+ASSIGNMENT_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "properties": {
+        "assignments": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 5,
+            "items": {
+                "type": "object",
+                "properties": {
+                    "action": {"type": "string", "enum": ["attach_existing", "create_new_l0"]},
+                    "community_id": {"type": ["string", "null"]},
+                    "weight": {"type": "number", "minimum": 0, "maximum": 1},
+                    "confidence": {"type": "number", "minimum": 0, "maximum": 1},
+                    "matched_reason": {"type": "string"},
+                    "update_mode": {"type": "string", "enum": ["append_reference", "update_delta", "rewrite_summary"]},
+                    "reason": {"type": "string"},
+                    "new_community": {
+                        "type": ["object", "null"],
+                        "properties": {
+                            "level": {"type": "number"},
+                            "title": {"type": "string"},
+                            "scope": {"type": "string"},
+                            "title_quality": {"type": "string", "enum": ["broad_topic"]},
+                            "level_rationale": {"type": "string"},
+                            "future_coverage": {"type": "array", "items": {"type": "string"}},
+                            "intent_role": {"type": "string"},
+                            "candidate_fit_summary": {"type": "string"},
+                        },
+                        "required": [
+                            "level",
+                            "title",
+                            "scope",
+                            "title_quality",
+                            "level_rationale",
+                            "future_coverage",
+                            "intent_role",
+                            "candidate_fit_summary",
+                        ],
+                        "additionalProperties": False,
+                    },
+                },
+                "allOf": [
+                    {
+                        "if": {"properties": {"action": {"const": "attach_existing"}}, "required": ["action"]},
+                        "then": {"properties": {"community_id": {"type": "string"}, "new_community": {"type": "null"}}},
+                    },
+                    {
+                        "if": {"properties": {"action": {"const": "create_new_l0"}}, "required": ["action"]},
+                        "then": {"properties": {"community_id": {"type": "null"}, "new_community": {"type": "object"}}},
+                    },
+                ],
+                "required": [
+                    "action",
+                    "community_id",
+                    "weight",
+                    "confidence",
+                    "matched_reason",
+                    "update_mode",
+                    "reason",
+                    "new_community",
+                ],
+                "additionalProperties": False,
+            },
+        },
+        "rejected_candidates": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "community_id": {"type": "string"},
+                    "reason_code": {"type": "string"},
+                    "reason": {"type": "string"},
+                },
+                "required": ["community_id", "reason_code", "reason"],
+                "additionalProperties": False,
+            },
+        },
+        "maintenance_hints": {
+            "type": "object",
+            "properties": {
+                "suggest_split": {"type": "boolean"},
+                "suggest_merge_community_ids": {"type": "array", "items": {"type": "string"}},
+                "reason": {"type": "string"},
+            },
+            "required": ["suggest_split", "suggest_merge_community_ids", "reason"],
+            "additionalProperties": False,
+        },
+    },
+    "required": ["assignments", "rejected_candidates", "maintenance_hints"],
+    "additionalProperties": False,
+}
+
+
+COGNITIVE_CARD_SYSTEM_PROMPT = """你是金融知识图谱的 Cognitive Card 抽取器。
+
+任务：把当前 chunk text 抽成局部认知信号，供 Community、事件流、风险簇、影响链等高阶索引复用。
+
+要求：
+- 只基于当前 chunk text，不添加外部事实，不跨 chunk 推断全局结论。
+- 不要输出 source_id、evidence_id、chunk_id、offset、previous_chunk_id、next_chunk_id、text_hash、chunker_version；这些证据定位字段由系统注入。
+- 必须输出 topic_intents，数量 1-10 个；每个 topic_intent 表示当前 chunk 支撑的一个主题意图。
+- topic_intents 必须是对象数组，禁止输出字符串数组。
+- 每个 topic_intent 对象必须包含 raw_theme、title_candidate、parent_themes、broad_topics、mid_topics、specific_topics、topic_level_hint、driver、impact_target、risk_type、event_thread、event_action、actors、importance、impact_direction、event_stage、timeline_position、event_time、summary、supporting_text。
+- topic_intent 只表示高维主题意图，不表示单个公司动作、单个数字、单个项目、单条审批、单次行情或单个数据点。
+- 细事实应放入 specific_topics、event_action、actors、supporting_text，不要为细事实单独创建 topic_intent。
+- 不要因为出现多个公司、多个数字、多个动作就拆多个 topic_intents；除非它们属于不同父级主题、不同影响对象、不同风险类型或不同事件线。
+- raw_theme 必须是当前 chunk 能支撑的主题表达，不要直接照抄新闻标题。
+- title_candidate 必须是适合作为 community 的候选主题标题。
+- parent_themes 写交易认知层 L0 父主题，是后续 Community 归档最重要的信号；它应该能承载多条不同来源、不同主体、不同时间的资料。
+- parent_themes 不要写公司名、项目名、单一产品、单次交易或单条行情；遇到细方向时必须上提到可复用父主题。
+- parent_themes 应像图书馆一级目录名：短、稳定、可复用；不要写成一句新闻摘要、原因解释或长标题。
+- 如果一个表达只描述某个父主题下的供需变化、风险变化、资金变化、项目进展或单一主体动作，应放入 mid_topics / specific_topics，而不是 parent_themes。
+- broad_topics 写父主题下仍然较宽的行业、政策、市场或风险主题。
+- mid_topics 写父级主题下的子方向，适合未来 L1/L2。
+- specific_topics 写具体项目、公司动作、单笔交易、单个产品、单次行情或单条事件线索；这些不是 L0 标题。
+- impact_target 只写当前 chunk 明确提到的行业、资产、公司、商品、产业链环节。
+- event_thread 用于给后续事件流提供局部线索，应是可跨多条资料复用的政策线、产业线、地缘线、公司事件线或市场事件线名称。
+- timeline_position / event_time 继续抽取并保留给后续事件流；但它们不会传给 Community Assignment LLM。
+- risk_signals 只抽当前 chunk 明确支撑的风险线索；证据不足时保守输出。
+- local_impact_signals 只抽当前 chunk 明确提到的局部影响线索，不要改写成完整影响链。
+- summary、topic_intent.summary、local_impact_mentions 不允许出现“当前chunk”“当前 chunk”“本chunk”“该chunk”“这段chunk”等实现视角词。
+- supporting_text 只写当前 chunk 中支撑判断的关键短句，不要整段复制，不要超过一句。
+- title_candidates 给 3-5 个候选主题标题，优先覆盖 parent_themes，其次覆盖 broad_topics 和 mid_topics。
+- title_candidates 必须是主题名，不要使用新闻标题、单一公司项目名、单一交易名、盘面描述或“动态/事件/项目/公告”这类尾词。
+- 不要输出 primary / secondary 之类主次判断；主题强弱由后续 assignment weight 表达。
+- 输出必须符合 JSON Schema，不要 Markdown。"""
+
+
+ASSIGNMENT_SYSTEM_PROMPT = """你是金融知识图谱的 Community 归档裁决器。
+
+你会收到 compact topic_intent、轻量新闻标题，以及系统召回的候选 L0/L1/L2 community。
+
+你的任务：
+- 在候选 community 中判断是否应该挂入已有主题；
+- 如果候选都不适合，第一阶段只能创建新的 L0 community；
+- 输入候选 community_id 会使用 c1、c2、c3 这类短 alias；attach_existing、rejected_candidates、maintenance_hints 中引用候选时必须原样使用这些 alias，禁止输出 hash、标题或自造 ID。
+- 一个 topic_intent 可以归属到一个或多个 community；
+- 不区分 primary / secondary；
+- 每条归属必须输出 weight，表示这个 topic_intent 和 community 的关联强度；
+- assignments 数量不要超过 max_attach 限制；
+- 不要输出 uncertain，不走人工 pending；
+- 低置信也必须在 attach_existing 或 create_new_l0 中二选一；
+- 归档判断必须综合 parent_themes、broad_topics、mid_topics、specific_topics、raw_theme、title_candidate、driver、impact_target、risk_type、event_thread、event_action、actors。
+- parent_themes 是 L0 归档主信号。如果 topic_intent.parent_themes 与候选 community 的 title、canonical_labels、summary 或 scope 明显匹配，应优先 attach_existing。
+- broad_topics、mid_topics、specific_topics 都只是候选信号，不是标题指令；你必须判断它们的真实层级是否适合作为 L0。
+- L0 community 是可长期复用的父级主题，应该能承载多条不同来源、不同时间、不同主体的资料，并且未来可以继续拆出 L1/L2。
+- 候选 community 的 scope、future_coverage、parent_themes、broad_topics、mid_topics、specific_topics 用来判断覆盖范围。只要当前 topic_intent 是候选 coverage 下的子主题，应优先 attach_existing，而不是因为角度更细就新建平级 L0。
+- 如果当前 topic_intent 是 mid/specific 层级，不能直接把细主题包装成 L0；必须先寻找已有父级或子级 community 是否可挂入，没有合适候选时再提炼更高一层的父级 L0。
+- 如果创建新 L0，title 必须优先使用 parent_themes 中可长期复用的父级主题；只有 parent_themes 为空或明显不适合时，才从 broad_topics 中提炼父级主题。
+- 如果当前 broad/mid/specific 是已有 parent_theme 的子方向，必须挂入该父主题，不要创建平级 L0。
+- 如果创建新 L0，title 必须是可长期复用的父级主题，不能是新闻标题、公司项目名、单一交易名、单个产品、单次行情、单个技术细节。
+- create_new_l0 的 title 应像索引目录名，优先短标题；不要输出带有“政策与市场动态”“结构性变化”“投资机会”等摘要式尾巴的长标题，除非这是不可再压缩的稳定主题名。
+- 如果 action=attach_existing，new_community 必须严格为 null。
+- 如果 action=create_new_l0，community_id 必须为 null，new_community 必须是完整对象。
+- 输出必须符合 JSON Schema，不要 Markdown。"""
+
+
+def cognitive_card_from_llm(chunk: EvidenceChunk, data: dict[str, Any]) -> CognitiveCard:
+    payload = dict(chunk.payload or {})
+    source_id = str(payload.get("source_id") or "")
+    source_type = str(payload.get("source_type") or "")
+    pointers = {
+        "source_id": source_id,
+        "source_type": source_type,
+        "evidence_id": chunk.evidence_id,
+        "primary_chunk_id": chunk.chunk_id,
+        "chunk_ids": [chunk.chunk_id],
+        "chunk_index": chunk.chunk_index,
+        "start_offset": chunk.start_offset,
+        "end_offset": chunk.end_offset,
+        "previous_chunk_id": chunk.previous_chunk_id or "",
+        "next_chunk_id": chunk.next_chunk_id or "",
+        "text_hash": chunk.text_hash or "",
+        "chunker_version": chunk.chunker_version or "",
+    }
+    card_id = "kg_cognitive_card:" + _digest(
+        [chunk.adapter_name, chunk.evidence_id, chunk.chunk_id, str(chunk.text_hash or ""), COGNITIVE_CARD_SCHEMA_VERSION]
+    )
+    raw_intents = data.get("topic_intents") or []
+    if not isinstance(raw_intents, list) or not raw_intents:
+        raise RuntimeError(f"cognitive card has no topic_intents: chunk_id={chunk.chunk_id}")
+    intents: list[dict[str, Any]] = []
+    for intent in raw_intents:
+        if isinstance(intent, dict):
+            intents.append(_clean_intent(intent))
+    if not intents:
+        raise RuntimeError(f"cognitive card has no valid topic_intents: chunk_id={chunk.chunk_id}")
+    return CognitiveCard(
+        cognitive_card_id=card_id,
+        adapter_name=chunk.adapter_name,
+        source_type=source_type,
+        source_id=source_id,
+        evidence_id=chunk.evidence_id,
+        primary_chunk_id=chunk.chunk_id,
+        chunk_ids=[chunk.chunk_id],
+        chunk_index=chunk.chunk_index,
+        summary=_clean_text(data.get("summary")),
+        title_candidates=_dedupe(_as_list(data.get("title_candidates")))[:5],
+        topic_intents=intents,
+        risk_signals=[item for item in data.get("risk_signals") or [] if isinstance(item, dict)],
+        local_impact_signals=[item for item in data.get("local_impact_signals") or [] if isinstance(item, dict)],
+        actor_signals=data.get("actor_signals") if isinstance(data.get("actor_signals"), dict) else {},
+        supporting_text=_dedupe(_as_list(data.get("supporting_text")))[:5],
+        system_pointers=pointers,
+        payload={**data, "title": payload.get("title") or "", "source_name": payload.get("source_name") or ""},
+    )
+
+
+def validate_assignment_decision(
+    decision: dict[str, Any],
+    candidates: list[dict[str, Any]],
+    *,
+    topic_intent: dict[str, Any] | None = None,
+) -> None:
+    required_top = ["assignments", "rejected_candidates", "maintenance_hints"]
+    missing_top = [key for key in required_top if key not in decision]
+    if missing_top:
+        raise RuntimeError(f"assignment decision missing top-level fields: {missing_top}; decision={decision}")
+    if not isinstance(decision["assignments"], list) or not decision["assignments"]:
+        raise RuntimeError(f"assignments must be non-empty array; decision={decision}")
+    if len(decision["assignments"]) > COMPLEX_MAX_ATTACH:
+        raise RuntimeError(f"too many assignments: {len(decision['assignments'])}; decision={decision}")
+    candidate_ids = {str(candidate["community_id"]) for candidate in candidates}
+    seen: set[str] = set()
+    for assignment in decision["assignments"]:
+        if not isinstance(assignment, dict):
+            raise RuntimeError(f"assignment must be object: {assignment}; decision={decision}")
+        action = assignment.get("action")
+        if action not in {"attach_existing", "create_new_l0"}:
+            raise RuntimeError(f"assignment.action invalid: {action}; decision={decision}")
+        community_id = assignment.get("community_id")
+        new_community = assignment.get("new_community")
+        if action == "attach_existing":
+            if not isinstance(community_id, str) or not community_id.strip():
+                raise RuntimeError(f"attach_existing requires community_id; decision={decision}")
+            if community_id not in candidate_ids:
+                raise RuntimeError(f"community_id not in candidates: {community_id}; decision={decision}")
+            if new_community is not None:
+                raise RuntimeError(f"new_community must be null when attaching; decision={decision}")
+            dedupe = "attach:" + community_id
+        else:
+            if community_id is not None:
+                raise RuntimeError(f"community_id must be null when creating new L0; decision={decision}")
+            _validate_new_community(new_community, decision, topic_intent=topic_intent)
+            dedupe = "create:" + _normalize_label(str(new_community.get("title") or ""))
+        if dedupe in seen:
+            raise RuntimeError(f"duplicate assignment target: {dedupe}; decision={decision}")
+        seen.add(dedupe)
+        for numeric in ("weight", "confidence"):
+            value = assignment.get(numeric)
+            if not isinstance(value, (int, float)) or isinstance(value, bool) or not 0 <= float(value) <= 1:
+                raise RuntimeError(f"{numeric} must be number between 0 and 1; decision={decision}")
+
+
+def _validate_new_community(payload: Any, decision: dict[str, Any], *, topic_intent: dict[str, Any] | None) -> None:
+    if not isinstance(payload, dict):
+        raise RuntimeError(f"create_new_l0 requires new_community object; decision={decision}")
+    for key in ("level", "title", "scope", "title_quality", "level_rationale", "future_coverage", "intent_role", "candidate_fit_summary"):
+        if key not in payload:
+            raise RuntimeError(f"new_community missing field {key}; decision={decision}")
+    level = payload.get("level")
+    if not isinstance(level, (int, float)) or isinstance(level, bool) or float(level) != 0:
+        raise RuntimeError(f"new_community.level must be numeric 0; decision={decision}")
+    title = _clean_text(payload.get("title"))
+    if not title:
+        raise RuntimeError(f"new_community.title must be non-empty; decision={decision}")
+    if payload.get("title_quality") != "broad_topic":
+        raise RuntimeError(f"new_community.title_quality must be broad_topic; decision={decision}")
+    if not isinstance(payload.get("future_coverage"), list) or not payload["future_coverage"]:
+        raise RuntimeError(f"new_community.future_coverage must be non-empty array; decision={decision}")
+    if topic_intent is not None:
+        normalized_title = _normalize_label(title)
+        specific_titles = {_normalize_label(item) for item in _as_list(topic_intent.get("specific_topics"))}
+        if normalized_title and normalized_title in specific_titles:
+            raise RuntimeError(f"new_community.title duplicates a specific topic: title={title}; decision={decision}")
+
+
+def _assignment_topic_intent(card: CognitiveCard, intent_payload: dict[str, Any]) -> dict[str, Any]:
+    intent = {
+        "raw_theme": _clean_text(intent_payload.get("raw_theme")),
+        "title_candidate": _clean_text(intent_payload.get("title_candidate") or intent_payload.get("raw_theme")),
+        "parent_themes": _dedupe(_as_list(intent_payload.get("parent_themes")))[:5],
+        "broad_topics": _dedupe(_as_list(intent_payload.get("broad_topics")))[:5],
+        "mid_topics": _dedupe(_as_list(intent_payload.get("mid_topics")))[:6],
+        "specific_topics": _dedupe(_as_list(intent_payload.get("specific_topics")))[:6],
+        "topic_level_hint": str(intent_payload.get("topic_level_hint") or "uncertain").strip() or "uncertain",
+        "summary": _clip(str(intent_payload.get("summary") or card.summary or ""), 280),
+        "driver": _dedupe(_as_list(intent_payload.get("driver")))[:6],
+        "impact_target": _dedupe(_as_list(intent_payload.get("impact_target")))[:8],
+        "event_thread": _dedupe(_as_list(intent_payload.get("event_thread")))[:5],
+        "risk_type": _dedupe(_as_list(intent_payload.get("risk_type")))[:5],
+        "event_action": _dedupe(_as_list(intent_payload.get("event_action")))[:6],
+        "actors": _dedupe(_as_list(intent_payload.get("actors")))[:8],
+        "importance": round(float(intent_payload.get("importance") or _infer_importance(intent_payload)), 2),
+        "cognitive_card_id": card.cognitive_card_id,
+        "source_id": card.source_id,
+        "evidence_id": card.evidence_id,
+        "chunk_ids": card.chunk_ids,
+        "primary_chunk_id": card.primary_chunk_id,
+    }
+    impact_direction = str(intent_payload.get("impact_direction") or "").strip()
+    if impact_direction and impact_direction != "uncertain":
+        intent["impact_direction"] = impact_direction
+    return intent
+
+
+def _apply_assignment(
+    *,
+    adapter_name: str,
+    card: CognitiveCard,
+    intent_index: int,
+    topic_intent: dict[str, Any],
+    decision: dict[str, Any],
+    communities: dict[str, CommunityDraft],
+) -> list[CommunityAssignment]:
+    applied: list[CommunityAssignment] = []
+    for assignment in decision["assignments"]:
+        action = str(assignment["action"])
+        if action == "create_new_l0":
+            payload = assignment["new_community"]
+            community_id = _community_id(adapter_name, str(payload["title"]))
+            if community_id not in communities:
+                communities[community_id] = CommunityDraft(
+                    community_id=community_id,
+                    title=_clean_text(payload["title"]),
+                    scope=_clean_text(payload["scope"]),
+                    level=0,
+                    future_coverage=_dedupe(_as_list(payload.get("future_coverage")))[:16],
+                    created_from_source_id=card.source_id,
+                )
+        else:
+            community_id = str(assignment["community_id"])
+        community = communities[community_id]
+        community.source_ids = _dedupe([*community.source_ids, card.source_id])
+        community.evidence_ids = _dedupe([*community.evidence_ids, card.evidence_id])
+        community.chunk_ids = _dedupe([*community.chunk_ids, *card.chunk_ids])
+        community.cognitive_card_ids = _dedupe([*community.cognitive_card_ids, card.cognitive_card_id])
+        community.assigned_intents.append(topic_intent)
+        community.assignments.append(assignment)
+        community.summary = _community_summary(community)
+        assignment_id = "kg_community_assignment:" + _digest(
+            [card.cognitive_card_id, str(intent_index), community_id, action]
+        )
+        applied.append(
+            CommunityAssignment(
+                assignment_id=assignment_id,
+                adapter_name=adapter_name,
+                cognitive_card_id=card.cognitive_card_id,
+                intent_index=intent_index,
+                intent_id=f"{card.cognitive_card_id}:intent:{intent_index}",
+                community_id=community_id,
+                action=action,
+                weight=float(assignment.get("weight") or 0),
+                confidence=float(assignment.get("confidence") or 0),
+                matched_reason=str(assignment.get("matched_reason") or ""),
+                update_mode=str(assignment.get("update_mode") or ""),
+                reason=str(assignment.get("reason") or ""),
+                topic_intent=topic_intent,
+                decision=decision,
+            )
+        )
+    return applied
+
+
+def _drafts_from_existing(existing: list[GraphIndexCommunity]) -> dict[str, CommunityDraft]:
+    drafts: dict[str, CommunityDraft] = {}
+    for community in existing:
+        if community.projection != COMMUNITY_PROJECTION or community.status != "active":
+            continue
+        metrics = community.metrics or {}
+        drafts[community.community_id] = CommunityDraft(
+            community_id=community.community_id,
+            title=community.title,
+            scope=str(metrics.get("scope") or community.summary or ""),
+            level=community.level,
+            parent_community_id=community.parent_community_id,
+            summary=community.summary,
+            source_ids=[],
+            evidence_ids=[],
+            chunk_ids=[],
+            cognitive_card_ids=[],
+            assigned_intents=[],
+            assignments=[],
+            future_coverage=[str(item) for item in metrics.get("future_coverage") or [] if str(item).strip()],
+        )
+    return drafts
+
+
+def _graph_community_from_draft(adapter_name: str, draft: CommunityDraft) -> GraphIndexCommunity:
+    signals = draft.signal_values()
+    version_id = f"{draft.community_id}:v:{_digest([*draft.chunk_ids, *draft.cognitive_card_ids, draft.summary])}"
+    metrics = {
+        "source_ids": draft.source_ids,
+        "source_count": len(set(draft.source_ids)),
+        "cognitive_card_ids": draft.cognitive_card_ids,
+        "assigned_intents": draft.assigned_intents[-80:],
+        "assignments": draft.assignments[-80:],
+        "topic_tags": _dedupe(
+            [
+                *signals.get("parent_themes", []),
+                *signals.get("broad_topics", []),
+                *signals.get("mid_topics", []),
+                *signals.get("raw_theme", []),
+            ]
+        )[:32],
+        "parent_themes": signals.get("parent_themes", [])[:24],
+        "impact_tags": signals.get("impact_target", [])[:32],
+        "risk_tags": signals.get("risk_type", [])[:24],
+        "event_threads": signals.get("event_thread", [])[:24],
+        "future_coverage": _dedupe([*draft.future_coverage, *signals.get("mid_topics", []), *signals.get("specific_topics", [])])[:32],
+        "maturity_level": maturity_label(len(set(draft.source_ids))),
+        "scope": draft.scope,
+        "community_builder": "cognitive_card_assignment_v1",
+    }
+    return GraphIndexCommunity(
+        community_id=draft.community_id,
+        version_id=version_id,
+        adapter_name=adapter_name,
+        projection=COMMUNITY_PROJECTION,
+        level=draft.level,
+        parent_community_id=draft.parent_community_id,
+        title=draft.title,
+        summary=draft.summary or _community_summary(draft),
+        member_node_ids=[],
+        member_edge_ids=[],
+        evidence_ids=_dedupe(draft.evidence_ids),
+        chunk_ids=_dedupe(draft.chunk_ids),
+        metrics=metrics,
+        status="active",
+        previous_version_id="",
+        change_reason="cognitive_assignment",
+        lineage_id="kg_community_lineage:" + _digest([draft.title]),
+        previous_community_ids=[],
+    )
+
+
+def _community_document(community: GraphIndexCommunity) -> GraphIndexVectorDocument:
+    metrics = community.metrics or {}
+    text = "\n".join(
+        part
+        for part in [
+            "Document Type: Community Report",
+            f"Community: {community.title}",
+            f"Projection: {community.projection}",
+            f"Community Level: {community.level}",
+            f"Maturity: {metrics.get('maturity_level') or ''}",
+            f"Summary: {community.summary}",
+            f"Parent Themes: {'；'.join(metrics.get('parent_themes') or [])}",
+            f"Topic Tags: {'；'.join(metrics.get('topic_tags') or [])}",
+            f"Future Coverage: {'；'.join(metrics.get('future_coverage') or [])}",
+            f"Impact Tags: {'；'.join(metrics.get('impact_tags') or [])}",
+            f"Risk Tags: {'；'.join(metrics.get('risk_tags') or [])}",
+            f"Event Threads: {'；'.join(metrics.get('event_threads') or [])}",
+            f"Cited Evidence: {' '.join(community.evidence_ids[:16])}",
+            f"Cited Chunks: {' '.join(community.chunk_ids[:16])}",
+            f"Expandable Handles: community_id={community.community_id}",
+        ]
+        if part and not part.endswith(": ")
+    )
+    return GraphIndexVectorDocument(
+        document_id=community.community_id,
+        document_type="community_report",
+        collection_role="community",
+        source_type="kg_community_report",
+        source_id=community.community_id,
+        evidence_id=community.evidence_ids[0] if community.evidence_ids else "",
+        text=text,
+        metadata={
+            "community_id": community.community_id,
+            "community_version_id": community.version_id,
+            "community_title": community.title,
+            "community_level": community.level,
+            "projection": community.projection,
+            "parent_community_id": community.parent_community_id,
+            "cited_evidence_ids": community.evidence_ids,
+            "cited_chunk_ids": community.chunk_ids,
+            "edge_ids": [],
+            "node_ids": [],
+            "metrics": metrics,
+            "maturity_level": metrics.get("maturity_level") or "",
+            "cognitive_card_ids": metrics.get("cognitive_card_ids") or [],
+        },
+    )
+
+
+def assignment_query_text(intent: dict[str, Any]) -> str:
+    values = [
+        *_as_list(intent.get("parent_themes")),
+        intent.get("raw_theme"),
+        intent.get("title_candidate"),
+        *_as_list(intent.get("broad_topics")),
+        *_as_list(intent.get("mid_topics")),
+        *_as_list(intent.get("specific_topics")),
+        *_as_list(intent.get("driver")),
+        *_as_list(intent.get("impact_target")),
+        *_as_list(intent.get("risk_type")),
+        *_as_list(intent.get("event_thread")),
+        *_as_list(intent.get("event_action")),
+        *_as_list(intent.get("actors")),
+        intent.get("summary"),
+    ]
+    return "\n".join(_dedupe([_clean_text(item) for item in values if _clean_text(item)]))
+
+
+def _candidate_aliases(candidates: list[dict[str, Any]]) -> tuple[dict[str, str], list[dict[str, Any]]]:
+    alias_map: dict[str, str] = {}
+    prompt_candidates: list[dict[str, Any]] = []
+    for index, candidate in enumerate(candidates, start=1):
+        alias = f"c{index}"
+        original_id = str(candidate.get("community_id") or "")
+        alias_map[alias] = original_id
+        payload = dict(candidate)
+        payload["community_id"] = alias
+        prompt_candidates.append(payload)
+    return alias_map, prompt_candidates
+
+
+def _resolve_aliases(decision: dict[str, Any], alias_map: dict[str, str]) -> dict[str, Any]:
+    def resolve(value: Any) -> Any:
+        return alias_map.get(str(value), value) if value is not None else value
+
+    copied = json.loads(json.dumps(decision, ensure_ascii=False))
+    for assignment in copied.get("assignments") or []:
+        if isinstance(assignment, dict):
+            assignment["community_id"] = resolve(assignment.get("community_id"))
+    for item in copied.get("rejected_candidates") or []:
+        if isinstance(item, dict):
+            item["community_id"] = resolve(item.get("community_id"))
+    hints = copied.get("maintenance_hints")
+    if isinstance(hints, dict):
+        hints["suggest_merge_community_ids"] = [resolve(item) for item in hints.get("suggest_merge_community_ids") or []]
+    return copied
+
+
+def maturity_label(source_count: int) -> str:
+    if source_count <= 1:
+        return "single_evidence"
+    if source_count <= 5:
+        return "multi_evidence"
+    return "mature_topic"
+
+
+def _clean_intent(intent: dict[str, Any]) -> dict[str, Any]:
+    result = dict(intent)
+    for key in ("raw_theme", "title_candidate", "topic_level_hint", "impact_direction", "event_stage", "timeline_position", "event_time", "summary", "supporting_text"):
+        result[key] = _clean_text(result.get(key))
+    for key in ("parent_themes", "broad_topics", "mid_topics", "specific_topics", "driver", "impact_target", "risk_type", "event_thread", "event_action", "actors"):
+        result[key] = _dedupe(_as_list(result.get(key)))
+    try:
+        result["importance"] = max(0.0, min(1.0, float(result.get("importance") or 0.0)))
+    except Exception:
+        result["importance"] = 0.0
+    return result
+
+
+def _community_summary(community: CommunityDraft) -> str:
+    signals = community.signal_values()
+    parts = [
+        f"{community.title} 聚合了 {len(set(community.source_ids))} 个来源、{len(set(community.chunk_ids))} 个 chunk 的认知信号。",
+        f"父级主题：{'；'.join(signals.get('parent_themes', [])[:6])}。" if signals.get("parent_themes") else "",
+        f"主要线索：{'；'.join(_dedupe([*signals.get('raw_theme', []), *signals.get('mid_topics', [])])[:6])}。"
+        if signals.get("raw_theme") or signals.get("mid_topics")
+        else "",
+        f"影响对象：{'；'.join(signals.get('impact_target', [])[:8])}。" if signals.get("impact_target") else "",
+        f"风险线索：{'；'.join(signals.get('risk_type', [])[:6])}。" if signals.get("risk_type") else "",
+    ]
+    return " ".join(part for part in parts if part).strip()
+
+
+def _is_complex_intent(intent: dict[str, Any]) -> bool:
+    return (
+        len(_as_list(intent.get("parent_themes"))) + len(_as_list(intent.get("broad_topics"))) + len(_as_list(intent.get("mid_topics"))) >= 3
+        or len(_as_list(intent.get("specific_topics"))) >= 3
+        or len(_as_list(intent.get("impact_target"))) >= 4
+        or len(_as_list(intent.get("actors"))) >= 4
+        or (bool(_as_list(intent.get("risk_type"))) and bool(_as_list(intent.get("event_thread"))))
+    )
+
+
+def _infer_importance(intent: dict[str, Any]) -> float:
+    score = 0.58
+    if _as_list(intent.get("parent_themes")) or _as_list(intent.get("broad_topics")) or _as_list(intent.get("mid_topics")):
+        score += 0.1
+    if _as_list(intent.get("impact_target")):
+        score += 0.1
+    if _as_list(intent.get("driver")):
+        score += 0.08
+    if _as_list(intent.get("event_thread")):
+        score += 0.08
+    if _as_list(intent.get("risk_type")):
+        score += 0.06
+    return round(min(0.95, score), 2)
+
+
+def _community_id(adapter_name: str, title: str) -> str:
+    return f"kg_community:{COMMUNITY_PROJECTION}:l0:{_digest([adapter_name, _normalize_label(title)])}"
+
+
+def _as_list(value: Any) -> list[str]:
+    if value is None:
+        return []
+    values = value if isinstance(value, list) else [value]
+    return [_clean_text(item) for item in values if _clean_text(item)]
+
+
+def _dedupe(values: list[str]) -> list[str]:
+    result: list[str] = []
+    seen: set[str] = set()
+    for value in values:
+        text = _clean_text(value)
+        key = _normalize_label(text)
+        if not key or key in seen:
+            continue
+        seen.add(key)
+        result.append(text)
+    return result
+
+
+def _clean_text(value: Any) -> str:
+    text = str(value or "").strip()
+    text = re.sub(r"\s+", " ", text)
+    return text.strip()
+
+
+def _clip(text: str, limit: int) -> str:
+    text = _clean_text(text)
+    return text if len(text) <= limit else text[:limit] + "...[truncated]"
+
+
+def _normalize_label(value: Any) -> str:
+    text = str(value or "").strip().lower()
+    text = re.sub(r"\s+", "", text)
+    return text
+
+
+def _digest(parts: list[str]) -> str:
+    data = "\n".join(str(part) for part in parts)
+    return hashlib.sha256(data.encode("utf-8")).hexdigest()[:16]

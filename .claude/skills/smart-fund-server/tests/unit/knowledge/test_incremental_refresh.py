@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -27,6 +28,7 @@ from src.domain.knowledge.graph_index import (
     GraphIndexRefreshPlan,
     GraphIndexUnassignedSignal,
 )
+from src.domain.knowledge.cognitive_index import CognitiveCommunityBuildResult
 from src.domain.knowledge.schemas import CompileResult, CompiledEdge, CompiledNode, EvidenceChunk
 from src.domain.knowledge.toy_adapter import ToyProjectAdapter
 
@@ -144,6 +146,40 @@ async def test_compile_kg_refreshes_changed_indexes_incrementally(monkeypatch) -
     monkeypatch.setattr(service_module, "MilvusSemanticHybridRetriever", lambda: FakeRetriever())
     monkeypatch.setattr(service_module, "GraphIndexLLMReporter", lambda: _FakeGraphIndexReporter())
 
+    class FakeCognitiveExtractor:
+        def __init__(self, **_kwargs):
+            pass
+
+        async def extract(self, chunks):
+            return [
+                SimpleNamespace(
+                    cognitive_card_id=f"card:{chunk.chunk_id}",
+                    evidence_id=chunk.evidence_id,
+                    primary_chunk_id=chunk.chunk_id,
+                )
+                for chunk in chunks
+            ]
+
+    class FakeCommunityBuilder:
+        async def build(self, *, adapter_name, cards, existing_communities):
+            del adapter_name, existing_communities
+            return CognitiveCommunityBuildResult(
+                cards=cards,
+                assignments=[],
+                communities=[],
+                documents=[],
+                diagnostics={
+                    "cards": len(cards),
+                    "intents": 0,
+                    "assignments": 0,
+                    "communities": 0,
+                    "community_builder": "fake",
+                },
+            )
+
+    monkeypatch.setattr(service_module, "CognitiveCardExtractor", FakeCognitiveExtractor)
+    monkeypatch.setattr(service_module, "CommunityCardBuilder", lambda **_kwargs: FakeCommunityBuilder())
+
     result = await KnowledgeService(repository=repository).compile_kg(
         service_module.KnowledgeCompileCommand(
             adapter_name="toy",
@@ -153,21 +189,17 @@ async def test_compile_kg_refreshes_changed_indexes_incrementally(monkeypatch) -
     )
 
     assert result.index_refresh["mode"] == "incremental"
-    assert result.index_refresh["graph_adjacency"] == 3
+    assert result.index_refresh["graph_adjacency"] == 0
     assert result.index_refresh["evidence_chunks"] == 1
     refresh_call = [call for call in hybrid_calls if "chunks" in call][-1]
-    assert result.index_refresh["hybrid_chunks"] == len(refresh_call["chunks"]) + len(
-        refresh_call["nodes"]
-    ) + len(refresh_call["edges"])
+    assert result.index_refresh["hybrid_chunks"] == len(refresh_call["chunks"])
+    assert refresh_call["nodes"] == []
+    assert refresh_call["edges"] == []
     assert "graph_index" in result.index_refresh
-    assert result.index_refresh["graph_index"]["status"] == "deferred"
-    assert result.index_refresh["graph_index"]["reason"] == "graph_index_is_async_or_manual"
-    assert result.index_refresh["graph_index"]["dirty_refs"] == {
-        "nodes": 4,
-        "edges": 3,
-        "evidence": 1,
-        "chunks": 1,
-    }
+    assert result.index_refresh["graph_index"]["status"] == "replaced_by_cognitive_index"
+    assert result.index_refresh["cognitive_index"]["status"] == "completed"
+    assert result.index_refresh["cognitive_index"]["cards"] == 1
+    assert result.index_refresh["cognitive_index"]["all_cards"] == 1
     assert hybrid_calls[0]["target"] == "test"
     assert refresh_call["target"] == "test"
     assert hybrid_calls[0]["chunks"]
@@ -175,11 +207,12 @@ async def test_compile_kg_refreshes_changed_indexes_incrementally(monkeypatch) -
     assert hybrid_calls[0]["edges"] == []
     assert repository.calls[:2] == ["upsert_evidence:1", "upsert_evidence_chunks:1"]
     assert "create_run" in repository.calls
-    assert repository.calls.index("upsert_evidence:1") < repository.calls.index("upsert_nodes:4")
-    assert "upsert_graph_adjacency:3" in repository.calls
+    assert not any(call.startswith("upsert_nodes") for call in repository.calls)
+    assert not any(call.startswith("upsert_edges") for call in repository.calls)
+    assert not any(call.startswith("upsert_graph_adjacency") for call in repository.calls)
     assert "upsert_evidence_chunks:1" in repository.calls
-    assert "mark_graph_index_dirty:compile_changed_refs" in repository.calls
-    assert not any(call.startswith("replace_graph_index") for call in repository.calls)
+    assert "mark_graph_index_dirty:compile_changed_refs" not in repository.calls
+    assert any(call.startswith("replace_graph_index") for call in repository.calls)
 
 
 def test_semantic_index_materials_include_edges_related_to_changed_node() -> None:
@@ -228,10 +261,10 @@ def test_semantic_index_materials_include_edges_related_to_changed_node() -> Non
         ),
     )
 
-    assert [node.node_id for node in materials.nodes] == [changed_node.node_id, neighbor.node_id]
-    assert [edge.edge_id for edge in materials.edges] == [existing_edge.edge_id]
-    assert f"kg_card:node_card:{changed_node.node_id}" in materials.stale_chunk_ids
-    assert f"kg_card:edge:{existing_edge.edge_id}" in materials.stale_chunk_ids
+    assert materials.nodes == []
+    assert materials.edges == []
+    assert f"kg_card:node_card:{changed_node.node_id}" not in materials.stale_chunk_ids
+    assert f"kg_card:edge:{existing_edge.edge_id}" not in materials.stale_chunk_ids
 
 
 def test_semantic_index_materials_delete_stale_cards_for_deprecated_edge() -> None:
@@ -280,8 +313,8 @@ def test_semantic_index_materials_delete_stale_cards_for_deprecated_edge() -> No
         ),
     )
 
-    assert [edge.edge_id for edge in materials.edges] == [deprecated_edge.edge_id]
-    assert f"kg_card:edge:{deprecated_edge.edge_id}" in materials.stale_chunk_ids
+    assert materials.edges == []
+    assert f"kg_card:edge:{deprecated_edge.edge_id}" not in materials.stale_chunk_ids
 
 
 def test_graph_index_build_scope_uses_dirty_subgraph_not_full_graph() -> None:
@@ -649,6 +682,7 @@ class _CompileRefreshRepository:
         self.edges = []
         self.evidence = []
         self.chunks = []
+        self.cognitive_cards = []
 
     def create_compilation_run(self, _run):
         self.calls.append("create_run")
@@ -695,6 +729,19 @@ class _CompileRefreshRepository:
 
     def list_evidence_chunks(self, _adapter_name):
         return self.chunks
+
+    def replace_cognitive_cards_for_evidence(self, _adapter_name, *, evidence_ids, cards):
+        self.calls.append(f"replace_cognitive_cards_for_evidence:{len(evidence_ids)}:{len(cards)}")
+        self.cognitive_cards = list(cards)
+        return {"deleted_cards": 0, "inserted_cards": len(cards), "evidence_ids": evidence_ids}
+
+    def list_cognitive_cards(self, _adapter_name, *, status="active"):
+        del status
+        return self.cognitive_cards
+
+    def replace_community_assignments_for_cards(self, _adapter_name, *, cognitive_card_ids, assignments):
+        self.calls.append(f"replace_community_assignments_for_cards:{len(cognitive_card_ids)}:{len(assignments)}")
+        return len(assignments)
 
     def count_graph_index_materials(self, _adapter_name):
         return {"nodes": len(self.nodes), "edges": len(self.edges), "chunks": len(self.chunks)}

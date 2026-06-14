@@ -11,6 +11,7 @@ from src.domain.knowledge.graph_index import (
     GraphIndexFinding,
     GraphIndexUnassignedSignal,
 )
+from src.domain.knowledge.cognitive_index import CognitiveCard, CommunityAssignment
 from src.domain.knowledge.quality import ReviewAction, ReviewEntry
 from src.domain.knowledge.retrieval_eval import (
     RetrievalEvalMetric,
@@ -97,6 +98,30 @@ class KnowledgeRepository(ABC):
     @abstractmethod
     def list_evidence_chunks(self, adapter_name: str) -> list[EvidenceChunk]:
         """Load generated evidence chunks for one adapter."""
+
+    @abstractmethod
+    def replace_cognitive_cards_for_evidence(
+        self,
+        adapter_name: str,
+        *,
+        evidence_ids: list[str],
+        cards: list[CognitiveCard],
+    ) -> dict[str, Any]:
+        """Replace Cognitive Cards for changed evidence ids."""
+
+    @abstractmethod
+    def list_cognitive_cards(self, adapter_name: str, *, status: str = "active") -> list[CognitiveCard]:
+        """Load Cognitive Cards for one adapter."""
+
+    @abstractmethod
+    def replace_community_assignments_for_cards(
+        self,
+        adapter_name: str,
+        *,
+        cognitive_card_ids: list[str],
+        assignments: list[CommunityAssignment],
+    ) -> int:
+        """Replace Community Assignment decisions for Cognitive Cards."""
 
     @abstractmethod
     def count_graph_index_materials(self, adapter_name: str) -> dict[str, int]:

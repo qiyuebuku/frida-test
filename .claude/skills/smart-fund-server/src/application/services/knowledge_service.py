@@ -48,6 +48,11 @@ from src.application.services.llm_agentic_retrieval_strategy import LLMAgenticRe
 from src.application.services.llm_candidate_judge import LLMCandidateJudge
 from src.application.services.graph_index_reporter import GraphIndexLLMReporter
 from src.application.services.graph_index_profiles import FINANCIAL_GRAPH_PROJECTIONS, GRAPH_INDEX_PUBLIC_LENS_ALIASES
+from src.application.services.cognitive_index_service import (
+    CognitiveCardExtractor,
+    CommunityCardBuilder,
+    CommunitySemanticCandidateProvider,
+)
 from src.application.services.openai_agents_retrieval_runtime import (
     OpenAIAgentsRetrievalRuntime,
 )
@@ -61,6 +66,7 @@ from src.domain.knowledge.compiler import KnowledgeCompiler
 from src.domain.knowledge.enums import EvidenceStatus
 from src.domain.knowledge.graph_index import (
     GraphIndexBuildResult,
+    GraphIndexCommunity,
     GraphIndexDirtyRefs,
     GraphIndexRefreshPlan,
     GraphIndexUnassignedSignal,
@@ -72,6 +78,7 @@ from src.domain.knowledge.graph_index import (
     plan_graph_index_refresh,
     resolve_graph_index_lineage,
 )
+from src.domain.knowledge.cognitive_index import _community_document as _cognitive_community_document
 from src.domain.knowledge.quality import (
     BadCaseReplay,
     KnowledgeQualityScanner,
@@ -1315,8 +1322,7 @@ class KnowledgeService:
                 evidence_ids=evidence_ids_to_delete,
             )
 
-        with profile_span("kg_incremental_index.upsert_graph_adjacency", edges=len(result.edges)):
-            graph_adjacency = repository.upsert_graph_adjacency(result.edges)
+        graph_adjacency = 0
         with profile_span("kg_incremental_index.upsert_evidence_chunks", evidence=len(result.evidence)):
             evidence_chunks = repository.upsert_evidence_chunks(result.evidence)
         with profile_span(
@@ -1350,21 +1356,20 @@ class KnowledgeService:
                 kg_version=result.version,
                 graph_projections=FINANCIAL_GRAPH_PROJECTIONS if result.adapter_name == "financial" else None,
             )
-        with profile_span("kg_incremental_index.mark_graph_index_dirty", adapter=result.adapter_name):
-            dirty_rows = repository.mark_graph_index_dirty(
-                result.adapter_name,
-                reason="compile_changed_refs",
+        with profile_span(
+            "kg_incremental_index.refresh_cognitive_index",
+            adapter=result.adapter_name,
+            changed_chunks=len(semantic_materials.chunks),
+        ):
+            cognitive_index = await _refresh_cognitive_index(
+                repository=repository,
+                result=result,
+                target=target,
+                changed_chunks=semantic_materials.chunks,
             )
             graph_index = {
-                "status": "deferred",
-                "reason": "graph_index_is_async_or_manual",
-                "dirty_rows": dirty_rows,
-                "dirty_refs": {
-                    "nodes": len(result.nodes),
-                    "edges": len(result.edges),
-                    "evidence": len(result.evidence),
-                    "chunks": len(semantic_materials.chunks),
-                },
+                "status": "replaced_by_cognitive_index",
+                "reason": "community_topics_are_built_from_cognitive_cards",
             }
         summary = {
             "mode": "incremental",
@@ -1372,6 +1377,7 @@ class KnowledgeService:
             "evidence_chunks": evidence_chunks,
             "hybrid_chunks": hybrid_chunks,
             "graph_index": graph_index,
+            "cognitive_index": cognitive_index,
             "node_ids": [node.node_id for node in result.nodes],
             "edge_ids": [edge.edge_id for edge in result.edges],
             "evidence_ids": [item.evidence_id for item in result.evidence],
@@ -1387,13 +1393,13 @@ class KnowledgeService:
         }
         logger.info(
             "[kg_incremental_index] adapter=%s target=%s graph_adjacency=%d "
-            "evidence_chunks=%d hybrid_chunks=%d graph_index_status=%s nodes=%d edges=%d evidence=%d",
+            "evidence_chunks=%d hybrid_chunks=%d cognitive_communities=%s nodes=%d edges=%d evidence=%d",
             result.adapter_name,
             target,
             graph_adjacency,
             evidence_chunks,
             hybrid_chunks,
-            str(graph_index.get("status") or ""),
+            str((cognitive_index or {}).get("communities") or 0),
             len(result.nodes),
             len(result.edges),
             len(result.evidence),
@@ -1439,6 +1445,133 @@ class KnowledgeService:
 
 
 Target = Literal["prod", "test"]
+
+
+async def _refresh_cognitive_index(
+    *,
+    repository: KnowledgeRepository,
+    result: CompileResult,
+    target: Target,
+    changed_chunks: list[EvidenceChunk],
+) -> dict[str, Any]:
+    changed_evidence_ids = _ordered_unique([item.evidence_id for item in changed_chunks])
+    if not changed_evidence_ids:
+        return {
+            "status": "skipped",
+            "reason": "no_changed_chunks",
+            "cards": 0,
+            "assignments": 0,
+            "communities": 0,
+            "documents_written": 0,
+        }
+
+    extractor = CognitiveCardExtractor(
+        concurrency=max(1, min(4, int(getattr(settings, "CLAUDE_PROXY_MAX_CONCURRENCY", 2) or 2)))
+    )
+    with profile_span("kg_cognitive_index.extract_cards", chunks=len(changed_chunks)):
+        cards = await extractor.extract(changed_chunks)
+    with profile_span("kg_cognitive_index.persist_cards", cards=len(cards)):
+        card_persistence = repository.replace_cognitive_cards_for_evidence(
+            result.adapter_name,
+            evidence_ids=changed_evidence_ids,
+            cards=cards,
+        )
+
+    with profile_span("kg_cognitive_index.load_all_cards", adapter=result.adapter_name):
+        all_cards = repository.list_cognitive_cards(result.adapter_name)
+
+    existing_communities = repository.list_graph_communities(result.adapter_name)
+    semantic_retriever = _semantic_hybrid_retriever()
+    semantic_store = getattr(semantic_retriever, "store", None)
+
+    async def commit_updated_communities(communities: list[GraphIndexCommunity]) -> None:
+        if not communities:
+            return
+        with profile_span("kg_cognitive_index.stream_commit_pg", communities=len(communities)):
+            repository.replace_graph_index_scope(
+                result.adapter_name,
+                remove_community_ids=[],
+                communities=communities,
+                findings=[],
+                deltas=[],
+                unassigned_signals=[],
+            )
+        semantic_documents = [
+            _semantic_document_from_graph_index_document(_cognitive_community_document(item))
+            for item in communities
+        ]
+        with profile_span("kg_cognitive_index.stream_commit_milvus", communities=len(communities)):
+            await _semantic_hybrid_retriever().upsert_semantic_documents(
+                adapter_name=result.adapter_name,
+                target=target,
+                documents=semantic_documents,
+                kg_version=result.version,
+            )
+
+    builder = CommunityCardBuilder(
+        candidate_provider=CommunitySemanticCandidateProvider(store=semantic_store) if semantic_store is not None else None,
+        target=target,
+        on_communities_updated=commit_updated_communities,
+    )
+    with profile_span("kg_cognitive_index.build_communities", cards=len(all_cards)):
+        build_result = await builder.build(
+            adapter_name=result.adapter_name,
+            cards=all_cards,
+            existing_communities=existing_communities,
+        )
+
+    all_card_ids = [item.cognitive_card_id for item in all_cards]
+    with profile_span("kg_cognitive_index.persist_assignments", assignments=len(build_result.assignments)):
+        assignment_rows = repository.replace_community_assignments_for_cards(
+            result.adapter_name,
+            cognitive_card_ids=all_card_ids,
+            assignments=build_result.assignments,
+        )
+
+    with profile_span("kg_cognitive_index.replace_graph_index", communities=len(build_result.communities)):
+        graph_persistence = repository.replace_graph_index(
+            result.adapter_name,
+            communities=build_result.communities,
+            findings=[],
+            deltas=[],
+            unassigned_signals=[],
+        )
+
+    stale_target_ids = list(graph_persistence.get("stale_target_ids") or [])
+    with profile_span("kg_cognitive_index.delete_stale_documents", documents=len(stale_target_ids)):
+        stale_documents = await _delete_hybrid_documents(
+            adapter_name=result.adapter_name,
+            target=target,
+            chunk_ids=stale_target_ids,
+        )
+
+    semantic_documents = [
+        _semantic_document_from_graph_index_document(item)
+        for item in build_result.documents
+    ]
+    with profile_span("kg_cognitive_index.upsert_community_documents", documents=len(semantic_documents)):
+        documents_written = await _semantic_hybrid_retriever().upsert_semantic_documents(
+            adapter_name=result.adapter_name,
+            target=target,
+            documents=semantic_documents,
+            kg_version=result.version,
+        )
+
+    return {
+        "status": "completed",
+        "changed_chunks": len(changed_chunks),
+        "changed_evidence": len(changed_evidence_ids),
+        "cards": len(cards),
+        "all_cards": len(all_cards),
+        "assignments": len(build_result.assignments),
+        "assignment_rows": assignment_rows,
+        "communities": len(build_result.communities),
+        "documents_written": documents_written,
+        "stale_documents_deleted": stale_documents,
+        "card_persistence": card_persistence,
+        "graph_persistence": graph_persistence,
+        "diagnostics": build_result.diagnostics,
+    }
 
 
 @dataclass(frozen=True)
@@ -2405,42 +2538,17 @@ def _semantic_index_materials_for_result(
     repository: KnowledgeRepository,
     result: CompileResult,
 ) -> _SemanticIndexMaterials:
-    changed_node_ids = {node.node_id for node in result.nodes}
-    changed_edge_ids = {edge.edge_id for edge in result.edges}
     changed_evidence_ids = {item.evidence_id for item in result.evidence}
-
-    all_edges = list(repository.list_edges(result.adapter_name))
-    edge_by_id = {edge.edge_id: edge for edge in all_edges}
-    edge_by_id.update({edge.edge_id: edge for edge in result.edges})
-
-    impacted_edge_ids: set[str] = set(changed_edge_ids)
-    for edge in edge_by_id.values():
-        if edge.source_node_id in changed_node_ids or edge.target_node_id in changed_node_ids:
-            impacted_edge_ids.add(edge.edge_id)
-        if changed_evidence_ids and set(edge.evidence_ids) & changed_evidence_ids:
-            impacted_edge_ids.add(edge.edge_id)
-
-    impacted_edges = [edge_by_id[edge_id] for edge_id in sorted(impacted_edge_ids) if edge_id in edge_by_id]
-    impacted_node_ids = set(changed_node_ids)
-    for edge in impacted_edges:
-        impacted_node_ids.add(edge.source_node_id)
-        impacted_node_ids.add(edge.target_node_id)
-
-    all_nodes = list(repository.list_nodes(result.adapter_name))
-    node_by_id = {node.node_id: node for node in all_nodes}
-    node_by_id.update({node.node_id: node for node in result.nodes})
-    impacted_nodes = [node_by_id[node_id] for node_id in sorted(impacted_node_ids) if node_id in node_by_id]
-
     chunks = _evidence_chunks_from_compiled(result.evidence)
     stale_chunk_ids = _semantic_vector_chunk_ids(
-        node_ids=impacted_node_ids,
-        edge_ids=impacted_edge_ids,
+        node_ids=set(),
+        edge_ids=set(),
         evidence_ids=changed_evidence_ids,
     )
     return _SemanticIndexMaterials(
         chunks=chunks,
-        nodes=impacted_nodes,
-        edges=impacted_edges,
+        nodes=[],
+        edges=[],
         stale_chunk_ids=stale_chunk_ids,
     )
 

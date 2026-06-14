@@ -322,6 +322,77 @@ class KnowledgeGraphCommunity(Base):
     )
 
 
+class KnowledgeCognitiveCard(Base):
+    """Chunk-level cognitive signals used by high-level semantic indexes."""
+
+    __tablename__ = "kg_cognitive_cards"
+    __table_args__ = (
+        Index("ix_kg_cognitive_cards_adapter_status", "adapter_name", "status"),
+        Index("ix_kg_cognitive_cards_evidence", "evidence_id"),
+        Index("ix_kg_cognitive_cards_chunk", "primary_chunk_id"),
+        Index("ix_kg_cognitive_cards_source", "adapter_name", "source_type", "source_id"),
+    )
+
+    cognitive_card_id: Mapped[str] = mapped_column(String(180), primary_key=True)
+    adapter_name: Mapped[str] = mapped_column(String(64), nullable=False)
+    source_type: Mapped[str] = mapped_column(String(64), nullable=False, default="")
+    source_id: Mapped[str] = mapped_column(String(256), nullable=False, default="")
+    evidence_id: Mapped[str] = mapped_column(String(180), nullable=False)
+    primary_chunk_id: Mapped[str] = mapped_column(String(220), nullable=False)
+    chunk_ids: Mapped[list] = mapped_column(JSONB, default=list, nullable=False)
+    chunk_index: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    summary: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    title_candidates: Mapped[list] = mapped_column(JSONB, default=list, nullable=False)
+    topic_intents: Mapped[list] = mapped_column(JSONB, default=list, nullable=False)
+    risk_signals: Mapped[list] = mapped_column(JSONB, default=list, nullable=False)
+    local_impact_signals: Mapped[list] = mapped_column(JSONB, default=list, nullable=False)
+    actor_signals: Mapped[dict] = mapped_column(JSONB, default=dict, nullable=False)
+    supporting_text: Mapped[list] = mapped_column(JSONB, default=list, nullable=False)
+    system_pointers: Mapped[dict] = mapped_column(JSONB, default=dict, nullable=False)
+    payload: Mapped[dict] = mapped_column(JSONB, default=dict, nullable=False)
+    schema_version: Mapped[str] = mapped_column(String(96), nullable=False, default="")
+    status: Mapped[str] = mapped_column(String(32), nullable=False, default="active")
+    created_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+    updated_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+
+class KnowledgeCommunityAssignment(Base):
+    """LLM community attachment/create decision for a Cognitive Card intent."""
+
+    __tablename__ = "kg_community_assignments"
+    __table_args__ = (
+        Index("ix_kg_community_assignments_adapter_status", "adapter_name", "status"),
+        Index("ix_kg_community_assignments_card", "cognitive_card_id"),
+        Index("ix_kg_community_assignments_community", "community_id"),
+    )
+
+    assignment_id: Mapped[str] = mapped_column(String(180), primary_key=True)
+    adapter_name: Mapped[str] = mapped_column(String(64), nullable=False)
+    cognitive_card_id: Mapped[str] = mapped_column(String(180), nullable=False)
+    intent_index: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    intent_id: Mapped[str] = mapped_column(String(220), nullable=False, default="")
+    community_id: Mapped[str] = mapped_column(String(180), nullable=False, default="")
+    action: Mapped[str] = mapped_column(String(32), nullable=False, default="")
+    weight: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    confidence: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    matched_reason: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    update_mode: Mapped[str] = mapped_column(String(32), nullable=False, default="")
+    reason: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    topic_intent: Mapped[dict] = mapped_column(JSONB, default=dict, nullable=False)
+    decision: Mapped[dict] = mapped_column(JSONB, default=dict, nullable=False)
+    status: Mapped[str] = mapped_column(String(32), nullable=False, default="active")
+    created_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+    updated_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+
 class KnowledgeGraphFinding(Base):
     """Graph Index finding/narrative state with chunk refs."""
 

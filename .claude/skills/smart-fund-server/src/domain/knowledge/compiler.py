@@ -11,18 +11,14 @@ from uuid import uuid4
 from src.domain.knowledge.adapter import DomainAdapter
 from src.domain.knowledge.chunking import build_chunks_for_compiled_evidence
 from src.domain.knowledge.evidence import EvidenceManager
-from src.domain.knowledge.relation_compiler import RelationCompiler
 from src.domain.knowledge.retrieval_profile import profile_span
 from src.domain.knowledge.repositories import KnowledgeRepository
-from src.domain.knowledge.resolver import EntityResolver
 from src.domain.knowledge.schemas import (
     CompileResult,
     CompiledEvidence,
-    EdgeDraft,
     EvidenceDraft,
     FailedRecord,
     KnowledgeInput,
-    NodeDraft,
     ValidationIssue,
 )
 from src.domain.knowledge.source_record import validate_source_record_contract
@@ -36,15 +32,11 @@ class KnowledgeCompiler:
     def __init__(
         self,
         repository: KnowledgeRepository | None = None,
-        entity_resolver: EntityResolver | None = None,
-        relation_compiler: RelationCompiler | None = None,
         evidence_manager: EvidenceManager | None = None,
         concurrency: int = 1,
         pre_extraction_chunk_materializer: PreExtractionChunkMaterializer | None = None,
     ):
         self.repository = repository
-        self.entity_resolver = entity_resolver or EntityResolver()
-        self.relation_compiler = relation_compiler or RelationCompiler()
         self.evidence_manager = evidence_manager or EvidenceManager()
         # Controls per-record extraction concurrency. Keep it aligned with the
         # downstream LLM proxy/pool limit when adapters call remote models.
@@ -81,8 +73,6 @@ class KnowledgeCompiler:
                     item.metadata["_evidence_chunk_hints"] = _chunk_hints_for_compiled_evidence(compiled_item_evidence)
                     if self.pre_extraction_chunk_materializer is not None and compiled_item_evidence:
                         await self.pre_extraction_chunk_materializer(adapter.spec.name, version, compiled_item_evidence)
-                    item_nodes = await adapter.extract_node_drafts(item)
-                    item_edges = await adapter.extract_edge_drafts(item, item_nodes)
                 except Exception as exc:
                     completed[0] += 1
                     logger.warning(
@@ -96,29 +86,25 @@ class KnowledgeCompiler:
                     )
                 completed[0] += 1
                 logger.debug(
-                    "[compile] [%d/%d] ok source_type=%s source_id=%s nodes=%d edges=%d duration=%.1fs",
+                    "[compile] [%d/%d] ok source_type=%s source_id=%s evidence=%d duration=%.1fs",
                     completed[0], total, item.source_type, item.source_id,
-                    len(item_nodes), len(item_edges), time.monotonic() - t0,
+                    len(item_evidence), time.monotonic() - t0,
                 )
-                return (item_evidence, item_nodes, item_edges), None
+                return item_evidence, None
 
         results = await asyncio.gather(*(process_one(item) for item in inputs))
 
-        node_drafts: list[NodeDraft] = []
-        edge_drafts: list[EdgeDraft] = []
         evidence_drafts: list[EvidenceDraft] = []
         for success, fail in results:
             if fail is not None:
                 failed_records.append(fail)
                 continue
-            item_evidence, item_nodes, item_edges = success
+            item_evidence = success
             evidence_drafts.extend(item_evidence)
-            node_drafts.extend(item_nodes)
-            edge_drafts.extend(item_edges)
 
         logger.info(
             "[compile] adapter=%s extraction done: nodes=%d edges=%d evidence=%d failed=%d total_duration=%.1fs",
-            adapter.spec.name, len(node_drafts), len(edge_drafts), len(evidence_drafts),
+            adapter.spec.name, 0, 0, len(evidence_drafts),
             len(failed_records), time.monotonic() - run_t0,
         )
 
@@ -128,34 +114,14 @@ class KnowledgeCompiler:
                 version=version,
                 drafts=evidence_drafts,
             )
-        with profile_span("kg_compile.node_resolve", drafts=len(node_drafts)):
-            node_result = self.entity_resolver.resolve(
-                adapter_spec=adapter.spec,
-                version=version,
-                drafts=node_drafts,
-            )
-        with profile_span("kg_compile.edge_compile", drafts=len(edge_drafts)):
-            edge_result = self.relation_compiler.compile(
-                adapter_spec=adapter.spec,
-                version=version,
-                drafts=edge_drafts,
-                draft_by_ref=node_result.draft_by_ref,
-                node_id_by_ref=node_result.node_id_by_ref,
-                evidence_ref_map=evidence_result.ref_map,
-            )
-
-        failed_records.extend(node_result.failed_records)
-        failed_records.extend(edge_result.failed_records)
-        warnings.extend(node_result.warnings)
-        warnings.extend(edge_result.warnings)
 
         result = CompileResult(
             run_id=run_id,
             adapter_name=adapter.spec.name,
             adapter_version=adapter.spec.version,
             version=version,
-            nodes=node_result.nodes,
-            edges=edge_result.edges,
+            nodes=[],
+            edges=[],
             evidence=evidence_result.evidence,
             failed_records=failed_records,
             warnings=warnings,
@@ -187,10 +153,6 @@ class KnowledgeCompiler:
             self.repository.upsert_evidence(result.evidence)
         with profile_span("kg_compile.persist.upsert_evidence_chunks", evidence=len(result.evidence)):
             self.repository.upsert_evidence_chunks(result.evidence)
-        with profile_span("kg_compile.persist.upsert_nodes", nodes=len(result.nodes)):
-            self.repository.upsert_nodes(result.nodes)
-        with profile_span("kg_compile.persist.upsert_edges", edges=len(result.edges)):
-            self.repository.upsert_edges(result.edges)
         with profile_span("kg_compile.persist.finish_run", run_id=result.run_id):
             self.repository.finish_compilation_run(
                 result.run_id,

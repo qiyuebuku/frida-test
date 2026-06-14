@@ -11,11 +11,9 @@
       -> Evidence
       -> Evidence Chunk manifest
       -> Milvus chunk target
-      -> AI 抽取 entity / event / relation
-      -> embedding 召回相似候选 + AI 归一化
-      -> PG nodes / edges / evidence refs / edge-chunk refs
-      -> Milvus entity / relation targets
-      -> Graph Index 增量刷新，生成 community / finding / rolling delta 导航 target
+      -> Cognitive Card
+      -> Community Assignment
+      -> Community Card / Milvus community target
 
 每一步的作用：
 
@@ -30,20 +28,21 @@
   这一步会走真实 KnowledgeService.compile_kg()，不是 mock。当前项目尚未上线，演示脚本直接写入 prod target。
 
 - Step 2：检查 PG 事实层。
-  重点看 evidence、chunk manifest、node、edge、edge->evidence、edge->chunk refs 是否存在。
+  重点看 evidence、chunk manifest、Cognitive Card、Community Assignment 和 Community Card 是否存在。
   PG 只保存事实和指针；chunk 可读全文主要由 Milvus target 承担。
 
 - Step 3：检查 Graph Index 状态。
-  重点看 community、finding、rolling delta 是否已经由显式 Graph Index 构建写入，并保留 version/lineage 信息。
+  重点看 Cognitive Card 驱动的 community 是否已经写入，并保留 chunk/evidence refs。
 
-- Step 4：按 target_id 从 Milvus 精准取回写入的 chunk / entity / relation / graph index target。
+- Step 4：按 target_id 从 Milvus 精准取回写入的 chunk / community target。
   这一步证明 Milvus 不只是语义搜索，也能按 PG refs 精准取回可读 target。
 
 - Step 5：用语义查询检查 Milvus 多集合入口。
   这一步同时输出全局召回和本次 demo scope 召回，避免历史数据污染写入链路质量判断。
 
 - Step 6：可选全量重建语义索引和 Graph Index。
-  正常写入只标记 Graph Index dirty；本脚本默认在 Step 1.5 显式构建 Graph Index。
+  正常写入已经在 compile 阶段刷新 Cognitive Community Index。
+  旧 Graph Index 显式构建仅作为手动回归入口，默认关闭，避免覆盖 Cognitive Community 结果。
   如果要演示全量语义索引重建，把 RUN_FULL_SEMANTIC_REBUILD 改为 True。
 
 - Step 7：写出 generated_write_path_demo.json。
@@ -105,6 +104,8 @@ from src.infrastructure.observability.langfuse_tracing import (  # noqa: E402
     langfuse_update_span,
 )
 from src.infrastructure.persistence.models.knowledge import (  # noqa: E402
+    KnowledgeCognitiveCard,
+    KnowledgeCommunityAssignment,
     KnowledgeEdge,
     KnowledgeEdgeEvidence,
     KnowledgeEdgeEvidenceChunk,
@@ -134,18 +135,18 @@ DRY_RUN = False
 # 默认不做全量重建。全量重建会重新处理当前 target 的语义索引，可能调用 embedding 服务较久。
 RUN_FULL_SEMANTIC_REBUILD = False
 
-# compile_kg 只负责事实写入和轻量索引刷新；Graph Index 是高级认知索引，本脚本显式构建它来验证结果。
-RUN_GRAPH_INDEX_BUILD = True
+# compile_kg 已刷新 Cognitive Community Index。旧 Graph Index 显式构建只保留为手动回归入口。
+RUN_GRAPH_INDEX_BUILD = False
 
 DEMO_PREFIX = "usage_demo_write_path"
-DEMO_SCENARIO = "real_ft_news_community_30_20260605"
+DEMO_SCENARIO = "real_ft_news_community_5_20260612"
 DEMO_TS = "2026-05-20T09:30:00+08:00"
 RUN_SESSION_ID = f"kg-write-demo:{DEMO_SCENARIO}:{int(time.time())}"
 
 USE_REAL_FT_NEWS = True
 USE_HARDCODED_FT_NEWS = True
 FT_NEWS_CANDIDATE_LIMIT = 800
-FT_NEWS_RECORD_LIMIT = 30
+FT_NEWS_RECORD_LIMIT = 5
 FT_NEWS_MIN_TEXT_CHARS = 120
 
 VERIFY_QUERY = "最近市场对AI算力链、半导体、新能源和并购重组的主要叙事、机会与风险分别是什么？"
@@ -168,7 +169,7 @@ FT_NEWS_REPRESENTATIVE_BUCKETS: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("company_earnings", ("业绩", "净利润", "营收", "订单", "财报", "一季报", "增长")),
 )
 
-# 固定 30 条真实 ft_news 样本。运行时按 ID 从 ft_news 读取正文，避免把大段新闻硬编码进脚本，
+# 固定真实 ft_news 样本。运行时按 ID 从 ft_news 读取正文，避免把大段新闻硬编码进脚本，
 # 同时保证每次 demo 使用同一批样本来观察 community 聚合、分裂和晋升效果。
 HARDCODED_FT_NEWS_IDS: tuple[int, ...] = (
     83904,  # A股并购重组市场结构变化
@@ -674,14 +675,9 @@ def step_0_5_validate_write_path_schema() -> dict[str, Any]:
         required_tables = {
             KnowledgeEvidence.__tablename__,
             KnowledgeEvidenceChunk.__tablename__,
-            KnowledgeNode.__tablename__,
-            KnowledgeEdge.__tablename__,
-            KnowledgeEdgeEvidence.__tablename__,
-            KnowledgeEdgeEvidenceChunk.__tablename__,
             KnowledgeGraphCommunity.__tablename__,
-            KnowledgeGraphFinding.__tablename__,
-            KnowledgeGraphDelta.__tablename__,
-            KnowledgeGraphUnassignedSignal.__tablename__,
+            KnowledgeCognitiveCard.__tablename__,
+            KnowledgeCommunityAssignment.__tablename__,
         }
         missing_tables = sorted(table for table in required_tables if not inspector.has_table(table))
         table_columns = {
@@ -714,8 +710,13 @@ def step_0_5_validate_write_path_schema() -> dict[str, Any]:
             "schema/10_drop_kg_evidence_chunks_content.sql",
             "schema/11_drop_graph_index_version_tables.sql",
             "schema/12_graph_unassigned_signals.sql",
+            "schema/13_cognitive_index.sql",
         ],
         "kg_evidence_chunks_columns": sorted(table_columns.get(KnowledgeEvidenceChunk.__tablename__, set())),
+        "kg_cognitive_cards_columns": sorted(table_columns.get(KnowledgeCognitiveCard.__tablename__, set())),
+        "kg_community_assignments_columns": sorted(
+            table_columns.get(KnowledgeCommunityAssignment.__tablename__, set())
+        ),
     }
     pprint(result, sort_dicts=False)
     if result["status"] != "ok":
@@ -1060,6 +1061,24 @@ def step_3_inspect_graph_index(
                 KnowledgeGraphUnassignedSignal.signal_id,
             )
         ).all()
+        cognitive_cards = session.scalars(
+            select(KnowledgeCognitiveCard)
+            .where(
+                KnowledgeCognitiveCard.adapter_name == ADAPTER,
+                KnowledgeCognitiveCard.evidence_id.in_(evidence_ids),
+            )
+            .order_by(KnowledgeCognitiveCard.source_id, KnowledgeCognitiveCard.chunk_index)
+        ).all()
+        community_assignments = session.scalars(
+            select(KnowledgeCommunityAssignment)
+            .where(
+                KnowledgeCommunityAssignment.adapter_name == ADAPTER,
+                KnowledgeCommunityAssignment.cognitive_card_id.in_(
+                    [row.cognitive_card_id for row in cognitive_cards]
+                ),
+            )
+            .order_by(KnowledgeCommunityAssignment.cognitive_card_id, KnowledgeCommunityAssignment.intent_index)
+        ).all()
 
     related_communities = [
         _community_row(row)
@@ -1095,7 +1114,12 @@ def step_3_inspect_graph_index(
     ]
     result = {
         "compile_graph_index": _compact_graph_index_refresh((compile_result.get("index_refresh") or {}).get("graph_index") or {}),
+        "compile_cognitive_index": _compact_cognitive_index_refresh(
+            (compile_result.get("index_refresh") or {}).get("cognitive_index") or {}
+        ),
         "manual_graph_index_build": _compact_graph_index_refresh((graph_index_build or {}).get("graph_index") or {}),
+        "related_cognitive_cards": [_cognitive_card_row(row) for row in cognitive_cards],
+        "related_community_assignments": [_community_assignment_row(row) for row in community_assignments],
         "related_communities": related_communities,
         "related_findings": related_findings,
         "related_deltas": related_deltas,
@@ -1109,11 +1133,16 @@ def step_3_inspect_graph_index(
     pprint(
         {
             "compile_graph_index": result["compile_graph_index"],
+            "compile_cognitive_index": result["compile_cognitive_index"],
             "manual_graph_index_build": result["manual_graph_index_build"],
+            "related_cognitive_cards": len(result["related_cognitive_cards"]),
+            "related_community_assignments": len(result["related_community_assignments"]),
             "related_communities": len(related_communities),
             "related_findings": len(related_findings),
             "related_deltas": len(related_deltas),
             "related_unassigned_signals": len(related_unassigned_signals),
+            "sample_cognitive_cards": result["related_cognitive_cards"][:5],
+            "sample_community_assignments": result["related_community_assignments"][:5],
             "sample_communities": related_communities[:5],
             "sample_findings": related_findings[:5],
             "sample_deltas": related_deltas[:5],
@@ -1133,11 +1162,7 @@ async def step_4_get_milvus_targets_by_id(pg_state: dict[str, Any], graph_index_
     graph_ids = graph_index_state.get("ids") or {}
     target_groups = {
         "chunk": ids.get("chunk_ids", [])[:MILVUS_GET_LIMIT],
-        "entity": ids.get("entity_target_ids", [])[:MILVUS_GET_LIMIT],
-        "relation": ids.get("relation_target_ids", [])[:MILVUS_GET_LIMIT],
         "community": graph_ids.get("community_target_ids", [])[:MILVUS_GET_LIMIT],
-        "finding": graph_ids.get("finding_target_ids", [])[:MILVUS_GET_LIMIT],
-        "delta": graph_ids.get("delta_target_ids", [])[:MILVUS_GET_LIMIT],
     }
     target_id_to_group = {
         target_id: group_name
@@ -1266,10 +1291,11 @@ def hardcoded_ft_news_records() -> list[dict[str, Any]]:
     """固定代表性 ft_news 样本，避免 demo 每次受数据库最新数据影响。"""
 
     if HARDCODED_FT_NEWS_IDS:
-        rows = _fetch_ft_news_rows_by_ids(HARDCODED_FT_NEWS_IDS)
+        requested_ids = HARDCODED_FT_NEWS_IDS[:FT_NEWS_RECORD_LIMIT]
+        rows = _fetch_ft_news_rows_by_ids(requested_ids)
         rows_by_id = {int(row["id"]): row for row in rows}
-        missing_ids = [row_id for row_id in HARDCODED_FT_NEWS_IDS if row_id not in rows_by_id]
-        selected_rows = [rows_by_id[row_id] for row_id in HARDCODED_FT_NEWS_IDS if row_id in rows_by_id]
+        missing_ids = [row_id for row_id in requested_ids if row_id not in rows_by_id]
+        selected_rows = [rows_by_id[row_id] for row_id in requested_ids if row_id in rows_by_id]
         records: list[dict[str, Any]] = []
         for row in selected_rows:
             projected = project_ft_news_row(row)
@@ -1285,7 +1311,7 @@ def hardcoded_ft_news_records() -> list[dict[str, Any]]:
         if records:
             print(
                 "[demo.ft_news] using fixed ft_news ids; "
-                f"requested={len(HARDCODED_FT_NEWS_IDS)} records={len(records)} "
+                f"requested={len(requested_ids)} records={len(records)} "
                 f"missing_ids={missing_ids}"
             )
             for record in records:
@@ -1838,6 +1864,40 @@ def _intersects(left: list[Any] | tuple[Any, ...] | set[Any] | None, right: set[
     return bool({str(item) for item in left if item}.intersection(right))
 
 
+def _cognitive_card_row(row: KnowledgeCognitiveCard) -> dict[str, Any]:
+    return {
+        "cognitive_card_id": row.cognitive_card_id,
+        "source_id": row.source_id,
+        "evidence_id": row.evidence_id,
+        "primary_chunk_id": row.primary_chunk_id,
+        "chunk_index": row.chunk_index,
+        "summary": _clip(row.summary or "", 140),
+        "title_candidates": (row.title_candidates or [])[:5],
+        "topic_intent_count": len(row.topic_intents or []),
+        "risk_signal_count": len(row.risk_signals or []),
+        "local_impact_signal_count": len(row.local_impact_signals or []),
+        "supporting_text": (row.supporting_text or [])[:3],
+        "schema_version": row.schema_version,
+        "status": row.status,
+    }
+
+
+def _community_assignment_row(row: KnowledgeCommunityAssignment) -> dict[str, Any]:
+    return {
+        "assignment_id": row.assignment_id,
+        "cognitive_card_id": row.cognitive_card_id,
+        "intent_index": row.intent_index,
+        "community_id": row.community_id,
+        "action": row.action,
+        "weight": round(float(row.weight or 0), 4),
+        "confidence": round(float(row.confidence or 0), 4),
+        "update_mode": row.update_mode,
+        "matched_reason": _clip(row.matched_reason or "", 120),
+        "reason": _clip(row.reason or "", 120),
+        "status": row.status,
+    }
+
+
 def _community_row(row: KnowledgeGraphCommunity) -> dict[str, Any]:
     return {
         "community_id": row.community_id,
@@ -1986,9 +2046,29 @@ def _compact_index_refresh(index_refresh: dict[str, Any]) -> dict[str, Any]:
         "evidence_chunks": index_refresh.get("evidence_chunks"),
         "hybrid_chunks": index_refresh.get("hybrid_chunks"),
         "graph_index": _compact_graph_index_refresh(index_refresh.get("graph_index") or {}),
+        "cognitive_index": _compact_cognitive_index_refresh(index_refresh.get("cognitive_index") or {}),
         "semantic_materials": index_refresh.get("semantic_materials"),
         "stale_hybrid_vectors_deleted": index_refresh.get("stale_hybrid_vectors_deleted"),
         "stale_semantic_documents_deleted": index_refresh.get("stale_semantic_documents_deleted"),
+    }
+
+
+def _compact_cognitive_index_refresh(cognitive_index: dict[str, Any]) -> dict[str, Any]:
+    if not cognitive_index:
+        return {}
+    diagnostics = cognitive_index.get("diagnostics") or {}
+    return {
+        "status": cognitive_index.get("status"),
+        "changed_chunks": cognitive_index.get("changed_chunks"),
+        "changed_evidence": cognitive_index.get("changed_evidence"),
+        "cards": cognitive_index.get("cards"),
+        "all_cards": cognitive_index.get("all_cards"),
+        "assignments": cognitive_index.get("assignments"),
+        "communities": cognitive_index.get("communities"),
+        "documents_written": cognitive_index.get("documents_written"),
+        "stale_documents_deleted": cognitive_index.get("stale_documents_deleted"),
+        "community_builder": diagnostics.get("community_builder"),
+        "assignment_validation_errors": diagnostics.get("assignment_validation_errors"),
     }
 
 
