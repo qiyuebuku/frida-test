@@ -1144,19 +1144,36 @@ class LLMGatewayService:
         issues = _json_schema_validation_issues(response.structured_output, request.json_schema)
         if not issues:
             return response
-        repair_request = _schema_repair_request(request, response, issues)
-        repaired = await provider.generate(repair_request, route)
-        repaired_issues = _json_schema_validation_issues(repaired.structured_output, request.json_schema)
-        repaired.proxy.setdefault("schema_repair_attempted", True)
-        repaired.proxy.setdefault("schema_repair_issues", issues)
-        repaired.proxy.setdefault("schema_repair_success", not repaired_issues)
-        if repaired_issues:
-            response.proxy.setdefault("schema_repair_attempted", True)
-            response.proxy.setdefault("schema_repair_issues", issues)
-            response.proxy.setdefault("schema_repair_success", False)
-            response.proxy.setdefault("schema_repair_retry_issues", repaired_issues)
-            return response
-        return repaired
+        max_attempts = _schema_repair_max_attempts()
+        original_issues = list(issues)
+        current_response = response
+        current_issues = list(issues)
+        repair_messages: list[dict[str, Any]] | None = None
+        for attempt in range(1, max_attempts + 1):
+            repair_request = _schema_repair_request(
+                request,
+                current_response,
+                current_issues,
+                previous_messages=repair_messages,
+            )
+            repaired = await provider.generate(repair_request, route)
+            repaired_issues = _json_schema_validation_issues(repaired.structured_output, request.json_schema)
+            repaired.proxy.setdefault("schema_repair_attempted", True)
+            repaired.proxy.setdefault("schema_repair_attempts", attempt)
+            repaired.proxy.setdefault("schema_repair_issues", original_issues)
+            repaired.proxy.setdefault("schema_repair_last_issues", repaired_issues)
+            repaired.proxy.setdefault("schema_repair_success", not repaired_issues)
+            if not repaired_issues:
+                return repaired
+            repair_messages = list(repair_request.messages)
+            current_response = repaired
+            current_issues = repaired_issues
+        response.proxy.setdefault("schema_repair_attempted", True)
+        response.proxy.setdefault("schema_repair_attempts", max_attempts)
+        response.proxy.setdefault("schema_repair_issues", original_issues)
+        response.proxy.setdefault("schema_repair_success", False)
+        response.proxy.setdefault("schema_repair_retry_issues", current_issues)
+        return response
 
     def health(self) -> dict[str, Any]:
         return {
@@ -1247,8 +1264,10 @@ def _schema_repair_request(
     request: LLMProxyRequest,
     response: LLMProxyResponse,
     issues: list[str],
+    *,
+    previous_messages: list[dict[str, Any]] | None = None,
 ) -> LLMProxyRequest:
-    original_messages = _messages_for_schema_repair(request)
+    original_messages = previous_messages or _messages_for_schema_repair(request)
     previous = response.text or json.dumps(response.structured_output, ensure_ascii=False, default=str)
     schema = json.dumps(request.json_schema or {}, ensure_ascii=False, indent=2)
     metadata = {
@@ -1287,6 +1306,14 @@ def _schema_repair_request(
         timeout=request.timeout,
         use_cache=False,
     )
+
+
+def _schema_repair_max_attempts() -> int:
+    raw = os.getenv("LLM_PROXY_SCHEMA_REPAIR_MAX_ATTEMPTS", "3")
+    try:
+        return max(1, min(10, int(raw)))
+    except ValueError:
+        return 3
 
 
 def _feedback_repair_request(

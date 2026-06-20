@@ -139,14 +139,14 @@ RUN_FULL_SEMANTIC_REBUILD = False
 RUN_GRAPH_INDEX_BUILD = False
 
 DEMO_PREFIX = "usage_demo_write_path"
-DEMO_SCENARIO = "real_ft_news_community_5_20260612"
+DEMO_SCENARIO = "real_ft_news_community_30_20260612"
 DEMO_TS = "2026-05-20T09:30:00+08:00"
 RUN_SESSION_ID = f"kg-write-demo:{DEMO_SCENARIO}:{int(time.time())}"
 
 USE_REAL_FT_NEWS = True
 USE_HARDCODED_FT_NEWS = True
 FT_NEWS_CANDIDATE_LIMIT = 800
-FT_NEWS_RECORD_LIMIT = 5
+FT_NEWS_RECORD_LIMIT = 30
 FT_NEWS_MIN_TEXT_CHARS = 120
 
 VERIFY_QUERY = "最近市场对AI算力链、半导体、新能源和并购重组的主要叙事、机会与风险分别是什么？"

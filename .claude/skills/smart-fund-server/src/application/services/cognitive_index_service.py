@@ -53,7 +53,15 @@ class CognitiveCardExtractor:
             async with sem:
                 return await self._extract_one(chunk)
 
-        return await asyncio.gather(*(extract_one(chunk) for chunk in chunks))
+        tasks = [asyncio.create_task(extract_one(chunk)) for chunk in chunks]
+        try:
+            return await asyncio.gather(*tasks)
+        except Exception:
+            for task in tasks:
+                if not task.done():
+                    task.cancel()
+            await asyncio.gather(*tasks, return_exceptions=True)
+            raise
 
     async def _extract_one(self, chunk: EvidenceChunk) -> CognitiveCard:
         payload = dict(chunk.payload or {})
@@ -82,10 +90,7 @@ class CognitiveCardExtractor:
             input={"chunk_id": chunk.chunk_id, "text_chars": len(chunk.content)},
         ):
             response = await self._llm.generate(request)
-            data = response.structured_output
-            if not isinstance(data, dict):
-                raise RuntimeError(f"cognitive card output is not object: chunk_id={chunk.chunk_id}")
-            card = cognitive_card_from_llm(chunk, data)
+            card = await self._card_from_response(chunk, request, response)
             langfuse_update_span(
                 output={
                     "cognitive_card_id": card.cognitive_card_id,
@@ -96,6 +101,42 @@ class CognitiveCardExtractor:
                 status_message="completed",
             )
             return card
+
+    async def _card_from_response(
+        self,
+        chunk: EvidenceChunk,
+        request: LLMProxyRequest,
+        response: Any,
+    ) -> CognitiveCard:
+        issues: list[str] = []
+        data = response.structured_output
+        if not isinstance(data, dict):
+            issues.append(f"cognitive card output must be JSON object; actual={type(data).__name__}")
+        else:
+            try:
+                return cognitive_card_from_llm(chunk, data)
+            except Exception as exc:
+                issues.append(str(exc))
+
+        repaired = await self._llm.repair_with_feedback(
+            request,
+            response,
+            issues,
+            instruction=(
+                "上一轮 Cognitive Card 输出未通过业务校验。"
+                "只修复 JSON 结构和字段合规性，不要新增外部事实。"
+                "顶层必须是 JSON object，且必须包含 summary、title_candidates、topic_intents、"
+                "risk_signals、local_impact_signals、actor_signals、supporting_text。"
+                "topic_intents 必须是非空对象数组。"
+            ),
+            retry_reason="cognitive_card_validation_invalid",
+        )
+        repaired_data = repaired.structured_output
+        if not isinstance(repaired_data, dict):
+            raise RuntimeError(
+                f"cognitive card repair output is not object: chunk_id={chunk.chunk_id}; issues={issues}"
+            )
+        return cognitive_card_from_llm(chunk, repaired_data)
 
 
 class CommunitySemanticCandidateProvider:

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from src.application.services.cognitive_index_service import CommunityCardBuilder
+from src.application.services.cognitive_index_service import CognitiveCardExtractor, CommunityCardBuilder
 from src.domain.knowledge.cognitive_index import (
     CognitiveCard,
     assignment_query_text,
@@ -112,6 +112,7 @@ def test_assignment_validation_rejects_empty_title_as_new_l0():
                         "matched_reason": "candidate none",
                         "update_mode": "append_reference",
                         "reason": "empty title",
+                        "candidate_fit_judgements": [],
                         "new_community": {
                             "level": 0,
                             "title": "",
@@ -119,6 +120,7 @@ def test_assignment_validation_rejects_empty_title_as_new_l0():
                             "title_quality": "broad_topic",
                             "level_rationale": "bad",
                             "future_coverage": ["后续项目进展"],
+                            "covered_subtopics": ["细分主题"],
                             "intent_role": "topic",
                             "candidate_fit_summary": "none",
                         },
@@ -132,10 +134,52 @@ def test_assignment_validation_rejects_empty_title_as_new_l0():
         )
 
 
+def test_assignment_validation_rejects_new_l0_when_candidate_can_attach_as_parent():
+    with pytest.raises(RuntimeError, match="conflicts with attach_parent"):
+        validate_assignment_decision(
+            {
+                "assignments": [
+                    {
+                        "action": "create_new_l0",
+                        "community_id": None,
+                        "weight": 0.9,
+                        "confidence": 0.9,
+                        "matched_reason": "候选只是部分相关",
+                        "update_mode": "append_reference",
+                        "reason": "错误新建平级主题",
+                        "candidate_fit_judgements": [
+                            {
+                                "community_id": "c1",
+                                "fit": "attach_parent",
+                                "reason": "候选可以作为父级目录承接当前子方向",
+                            }
+                        ],
+                        "new_community": {
+                            "level": 0,
+                            "title": "AI芯片供应链",
+                            "scope": "围绕 AI 芯片供需的主题",
+                            "title_quality": "broad_topic",
+                            "level_rationale": "可承载多条资料",
+                            "future_coverage": ["AI芯片供需", "企业自建产能"],
+                            "covered_subtopics": ["AI芯片短缺"],
+                            "intent_role": "parent_topic",
+                            "candidate_fit_summary": "错误判断",
+                        },
+                    }
+                ],
+                "rejected_candidates": [],
+                "maintenance_hints": {"suggest_split": False, "suggest_merge_community_ids": [], "reason": ""},
+            },
+            [{"community_id": "c1"}],
+            topic_intent={"specific_topics": ["AI芯片短缺"]},
+        )
+
+
 class _LLM:
     def __init__(self, outputs: list[dict]) -> None:
         self.outputs = list(outputs)
         self.requests = []
+        self.repairs = []
 
     async def generate(self, request):
         self.requests.append(request)
@@ -149,6 +193,31 @@ class _LLM:
             raw_payload={},
         )
 
+    async def repair_with_feedback(self, request, response, validation_issues, **kwargs):
+        self.repairs.append(
+            {
+                "request": request,
+                "response": response,
+                "validation_issues": validation_issues,
+                "kwargs": kwargs,
+            }
+        )
+        return await self.generate(request)
+
+
+@pytest.mark.asyncio
+async def test_cognitive_card_extractor_repairs_non_object_output():
+    llm = _LLM([["not", "object"], _card_payload()])
+
+    cards = await CognitiveCardExtractor(llm=llm, model="test-model", concurrency=1).extract([_chunk()])
+
+    assert len(cards) == 1
+    assert cards[0].source_id == "test:1"
+    assert cards[0].topic_intents[0]["raw_theme"] == "并购重组政策推动产业链整合"
+    assert len(llm.repairs) == 1
+    assert "must be JSON object" in llm.repairs[0]["validation_issues"][0]
+    assert llm.repairs[0]["kwargs"]["retry_reason"] == "cognitive_card_validation_invalid"
+
 
 def _create_assignment(title: str) -> dict:
     return {
@@ -161,6 +230,7 @@ def _create_assignment(title: str) -> dict:
                 "matched_reason": "无候选社区",
                 "update_mode": "append_reference",
                 "reason": "新建父级主题",
+                "candidate_fit_judgements": [],
                 "new_community": {
                     "level": 0,
                     "title": title,
@@ -168,6 +238,7 @@ def _create_assignment(title: str) -> dict:
                     "title_quality": "broad_topic",
                     "level_rationale": "可承载多条资料",
                     "future_coverage": ["政策变化", "产业链整合"],
+                    "covered_subtopics": ["产业并购", "政策变化"],
                     "intent_role": "parent_topic",
                     "candidate_fit_summary": "无候选",
                 },
@@ -189,6 +260,9 @@ def _attach_assignment() -> dict:
                 "matched_reason": "同一并购重组父主题",
                 "update_mode": "update_delta",
                 "reason": "补充同一主题材料",
+                "candidate_fit_judgements": [
+                    {"community_id": "c1", "fit": "attach_parent", "reason": "属于已有并购重组覆盖范围"}
+                ],
                 "new_community": None,
             }
         ],

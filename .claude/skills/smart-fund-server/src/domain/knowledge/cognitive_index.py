@@ -132,11 +132,13 @@ class CommunityDraft:
             "parent_community_id": self.parent_community_id,
             "scope": _clip(self.scope, 220),
             "summary": _clip(self.summary, 240),
+            "source_count": len(set(self.source_ids)),
             "parent_themes": signals.get("parent_themes", [])[:8],
             "broad_topics": signals.get("broad_topics", [])[:8],
             "mid_topics": signals.get("mid_topics", [])[:10],
             "specific_topics": signals.get("specific_topics", [])[:10],
             "future_coverage": _dedupe([*self.future_coverage, *signals.get("mid_topics", []), *signals.get("specific_topics", [])])[:12],
+            "coverage_summary": _candidate_coverage_summary(signals, self.future_coverage),
             "canonical_labels": labels,
             "maturity": maturity_label(len(set(self.source_ids))),
             "retrieval_score": round(float(score or 0), 4),
@@ -329,6 +331,23 @@ ASSIGNMENT_SCHEMA: dict[str, Any] = {
                     "matched_reason": {"type": "string"},
                     "update_mode": {"type": "string", "enum": ["append_reference", "update_delta", "rewrite_summary"]},
                     "reason": {"type": "string"},
+                    "candidate_fit_judgements": {
+                        "type": "array",
+                        "maxItems": 12,
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "community_id": {"type": "string"},
+                                "fit": {
+                                    "type": "string",
+                                    "enum": ["attach_parent", "related_but_separate", "not_related"],
+                                },
+                                "reason": {"type": "string"},
+                            },
+                            "required": ["community_id", "fit", "reason"],
+                            "additionalProperties": False,
+                        },
+                    },
                     "new_community": {
                         "type": ["object", "null"],
                         "properties": {
@@ -338,6 +357,7 @@ ASSIGNMENT_SCHEMA: dict[str, Any] = {
                             "title_quality": {"type": "string", "enum": ["broad_topic"]},
                             "level_rationale": {"type": "string"},
                             "future_coverage": {"type": "array", "items": {"type": "string"}},
+                            "covered_subtopics": {"type": "array", "items": {"type": "string"}},
                             "intent_role": {"type": "string"},
                             "candidate_fit_summary": {"type": "string"},
                         },
@@ -348,6 +368,7 @@ ASSIGNMENT_SCHEMA: dict[str, Any] = {
                             "title_quality",
                             "level_rationale",
                             "future_coverage",
+                            "covered_subtopics",
                             "intent_role",
                             "candidate_fit_summary",
                         ],
@@ -372,6 +393,7 @@ ASSIGNMENT_SCHEMA: dict[str, Any] = {
                     "matched_reason",
                     "update_mode",
                     "reason",
+                    "candidate_fit_judgements",
                     "new_community",
                 ],
                 "additionalProperties": False,
@@ -448,6 +470,7 @@ ASSIGNMENT_SYSTEM_PROMPT = """你是金融知识图谱的 Community 归档裁决
 你的任务：
 - 在候选 community 中判断是否应该挂入已有主题；
 - 如果候选都不适合，第一阶段只能创建新的 L0 community；
+- Cognitive Card 的 parent_themes、title_candidate、raw_theme 都只是候选信号，不是最终 community 名称；你必须在本阶段重新归一化主题边界。
 - 输入候选 community_id 会使用 c1、c2、c3 这类短 alias；attach_existing、rejected_candidates、maintenance_hints 中引用候选时必须原样使用这些 alias，禁止输出 hash、标题或自造 ID。
 - 一个 topic_intent 可以归属到一个或多个 community；
 - 不区分 primary / secondary；
@@ -459,12 +482,20 @@ ASSIGNMENT_SYSTEM_PROMPT = """你是金融知识图谱的 Community 归档裁决
 - parent_themes 是 L0 归档主信号。如果 topic_intent.parent_themes 与候选 community 的 title、canonical_labels、summary 或 scope 明显匹配，应优先 attach_existing。
 - broad_topics、mid_topics、specific_topics 都只是候选信号，不是标题指令；你必须判断它们的真实层级是否适合作为 L0。
 - L0 community 是可长期复用的父级主题，应该能承载多条不同来源、不同时间、不同主体的资料，并且未来可以继续拆出 L1/L2。
-- 候选 community 的 scope、future_coverage、parent_themes、broad_topics、mid_topics、specific_topics 用来判断覆盖范围。只要当前 topic_intent 是候选 coverage 下的子主题，应优先 attach_existing，而不是因为角度更细就新建平级 L0。
+- 候选 community 的 scope、future_coverage、parent_themes、broad_topics、mid_topics、specific_topics 用来判断目录覆盖范围。判断重点不是候选 summary 是否已经写过当前细节，而是候选是否能作为父级目录承接当前细节。
+- candidate_fit_judgements.fit 只能使用：
+  - attach_parent：候选可以作为父级目录承接当前 topic_intent，即使当前细节、主体、风险点或供需状态是候选中尚未出现的新材料；
+  - related_but_separate：候选与当前 topic_intent 相关，但挂入会污染主题边界，应该保持不同 L0；
+  - not_related：候选与当前 topic_intent 不相关。
+- 如果有候选 community 的 fit=attach_parent，必须 attach_existing 到其中最合适的候选，不能 create_new_l0。
+- create_new_l0 只有在所有候选都是 related_but_separate 或 not_related 时才允许。此时 candidate_fit_judgements 必须说明为什么候选不能作为父级目录承接。
+- 不要因为候选没有直接提到当前 chunk 的细节就判为 related_but_separate；L0 的职责就是吸收同一父主题下的新子方向。
 - 如果当前 topic_intent 是 mid/specific 层级，不能直接把细主题包装成 L0；必须先寻找已有父级或子级 community 是否可挂入，没有合适候选时再提炼更高一层的父级 L0。
 - 如果创建新 L0，title 必须优先使用 parent_themes 中可长期复用的父级主题；只有 parent_themes 为空或明显不适合时，才从 broad_topics 中提炼父级主题。
 - 如果当前 broad/mid/specific 是已有 parent_theme 的子方向，必须挂入该父主题，不要创建平级 L0。
 - 如果创建新 L0，title 必须是可长期复用的父级主题，不能是新闻标题、公司项目名、单一交易名、单个产品、单次行情、单个技术细节。
 - create_new_l0 的 title 应像索引目录名，优先短标题；不要输出带有“政策与市场动态”“结构性变化”“投资机会”等摘要式尾巴的长标题，除非这是不可再压缩的稳定主题名。
+- create_new_l0 的 future_coverage / covered_subtopics 不能只复述当前 chunk，必须列出该父主题未来可承载的相邻子方向，用于后续避免重复建 L0。
 - 如果 action=attach_existing，new_community 必须严格为 null。
 - 如果 action=create_new_l0，community_id 必须为 null，new_community 必须是完整对象。
 - 输出必须符合 JSON Schema，不要 Markdown。"""
@@ -558,6 +589,7 @@ def validate_assignment_decision(
                 raise RuntimeError(f"community_id must be null when creating new L0; decision={decision}")
             _validate_new_community(new_community, decision, topic_intent=topic_intent)
             dedupe = "create:" + _normalize_label(str(new_community.get("title") or ""))
+        _validate_candidate_fit_judgements(assignment, candidate_ids, decision)
         if dedupe in seen:
             raise RuntimeError(f"duplicate assignment target: {dedupe}; decision={decision}")
         seen.add(dedupe)
@@ -583,11 +615,39 @@ def _validate_new_community(payload: Any, decision: dict[str, Any], *, topic_int
         raise RuntimeError(f"new_community.title_quality must be broad_topic; decision={decision}")
     if not isinstance(payload.get("future_coverage"), list) or not payload["future_coverage"]:
         raise RuntimeError(f"new_community.future_coverage must be non-empty array; decision={decision}")
+    if not isinstance(payload.get("covered_subtopics"), list) or not payload["covered_subtopics"]:
+        raise RuntimeError(f"new_community.covered_subtopics must be non-empty array; decision={decision}")
     if topic_intent is not None:
         normalized_title = _normalize_label(title)
         specific_titles = {_normalize_label(item) for item in _as_list(topic_intent.get("specific_topics"))}
         if normalized_title and normalized_title in specific_titles:
             raise RuntimeError(f"new_community.title duplicates a specific topic: title={title}; decision={decision}")
+
+
+def _validate_candidate_fit_judgements(
+    assignment: dict[str, Any],
+    candidate_ids: set[str],
+    decision: dict[str, Any],
+) -> None:
+    judgements = assignment.get("candidate_fit_judgements")
+    if not isinstance(judgements, list):
+        raise RuntimeError(f"candidate_fit_judgements must be array; decision={decision}")
+    valid_fits = {"attach_parent", "related_but_separate", "not_related"}
+    has_attach_parent = False
+    for item in judgements:
+        if not isinstance(item, dict):
+            raise RuntimeError(f"candidate_fit_judgements item must be object; decision={decision}")
+        community_id = str(item.get("community_id") or "")
+        if community_id not in candidate_ids:
+            raise RuntimeError(f"candidate_fit_judgements community_id not in candidates: {community_id}; decision={decision}")
+        if item.get("fit") not in valid_fits:
+            raise RuntimeError(f"candidate_fit_judgements.fit invalid: {item.get('fit')}; decision={decision}")
+        if item.get("fit") == "attach_parent":
+            has_attach_parent = True
+        if not _clean_text(item.get("reason")):
+            raise RuntimeError(f"candidate_fit_judgements.reason must be non-empty; decision={decision}")
+    if assignment.get("action") == "create_new_l0" and has_attach_parent:
+        raise RuntimeError(f"create_new_l0 conflicts with attach_parent candidate; decision={decision}")
 
 
 def _assignment_topic_intent(card: CognitiveCard, intent_payload: dict[str, Any]) -> dict[str, Any]:
@@ -640,7 +700,9 @@ def _apply_assignment(
                     title=_clean_text(payload["title"]),
                     scope=_clean_text(payload["scope"]),
                     level=0,
-                    future_coverage=_dedupe(_as_list(payload.get("future_coverage")))[:16],
+                    future_coverage=_dedupe(
+                        [*_as_list(payload.get("future_coverage")), *_as_list(payload.get("covered_subtopics"))]
+                    )[:16],
                     created_from_source_id=card.source_id,
                 )
         else:
@@ -838,6 +900,9 @@ def _resolve_aliases(decision: dict[str, Any], alias_map: dict[str, str]) -> dic
     for assignment in copied.get("assignments") or []:
         if isinstance(assignment, dict):
             assignment["community_id"] = resolve(assignment.get("community_id"))
+            for judgement in assignment.get("candidate_fit_judgements") or []:
+                if isinstance(judgement, dict):
+                    judgement["community_id"] = resolve(judgement.get("community_id"))
     for item in copied.get("rejected_candidates") or []:
         if isinstance(item, dict):
             item["community_id"] = resolve(item.get("community_id"))
@@ -880,6 +945,17 @@ def _community_summary(community: CommunityDraft) -> str:
         f"风险线索：{'；'.join(signals.get('risk_type', [])[:6])}。" if signals.get("risk_type") else "",
     ]
     return " ".join(part for part in parts if part).strip()
+
+
+def _candidate_coverage_summary(signals: dict[str, list[str]], future_coverage: list[str]) -> str:
+    parts = [
+        f"父主题={ '、'.join(signals.get('parent_themes', [])[:4]) }" if signals.get("parent_themes") else "",
+        f"已覆盖子方向={ '、'.join(_dedupe([*signals.get('mid_topics', []), *signals.get('specific_topics', [])])[:8]) }"
+        if signals.get("mid_topics") or signals.get("specific_topics")
+        else "",
+        f"未来覆盖={ '、'.join(_dedupe(future_coverage)[:8]) }" if future_coverage else "",
+    ]
+    return _clip("；".join(part for part in parts if part), 360)
 
 
 def _is_complex_intent(intent: dict[str, Any]) -> bool:

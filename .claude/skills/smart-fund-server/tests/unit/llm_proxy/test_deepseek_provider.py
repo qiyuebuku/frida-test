@@ -399,3 +399,20 @@ def test_deepseek_http_error_message_contains_safe_exception_type(monkeypatch):
     assert exc.value.error_type == "upstream_unavailable"
     assert "ConnectError" in message
     assert "sk-secret" not in message
+
+
+def test_deepseek_unexpected_transport_error_is_wrapped(monkeypatch):
+    provider = _provider(api_key="sk-secret")
+
+    async def fake_post(self, url, **kwargs):
+        raise ValueError("second argument (exceptions) must be a non-empty sequence")
+
+    monkeypatch.setattr(httpx.AsyncClient, "post", fake_post)
+
+    with pytest.raises(LLMProxyError) as exc:
+        asyncio.run(provider.generate(LLMProxyRequest(prompt="hello"), _route()))
+
+    message = str(exc.value)
+    assert exc.value.error_type == "upstream_unavailable"
+    assert "ValueError" in message
+    assert "sk-secret" not in message

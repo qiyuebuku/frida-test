@@ -211,6 +211,11 @@ class DeepSeekOpenAIProvider:
                 f"DeepSeek 请求失败: {self._safe_exception_summary(exc)}",
                 error_type="upstream_unavailable",
             ) from exc
+        except Exception as exc:
+            raise LLMProxyError(
+                f"DeepSeek 请求异常: {self._safe_exception_summary(exc)}",
+                error_type="upstream_unavailable",
+            ) from exc
 
         if response.status_code >= 400:
             self._raise_for_status(response)
