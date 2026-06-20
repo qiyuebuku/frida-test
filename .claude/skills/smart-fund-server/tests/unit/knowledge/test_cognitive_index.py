@@ -105,70 +105,34 @@ def test_assignment_validation_rejects_empty_title_as_new_l0():
             {
                 "assignments": [
                     {
-                        "action": "create_new_l0",
-                        "community_id": None,
+                        "action": "create_new",
+                        "community_id": "new_1",
                         "weight": 0.9,
                         "confidence": 0.9,
-                        "matched_reason": "candidate none",
-                        "update_mode": "append_reference",
                         "reason": "empty title",
-                        "candidate_fit_judgements": [],
-                        "new_community": {
-                            "level": 0,
-                            "title": "",
-                            "scope": "新能源海外项目",
-                            "title_quality": "broad_topic",
-                            "level_rationale": "bad",
-                            "future_coverage": ["后续项目进展"],
-                            "covered_subtopics": ["细分主题"],
-                            "intent_role": "topic",
-                            "candidate_fit_summary": "none",
-                        },
                     }
                 ],
-                "rejected_candidates": [],
-                "maintenance_hints": {"suggest_split": False, "suggest_merge_community_ids": [], "reason": ""},
+                "new_communities": [{"client_id": "new_1", "title": "", "scope": "新能源海外项目"}],
             },
             [],
             topic_intent={"specific_topics": ["细分主题"]},
         )
 
 
-def test_assignment_validation_rejects_new_l0_when_candidate_can_attach_as_parent():
-    with pytest.raises(RuntimeError, match="conflicts with attach_parent"):
+def test_assignment_validation_rejects_create_new_unknown_client_id():
+    with pytest.raises(RuntimeError, match="unknown new community"):
         validate_assignment_decision(
             {
                 "assignments": [
                     {
-                        "action": "create_new_l0",
-                        "community_id": None,
+                        "action": "create_new",
+                        "community_id": "new_missing",
                         "weight": 0.9,
                         "confidence": 0.9,
-                        "matched_reason": "候选只是部分相关",
-                        "update_mode": "append_reference",
                         "reason": "错误新建平级主题",
-                        "candidate_fit_judgements": [
-                            {
-                                "community_id": "c1",
-                                "fit": "attach_parent",
-                                "reason": "候选可以作为父级目录承接当前子方向",
-                            }
-                        ],
-                        "new_community": {
-                            "level": 0,
-                            "title": "AI芯片供应链",
-                            "scope": "围绕 AI 芯片供需的主题",
-                            "title_quality": "broad_topic",
-                            "level_rationale": "可承载多条资料",
-                            "future_coverage": ["AI芯片供需", "企业自建产能"],
-                            "covered_subtopics": ["AI芯片短缺"],
-                            "intent_role": "parent_topic",
-                            "candidate_fit_summary": "错误判断",
-                        },
                     }
                 ],
-                "rejected_candidates": [],
-                "maintenance_hints": {"suggest_split": False, "suggest_merge_community_ids": [], "reason": ""},
+                "new_communities": [{"client_id": "new_1", "title": "AI芯片供应链", "scope": "围绕 AI 芯片供需的主题"}],
             },
             [{"community_id": "c1"}],
             topic_intent={"specific_topics": ["AI芯片短缺"]},
@@ -223,29 +187,16 @@ def _create_assignment(title: str) -> dict:
     return {
         "assignments": [
             {
-                "action": "create_new_l0",
-                "community_id": None,
+                "action": "create_new",
+                "community_id": "new_1",
                 "weight": 0.92,
                 "confidence": 0.9,
-                "matched_reason": "无候选社区",
-                "update_mode": "append_reference",
                 "reason": "新建父级主题",
-                "candidate_fit_judgements": [],
-                "new_community": {
-                    "level": 0,
-                    "title": title,
-                    "scope": "围绕并购重组政策与产业整合的主题",
-                    "title_quality": "broad_topic",
-                    "level_rationale": "可承载多条资料",
-                    "future_coverage": ["政策变化", "产业链整合"],
-                    "covered_subtopics": ["产业并购", "政策变化"],
-                    "intent_role": "parent_topic",
-                    "candidate_fit_summary": "无候选",
-                },
             }
         ],
-        "rejected_candidates": [],
-        "maintenance_hints": {"suggest_split": False, "suggest_merge_community_ids": [], "reason": ""},
+        "new_communities": [
+            {"client_id": "new_1", "title": title, "scope": "围绕并购重组政策与产业整合的主题"}
+        ],
     }
 
 
@@ -257,17 +208,10 @@ def _attach_assignment() -> dict:
                 "community_id": "c1",
                 "weight": 0.88,
                 "confidence": 0.91,
-                "matched_reason": "同一并购重组父主题",
-                "update_mode": "update_delta",
                 "reason": "补充同一主题材料",
-                "candidate_fit_judgements": [
-                    {"community_id": "c1", "fit": "attach_parent", "reason": "属于已有并购重组覆盖范围"}
-                ],
-                "new_community": None,
             }
         ],
-        "rejected_candidates": [],
-        "maintenance_hints": {"suggest_split": False, "suggest_merge_community_ids": [], "reason": ""},
+        "new_communities": [],
     }
 
 
@@ -322,7 +266,7 @@ async def test_community_builder_creates_then_attaches_existing_l0():
 
     assert len(result.communities) == 1
     assert result.communities[0].title == "A股并购重组"
-    assert "政策变化" in result.communities[0].metrics["future_coverage"]
+    assert "并购重组政策与产业整合" in result.communities[0].metrics["future_coverage"]
     assert len(result.assignments) == 2
     assert result.assignments[1].action == "attach_existing"
     assert result.diagnostics["communities"] == 1

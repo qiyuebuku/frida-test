@@ -353,8 +353,9 @@ class CommunityCardBuilder:
                 instruction=(
                     "上一轮 Community Assignment 输出未通过业务校验。"
                     "只修复 JSON 结构和字段合规性，不改变业务裁决含义。"
-                    "action=attach_existing 时 new_community 必须为 null；"
-                    "action=create_new_l0 时 community_id 必须为 null 且 new_community 必须是完整对象。"
+                    "顶层只能包含 assignments 和 new_communities。"
+                    "action=attach_existing 时 community_id 必须引用候选 alias；"
+                    "action=create_new 时 community_id 必须引用 new_communities 中的 client_id。"
                 ),
                 retry_reason="community_assignment_validation_invalid",
             )

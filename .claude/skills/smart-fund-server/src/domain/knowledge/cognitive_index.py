@@ -24,7 +24,7 @@ from src.domain.knowledge.schemas import EvidenceChunk
 DEFAULT_MAX_ATTACH = 3
 COMPLEX_MAX_ATTACH = 5
 COGNITIVE_CARD_SCHEMA_VERSION = "cognitive_card_v1"
-COMMUNITY_ASSIGNMENT_SCHEMA_VERSION = "community_assignment_v1"
+COMMUNITY_ASSIGNMENT_SCHEMA_VERSION = "community_assignment_v2"
 COMMUNITY_PROJECTION = "cognitive_topic"
 
 
@@ -324,106 +324,38 @@ ASSIGNMENT_SCHEMA: dict[str, Any] = {
             "items": {
                 "type": "object",
                 "properties": {
-                    "action": {"type": "string", "enum": ["attach_existing", "create_new_l0"]},
-                    "community_id": {"type": ["string", "null"]},
+                    "action": {"type": "string", "enum": ["attach_existing", "create_new"]},
+                    "community_id": {"type": "string"},
                     "weight": {"type": "number", "minimum": 0, "maximum": 1},
                     "confidence": {"type": "number", "minimum": 0, "maximum": 1},
-                    "matched_reason": {"type": "string"},
-                    "update_mode": {"type": "string", "enum": ["append_reference", "update_delta", "rewrite_summary"]},
                     "reason": {"type": "string"},
-                    "candidate_fit_judgements": {
-                        "type": "array",
-                        "maxItems": 12,
-                        "items": {
-                            "type": "object",
-                            "properties": {
-                                "community_id": {"type": "string"},
-                                "fit": {
-                                    "type": "string",
-                                    "enum": ["attach_parent", "related_but_separate", "not_related"],
-                                },
-                                "reason": {"type": "string"},
-                            },
-                            "required": ["community_id", "fit", "reason"],
-                            "additionalProperties": False,
-                        },
-                    },
-                    "new_community": {
-                        "type": ["object", "null"],
-                        "properties": {
-                            "level": {"type": "number"},
-                            "title": {"type": "string"},
-                            "scope": {"type": "string"},
-                            "title_quality": {"type": "string", "enum": ["broad_topic"]},
-                            "level_rationale": {"type": "string"},
-                            "future_coverage": {"type": "array", "items": {"type": "string"}},
-                            "covered_subtopics": {"type": "array", "items": {"type": "string"}},
-                            "intent_role": {"type": "string"},
-                            "candidate_fit_summary": {"type": "string"},
-                        },
-                        "required": [
-                            "level",
-                            "title",
-                            "scope",
-                            "title_quality",
-                            "level_rationale",
-                            "future_coverage",
-                            "covered_subtopics",
-                            "intent_role",
-                            "candidate_fit_summary",
-                        ],
-                        "additionalProperties": False,
-                    },
                 },
-                "allOf": [
-                    {
-                        "if": {"properties": {"action": {"const": "attach_existing"}}, "required": ["action"]},
-                        "then": {"properties": {"community_id": {"type": "string"}, "new_community": {"type": "null"}}},
-                    },
-                    {
-                        "if": {"properties": {"action": {"const": "create_new_l0"}}, "required": ["action"]},
-                        "then": {"properties": {"community_id": {"type": "null"}, "new_community": {"type": "object"}}},
-                    },
-                ],
                 "required": [
                     "action",
                     "community_id",
                     "weight",
                     "confidence",
-                    "matched_reason",
-                    "update_mode",
                     "reason",
-                    "candidate_fit_judgements",
-                    "new_community",
                 ],
                 "additionalProperties": False,
             },
         },
-        "rejected_candidates": {
+        "new_communities": {
             "type": "array",
+            "maxItems": 5,
             "items": {
                 "type": "object",
                 "properties": {
-                    "community_id": {"type": "string"},
-                    "reason_code": {"type": "string"},
-                    "reason": {"type": "string"},
+                    "client_id": {"type": "string"},
+                    "title": {"type": "string"},
+                    "scope": {"type": "string"},
                 },
-                "required": ["community_id", "reason_code", "reason"],
+                "required": ["client_id", "title", "scope"],
                 "additionalProperties": False,
             },
         },
-        "maintenance_hints": {
-            "type": "object",
-            "properties": {
-                "suggest_split": {"type": "boolean"},
-                "suggest_merge_community_ids": {"type": "array", "items": {"type": "string"}},
-                "reason": {"type": "string"},
-            },
-            "required": ["suggest_split", "suggest_merge_community_ids", "reason"],
-            "additionalProperties": False,
-        },
     },
-    "required": ["assignments", "rejected_candidates", "maintenance_hints"],
+    "required": ["assignments", "new_communities"],
     "additionalProperties": False,
 }
 
@@ -469,35 +401,29 @@ ASSIGNMENT_SYSTEM_PROMPT = """你是金融知识图谱的 Community 归档裁决
 
 你的任务：
 - 在候选 community 中判断是否应该挂入已有主题；
-- 如果候选都不适合，第一阶段只能创建新的 L0 community；
-- Cognitive Card 的 parent_themes、title_candidate、raw_theme 都只是候选信号，不是最终 community 名称；你必须在本阶段重新归一化主题边界。
-- 输入候选 community_id 会使用 c1、c2、c3 这类短 alias；attach_existing、rejected_candidates、maintenance_hints 中引用候选时必须原样使用这些 alias，禁止输出 hash、标题或自造 ID。
+- 如果候选都不适合，创建新的 L0 community；
+- Cognitive Card 的 parent_themes、title_candidate、raw_theme 都只是候选信号，不是最终 community 名称；你必须在本阶段归一化主题边界。
+- 输入候选 community_id 会使用 c1、c2、c3 这类短 alias；attach_existing 时必须原样使用这些 alias，禁止输出 hash、标题或自造 ID。
 - 一个 topic_intent 可以归属到一个或多个 community；
 - 不区分 primary / secondary；
 - 每条归属必须输出 weight，表示这个 topic_intent 和 community 的关联强度；
 - assignments 数量不要超过 max_attach 限制；
 - 不要输出 uncertain，不走人工 pending；
-- 低置信也必须在 attach_existing 或 create_new_l0 中二选一；
+- 低置信也必须在 attach_existing 或 create_new 中二选一；
 - 归档判断必须综合 parent_themes、broad_topics、mid_topics、specific_topics、raw_theme、title_candidate、driver、impact_target、risk_type、event_thread、event_action、actors。
 - parent_themes 是 L0 归档主信号。如果 topic_intent.parent_themes 与候选 community 的 title、canonical_labels、summary 或 scope 明显匹配，应优先 attach_existing。
 - broad_topics、mid_topics、specific_topics 都只是候选信号，不是标题指令；你必须判断它们的真实层级是否适合作为 L0。
 - L0 community 是可长期复用的父级主题，应该能承载多条不同来源、不同时间、不同主体的资料，并且未来可以继续拆出 L1/L2。
 - 候选 community 的 scope、future_coverage、parent_themes、broad_topics、mid_topics、specific_topics 用来判断目录覆盖范围。判断重点不是候选 summary 是否已经写过当前细节，而是候选是否能作为父级目录承接当前细节。
-- candidate_fit_judgements.fit 只能使用：
-  - attach_parent：候选可以作为父级目录承接当前 topic_intent，即使当前细节、主体、风险点或供需状态是候选中尚未出现的新材料；
-  - related_but_separate：候选与当前 topic_intent 相关，但挂入会污染主题边界，应该保持不同 L0；
-  - not_related：候选与当前 topic_intent 不相关。
-- 如果有候选 community 的 fit=attach_parent，必须 attach_existing 到其中最合适的候选，不能 create_new_l0。
-- create_new_l0 只有在所有候选都是 related_but_separate 或 not_related 时才允许。此时 candidate_fit_judgements 必须说明为什么候选不能作为父级目录承接。
 - 不要因为候选没有直接提到当前 chunk 的细节就判为 related_but_separate；L0 的职责就是吸收同一父主题下的新子方向。
 - 如果当前 topic_intent 是 mid/specific 层级，不能直接把细主题包装成 L0；必须先寻找已有父级或子级 community 是否可挂入，没有合适候选时再提炼更高一层的父级 L0。
 - 如果创建新 L0，title 必须优先使用 parent_themes 中可长期复用的父级主题；只有 parent_themes 为空或明显不适合时，才从 broad_topics 中提炼父级主题。
 - 如果当前 broad/mid/specific 是已有 parent_theme 的子方向，必须挂入该父主题，不要创建平级 L0。
 - 如果创建新 L0，title 必须是可长期复用的父级主题，不能是新闻标题、公司项目名、单一交易名、单个产品、单次行情、单个技术细节。
-- create_new_l0 的 title 应像索引目录名，优先短标题；不要输出带有“政策与市场动态”“结构性变化”“投资机会”等摘要式尾巴的长标题，除非这是不可再压缩的稳定主题名。
-- create_new_l0 的 future_coverage / covered_subtopics 不能只复述当前 chunk，必须列出该父主题未来可承载的相邻子方向，用于后续避免重复建 L0。
-- 如果 action=attach_existing，new_community 必须严格为 null。
-- 如果 action=create_new_l0，community_id 必须为 null，new_community 必须是完整对象。
+- create_new 的 title 应像索引目录名，优先短标题；不要输出带有“政策与市场动态”“结构性变化”“投资机会”等摘要式尾巴的长标题，除非这是不可再压缩的稳定主题名。
+- 如果 action=attach_existing，community_id 必须引用候选 alias，例如 c1。
+- 如果 action=create_new，community_id 必须引用 new_communities 中的 client_id，例如 new_1。
+- new_communities 只包含本次新建 community 的 client_id、title、scope。不要输出 level、title_quality、future_coverage、maintenance_hints、rejected_candidates 或 candidate_fit_judgements。
 - 输出必须符合 JSON Schema，不要 Markdown。"""
 
 
@@ -558,7 +484,7 @@ def validate_assignment_decision(
     *,
     topic_intent: dict[str, Any] | None = None,
 ) -> None:
-    required_top = ["assignments", "rejected_candidates", "maintenance_hints"]
+    required_top = ["assignments", "new_communities"]
     missing_top = [key for key in required_top if key not in decision]
     if missing_top:
         raise RuntimeError(f"assignment decision missing top-level fields: {missing_top}; decision={decision}")
@@ -566,30 +492,28 @@ def validate_assignment_decision(
         raise RuntimeError(f"assignments must be non-empty array; decision={decision}")
     if len(decision["assignments"]) > COMPLEX_MAX_ATTACH:
         raise RuntimeError(f"too many assignments: {len(decision['assignments'])}; decision={decision}")
+    if not isinstance(decision["new_communities"], list):
+        raise RuntimeError(f"new_communities must be array; decision={decision}")
     candidate_ids = {str(candidate["community_id"]) for candidate in candidates}
+    new_communities = _validate_new_communities(decision, topic_intent=topic_intent)
     seen: set[str] = set()
     for assignment in decision["assignments"]:
         if not isinstance(assignment, dict):
             raise RuntimeError(f"assignment must be object: {assignment}; decision={decision}")
         action = assignment.get("action")
-        if action not in {"attach_existing", "create_new_l0"}:
+        if action not in {"attach_existing", "create_new"}:
             raise RuntimeError(f"assignment.action invalid: {action}; decision={decision}")
         community_id = assignment.get("community_id")
-        new_community = assignment.get("new_community")
+        if not isinstance(community_id, str) or not community_id.strip():
+            raise RuntimeError(f"assignment.community_id must be non-empty string; decision={decision}")
         if action == "attach_existing":
-            if not isinstance(community_id, str) or not community_id.strip():
-                raise RuntimeError(f"attach_existing requires community_id; decision={decision}")
             if community_id not in candidate_ids:
                 raise RuntimeError(f"community_id not in candidates: {community_id}; decision={decision}")
-            if new_community is not None:
-                raise RuntimeError(f"new_community must be null when attaching; decision={decision}")
             dedupe = "attach:" + community_id
         else:
-            if community_id is not None:
-                raise RuntimeError(f"community_id must be null when creating new L0; decision={decision}")
-            _validate_new_community(new_community, decision, topic_intent=topic_intent)
-            dedupe = "create:" + _normalize_label(str(new_community.get("title") or ""))
-        _validate_candidate_fit_judgements(assignment, candidate_ids, decision)
+            if community_id not in new_communities:
+                raise RuntimeError(f"create_new references unknown new community: {community_id}; decision={decision}")
+            dedupe = "create:" + _normalize_label(str(new_communities[community_id].get("title") or ""))
         if dedupe in seen:
             raise RuntimeError(f"duplicate assignment target: {dedupe}; decision={decision}")
         seen.add(dedupe)
@@ -597,57 +521,32 @@ def validate_assignment_decision(
             value = assignment.get(numeric)
             if not isinstance(value, (int, float)) or isinstance(value, bool) or not 0 <= float(value) <= 1:
                 raise RuntimeError(f"{numeric} must be number between 0 and 1; decision={decision}")
+        if not _clean_text(assignment.get("reason")):
+            raise RuntimeError(f"assignment.reason must be non-empty; decision={decision}")
 
 
-def _validate_new_community(payload: Any, decision: dict[str, Any], *, topic_intent: dict[str, Any] | None) -> None:
-    if not isinstance(payload, dict):
-        raise RuntimeError(f"create_new_l0 requires new_community object; decision={decision}")
-    for key in ("level", "title", "scope", "title_quality", "level_rationale", "future_coverage", "intent_role", "candidate_fit_summary"):
-        if key not in payload:
-            raise RuntimeError(f"new_community missing field {key}; decision={decision}")
-    level = payload.get("level")
-    if not isinstance(level, (int, float)) or isinstance(level, bool) or float(level) != 0:
-        raise RuntimeError(f"new_community.level must be numeric 0; decision={decision}")
-    title = _clean_text(payload.get("title"))
-    if not title:
-        raise RuntimeError(f"new_community.title must be non-empty; decision={decision}")
-    if payload.get("title_quality") != "broad_topic":
-        raise RuntimeError(f"new_community.title_quality must be broad_topic; decision={decision}")
-    if not isinstance(payload.get("future_coverage"), list) or not payload["future_coverage"]:
-        raise RuntimeError(f"new_community.future_coverage must be non-empty array; decision={decision}")
-    if not isinstance(payload.get("covered_subtopics"), list) or not payload["covered_subtopics"]:
-        raise RuntimeError(f"new_community.covered_subtopics must be non-empty array; decision={decision}")
-    if topic_intent is not None:
-        normalized_title = _normalize_label(title)
-        specific_titles = {_normalize_label(item) for item in _as_list(topic_intent.get("specific_topics"))}
-        if normalized_title and normalized_title in specific_titles:
-            raise RuntimeError(f"new_community.title duplicates a specific topic: title={title}; decision={decision}")
-
-
-def _validate_candidate_fit_judgements(
-    assignment: dict[str, Any],
-    candidate_ids: set[str],
+def _validate_new_communities(
     decision: dict[str, Any],
-) -> None:
-    judgements = assignment.get("candidate_fit_judgements")
-    if not isinstance(judgements, list):
-        raise RuntimeError(f"candidate_fit_judgements must be array; decision={decision}")
-    valid_fits = {"attach_parent", "related_but_separate", "not_related"}
-    has_attach_parent = False
-    for item in judgements:
+    *,
+    topic_intent: dict[str, Any] | None,
+) -> dict[str, dict[str, Any]]:
+    result: dict[str, dict[str, Any]] = {}
+    for item in decision["new_communities"]:
         if not isinstance(item, dict):
-            raise RuntimeError(f"candidate_fit_judgements item must be object; decision={decision}")
-        community_id = str(item.get("community_id") or "")
-        if community_id not in candidate_ids:
-            raise RuntimeError(f"candidate_fit_judgements community_id not in candidates: {community_id}; decision={decision}")
-        if item.get("fit") not in valid_fits:
-            raise RuntimeError(f"candidate_fit_judgements.fit invalid: {item.get('fit')}; decision={decision}")
-        if item.get("fit") == "attach_parent":
-            has_attach_parent = True
-        if not _clean_text(item.get("reason")):
-            raise RuntimeError(f"candidate_fit_judgements.reason must be non-empty; decision={decision}")
-    if assignment.get("action") == "create_new_l0" and has_attach_parent:
-        raise RuntimeError(f"create_new_l0 conflicts with attach_parent candidate; decision={decision}")
+            raise RuntimeError(f"new_communities item must be object: {item}; decision={decision}")
+        client_id = _clean_text(item.get("client_id"))
+        title = _clean_text(item.get("title"))
+        scope = _clean_text(item.get("scope"))
+        if not client_id:
+            raise RuntimeError(f"new_community.client_id must be non-empty; decision={decision}")
+        if client_id in result:
+            raise RuntimeError(f"duplicate new_community.client_id: {client_id}; decision={decision}")
+        if not title:
+            raise RuntimeError(f"new_community.title must be non-empty; decision={decision}")
+        if not scope:
+            raise RuntimeError(f"new_community.scope must be non-empty; decision={decision}")
+        result[client_id] = {"client_id": client_id, "title": title, "scope": scope}
+    return result
 
 
 def _assignment_topic_intent(card: CognitiveCard, intent_payload: dict[str, Any]) -> dict[str, Any]:
@@ -689,10 +588,15 @@ def _apply_assignment(
     communities: dict[str, CommunityDraft],
 ) -> list[CommunityAssignment]:
     applied: list[CommunityAssignment] = []
+    new_communities = {
+        str(item.get("client_id")): item
+        for item in decision.get("new_communities") or []
+        if isinstance(item, dict) and str(item.get("client_id") or "").strip()
+    }
     for assignment in decision["assignments"]:
         action = str(assignment["action"])
-        if action == "create_new_l0":
-            payload = assignment["new_community"]
+        if action == "create_new":
+            payload = new_communities[str(assignment["community_id"])]
             community_id = _community_id(adapter_name, str(payload["title"]))
             if community_id not in communities:
                 communities[community_id] = CommunityDraft(
@@ -700,9 +604,7 @@ def _apply_assignment(
                     title=_clean_text(payload["title"]),
                     scope=_clean_text(payload["scope"]),
                     level=0,
-                    future_coverage=_dedupe(
-                        [*_as_list(payload.get("future_coverage")), *_as_list(payload.get("covered_subtopics"))]
-                    )[:16],
+                    future_coverage=_future_coverage_from_intent(topic_intent),
                     created_from_source_id=card.source_id,
                 )
         else:
@@ -729,8 +631,8 @@ def _apply_assignment(
                 action=action,
                 weight=float(assignment.get("weight") or 0),
                 confidence=float(assignment.get("confidence") or 0),
-                matched_reason=str(assignment.get("matched_reason") or ""),
-                update_mode=str(assignment.get("update_mode") or ""),
+                matched_reason=str(assignment.get("reason") or ""),
+                update_mode=_assignment_update_mode(action=action, weight=float(assignment.get("weight") or 0)),
                 reason=str(assignment.get("reason") or ""),
                 topic_intent=topic_intent,
                 decision=decision,
@@ -899,17 +801,31 @@ def _resolve_aliases(decision: dict[str, Any], alias_map: dict[str, str]) -> dic
     copied = json.loads(json.dumps(decision, ensure_ascii=False))
     for assignment in copied.get("assignments") or []:
         if isinstance(assignment, dict):
-            assignment["community_id"] = resolve(assignment.get("community_id"))
-            for judgement in assignment.get("candidate_fit_judgements") or []:
-                if isinstance(judgement, dict):
-                    judgement["community_id"] = resolve(judgement.get("community_id"))
-    for item in copied.get("rejected_candidates") or []:
-        if isinstance(item, dict):
-            item["community_id"] = resolve(item.get("community_id"))
-    hints = copied.get("maintenance_hints")
-    if isinstance(hints, dict):
-        hints["suggest_merge_community_ids"] = [resolve(item) for item in hints.get("suggest_merge_community_ids") or []]
+            if assignment.get("action") == "attach_existing":
+                assignment["community_id"] = resolve(assignment.get("community_id"))
     return copied
+
+
+def _future_coverage_from_intent(intent: dict[str, Any]) -> list[str]:
+    return _dedupe(
+        [
+            *_as_list(intent.get("parent_themes")),
+            *_as_list(intent.get("broad_topics")),
+            *_as_list(intent.get("mid_topics")),
+            *_as_list(intent.get("specific_topics")),
+            *_as_list(intent.get("driver")),
+            *_as_list(intent.get("impact_target")),
+            *_as_list(intent.get("event_thread")),
+        ]
+    )[:16]
+
+
+def _assignment_update_mode(*, action: str, weight: float) -> str:
+    if action == "create_new":
+        return "rewrite_summary"
+    if weight >= 0.80:
+        return "update_delta"
+    return "append_reference"
 
 
 def maturity_label(source_count: int) -> str:
