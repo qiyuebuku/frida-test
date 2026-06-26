@@ -7,10 +7,12 @@ import pytest
 from src.application.services.cognitive_index_service import CognitiveCardExtractor, CommunityCardBuilder
 from src.domain.knowledge.cognitive_index import (
     CognitiveCard,
+    _drafts_from_existing,
     assignment_query_text,
     cognitive_card_from_llm,
     validate_assignment_decision,
 )
+from src.domain.knowledge.graph_index import GraphIndexCommunity
 from src.domain.knowledge.schemas import EvidenceChunk
 from src.infrastructure.llm_proxy.types import LLMProxyResponse
 
@@ -109,6 +111,7 @@ def test_assignment_validation_rejects_empty_title_as_new_l0():
                         "community_id": "new_1",
                         "weight": 0.9,
                         "confidence": 0.9,
+                        "fit_type": "new_parent_topic",
                         "reason": "empty title",
                     }
                 ],
@@ -129,6 +132,7 @@ def test_assignment_validation_rejects_create_new_unknown_client_id():
                         "community_id": "new_missing",
                         "weight": 0.9,
                         "confidence": 0.9,
+                        "fit_type": "new_parent_topic",
                         "reason": "错误新建平级主题",
                     }
                 ],
@@ -137,6 +141,75 @@ def test_assignment_validation_rejects_create_new_unknown_client_id():
             [{"community_id": "c1"}],
             topic_intent={"specific_topics": ["AI芯片短缺"]},
         )
+
+
+def test_assignment_validation_rejects_attach_existing_with_new_parent_fit_type():
+    with pytest.raises(RuntimeError, match="attach_existing fit_type cannot be new_parent_topic"):
+        validate_assignment_decision(
+            {
+                "assignments": [
+                    {
+                        "action": "attach_existing",
+                        "community_id": "c1",
+                        "weight": 0.9,
+                        "confidence": 0.9,
+                        "fit_type": "new_parent_topic",
+                        "reason": "错误 fit_type",
+                    }
+                ],
+                "new_communities": [],
+            },
+            [{"community_id": "c1"}],
+            topic_intent={"parent_themes": ["AI算力链"]},
+        )
+
+
+def test_existing_community_draft_restores_directory_signals_from_metrics():
+    community = GraphIndexCommunity(
+        community_id="kg_community:cognitive_topic:l0:ai",
+        version_id="v1",
+        adapter_name="financial",
+        projection="cognitive_topic",
+        level=0,
+        parent_community_id="",
+        title="AI算力链",
+        summary="AI算力链目录",
+        member_node_ids=[],
+        member_edge_ids=[],
+        evidence_ids=["ev1"],
+        chunk_ids=["chunk1"],
+        metrics={
+            "source_ids": ["source1"],
+            "cognitive_card_ids": ["card1"],
+            "assigned_intents": [
+                {
+                    "parent_themes": ["AI算力链"],
+                    "broad_topics": ["人工智能基础设施"],
+                    "mid_topics": ["AI芯片供应", "光模块CPO"],
+                    "specific_topics": ["特斯拉自建芯片产能"],
+                    "raw_theme": "AI芯片供应短缺",
+                    "title_candidate": "AI芯片供应链",
+                    "event_thread": ["AI算力硬件产业链"],
+                }
+            ],
+            "future_coverage": ["AI服务器", "数据中心算力"],
+            "scope": "承接 AI 芯片、光模块、AI服务器、数据中心等算力基础设施主题",
+        },
+        status="active",
+        previous_version_id="",
+        change_reason="cognitive_assignment",
+        lineage_id="lineage",
+        previous_community_ids=[],
+    )
+
+    draft = _drafts_from_existing([community])[community.community_id]
+    candidate = draft.to_assignment_candidate(score=0.8, lane="semantic:parent_topic")
+
+    assert candidate["source_count"] == 1
+    assert "AI芯片供应" in candidate["future_coverage"]
+    assert "AI服务器" in candidate["future_coverage"]
+    assert "AI算力链" in candidate["canonical_labels"]
+    assert "可吸收子方向" in candidate["coverage_contract"]
 
 
 class _LLM:
@@ -191,6 +264,7 @@ def _create_assignment(title: str) -> dict:
                 "community_id": "new_1",
                 "weight": 0.92,
                 "confidence": 0.9,
+                "fit_type": "new_parent_topic",
                 "reason": "新建父级主题",
             }
         ],
@@ -208,6 +282,7 @@ def _attach_assignment() -> dict:
                 "community_id": "c1",
                 "weight": 0.88,
                 "confidence": 0.91,
+                "fit_type": "new_subtopic",
                 "reason": "补充同一主题材料",
             }
         ],
@@ -270,3 +345,78 @@ async def test_community_builder_creates_then_attaches_existing_l0():
     assert len(result.assignments) == 2
     assert result.assignments[1].action == "attach_existing"
     assert result.diagnostics["communities"] == 1
+
+
+@pytest.mark.asyncio
+async def test_community_builder_deduplicates_existing_intent_when_rebuilding():
+    card = cognitive_card_from_llm(_chunk(), _card_payload("A股并购重组"))
+    existing_id = "kg_community:cognitive_topic:l0:merger"
+    existing = GraphIndexCommunity(
+        community_id=existing_id,
+        version_id="v1",
+        adapter_name="financial",
+        projection="cognitive_topic",
+        level=0,
+        parent_community_id="",
+        title="A股并购重组",
+        summary="A股并购重组主题",
+        member_node_ids=[],
+        member_edge_ids=[],
+        evidence_ids=[card.evidence_id],
+        chunk_ids=card.chunk_ids,
+        metrics={
+            "source_ids": [card.source_id],
+            "cognitive_card_ids": [card.cognitive_card_id],
+            "assigned_intents": [
+                {
+                    "cognitive_card_id": card.cognitive_card_id,
+                    "source_id": card.source_id,
+                    "evidence_id": card.evidence_id,
+                    "chunk_ids": card.chunk_ids,
+                    "raw_theme": card.topic_intents[0]["raw_theme"],
+                    "title_candidate": card.topic_intents[0]["title_candidate"],
+                    "summary": card.topic_intents[0]["summary"],
+                    "parent_themes": card.topic_intents[0]["parent_themes"],
+                    "broad_topics": card.topic_intents[0]["broad_topics"],
+                    "mid_topics": card.topic_intents[0]["mid_topics"],
+                    "specific_topics": card.topic_intents[0]["specific_topics"],
+                }
+            ],
+        },
+        status="active",
+        previous_version_id="",
+        change_reason="cognitive_assignment",
+        lineage_id="lineage",
+        previous_community_ids=[],
+    )
+
+    class _Provider:
+        async def recall(self, **_kwargs):
+            return [
+                {
+                    "community_id": existing_id,
+                    "title": "A股并购重组",
+                    "level": 0,
+                    "parent_community_id": "",
+                    "summary": "A股并购重组主题",
+                    "canonical_labels": ["A股并购重组"],
+                    "maturity": "single_evidence",
+                    "retrieval_score": 0.91,
+                    "retrieval_lane": "semantic:parent_topic",
+                    "recent_examples": [],
+                }
+            ]
+
+    result = await CommunityCardBuilder(
+        llm=_LLM([_attach_assignment()]),
+        model="test-model",
+        candidate_provider=_Provider(),
+    ).build(
+        adapter_name="financial",
+        cards=[card],
+        existing_communities=[existing],
+    )
+
+    assert len(result.communities) == 1
+    assert len(result.communities[0].metrics["assigned_intents"]) == 1
+    assert len(result.communities[0].metrics["cognitive_card_ids"]) == 1

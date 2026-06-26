@@ -26,7 +26,7 @@ from src.domain.knowledge.cognitive_index import (
     _graph_community_from_draft,
     _is_complex_intent,
     _resolve_aliases,
-    assignment_query_text,
+    assignment_query_lanes,
     cognitive_card_from_llm,
     validate_assignment_decision,
 )
@@ -154,46 +154,73 @@ class CommunitySemanticCandidateProvider:
     ) -> list[dict[str, Any]]:
         if not communities:
             return []
-        query = assignment_query_text(topic_intent)
-        if not query.strip():
+        query_lanes = assignment_query_lanes(topic_intent)
+        if not query_lanes:
             return []
         with langfuse_observation(
             name="kg.community_assignment.semantic_recall",
             as_type="retriever",
             input={
-                "query_chars": len(query),
+                "query_lanes": [{"lane": item["lane"], "query_chars": len(item["query"])} for item in query_lanes],
                 "adapter_name": adapter_name,
                 "target": target,
                 "limit": limit,
             },
             metadata={"collection_role": SEMANTIC_COLLECTION_COMMUNITY},
         ):
-            vectors = await embed_texts([query])
-            query_vector = vectors[0] if vectors and vectors[0] else []
-            hits = self._store.hybrid_search(
-                collection_role=SEMANTIC_COLLECTION_COMMUNITY,
-                query_text=query,
-                query_vector=query_vector,
-                adapter_name=adapter_name,
-                target=target,
-                limit=max(limit, 1),
-            )
-            candidates: list[dict[str, Any]] = []
-            seen: set[str] = set()
-            for hit in hits:
-                community_id = str(hit.metadata.get("community_id") or hit.metadata.get("source_id") or hit.target_id)
-                community = communities.get(community_id)
-                if community is None or community_id in seen:
+            query_texts = [item["query"] for item in query_lanes]
+            vectors = await embed_texts(query_texts)
+            merged_hits: dict[str, dict[str, Any]] = {}
+            raw_hits = 0
+            per_lane_hits: dict[str, int] = {}
+            for lane, query, vector in zip(query_lanes, query_texts, vectors, strict=False):
+                if not query.strip() or not vector:
                     continue
-                seen.add(community_id)
+                hits = self._store.hybrid_search(
+                    collection_role=SEMANTIC_COLLECTION_COMMUNITY,
+                    query_text=query,
+                    query_vector=vector,
+                    adapter_name=adapter_name,
+                    target=target,
+                    limit=max(limit, 1),
+                )
+                raw_hits += len(hits)
+                per_lane_hits[lane["lane"]] = len(hits)
+                for hit in hits:
+                    community_id = str(hit.metadata.get("community_id") or hit.metadata.get("source_id") or hit.target_id)
+                    if community_id not in communities:
+                        continue
+                    current = merged_hits.get(community_id)
+                    score = float(hit.score or 0.0)
+                    if current is None:
+                        merged_hits[community_id] = {
+                            "community_id": community_id,
+                            "score": score,
+                            "lanes": {lane["lane"]},
+                        }
+                    else:
+                        current["score"] = max(float(current["score"]), score)
+                        current["lanes"].add(lane["lane"])
+            candidates: list[dict[str, Any]] = []
+            for item in sorted(
+                merged_hits.values(),
+                key=lambda value: (len(value["lanes"]), float(value["score"])),
+                reverse=True,
+            ):
+                community_id = str(item["community_id"])
+                community = communities[community_id]
                 candidates.append(
-                    community.to_assignment_candidate(score=float(hit.score or 0.0), lane="semantic_community")
+                    community.to_assignment_candidate(
+                        score=float(item["score"] or 0.0),
+                        lane="semantic:" + ",".join(sorted(item["lanes"])),
+                    )
                 )
                 if len(candidates) >= limit:
                     break
             langfuse_update_span(
                 output={
-                    "raw_hits": len(hits),
+                    "raw_hits": raw_hits,
+                    "per_lane_hits": per_lane_hits,
                     "candidates": len(candidates),
                     "candidate_titles": [item.get("title") for item in candidates[:8]],
                 },
@@ -356,6 +383,8 @@ class CommunityCardBuilder:
                     "顶层只能包含 assignments 和 new_communities。"
                     "action=attach_existing 时 community_id 必须引用候选 alias；"
                     "action=create_new 时 community_id 必须引用 new_communities 中的 client_id。"
+                    "每条 assignment 必须包含 fit_type；attach_existing 不能使用 new_parent_topic，"
+                    "create_new 必须使用 new_parent_topic。"
                 ),
                 retry_reason="community_assignment_validation_invalid",
             )

@@ -26,6 +26,13 @@ COMPLEX_MAX_ATTACH = 5
 COGNITIVE_CARD_SCHEMA_VERSION = "cognitive_card_v1"
 COMMUNITY_ASSIGNMENT_SCHEMA_VERSION = "community_assignment_v2"
 COMMUNITY_PROJECTION = "cognitive_topic"
+ASSIGNMENT_FIT_TYPES = {
+    "existing_direction",
+    "new_subtopic",
+    "broader_parent",
+    "adjacent_context",
+    "new_parent_topic",
+}
 
 
 @dataclass(frozen=True)
@@ -111,20 +118,7 @@ class CommunityDraft:
 
     def to_assignment_candidate(self, *, score: float = 0.0, lane: str = "") -> dict[str, Any]:
         signals = self.signal_values()
-        labels = _dedupe(
-            [
-                self.title,
-                *signals.get("parent_themes", []),
-                *signals.get("broad_topics", []),
-                *signals.get("mid_topics", []),
-                *signals.get("specific_topics", []),
-                *signals.get("raw_theme", []),
-                *signals.get("title_candidate", []),
-                *signals.get("impact_target", []),
-                *signals.get("event_thread", []),
-                *signals.get("risk_type", []),
-            ]
-        )[:12]
+        labels = _community_canonical_labels(self, signals)[:16]
         return {
             "community_id": self.community_id,
             "title": self.title,
@@ -133,11 +127,13 @@ class CommunityDraft:
             "scope": _clip(self.scope, 220),
             "summary": _clip(self.summary, 240),
             "source_count": len(set(self.source_ids)),
+            "directory_scope": _clip(self.scope or _community_coverage_contract(self, signals), 260),
             "parent_themes": signals.get("parent_themes", [])[:8],
             "broad_topics": signals.get("broad_topics", [])[:8],
             "mid_topics": signals.get("mid_topics", [])[:10],
             "specific_topics": signals.get("specific_topics", [])[:10],
             "future_coverage": _dedupe([*self.future_coverage, *signals.get("mid_topics", []), *signals.get("specific_topics", [])])[:12],
+            "coverage_contract": _community_coverage_contract(self, signals),
             "coverage_summary": _candidate_coverage_summary(signals, self.future_coverage),
             "canonical_labels": labels,
             "maturity": maturity_label(len(set(self.source_ids))),
@@ -328,6 +324,10 @@ ASSIGNMENT_SCHEMA: dict[str, Any] = {
                     "community_id": {"type": "string"},
                     "weight": {"type": "number", "minimum": 0, "maximum": 1},
                     "confidence": {"type": "number", "minimum": 0, "maximum": 1},
+                    "fit_type": {
+                        "type": "string",
+                        "enum": sorted(ASSIGNMENT_FIT_TYPES),
+                    },
                     "reason": {"type": "string"},
                 },
                 "required": [
@@ -335,6 +335,7 @@ ASSIGNMENT_SCHEMA: dict[str, Any] = {
                     "community_id",
                     "weight",
                     "confidence",
+                    "fit_type",
                     "reason",
                 ],
                 "additionalProperties": False,
@@ -407,6 +408,7 @@ ASSIGNMENT_SYSTEM_PROMPT = """你是金融知识图谱的 Community 归档裁决
 - 一个 topic_intent 可以归属到一个或多个 community；
 - 不区分 primary / secondary；
 - 每条归属必须输出 weight，表示这个 topic_intent 和 community 的关联强度；
+- 每条归属必须输出 fit_type，用来说明这是既有方向、新增子方向、更宽父主题、相邻上下文，还是全新的父主题；
 - assignments 数量不要超过 max_attach 限制；
 - 不要输出 uncertain，不走人工 pending；
 - 低置信也必须在 attach_existing 或 create_new 中二选一；
@@ -416,6 +418,9 @@ ASSIGNMENT_SYSTEM_PROMPT = """你是金融知识图谱的 Community 归档裁决
 - L0 community 是可长期复用的父级主题，应该能承载多条不同来源、不同时间、不同主体的资料，并且未来可以继续拆出 L1/L2。
 - 候选 community 的 scope、future_coverage、parent_themes、broad_topics、mid_topics、specific_topics 用来判断目录覆盖范围。判断重点不是候选 summary 是否已经写过当前细节，而是候选是否能作为父级目录承接当前细节。
 - 不要因为候选没有直接提到当前 chunk 的细节就判为 related_but_separate；L0 的职责就是吸收同一父主题下的新子方向。
+- 如果当前细节是候选 community 的新增子方向，应 attach_existing，并把 fit_type 写成 new_subtopic；不要因为 summary 里没有当前细节而新建平级 L0。
+- 如果候选 community 比当前 intent 更宽，但能承接当前 intent，应 attach_existing，并把 fit_type 写成 broader_parent。
+- 只有当候选 community 的目录范围无法承接当前 intent 时，才 create_new；create_new 的 fit_type 必须是 new_parent_topic。
 - 如果当前 topic_intent 是 mid/specific 层级，不能直接把细主题包装成 L0；必须先寻找已有父级或子级 community 是否可挂入，没有合适候选时再提炼更高一层的父级 L0。
 - 如果创建新 L0，title 必须优先使用 parent_themes 中可长期复用的父级主题；只有 parent_themes 为空或明显不适合时，才从 broad_topics 中提炼父级主题。
 - 如果当前 broad/mid/specific 是已有 parent_theme 的子方向，必须挂入该父主题，不要创建平级 L0。
@@ -521,6 +526,13 @@ def validate_assignment_decision(
             value = assignment.get(numeric)
             if not isinstance(value, (int, float)) or isinstance(value, bool) or not 0 <= float(value) <= 1:
                 raise RuntimeError(f"{numeric} must be number between 0 and 1; decision={decision}")
+        fit_type = _clean_text(assignment.get("fit_type"))
+        if fit_type not in ASSIGNMENT_FIT_TYPES:
+            raise RuntimeError(f"assignment.fit_type invalid: {fit_type}; decision={decision}")
+        if action == "create_new" and fit_type != "new_parent_topic":
+            raise RuntimeError(f"create_new fit_type must be new_parent_topic; decision={decision}")
+        if action == "attach_existing" and fit_type == "new_parent_topic":
+            raise RuntimeError(f"attach_existing fit_type cannot be new_parent_topic; decision={decision}")
         if not _clean_text(assignment.get("reason")):
             raise RuntimeError(f"assignment.reason must be non-empty; decision={decision}")
 
@@ -595,6 +607,7 @@ def _apply_assignment(
     }
     for assignment in decision["assignments"]:
         action = str(assignment["action"])
+        intent_id = f"{card.cognitive_card_id}:intent:{intent_index}"
         if action == "create_new":
             payload = new_communities[str(assignment["community_id"])]
             community_id = _community_id(adapter_name, str(payload["title"]))
@@ -609,32 +622,51 @@ def _apply_assignment(
                 )
         else:
             community_id = str(assignment["community_id"])
+        assignment_id = "kg_community_assignment:" + _digest(
+            [card.cognitive_card_id, str(intent_index), community_id, action]
+        )
         community = communities[community_id]
+        stored_intent = {**topic_intent, "intent_id": intent_id}
+        stored_assignment = {
+            **assignment,
+            "assignment_id": assignment_id,
+            "cognitive_card_id": card.cognitive_card_id,
+            "intent_index": intent_index,
+            "intent_id": intent_id,
+            "resolved_community_id": community_id,
+        }
+        intent_identity = _intent_identity(stored_intent)
+        community.assigned_intents = [
+            item for item in community.assigned_intents if _intent_identity(item) != intent_identity
+        ]
+        community.assignments = [
+            item
+            for item in community.assignments
+            if str(item.get("assignment_id") or "") != assignment_id
+            and _intent_identity(item) != intent_identity
+        ]
         community.source_ids = _dedupe([*community.source_ids, card.source_id])
         community.evidence_ids = _dedupe([*community.evidence_ids, card.evidence_id])
         community.chunk_ids = _dedupe([*community.chunk_ids, *card.chunk_ids])
         community.cognitive_card_ids = _dedupe([*community.cognitive_card_ids, card.cognitive_card_id])
-        community.assigned_intents.append(topic_intent)
-        community.assignments.append(assignment)
+        community.assigned_intents.append(stored_intent)
+        community.assignments.append(stored_assignment)
         community.summary = _community_summary(community)
-        assignment_id = "kg_community_assignment:" + _digest(
-            [card.cognitive_card_id, str(intent_index), community_id, action]
-        )
         applied.append(
             CommunityAssignment(
                 assignment_id=assignment_id,
                 adapter_name=adapter_name,
                 cognitive_card_id=card.cognitive_card_id,
                 intent_index=intent_index,
-                intent_id=f"{card.cognitive_card_id}:intent:{intent_index}",
+                intent_id=intent_id,
                 community_id=community_id,
                 action=action,
                 weight=float(assignment.get("weight") or 0),
                 confidence=float(assignment.get("confidence") or 0),
-                matched_reason=str(assignment.get("reason") or ""),
+                matched_reason=_assignment_reason_with_fit_type(assignment),
                 update_mode=_assignment_update_mode(action=action, weight=float(assignment.get("weight") or 0)),
-                reason=str(assignment.get("reason") or ""),
-                topic_intent=topic_intent,
+                reason=_assignment_reason_with_fit_type(assignment),
+                topic_intent=stored_intent,
                 decision=decision,
             )
         )
@@ -647,6 +679,9 @@ def _drafts_from_existing(existing: list[GraphIndexCommunity]) -> dict[str, Comm
         if community.projection != COMMUNITY_PROJECTION or community.status != "active":
             continue
         metrics = community.metrics or {}
+        assigned_intents = [
+            item for item in (metrics.get("assigned_intents") or []) if isinstance(item, dict)
+        ]
         drafts[community.community_id] = CommunityDraft(
             community_id=community.community_id,
             title=community.title,
@@ -654,12 +689,12 @@ def _drafts_from_existing(existing: list[GraphIndexCommunity]) -> dict[str, Comm
             level=community.level,
             parent_community_id=community.parent_community_id,
             summary=community.summary,
-            source_ids=[],
-            evidence_ids=[],
-            chunk_ids=[],
-            cognitive_card_ids=[],
-            assigned_intents=[],
-            assignments=[],
+            source_ids=[str(item) for item in metrics.get("source_ids") or [] if str(item).strip()],
+            evidence_ids=list(community.evidence_ids or []),
+            chunk_ids=list(community.chunk_ids or []),
+            cognitive_card_ids=[str(item) for item in metrics.get("cognitive_card_ids") or [] if str(item).strip()],
+            assigned_intents=assigned_intents,
+            assignments=[item for item in (metrics.get("assignments") or []) if isinstance(item, dict)],
             future_coverage=[str(item) for item in metrics.get("future_coverage") or [] if str(item).strip()],
         )
     return drafts
@@ -687,6 +722,8 @@ def _graph_community_from_draft(adapter_name: str, draft: CommunityDraft) -> Gra
         "risk_tags": signals.get("risk_type", [])[:24],
         "event_threads": signals.get("event_thread", [])[:24],
         "future_coverage": _dedupe([*draft.future_coverage, *signals.get("mid_topics", []), *signals.get("specific_topics", [])])[:32],
+        "canonical_labels": _community_canonical_labels(draft, signals),
+        "coverage_contract": _community_coverage_contract(draft, signals),
         "maturity_level": maturity_label(len(set(draft.source_ids))),
         "scope": draft.scope,
         "community_builder": "cognitive_card_assignment_v1",
@@ -723,6 +760,9 @@ def _community_document(community: GraphIndexCommunity) -> GraphIndexVectorDocum
             f"Projection: {community.projection}",
             f"Community Level: {community.level}",
             f"Maturity: {metrics.get('maturity_level') or ''}",
+            f"Directory Scope: {metrics.get('scope') or ''}",
+            f"Coverage Contract: {metrics.get('coverage_contract') or ''}",
+            f"Canonical Labels: {'；'.join(metrics.get('canonical_labels') or [])}",
             f"Summary: {community.summary}",
             f"Parent Themes: {'；'.join(metrics.get('parent_themes') or [])}",
             f"Topic Tags: {'；'.join(metrics.get('topic_tags') or [])}",
@@ -763,22 +803,51 @@ def _community_document(community: GraphIndexCommunity) -> GraphIndexVectorDocum
 
 
 def assignment_query_text(intent: dict[str, Any]) -> str:
-    values = [
-        *_as_list(intent.get("parent_themes")),
-        intent.get("raw_theme"),
-        intent.get("title_candidate"),
-        *_as_list(intent.get("broad_topics")),
-        *_as_list(intent.get("mid_topics")),
-        *_as_list(intent.get("specific_topics")),
-        *_as_list(intent.get("driver")),
-        *_as_list(intent.get("impact_target")),
-        *_as_list(intent.get("risk_type")),
-        *_as_list(intent.get("event_thread")),
-        *_as_list(intent.get("event_action")),
-        *_as_list(intent.get("actors")),
-        intent.get("summary"),
+    return "\n".join(assignment_query_texts(intent))
+
+
+def assignment_query_texts(intent: dict[str, Any]) -> list[str]:
+    lanes: list[list[Any]] = [
+        [
+            *_as_list(intent.get("parent_themes")),
+            *_as_list(intent.get("broad_topics")),
+            intent.get("title_candidate"),
+            intent.get("raw_theme"),
+        ],
+        [
+            *_as_list(intent.get("parent_themes")),
+            *_as_list(intent.get("mid_topics")),
+            *_as_list(intent.get("specific_topics")),
+            intent.get("summary"),
+        ],
+        [
+            *_as_list(intent.get("event_thread")),
+            *_as_list(intent.get("event_action")),
+            *_as_list(intent.get("driver")),
+            *_as_list(intent.get("actors")),
+        ],
+        [
+            *_as_list(intent.get("impact_target")),
+            *_as_list(intent.get("risk_type")),
+            intent.get("impact_direction"),
+            *_as_list(intent.get("parent_themes")),
+        ],
     ]
-    return "\n".join(_dedupe([_clean_text(item) for item in values if _clean_text(item)]))
+    queries: list[str] = []
+    for lane in lanes:
+        query = "\n".join(_dedupe([_clean_text(item) for item in lane if _clean_text(item)]))
+        if query:
+            queries.append(query)
+    merged = "\n".join(_dedupe([line for query in queries for line in query.splitlines() if line.strip()]))
+    return _dedupe([*queries, merged])
+
+
+def assignment_query_lanes(intent: dict[str, Any]) -> list[dict[str, str]]:
+    names = ["parent_topic", "child_direction", "event_driver", "impact_risk", "merged"]
+    return [
+        {"lane": names[index] if index < len(names) else f"lane_{index + 1}", "query": query}
+        for index, query in enumerate(assignment_query_texts(intent))
+    ]
 
 
 def _candidate_aliases(candidates: list[dict[str, Any]]) -> tuple[dict[str, str], list[dict[str, Any]]]:
@@ -828,6 +897,25 @@ def _assignment_update_mode(*, action: str, weight: float) -> str:
     return "append_reference"
 
 
+def _assignment_reason_with_fit_type(assignment: dict[str, Any]) -> str:
+    fit_type = _clean_text(assignment.get("fit_type"))
+    reason = _clean_text(assignment.get("reason"))
+    return f"fit_type={fit_type}; {reason}" if fit_type else reason
+
+
+def _intent_identity(intent: dict[str, Any]) -> str:
+    chunk_ids = "|".join(_as_list(intent.get("chunk_ids")))
+    return _digest(
+        [
+            _clean_text(intent.get("cognitive_card_id")),
+            _clean_text(intent.get("raw_theme")),
+            _clean_text(intent.get("title_candidate")),
+            _clean_text(intent.get("summary")),
+            chunk_ids,
+        ]
+    )
+
+
 def maturity_label(source_count: int) -> str:
     if source_count <= 1:
         return "single_evidence"
@@ -861,6 +949,32 @@ def _community_summary(community: CommunityDraft) -> str:
         f"风险线索：{'；'.join(signals.get('risk_type', [])[:6])}。" if signals.get("risk_type") else "",
     ]
     return " ".join(part for part in parts if part).strip()
+
+
+def _community_canonical_labels(draft: CommunityDraft, signals: dict[str, list[str]]) -> list[str]:
+    return _dedupe(
+        [
+            draft.title,
+            *signals.get("parent_themes", []),
+            *signals.get("broad_topics", []),
+            *signals.get("mid_topics", []),
+            *signals.get("raw_theme", []),
+            *signals.get("title_candidate", []),
+            *signals.get("event_thread", []),
+        ]
+    )[:40]
+
+
+def _community_coverage_contract(draft: CommunityDraft, signals: dict[str, list[str]]) -> str:
+    parent = _dedupe([draft.title, *signals.get("parent_themes", [])])[:6]
+    children = _dedupe([*signals.get("broad_topics", []), *signals.get("mid_topics", []), *draft.future_coverage])[:12]
+    specifics = _dedupe(signals.get("specific_topics", []))[:10]
+    parts = [
+        f"可承接父主题：{'、'.join(parent)}" if parent else "",
+        f"可吸收子方向：{'、'.join(children)}" if children else "",
+        f"当前具体线索：{'、'.join(specifics)}" if specifics else "",
+    ]
+    return _clip("；".join(part for part in parts if part), 420)
 
 
 def _candidate_coverage_summary(signals: dict[str, list[str]], future_coverage: list[str]) -> str:

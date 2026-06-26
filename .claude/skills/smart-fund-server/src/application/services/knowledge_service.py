@@ -112,7 +112,7 @@ from src.domain.knowledge.repositories import (
     KnowledgeRepository,
     KnowledgeSourceProjectionRepository,
 )
-from src.domain.knowledge.semantic_index_materials import SemanticVectorDocument
+from src.domain.knowledge.semantic_index_materials import SEMANTIC_COLLECTION_COMMUNITY, SemanticVectorDocument
 from src.domain.knowledge.schemas import (
     CompileResult,
     CompiledEdge,
@@ -1556,6 +1556,12 @@ async def _refresh_cognitive_index(
             documents=semantic_documents,
             kg_version=result.version,
         )
+    with profile_span("kg_cognitive_index.prune_community_documents", communities=len(build_result.communities)):
+        orphan_community_documents_deleted = await _prune_stale_community_documents(
+            adapter_name=result.adapter_name,
+            target=target,
+            active_target_ids=[item.community_id for item in build_result.communities],
+        )
 
     return {
         "status": "completed",
@@ -1568,6 +1574,7 @@ async def _refresh_cognitive_index(
         "communities": len(build_result.communities),
         "documents_written": documents_written,
         "stale_documents_deleted": stale_documents,
+        "orphan_community_documents_deleted": orphan_community_documents_deleted,
         "card_persistence": card_persistence,
         "graph_persistence": graph_persistence,
         "diagnostics": build_result.diagnostics,
@@ -1665,6 +1672,40 @@ async def _delete_hybrid_documents(*, adapter_name: str, target: str, chunk_ids:
             adapter_name,
             target,
             len(chunk_ids),
+            exc,
+        )
+        return 0
+
+
+async def _prune_stale_community_documents(
+    *,
+    adapter_name: str,
+    target: str,
+    active_target_ids: list[str],
+) -> int:
+    active = {target_id for target_id in active_target_ids if target_id}
+    try:
+        existing = await _semantic_hybrid_retriever().list_target_ids_by_role(
+            collection_role=SEMANTIC_COLLECTION_COMMUNITY,
+            adapter_name=adapter_name,
+            target=target,
+            source_type="kg_community_report",
+        )
+        stale = sorted(target_id for target_id in existing if target_id not in active)
+        if not stale:
+            return 0
+        return await _semantic_hybrid_retriever().delete_documents_by_role(
+            collection_role=SEMANTIC_COLLECTION_COMMUNITY,
+            adapter_name=adapter_name,
+            target=target,
+            target_ids=stale,
+        )
+    except Exception as exc:
+        logger.warning(
+            "[kg_cleanup] failed to prune stale community documents adapter=%s target=%s active=%d error=%s",
+            adapter_name,
+            target,
+            len(active),
             exc,
         )
         return 0

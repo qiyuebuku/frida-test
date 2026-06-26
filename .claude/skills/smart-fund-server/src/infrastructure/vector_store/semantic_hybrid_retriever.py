@@ -502,6 +502,42 @@ class MilvusSemanticHybridRetriever(SemanticHybridRetriever):
         self.store.delete_documents(adapter_name=adapter_name, target=target, chunk_ids=unique_ids)
         return len(unique_ids)
 
+    async def delete_documents_by_role(
+        self,
+        *,
+        collection_role: str,
+        adapter_name: str,
+        target: str,
+        target_ids: list[str],
+    ) -> int:
+        unique_ids = [target_id for target_id in dict.fromkeys(target_ids) if target_id]
+        if not unique_ids:
+            return 0
+        self.store.delete_documents_by_role(
+            collection_role=collection_role,
+            adapter_name=adapter_name,
+            target=target,
+            target_ids=unique_ids,
+        )
+        return len(unique_ids)
+
+    async def list_target_ids_by_role(
+        self,
+        *,
+        collection_role: str,
+        adapter_name: str,
+        target: str,
+        source_type: str | None = None,
+        limit: int = 1_000_000,
+    ) -> list[str]:
+        return self.store.list_target_ids(
+            collection_role=collection_role,
+            adapter_name=adapter_name,
+            target=target,
+            source_type=source_type,
+            limit=limit,
+        )
+
     async def delete_scope(
         self,
         *,

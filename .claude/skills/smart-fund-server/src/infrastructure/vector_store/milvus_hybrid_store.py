@@ -306,6 +306,49 @@ class MilvusHybridStore:
                 ),
             )
 
+    def list_target_ids(
+        self,
+        *,
+        adapter_name: str,
+        target: str,
+        source_type: str | None = None,
+        limit: int = 1_000_000,
+    ) -> list[str]:
+        client = self._get_client()
+        if not client.has_collection(self.collection_name):
+            return []
+        max_results = max(1, int(limit or 1))
+        page_size = min(max(settings.MILVUS_BATCH_SIZE, 1), max_results)
+        filters = [
+            f'adapter_name == "{_escape_filter_value(adapter_name)}"',
+            f'target == "{_escape_filter_value(target)}"',
+        ]
+        if source_type:
+            filters.append(f'source_type == "{_escape_filter_value(source_type)}"')
+        target_ids: list[str] = []
+        offset = 0
+        filter_text = " and ".join(filters)
+        while len(target_ids) < max_results:
+            current_limit = min(page_size, max_results - len(target_ids))
+            rows = client.query(
+                collection_name=self.collection_name,
+                filter=filter_text,
+                output_fields=["target_id"],
+                limit=current_limit,
+                offset=offset,
+            )
+            if not rows:
+                break
+            target_ids.extend(
+                str(row.get("target_id") or "").strip()
+                for row in rows
+                if str(row.get("target_id") or "").strip()
+            )
+            if len(rows) < current_limit:
+                break
+            offset += len(rows)
+        return target_ids
+
     def delete_evidence(self, *, adapter_name: str, target: str, evidence_ids: list[str]) -> None:
         evidence_ids = [evidence_id for evidence_id in dict.fromkeys(evidence_ids) if evidence_id]
         if not evidence_ids:
@@ -711,6 +754,36 @@ class MilvusTypedHybridStore:
     def delete_documents(self, *, adapter_name: str, target: str, chunk_ids: list[str]) -> None:
         for store in self._stores.values():
             store.delete_documents(adapter_name=adapter_name, target=target, chunk_ids=chunk_ids)
+
+    def delete_documents_by_role(
+        self,
+        *,
+        collection_role: str,
+        adapter_name: str,
+        target: str,
+        target_ids: list[str],
+    ) -> None:
+        self.store_for(collection_role).delete_documents(
+            adapter_name=adapter_name,
+            target=target,
+            chunk_ids=target_ids,
+        )
+
+    def list_target_ids(
+        self,
+        *,
+        collection_role: str,
+        adapter_name: str,
+        target: str,
+        source_type: str | None = None,
+        limit: int = 1_000_000,
+    ) -> list[str]:
+        return self.store_for(collection_role).list_target_ids(
+            adapter_name=adapter_name,
+            target=target,
+            source_type=source_type,
+            limit=limit,
+        )
 
     def delete_scope(self, *, adapter_name: str, target: str) -> None:
         for store in self._stores.values():
