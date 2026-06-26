@@ -750,6 +750,12 @@ async def step_0_6_cleanup_previous_demo_data() -> dict[str, Any]:
                 KnowledgeEvidenceChunk.evidence_id.in_(evidence_ids),
             )
         ).all() if evidence_ids else []
+        cognitive_card_ids = session.scalars(
+            select(KnowledgeCognitiveCard.cognitive_card_id).where(
+                KnowledgeCognitiveCard.adapter_name == ADAPTER,
+                KnowledgeCognitiveCard.source_id.like(f"{DEMO_PREFIX}:%"),
+            )
+        ).all()
         edge_ids = session.scalars(
             select(KnowledgeEdgeEvidence.edge_id).where(KnowledgeEdgeEvidence.evidence_id.in_(evidence_ids))
         ).all() if evidence_ids else []
@@ -774,6 +780,20 @@ async def step_0_6_cleanup_previous_demo_data() -> dict[str, Any]:
         )
 
         deleted: dict[str, int] = {}
+        deleted["community_assignments"] = _delete_count(
+            session,
+            delete(KnowledgeCommunityAssignment).where(
+                KnowledgeCommunityAssignment.adapter_name == ADAPTER,
+                KnowledgeCommunityAssignment.cognitive_card_id.in_(cognitive_card_ids),
+            ),
+        )
+        deleted["cognitive_cards"] = _delete_count(
+            session,
+            delete(KnowledgeCognitiveCard).where(
+                KnowledgeCognitiveCard.adapter_name == ADAPTER,
+                KnowledgeCognitiveCard.cognitive_card_id.in_(cognitive_card_ids),
+            ),
+        )
         deleted["graph_unassigned_signals"] = _delete_count(
             session,
             delete(KnowledgeGraphUnassignedSignal).where(
@@ -843,21 +863,23 @@ async def step_0_6_cleanup_previous_demo_data() -> dict[str, Any]:
         graph_ids=graph_ids,
     )
     retriever = MilvusSemanticHybridRetriever()
-    milvus_scope_deleted = await retriever.delete_scope(
+    milvus_deleted = await retriever.delete_documents(
         adapter_name=ADAPTER,
         target=TARGET,
+        chunk_ids=milvus_target_ids,
     )
     result = {
         "source_prefix": DEMO_PREFIX,
         "evidence_ids": evidence_ids,
         "chunk_ids": list(chunk_ids),
+        "cognitive_card_ids": list(cognitive_card_ids),
         "edge_ids": edge_ids,
         "candidate_node_ids": candidate_node_ids,
         "graph_target_ids": graph_ids,
         "milvus_target_ids": milvus_target_ids,
         "deleted": deleted,
         "milvus": {
-            "delete_scope": milvus_scope_deleted,
+            "deleted_target_ids": milvus_deleted,
         },
     }
     pprint(
