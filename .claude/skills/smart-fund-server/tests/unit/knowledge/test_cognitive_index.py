@@ -458,6 +458,10 @@ async def test_seed_community_candidates_are_injected_without_history():
     prompt = llm.requests[0].prompt
     assert '"origin": "seed"' in prompt
     assert "AI算力链" in prompt
+    assert "source_id" not in prompt
+    assert "evidence_id" not in prompt
+    assert "chunk_ids" not in prompt
+    assert "primary_chunk_id" not in prompt
     assert len(seed_community_drafts("financial")) == 8
     assert len(result.communities) == 1
     assert result.communities[0].title == "AI算力链"

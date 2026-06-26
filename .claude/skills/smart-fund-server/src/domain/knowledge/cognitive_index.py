@@ -744,6 +744,31 @@ def _assignment_topic_intent(card: CognitiveCard, intent_payload: dict[str, Any]
     return intent
 
 
+def assignment_prompt_topic_intent(intent: dict[str, Any], *, max_attach: int) -> dict[str, Any]:
+    allowed_keys = (
+        "raw_theme",
+        "title_candidate",
+        "parent_themes",
+        "broad_topics",
+        "mid_topics",
+        "specific_topics",
+        "topic_level_hint",
+        "summary",
+        "driver",
+        "impact_target",
+        "event_thread",
+        "risk_type",
+        "event_action",
+        "actors",
+        "importance",
+        "impact_direction",
+    )
+    return {
+        **{key: intent[key] for key in allowed_keys if key in intent},
+        "max_attach": max_attach,
+    }
+
+
 def _apply_assignment(
     *,
     adapter_name: str,

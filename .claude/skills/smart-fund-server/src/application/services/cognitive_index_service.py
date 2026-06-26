@@ -30,6 +30,7 @@ from src.domain.knowledge.cognitive_index import (
     _is_complex_intent,
     _resolve_aliases,
     assignment_query_lanes,
+    assignment_prompt_topic_intent,
     cognitive_card_from_llm,
     merge_seed_community_drafts,
     seed_community_drafts,
@@ -372,7 +373,7 @@ class CommunityCardBuilder:
             "max_attach": max_attach,
             "candidate_communities": prompt_candidates,
             "source": {"title": (card.payload or {}).get("title") or ""},
-            "topic_intent": {**topic_intent, "max_attach": max_attach},
+            "topic_intent": assignment_prompt_topic_intent(topic_intent, max_attach=max_attach),
         }
         request = LLMProxyRequest(
             model=self._model,
