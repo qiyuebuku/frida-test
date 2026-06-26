@@ -16,8 +16,8 @@ from src.domain.knowledge.cognitive_index import (
     COMPLEX_MAX_ATTACH,
     DEFAULT_MAX_ATTACH,
     MAX_ASSIGNMENT_CANDIDATES,
-    MAX_SEED_ASSIGNMENT_CANDIDATES,
     MAX_SEMANTIC_ASSIGNMENT_CANDIDATES,
+    RERANK_MIN_ASSIGNMENT_CANDIDATES,
     CognitiveCard,
     CognitiveCommunityBuildResult,
     CommunityAssignment,
@@ -30,14 +30,14 @@ from src.domain.knowledge.cognitive_index import (
     _is_complex_intent,
     _resolve_aliases,
     assignment_query_lanes,
+    assignment_query_text,
     assignment_prompt_topic_intent,
     cognitive_card_from_llm,
-    merge_seed_community_drafts,
-    seed_community_drafts,
     validate_assignment_decision,
 )
 from src.domain.knowledge.graph_index import GraphIndexCommunity
 from src.domain.knowledge.schemas import EvidenceChunk
+from src.infrastructure.clients.reranker import RerankerClient
 from src.domain.knowledge.semantic_index_materials import SEMANTIC_COLLECTION_COMMUNITY
 from src.infrastructure.clients.embedding import embed_texts
 from src.infrastructure.llm_proxy.service import get_llm_gateway_service
@@ -242,12 +242,14 @@ class CommunityCardBuilder:
         *,
         model: str | None = None,
         candidate_provider: CommunitySemanticCandidateProvider | None = None,
+        reranker_client: RerankerClient | None = None,
         target: str = "prod",
         on_communities_updated: Callable[[list[GraphIndexCommunity]], Awaitable[None]] | None = None,
     ):
         self._llm = llm or get_llm_gateway_service()
         self._model = model or resolve_kg_llm_model("kg_community_assignment")
         self._candidate_provider = candidate_provider
+        self._reranker_client = reranker_client
         self._target = target
         self._on_communities_updated = on_communities_updated
 
@@ -258,10 +260,7 @@ class CommunityCardBuilder:
         cards: list[CognitiveCard],
         existing_communities: list[GraphIndexCommunity],
     ) -> CognitiveCommunityBuildResult:
-        communities = merge_seed_community_drafts(
-            _drafts_from_existing(existing_communities),
-            seed_community_drafts(adapter_name),
-        )
+        communities = _drafts_from_existing(existing_communities)
         assignments: list[CommunityAssignment] = []
         intent_count = 0
         validation_errors = 0
@@ -305,7 +304,7 @@ class CommunityCardBuilder:
             graph_communities = [
                 _graph_community_from_draft(adapter_name, community)
                 for community in communities.values()
-                if community.assigned_intents
+                if community.assigned_intents or getattr(community, "origin", "") == "seed"
             ]
             documents = [_community_document(community) for community in graph_communities]
             diagnostics = {
@@ -316,6 +315,7 @@ class CommunityCardBuilder:
                 "assignment_validation_errors": validation_errors,
                 "candidate_recall": "semantic_community",
                 "seed_candidates": len([item for item in communities.values() if getattr(item, "origin", "") == "seed"]),
+                "candidate_rerank": "external_reranker" if self._reranker_client is not None else "disabled",
                 "community_builder": "cognitive_card_assignment_v1",
             }
             langfuse_update_span(output=diagnostics, status_message="completed")
@@ -336,16 +336,6 @@ class CommunityCardBuilder:
     ) -> list[dict[str, Any]]:
         candidates: list[dict[str, Any]] = []
         seen: set[str] = set()
-        seed_candidates = [
-            community.to_assignment_candidate(score=1.0, lane="seed_context")
-            for community in communities.values()
-            if getattr(community, "origin", "") == "seed"
-        ][:MAX_SEED_ASSIGNMENT_CANDIDATES]
-        for candidate in seed_candidates:
-            community_id = str(candidate.get("community_id") or "")
-            if community_id and community_id not in seen:
-                seen.add(community_id)
-                candidates.append(candidate)
         if self._candidate_provider is not None:
             semantic_candidates = await self._candidate_provider.recall(
                 adapter_name=adapter_name,
@@ -359,7 +349,67 @@ class CommunityCardBuilder:
                 if community_id and community_id not in seen:
                     seen.add(community_id)
                     candidates.append(candidate)
-        return candidates[:MAX_ASSIGNMENT_CANDIDATES]
+        return await self._rerank_candidates(topic_intent, candidates)
+
+    async def _rerank_candidates(
+        self,
+        topic_intent: dict[str, Any],
+        candidates: list[dict[str, Any]],
+    ) -> list[dict[str, Any]]:
+        if len(candidates) < RERANK_MIN_ASSIGNMENT_CANDIDATES or self._reranker_client is None:
+            return candidates[:MAX_ASSIGNMENT_CANDIDATES]
+        query = assignment_query_text(topic_intent)
+        documents = [_candidate_rerank_text(candidate) for candidate in candidates]
+        with langfuse_observation(
+            name="kg.community_assignment.rerank_candidates",
+            as_type="span",
+            input={
+                "candidate_count": len(candidates),
+                "top_n": min(MAX_ASSIGNMENT_CANDIDATES, len(candidates)),
+                "candidate_titles": [candidate.get("title") for candidate in candidates[:20]],
+            },
+        ):
+            response = await self._reranker_client.rerank(
+                query=query,
+                documents=documents,
+                top_n=min(MAX_ASSIGNMENT_CANDIDATES, len(candidates)),
+            )
+            ranked: list[dict[str, Any]] = []
+            seen_indexes: set[int] = set()
+            for result in response.results:
+                if 0 <= result.index < len(candidates):
+                    candidate = dict(candidates[result.index])
+                    candidate["rerank_score"] = round(float(result.relevance_score), 6)
+                    candidate["retrieval_lane"] = str(candidate.get("retrieval_lane") or "") + "|reranked"
+                    ranked.append(candidate)
+                    seen_indexes.add(result.index)
+            if len(ranked) < min(MAX_ASSIGNMENT_CANDIDATES, len(candidates)):
+                ranked.extend(
+                    candidate
+                    for index, candidate in enumerate(candidates)
+                    if index not in seen_indexes
+                )
+            selected = ranked[:MAX_ASSIGNMENT_CANDIDATES]
+            langfuse_update_span(
+                output={
+                    "raw_candidates": len(candidates),
+                    "reranked_candidates": len(ranked),
+                    "selected_candidates": len(selected),
+                    "dropped_candidates": max(0, len(candidates) - len(selected)),
+                    "top_candidates": [
+                        {
+                            "community_id": candidate.get("community_id"),
+                            "title": candidate.get("title"),
+                            "origin": candidate.get("origin"),
+                            "retrieval_score": candidate.get("retrieval_score"),
+                            "rerank_score": candidate.get("rerank_score"),
+                        }
+                        for candidate in selected[:10]
+                    ],
+                },
+                status_message="completed",
+            )
+            return selected
 
     async def _decide_assignment(
         self,
@@ -414,3 +464,22 @@ class CommunityCardBuilder:
             decision = _resolve_aliases(decision, alias_map)
             validate_assignment_decision(decision, candidates, topic_intent=topic_intent)
         return decision
+
+
+def _candidate_rerank_text(candidate: dict[str, Any]) -> str:
+    parts = [
+        f"title: {candidate.get('title') or ''}",
+        f"origin: {candidate.get('origin') or ''}",
+        f"scope: {candidate.get('scope') or candidate.get('directory_scope') or ''}",
+        f"canonical_labels: {'；'.join(candidate.get('canonical_labels') or [])}",
+        f"coverage: {candidate.get('coverage_contract') or candidate.get('coverage_summary') or ''}",
+        f"parent_themes: {'；'.join(candidate.get('parent_themes') or [])}",
+        f"broad_topics: {'；'.join(candidate.get('broad_topics') or [])}",
+        f"mid_topics: {'；'.join(candidate.get('mid_topics') or [])}",
+        f"future_coverage: {'；'.join(candidate.get('future_coverage') or [])}",
+        f"include_rules: {'；'.join(candidate.get('include_rules') or [])}",
+        f"exclude_rules: {'；'.join(candidate.get('exclude_rules') or [])}",
+        f"granularity_note: {candidate.get('granularity_note') or ''}",
+        f"recent_examples: {'；'.join(str(item.get('title') or '') for item in candidate.get('recent_examples') or [] if isinstance(item, dict))}",
+    ]
+    return "\n".join(part for part in parts if not part.endswith(": "))

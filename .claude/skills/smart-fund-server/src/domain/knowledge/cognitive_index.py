@@ -23,8 +23,8 @@ from src.domain.knowledge.schemas import EvidenceChunk
 
 DEFAULT_MAX_ATTACH = 3
 COMPLEX_MAX_ATTACH = 5
-MAX_SEED_ASSIGNMENT_CANDIDATES = 8
-MAX_SEMANTIC_ASSIGNMENT_CANDIDATES = 12
+RERANK_MIN_ASSIGNMENT_CANDIDATES = 8
+MAX_SEMANTIC_ASSIGNMENT_CANDIDATES = 50
 MAX_ASSIGNMENT_CANDIDATES = 20
 COGNITIVE_CARD_SCHEMA_VERSION = "cognitive_card_v1"
 COMMUNITY_ASSIGNMENT_SCHEMA_VERSION = "community_assignment_v2"
@@ -904,6 +904,21 @@ def seed_community_drafts(adapter_name: str) -> dict[str, CommunityDraft]:
     return drafts
 
 
+def seed_graph_communities(
+    adapter_name: str,
+    *,
+    existing_communities: list[GraphIndexCommunity] | None = None,
+) -> list[GraphIndexCommunity]:
+    drafts = _drafts_from_existing(existing_communities or [])
+    seed_ids = set(seed_community_drafts(adapter_name))
+    merge_seed_community_drafts(drafts, seed_community_drafts(adapter_name))
+    return [
+        _graph_community_from_draft(adapter_name, drafts[community_id])
+        for community_id in sorted(seed_ids)
+        if community_id in drafts
+    ]
+
+
 def merge_seed_community_drafts(
     drafts: dict[str, CommunityDraft],
     seeds: dict[str, CommunityDraft],
@@ -915,6 +930,8 @@ def merge_seed_community_drafts(
             continue
         existing.origin = "seed"
         existing.scope = existing.scope or seed.scope
+        if not existing.assigned_intents:
+            existing.summary = seed.summary
         existing.include_rules = _dedupe([*existing.include_rules, *seed.include_rules])
         existing.exclude_rules = _dedupe([*existing.exclude_rules, *seed.exclude_rules])
         existing.canonical_labels = _dedupe([*existing.canonical_labels, *seed.canonical_labels])

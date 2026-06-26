@@ -79,6 +79,7 @@ from src.domain.knowledge.graph_index import (
     resolve_graph_index_lineage,
 )
 from src.domain.knowledge.cognitive_index import _community_document as _cognitive_community_document
+from src.domain.knowledge.cognitive_index import seed_graph_communities
 from src.domain.knowledge.quality import (
     BadCaseReplay,
     KnowledgeQualityScanner,
@@ -198,6 +199,15 @@ class KnowledgeService:
         if self.source_projection_service is None:
             raise RuntimeError("Knowledge source projection repository is required for this use case")
         return self.source_projection_service.project(command)
+
+    async def bootstrap_seed_communities(self, *, adapter_name: str) -> dict[str, Any]:
+        repository = self._require_repository()
+        return await _ensure_seed_communities(
+            repository=repository,
+            adapter_name=adapter_name,
+            target=self.target,
+            kg_version="seed_bootstrap",
+        )
 
     async def compile_kg(self, command: KnowledgeCompileCommand) -> KnowledgeCompileResultDTO:
         metadata = _knowledge_command_metadata(command)
@@ -1455,6 +1465,12 @@ async def _refresh_cognitive_index(
     changed_chunks: list[EvidenceChunk],
 ) -> dict[str, Any]:
     changed_evidence_ids = _ordered_unique([item.evidence_id for item in changed_chunks])
+    seed_bootstrap = await _ensure_seed_communities(
+        repository=repository,
+        adapter_name=result.adapter_name,
+        target=target,
+        kg_version=result.version,
+    )
     if not changed_evidence_ids:
         return {
             "status": "skipped",
@@ -1463,6 +1479,7 @@ async def _refresh_cognitive_index(
             "assignments": 0,
             "communities": 0,
             "documents_written": 0,
+            "seed_bootstrap": seed_bootstrap,
         }
 
     extractor = CognitiveCardExtractor(
@@ -1510,6 +1527,7 @@ async def _refresh_cognitive_index(
 
     builder = CommunityCardBuilder(
         candidate_provider=CommunitySemanticCandidateProvider(store=semantic_store) if semantic_store is not None else None,
+        reranker_client=RerankerClient(),
         target=target,
         on_communities_updated=commit_updated_communities,
     )
@@ -1578,6 +1596,50 @@ async def _refresh_cognitive_index(
         "card_persistence": card_persistence,
         "graph_persistence": graph_persistence,
         "diagnostics": build_result.diagnostics,
+        "seed_bootstrap": seed_bootstrap,
+    }
+
+
+async def _ensure_seed_communities(
+    *,
+    repository: KnowledgeRepository,
+    adapter_name: str,
+    target: Target,
+    kg_version: str,
+) -> dict[str, Any]:
+    existing_communities = repository.list_graph_communities(adapter_name)
+    seed_communities = seed_graph_communities(
+        adapter_name,
+        existing_communities=existing_communities,
+    )
+    if not seed_communities:
+        return {"status": "skipped", "reason": "no_seed_definitions", "communities": 0, "documents_written": 0}
+    with profile_span("kg_cognitive_index.ensure_seed_pg", communities=len(seed_communities)):
+        persistence = repository.replace_graph_index_scope(
+            adapter_name,
+            remove_community_ids=[],
+            communities=seed_communities,
+            findings=[],
+            deltas=[],
+            unassigned_signals=[],
+        )
+    semantic_documents = [
+        _semantic_document_from_graph_index_document(_cognitive_community_document(item))
+        for item in seed_communities
+    ]
+    with profile_span("kg_cognitive_index.ensure_seed_milvus", communities=len(seed_communities)):
+        documents_written = await _semantic_hybrid_retriever().upsert_semantic_documents(
+            adapter_name=adapter_name,
+            target=target,
+            documents=semantic_documents,
+            kg_version=kg_version,
+        )
+    return {
+        "status": "completed",
+        "communities": len(seed_communities),
+        "documents_written": documents_written,
+        "community_ids": [item.community_id for item in seed_communities],
+        "persistence": persistence,
     }
 
 

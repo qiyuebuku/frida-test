@@ -778,6 +778,18 @@ async def step_0_6_cleanup_previous_demo_data() -> dict[str, Any]:
             node_ids=set(candidate_node_ids),
             edge_ids=set(edge_ids),
         )
+        protected_seed_community_ids = _strip_demo_refs_from_seed_communities(
+            session,
+            community_ids=graph_ids["community_ids"],
+            evidence_ids=set(evidence_ids),
+            chunk_ids=set(chunk_ids),
+            cognitive_card_ids=set(cognitive_card_ids),
+        )
+        graph_ids["community_ids"] = [
+            community_id
+            for community_id in graph_ids["community_ids"]
+            if community_id not in protected_seed_community_ids
+        ]
 
         deleted: dict[str, int] = {}
         deleted["community_assignments"] = _delete_count(
@@ -876,6 +888,7 @@ async def step_0_6_cleanup_previous_demo_data() -> dict[str, Any]:
         "edge_ids": edge_ids,
         "candidate_node_ids": candidate_node_ids,
         "graph_target_ids": graph_ids,
+        "protected_seed_community_ids": protected_seed_community_ids,
         "milvus_target_ids": milvus_target_ids,
         "deleted": deleted,
         "milvus": {
@@ -894,6 +907,7 @@ async def step_0_6_cleanup_previous_demo_data() -> dict[str, Any]:
                 "findings": len(graph_ids["finding_ids"]),
                 "deltas": len(graph_ids["delta_ids"]),
             },
+            "protected_seed_communities": len(protected_seed_community_ids),
             "milvus_targets": len(milvus_target_ids),
             "deleted": deleted,
             "milvus": result["milvus"],
@@ -1693,6 +1707,76 @@ def _cleanup_milvus_target_ids(
         *graph_ids.get("delta_ids", []),
     ]
     return [target_id for target_id in dict.fromkeys(target_ids) if target_id]
+
+
+def _strip_demo_refs_from_seed_communities(
+    session: Any,
+    *,
+    community_ids: list[str],
+    evidence_ids: set[str],
+    chunk_ids: set[str],
+    cognitive_card_ids: set[str],
+) -> list[str]:
+    if not community_ids:
+        return []
+    rows = session.scalars(
+        select(KnowledgeGraphCommunity).where(
+            KnowledgeGraphCommunity.adapter_name == ADAPTER,
+            KnowledgeGraphCommunity.community_id.in_(community_ids),
+        )
+    ).all()
+    protected: list[str] = []
+    for row in rows:
+        metrics = dict(row.metrics or {})
+        if metrics.get("origin") != "seed":
+            continue
+        protected.append(row.community_id)
+        row.evidence_ids = [item for item in row.evidence_ids or [] if item not in evidence_ids]
+        row.chunk_ids = [item for item in row.chunk_ids or [] if item not in chunk_ids]
+        metrics["source_ids"] = [
+            item
+            for item in metrics.get("source_ids") or []
+            if not str(item).startswith(f"{DEMO_PREFIX}:")
+        ]
+        metrics["source_count"] = len(set(metrics["source_ids"]))
+        metrics["cognitive_card_ids"] = [
+            item
+            for item in metrics.get("cognitive_card_ids") or []
+            if item not in cognitive_card_ids
+        ]
+        metrics["assigned_intents"] = [
+            item
+            for item in metrics.get("assigned_intents") or []
+            if not _is_demo_assignment_payload(item, evidence_ids=evidence_ids, cognitive_card_ids=cognitive_card_ids)
+        ]
+        metrics["assignments"] = [
+            item
+            for item in metrics.get("assignments") or []
+            if not _is_demo_assignment_payload(item, evidence_ids=evidence_ids, cognitive_card_ids=cognitive_card_ids)
+        ]
+        if not metrics["assigned_intents"]:
+            row.summary = str(metrics.get("scope") or row.summary or "")
+            metrics["source_count"] = 0
+        row.metrics = metrics
+    return protected
+
+
+def _is_demo_assignment_payload(
+    item: Any,
+    *,
+    evidence_ids: set[str],
+    cognitive_card_ids: set[str],
+) -> bool:
+    if not isinstance(item, dict):
+        return False
+    source_id = str(item.get("source_id") or "")
+    evidence_id = str(item.get("evidence_id") or "")
+    cognitive_card_id = str(item.get("cognitive_card_id") or "")
+    return (
+        source_id.startswith(f"{DEMO_PREFIX}:")
+        or evidence_id in evidence_ids
+        or cognitive_card_id in cognitive_card_ids
+    )
 
 
 def _delete_count(session: Any, statement: Any) -> int:

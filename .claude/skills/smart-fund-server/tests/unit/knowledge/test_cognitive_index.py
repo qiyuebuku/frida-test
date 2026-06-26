@@ -11,11 +11,13 @@ from src.domain.knowledge.cognitive_index import (
     assignment_query_text,
     cognitive_card_from_llm,
     seed_community_drafts,
+    seed_graph_communities,
     validate_assignment_decision,
 )
 from src.domain.knowledge.graph_index import GraphIndexCommunity
 from src.domain.knowledge.schemas import EvidenceChunk
 from src.infrastructure.llm_proxy.types import LLMProxyResponse
+from src.infrastructure.clients.reranker import RerankResponse, RerankResult
 
 
 def _chunk() -> EvidenceChunk:
@@ -213,6 +215,61 @@ def test_existing_community_draft_restores_directory_signals_from_metrics():
     assert "可吸收子方向" in candidate["coverage_contract"]
 
 
+def test_seed_graph_communities_preserve_existing_seed_refs():
+    existing_seed = next(item for item in seed_graph_communities("financial") if item.title == "AI算力链")
+    existing_seed = GraphIndexCommunity(
+        community_id=existing_seed.community_id,
+        version_id="v-old",
+        adapter_name="financial",
+        projection="cognitive_topic",
+        level=0,
+        parent_community_id="",
+        title="AI算力链",
+        summary="已经挂入真实资料的 AI 算力链主题",
+        member_node_ids=[],
+        member_edge_ids=[],
+        evidence_ids=["ev-old"],
+        chunk_ids=["chunk-old"],
+        metrics={
+            **(existing_seed.metrics or {}),
+            "origin": "seed",
+            "source_ids": ["source-old"],
+            "cognitive_card_ids": ["card-old"],
+            "assigned_intents": [
+                {
+                    "cognitive_card_id": "card-old",
+                    "source_id": "source-old",
+                    "evidence_id": "ev-old",
+                    "chunk_ids": ["chunk-old"],
+                    "raw_theme": "AI芯片供应",
+                    "title_candidate": "AI算力链",
+                    "summary": "AI芯片供应变化",
+                    "parent_themes": ["AI算力链"],
+                    "broad_topics": ["人工智能基础设施"],
+                    "mid_topics": ["AI芯片供应"],
+                    "specific_topics": ["先进制程芯片"],
+                }
+            ],
+            "assignments": [{"assignment_id": "a-old", "cognitive_card_id": "card-old"}],
+        },
+        status="active",
+        previous_version_id="",
+        change_reason="cognitive_assignment",
+        lineage_id="lineage",
+        previous_community_ids=[],
+    )
+
+    seeds = seed_graph_communities("financial", existing_communities=[existing_seed])
+    ai_seed = next(item for item in seeds if item.title == "AI算力链")
+
+    assert ai_seed.evidence_ids == ["ev-old"]
+    assert ai_seed.chunk_ids == ["chunk-old"]
+    assert ai_seed.summary == "已经挂入真实资料的 AI 算力链主题"
+    assert ai_seed.metrics["source_ids"] == ["source-old"]
+    assert ai_seed.metrics["cognitive_card_ids"] == ["card-old"]
+    assert ai_seed.metrics["assigned_intents"][0]["cognitive_card_id"] == "card-old"
+
+
 class _LLM:
     def __init__(self, outputs: list[dict]) -> None:
         self.outputs = list(outputs)
@@ -241,6 +298,24 @@ class _LLM:
             }
         )
         return await self.generate(request)
+
+
+class _Reranker:
+    def __init__(self, order: list[int]) -> None:
+        self.order = order
+        self.calls = []
+
+    async def rerank(self, *, query, documents, top_n=None):
+        self.calls.append({"query": query, "documents": documents, "top_n": top_n})
+        return RerankResponse(
+            model="test-reranker",
+            results=[
+                RerankResult(index=index, relevance_score=1.0 - rank * 0.01, document=documents[index])
+                for rank, index in enumerate(self.order)
+            ],
+            latency_ms=1,
+            total_documents=len(documents),
+        )
 
 
 @pytest.mark.asyncio
@@ -303,7 +378,7 @@ async def test_community_builder_creates_then_attaches_existing_l0():
         }
     )
     card2 = cognitive_card_from_llm(second_chunk, _card_payload("并购重组政策与产业整合"))
-    llm = _LLM([_create_assignment("A股并购重组"), _attach_assignment("c9")])
+    llm = _LLM([_create_assignment("A股并购重组"), _attach_assignment()])
     committed = []
 
     class _Provider:
@@ -409,7 +484,7 @@ async def test_community_builder_deduplicates_existing_intent_when_rebuilding():
             ]
 
     result = await CommunityCardBuilder(
-        llm=_LLM([_attach_assignment("c9")]),
+        llm=_LLM([_attach_assignment()]),
         model="test-model",
         candidate_provider=_Provider(),
     ).build(
@@ -424,7 +499,7 @@ async def test_community_builder_deduplicates_existing_intent_when_rebuilding():
 
 
 @pytest.mark.asyncio
-async def test_seed_community_candidates_are_injected_without_history():
+async def test_materialized_seed_community_candidate_can_be_attached():
     chunk = _chunk().model_copy(
         update={
             "content": "AI芯片供给不足推动算力硬件产业链扩产，数据中心需求继续上升。",
@@ -447,12 +522,36 @@ async def test_seed_community_candidates_are_injected_without_history():
         }
     )
     card = cognitive_card_from_llm(chunk, payload)
-    llm = _LLM([_attach_assignment("c3")])
+    seed_communities = seed_graph_communities("financial")
+    ai_seed = next(item for item in seed_communities if item.title == "AI算力链")
+    llm = _LLM([_attach_assignment()])
 
-    result = await CommunityCardBuilder(llm=llm, model="test-model").build(
+    class _Provider:
+        async def recall(self, **_kwargs):
+            return [
+                {
+                    "community_id": ai_seed.community_id,
+                    "title": ai_seed.title,
+                    "origin": (ai_seed.metrics or {}).get("origin"),
+                    "level": ai_seed.level,
+                    "parent_community_id": ai_seed.parent_community_id,
+                    "scope": (ai_seed.metrics or {}).get("scope"),
+                    "include_rules": (ai_seed.metrics or {}).get("include_rules"),
+                    "exclude_rules": (ai_seed.metrics or {}).get("exclude_rules"),
+                    "granularity_note": (ai_seed.metrics or {}).get("granularity_note"),
+                    "summary": ai_seed.summary,
+                    "canonical_labels": (ai_seed.metrics or {}).get("canonical_labels"),
+                    "maturity": "seed_reference",
+                    "retrieval_score": 0.93,
+                    "retrieval_lane": "semantic:parent_topic",
+                    "recent_examples": [],
+                }
+            ]
+
+    result = await CommunityCardBuilder(llm=llm, model="test-model", candidate_provider=_Provider()).build(
         adapter_name="financial",
         cards=[card],
-        existing_communities=[],
+        existing_communities=seed_communities,
     )
 
     prompt = llm.requests[0].prompt
@@ -463,7 +562,67 @@ async def test_seed_community_candidates_are_injected_without_history():
     assert "chunk_ids" not in prompt
     assert "primary_chunk_id" not in prompt
     assert len(seed_community_drafts("financial")) == 8
-    assert len(result.communities) == 1
-    assert result.communities[0].title == "AI算力链"
-    assert result.communities[0].metrics["origin"] == "seed"
-    assert "AI芯片" in result.communities[0].metrics["canonical_labels"]
+    assert len(result.communities) == 8
+    ai_result = next(item for item in result.communities if item.title == "AI算力链")
+    assert ai_result.metrics["origin"] == "seed"
+    assert ai_result.evidence_ids == [card.evidence_id]
+    assert "AI芯片" in ai_result.metrics["canonical_labels"]
+
+
+@pytest.mark.asyncio
+async def test_community_builder_reranks_many_candidates_before_assignment():
+    card = cognitive_card_from_llm(_chunk(), _card_payload("A股并购重组"))
+    candidates = []
+    for index in range(8):
+        community = GraphIndexCommunity(
+            community_id=f"kg_community:cognitive_topic:l0:test_{index}",
+            version_id=f"v{index}",
+            adapter_name="financial",
+            projection="cognitive_topic",
+            level=0,
+            parent_community_id="",
+            title=f"候选主题{index}",
+            summary=f"候选主题{index} summary",
+            member_node_ids=[],
+            member_edge_ids=[],
+            evidence_ids=[],
+            chunk_ids=[],
+            metrics={"origin": "emergent", "scope": f"候选主题{index} scope", "canonical_labels": [f"候选主题{index}"]},
+            status="active",
+            previous_version_id="",
+            change_reason="cognitive_assignment",
+            lineage_id=f"lineage{index}",
+            previous_community_ids=[],
+        )
+        candidates.append(community)
+
+    class _Provider:
+        async def recall(self, **_kwargs):
+            return [
+                {
+                    "community_id": community.community_id,
+                    "title": community.title,
+                    "origin": "emergent",
+                    "scope": community.metrics["scope"],
+                    "canonical_labels": community.metrics["canonical_labels"],
+                    "maturity": "single_evidence",
+                    "retrieval_score": 0.5,
+                    "retrieval_lane": "semantic:merged",
+                    "recent_examples": [],
+                }
+                for community in candidates
+            ]
+
+    reranker = _Reranker([7, 0, 1, 2, 3, 4, 5, 6])
+    result = await CommunityCardBuilder(
+        llm=_LLM([_attach_assignment()]),
+        model="test-model",
+        candidate_provider=_Provider(),
+        reranker_client=reranker,
+    ).build(adapter_name="financial", cards=[card], existing_communities=candidates)
+
+    prompt = result.assignments[0].decision
+    assert reranker.calls
+    assert reranker.calls[0]["top_n"] == 8
+    assert result.assignments[0].community_id == candidates[7].community_id
+    assert prompt["assignments"][0]["community_id"] == candidates[7].community_id
