@@ -23,6 +23,9 @@ from src.domain.knowledge.schemas import EvidenceChunk
 
 DEFAULT_MAX_ATTACH = 3
 COMPLEX_MAX_ATTACH = 5
+MAX_SEED_ASSIGNMENT_CANDIDATES = 8
+MAX_SEMANTIC_ASSIGNMENT_CANDIDATES = 12
+MAX_ASSIGNMENT_CANDIDATES = 20
 COGNITIVE_CARD_SCHEMA_VERSION = "cognitive_card_v1"
 COMMUNITY_ASSIGNMENT_SCHEMA_VERSION = "community_assignment_v2"
 COMMUNITY_PROJECTION = "cognitive_topic"
@@ -82,9 +85,14 @@ class CommunityDraft:
     community_id: str
     title: str
     scope: str
+    origin: str = "emergent"
     level: int = 0
     parent_community_id: str = ""
     summary: str = ""
+    include_rules: list[str] = field(default_factory=list)
+    exclude_rules: list[str] = field(default_factory=list)
+    canonical_labels: list[str] = field(default_factory=list)
+    granularity_note: str = ""
     source_ids: list[str] = field(default_factory=list)
     evidence_ids: list[str] = field(default_factory=list)
     chunk_ids: list[str] = field(default_factory=list)
@@ -122,9 +130,13 @@ class CommunityDraft:
         return {
             "community_id": self.community_id,
             "title": self.title,
+            "origin": self.origin,
             "level": self.level,
             "parent_community_id": self.parent_community_id,
             "scope": _clip(self.scope, 220),
+            "include_rules": [_clip(item, 120) for item in self.include_rules[:6]],
+            "exclude_rules": [_clip(item, 120) for item in self.exclude_rules[:6]],
+            "granularity_note": _clip(self.granularity_note, 180),
             "summary": _clip(self.summary, 240),
             "source_count": len(set(self.source_ids)),
             "directory_scope": _clip(self.scope or _community_coverage_contract(self, signals), 260),
@@ -136,7 +148,7 @@ class CommunityDraft:
             "coverage_contract": _community_coverage_contract(self, signals),
             "coverage_summary": _candidate_coverage_summary(signals, self.future_coverage),
             "canonical_labels": labels,
-            "maturity": maturity_label(len(set(self.source_ids))),
+            "maturity": "seed_reference" if self.origin == "seed" and not self.source_ids else maturity_label(len(set(self.source_ids))),
             "retrieval_score": round(float(score or 0), 4),
             "retrieval_lane": lane,
             "recent_examples": [
@@ -153,6 +165,140 @@ class CommunityDraft:
                 for intent in self.assigned_intents[-3:]
             ],
         }
+
+
+@dataclass(frozen=True)
+class SeedCommunityDefinition:
+    title: str
+    scope: str
+    include_rules: tuple[str, ...]
+    exclude_rules: tuple[str, ...]
+    canonical_labels: tuple[str, ...]
+    granularity_note: str
+
+
+SEED_COMMUNITY_DEFINITIONS: tuple[SeedCommunityDefinition, ...] = (
+    SeedCommunityDefinition(
+        title="地缘政治与能源风险",
+        scope="承接地缘冲突、制裁、航运通道、油气供应、能源价格冲击及其对市场风险偏好的影响。",
+        include_rules=(
+            "中东、俄乌、红海、霍尔木兹海峡等地缘冲突或通道风险。",
+            "制裁、反制裁、供应中断、油气运输受阻、能源价格冲击。",
+            "地缘事件对权益、债券、商品、外汇或风险偏好的传导。",
+        ),
+        exclude_rules=(
+            "单纯公司业绩、常规能源项目投产，不归入本主题。",
+            "没有地缘或能源供应冲击含义的普通商品价格波动，不归入本主题。",
+        ),
+        canonical_labels=("地缘风险", "能源安全", "油气供应", "航运通道风险", "制裁影响"),
+        granularity_note="这是 L0 长期风险主线；具体国家、海峡、制裁轮次和油气品种作为子方向进入。",
+    ),
+    SeedCommunityDefinition(
+        title="公司业绩与产业景气",
+        scope="承接上市公司业绩、订单、盈利能力、产能利用率、行业景气度和产业经营趋势。",
+        include_rules=(
+            "财报、业绩预告、收入利润变化、订单和产能利用率。",
+            "行业景气上行或下行、库存周期、需求恢复或疲弱。",
+            "公司经营变化能反映产业趋势或交易认知变化。",
+        ),
+        exclude_rules=(
+            "纯融资、上市、并购交易优先归入资本市场改革或并购相关新主题。",
+            "纯政策文件且没有经营结果，不归入本主题。",
+        ),
+        canonical_labels=("公司业绩", "行业景气", "订单变化", "盈利能力", "经营趋势"),
+        granularity_note="这是 L0 经营基本面主线；单家公司和单个财报季作为子方向进入。",
+    ),
+    SeedCommunityDefinition(
+        title="AI算力链",
+        scope="承接 AI 芯片、算力硬件、光模块、服务器、数据中心、算电协同、AI 应用需求对硬件链条的拉动。",
+        include_rules=(
+            "AI 芯片供需、算力基础设施、服务器、光模块、CPO、数据中心。",
+            "AI 应用扩张带来的算力需求、硬件瓶颈、产业链机会。",
+            "算电协同、绿电支撑数据中心、AI 基础设施资本开支。",
+        ),
+        exclude_rules=(
+            "与算力链无关的泛 AI 软件、影视 IP、营销应用，不强行归入。",
+            "普通半导体政策或消费电子事件，只有无 AI 算力链含义时不归入。",
+        ),
+        canonical_labels=("AI算力链", "人工智能基础设施", "AI芯片", "光模块", "数据中心", "算电协同"),
+        granularity_note="这是 L0 科技基础设施主线；AI芯片、光模块、数据中心和算电协同作为子方向进入。",
+    ),
+    SeedCommunityDefinition(
+        title="政策监管与产业扶持",
+        scope="承接宏观政策、产业政策、监管规则、财政金融支持、区域扶持政策及其产业影响。",
+        include_rules=(
+            "国务院、部委、地方政府、监管部门发布的产业扶持或监管政策。",
+            "贷款贴息、税费支持、市场监管、行业准入、合规约束。",
+            "政策对行业、企业、区域产业和资本市场行为的影响。",
+        ),
+        exclude_rules=(
+            "纯公司经营结果且没有政策或监管驱动，不归入本主题。",
+            "单一海外地缘制裁优先归入地缘政治与能源风险。",
+        ),
+        canonical_labels=("政策监管", "产业扶持", "财政金融政策", "地方政策", "监管规则"),
+        granularity_note="这是 L0 政策主线；具体政策文件、监管动作和地方产业政策作为子方向进入。",
+    ),
+    SeedCommunityDefinition(
+        title="大宗商品供需冲击",
+        scope="承接铜、油气、工业气体、农产品、贵金属等商品供需、价格、库存、运输和上游约束变化。",
+        include_rules=(
+            "商品价格大幅波动、供应短缺、库存变化、运输和生产瓶颈。",
+            "上游资源约束对中下游行业成本和盈利的影响。",
+            "商品供需变化对通胀、产业链和市场风险偏好的传导。",
+        ),
+        exclude_rules=(
+            "没有商品供需含义的普通公司公告，不归入本主题。",
+            "纯地缘导致的油气通道风险优先归入地缘政治与能源风险，并可同时归入本主题。",
+        ),
+        canonical_labels=("大宗商品", "供需冲击", "价格波动", "资源约束", "库存周期"),
+        granularity_note="这是 L0 商品主线；具体品种和单次价格变化作为子方向进入。",
+    ),
+    SeedCommunityDefinition(
+        title="资本市场改革",
+        scope="承接资本市场制度改革、区域股权市场、IPO、并购重组、上市融资、投行业务和证券行业生态变化。",
+        include_rules=(
+            "IPO、再融资、并购重组、区域股权市场、交易制度和上市规则。",
+            "券商投行、私募股权、资本市场服务实体经济。",
+            "制度变化对上市公司质量、市场活跃度和风险定价的影响。",
+        ),
+        exclude_rules=(
+            "单家公司普通业绩优先归入公司业绩与产业景气。",
+            "没有资本市场制度或融资含义的产业政策，不归入本主题。",
+        ),
+        canonical_labels=("资本市场改革", "并购重组", "IPO", "区域股权市场", "券商投行", "上市融资"),
+        granularity_note="这是 L0 资本市场制度主线；并购重组、IPO、区域股权市场和券商生态作为子方向进入。",
+    ),
+    SeedCommunityDefinition(
+        title="新能源出海",
+        scope="承接新能源企业海外产能、储能、电池、光伏、绿电、海外建厂、贸易壁垒和区域产业合作。",
+        include_rules=(
+            "储能、电池、光伏、绿电等新能源产业的海外产能和项目布局。",
+            "企业出海、海外建厂、区域合作、贸易壁垒和本地化生产。",
+            "新能源海外布局对供应链、订单、成本和政策风险的影响。",
+        ),
+        exclude_rules=(
+            "国内普通新能源装机数据不一定归入，除非涉及出海或全球供应链。",
+            "单纯电力系统政策可归入政策监管与产业扶持。",
+        ),
+        canonical_labels=("新能源出海", "储能出海", "海外产能", "光伏出海", "电池供应链"),
+        granularity_note="这是 L0 新能源全球化主线；国家、公司、工厂和产品作为子方向进入。",
+    ),
+    SeedCommunityDefinition(
+        title="宏观流动性与汇率利率",
+        scope="承接央行操作、利率、汇率、债券市场、社会融资、信贷、流动性和宏观金融条件变化。",
+        include_rules=(
+            "央行干预、利率路径、汇率稳定、债券收益率、信贷和社融。",
+            "宏观流动性变化对权益、债券、外汇和风险资产的影响。",
+            "海外央行政策、美元流动性和本币汇率压力。",
+        ),
+        exclude_rules=(
+            "没有宏观金融条件含义的公司融资交易，不归入本主题。",
+            "纯资本市场制度改革优先归入资本市场改革。",
+        ),
+        canonical_labels=("宏观流动性", "汇率", "利率", "央行政策", "社会融资", "债券市场"),
+        granularity_note="这是 L0 宏观金融条件主线；具体国家、币种、利率会议和数据发布作为子方向进入。",
+    ),
+)
 
 
 @dataclass(frozen=True)
@@ -400,6 +546,10 @@ ASSIGNMENT_SYSTEM_PROMPT = """你是金融知识图谱的 Community 归档裁决
 
 你会收到 compact topic_intent、轻量新闻标题，以及系统召回的候选 L0/L1/L2 community。
 
+候选 community 的 origin 含义：
+- origin=seed：人工预置的高质量长期主线，只是优质先验和边界参考，不是强制分类。
+- origin=emergent：系统从历史新闻中自动发现并已经写入的主题。
+
 你的任务：
 - 在候选 community 中判断是否应该挂入已有主题；
 - 如果候选都不适合，创建新的 L0 community；
@@ -412,6 +562,9 @@ ASSIGNMENT_SYSTEM_PROMPT = """你是金融知识图谱的 Community 归档裁决
 - assignments 数量不要超过 max_attach 限制；
 - 不要输出 uncertain，不走人工 pending；
 - 低置信也必须在 attach_existing 或 create_new 中二选一；
+- seed 主题如果 scope、include_rules、canonical_labels 能承接当前 intent，应优先 attach_existing。
+- seed 主题不是笼子；如果当前 intent 明显不在 seed scope 或命中 exclude_rules，必须 create_new 或挂入更合适的 emergent community。
+- emergent 主题和 seed 主题地位相同，都可以承接 intent；区别只在于 seed 给你更稳定的业务边界参考。
 - 归档判断必须综合 parent_themes、broad_topics、mid_topics、specific_topics、raw_theme、title_candidate、driver、impact_target、risk_type、event_thread、event_action、actors。
 - parent_themes 是 L0 归档主信号。如果 topic_intent.parent_themes 与候选 community 的 title、canonical_labels、summary 或 scope 明显匹配，应优先 attach_existing。
 - broad_topics、mid_topics、specific_topics 都只是候选信号，不是标题指令；你必须判断它们的真实层级是否适合作为 L0。
@@ -421,6 +574,7 @@ ASSIGNMENT_SYSTEM_PROMPT = """你是金融知识图谱的 Community 归档裁决
 - 如果当前细节是候选 community 的新增子方向，应 attach_existing，并把 fit_type 写成 new_subtopic；不要因为 summary 里没有当前细节而新建平级 L0。
 - 如果候选 community 比当前 intent 更宽，但能承接当前 intent，应 attach_existing，并把 fit_type 写成 broader_parent。
 - 只有当候选 community 的目录范围无法承接当前 intent 时，才 create_new；create_new 的 fit_type 必须是 new_parent_topic。
+- create_new 时必须在 reason 中说明：为什么现有 seed/emergent 候选无法承接、这个新主题未来能持续覆盖什么边界、它与最接近候选的区别。
 - 如果当前 topic_intent 是 mid/specific 层级，不能直接把细主题包装成 L0；必须先寻找已有父级或子级 community 是否可挂入，没有合适候选时再提炼更高一层的父级 L0。
 - 如果创建新 L0，title 必须优先使用 parent_themes 中可长期复用的父级主题；只有 parent_themes 为空或明显不适合时，才从 broad_topics 中提炼父级主题。
 - 如果当前 broad/mid/specific 是已有 parent_theme 的子方向，必须挂入该父主题，不要创建平级 L0。
@@ -686,9 +840,14 @@ def _drafts_from_existing(existing: list[GraphIndexCommunity]) -> dict[str, Comm
             community_id=community.community_id,
             title=community.title,
             scope=str(metrics.get("scope") or community.summary or ""),
+            origin=str(metrics.get("origin") or "emergent"),
             level=community.level,
             parent_community_id=community.parent_community_id,
             summary=community.summary,
+            include_rules=[str(item) for item in metrics.get("include_rules") or [] if str(item).strip()],
+            exclude_rules=[str(item) for item in metrics.get("exclude_rules") or [] if str(item).strip()],
+            canonical_labels=[str(item) for item in metrics.get("canonical_labels") or [] if str(item).strip()],
+            granularity_note=str(metrics.get("granularity_note") or ""),
             source_ids=[str(item) for item in metrics.get("source_ids") or [] if str(item).strip()],
             evidence_ids=list(community.evidence_ids or []),
             chunk_ids=list(community.chunk_ids or []),
@@ -700,10 +859,53 @@ def _drafts_from_existing(existing: list[GraphIndexCommunity]) -> dict[str, Comm
     return drafts
 
 
+def seed_community_drafts(adapter_name: str) -> dict[str, CommunityDraft]:
+    drafts: dict[str, CommunityDraft] = {}
+    for definition in SEED_COMMUNITY_DEFINITIONS:
+        community_id = _community_id(adapter_name, definition.title)
+        drafts[community_id] = CommunityDraft(
+            community_id=community_id,
+            title=definition.title,
+            scope=definition.scope,
+            origin="seed",
+            level=0,
+            summary=definition.scope,
+            include_rules=list(definition.include_rules),
+            exclude_rules=list(definition.exclude_rules),
+            canonical_labels=list(definition.canonical_labels),
+            granularity_note=definition.granularity_note,
+            future_coverage=list(definition.canonical_labels),
+        )
+    return drafts
+
+
+def merge_seed_community_drafts(
+    drafts: dict[str, CommunityDraft],
+    seeds: dict[str, CommunityDraft],
+) -> dict[str, CommunityDraft]:
+    for community_id, seed in seeds.items():
+        existing = drafts.get(community_id)
+        if existing is None:
+            drafts[community_id] = seed
+            continue
+        existing.origin = "seed"
+        existing.scope = existing.scope or seed.scope
+        existing.include_rules = _dedupe([*existing.include_rules, *seed.include_rules])
+        existing.exclude_rules = _dedupe([*existing.exclude_rules, *seed.exclude_rules])
+        existing.canonical_labels = _dedupe([*existing.canonical_labels, *seed.canonical_labels])
+        existing.granularity_note = existing.granularity_note or seed.granularity_note
+        existing.future_coverage = _dedupe([*existing.future_coverage, *seed.future_coverage])
+    return drafts
+
+
 def _graph_community_from_draft(adapter_name: str, draft: CommunityDraft) -> GraphIndexCommunity:
     signals = draft.signal_values()
     version_id = f"{draft.community_id}:v:{_digest([*draft.chunk_ids, *draft.cognitive_card_ids, draft.summary])}"
     metrics = {
+        "origin": draft.origin,
+        "include_rules": draft.include_rules,
+        "exclude_rules": draft.exclude_rules,
+        "granularity_note": draft.granularity_note,
         "source_ids": draft.source_ids,
         "source_count": len(set(draft.source_ids)),
         "cognitive_card_ids": draft.cognitive_card_ids,
@@ -759,8 +961,12 @@ def _community_document(community: GraphIndexCommunity) -> GraphIndexVectorDocum
             f"Community: {community.title}",
             f"Projection: {community.projection}",
             f"Community Level: {community.level}",
+            f"Origin: {metrics.get('origin') or ''}",
             f"Maturity: {metrics.get('maturity_level') or ''}",
             f"Directory Scope: {metrics.get('scope') or ''}",
+            f"Include Rules: {'；'.join(metrics.get('include_rules') or [])}",
+            f"Exclude Rules: {'；'.join(metrics.get('exclude_rules') or [])}",
+            f"Granularity Note: {metrics.get('granularity_note') or ''}",
             f"Coverage Contract: {metrics.get('coverage_contract') or ''}",
             f"Canonical Labels: {'；'.join(metrics.get('canonical_labels') or [])}",
             f"Summary: {community.summary}",
@@ -955,6 +1161,7 @@ def _community_canonical_labels(draft: CommunityDraft, signals: dict[str, list[s
     return _dedupe(
         [
             draft.title,
+            *draft.canonical_labels,
             *signals.get("parent_themes", []),
             *signals.get("broad_topics", []),
             *signals.get("mid_topics", []),

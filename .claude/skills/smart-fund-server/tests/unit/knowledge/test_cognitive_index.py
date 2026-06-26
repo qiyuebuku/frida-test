@@ -10,6 +10,7 @@ from src.domain.knowledge.cognitive_index import (
     _drafts_from_existing,
     assignment_query_text,
     cognitive_card_from_llm,
+    seed_community_drafts,
     validate_assignment_decision,
 )
 from src.domain.knowledge.graph_index import GraphIndexCommunity
@@ -274,12 +275,12 @@ def _create_assignment(title: str) -> dict:
     }
 
 
-def _attach_assignment() -> dict:
+def _attach_assignment(alias: str = "c1") -> dict:
     return {
         "assignments": [
             {
                 "action": "attach_existing",
-                "community_id": "c1",
+                "community_id": alias,
                 "weight": 0.88,
                 "confidence": 0.91,
                 "fit_type": "new_subtopic",
@@ -302,7 +303,7 @@ async def test_community_builder_creates_then_attaches_existing_l0():
         }
     )
     card2 = cognitive_card_from_llm(second_chunk, _card_payload("并购重组政策与产业整合"))
-    llm = _LLM([_create_assignment("A股并购重组"), _attach_assignment()])
+    llm = _LLM([_create_assignment("A股并购重组"), _attach_assignment("c9")])
     committed = []
 
     class _Provider:
@@ -408,7 +409,7 @@ async def test_community_builder_deduplicates_existing_intent_when_rebuilding():
             ]
 
     result = await CommunityCardBuilder(
-        llm=_LLM([_attach_assignment()]),
+        llm=_LLM([_attach_assignment("c9")]),
         model="test-model",
         candidate_provider=_Provider(),
     ).build(
@@ -420,3 +421,45 @@ async def test_community_builder_deduplicates_existing_intent_when_rebuilding():
     assert len(result.communities) == 1
     assert len(result.communities[0].metrics["assigned_intents"]) == 1
     assert len(result.communities[0].metrics["cognitive_card_ids"]) == 1
+
+
+@pytest.mark.asyncio
+async def test_seed_community_candidates_are_injected_without_history():
+    chunk = _chunk().model_copy(
+        update={
+            "content": "AI芯片供给不足推动算力硬件产业链扩产，数据中心需求继续上升。",
+            "end_offset": 35,
+        }
+    )
+    payload = _card_payload("AI算力链")
+    payload["topic_intents"][0].update(
+        {
+            "raw_theme": "AI芯片供给不足推动算力硬件扩产",
+            "title_candidate": "AI算力链",
+            "parent_themes": ["AI算力链"],
+            "broad_topics": ["人工智能基础设施"],
+            "mid_topics": ["AI芯片供应", "算力硬件扩产"],
+            "specific_topics": ["AI芯片供给不足"],
+            "driver": ["AI应用需求"],
+            "impact_target": ["AI芯片", "数据中心", "算力硬件"],
+            "event_thread": ["AI算力链供需变化"],
+            "summary": "AI芯片供给不足推动算力硬件产业链扩产。",
+        }
+    )
+    card = cognitive_card_from_llm(chunk, payload)
+    llm = _LLM([_attach_assignment("c3")])
+
+    result = await CommunityCardBuilder(llm=llm, model="test-model").build(
+        adapter_name="financial",
+        cards=[card],
+        existing_communities=[],
+    )
+
+    prompt = llm.requests[0].prompt
+    assert '"origin": "seed"' in prompt
+    assert "AI算力链" in prompt
+    assert len(seed_community_drafts("financial")) == 8
+    assert len(result.communities) == 1
+    assert result.communities[0].title == "AI算力链"
+    assert result.communities[0].metrics["origin"] == "seed"
+    assert "AI芯片" in result.communities[0].metrics["canonical_labels"]

@@ -15,6 +15,9 @@ from src.domain.knowledge.cognitive_index import (
     COGNITIVE_CARD_SYSTEM_PROMPT,
     COMPLEX_MAX_ATTACH,
     DEFAULT_MAX_ATTACH,
+    MAX_ASSIGNMENT_CANDIDATES,
+    MAX_SEED_ASSIGNMENT_CANDIDATES,
+    MAX_SEMANTIC_ASSIGNMENT_CANDIDATES,
     CognitiveCard,
     CognitiveCommunityBuildResult,
     CommunityAssignment,
@@ -28,6 +31,8 @@ from src.domain.knowledge.cognitive_index import (
     _resolve_aliases,
     assignment_query_lanes,
     cognitive_card_from_llm,
+    merge_seed_community_drafts,
+    seed_community_drafts,
     validate_assignment_decision,
 )
 from src.domain.knowledge.graph_index import GraphIndexCommunity
@@ -252,7 +257,10 @@ class CommunityCardBuilder:
         cards: list[CognitiveCard],
         existing_communities: list[GraphIndexCommunity],
     ) -> CognitiveCommunityBuildResult:
-        communities = _drafts_from_existing(existing_communities)
+        communities = merge_seed_community_drafts(
+            _drafts_from_existing(existing_communities),
+            seed_community_drafts(adapter_name),
+        )
         assignments: list[CommunityAssignment] = []
         intent_count = 0
         validation_errors = 0
@@ -306,6 +314,7 @@ class CommunityCardBuilder:
                 "communities": len(graph_communities),
                 "assignment_validation_errors": validation_errors,
                 "candidate_recall": "semantic_community",
+                "seed_candidates": len([item for item in communities.values() if getattr(item, "origin", "") == "seed"]),
                 "community_builder": "cognitive_card_assignment_v1",
             }
             langfuse_update_span(output=diagnostics, status_message="completed")
@@ -326,20 +335,30 @@ class CommunityCardBuilder:
     ) -> list[dict[str, Any]]:
         candidates: list[dict[str, Any]] = []
         seen: set[str] = set()
+        seed_candidates = [
+            community.to_assignment_candidate(score=1.0, lane="seed_context")
+            for community in communities.values()
+            if getattr(community, "origin", "") == "seed"
+        ][:MAX_SEED_ASSIGNMENT_CANDIDATES]
+        for candidate in seed_candidates:
+            community_id = str(candidate.get("community_id") or "")
+            if community_id and community_id not in seen:
+                seen.add(community_id)
+                candidates.append(candidate)
         if self._candidate_provider is not None:
             semantic_candidates = await self._candidate_provider.recall(
                 adapter_name=adapter_name,
                 target=self._target,
                 topic_intent=topic_intent,
                 communities=communities,
-                limit=12,
+                limit=MAX_SEMANTIC_ASSIGNMENT_CANDIDATES,
             )
             for candidate in semantic_candidates:
                 community_id = str(candidate.get("community_id") or "")
                 if community_id and community_id not in seen:
                     seen.add(community_id)
                     candidates.append(candidate)
-        return candidates[:12]
+        return candidates[:MAX_ASSIGNMENT_CANDIDATES]
 
     async def _decide_assignment(
         self,
