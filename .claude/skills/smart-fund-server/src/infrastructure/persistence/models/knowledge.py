@@ -393,6 +393,34 @@ class KnowledgeCommunityAssignment(Base):
     )
 
 
+class KnowledgeAssignmentCandidateOrder(Base):
+    """Stable candidate order memory for Community Assignment prompts."""
+
+    __tablename__ = "kg_assignment_candidate_orders"
+    __table_args__ = (
+        UniqueConstraint(
+            "adapter_name",
+            "target",
+            "query_key",
+            name="uq_kg_assignment_candidate_orders_scope",
+        ),
+        Index("ix_kg_assignment_candidate_orders_scope", "adapter_name", "target"),
+    )
+
+    order_id: Mapped[str] = mapped_column(String(180), primary_key=True)
+    adapter_name: Mapped[str] = mapped_column(String(64), nullable=False)
+    target: Mapped[str] = mapped_column(String(32), nullable=False, default="")
+    query_key: Mapped[str] = mapped_column(String(96), nullable=False)
+    ordered_community_ids: Mapped[list] = mapped_column(JSONB, default=list, nullable=False)
+    payload: Mapped[dict] = mapped_column(JSONB, default=dict, nullable=False)
+    created_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+    updated_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+
 class KnowledgeGraphFinding(Base):
     """Graph Index finding/narrative state with chunk refs."""
 

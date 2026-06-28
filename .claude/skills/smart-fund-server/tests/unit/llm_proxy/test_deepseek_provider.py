@@ -57,6 +57,33 @@ def test_deepseek_json_object_response_format():
     assert "JSON Schema" in payload["messages"][0]["content"]
 
 
+def test_deepseek_injects_schema_even_when_prompt_mentions_json_schema():
+    provider = _provider()
+    schema = {
+        "type": "object",
+        "properties": {
+            "assignments": {"type": "array"},
+            "new_communities": {"type": "array"},
+        },
+        "required": ["assignments", "new_communities"],
+        "additionalProperties": False,
+    }
+    payload = provider._request_payload(
+        LLMProxyRequest(
+            prompt="返回归档裁决",
+            system_prompt="输出必须符合 JSON Schema，不要 Markdown。",
+            json_schema=schema,
+        ),
+        _route(),
+    )
+
+    system_prompt = payload["messages"][0]["content"]
+    assert "__LLM_PROXY_JSON_SCHEMA_INSTRUCTION__" in system_prompt
+    assert '"assignments"' in system_prompt
+    assert '"new_communities"' in system_prompt
+    assert '"required"' in system_prompt
+
+
 def test_deepseek_json_object_mode_injects_json_instruction_for_messages():
     provider = _provider()
     payload = provider._request_payload(

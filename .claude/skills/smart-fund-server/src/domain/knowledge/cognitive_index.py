@@ -554,7 +554,7 @@ ASSIGNMENT_SYSTEM_PROMPT = """你是金融知识图谱的 Community 归档裁决
 - 在候选 community 中判断是否应该挂入已有主题；
 - 如果候选都不适合，创建新的 L0 community；
 - Cognitive Card 的 parent_themes、title_candidate、raw_theme 都只是候选信号，不是最终 community 名称；你必须在本阶段归一化主题边界。
-- 输入候选 community_id 会使用 c1、c2、c3 这类短 alias；attach_existing 时必须原样使用这些 alias，禁止输出 hash、标题或自造 ID。
+- 输入候选 community_id 会使用 c_ 开头的稳定短 alias；attach_existing 时必须原样使用这些 alias，禁止输出标题、真实 community_id 或自造 ID。
 - 一个 topic_intent 可以归属到一个或多个 community；
 - 不区分 primary / secondary；
 - 每条归属必须输出 weight，表示这个 topic_intent 和 community 的关联强度；
@@ -580,7 +580,7 @@ ASSIGNMENT_SYSTEM_PROMPT = """你是金融知识图谱的 Community 归档裁决
 - 如果当前 broad/mid/specific 是已有 parent_theme 的子方向，必须挂入该父主题，不要创建平级 L0。
 - 如果创建新 L0，title 必须是可长期复用的父级主题，不能是新闻标题、公司项目名、单一交易名、单个产品、单次行情、单个技术细节。
 - create_new 的 title 应像索引目录名，优先短标题；不要输出带有“政策与市场动态”“结构性变化”“投资机会”等摘要式尾巴的长标题，除非这是不可再压缩的稳定主题名。
-- 如果 action=attach_existing，community_id 必须引用候选 alias，例如 c1。
+- 如果 action=attach_existing，community_id 必须引用候选 alias，例如 c_a1b2c3。
 - 如果 action=create_new，community_id 必须引用 new_communities 中的 client_id，例如 new_1。
 - new_communities 只包含本次新建 community 的 client_id、title、scope。不要输出 level、title_quality、future_coverage、maintenance_hints、rejected_candidates 或 candidate_fit_judgements。
 - 输出必须符合 JSON Schema，不要 Markdown。"""
@@ -940,9 +940,49 @@ def merge_seed_community_drafts(
     return drafts
 
 
+def _community_assignment_stats(draft: CommunityDraft) -> dict[str, float | int]:
+    weights: list[float] = []
+    for assignment in draft.assignments:
+        try:
+            weights.append(float(assignment.get("weight") or 0))
+        except (TypeError, ValueError):
+            weights.append(0.0)
+    if not weights:
+        return {
+            "avg_weight": 0.0,
+            "max_weight": 0.0,
+            "high_weight_count": 0,
+            "medium_weight_count": 0,
+            "low_weight_count": 0,
+        }
+    return {
+        "avg_weight": round(sum(weights) / len(weights), 4),
+        "max_weight": round(max(weights), 4),
+        "high_weight_count": sum(1 for weight in weights if weight >= 0.8),
+        "medium_weight_count": sum(1 for weight in weights if 0.5 <= weight < 0.8),
+        "low_weight_count": sum(1 for weight in weights if weight < 0.5),
+    }
+
+
 def _graph_community_from_draft(adapter_name: str, draft: CommunityDraft) -> GraphIndexCommunity:
     signals = draft.signal_values()
     version_id = f"{draft.community_id}:v:{_digest([*draft.chunk_ids, *draft.cognitive_card_ids, draft.summary])}"
+    assignment_stats = _community_assignment_stats(draft)
+    topic_tags = _dedupe(
+        [
+            *signals.get("parent_themes", []),
+            *signals.get("broad_topics", []),
+            *signals.get("mid_topics", []),
+            *signals.get("raw_theme", []),
+        ]
+    )[:32]
+    topic_diversity_values = _dedupe(
+        [
+            *topic_tags,
+            *signals.get("specific_topics", []),
+            *signals.get("event_thread", []),
+        ]
+    )
     metrics = {
         "origin": draft.origin,
         "include_rules": draft.include_rules,
@@ -950,17 +990,22 @@ def _graph_community_from_draft(adapter_name: str, draft: CommunityDraft) -> Gra
         "granularity_note": draft.granularity_note,
         "source_ids": draft.source_ids,
         "source_count": len(set(draft.source_ids)),
+        "unique_source_count": len(set(draft.source_ids)),
+        "evidence_count": len(set(draft.evidence_ids)),
+        "chunk_count": len(set(draft.chunk_ids)),
         "cognitive_card_ids": draft.cognitive_card_ids,
+        "cognitive_card_count": len(set(draft.cognitive_card_ids)),
         "assigned_intents": draft.assigned_intents[-80:],
+        "assigned_intent_count": len(draft.assigned_intents),
         "assignments": draft.assignments[-80:],
-        "topic_tags": _dedupe(
-            [
-                *signals.get("parent_themes", []),
-                *signals.get("broad_topics", []),
-                *signals.get("mid_topics", []),
-                *signals.get("raw_theme", []),
-            ]
-        )[:32],
+        "assignment_count": len(draft.assignments),
+        "avg_assignment_weight": assignment_stats["avg_weight"],
+        "max_assignment_weight": assignment_stats["max_weight"],
+        "high_weight_assignment_count": assignment_stats["high_weight_count"],
+        "medium_weight_assignment_count": assignment_stats["medium_weight_count"],
+        "low_weight_assignment_count": assignment_stats["low_weight_count"],
+        "topic_diversity_count": len(topic_diversity_values),
+        "topic_tags": topic_tags,
         "parent_themes": signals.get("parent_themes", [])[:24],
         "impact_tags": signals.get("impact_target", [])[:32],
         "risk_tags": signals.get("risk_type", [])[:24],
@@ -1011,6 +1056,10 @@ def _community_document(community: GraphIndexCommunity) -> GraphIndexVectorDocum
             f"Granularity Note: {metrics.get('granularity_note') or ''}",
             f"Coverage Contract: {metrics.get('coverage_contract') or ''}",
             f"Canonical Labels: {'；'.join(metrics.get('canonical_labels') or [])}",
+            f"Assigned Intent Count: {metrics.get('assigned_intent_count') or 0}",
+            f"Source Count: {metrics.get('source_count') or 0}",
+            f"Average Assignment Weight: {metrics.get('avg_assignment_weight') or 0}",
+            f"Topic Diversity Count: {metrics.get('topic_diversity_count') or 0}",
             f"Summary: {community.summary}",
             f"Parent Themes: {'；'.join(metrics.get('parent_themes') or [])}",
             f"Topic Tags: {'；'.join(metrics.get('topic_tags') or [])}",
@@ -1098,17 +1147,56 @@ def assignment_query_lanes(intent: dict[str, Any]) -> list[dict[str, str]]:
     ]
 
 
+def assignment_candidate_order_key(intent: dict[str, Any]) -> str:
+    """Stable semantic key for remembering prompt candidate order.
+
+    Evidence/chunk/source identifiers are intentionally excluded. The key
+    represents the assignment question, not the source record that produced it.
+    """
+
+    payload = {
+        "parent_themes": sorted(_normalize_label(item) for item in _as_list(intent.get("parent_themes"))),
+        "broad_topics": sorted(_normalize_label(item) for item in _as_list(intent.get("broad_topics"))),
+        "mid_topics": sorted(_normalize_label(item) for item in _as_list(intent.get("mid_topics"))),
+        "event_thread": sorted(_normalize_label(item) for item in _as_list(intent.get("event_thread"))),
+        "impact_target": sorted(_normalize_label(item) for item in _as_list(intent.get("impact_target"))),
+        "risk_type": sorted(_normalize_label(item) for item in _as_list(intent.get("risk_type"))),
+        "title_candidate": _normalize_label(intent.get("title_candidate")),
+        "raw_theme": _normalize_label(intent.get("raw_theme")),
+    }
+    raw = json.dumps(payload, sort_keys=True, ensure_ascii=False, separators=(",", ":"))
+    return "kg_assignment_query:" + _digest([raw])
+
+
 def _candidate_aliases(candidates: list[dict[str, Any]]) -> tuple[dict[str, str], list[dict[str, Any]]]:
     alias_map: dict[str, str] = {}
     prompt_candidates: list[dict[str, Any]] = []
-    for index, candidate in enumerate(candidates, start=1):
-        alias = f"c{index}"
+    for candidate in candidates:
         original_id = str(candidate.get("community_id") or "")
+        alias = _stable_candidate_alias(original_id)
         alias_map[alias] = original_id
-        payload = dict(candidate)
-        payload["community_id"] = alias
+        payload = {
+            "community_id": alias,
+            "title": _clean_text(candidate.get("title")),
+            "origin": _clean_text(candidate.get("origin")),
+            "level": int(candidate.get("level") or 0),
+            "scope": _clip(
+                str(candidate.get("scope") or candidate.get("directory_scope") or candidate.get("coverage_contract") or ""),
+                260,
+            ),
+            "include_rules": [_clip(item, 120) for item in _as_list(candidate.get("include_rules"))[:6]],
+            "exclude_rules": [_clip(item, 120) for item in _as_list(candidate.get("exclude_rules"))[:6]],
+            "canonical_labels": _as_list(candidate.get("canonical_labels"))[:16],
+            "coverage_contract": _clip(str(candidate.get("coverage_contract") or ""), 260),
+            "future_coverage": _as_list(candidate.get("future_coverage"))[:12],
+            "granularity_note": _clip(str(candidate.get("granularity_note") or ""), 180),
+        }
         prompt_candidates.append(payload)
     return alias_map, prompt_candidates
+
+
+def _stable_candidate_alias(community_id: str) -> str:
+    return "c_" + _digest([community_id])[:6]
 
 
 def _resolve_aliases(decision: dict[str, Any], alias_map: dict[str, str]) -> dict[str, Any]:

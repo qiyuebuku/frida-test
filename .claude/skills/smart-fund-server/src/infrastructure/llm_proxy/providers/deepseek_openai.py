@@ -17,6 +17,8 @@ from src.infrastructure.llm_proxy.types import (
     LLMRouteDecision,
 )
 
+JSON_SCHEMA_INSTRUCTION_MARKER = "__LLM_PROXY_JSON_SCHEMA_INSTRUCTION__"
+
 
 class DeepSeekOpenAIProvider:
     name = "deepseek"
@@ -327,7 +329,7 @@ class DeepSeekOpenAIProvider:
     ) -> list[dict[str, Any]]:
         joined = json.dumps(messages, ensure_ascii=False).lower()
         needs_json_instruction = "json" not in joined
-        needs_schema = bool(request.json_schema) and "json schema" not in joined
+        needs_schema = bool(request.json_schema) and JSON_SCHEMA_INSTRUCTION_MARKER.lower() not in joined
         if not needs_json_instruction and not needs_schema:
             return messages
 
@@ -335,8 +337,12 @@ class DeepSeekOpenAIProvider:
         if needs_json_instruction:
             instruction_parts.append("请只输出合法 JSON 对象，不要输出 Markdown、解释文字或代码块。")
         if needs_schema and request.json_schema:
-            schema = json.dumps(request.json_schema, ensure_ascii=False, indent=2)
-            instruction_parts.append(f"JSON Schema:\n{schema}")
+            schema = json.dumps(request.json_schema, ensure_ascii=False, separators=(",", ":"))
+            instruction_parts.append(
+                f"{JSON_SCHEMA_INSTRUCTION_MARKER}\n"
+                f"必须严格符合下面的 JSON Schema，required 字段必须全部输出，"
+                f"additionalProperties=false 时禁止输出额外字段：\n{schema}"
+            )
         instruction = "\n".join(instruction_parts)
         if messages and str(messages[0].get("role") or "").lower() == "system":
             first = dict(messages[0])

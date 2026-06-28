@@ -2,12 +2,20 @@
 
 from __future__ import annotations
 
+import json
+
 import pytest
 
-from src.application.services.cognitive_index_service import CognitiveCardExtractor, CommunityCardBuilder
+from src.application.services.cognitive_index_service import (
+    AssignmentCandidateOrderStore,
+    CognitiveCardExtractor,
+    CommunityCardBuilder,
+)
 from src.domain.knowledge.cognitive_index import (
     CognitiveCard,
+    _assignment_topic_intent,
     _drafts_from_existing,
+    assignment_candidate_order_key,
     assignment_query_text,
     cognitive_card_from_llm,
     seed_community_drafts,
@@ -279,6 +287,8 @@ class _LLM:
     async def generate(self, request):
         self.requests.append(request)
         output = self.outputs.pop(0)
+        if callable(output):
+            output = output(request)
         return LLMProxyResponse(
             text="",
             structured_output=output,
@@ -316,6 +326,28 @@ class _Reranker:
             latency_ms=1,
             total_documents=len(documents),
         )
+
+
+class _MemoryOrderStore(AssignmentCandidateOrderStore):
+    def __init__(self, initial: dict[str, list[str]] | None = None) -> None:
+        self.orders = dict(initial or {})
+        self.saved = []
+
+    def order_candidates(self, *, adapter_name, query_key, candidates):
+        previous = self.orders.get(query_key, [])
+        by_id = {candidate["community_id"]: candidate for candidate in candidates}
+        ordered = []
+        for community_id in previous:
+            candidate = by_id.pop(community_id, None)
+            if candidate is not None:
+                ordered.append(candidate)
+        ordered.extend(sorted(by_id.values(), key=lambda item: (item.get("title") or "", item.get("community_id") or "")))
+        return ordered
+
+    def save_order(self, *, adapter_name, query_key, candidates):
+        ordered_ids = [candidate["community_id"] for candidate in candidates]
+        self.orders[query_key] = ordered_ids
+        self.saved.append({"adapter_name": adapter_name, "query_key": query_key, "ordered_ids": ordered_ids})
 
 
 @pytest.mark.asyncio
@@ -366,6 +398,11 @@ def _attach_assignment(alias: str = "c1") -> dict:
     }
 
 
+def _first_candidate_alias(request) -> str:
+    prompt = json.loads(request.prompt)
+    return prompt["candidate_communities"][0]["community_id"]
+
+
 @pytest.mark.asyncio
 async def test_community_builder_creates_then_attaches_existing_l0():
     card1 = cognitive_card_from_llm(_chunk(), _card_payload("A股并购重组"))
@@ -378,7 +415,7 @@ async def test_community_builder_creates_then_attaches_existing_l0():
         }
     )
     card2 = cognitive_card_from_llm(second_chunk, _card_payload("并购重组政策与产业整合"))
-    llm = _LLM([_create_assignment("A股并购重组"), _attach_assignment()])
+    llm = _LLM([_create_assignment("A股并购重组"), lambda request: _attach_assignment(_first_candidate_alias(request))])
     committed = []
 
     class _Provider:
@@ -418,6 +455,16 @@ async def test_community_builder_creates_then_attaches_existing_l0():
     assert len(result.communities) == 1
     assert result.communities[0].title == "A股并购重组"
     assert "并购重组政策与产业整合" in result.communities[0].metrics["future_coverage"]
+    assert result.communities[0].metrics["assigned_intent_count"] == 2
+    assert result.communities[0].metrics["assignment_count"] == 2
+    assert result.communities[0].metrics["source_count"] == 2
+    assert result.communities[0].metrics["unique_source_count"] == 2
+    assert result.communities[0].metrics["evidence_count"] == 2
+    assert result.communities[0].metrics["chunk_count"] == 2
+    assert result.communities[0].metrics["cognitive_card_count"] == 2
+    assert result.communities[0].metrics["avg_assignment_weight"] == 0.9
+    assert result.communities[0].metrics["high_weight_assignment_count"] == 2
+    assert result.communities[0].metrics["topic_diversity_count"] >= 4
     assert len(result.assignments) == 2
     assert result.assignments[1].action == "attach_existing"
     assert result.diagnostics["communities"] == 1
@@ -484,7 +531,7 @@ async def test_community_builder_deduplicates_existing_intent_when_rebuilding():
             ]
 
     result = await CommunityCardBuilder(
-        llm=_LLM([_attach_assignment()]),
+        llm=_LLM([lambda request: _attach_assignment(_first_candidate_alias(request))]),
         model="test-model",
         candidate_provider=_Provider(),
     ).build(
@@ -495,6 +542,9 @@ async def test_community_builder_deduplicates_existing_intent_when_rebuilding():
 
     assert len(result.communities) == 1
     assert len(result.communities[0].metrics["assigned_intents"]) == 1
+    assert result.communities[0].metrics["assigned_intent_count"] == 1
+    assert result.communities[0].metrics["assignment_count"] == 1
+    assert result.communities[0].metrics["avg_assignment_weight"] == 0.88
     assert len(result.communities[0].metrics["cognitive_card_ids"]) == 1
 
 
@@ -524,7 +574,7 @@ async def test_materialized_seed_community_candidate_can_be_attached():
     card = cognitive_card_from_llm(chunk, payload)
     seed_communities = seed_graph_communities("financial")
     ai_seed = next(item for item in seed_communities if item.title == "AI算力链")
-    llm = _LLM([_attach_assignment()])
+    llm = _LLM([lambda request: _attach_assignment(_first_candidate_alias(request))])
 
     class _Provider:
         async def recall(self, **_kwargs):
@@ -566,6 +616,9 @@ async def test_materialized_seed_community_candidate_can_be_attached():
     ai_result = next(item for item in result.communities if item.title == "AI算力链")
     assert ai_result.metrics["origin"] == "seed"
     assert ai_result.evidence_ids == [card.evidence_id]
+    assert ai_result.metrics["assigned_intent_count"] == 1
+    assert ai_result.metrics["assignment_count"] == 1
+    assert ai_result.metrics["avg_assignment_weight"] == 0.88
     assert "AI芯片" in ai_result.metrics["canonical_labels"]
 
 
@@ -615,7 +668,7 @@ async def test_community_builder_reranks_many_candidates_before_assignment():
 
     reranker = _Reranker([7, 0, 1, 2, 3, 4, 5, 6])
     result = await CommunityCardBuilder(
-        llm=_LLM([_attach_assignment()]),
+        llm=_LLM([lambda request: _attach_assignment(_first_candidate_alias(request))]),
         model="test-model",
         candidate_provider=_Provider(),
         reranker_client=reranker,
@@ -624,5 +677,135 @@ async def test_community_builder_reranks_many_candidates_before_assignment():
     prompt = result.assignments[0].decision
     assert reranker.calls
     assert reranker.calls[0]["top_n"] == 8
-    assert result.assignments[0].community_id == candidates[7].community_id
-    assert prompt["assignments"][0]["community_id"] == candidates[7].community_id
+    assert result.assignments[0].community_id == candidates[0].community_id
+    assert prompt["assignments"][0]["community_id"] == candidates[0].community_id
+
+
+@pytest.mark.asyncio
+async def test_assignment_prompt_uses_persistent_prefix_order_and_slim_candidate_fields():
+    card = cognitive_card_from_llm(_chunk(), _card_payload("A股并购重组"))
+    candidate_rows = [
+        {
+            "community_id": "kg_community:cognitive_topic:l0:capital_market",
+            "title": "资本市场改革",
+            "origin": "seed",
+            "level": 0,
+            "scope": "承接 IPO、并购重组、区域股权市场和券商投行。",
+            "directory_scope": "重复目录范围",
+            "include_rules": ["并购重组"],
+            "exclude_rules": ["普通业绩"],
+            "canonical_labels": ["资本市场改革", "并购重组"],
+            "coverage_contract": "可吸收并购重组子方向",
+            "future_coverage": ["IPO", "并购重组"],
+            "source_count": 99,
+            "retrieval_score": 0.12,
+            "rerank_score": 0.99,
+            "recent_examples": [{"title": "不应进入 prompt"}],
+        },
+        {
+            "community_id": "kg_community:cognitive_topic:l0:ai_compute",
+            "title": "AI算力链",
+            "origin": "seed",
+            "level": 0,
+            "scope": "承接 AI 芯片、光模块、数据中心。",
+            "canonical_labels": ["AI算力链"],
+            "coverage_contract": "可吸收 AI 算力子方向",
+            "future_coverage": ["AI芯片"],
+            "source_count": 88,
+            "retrieval_score": 0.88,
+            "rerank_score": 0.88,
+        },
+        {
+            "community_id": "kg_community:cognitive_topic:l0:policy",
+            "title": "政策监管与产业扶持",
+            "origin": "seed",
+            "level": 0,
+            "scope": "承接产业政策和监管规则。",
+            "canonical_labels": ["政策监管"],
+            "coverage_contract": "可吸收政策子方向",
+            "future_coverage": ["地方政策"],
+            "source_count": 77,
+            "retrieval_score": 0.77,
+            "rerank_score": 0.77,
+        },
+    ]
+    existing_communities = [
+        GraphIndexCommunity(
+            community_id=str(row["community_id"]),
+            version_id=f"{row['community_id']}:v1",
+            adapter_name="financial",
+            projection="cognitive_topic",
+            level=int(row.get("level") or 0),
+            parent_community_id="",
+            title=str(row["title"]),
+            summary=str(row.get("scope") or ""),
+            member_node_ids=[],
+            member_edge_ids=[],
+            evidence_ids=[],
+            chunk_ids=[],
+            metrics={
+                "origin": row.get("origin"),
+                "scope": row.get("scope"),
+                "include_rules": row.get("include_rules") or [],
+                "exclude_rules": row.get("exclude_rules") or [],
+                "canonical_labels": row.get("canonical_labels") or [],
+                "future_coverage": row.get("future_coverage") or [],
+                "coverage_contract": row.get("coverage_contract") or "",
+            },
+            status="active",
+            previous_version_id="",
+            change_reason="cognitive_assignment",
+            lineage_id="lineage",
+            previous_community_ids=[],
+        )
+        for row in candidate_rows
+    ]
+
+    class _Provider:
+        async def recall(self, **_kwargs):
+            return list(candidate_rows)
+
+    order_store = _MemoryOrderStore()
+
+    def save_after_read(request):
+        prompt = json.loads(request.prompt)
+        # LLM attaches to the first prompt candidate so the test also verifies alias resolution.
+        return _attach_assignment(prompt["candidate_communities"][0]["community_id"])
+
+    # Seed the real query key after the card has been converted into the assignment intent.
+    topic_intent = _assignment_topic_intent(card, card.topic_intents[0])
+    query_key = assignment_candidate_order_key(topic_intent)
+    order_store.orders[query_key] = [
+        "kg_community:cognitive_topic:l0:policy",
+        "kg_community:cognitive_topic:l0:capital_market",
+    ]
+    llm = _LLM([save_after_read])
+
+    result = await CommunityCardBuilder(
+        llm=llm,
+        model="test-model",
+        candidate_provider=_Provider(),
+        candidate_order_store=order_store,
+    ).build(adapter_name="financial", cards=[card], existing_communities=existing_communities)
+
+    request_prompt = json.loads(llm.requests[0].prompt)
+    prompt_candidates = request_prompt["candidate_communities"]
+    assert [item["title"] for item in prompt_candidates] == [
+        "政策监管与产业扶持",
+        "资本市场改革",
+        "AI算力链",
+    ]
+    assert all(item["community_id"].startswith("c_") for item in prompt_candidates)
+    for item in prompt_candidates:
+        assert "source_count" not in item
+        assert "directory_scope" not in item
+        assert "retrieval_score" not in item
+        assert "rerank_score" not in item
+        assert "recent_examples" not in item
+        assert "summary" not in item
+    assert result.assignments[0].community_id == "kg_community:cognitive_topic:l0:policy"
+    assert order_store.saved[0]["ordered_ids"] == [
+        "kg_community:cognitive_topic:l0:policy",
+        "kg_community:cognitive_topic:l0:capital_market",
+        "kg_community:cognitive_topic:l0:ai_compute",
+    ]

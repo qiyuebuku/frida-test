@@ -45,6 +45,19 @@ CREATE TABLE IF NOT EXISTS public.kg_community_assignments (
     updated_at timestamp with time zone DEFAULT now()
 );
 
+CREATE TABLE IF NOT EXISTS public.kg_assignment_candidate_orders (
+    order_id character varying(180) PRIMARY KEY,
+    adapter_name character varying(64) NOT NULL,
+    target character varying(32) NOT NULL DEFAULT '',
+    query_key character varying(96) NOT NULL,
+    ordered_community_ids jsonb NOT NULL DEFAULT '[]'::jsonb,
+    payload jsonb NOT NULL DEFAULT '{}'::jsonb,
+    created_at timestamp with time zone DEFAULT now(),
+    updated_at timestamp with time zone DEFAULT now(),
+    CONSTRAINT uq_kg_assignment_candidate_orders_scope
+        UNIQUE (adapter_name, target, query_key)
+);
+
 CREATE INDEX IF NOT EXISTS ix_kg_cognitive_cards_adapter_status
     ON public.kg_cognitive_cards(adapter_name, status);
 CREATE INDEX IF NOT EXISTS ix_kg_cognitive_cards_evidence
@@ -60,3 +73,6 @@ CREATE INDEX IF NOT EXISTS ix_kg_community_assignments_card
     ON public.kg_community_assignments(cognitive_card_id);
 CREATE INDEX IF NOT EXISTS ix_kg_community_assignments_community
     ON public.kg_community_assignments(community_id);
+
+CREATE INDEX IF NOT EXISTS ix_kg_assignment_candidate_orders_scope
+    ON public.kg_assignment_candidate_orders(adapter_name, target);

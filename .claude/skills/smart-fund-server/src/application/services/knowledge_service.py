@@ -49,6 +49,7 @@ from src.application.services.llm_candidate_judge import LLMCandidateJudge
 from src.application.services.graph_index_reporter import GraphIndexLLMReporter
 from src.application.services.graph_index_profiles import FINANCIAL_GRAPH_PROJECTIONS, GRAPH_INDEX_PUBLIC_LENS_ALIASES
 from src.application.services.cognitive_index_service import (
+    AssignmentCandidateOrderStore,
     CognitiveCardExtractor,
     CommunityCardBuilder,
     CommunitySemanticCandidateProvider,
@@ -1530,6 +1531,7 @@ async def _refresh_cognitive_index(
         reranker_client=RerankerClient(),
         target=target,
         on_communities_updated=commit_updated_communities,
+        candidate_order_store=AssignmentCandidateOrderStore(target=target),
     )
     with profile_span("kg_cognitive_index.build_communities", cards=len(all_cards)):
         build_result = await builder.build(

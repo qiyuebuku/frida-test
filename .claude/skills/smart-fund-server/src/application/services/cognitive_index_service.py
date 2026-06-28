@@ -3,9 +3,14 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 from collections.abc import Awaitable, Callable
+from datetime import datetime, timezone
 from typing import Any
+
+from sqlalchemy import select
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 
 from src.application.services.knowledge_llm_config import resolve_kg_llm_model
 from src.domain.knowledge.cognitive_index import (
@@ -29,6 +34,7 @@ from src.domain.knowledge.cognitive_index import (
     _graph_community_from_draft,
     _is_complex_intent,
     _resolve_aliases,
+    assignment_candidate_order_key,
     assignment_query_lanes,
     assignment_query_text,
     assignment_prompt_topic_intent,
@@ -43,6 +49,8 @@ from src.infrastructure.clients.embedding import embed_texts
 from src.infrastructure.llm_proxy.service import get_llm_gateway_service
 from src.infrastructure.llm_proxy.types import LLMProxyRequest
 from src.infrastructure.observability.langfuse_tracing import langfuse_observation, langfuse_update_span
+from src.infrastructure.connections import get_session
+from src.infrastructure.persistence.models.knowledge import KnowledgeAssignmentCandidateOrder
 from src.infrastructure.vector_store.milvus_hybrid_store import MilvusTypedHybridStore
 
 
@@ -235,6 +243,107 @@ class CommunitySemanticCandidateProvider:
             return candidates
 
 
+class AssignmentCandidateOrderStore:
+    """Persistent append-only candidate order memory for assignment prompts."""
+
+    def __init__(self, *, target: str = "prod") -> None:
+        self._target = target
+
+    def order_candidates(
+        self,
+        *,
+        adapter_name: str,
+        query_key: str,
+        candidates: list[dict[str, Any]],
+    ) -> list[dict[str, Any]]:
+        if not candidates:
+            return []
+        previous_order = self._load_order(adapter_name=adapter_name, query_key=query_key)
+        by_id = {
+            str(candidate.get("community_id") or ""): candidate
+            for candidate in candidates
+            if str(candidate.get("community_id") or "")
+        }
+        ordered: list[dict[str, Any]] = []
+        for community_id in previous_order:
+            candidate = by_id.pop(community_id, None)
+            if candidate is not None:
+                ordered.append(candidate)
+        ordered.extend(sorted(by_id.values(), key=_stable_candidate_prompt_sort_key))
+        return ordered
+
+    def save_order(
+        self,
+        *,
+        adapter_name: str,
+        query_key: str,
+        candidates: list[dict[str, Any]],
+    ) -> None:
+        ordered_ids = [
+            community_id
+            for community_id in (
+                str(candidate.get("community_id") or "") for candidate in candidates
+            )
+            if community_id
+        ]
+        if not ordered_ids:
+            return
+        now = datetime.now(timezone.utc)
+        order_digest = hashlib.sha256(
+            f"{adapter_name}|{self._target}|{query_key}".encode("utf-8")
+        ).hexdigest()[:16]
+        order_id = f"kg_assignment_candidate_order:{order_digest}"
+        payload = {
+            "order_strategy": "history_prefix_then_stable_append_v1",
+            "candidate_count": len(ordered_ids),
+        }
+        with get_session(self._target) as session:
+            stmt = pg_insert(KnowledgeAssignmentCandidateOrder).values(
+                {
+                    "order_id": order_id,
+                    "adapter_name": adapter_name,
+                    "target": self._target,
+                    "query_key": query_key,
+                    "ordered_community_ids": ordered_ids,
+                    "payload": payload,
+                    "updated_at": now,
+                }
+            )
+            excluded = stmt.excluded
+            session.execute(
+                stmt.on_conflict_do_update(
+                    index_elements=["adapter_name", "target", "query_key"],
+                    set_={
+                        "ordered_community_ids": excluded.ordered_community_ids,
+                        "payload": excluded.payload,
+                        "updated_at": now,
+                    },
+                )
+            )
+
+    def _load_order(self, *, adapter_name: str, query_key: str) -> list[str]:
+        with get_session(self._target) as session:
+            row = session.scalar(
+                select(KnowledgeAssignmentCandidateOrder).where(
+                    KnowledgeAssignmentCandidateOrder.adapter_name == adapter_name,
+                    KnowledgeAssignmentCandidateOrder.target == self._target,
+                    KnowledgeAssignmentCandidateOrder.query_key == query_key,
+                )
+            )
+            if row is None:
+                return []
+            return [str(item) for item in row.ordered_community_ids or [] if str(item).strip()]
+
+
+def _stable_candidate_prompt_sort_key(candidate: dict[str, Any]) -> tuple[int, int, str, str]:
+    return (
+        int(candidate.get("level") or 0),
+        0 if str(candidate.get("origin") or "") == "seed" else 1,
+        str(candidate.get("title") or ""),
+        str(candidate.get("community_id") or ""),
+    )
+
+
 class CommunityCardBuilder:
     def __init__(
         self,
@@ -245,6 +354,7 @@ class CommunityCardBuilder:
         reranker_client: RerankerClient | None = None,
         target: str = "prod",
         on_communities_updated: Callable[[list[GraphIndexCommunity]], Awaitable[None]] | None = None,
+        candidate_order_store: AssignmentCandidateOrderStore | None = None,
     ):
         self._llm = llm or get_llm_gateway_service()
         self._model = model or resolve_kg_llm_model("kg_community_assignment")
@@ -252,6 +362,7 @@ class CommunityCardBuilder:
         self._reranker_client = reranker_client
         self._target = target
         self._on_communities_updated = on_communities_updated
+        self._candidate_order_store = candidate_order_store
 
     async def build(
         self,
@@ -418,7 +529,13 @@ class CommunityCardBuilder:
         candidates: list[dict[str, Any]],
     ) -> dict[str, Any]:
         max_attach = COMPLEX_MAX_ATTACH if _is_complex_intent(topic_intent) else DEFAULT_MAX_ATTACH
-        alias_map, prompt_candidates = _candidate_aliases(candidates)
+        query_key = assignment_candidate_order_key(topic_intent)
+        prompt_ordered_candidates = self._prompt_order_candidates(
+            adapter_name=card.adapter_name,
+            query_key=query_key,
+            candidates=candidates,
+        )
+        alias_map, prompt_candidates = _candidate_aliases(prompt_ordered_candidates)
         prompt = {
             "max_attach": max_attach,
             "candidate_communities": prompt_candidates,
@@ -432,7 +549,7 @@ class CommunityCardBuilder:
             temperature=0,
             max_tokens=2200,
             json_schema=ASSIGNMENT_SCHEMA,
-            metadata={"task": "kg_community_assignment", "source_id": card.source_id},
+            metadata={"task": "kg_community_assignment"},
             use_cache=True,
         )
         response = await self._llm.generate(request)
@@ -463,7 +580,28 @@ class CommunityCardBuilder:
                 raise RuntimeError(f"assignment repair output is not object: card={card.cognitive_card_id}") from exc
             decision = _resolve_aliases(decision, alias_map)
             validate_assignment_decision(decision, candidates, topic_intent=topic_intent)
+        if self._candidate_order_store is not None:
+            self._candidate_order_store.save_order(
+                adapter_name=card.adapter_name,
+                query_key=query_key,
+                candidates=prompt_ordered_candidates,
+            )
         return decision
+
+    def _prompt_order_candidates(
+        self,
+        *,
+        adapter_name: str,
+        query_key: str,
+        candidates: list[dict[str, Any]],
+    ) -> list[dict[str, Any]]:
+        if self._candidate_order_store is None:
+            return sorted(candidates, key=_stable_candidate_prompt_sort_key)
+        return self._candidate_order_store.order_candidates(
+            adapter_name=adapter_name,
+            query_key=query_key,
+            candidates=candidates,
+        )
 
 
 def _candidate_rerank_text(candidate: dict[str, Any]) -> str:

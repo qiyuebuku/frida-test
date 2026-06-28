@@ -32,6 +32,7 @@ from src.infrastructure.persistence.models.reflection import (
     Review,
 )
 from src.infrastructure.persistence.models.knowledge import (
+    KnowledgeAssignmentCandidateOrder,
     KnowledgeCompilationRun,
     KnowledgeEdge,
     KnowledgeEdgeEvidence,
@@ -80,6 +81,7 @@ __all__ = [
     "Lesson",
     # knowledge
     "KnowledgeNode",
+    "KnowledgeAssignmentCandidateOrder",
     "KnowledgeNormalizationRule",
     "KnowledgeEdge",
     "KnowledgeEvidence",

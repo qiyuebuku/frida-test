@@ -94,6 +94,10 @@ from src.application.dto.knowledge_dto import (  # noqa: E402
 from src.application.services.knowledge_llm_config import kg_llm_config_summary  # noqa: E402
 from src.application.services.knowledge_service import create_knowledge_service  # noqa: E402
 from src.domain.knowledge.retrieval import RetrievalOptions  # noqa: E402
+from src.domain.knowledge.semantic_index_materials import (  # noqa: E402
+    SEMANTIC_COLLECTION_ENTITY,
+    SEMANTIC_COLLECTION_RELATION,
+)
 from src.domain.knowledge_adapters.financial.source_projection import project_ft_news_row  # noqa: E402
 from src.infrastructure.connections import get_session  # noqa: E402
 from src.infrastructure.llm_proxy.service import get_llm_gateway_service  # noqa: E402
@@ -104,6 +108,7 @@ from src.infrastructure.observability.langfuse_tracing import (  # noqa: E402
     langfuse_update_span,
 )
 from src.infrastructure.persistence.models.knowledge import (  # noqa: E402
+    KnowledgeAssignmentCandidateOrder,
     KnowledgeCognitiveCard,
     KnowledgeCommunityAssignment,
     KnowledgeEdge,
@@ -139,14 +144,14 @@ RUN_FULL_SEMANTIC_REBUILD = False
 RUN_GRAPH_INDEX_BUILD = False
 
 DEMO_PREFIX = "usage_demo_write_path"
-DEMO_SCENARIO = "real_ft_news_community_30_20260612"
+DEMO_SCENARIO = "real_ft_news_community_80_20260628"
 DEMO_TS = "2026-05-20T09:30:00+08:00"
 RUN_SESSION_ID = f"kg-write-demo:{DEMO_SCENARIO}:{int(time.time())}"
 
 USE_REAL_FT_NEWS = True
 USE_HARDCODED_FT_NEWS = True
 FT_NEWS_CANDIDATE_LIMIT = 800
-FT_NEWS_RECORD_LIMIT = 30
+FT_NEWS_RECORD_LIMIT = 80
 FT_NEWS_MIN_TEXT_CHARS = 120
 
 VERIFY_QUERY = "最近市场对AI算力链、半导体、新能源和并购重组的主要叙事、机会与风险分别是什么？"
@@ -673,6 +678,7 @@ def step_0_5_validate_write_path_schema() -> dict[str, Any]:
     with get_session(TARGET) as session:
         inspector = inspect(session.bind)
         required_tables = {
+            KnowledgeAssignmentCandidateOrder.__tablename__,
             KnowledgeEvidence.__tablename__,
             KnowledgeEvidenceChunk.__tablename__,
             KnowledgeGraphCommunity.__tablename__,
@@ -763,6 +769,10 @@ async def step_0_6_cleanup_previous_demo_data() -> dict[str, Any]:
         edge_rows = session.scalars(
             select(KnowledgeEdge).where(KnowledgeEdge.edge_id.in_(edge_ids))
         ).all() if edge_ids else []
+        legacy_edge_ids = session.scalars(
+            select(KnowledgeEdge.edge_id).where(KnowledgeEdge.adapter_name == ADAPTER)
+        ).all()
+        legacy_edge_ids = list(dict.fromkeys([*edge_ids, *(str(edge_id) for edge_id in legacy_edge_ids if edge_id)]))
         candidate_node_ids = list(
             dict.fromkeys(
                 node_id
@@ -837,7 +847,10 @@ async def step_0_6_cleanup_previous_demo_data() -> dict[str, Any]:
         deleted["edge_chunk_refs"] = _delete_count(
             session,
             delete(KnowledgeEdgeEvidenceChunk).where(
-                KnowledgeEdgeEvidenceChunk.evidence_id.in_(evidence_ids)
+                or_(
+                    KnowledgeEdgeEvidenceChunk.evidence_id.in_(evidence_ids),
+                    KnowledgeEdgeEvidenceChunk.edge_id.in_(legacy_edge_ids),
+                )
             ),
         )
         deleted["evidence_chunks"] = _delete_count(
@@ -846,32 +859,36 @@ async def step_0_6_cleanup_previous_demo_data() -> dict[str, Any]:
         )
         deleted["edge_evidence_refs"] = _delete_count(
             session,
-            delete(KnowledgeEdgeEvidence).where(KnowledgeEdgeEvidence.evidence_id.in_(evidence_ids)),
+            delete(KnowledgeEdgeEvidence).where(
+                or_(
+                    KnowledgeEdgeEvidence.evidence_id.in_(evidence_ids),
+                    KnowledgeEdgeEvidence.edge_id.in_(legacy_edge_ids),
+                )
+            ),
         )
         deleted["graph_adjacency"] = _delete_count(
             session,
             delete(KnowledgeGraphAdjacency).where(
                 KnowledgeGraphAdjacency.adapter_name == ADAPTER,
-                KnowledgeGraphAdjacency.edge_id.in_(edge_ids),
             ),
         )
         deleted["edges"] = _delete_count(
             session,
-            delete(KnowledgeEdge).where(
-                KnowledgeEdge.adapter_name == ADAPTER,
-                KnowledgeEdge.edge_id.in_(edge_ids),
-            ),
+            delete(KnowledgeEdge).where(KnowledgeEdge.adapter_name == ADAPTER),
         )
         deleted["evidence"] = _delete_count(
             session,
             delete(KnowledgeEvidence).where(KnowledgeEvidence.evidence_id.in_(evidence_ids)),
         )
-        deleted["orphan_nodes"] = _delete_orphan_nodes(session, candidate_node_ids)
+        deleted["legacy_nodes"] = _delete_count(
+            session,
+            delete(KnowledgeNode).where(KnowledgeNode.adapter_name == ADAPTER),
+        )
 
     milvus_target_ids = _cleanup_milvus_target_ids(
         chunk_ids=list(chunk_ids),
         node_ids=candidate_node_ids,
-        edge_ids=edge_ids,
+        edge_ids=legacy_edge_ids,
         graph_ids=graph_ids,
     )
     retriever = MilvusSemanticHybridRetriever()
@@ -879,6 +896,28 @@ async def step_0_6_cleanup_previous_demo_data() -> dict[str, Any]:
         adapter_name=ADAPTER,
         target=TARGET,
         chunk_ids=milvus_target_ids,
+    )
+    legacy_entity_target_ids = await retriever.list_target_ids_by_role(
+        collection_role=SEMANTIC_COLLECTION_ENTITY,
+        adapter_name=ADAPTER,
+        target=TARGET,
+    )
+    legacy_relation_target_ids = await retriever.list_target_ids_by_role(
+        collection_role=SEMANTIC_COLLECTION_RELATION,
+        adapter_name=ADAPTER,
+        target=TARGET,
+    )
+    legacy_entity_deleted = await retriever.delete_documents_by_role(
+        collection_role=SEMANTIC_COLLECTION_ENTITY,
+        adapter_name=ADAPTER,
+        target=TARGET,
+        target_ids=legacy_entity_target_ids,
+    )
+    legacy_relation_deleted = await retriever.delete_documents_by_role(
+        collection_role=SEMANTIC_COLLECTION_RELATION,
+        adapter_name=ADAPTER,
+        target=TARGET,
+        target_ids=legacy_relation_target_ids,
     )
     result = {
         "source_prefix": DEMO_PREFIX,
@@ -893,6 +932,10 @@ async def step_0_6_cleanup_previous_demo_data() -> dict[str, Any]:
         "deleted": deleted,
         "milvus": {
             "deleted_target_ids": milvus_deleted,
+            "legacy_entity_target_ids": len(legacy_entity_target_ids),
+            "legacy_relation_target_ids": len(legacy_relation_target_ids),
+            "legacy_entity_deleted": legacy_entity_deleted,
+            "legacy_relation_deleted": legacy_relation_deleted,
         },
     }
     pprint(
@@ -1344,6 +1387,12 @@ def hardcoded_ft_news_records() -> list[dict[str, Any]]:
                     bucket_hits=_ft_news_bucket_hits(row),
                 )
             )
+        if len(records) < FT_NEWS_RECORD_LIMIT and USE_REAL_FT_NEWS:
+            supplement = real_ft_news_records(
+                limit=FT_NEWS_RECORD_LIMIT - len(records),
+                excluded_ids={int(row_id) for row_id in requested_ids},
+            )
+            records.extend(supplement)
         if records:
             print(
                 "[demo.ft_news] using fixed ft_news ids; "
@@ -1386,15 +1435,21 @@ def hardcoded_ft_news_records() -> list[dict[str, Any]]:
     return records
 
 
-def real_ft_news_records() -> list[dict[str, Any]]:
+def real_ft_news_records(
+    *,
+    limit: int = FT_NEWS_RECORD_LIMIT,
+    excluded_ids: set[int] | None = None,
+) -> list[dict[str, Any]]:
     """从 ft_news 选取代表性新闻，覆盖真实写入和 Graph Index 分裂场景。"""
 
     rows = _fetch_recent_ft_news_rows(limit=FT_NEWS_CANDIDATE_LIMIT)
     if not rows:
         return []
+    if excluded_ids:
+        rows = [row for row in rows if int(row["id"]) not in excluded_ids]
     selected_rows, bucket_hits = _select_representative_ft_news_rows(
         rows,
-        limit=FT_NEWS_RECORD_LIMIT,
+        limit=limit,
         min_text_chars=FT_NEWS_MIN_TEXT_CHARS,
     )
     records: list[dict[str, Any]] = []
