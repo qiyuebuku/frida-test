@@ -14,6 +14,7 @@ from src.infrastructure.vector_store.semantic_hybrid_retriever import (
     MilvusSemanticHybridRetriever,
     _candidate_limit,
     _expanded_query_text,
+    _roles_for_target_ids,
     _strong_query_terms,
 )
 
@@ -147,6 +148,10 @@ def test_candidate_limit_overfetches_without_unbounded_growth() -> None:
     assert _candidate_limit(1) == 3
     assert _candidate_limit(10) == 30
     assert _candidate_limit(50) == 80
+
+
+def test_roles_for_target_ids_routes_cognitive_community_ids_to_community_collection() -> None:
+    assert _roles_for_target_ids(["kgc:financial:l0:3"]) == ("community",)
 
 
 @pytest.mark.asyncio

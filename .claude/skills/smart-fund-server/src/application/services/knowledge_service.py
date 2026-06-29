@@ -1532,6 +1532,10 @@ async def _refresh_cognitive_index(
         target=target,
         on_communities_updated=commit_updated_communities,
         candidate_order_store=AssignmentCandidateOrderStore(target=target),
+        community_id_factory=lambda adapter_name, level, _title: repository.allocate_graph_community_id(
+            adapter_name,
+            level=level,
+        ),
     )
     with profile_span("kg_cognitive_index.build_communities", cards=len(all_cards)):
         build_result = await builder.build(
@@ -1613,6 +1617,10 @@ async def _ensure_seed_communities(
     seed_communities = seed_graph_communities(
         adapter_name,
         existing_communities=existing_communities,
+        community_id_factory=lambda _definition: repository.allocate_graph_community_id(
+            adapter_name,
+            level=0,
+        ),
     )
     if not seed_communities:
         return {"status": "skipped", "reason": "no_seed_definitions", "communities": 0, "documents_written": 0}
@@ -1753,7 +1761,6 @@ async def _prune_stale_community_documents(
             collection_role=SEMANTIC_COLLECTION_COMMUNITY,
             adapter_name=adapter_name,
             target=target,
-            source_type="kg_community_report",
         )
         stale = sorted(target_id for target_id in existing if target_id not in active)
         if not stale:

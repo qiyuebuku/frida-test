@@ -616,7 +616,7 @@ def _roles_for_target_ids(target_ids: list[str]) -> tuple[str, ...]:
     for target_id in target_ids:
         if target_id.startswith(("kg_chunk:", "chunk:")):
             roles.add(SEMANTIC_COLLECTION_CHUNK)
-        elif target_id.startswith(("kg_finding:", "kg_community:")):
+        elif target_id.startswith(("kgc:", "kg_finding:", "kg_community:")):
             roles.add(SEMANTIC_COLLECTION_COMMUNITY)
         elif target_id.startswith(("kg_edge:", "kg_card:edge:")):
             roles.add(SEMANTIC_COLLECTION_RELATION)

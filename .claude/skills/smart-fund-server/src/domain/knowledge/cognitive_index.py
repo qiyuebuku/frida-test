@@ -15,6 +15,7 @@ import hashlib
 import json
 import re
 from dataclasses import dataclass, field
+from collections.abc import Callable
 from typing import Any
 
 from src.domain.knowledge.graph_index import GraphIndexCommunity, GraphIndexVectorDocument
@@ -23,9 +24,11 @@ from src.domain.knowledge.schemas import EvidenceChunk
 
 DEFAULT_MAX_ATTACH = 3
 COMPLEX_MAX_ATTACH = 5
-RERANK_MIN_ASSIGNMENT_CANDIDATES = 8
 MAX_SEMANTIC_ASSIGNMENT_CANDIDATES = 50
-MAX_ASSIGNMENT_CANDIDATES = 20
+MAX_ASSIGNMENT_CANDIDATES = 12
+RERANK_MIN_ASSIGNMENT_CANDIDATES = MAX_ASSIGNMENT_CANDIDATES + 1
+COGNITIVE_CARD_MAX_TOKENS = 5000
+ASSIGNMENT_MAX_TOKENS = 5000
 COGNITIVE_CARD_SCHEMA_VERSION = "cognitive_card_v1"
 COMMUNITY_ASSIGNMENT_SCHEMA_VERSION = "community_assignment_v2"
 COMMUNITY_PROJECTION = "cognitive_topic"
@@ -36,6 +39,67 @@ ASSIGNMENT_FIT_TYPES = {
     "adjacent_context",
     "new_parent_topic",
 }
+MARKET_SIGNAL_BUCKET_TITLES = {
+    "市场行情",
+    "板块异动",
+    "个股涨跌",
+    "个股表现",
+    "成交放量",
+    "成交额放量",
+    "资金流向",
+    "资金净流入",
+    "ETF表现",
+    "概念异动",
+    "盘面表现",
+    "行情异动",
+}
+MARKET_SIGNAL_ONLY_TERMS = (
+    "行情",
+    "异动",
+    "反弹",
+    "拉升",
+    "上涨",
+    "下跌",
+    "转跌",
+    "涨停",
+    "跌停",
+    "走高",
+    "走低",
+    "回暖",
+    "回落",
+    "成交放量",
+    "资金流入",
+    "资金净流入",
+    "ETF",
+)
+MARKET_TOPIC_DRIVER_TERMS = (
+    "供需",
+    "供应",
+    "需求",
+    "政策",
+    "监管",
+    "产业",
+    "链",
+    "风险",
+    "安全",
+    "基础设施",
+    "地缘",
+    "冲突",
+    "制裁",
+    "关税",
+    "货币",
+    "利率",
+    "汇率",
+    "流动性",
+    "通胀",
+    "产能",
+    "出海",
+    "并购",
+    "重组",
+    "算力",
+    "债务",
+    "融资",
+)
 
 
 @dataclass(frozen=True)
@@ -525,6 +589,8 @@ COGNITIVE_CARD_SYSTEM_PROMPT = """你是金融知识图谱的 Cognitive Card 抽
 - parent_themes 写交易认知层 L0 父主题，是后续 Community 归档最重要的信号；它应该能承载多条不同来源、不同主体、不同时间的资料。
 - parent_themes 不要写公司名、项目名、单一产品、单次交易或单条行情；遇到细方向时必须上提到可复用父主题。
 - parent_themes 应像图书馆一级目录名：短、稳定、可复用；不要写成一句新闻摘要、原因解释或长标题。
+- parent_themes 不要写“市场行情”“板块异动”“个股涨跌”“成交放量”“资金流向”“ETF表现”“概念异动”“盘面表现”这类行情表现桶；这些只能作为 specific_topics 或 supporting_text 的细节。
+- 如果 chunk 描述上涨、下跌、反弹、涨停、成交放量或资金流入，parent_themes 必须追溯背后的驱动主题、产业链主题、政策主题、风险主题或流动性主题。
 - 如果一个表达只描述某个父主题下的供需变化、风险变化、资金变化、项目进展或单一主体动作，应放入 mid_topics / specific_topics，而不是 parent_themes。
 - broad_topics 写父主题下仍然较宽的行业、政策、市场或风险主题。
 - mid_topics 写父级主题下的子方向，适合未来 L1/L2。
@@ -544,7 +610,7 @@ COGNITIVE_CARD_SYSTEM_PROMPT = """你是金融知识图谱的 Cognitive Card 抽
 
 ASSIGNMENT_SYSTEM_PROMPT = """你是金融知识图谱的 Community 归档裁决器。
 
-你会收到 compact topic_intent、轻量新闻标题，以及系统召回的候选 L0/L1/L2 community。
+你会收到 compact topic_intent，以及系统召回的候选 L0/L1/L2 community。
 
 候选 community 的 origin 含义：
 - origin=seed：人工预置的高质量长期主线，只是优质先验和边界参考，不是强制分类。
@@ -553,8 +619,11 @@ ASSIGNMENT_SYSTEM_PROMPT = """你是金融知识图谱的 Community 归档裁决
 你的任务：
 - 在候选 community 中判断是否应该挂入已有主题；
 - 如果候选都不适合，创建新的 L0 community；
+- 输入里的 community_candidates 是统一候选列表，包含 seed 和 emergent 两类候选；
+- community_candidates 按系统自增 ID 稳定排序，靠前不代表更相关；
+- community_candidates 中的 dynamic_context 是候选已吸收方向的动态摘要，只作为辅助证据，不得覆盖 seed 的 include/exclude 边界；
 - Cognitive Card 的 parent_themes、title_candidate、raw_theme 都只是候选信号，不是最终 community 名称；你必须在本阶段归一化主题边界。
-- 输入候选 community_id 会使用 c_ 开头的稳定短 alias；attach_existing 时必须原样使用这些 alias，禁止输出标题、真实 community_id 或自造 ID。
+- 输入候选 community_id 是系统真实 community ID；attach_existing 时必须原样使用候选 community_id，禁止输出标题或自造 ID。
 - 一个 topic_intent 可以归属到一个或多个 community；
 - 不区分 primary / secondary；
 - 每条归属必须输出 weight，表示这个 topic_intent 和 community 的关联强度；
@@ -569,7 +638,8 @@ ASSIGNMENT_SYSTEM_PROMPT = """你是金融知识图谱的 Community 归档裁决
 - parent_themes 是 L0 归档主信号。如果 topic_intent.parent_themes 与候选 community 的 title、canonical_labels、summary 或 scope 明显匹配，应优先 attach_existing。
 - broad_topics、mid_topics、specific_topics 都只是候选信号，不是标题指令；你必须判断它们的真实层级是否适合作为 L0。
 - L0 community 是可长期复用的父级主题，应该能承载多条不同来源、不同时间、不同主体的资料，并且未来可以继续拆出 L1/L2。
-- 候选 community 的 scope、future_coverage、parent_themes、broad_topics、mid_topics、specific_topics 用来判断目录覆盖范围。判断重点不是候选 summary 是否已经写过当前细节，而是候选是否能作为父级目录承接当前细节。
+- 候选 community 的 scope、include_rules、exclude_rules、canonical_labels、granularity_note 用来判断长期目录边界；dynamic_context 的 absorbed_subtopics、recent_signal_summary 只用于辅助理解该目录过去吸收过哪些子方向。
+- 判断重点不是候选 summary 是否已经写过当前细节，而是候选是否能作为父级目录承接当前细节。
 - 不要因为候选没有直接提到当前 chunk 的细节就判为 related_but_separate；L0 的职责就是吸收同一父主题下的新子方向。
 - 如果当前细节是候选 community 的新增子方向，应 attach_existing，并把 fit_type 写成 new_subtopic；不要因为 summary 里没有当前细节而新建平级 L0。
 - 如果候选 community 比当前 intent 更宽，但能承接当前 intent，应 attach_existing，并把 fit_type 写成 broader_parent。
@@ -580,7 +650,10 @@ ASSIGNMENT_SYSTEM_PROMPT = """你是金融知识图谱的 Community 归档裁决
 - 如果当前 broad/mid/specific 是已有 parent_theme 的子方向，必须挂入该父主题，不要创建平级 L0。
 - 如果创建新 L0，title 必须是可长期复用的父级主题，不能是新闻标题、公司项目名、单一交易名、单个产品、单次行情、单个技术细节。
 - create_new 的 title 应像索引目录名，优先短标题；不要输出带有“政策与市场动态”“结构性变化”“投资机会”等摘要式尾巴的长标题，除非这是不可再压缩的稳定主题名。
-- 如果 action=attach_existing，community_id 必须引用候选 alias，例如 c_a1b2c3。
+- 不要创建只表示行情表现的 L0，例如“市场行情”“板块异动”“个股涨跌”“成交放量”“资金流向”“ETF表现”“概念异动”“盘面表现”。这些只是 market signal，不是 community 边界。
+- 如果 topic_intent 主要是上涨、下跌、反弹、涨停、成交放量或资金流入，必须追溯它背后的驱动主题或产业/风险主题；例如油气设备股反弹应优先考虑能源供应、地缘风险或大宗商品供需，AI硬件股回暖应优先考虑 AI算力链。
+- 如果无法从当前 intent 提炼出驱动主题，也不要新建“市场行情”这类泛化桶；应创建更具体且可长期复用的驱动型父主题，或挂入最接近的已有父主题并说明弱相关原因。
+- 如果 action=attach_existing，community_id 必须引用 community_candidates 中真实存在的 community_id。
 - 如果 action=create_new，community_id 必须引用 new_communities 中的 client_id，例如 new_1。
 - new_communities 只包含本次新建 community 的 client_id、title、scope。不要输出 level、title_quality、future_coverage、maintenance_hints、rejected_candidates 或 candidate_fit_judgements。
 - 输出必须符合 JSON Schema，不要 Markdown。"""
@@ -711,8 +784,48 @@ def _validate_new_communities(
             raise RuntimeError(f"new_community.title must be non-empty; decision={decision}")
         if not scope:
             raise RuntimeError(f"new_community.scope must be non-empty; decision={decision}")
+        if _is_market_signal_l0_title(title=title, scope=scope, topic_intent=topic_intent):
+            raise RuntimeError(
+                "new_community.title is a market signal, not a durable L0 community boundary; "
+                f"title={title}; scope={scope}; decision={decision}"
+            )
         result[client_id] = {"client_id": client_id, "title": title, "scope": scope}
     return result
+
+
+def _is_market_signal_l0_title(
+    *,
+    title: str,
+    scope: str,
+    topic_intent: dict[str, Any] | None,
+) -> bool:
+    normalized_title = _normalize_label(title)
+    if normalized_title in {_normalize_label(item) for item in MARKET_SIGNAL_BUCKET_TITLES}:
+        return True
+    title_scope = f"{title}\n{scope}"
+    if _has_market_signal_term(title) and not _has_market_topic_driver(title_scope):
+        return True
+    if not topic_intent:
+        return False
+    parent_themes = _as_list(topic_intent.get("parent_themes"))
+    if any(_normalize_label(title) == _normalize_label(theme) for theme in parent_themes):
+        if normalized_title in {_normalize_label(item) for item in MARKET_SIGNAL_BUCKET_TITLES}:
+            return True
+    return False
+
+
+def _has_market_signal_term(value: Any) -> bool:
+    text = _clean_text(value)
+    if not text:
+        return False
+    return any(term in text for term in MARKET_SIGNAL_ONLY_TERMS)
+
+
+def _has_market_topic_driver(value: Any) -> bool:
+    text = _clean_text(value)
+    if not text:
+        return False
+    return any(term in text for term in MARKET_TOPIC_DRIVER_TERMS)
 
 
 def _assignment_topic_intent(card: CognitiveCard, intent_payload: dict[str, Any]) -> dict[str, Any]:
@@ -777,6 +890,7 @@ def _apply_assignment(
     topic_intent: dict[str, Any],
     decision: dict[str, Any],
     communities: dict[str, CommunityDraft],
+    community_id_factory: Callable[[str, int, str], str] | None = None,
 ) -> list[CommunityAssignment]:
     applied: list[CommunityAssignment] = []
     new_communities = {
@@ -789,7 +903,11 @@ def _apply_assignment(
         intent_id = f"{card.cognitive_card_id}:intent:{intent_index}"
         if action == "create_new":
             payload = new_communities[str(assignment["community_id"])]
-            community_id = _community_id(adapter_name, str(payload["title"]))
+            community_id = (
+                community_id_factory(adapter_name, 0, str(payload["title"]))
+                if community_id_factory is not None
+                else _community_id(adapter_name, str(payload["title"]))
+            )
             if community_id not in communities:
                 communities[community_id] = CommunityDraft(
                     community_id=community_id,
@@ -908,10 +1026,20 @@ def seed_graph_communities(
     adapter_name: str,
     *,
     existing_communities: list[GraphIndexCommunity] | None = None,
+    community_id_factory: Callable[[SeedCommunityDefinition], str] | None = None,
 ) -> list[GraphIndexCommunity]:
     drafts = _drafts_from_existing(existing_communities or [])
-    seed_ids = set(seed_community_drafts(adapter_name))
-    merge_seed_community_drafts(drafts, seed_community_drafts(adapter_name))
+    seeds: dict[str, CommunityDraft] = {}
+    for definition in SEED_COMMUNITY_DEFINITIONS:
+        existing_id = _find_seed_draft_id_by_title(drafts, definition.title)
+        community_id = existing_id or (
+            community_id_factory(definition)
+            if community_id_factory is not None
+            else _community_id(adapter_name, definition.title)
+        )
+        seeds[community_id] = _seed_draft(adapter_name, definition, community_id=community_id)
+    seed_ids = set(seeds)
+    merge_seed_community_drafts(drafts, seeds)
     return [
         _graph_community_from_draft(adapter_name, drafts[community_id])
         for community_id in sorted(seed_ids)
@@ -924,7 +1052,8 @@ def merge_seed_community_drafts(
     seeds: dict[str, CommunityDraft],
 ) -> dict[str, CommunityDraft]:
     for community_id, seed in seeds.items():
-        existing = drafts.get(community_id)
+        target_id = community_id if community_id in drafts else _find_seed_draft_id_by_title(drafts, seed.title)
+        existing = drafts.get(target_id or community_id)
         if existing is None:
             drafts[community_id] = seed
             continue
@@ -938,6 +1067,38 @@ def merge_seed_community_drafts(
         existing.granularity_note = existing.granularity_note or seed.granularity_note
         existing.future_coverage = _dedupe([*existing.future_coverage, *seed.future_coverage])
     return drafts
+
+
+def _seed_draft(
+    adapter_name: str,
+    definition: SeedCommunityDefinition,
+    *,
+    community_id: str,
+) -> CommunityDraft:
+    return CommunityDraft(
+        community_id=community_id,
+        title=definition.title,
+        scope=definition.scope,
+        origin="seed",
+        level=0,
+        summary=definition.scope,
+        include_rules=list(definition.include_rules),
+        exclude_rules=list(definition.exclude_rules),
+        canonical_labels=list(definition.canonical_labels),
+        granularity_note=definition.granularity_note,
+        future_coverage=list(definition.canonical_labels),
+    )
+
+
+def _find_seed_draft_id_by_title(drafts: dict[str, CommunityDraft], title: str) -> str:
+    title_key = _normalize_label(title)
+    for community_id, draft in drafts.items():
+        if _normalize_label(draft.title) == title_key and draft.origin == "seed":
+            return community_id
+    for community_id, draft in drafts.items():
+        if _normalize_label(draft.title) == title_key:
+            return community_id
+    return ""
 
 
 def _community_assignment_stats(draft: CommunityDraft) -> dict[str, float | int]:
@@ -1168,35 +1329,142 @@ def assignment_candidate_order_key(intent: dict[str, Any]) -> str:
     return "kg_assignment_query:" + _digest([raw])
 
 
-def _candidate_aliases(candidates: list[dict[str, Any]]) -> tuple[dict[str, str], list[dict[str, Any]]]:
+def _candidate_aliases(
+    candidates: list[dict[str, Any]],
+) -> tuple[dict[str, str], list[dict[str, Any]]]:
     alias_map: dict[str, str] = {}
     prompt_candidates: list[dict[str, Any]] = []
     for candidate in candidates:
         original_id = str(candidate.get("community_id") or "")
-        alias = _stable_candidate_alias(original_id)
-        alias_map[alias] = original_id
-        payload = {
-            "community_id": alias,
-            "title": _clean_text(candidate.get("title")),
-            "origin": _clean_text(candidate.get("origin")),
-            "level": int(candidate.get("level") or 0),
-            "scope": _clip(
-                str(candidate.get("scope") or candidate.get("directory_scope") or candidate.get("coverage_contract") or ""),
-                260,
-            ),
-            "include_rules": [_clip(item, 120) for item in _as_list(candidate.get("include_rules"))[:6]],
-            "exclude_rules": [_clip(item, 120) for item in _as_list(candidate.get("exclude_rules"))[:6]],
-            "canonical_labels": _as_list(candidate.get("canonical_labels"))[:16],
-            "coverage_contract": _clip(str(candidate.get("coverage_contract") or ""), 260),
-            "future_coverage": _as_list(candidate.get("future_coverage"))[:12],
-            "granularity_note": _clip(str(candidate.get("granularity_note") or ""), 180),
-        }
-        prompt_candidates.append(payload)
+        alias_map[original_id] = original_id
+        seed_definition = _seed_definition_for_candidate(candidate)
+        if seed_definition is not None:
+            prompt_candidate = _seed_candidate_payload(candidate, original_id, seed_definition)
+        else:
+            prompt_candidate = _emergent_candidate_payload(candidate, original_id)
+        dynamic = _candidate_dynamic_payload(candidate, original_id)
+        if len(dynamic) > 1:
+            prompt_candidate["dynamic_context"] = {
+                key: value for key, value in dynamic.items() if key != "community_id"
+            }
+        prompt_candidates.append(prompt_candidate)
     return alias_map, prompt_candidates
 
 
 def _stable_candidate_alias(community_id: str) -> str:
     return "c_" + _digest([community_id])[:6]
+
+
+def _seed_definition_for_candidate(candidate: dict[str, Any]) -> SeedCommunityDefinition | None:
+    if _clean_text(candidate.get("origin")) != "seed":
+        return None
+    title_key = _normalize_label(candidate.get("title"))
+    for definition in SEED_COMMUNITY_DEFINITIONS:
+        if _normalize_label(definition.title) == title_key:
+            return definition
+    return None
+
+
+def _seed_candidate_payload(
+    candidate: dict[str, Any],
+    alias: str,
+    definition: SeedCommunityDefinition,
+) -> dict[str, Any]:
+    return {
+        "community_id": alias,
+        "title": definition.title,
+        "origin": "seed",
+        "level": int(candidate.get("level") or 0),
+        "scope": _clip(definition.scope, 260),
+        "include_rules": [_clip(item, 120) for item in definition.include_rules[:6]],
+        "exclude_rules": [_clip(item, 120) for item in definition.exclude_rules[:6]],
+        "canonical_labels": list(definition.canonical_labels[:12]),
+        "granularity_note": _clip(definition.granularity_note, 180),
+    }
+
+
+def _emergent_candidate_payload(candidate: dict[str, Any], alias: str) -> dict[str, Any]:
+    return {
+        "community_id": alias,
+        "title": _clean_text(candidate.get("title")),
+        "origin": _clean_text(candidate.get("origin")) or "emergent",
+        "level": int(candidate.get("level") or 0),
+        "scope": _clip(str(candidate.get("scope") or candidate.get("directory_scope") or ""), 260),
+        "include_rules": [_clip(item, 120) for item in _as_list(candidate.get("include_rules"))[:6]],
+        "exclude_rules": [_clip(item, 120) for item in _as_list(candidate.get("exclude_rules"))[:6]],
+        "canonical_labels": _stable_candidate_labels(candidate)[:10],
+        "granularity_note": _clip(str(candidate.get("granularity_note") or ""), 180),
+    }
+
+
+def _stable_candidate_labels(candidate: dict[str, Any]) -> list[str]:
+    return _dedupe(
+        [
+            *_as_list(candidate.get("canonical_labels")),
+            *_as_list(candidate.get("parent_themes")),
+            *_as_list(candidate.get("broad_topics")),
+        ]
+    )
+
+
+def _candidate_dynamic_payload(candidate: dict[str, Any], alias: str) -> dict[str, Any]:
+    subtopics = _candidate_absorbed_subtopics(candidate)
+    summaries = _candidate_recent_signal_summary(candidate, subtopics)
+    payload: dict[str, Any] = {"community_id": alias}
+    if subtopics:
+        payload["absorbed_subtopics"] = subtopics
+    if summaries:
+        payload["recent_signal_summary"] = summaries
+    maturity = _clean_text(candidate.get("maturity"))
+    if maturity:
+        payload["maturity"] = maturity
+    return payload
+
+
+def _candidate_absorbed_subtopics(candidate: dict[str, Any]) -> list[str]:
+    values = _dedupe(
+        [
+            *_as_list(candidate.get("parent_themes")),
+            *_as_list(candidate.get("broad_topics")),
+            *_as_list(candidate.get("mid_topics")),
+            *_as_list(candidate.get("future_coverage")),
+            *_as_list(candidate.get("specific_topics")),
+        ]
+    )
+    return [value for value in values if _is_prompt_summary_label(value)][:8]
+
+
+def _candidate_recent_signal_summary(candidate: dict[str, Any], subtopics: list[str]) -> list[str]:
+    summaries: list[str] = []
+    if subtopics:
+        summaries.append("已吸收方向：" + "、".join(subtopics[:6]))
+    for example in candidate.get("recent_examples") or []:
+        if not isinstance(example, dict):
+            continue
+        title = _clean_text(example.get("title"))
+        summary = _clean_text(example.get("summary"))
+        text = title if _is_prompt_summary_label(title) else ""
+        if not text and summary and _is_prompt_summary_label(summary):
+            text = summary
+        if text:
+            summaries.append("近期信号：" + _clip(text, 60))
+        if len(summaries) >= 3:
+            break
+    return _dedupe([_clip(item, 90) for item in summaries])[:3]
+
+
+def _is_prompt_summary_label(value: Any) -> bool:
+    text = _clean_text(value)
+    if not text or len(text) > 42:
+        return False
+    digit_count = sum(char.isdigit() for char in text)
+    if digit_count >= 3:
+        return False
+    if re.search(r"\d+(\.\d+)?\s*(%|亿元|万元|元|万股|股|点|倍)", text):
+        return False
+    if re.search(r"\b\d{5,6}\b", text):
+        return False
+    return True
 
 
 def _resolve_aliases(decision: dict[str, Any], alias_map: dict[str, str]) -> dict[str, Any]:

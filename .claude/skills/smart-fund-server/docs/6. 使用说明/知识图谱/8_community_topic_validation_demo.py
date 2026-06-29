@@ -1501,7 +1501,7 @@ async def decide_assignment(
     candidate_alias_map, prompt_candidates = build_assignment_candidate_aliases(candidates)
     prompt = {
         "max_attach": max_attach,
-        "candidate_communities": prompt_candidates,
+        "community_candidates": prompt_candidates,
         "source": {
             "news_title": row["title"],
         },

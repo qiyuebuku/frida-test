@@ -492,36 +492,14 @@ class MilvusHybridStore:
             query_text_len=len(query_text),
             vector_dim=len(query_vector),
         ):
-            try:
-                results = self._get_client().hybrid_search(
-                    collection_name=self.collection_name,
-                    reqs=[dense_req, sparse_req],
-                    ranker=imports["RRFRanker"](k=self.rrf_k),
-                    filter=scope_filter,
-                    limit=limit,
-                    output_fields=output_fields,
-                )
-            except Exception as exc:
-                if not _is_sparse_row_error(exc):
-                    raise
-                logger.warning(
-                    "Milvus sparse BM25 hybrid search failed; falling back to dense-only search: %s",
-                    exc,
-                )
-                profile_event(
-                    "milvus_store.hybrid_search_dense_fallback",
-                    error=type(exc).__name__,
-                    reason="sparse_vector_nan_or_inf",
-                )
-                results = self._get_client().search(
-                    collection_name=self.collection_name,
-                    data=[query_vector],
-                    anns_field="dense_vector",
-                    search_params={"metric_type": self.metric_type},
-                    filter=scope_filter,
-                    limit=limit,
-                    output_fields=output_fields,
-                )
+            results = self._hybrid_search_with_connection_retry(
+                reqs=[dense_req, sparse_req],
+                ranker=imports["RRFRanker"](k=self.rrf_k),
+                scope_filter=scope_filter,
+                limit=limit,
+                output_fields=output_fields,
+                query_vector=query_vector,
+            )
         hits: list[MilvusHybridHit] = []
         for hit in results[0] if results else []:
             entity = _hit_value(hit, "entity") or {}
@@ -586,6 +564,65 @@ class MilvusHybridStore:
                 )
                 self._close_connection_manager(imports)
         return self._client
+
+    def _hybrid_search_with_connection_retry(
+        self,
+        *,
+        reqs: list[Any],
+        ranker: Any,
+        scope_filter: str,
+        limit: int,
+        output_fields: list[str],
+        query_vector: list[float],
+    ) -> Any:
+        for attempt in range(2):
+            try:
+                return self._get_client().hybrid_search(
+                    collection_name=self.collection_name,
+                    reqs=reqs,
+                    ranker=ranker,
+                    filter=scope_filter,
+                    limit=limit,
+                    output_fields=output_fields,
+                )
+            except Exception as exc:
+                if _is_sparse_row_error(exc):
+                    logger.warning(
+                        "Milvus sparse BM25 hybrid search failed; falling back to dense-only search: %s",
+                        exc,
+                    )
+                    profile_event(
+                        "milvus_store.hybrid_search_dense_fallback",
+                        error=type(exc).__name__,
+                        reason="sparse_vector_nan_or_inf",
+                    )
+                    return self._get_client().search(
+                        collection_name=self.collection_name,
+                        data=[query_vector],
+                        anns_field="dense_vector",
+                        search_params={"metric_type": self.metric_type},
+                        filter=scope_filter,
+                        limit=limit,
+                        output_fields=output_fields,
+                    )
+                if attempt == 0 and _is_transient_milvus_connection_error(exc):
+                    logger.warning(
+                        "Milvus hybrid search connection failed; resetting client and retrying once: %s",
+                        exc,
+                    )
+                    profile_event(
+                        "milvus_store.hybrid_search_connection_retry",
+                        collection=self.collection_name,
+                        error=type(exc).__name__,
+                    )
+                    self._reset_client_connection()
+                    continue
+                raise
+
+    def _reset_client_connection(self) -> None:
+        imports = self._load_imports()
+        self.close()
+        self._close_connection_manager(imports)
 
     def _load_imports(self) -> dict[str, Any]:
         if self._imports is not None:
@@ -963,6 +1000,23 @@ def _is_sparse_row_error(exc: Exception) -> bool:
         or "std::isfinite(element.val)" in message
         or "NaN or Inf" in message
     )
+
+
+def _is_transient_milvus_connection_error(exc: Exception) -> bool:
+    message = str(exc).lower()
+    indicators = (
+        "connection reset by peer",
+        "statuscode.unavailable",
+        "grpc_status:14",
+        "server unavailable",
+        "fail connecting to server",
+        "channel_ready",
+        "futuretimeouterror",
+        "too_many_pings",
+        "enhance_your_calm",
+        "goaway",
+    )
+    return any(indicator in message for indicator in indicators)
 
 
 def _finite_vector(vector: list[float]) -> bool:

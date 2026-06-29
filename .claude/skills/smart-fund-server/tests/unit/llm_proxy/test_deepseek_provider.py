@@ -283,20 +283,49 @@ def test_deepseek_retries_empty_json_mode_without_forced_json_then_repairs(monke
                 "id": "chat-1",
                 "model": payload["model"],
                 "choices": [{"message": {"content": ""}, "finish_reason": "stop"}],
-                "usage": {"prompt_tokens": 2, "completion_tokens": 0, "total_tokens": 2},
+                "usage": {
+                    "prompt_tokens": 2,
+                    "completion_tokens": 0,
+                    "total_tokens": 2,
+                    "prompt_cache_hit_tokens": 1,
+                    "prompt_cache_miss_tokens": 1,
+                    "completion_tokens_details": {"reasoning_tokens": 0},
+                },
             }
         if len(calls) == 2:
             return {
                 "id": "chat-2",
                 "model": payload["model"],
-                "choices": [{"message": {"content": "ok=true, reason=done"}, "finish_reason": "stop"}],
-                "usage": {"prompt_tokens": 3, "completion_tokens": 4, "total_tokens": 7},
+                "choices": [
+                    {
+                        "message": {
+                            "content": "ok=true, reason=done",
+                            "reasoning_content": "reasoned",
+                        },
+                        "finish_reason": "length",
+                    }
+                ],
+                "usage": {
+                    "prompt_tokens": 3,
+                    "completion_tokens": 4,
+                    "total_tokens": 7,
+                    "prompt_cache_hit_tokens": 2,
+                    "prompt_cache_miss_tokens": 1,
+                    "completion_tokens_details": {"reasoning_tokens": 2},
+                },
             }
         return {
             "id": "chat-3",
             "model": payload["model"],
             "choices": [{"message": {"content": '{"ok": true, "reason": "done"}'}, "finish_reason": "stop"}],
-            "usage": {"prompt_tokens": 5, "completion_tokens": 6, "total_tokens": 11},
+            "usage": {
+                "prompt_tokens": 5,
+                "completion_tokens": 6,
+                "total_tokens": 11,
+                "prompt_cache_hit_tokens": 3,
+                "prompt_cache_miss_tokens": 2,
+                "completion_tokens_details": {"reasoning_tokens": 1},
+            },
         }
 
     monkeypatch.setattr(provider, "_post", fake_post)
@@ -323,16 +352,40 @@ def test_deepseek_retries_empty_json_mode_without_forced_json_then_repairs(monke
         "input_tokens": 10,
         "output_tokens": 10,
         "total_tokens": 20,
-        "prompt_cache_hit_tokens": 0,
-        "prompt_cache_miss_tokens": 0,
-        "reasoning_tokens": 0,
+        "prompt_cache_hit_tokens": 6,
+        "prompt_cache_miss_tokens": 4,
+        "reasoning_tokens": 3,
     }
     assert response.proxy["json_mode_retry_attempted"] is True
     assert response.proxy["json_mode_retry_success"] is True
     assert response.proxy["json_repair_attempted"] is True
     assert response.proxy["json_repair_success"] is True
+    assert response.proxy["json_mode_initial_finish_reason"] == "stop"
+    assert response.proxy["json_mode_retry_finish_reason"] == "length"
+    assert response.proxy["json_mode_initial_usage"] == {
+        "input_tokens": 2,
+        "output_tokens": 0,
+        "total_tokens": 2,
+        "prompt_cache_hit_tokens": 1,
+        "prompt_cache_miss_tokens": 1,
+        "reasoning_tokens": 0,
+    }
+    assert response.proxy["json_mode_retry_usage"] == {
+        "input_tokens": 3,
+        "output_tokens": 4,
+        "total_tokens": 7,
+        "prompt_cache_hit_tokens": 2,
+        "prompt_cache_miss_tokens": 1,
+        "reasoning_tokens": 2,
+    }
     assert response.raw_payload["json_mode_initial"]["id"] == "chat-1"
+    assert response.raw_payload["json_mode_initial"]["usage"] == response.proxy["json_mode_initial_usage"]
+    assert response.raw_payload["json_mode_initial"]["content_chars"] == 0
     assert response.raw_payload["json_mode_retry"]["id"] == "chat-2"
+    assert response.raw_payload["json_mode_retry"]["finish_reason"] == "length"
+    assert response.raw_payload["json_mode_retry"]["usage"] == response.proxy["json_mode_retry_usage"]
+    assert response.raw_payload["json_mode_retry"]["content_chars"] == len("ok=true, reason=done")
+    assert response.raw_payload["json_mode_retry"]["reasoning_chars"] == len("reasoned")
     assert response.raw_payload["json_repair"]["id"] == "chat-3"
 
 

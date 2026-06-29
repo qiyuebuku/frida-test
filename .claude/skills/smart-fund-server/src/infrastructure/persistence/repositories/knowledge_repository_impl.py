@@ -35,6 +35,7 @@ from src.domain.knowledge.retrieval_profile import profile_span
 from src.domain.knowledge.schemas import CompiledEdge, CompiledEvidence, CompiledNode, EvidenceChunk
 from src.infrastructure.connections import get_session
 from src.infrastructure.persistence.models.knowledge import (
+    GRAPH_COMMUNITY_ID_SEQUENCE,
     KnowledgeCompilationRun,
     KnowledgeCognitiveCard,
     KnowledgeCommunityAssignment,
@@ -66,6 +67,7 @@ class KnowledgeRepositoryImpl(KnowledgeRepository):
         self._evidence_version_columns_ready = False
         self._retrieval_quality_tables_ready = False
         self._evidence_chunk_manifest_columns_ready = False
+        self._graph_community_id_columns_ready = False
 
     def ping(self) -> None:
         with profile_span("kg_repository.ping"):
@@ -709,6 +711,7 @@ class KnowledgeRepositoryImpl(KnowledgeRepository):
             unassigned_signals=len(unassigned_signals or []),
         ):
             with self._session_scope() as session:
+                self._ensure_graph_community_id_columns(session)
                 old_communities = list(
                     session.scalars(
                         select(KnowledgeGraphCommunity).where(KnowledgeGraphCommunity.adapter_name == adapter_name)
@@ -822,6 +825,7 @@ class KnowledgeRepositoryImpl(KnowledgeRepository):
     def list_graph_communities(self, adapter_name: str) -> list[GraphIndexCommunity]:
         with profile_span("kg_repository.list_graph_communities", adapter=adapter_name):
             with self._session_scope() as session:
+                self._ensure_graph_community_id_columns(session)
                 rows = list(
                     session.scalars(
                         select(KnowledgeGraphCommunity)
@@ -829,11 +833,19 @@ class KnowledgeRepositoryImpl(KnowledgeRepository):
                         .order_by(
                             KnowledgeGraphCommunity.projection,
                             KnowledgeGraphCommunity.level,
+                            KnowledgeGraphCommunity.id.asc().nullslast(),
                             KnowledgeGraphCommunity.community_id,
                         )
                     ).all()
                 )
                 return [_graph_community_schema(row) for row in rows]
+
+    def allocate_graph_community_id(self, adapter_name: str, *, level: int = 0) -> str:
+        with profile_span("kg_repository.allocate_graph_community_id", adapter=adapter_name, level=level):
+            with self._session_scope() as session:
+                self._ensure_graph_community_id_columns(session)
+                sequence_id = int(session.scalar(select(GRAPH_COMMUNITY_ID_SEQUENCE.next_value())))
+                return f"kgc:{adapter_name}:l{int(level)}:{sequence_id}"
 
     def list_graph_findings(self, adapter_name: str) -> list[GraphIndexFinding]:
         with profile_span("kg_repository.list_graph_findings", adapter=adapter_name):
@@ -933,6 +945,7 @@ class KnowledgeRepositoryImpl(KnowledgeRepository):
             promote_signals=len(promoted_signals or {}),
         ):
             with self._session_scope() as session:
+                self._ensure_graph_community_id_columns(session)
                 old_communities: list[KnowledgeGraphCommunity] = []
                 old_findings: list[KnowledgeGraphFinding] = []
                 old_deltas: list[KnowledgeGraphDelta] = []
@@ -1556,6 +1569,24 @@ class KnowledgeRepositoryImpl(KnowledgeRepository):
             # integration databases may contain old tables owned by another role.
             _table_columns(session, "kg_evidence_chunks")
             self._evidence_chunk_manifest_columns_ready = True
+
+    def _ensure_graph_community_id_columns(self, session: Session) -> None:
+        if self._graph_community_id_columns_ready:
+            return
+        with profile_span("kg_repository.ensure_graph_community_id_columns"):
+            session.execute(text("CREATE SEQUENCE IF NOT EXISTS kg_graph_community_id_seq"))
+            existing_columns = _table_columns(session, "kg_graph_communities")
+            if "id" not in existing_columns:
+                session.execute(text("ALTER TABLE kg_graph_communities ADD COLUMN IF NOT EXISTS id BIGINT"))
+            session.execute(
+                text("ALTER TABLE kg_graph_communities ALTER COLUMN id SET DEFAULT nextval('kg_graph_community_id_seq')")
+            )
+            existing_indexes = _table_indexes(session, "kg_graph_communities")
+            if "ix_kg_graph_communities_id" not in existing_indexes:
+                session.execute(
+                    text("CREATE INDEX IF NOT EXISTS ix_kg_graph_communities_id ON kg_graph_communities (id)")
+                )
+            self._graph_community_id_columns_ready = True
 
     def _ensure_retrieval_quality_tables(self, session: Session) -> None:
         if self._retrieval_quality_tables_ready:
@@ -2189,6 +2220,7 @@ def _chunk_ids_for_edge(properties: dict[str, Any], chunks: list[EvidenceChunk])
 def _graph_community_values(item: GraphIndexCommunity) -> dict[str, Any]:
     return {
         "community_id": item.community_id,
+        "id": _graph_community_numeric_id(item.community_id),
         "version_id": item.version_id,
         "adapter_name": item.adapter_name,
         "projection": item.projection,
@@ -2281,7 +2313,7 @@ def _community_assignment_values(item: CommunityAssignment) -> dict[str, Any]:
 
 
 def _graph_community_schema(row: KnowledgeGraphCommunity) -> GraphIndexCommunity:
-    return GraphIndexCommunity(
+    community = GraphIndexCommunity(
         community_id=row.community_id,
         version_id=row.version_id,
         adapter_name=row.adapter_name,
@@ -2301,6 +2333,19 @@ def _graph_community_schema(row: KnowledgeGraphCommunity) -> GraphIndexCommunity
         lineage_id=row.lineage_id or "",
         previous_community_ids=[str(item) for item in row.previous_community_ids or [] if item],
     )
+    if row.id is not None:
+        community.metrics.setdefault("community_numeric_id", int(row.id))
+    return community
+
+
+def _graph_community_numeric_id(community_id: str) -> int | None:
+    match = re.search(r":(\d+)$", str(community_id or ""))
+    if not match:
+        return None
+    try:
+        return int(match.group(1))
+    except ValueError:
+        return None
 
 
 def _graph_finding_values(item: GraphIndexFinding) -> dict[str, Any]:

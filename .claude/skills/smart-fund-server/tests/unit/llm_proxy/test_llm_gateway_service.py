@@ -425,6 +425,74 @@ def test_gateway_repairs_with_caller_feedback_and_overwrites_original_cache(tmp_
     assert "validation_issues" in repair_request.messages[-1]["content"]
 
 
+def test_gateway_repeats_caller_feedback_repair_until_schema_valid(tmp_path, monkeypatch):
+    monkeypatch.setenv("LLM_PROXY_SCHEMA_REPAIR_MAX_ATTEMPTS", "1")
+    registry = ProviderRegistry()
+    deepseek = SequenceProvider(
+        "deepseek",
+        [
+            {"structured_output": None},
+            {"structured_output": None},
+            {"structured_output": None},
+            {"structured_output": None},
+            {"structured_output": {"title": "AI算力链"}},
+        ],
+    )
+    registry.register(deepseek)
+    router = ModelRouter(
+        ModelRouterConfig(
+            default_model="deepseek-v4-flash",
+            default_provider="deepseek",
+            model_routes={"deepseek-v4-flash": ["deepseek"]},
+            model_aliases={},
+        )
+    )
+    service = LLMGatewayService(
+        router=router,
+        registry=registry,
+        cache_ttl_seconds=60,
+        cache_max_size=16,
+        file_cache=LLMPersistentFileCache(tmp_path, enabled=True),
+    )
+    request = LLMProxyRequest(
+        prompt='{"topic":"AI芯片短缺"}',
+        system_prompt="只输出 JSON",
+        model="deepseek-v4-flash",
+        json_schema={
+            "type": "object",
+            "properties": {"title": {"type": "string"}},
+            "required": ["title"],
+            "additionalProperties": False,
+        },
+    )
+
+    first = asyncio.run(service.generate(request))
+    repaired = asyncio.run(
+        service.repair_with_feedback(
+            request,
+            first,
+            ["output must be JSON object"],
+            instruction="请修复为合法 JSON object。",
+            retry_reason="cognitive_card_validation_invalid",
+        )
+    )
+    cached = asyncio.run(service.generate(request))
+
+    assert repaired.structured_output == {"title": "AI算力链"}
+    assert repaired.proxy["feedback_repair_attempted"] is True
+    assert repaired.proxy["feedback_repair_attempts"] == 2
+    assert repaired.proxy["feedback_repair_success"] is True
+    assert cached.cache_hit is True
+    assert cached.structured_output == {"title": "AI算力链"}
+    assert len(deepseek.calls) == 5
+    first_repair_request = deepseek.calls[2][0]
+    second_repair_request = deepseek.calls[4][0]
+    assert first_repair_request.metadata["retry_reason"] == "cognitive_card_validation_invalid"
+    assert second_repair_request.metadata["retry_reason"] == "cognitive_card_validation_invalid"
+    assert len(second_repair_request.messages) > len(first_repair_request.messages)
+    assert "validation_issues" in second_repair_request.messages[-1]["content"]
+
+
 def test_json_schema_validation_supports_conditional_assignment_schema():
     schema = {
         "type": "object",

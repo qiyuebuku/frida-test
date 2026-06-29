@@ -144,6 +144,10 @@ class KnowledgeRepository(ABC):
         """Load current Graph Index communities for one adapter."""
 
     @abstractmethod
+    def allocate_graph_community_id(self, adapter_name: str, *, level: int = 0) -> str:
+        """Allocate a monotonic community id for a new Graph Index community."""
+
+    @abstractmethod
     def list_graph_findings(self, adapter_name: str) -> list[GraphIndexFinding]:
         """Load current Graph Index findings for one adapter."""
 

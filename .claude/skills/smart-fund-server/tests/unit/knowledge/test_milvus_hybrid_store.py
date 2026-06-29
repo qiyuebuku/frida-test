@@ -106,6 +106,99 @@ def test_hybrid_search_empty_scope_warning_is_rate_limited(caplog) -> None:
     assert len(messages) == 1
 
 
+def test_hybrid_search_retries_once_after_transient_connection_reset() -> None:
+    class FakeAnnSearchRequest:
+        def __init__(self, **kwargs):
+            self.kwargs = kwargs
+
+    class FakeRRFRanker:
+        def __init__(self, **kwargs):
+            self.kwargs = kwargs
+
+    class FakeClient:
+        def __init__(self, *, fail: bool):
+            self.fail = fail
+            self.closed = False
+            self.hybrid_search_calls = 0
+
+        def has_collection(self, collection_name: str) -> bool:
+            return True
+
+        def query(self, **kwargs):
+            return [{"target_id": "doc-1"}]
+
+        def hybrid_search(self, **kwargs):
+            self.hybrid_search_calls += 1
+            if self.fail:
+                raise RuntimeError("StatusCode.UNAVAILABLE recvmsg:Connection reset by peer")
+            return [
+                [
+                    {
+                        "entity": {
+                            "target_id": "doc-1",
+                            "chunk_id": "doc-1",
+                            "evidence_id": "ev-1",
+                            "text": "AI 算力链",
+                            "adapter_name": "financial",
+                            "target": "prod",
+                            "target_type": "community",
+                            "source_type": "kg_graph_community",
+                            "source_id": "community-1",
+                            "metadata_json": {},
+                        },
+                        "score": 0.9,
+                    }
+                ]
+            ]
+
+        def close(self):
+            self.closed = True
+
+    first_client = FakeClient(fail=True)
+    second_client = FakeClient(fail=False)
+
+    class Store(MilvusHybridStore):
+        def __init__(self):
+            super().__init__(dim=3)
+            self.clients = [first_client, second_client]
+            self.connection_manager_closed = 0
+
+        def _load_imports(self):
+            return {
+                "AnnSearchRequest": FakeAnnSearchRequest,
+                "RRFRanker": FakeRRFRanker,
+            }
+
+        def ensure_collection(self, *, recreate_on_dim_mismatch: bool = False) -> None:
+            return None
+
+        def _get_client(self):
+            if self._client is not None:
+                return self._client
+            self._client = self.clients.pop(0)
+            return self._client
+
+        def _close_connection_manager(self, imports):
+            self.connection_manager_closed += 1
+
+    store = Store()
+
+    hits = store.hybrid_search(
+        query_text="AI算力链",
+        query_vector=[0.1, 0.2, 0.3],
+        adapter_name="financial",
+        target="prod",
+        limit=5,
+    )
+
+    assert len(hits) == 1
+    assert hits[0].target_id == "doc-1"
+    assert first_client.hybrid_search_calls == 1
+    assert first_client.closed is True
+    assert second_client.hybrid_search_calls == 1
+    assert store.connection_manager_closed == 1
+
+
 def test_upsert_documents_uses_target_id_primary_key_without_delete() -> None:
     class FakeClient:
         def __init__(self):

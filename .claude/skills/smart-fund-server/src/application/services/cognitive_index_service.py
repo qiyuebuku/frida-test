@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
+import re
 from collections.abc import Awaitable, Callable
 from datetime import datetime, timezone
 from typing import Any
@@ -16,6 +17,8 @@ from src.application.services.knowledge_llm_config import resolve_kg_llm_model
 from src.domain.knowledge.cognitive_index import (
     ASSIGNMENT_SCHEMA,
     ASSIGNMENT_SYSTEM_PROMPT,
+    ASSIGNMENT_MAX_TOKENS,
+    COGNITIVE_CARD_MAX_TOKENS,
     COGNITIVE_CARD_SCHEMA,
     COGNITIVE_CARD_SYSTEM_PROMPT,
     COMPLEX_MAX_ATTACH,
@@ -39,6 +42,8 @@ from src.domain.knowledge.cognitive_index import (
     assignment_query_text,
     assignment_prompt_topic_intent,
     cognitive_card_from_llm,
+    merge_seed_community_drafts,
+    seed_community_drafts,
     validate_assignment_decision,
 )
 from src.domain.knowledge.graph_index import GraphIndexCommunity
@@ -88,7 +93,7 @@ class CognitiveCardExtractor:
             system_prompt=COGNITIVE_CARD_SYSTEM_PROMPT,
             prompt=json.dumps(prompt, ensure_ascii=False, indent=2),
             temperature=0,
-            max_tokens=1800,
+            max_tokens=COGNITIVE_CARD_MAX_TOKENS,
             json_schema=COGNITIVE_CARD_SCHEMA,
             metadata={
                 "task": "kg_cognitive_card",
@@ -335,13 +340,25 @@ class AssignmentCandidateOrderStore:
             return [str(item) for item in row.ordered_community_ids or [] if str(item).strip()]
 
 
-def _stable_candidate_prompt_sort_key(candidate: dict[str, Any]) -> tuple[int, int, str, str]:
+def _stable_candidate_prompt_sort_key(candidate: dict[str, Any]) -> tuple[int, int, int, str]:
+    community_id = str(candidate.get("community_id") or "")
+    sequence = _community_id_sequence_order(community_id)
     return (
         int(candidate.get("level") or 0),
-        0 if str(candidate.get("origin") or "") == "seed" else 1,
-        str(candidate.get("title") or ""),
-        str(candidate.get("community_id") or ""),
+        0 if sequence is not None else 1,
+        sequence or 0,
+        community_id,
     )
+
+
+def _community_id_sequence_order(community_id: str) -> int | None:
+    match = re.search(r":(\d+)$", community_id)
+    if not match:
+        return None
+    try:
+        return int(match.group(1))
+    except ValueError:
+        return None
 
 
 class CommunityCardBuilder:
@@ -355,6 +372,7 @@ class CommunityCardBuilder:
         target: str = "prod",
         on_communities_updated: Callable[[list[GraphIndexCommunity]], Awaitable[None]] | None = None,
         candidate_order_store: AssignmentCandidateOrderStore | None = None,
+        community_id_factory: Callable[[str, int, str], str] | None = None,
     ):
         self._llm = llm or get_llm_gateway_service()
         self._model = model or resolve_kg_llm_model("kg_community_assignment")
@@ -363,6 +381,7 @@ class CommunityCardBuilder:
         self._target = target
         self._on_communities_updated = on_communities_updated
         self._candidate_order_store = candidate_order_store
+        self._community_id_factory = community_id_factory
 
     async def build(
         self,
@@ -372,6 +391,7 @@ class CommunityCardBuilder:
         existing_communities: list[GraphIndexCommunity],
     ) -> CognitiveCommunityBuildResult:
         communities = _drafts_from_existing(existing_communities)
+        merge_seed_community_drafts(communities, seed_community_drafts(adapter_name))
         assignments: list[CommunityAssignment] = []
         intent_count = 0
         validation_errors = 0
@@ -390,7 +410,7 @@ class CommunityCardBuilder:
                         communities=communities,
                     )
                     try:
-                        decision = await self._decide_assignment(card, topic_intent, candidates)
+                        decision = await self._decide_assignment(card, topic_intent, candidates, communities)
                     except Exception:
                         validation_errors += 1
                         raise
@@ -401,6 +421,7 @@ class CommunityCardBuilder:
                         topic_intent=topic_intent,
                         decision=decision,
                         communities=communities,
+                        community_id_factory=self._community_id_factory,
                     )
                     assignments.extend(applied)
                     if applied and self._on_communities_updated is not None:
@@ -527,29 +548,48 @@ class CommunityCardBuilder:
         card: CognitiveCard,
         topic_intent: dict[str, Any],
         candidates: list[dict[str, Any]],
+        communities: dict[str, Any],
     ) -> dict[str, Any]:
         max_attach = COMPLEX_MAX_ATTACH if _is_complex_intent(topic_intent) else DEFAULT_MAX_ATTACH
-        query_key = assignment_candidate_order_key(topic_intent)
+        deduped_candidates = _dedupe_assignment_candidates(candidates)
         prompt_ordered_candidates = self._prompt_order_candidates(
             adapter_name=card.adapter_name,
-            query_key=query_key,
-            candidates=candidates,
-        )
+            query_key=assignment_candidate_order_key(topic_intent),
+            candidates=deduped_candidates,
+        )[:MAX_ASSIGNMENT_CANDIDATES]
         alias_map, prompt_candidates = _candidate_aliases(prompt_ordered_candidates)
+        validation_candidates = prompt_ordered_candidates
+        candidate_ids = [str(candidate.get("community_id") or "") for candidate in candidates if candidate.get("community_id")]
+        deduped_candidate_ids = [
+            str(candidate.get("community_id") or "")
+            for candidate in deduped_candidates
+            if candidate.get("community_id")
+        ]
+        prompt_candidate_ids = [
+            str(candidate.get("community_id") or "")
+            for candidate in prompt_ordered_candidates
+            if candidate.get("community_id")
+        ]
         prompt = {
-            "max_attach": max_attach,
-            "candidate_communities": prompt_candidates,
-            "source": {"title": (card.payload or {}).get("title") or ""},
+            "community_candidates": prompt_candidates,
             "topic_intent": assignment_prompt_topic_intent(topic_intent, max_attach=max_attach),
+            "max_attach": max_attach,
         }
         request = LLMProxyRequest(
             model=self._model,
             system_prompt=ASSIGNMENT_SYSTEM_PROMPT,
             prompt=json.dumps(prompt, ensure_ascii=False, indent=2),
             temperature=0,
-            max_tokens=2200,
+            max_tokens=ASSIGNMENT_MAX_TOKENS,
             json_schema=ASSIGNMENT_SCHEMA,
-            metadata={"task": "kg_community_assignment"},
+            metadata={
+                "task": "kg_community_assignment",
+                "raw_candidate_count": len(candidate_ids),
+                "deduped_candidate_count": len(deduped_candidate_ids),
+                "prompt_candidate_count": len(prompt_ordered_candidates),
+                "duplicate_candidate_count": max(0, len(candidate_ids) - len(set(candidate_ids))),
+                "prompt_candidate_id_sample": prompt_candidate_ids[:5],
+            },
             use_cache=True,
         )
         response = await self._llm.generate(request)
@@ -558,7 +598,7 @@ class CommunityCardBuilder:
             raise RuntimeError(f"assignment output is not object: card={card.cognitive_card_id}")
         decision = _resolve_aliases(decision, alias_map)
         try:
-            validate_assignment_decision(decision, candidates, topic_intent=topic_intent)
+            validate_assignment_decision(decision, validation_candidates, topic_intent=topic_intent)
         except Exception as exc:
             repaired = await self._llm.repair_with_feedback(
                 request,
@@ -568,10 +608,13 @@ class CommunityCardBuilder:
                     "上一轮 Community Assignment 输出未通过业务校验。"
                     "只修复 JSON 结构和字段合规性，不改变业务裁决含义。"
                     "顶层只能包含 assignments 和 new_communities。"
-                    "action=attach_existing 时 community_id 必须引用候选 alias；"
+                    "action=attach_existing 时 community_id 必须引用 community_candidates 中真实存在的 community_id；"
                     "action=create_new 时 community_id 必须引用 new_communities 中的 client_id。"
                     "每条 assignment 必须包含 fit_type；attach_existing 不能使用 new_parent_topic，"
                     "create_new 必须使用 new_parent_topic。"
+                    "不要创建只表示行情表现的 L0 community，例如市场行情、板块异动、个股涨跌、成交放量、"
+                    "资金流向、ETF表现、概念异动或盘面表现；如果 intent 是上涨、下跌、反弹、涨停、"
+                    "成交放量或资金流入，必须挂入已有驱动主题，或创建更具体且可长期复用的驱动型父主题。"
                 ),
                 retry_reason="community_assignment_validation_invalid",
             )
@@ -579,13 +622,7 @@ class CommunityCardBuilder:
             if not isinstance(decision, dict):
                 raise RuntimeError(f"assignment repair output is not object: card={card.cognitive_card_id}") from exc
             decision = _resolve_aliases(decision, alias_map)
-            validate_assignment_decision(decision, candidates, topic_intent=topic_intent)
-        if self._candidate_order_store is not None:
-            self._candidate_order_store.save_order(
-                adapter_name=card.adapter_name,
-                query_key=query_key,
-                candidates=prompt_ordered_candidates,
-            )
+            validate_assignment_decision(decision, validation_candidates, topic_intent=topic_intent)
         return decision
 
     def _prompt_order_candidates(
@@ -595,13 +632,66 @@ class CommunityCardBuilder:
         query_key: str,
         candidates: list[dict[str, Any]],
     ) -> list[dict[str, Any]]:
-        if self._candidate_order_store is None:
-            return sorted(candidates, key=_stable_candidate_prompt_sort_key)
-        return self._candidate_order_store.order_candidates(
-            adapter_name=adapter_name,
-            query_key=query_key,
-            candidates=candidates,
-        )
+        return sorted(candidates, key=_stable_candidate_prompt_sort_key)
+
+
+def _dedupe_assignment_candidates(candidates: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    deduped: dict[str, dict[str, Any]] = {}
+    for candidate in candidates:
+        community_id = str(candidate.get("community_id") or "")
+        if not community_id:
+            continue
+        current = deduped.get(community_id)
+        if current is None:
+            deduped[community_id] = dict(candidate)
+            continue
+        deduped[community_id] = _merge_assignment_candidate(current, candidate)
+    return list(deduped.values())
+
+
+def _merge_assignment_candidate(left: dict[str, Any], right: dict[str, Any]) -> dict[str, Any]:
+    merged = dict(left)
+    for key, value in right.items():
+        if value in (None, "", [], {}):
+            continue
+        if key in {"retrieval_score", "rerank_score"}:
+            merged[key] = max(float(merged.get(key) or 0.0), float(value or 0.0))
+            continue
+        if key == "retrieval_lane":
+            lanes = [
+                item
+                for item in [str(merged.get(key) or ""), str(value or "")]
+                if item
+            ]
+            merged[key] = "|".join(_ordered_unique(lanes))
+            continue
+        if key in {"canonical_labels", "parent_themes", "broad_topics", "mid_topics", "specific_topics", "future_coverage"}:
+            merged[key] = _ordered_unique([*_candidate_list(merged.get(key)), *_candidate_list(value)])
+            continue
+        if not merged.get(key):
+            merged[key] = value
+    return merged
+
+
+def _candidate_list(value: Any) -> list[str]:
+    if value is None:
+        return []
+    if isinstance(value, (list, tuple, set)):
+        return [str(item) for item in value if str(item or "").strip()]
+    text = str(value).strip()
+    return [text] if text else []
+
+
+def _ordered_unique(values) -> list[str]:
+    seen: set[str] = set()
+    result: list[str] = []
+    for value in values:
+        text = str(value or "").strip()
+        if not text or text in seen:
+            continue
+        seen.add(text)
+        result.append(text)
+    return result
 
 
 def _candidate_rerank_text(candidate: dict[str, Any]) -> str:

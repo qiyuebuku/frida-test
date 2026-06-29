@@ -4,12 +4,15 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from sqlalchemy import DateTime, Float, Index, Integer, String, Text, UniqueConstraint
+from sqlalchemy import BigInteger, DateTime, Float, Index, Integer, Sequence, String, Text, UniqueConstraint
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 from sqlalchemy.sql import func
 
 from src.infrastructure.persistence.models.base import Base
+
+
+GRAPH_COMMUNITY_ID_SEQUENCE = Sequence("kg_graph_community_id_seq", metadata=Base.metadata)
 
 
 class KnowledgeNode(Base):
@@ -291,12 +294,14 @@ class KnowledgeGraphCommunity(Base):
 
     __tablename__ = "kg_graph_communities"
     __table_args__ = (
+        Index("ix_kg_graph_communities_id", "id"),
         Index("ix_kg_graph_communities_adapter_projection", "adapter_name", "projection"),
         Index("ix_kg_graph_communities_parent", "parent_community_id"),
         Index("ix_kg_graph_communities_status", "status"),
     )
 
     community_id: Mapped[str] = mapped_column(String(180), primary_key=True)
+    id: Mapped[int | None] = mapped_column(BigInteger, server_default=GRAPH_COMMUNITY_ID_SEQUENCE.next_value())
     version_id: Mapped[str] = mapped_column(String(220), nullable=False)
     adapter_name: Mapped[str] = mapped_column(String(64), nullable=False)
     projection: Mapped[str] = mapped_column(String(64), nullable=False)

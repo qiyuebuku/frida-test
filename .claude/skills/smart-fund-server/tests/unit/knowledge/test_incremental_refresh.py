@@ -215,6 +215,50 @@ async def test_compile_kg_refreshes_changed_indexes_incrementally(monkeypatch) -
     assert any(call.startswith("replace_graph_index") for call in repository.calls)
 
 
+@pytest.mark.asyncio
+async def test_prune_stale_community_documents_deletes_legacy_documents_regardless_source_type(monkeypatch) -> None:
+    class FakeRetriever:
+        def __init__(self):
+            self.deleted: list[str] = []
+            self.list_calls: list[dict] = []
+
+        async def list_target_ids_by_role(self, **kwargs):
+            self.list_calls.append(kwargs)
+            if kwargs.get("source_type"):
+                return ["kgc:financial:l0:1"]
+            return [
+                "kgc:financial:l0:1",
+                "kg_community:risk_event:l0:legacy",
+                "kg_finding:legacy",
+            ]
+
+        async def delete_documents_by_role(self, **kwargs):
+            self.deleted.extend(kwargs["target_ids"])
+            return len(kwargs["target_ids"])
+
+    retriever = FakeRetriever()
+    monkeypatch.setattr(service_module, "_semantic_hybrid_retriever", lambda: retriever)
+
+    deleted = await service_module._prune_stale_community_documents(
+        adapter_name="financial",
+        target="prod",
+        active_target_ids=["kgc:financial:l0:1"],
+    )
+
+    assert deleted == 2
+    assert retriever.list_calls == [
+        {
+            "collection_role": service_module.SEMANTIC_COLLECTION_COMMUNITY,
+            "adapter_name": "financial",
+            "target": "prod",
+        }
+    ]
+    assert retriever.deleted == [
+        "kg_community:risk_event:l0:legacy",
+        "kg_finding:legacy",
+    ]
+
+
 def test_semantic_index_materials_include_edges_related_to_changed_node() -> None:
     repository = _CompileRefreshRepository()
     changed_node = CompiledNode(
@@ -772,6 +816,9 @@ class _CompileRefreshRepository:
 
     def list_graph_communities(self, _adapter_name):
         return []
+
+    def allocate_graph_community_id(self, adapter_name, *, level=0):
+        return f"kgc:{adapter_name}:l{level}:{len(self.calls) + 1}"
 
     def list_graph_findings(self, _adapter_name):
         return []

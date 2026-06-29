@@ -150,8 +150,11 @@ CREATE TABLE IF NOT EXISTS public.kg_evidence_chunks (
     created_at timestamp with time zone DEFAULT now()
 );
 
+CREATE SEQUENCE IF NOT EXISTS public.kg_graph_community_id_seq;
+
 CREATE TABLE IF NOT EXISTS public.kg_graph_communities (
     community_id character varying(180) PRIMARY KEY,
+    id bigint DEFAULT nextval('public.kg_graph_community_id_seq'::regclass),
     version_id character varying(220) NOT NULL,
     adapter_name character varying(64) NOT NULL,
     projection character varying(64) NOT NULL,
@@ -172,6 +175,11 @@ CREATE TABLE IF NOT EXISTS public.kg_graph_communities (
     created_at timestamp with time zone DEFAULT now(),
     updated_at timestamp with time zone DEFAULT now()
 );
+
+ALTER TABLE IF EXISTS public.kg_graph_communities
+    ADD COLUMN IF NOT EXISTS id bigint;
+ALTER TABLE IF EXISTS public.kg_graph_communities
+    ALTER COLUMN id SET DEFAULT nextval('public.kg_graph_community_id_seq'::regclass);
 
 CREATE TABLE IF NOT EXISTS public.kg_cognitive_cards (
     cognitive_card_id character varying(180) PRIMARY KEY,
@@ -384,6 +392,8 @@ CREATE INDEX IF NOT EXISTS ix_kg_evidence_chunks_evidence_index
 
 CREATE INDEX IF NOT EXISTS ix_kg_graph_communities_adapter_projection
     ON public.kg_graph_communities(adapter_name, projection);
+CREATE INDEX IF NOT EXISTS ix_kg_graph_communities_id
+    ON public.kg_graph_communities(id);
 CREATE INDEX IF NOT EXISTS ix_kg_graph_communities_parent
     ON public.kg_graph_communities(parent_community_id);
 CREATE INDEX IF NOT EXISTS ix_kg_graph_communities_status

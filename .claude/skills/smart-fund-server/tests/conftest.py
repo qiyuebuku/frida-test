@@ -22,6 +22,11 @@ if str(PROJECT_ROOT) not in sys.path:
 
 import pytest
 
+# 单测默认不应向真实 Langfuse 项目写入事件。.env 面向本地 demo/调试，
+# 可能开启 KG_LANGFUSE_ENABLED；测试如需验证 Langfuse，可在用例内 monkeypatch 显式打开。
+if os.getenv("ALLOW_LANGFUSE_IN_TESTS", "").strip().lower() not in {"1", "true", "yes", "on"}:
+    os.environ["KG_LANGFUSE_ENABLED"] = "0"
+
 
 # ==================== 测试库连接配置 ====================
 

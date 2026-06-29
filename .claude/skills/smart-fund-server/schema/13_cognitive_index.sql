@@ -1,6 +1,16 @@
 -- Cognitive Card and Community Assignment tables.
 -- PG stores structured cognitive signals and refs only; readable chunk/card text stays in Milvus.
 
+CREATE SEQUENCE IF NOT EXISTS public.kg_graph_community_id_seq;
+
+ALTER TABLE IF EXISTS public.kg_graph_communities
+    ADD COLUMN IF NOT EXISTS id bigint;
+ALTER TABLE IF EXISTS public.kg_graph_communities
+    ALTER COLUMN id SET DEFAULT nextval('public.kg_graph_community_id_seq'::regclass);
+
+CREATE INDEX IF NOT EXISTS ix_kg_graph_communities_id
+    ON public.kg_graph_communities(id);
+
 CREATE TABLE IF NOT EXISTS public.kg_cognitive_cards (
     cognitive_card_id character varying(180) PRIMARY KEY,
     adapter_name character varying(64) NOT NULL,

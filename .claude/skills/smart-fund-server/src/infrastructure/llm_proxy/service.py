@@ -289,7 +289,19 @@ def _llm_trace_output(response: LLMProxyResponse) -> dict[str, Any]:
         "duration_ms": response.duration_ms,
         "cache_hit": response.cache_hit,
         "proxy": response.proxy,
+        "provider_diagnostics": _llm_provider_diagnostics(response.raw_payload),
     }
+
+
+def _llm_provider_diagnostics(raw_payload: dict[str, Any] | None) -> dict[str, Any]:
+    raw_payload = raw_payload or {}
+    diagnostics = {
+        "finish_reason": raw_payload.get("finish_reason"),
+        "json_mode_initial": raw_payload.get("json_mode_initial"),
+        "json_mode_retry": raw_payload.get("json_mode_retry"),
+        "json_repair": raw_payload.get("json_repair"),
+    }
+    return {key: value for key, value in diagnostics.items() if value is not None}
 
 
 def _clip_json_trace(value: Any, *, limit: int = 16000) -> Any:
@@ -1123,14 +1135,38 @@ class LLMGatewayService:
         original request cache key.
         """
 
-        repair_request = _feedback_repair_request(
-            request,
-            response,
-            validation_issues,
-            instruction=instruction,
-            retry_reason=retry_reason,
-        )
-        return await self.generate(repair_request)
+        max_attempts = _feedback_repair_max_attempts()
+        original_issues = list(validation_issues)
+        current_response = response
+        current_issues = list(validation_issues)
+        repair_messages: list[dict[str, Any]] | None = None
+        for attempt in range(1, max_attempts + 1):
+            repair_request = _feedback_repair_request(
+                request,
+                current_response,
+                current_issues,
+                instruction=instruction,
+                retry_reason=retry_reason,
+                previous_messages=repair_messages,
+            )
+            repaired = await self.generate(repair_request)
+            repaired_issues = _feedback_repair_response_issues(repaired, request)
+            repaired.proxy.setdefault("feedback_repair_attempted", True)
+            repaired.proxy.setdefault("feedback_repair_attempts", attempt)
+            repaired.proxy.setdefault("feedback_repair_issues", original_issues)
+            repaired.proxy.setdefault("feedback_repair_last_issues", repaired_issues)
+            repaired.proxy.setdefault("feedback_repair_success", not repaired_issues)
+            if not repaired_issues:
+                return repaired
+            repair_messages = list(repair_request.messages)
+            current_response = repaired
+            current_issues = repaired_issues
+        current_response.proxy.setdefault("feedback_repair_attempted", True)
+        current_response.proxy.setdefault("feedback_repair_attempts", max_attempts)
+        current_response.proxy.setdefault("feedback_repair_issues", original_issues)
+        current_response.proxy.setdefault("feedback_repair_success", False)
+        current_response.proxy.setdefault("feedback_repair_retry_issues", current_issues)
+        return current_response
 
     async def _repair_schema_invalid_response(
         self,
@@ -1316,6 +1352,25 @@ def _schema_repair_max_attempts() -> int:
         return 3
 
 
+def _feedback_repair_max_attempts() -> int:
+    raw = os.getenv("LLM_PROXY_FEEDBACK_REPAIR_MAX_ATTEMPTS", "3")
+    try:
+        return max(1, min(10, int(raw)))
+    except ValueError:
+        return 3
+
+
+def _feedback_repair_response_issues(
+    response: LLMProxyResponse,
+    request: LLMProxyRequest,
+) -> list[str]:
+    if request.json_schema:
+        return _json_schema_validation_issues(response.structured_output, request.json_schema)
+    if _is_json_request(request) and response.structured_output is None:
+        return ["structured_output:none"]
+    return []
+
+
 def _feedback_repair_request(
     request: LLMProxyRequest,
     response: LLMProxyResponse,
@@ -1323,8 +1378,9 @@ def _feedback_repair_request(
     *,
     instruction: str | None,
     retry_reason: str,
+    previous_messages: list[dict[str, Any]] | None = None,
 ) -> LLMProxyRequest:
-    original_messages = _messages_for_schema_repair(request)
+    original_messages = previous_messages or _messages_for_schema_repair(request)
     previous = response.text or json.dumps(response.structured_output, ensure_ascii=False, default=str)
     default_instruction = (
         "你上一次输出没有通过调用方的业务校验。请基于同一个任务上下文继续修复输出。"

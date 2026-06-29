@@ -131,6 +131,17 @@ class DeepSeekOpenAIProvider:
             normalized_usage = self._merge_usage(normalized_usage, self._normalized_usage(json_mode_retry_data))
         if repair_data is not None:
             normalized_usage = self._merge_usage(normalized_usage, self._normalized_usage(repair_data))
+        primary_diagnostics = self._response_diagnostics(primary_data)
+        json_mode_retry_diagnostics = (
+            self._response_diagnostics(json_mode_retry_data)
+            if json_mode_retry_data is not None
+            else None
+        )
+        json_repair_diagnostics = (
+            self._response_diagnostics(repair_data)
+            if repair_data is not None
+            else None
+        )
 
         return LLMProxyResponse(
             text=text,
@@ -152,30 +163,12 @@ class DeepSeekOpenAIProvider:
                 "reasoning_content": reasoning_content,
                 "provider": self.name,
                 "json_repair": (
-                    {
-                        "id": repair_data.get("id"),
-                        "model": repair_data.get("model"),
-                        "finish_reason": ((repair_data.get("choices") or [{}])[0]).get("finish_reason"),
-                    }
-                    if repair_data is not None
-                    else None
+                    json_repair_diagnostics
                 ),
                 "json_mode_retry": (
-                    {
-                        "id": json_mode_retry_data.get("id"),
-                        "model": json_mode_retry_data.get("model"),
-                        "finish_reason": ((json_mode_retry_data.get("choices") or [{}])[0]).get(
-                            "finish_reason"
-                        ),
-                    }
-                    if json_mode_retry_data is not None
-                    else None
+                    json_mode_retry_diagnostics
                 ),
-                "json_mode_initial": {
-                    "id": primary_data.get("id"),
-                    "model": primary_data.get("model"),
-                    "finish_reason": ((primary_data.get("choices") or [{}])[0]).get("finish_reason"),
-                },
+                "json_mode_initial": primary_diagnostics,
             },
             cache_hit=False,
             proxy={
@@ -189,9 +182,23 @@ class DeepSeekOpenAIProvider:
                 or json_mode_retry_error is not None,
                 "json_mode_retry_success": json_mode_retry_data is not None and bool(text.strip()),
                 "json_mode_retry_error": json_mode_retry_error,
+                "json_mode_initial_finish_reason": primary_diagnostics.get("finish_reason"),
+                "json_mode_retry_finish_reason": (
+                    json_mode_retry_diagnostics or {}
+                ).get("finish_reason"),
+                "json_mode_initial_usage": primary_diagnostics.get("usage"),
+                "json_mode_retry_usage": (
+                    json_mode_retry_diagnostics or {}
+                ).get("usage"),
                 "json_repair_attempted": repair_data is not None or repair_error is not None,
                 "json_repair_success": repair_data is not None and structured_output is not None,
                 "json_repair_error": repair_error,
+                "json_repair_finish_reason": (
+                    json_repair_diagnostics or {}
+                ).get("finish_reason"),
+                "json_repair_usage": (
+                    json_repair_diagnostics or {}
+                ).get("usage"),
             },
         )
 
@@ -462,6 +469,22 @@ class DeepSeekOpenAIProvider:
         choice = (data.get("choices") or [{}])[0]
         message = choice.get("message") or {}
         return str(message.get("content") or "")
+
+    @staticmethod
+    def _response_diagnostics(data: dict[str, Any]) -> dict[str, Any]:
+        choice = (data.get("choices") or [{}])[0]
+        message = choice.get("message") or {}
+        content = str(message.get("content") or "")
+        reasoning_content = str(message.get("reasoning_content") or "")
+        return {
+            "id": data.get("id"),
+            "model": data.get("model"),
+            "finish_reason": choice.get("finish_reason"),
+            "usage": DeepSeekOpenAIProvider._normalized_usage(data),
+            "content_chars": len(content),
+            "reasoning_chars": len(reasoning_content),
+            "has_tool_calls": bool(message.get("tool_calls")),
+        }
 
     @staticmethod
     def _normalized_usage(data: dict[str, Any]) -> dict[str, int]:
