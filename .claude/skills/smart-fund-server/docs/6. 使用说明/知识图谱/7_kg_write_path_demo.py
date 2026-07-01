@@ -66,6 +66,7 @@ from pathlib import Path
 from pprint import pprint
 from typing import Any
 
+import redis
 from sqlalchemy import delete, func, inspect, or_, select
 
 if hasattr(sys.stdout, "reconfigure"):
@@ -100,6 +101,7 @@ from src.domain.knowledge.semantic_index_materials import (  # noqa: E402
 )
 from src.domain.knowledge_adapters.financial.source_projection import project_ft_news_row  # noqa: E402
 from src.infrastructure.connections import get_session  # noqa: E402
+from src.infrastructure.config.settings import REDIS_URL  # noqa: E402
 from src.infrastructure.llm_proxy.service import get_llm_gateway_service  # noqa: E402
 from src.infrastructure.observability.langfuse_tracing import (  # noqa: E402
     langfuse_flush,
@@ -919,6 +921,8 @@ async def step_0_6_cleanup_previous_demo_data() -> dict[str, Any]:
         target=TARGET,
         target_ids=legacy_relation_target_ids,
     )
+    candidate_ledger_key = f"kg:assignment_candidate_ledger:{TARGET}:{ADAPTER}"
+    candidate_ledger_deleted = redis.from_url(REDIS_URL, decode_responses=True).delete(candidate_ledger_key)
     result = {
         "source_prefix": DEMO_PREFIX,
         "evidence_ids": evidence_ids,
@@ -937,6 +941,10 @@ async def step_0_6_cleanup_previous_demo_data() -> dict[str, Any]:
             "legacy_entity_deleted": legacy_entity_deleted,
             "legacy_relation_deleted": legacy_relation_deleted,
         },
+        "redis": {
+            "candidate_ledger_key": candidate_ledger_key,
+            "candidate_ledger_deleted": int(candidate_ledger_deleted or 0),
+        },
     }
     pprint(
         {
@@ -954,6 +962,7 @@ async def step_0_6_cleanup_previous_demo_data() -> dict[str, Any]:
             "milvus_targets": len(milvus_target_ids),
             "deleted": deleted,
             "milvus": result["milvus"],
+            "redis": result["redis"],
         },
         sort_dicts=False,
     )
@@ -2230,6 +2239,7 @@ def _compact_cognitive_index_refresh(cognitive_index: dict[str, Any]) -> dict[st
         "stale_documents_deleted": cognitive_index.get("stale_documents_deleted"),
         "community_builder": diagnostics.get("community_builder"),
         "assignment_validation_errors": diagnostics.get("assignment_validation_errors"),
+        "candidate_ledger": diagnostics.get("candidate_ledger"),
     }
 
 

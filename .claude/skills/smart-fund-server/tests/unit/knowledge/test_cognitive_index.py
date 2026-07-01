@@ -10,15 +10,14 @@ from src.application.services.cognitive_index_service import (
     AssignmentCandidateOrderStore,
     CognitiveCardExtractor,
     CommunityCardBuilder,
+    _candidate_append_log_base_count,
     _dedupe_assignment_candidates,
 )
 from src.domain.knowledge.cognitive_index import (
     ASSIGNMENT_MAX_TOKENS,
     COGNITIVE_CARD_MAX_TOKENS,
     CognitiveCard,
-    _assignment_topic_intent,
     _drafts_from_existing,
-    assignment_candidate_order_key,
     assignment_query_text,
     cognitive_card_from_llm,
     seed_community_drafts,
@@ -406,26 +405,510 @@ class _Reranker:
         )
 
 
-class _MemoryOrderStore(AssignmentCandidateOrderStore):
-    def __init__(self, initial: dict[str, list[str]] | None = None) -> None:
-        self.orders = dict(initial or {})
-        self.saved = []
+class _MemoryRedis:
+    def __init__(self) -> None:
+        self.data: dict[str, str] = {}
+        self.ttl: dict[str, int] = {}
 
-    def order_candidates(self, *, adapter_name, query_key, candidates):
-        previous = self.orders.get(query_key, [])
-        by_id = {candidate["community_id"]: candidate for candidate in candidates}
-        ordered = []
-        for community_id in previous:
-            candidate = by_id.pop(community_id, None)
-            if candidate is not None:
-                ordered.append(candidate)
-        ordered.extend(sorted(by_id.values(), key=lambda item: (item.get("title") or "", item.get("community_id") or "")))
-        return ordered
+    def get(self, key):
+        return self.data.get(key)
 
-    def save_order(self, *, adapter_name, query_key, candidates):
-        ordered_ids = [candidate["community_id"] for candidate in candidates]
-        self.orders[query_key] = ordered_ids
-        self.saved.append({"adapter_name": adapter_name, "query_key": query_key, "ordered_ids": ordered_ids})
+    def setex(self, key, ttl, value):
+        self.data[key] = value
+        self.ttl[key] = ttl
+        return True
+
+
+class _BrokenRedis:
+    def get(self, _key):
+        raise ConnectionError("redis unavailable")
+
+
+def _order_store() -> AssignmentCandidateOrderStore:
+    return AssignmentCandidateOrderStore(target="test", redis_client=_MemoryRedis())
+
+
+def _ledger_candidate(
+    community_id: str,
+    title: str,
+    *,
+    source_count: int = 0,
+    intent_count: int = 0,
+    future_coverage: list[str] | None = None,
+) -> dict:
+    return {
+        "community_id": community_id,
+        "title": title,
+        "origin": "emergent",
+        "level": 0,
+        "scope": f"{title} scope",
+        "canonical_labels": [title],
+        "source_count": source_count,
+        "assigned_intent_count": intent_count,
+        "maturity": "single_evidence",
+        "future_coverage": future_coverage or [],
+        "retrieval_score": 0.8,
+        "retrieval_lane": "semantic:merged",
+        "recent_examples": [],
+    }
+
+
+def test_candidate_ledger_uses_single_append_log_without_reordering_or_midstream_updates():
+    redis = _MemoryRedis()
+    store = AssignmentCandidateOrderStore(target="test", redis_client=redis)
+
+    first_log, first_diag = store.prepare_append_log(
+        adapter_name="financial",
+        candidates=[
+            _ledger_candidate("kgc:financial:l0:1", "AI算力链", source_count=1, intent_count=1),
+            _ledger_candidate("kgc:financial:l0:2", "资本市场改革", source_count=1, intent_count=1),
+        ],
+    )
+    second_log, second_diag = store.prepare_append_log(
+        adapter_name="financial",
+        candidates=[
+            _ledger_candidate("kgc:financial:l0:2", "资本市场改革", source_count=1, intent_count=1),
+            _ledger_candidate("kgc:financial:l0:1", "AI算力链", source_count=1, intent_count=1),
+            _ledger_candidate("kgc:financial:l0:3", "新能源出海", source_count=1, intent_count=1),
+        ],
+    )
+    third_log, third_diag = store.prepare_append_log(
+        adapter_name="financial",
+        candidates=[
+            _ledger_candidate(
+                "kgc:financial:l0:1",
+                "AI算力链",
+                source_count=2,
+                intent_count=2,
+                future_coverage=["AI芯片供需", "光模块/CPO"],
+            ),
+        ],
+    )
+
+    assert [item["entry_type"] for item in first_log] == ["candidate_base", "candidate_base"]
+    assert [item["community_id"] for item in second_log] == [
+        "kgc:financial:l0:1",
+        "kgc:financial:l0:2",
+        "kgc:financial:l0:3",
+    ]
+    assert [item["entry_type"] for item in third_log] == [
+        "candidate_base",
+        "candidate_base",
+        "candidate_base",
+        "candidate_update",
+    ]
+    assert third_log[-1]["community_id"] == "kgc:financial:l0:1"
+    assert third_log[-1] == {
+        "entry_type": "candidate_update",
+        "community_id": "kgc:financial:l0:1",
+        "absorbed": ["AI芯片供需", "光模块/CPO"],
+    }
+    assert first_diag["redis_available"] is True
+    assert second_diag["appended_base"] == 1
+    assert third_diag["appended_update"] == 1
+    assert _candidate_append_log_base_count(third_log) == 3
+
+
+def test_candidate_ledger_compacts_legacy_entries_loaded_from_redis():
+    redis = _MemoryRedis()
+    store = AssignmentCandidateOrderStore(target="test", redis_client=redis)
+    redis.setex(
+        store._ledger_key(adapter_name="financial"),
+        3600,
+        json.dumps(
+            {
+                "schema_version": "candidate_append_log_v1",
+                "candidate_append_log": [
+                    {
+                        "entry_type": "candidate_base",
+                        "community_id": "kgc:financial:l0:1",
+                        "title": "AI算力链",
+                        "origin": "seed",
+                        "level": 0,
+                        "scope": "承接 AI 芯片、算力硬件和数据中心。",
+                        "include_rules": [],
+                        "exclude_rules": [],
+                        "canonical_labels": ["AI算力链"],
+                        "granularity_note": "",
+                        "dynamic_context": {
+                            "absorbed_subtopics": ["AI芯片供需", "光模块/CPO"],
+                            "recent_signal_summary": ["旧格式摘要不应继续发送"],
+                            "maturity": "seed_reference",
+                        },
+                    },
+                    {
+                        "entry_type": "candidate_update",
+                        "community_id": "kgc:financial:l0:1",
+                        "title": "AI算力链",
+                        "update_type": "absorbed_signals",
+                        "source_count_delta": 1,
+                        "intent_count_delta": 1,
+                        "maturity": "multi_evidence",
+                        "change_summary": "旧格式变化摘要不应继续发送",
+                    },
+                ],
+                "candidate_stats": {},
+                "candidate_counters": {},
+                "checkpoint_meta": {},
+            },
+            ensure_ascii=False,
+        ),
+    )
+
+    append_log, _diag = store.prepare_append_log(adapter_name="financial", candidates=[])
+
+    assert append_log == [
+        {
+            "entry_type": "candidate_base",
+            "community_id": "kgc:financial:l0:1",
+            "title": "AI算力链",
+            "scope": "承接 AI 芯片、算力硬件和数据中心。",
+            "canonical_labels": ["AI算力链"],
+            "absorbed_subtopics": ["AI芯片供需", "光模块/CPO"],
+            "maturity": "seed_reference",
+        }
+    ]
+    saved = json.loads(redis.get(store._ledger_key(adapter_name="financial")))
+    assert saved["candidate_append_log"] == append_log
+
+
+def test_candidate_ledger_appends_only_reusable_topics_after_attach_decision():
+    redis = _MemoryRedis()
+    store = AssignmentCandidateOrderStore(target="test", redis_client=redis)
+    store.prepare_append_log(
+        adapter_name="financial",
+        candidates=[
+            _ledger_candidate(
+                "kgc:financial:l0:1",
+                "AI算力链",
+                future_coverage=["AI算力链"],
+            )
+        ],
+    )
+
+    store.record_assignment_decision(
+        adapter_name="financial",
+        decision={
+            "assignments": [
+                {
+                    "action": "attach_existing",
+                    "community_id": "kgc:financial:l0:1",
+                    "weight": 0.9,
+                    "confidence": 0.9,
+                    "fit_type": "new_subtopic",
+                    "reason": "吸收 AI 芯片供需和光模块方向。",
+                }
+            ],
+            "new_communities": [],
+        },
+        topic_intent={
+            "parent_themes": ["AI算力链"],
+            "broad_topics": ["AI基础设施"],
+            "mid_topics": ["AI芯片供需"],
+            "specific_topics": ["光模块/CPO"],
+            "driver": ["云厂商资本开支"],
+            "impact_target": ["算力硬件"],
+            "event_thread": ["AI算力扩张"],
+            "event_action": ["某公司扩建数据中心"],
+            "actors": ["某云厂商"],
+        },
+    )
+
+    saved = json.loads(redis.get(store._ledger_key(adapter_name="financial")))
+    assert saved["candidate_append_log"][-1] == {
+        "entry_type": "candidate_update",
+        "community_id": "kgc:financial:l0:1",
+        "absorbed": ["AI基础设施", "AI芯片供需"],
+    }
+    assert saved["candidate_stats"]["kgc:financial:l0:1"]["future_coverage"] == [
+        "AI算力链",
+        "AI基础设施",
+        "AI芯片供需",
+    ]
+
+
+def test_candidate_ledger_does_not_append_update_for_weak_adjacent_assignment():
+    redis = _MemoryRedis()
+    store = AssignmentCandidateOrderStore(target="test", redis_client=redis)
+    store.prepare_append_log(
+        adapter_name="financial",
+        candidates=[
+            _ledger_candidate(
+                "kgc:financial:l0:6",
+                "资本市场改革",
+                future_coverage=["资本市场改革"],
+            )
+        ],
+    )
+
+    store.record_assignment_decision(
+        adapter_name="financial",
+        decision={
+            "assignments": [
+                {
+                    "action": "attach_existing",
+                    "community_id": "kgc:financial:l0:6",
+                    "weight": 0.45,
+                    "confidence": 0.7,
+                    "fit_type": "adjacent_context",
+                    "reason": "只是相邻背景。",
+                }
+            ],
+            "new_communities": [],
+        },
+        topic_intent={
+            "parent_themes": ["并购重组"],
+            "broad_topics": ["上市公司资本运作"],
+            "mid_topics": ["重大资产重组"],
+            "specific_topics": ["东方证券收购上海证券100%股权"],
+            "impact_target": ["证券行业"],
+        },
+    )
+
+    saved = json.loads(redis.get(store._ledger_key(adapter_name="financial")))
+    assert [item["entry_type"] for item in saved["candidate_append_log"]] == ["candidate_base"]
+    assert saved["candidate_stats"]["kgc:financial:l0:6"]["future_coverage"] == ["资本市场改革"]
+
+
+def test_candidate_ledger_checkpoint_skips_rebuild_when_hot_prefix_overlap_is_high():
+    redis = _MemoryRedis()
+    store = AssignmentCandidateOrderStore(
+        target="test",
+        redis_client=redis,
+        max_base_candidates=3,
+        keep_base_candidates=3,
+        max_chars=100_000,
+    )
+
+    first_log, first_diag = store.prepare_append_log(
+        adapter_name="financial",
+        candidates=[
+            _ledger_candidate("kgc:financial:l0:1", "AI算力链"),
+            _ledger_candidate("kgc:financial:l0:2", "资本市场改革"),
+            _ledger_candidate("kgc:financial:l0:3", "新能源出海"),
+        ],
+    )
+    second_log, second_diag = store.prepare_append_log(
+        adapter_name="financial",
+        candidates=[
+            _ledger_candidate("kgc:financial:l0:4", "宏观流动性"),
+        ],
+    )
+
+    assert [item["community_id"] for item in first_log] == [
+        "kgc:financial:l0:1",
+        "kgc:financial:l0:2",
+        "kgc:financial:l0:3",
+    ]
+    assert [item["community_id"] for item in second_log if item["entry_type"] == "candidate_base"] == [
+        "kgc:financial:l0:1",
+        "kgc:financial:l0:2",
+        "kgc:financial:l0:3",
+        "kgc:financial:l0:4",
+    ]
+    assert first_diag["checkpointed"] is False
+    assert second_diag["checkpointed"] is False
+    assert second_diag["checkpoint_skipped_by_overlap"] is True
+    ledger = json.loads(next(iter(redis.data.values())))
+    assert ledger["checkpoint_meta"]["last_checkpoint_skipped_by_overlap"] is True
+
+
+def test_candidate_ledger_checkpoint_rebuilds_when_hot_prefix_overlap_is_low():
+    redis = _MemoryRedis()
+    store = AssignmentCandidateOrderStore(
+        target="test",
+        redis_client=redis,
+        max_base_candidates=3,
+        keep_base_candidates=2,
+        max_chars=100_000,
+    )
+
+    store.prepare_append_log(
+        adapter_name="financial",
+        candidates=[
+            _ledger_candidate("kgc:financial:l0:1", "AI算力链"),
+            _ledger_candidate("kgc:financial:l0:2", "资本市场改革"),
+            _ledger_candidate("kgc:financial:l0:3", "新能源出海"),
+        ],
+    )
+    store.record_assignment_decision(
+        adapter_name="financial",
+        decision={
+            "assignments": [
+                {"action": "attach_existing", "community_id": "kgc:financial:l0:3"},
+                {"action": "attach_existing", "community_id": "kgc:financial:l0:3"},
+                {"action": "attach_existing", "community_id": "kgc:financial:l0:2"},
+            ]
+        },
+    )
+    second_log, second_diag = store.prepare_append_log(
+        adapter_name="financial",
+        candidates=[
+            _ledger_candidate("kgc:financial:l0:4", "宏观流动性"),
+        ],
+    )
+
+    assert [item["community_id"] for item in second_log if item["entry_type"] == "candidate_base"] == [
+        "kgc:financial:l0:2",
+        "kgc:financial:l0:3",
+        "kgc:financial:l0:4",
+    ]
+    assert second_diag["checkpointed"] is True
+    assert second_diag["checkpoint_skipped_by_overlap"] is False
+    ledger = json.loads(next(iter(redis.data.values())))
+    assert ledger["checkpoint_meta"]["checkpoint_count"] == 1
+    assert ledger["checkpoint_meta"]["last_checkpointed"] is True
+
+
+def test_candidate_ledger_updates_do_not_trigger_checkpoint():
+    redis = _MemoryRedis()
+    store = AssignmentCandidateOrderStore(
+        target="test",
+        redis_client=redis,
+        max_base_candidates=100,
+        keep_base_candidates=10,
+        max_chars=100_000,
+    )
+
+    store.prepare_append_log(
+        adapter_name="financial",
+        candidates=[
+            _ledger_candidate(
+                "kgc:financial:l0:1",
+                "AI算力链",
+                source_count=1,
+                intent_count=1,
+                future_coverage=["初始方向"],
+            ),
+        ],
+    )
+    last_log = []
+    last_diag = {}
+    for value in range(2, 65):
+        last_log, last_diag = store.prepare_append_log(
+            adapter_name="financial",
+            candidates=[
+                _ledger_candidate(
+                    "kgc:financial:l0:1",
+                    "AI算力链",
+                    source_count=value,
+                    intent_count=value,
+                    future_coverage=["初始方向", f"新增方向{value}"],
+                ),
+            ],
+        )
+
+    assert last_log[0]["entry_type"] == "candidate_base"
+    assert {item["entry_type"] for item in last_log[1:]} == {"candidate_update"}
+    assert last_diag["checkpointed"] is False
+    assert last_diag["checkpoint_skipped_by_overlap"] is False
+    assert last_diag["candidate_append_log_update_count"] == 63
+    ledger = json.loads(next(iter(redis.data.values())))
+    assert ledger["checkpoint_meta"]["checkpoint_count"] == 0
+    assert ledger["checkpoint_meta"]["last_checkpoint_skipped_by_overlap"] is False
+
+
+@pytest.mark.asyncio
+async def test_community_builder_defers_candidate_checkpoint_between_assignment_calls():
+    payload = _card_payload("A股并购重组")
+    payload["topic_intents"].append(
+        {
+            **payload["topic_intents"][0],
+            "raw_theme": "AI算力链供需变化",
+            "title_candidate": "AI算力链",
+            "parent_themes": ["AI算力链"],
+            "broad_topics": ["人工智能基础设施"],
+            "mid_topics": ["AI芯片供需"],
+            "specific_topics": ["AI芯片短缺"],
+        }
+    )
+    card = cognitive_card_from_llm(_chunk(), payload)
+    redis = _MemoryRedis()
+    order_store = AssignmentCandidateOrderStore(
+        target="test",
+        redis_client=redis,
+        max_base_candidates=1,
+        keep_base_candidates=1,
+        max_chars=100_000,
+    )
+    candidate_rows = [
+        {
+            "community_id": "kg_community:cognitive_topic:l0:1",
+            "title": "资本市场改革",
+            "origin": "seed",
+            "level": 0,
+            "scope": "承接 IPO、并购重组、区域股权市场和券商投行。",
+            "canonical_labels": ["资本市场改革", "并购重组"],
+            "maturity": "seed_reference",
+        },
+        {
+            "community_id": "kg_community:cognitive_topic:l0:2",
+            "title": "AI算力链",
+            "origin": "seed",
+            "level": 0,
+            "scope": "承接 AI 芯片、光模块、数据中心。",
+            "canonical_labels": ["AI算力链"],
+            "maturity": "seed_reference",
+        },
+    ]
+    communities = [
+        GraphIndexCommunity(
+            community_id=str(row["community_id"]),
+            version_id=f"{row['community_id']}:v1",
+            adapter_name="financial",
+            projection="cognitive_topic",
+            level=0,
+            parent_community_id="",
+            title=str(row["title"]),
+            summary=str(row["scope"]),
+            member_node_ids=[],
+            member_edge_ids=[],
+            evidence_ids=[],
+            chunk_ids=[],
+            metrics={
+                "origin": row["origin"],
+                "scope": row["scope"],
+                "canonical_labels": row["canonical_labels"],
+            },
+            status="active",
+            previous_version_id="",
+            change_reason="cognitive_assignment",
+            lineage_id="lineage",
+            previous_community_ids=[],
+        )
+        for row in candidate_rows
+    ]
+
+    class _Provider:
+        def __init__(self):
+            self.calls = 0
+
+        async def recall(self, **_kwargs):
+            self.calls += 1
+            return [candidate_rows[self.calls - 1]]
+
+    llm = _LLM(
+        [
+            lambda request: _attach_assignment(_candidate_alias_by_title(request, "资本市场改革")),
+            lambda request: _attach_assignment(_candidate_alias_by_title(request, "AI算力链")),
+        ]
+    )
+
+    result = await CommunityCardBuilder(
+        llm=llm,
+        model="test-model",
+        candidate_provider=_Provider(),
+        candidate_order_store=order_store,
+    ).build(adapter_name="financial", cards=[card], existing_communities=communities)
+
+    assert len(llm.requests) == 2
+    first_prompt = json.loads(llm.requests[0].prompt)
+    second_prompt = json.loads(llm.requests[1].prompt)
+    assert [item["title"] for item in _prompt_candidate_bases(first_prompt)] == ["资本市场改革"]
+    assert [item["title"] for item in _prompt_candidate_bases(second_prompt)] == ["资本市场改革", "AI算力链"]
+    assert llm.requests[0].metadata["candidate_ledger"]["checkpointed"] is False
+    assert llm.requests[1].metadata["candidate_ledger"]["checkpointed"] is False
+    assert result.diagnostics["candidate_ledger"]["checkpoint_skipped_by_overlap_count"] == 1
 
 
 @pytest.mark.asyncio
@@ -479,15 +962,23 @@ def _attach_assignment(alias: str = "c1") -> dict:
 
 def _first_candidate_alias(request) -> str:
     prompt = json.loads(request.prompt)
-    return prompt["community_candidates"][0]["community_id"]
+    return _prompt_candidate_bases(prompt)[0]["community_id"]
 
 
 def _candidate_alias_by_title(request, title: str) -> str:
     prompt = json.loads(request.prompt)
-    for candidate in prompt["community_candidates"]:
+    for candidate in _prompt_candidate_bases(prompt):
         if candidate.get("title") == title:
             return candidate["community_id"]
     raise AssertionError(f"candidate title not found: {title}")
+
+
+def _prompt_candidate_bases(prompt: dict) -> list[dict]:
+    return [
+        item
+        for item in prompt.get("candidate_append_log") or []
+        if item.get("entry_type") == "candidate_base"
+    ]
 
 
 def test_dedupe_assignment_candidates_merges_duplicate_candidate_payloads():
@@ -562,6 +1053,7 @@ async def test_community_builder_creates_then_attaches_existing_l0():
         model="test-model",
         candidate_provider=_Provider(),
         on_communities_updated=commit,
+        candidate_order_store=_order_store(),
         community_id_factory=lambda adapter_name, level, title: f"kgc:{adapter_name}:l{level}:101",
     ).build(
         adapter_name="financial",
@@ -654,6 +1146,7 @@ async def test_community_builder_deduplicates_existing_intent_when_rebuilding():
         llm=_LLM([lambda request: _attach_assignment(_candidate_alias_by_title(request, "A股并购重组"))]),
         model="test-model",
         candidate_provider=_Provider(),
+        candidate_order_store=_order_store(),
     ).build(
         adapter_name="financial",
         cards=[card],
@@ -718,16 +1211,25 @@ async def test_materialized_seed_community_candidate_can_be_attached():
                 }
             ]
 
-    result = await CommunityCardBuilder(llm=llm, model="test-model", candidate_provider=_Provider()).build(
+    result = await CommunityCardBuilder(
+        llm=llm,
+        model="test-model",
+        candidate_provider=_Provider(),
+        candidate_order_store=_order_store(),
+    ).build(
         adapter_name="financial",
         cards=[card],
         existing_communities=seed_communities,
     )
 
     prompt = llm.requests[0].prompt
+    prompt_payload = json.loads(prompt)
+    prompt_candidates = _prompt_candidate_bases(prompt_payload)
     assert llm.requests[0].max_tokens == ASSIGNMENT_MAX_TOKENS
-    assert '"origin": "seed"' in prompt
+    assert all("origin" not in item for item in prompt_candidates)
+    assert all("level" not in item for item in prompt_candidates)
     assert "AI算力链" in prompt
+    assert any(item["title"] == "AI算力链" and item.get("scope") for item in prompt_candidates)
     assert "source_id" not in prompt
     assert "evidence_id" not in prompt
     assert "chunk_ids" not in prompt
@@ -793,6 +1295,7 @@ async def test_community_builder_reranks_many_candidates_before_assignment():
         model="test-model",
         candidate_provider=_Provider(),
         reranker_client=reranker,
+        candidate_order_store=_order_store(),
     ).build(adapter_name="financial", cards=[card], existing_communities=candidates)
 
     prompt = result.assignments[0].decision
@@ -864,6 +1367,7 @@ async def test_assignment_prompt_uses_only_recalled_candidates_without_seed_inje
         llm=llm,
         model="test-model",
         candidate_provider=_Provider(),
+        candidate_order_store=_order_store(),
     ).build(
         adapter_name="financial",
         cards=[card],
@@ -871,7 +1375,7 @@ async def test_assignment_prompt_uses_only_recalled_candidates_without_seed_inje
     )
 
     prompt = json.loads(llm.requests[0].prompt)
-    candidate_ids = [item["community_id"] for item in prompt["community_candidates"]]
+    candidate_ids = [item["community_id"] for item in _prompt_candidate_bases(prompt)]
     assert set(candidate_ids) == {recalled_seed.community_id, emergent.community_id}
     assert len(candidate_ids) == len(set(candidate_ids))
 
@@ -928,16 +1432,18 @@ async def test_assignment_prompt_caps_reranked_candidates_sent_to_llm():
         model="test-model",
         candidate_provider=_Provider(),
         reranker_client=reranker,
+        candidate_order_store=_order_store(),
     ).build(adapter_name="financial", cards=[card], existing_communities=candidates)
 
     prompt = json.loads(llm.requests[0].prompt)
     assert reranker.calls[0]["top_n"] == 12
-    assert len(prompt["community_candidates"]) == 12
-    assert {item["title"] for item in prompt["community_candidates"]}.issubset(
+    prompt_candidates = _prompt_candidate_bases(prompt)
+    assert len(prompt_candidates) == 12
+    assert {item["title"] for item in prompt_candidates}.issubset(
         {community.title for community in candidates}
     )
     assert result.assignments[0].community_id in {
-        candidate["community_id"] for candidate in prompt["community_candidates"]
+        candidate["community_id"] for candidate in prompt_candidates
     }
 
 
@@ -993,14 +1499,151 @@ async def test_assignment_skips_rerank_when_candidate_count_is_at_prompt_cap():
         model="test-model",
         candidate_provider=_Provider(),
         reranker_client=reranker,
+        candidate_order_store=_order_store(),
     ).build(adapter_name="financial", cards=[card], existing_communities=candidates)
 
     prompt = json.loads(llm.requests[0].prompt)
     assert reranker.calls == []
-    assert len(prompt["community_candidates"]) == 12
-    assert {item["title"] for item in prompt["community_candidates"]} == {
+    prompt_candidates = _prompt_candidate_bases(prompt)
+    assert len(prompt_candidates) == 12
+    assert {item["title"] for item in prompt_candidates} == {
         community.title for community in candidates
     }
+
+
+@pytest.mark.asyncio
+async def test_assignment_prompt_keeps_active_ledger_prefix_even_when_not_recalled_this_turn():
+    card = cognitive_card_from_llm(_chunk(), _card_payload("A股并购重组"))
+    old_row = {
+        "community_id": "kg_community:cognitive_topic:l0:1",
+        "title": "AI算力链",
+        "origin": "seed",
+        "level": 0,
+        "scope": "承接 AI 芯片、光模块、数据中心。",
+        "canonical_labels": ["AI算力链"],
+        "maturity": "seed_reference",
+    }
+    new_row = {
+        "community_id": "kg_community:cognitive_topic:l0:2",
+        "title": "资本市场改革",
+        "origin": "seed",
+        "level": 0,
+        "scope": "承接 IPO、并购重组、区域股权市场和券商投行。",
+        "canonical_labels": ["资本市场改革", "并购重组"],
+        "maturity": "seed_reference",
+    }
+    order_store = AssignmentCandidateOrderStore(target="test", redis_client=_MemoryRedis())
+    order_store.prepare_append_log(adapter_name="financial", candidates=[old_row])
+
+    class _Provider:
+        async def recall(self, **_kwargs):
+            return [new_row]
+
+    communities = [
+        GraphIndexCommunity(
+            community_id=str(row["community_id"]),
+            version_id=f"{row['community_id']}:v1",
+            adapter_name="financial",
+            projection="cognitive_topic",
+            level=0,
+            parent_community_id="",
+            title=str(row["title"]),
+            summary=str(row["scope"]),
+            member_node_ids=[],
+            member_edge_ids=[],
+            evidence_ids=[],
+            chunk_ids=[],
+            metrics={
+                "origin": row["origin"],
+                "scope": row["scope"],
+                "canonical_labels": row["canonical_labels"],
+            },
+            status="active",
+            previous_version_id="",
+            change_reason="cognitive_assignment",
+            lineage_id="lineage",
+            previous_community_ids=[],
+        )
+        for row in [old_row, new_row]
+    ]
+    llm = _LLM([lambda request: _attach_assignment(_candidate_alias_by_title(request, "资本市场改革"))])
+
+    await CommunityCardBuilder(
+        llm=llm,
+        model="test-model",
+        candidate_provider=_Provider(),
+        candidate_order_store=order_store,
+    ).build(adapter_name="financial", cards=[card], existing_communities=communities)
+
+    prompt = json.loads(llm.requests[0].prompt)
+    assert [item["title"] for item in _prompt_candidate_bases(prompt)] == ["AI算力链", "资本市场改革"]
+
+
+@pytest.mark.asyncio
+async def test_community_builder_raises_when_candidate_ledger_redis_unavailable():
+    card = cognitive_card_from_llm(_chunk(), _card_payload("A股并购重组"))
+    candidate = {
+        "community_id": "kg_community:cognitive_topic:l0:1",
+        "title": "资本市场改革",
+        "origin": "seed",
+        "level": 0,
+        "scope": "承接 IPO、并购重组、区域股权市场和券商投行。",
+        "canonical_labels": ["资本市场改革", "并购重组"],
+        "maturity": "seed_reference",
+    }
+    community = GraphIndexCommunity(
+        community_id=candidate["community_id"],
+        version_id="v1",
+        adapter_name="financial",
+        projection="cognitive_topic",
+        level=0,
+        parent_community_id="",
+        title=candidate["title"],
+        summary=candidate["scope"],
+        member_node_ids=[],
+        member_edge_ids=[],
+        evidence_ids=[],
+        chunk_ids=[],
+        metrics={
+            "origin": candidate["origin"],
+            "scope": candidate["scope"],
+            "canonical_labels": candidate["canonical_labels"],
+        },
+        status="active",
+        previous_version_id="",
+        change_reason="cognitive_assignment",
+        lineage_id="lineage",
+        previous_community_ids=[],
+    )
+
+    class _Provider:
+        async def recall(self, **_kwargs):
+            return [candidate]
+
+    with pytest.raises(ConnectionError, match="redis unavailable"):
+        await CommunityCardBuilder(
+            llm=_LLM([lambda request: _attach_assignment(_candidate_alias_by_title(request, "资本市场改革"))]),
+            model="test-model",
+            candidate_provider=_Provider(),
+            candidate_order_store=AssignmentCandidateOrderStore(target="test", redis_client=_BrokenRedis()),
+        ).build(adapter_name="financial", cards=[card], existing_communities=[community])
+
+
+@pytest.mark.asyncio
+async def test_community_builder_requires_candidate_ledger():
+    card = cognitive_card_from_llm(_chunk(), _card_payload("A股并购重组"))
+
+    class _Provider:
+        async def recall(self, **_kwargs):
+            return []
+
+    with pytest.raises(RuntimeError, match="assignment candidate ledger is required"):
+        await CommunityCardBuilder(
+            llm=_LLM([_create_assignment("A股并购重组")]),
+            model="test-model",
+            candidate_provider=_Provider(),
+            candidate_order_store=None,
+        ).build(adapter_name="financial", cards=[card], existing_communities=[])
 
 
 @pytest.mark.asyncio
@@ -1087,19 +1730,16 @@ async def test_assignment_prompt_uses_persistent_prefix_order_and_slim_candidate
         async def recall(self, **_kwargs):
             return list(candidate_rows)
 
-    order_store = _MemoryOrderStore()
+    order_store = AssignmentCandidateOrderStore(target="test", redis_client=_MemoryRedis())
+    order_store.prepare_append_log(
+        adapter_name="financial",
+        candidates=[candidate_rows[2], candidate_rows[0]],
+    )
 
     def save_after_read(request):
         # LLM attaches to the recalled policy seed so the test also verifies alias resolution.
         return _attach_assignment(_candidate_alias_by_title(request, "政策监管与产业扶持"))
 
-    # Seed the real query key after the card has been converted into the assignment intent.
-    topic_intent = _assignment_topic_intent(card, card.topic_intents[0])
-    query_key = assignment_candidate_order_key(topic_intent)
-    order_store.orders[query_key] = [
-        "kg_community:cognitive_topic:l0:policy",
-        "kg_community:cognitive_topic:l0:capital_market",
-    ]
     llm = _LLM([save_after_read])
 
     result = await CommunityCardBuilder(
@@ -1110,17 +1750,22 @@ async def test_assignment_prompt_uses_persistent_prefix_order_and_slim_candidate
     ).build(adapter_name="financial", cards=[card], existing_communities=existing_communities)
 
     request_prompt = json.loads(llm.requests[0].prompt)
-    prompt_candidates = request_prompt["community_candidates"]
-    assert list(request_prompt) == ["community_candidates", "topic_intent", "max_attach"]
+    prompt_candidates = _prompt_candidate_bases(request_prompt)
+    assert list(request_prompt) == ["candidate_append_log", "topic_intent", "max_attach"]
     assert {item["title"] for item in prompt_candidates} == {
         item["title"] for item in candidate_rows
     }
+    assert [item["community_id"] for item in prompt_candidates[:2]] == [
+        "kg_community:cognitive_topic:l0:capital_market",
+        "kg_community:cognitive_topic:l0:policy",
+    ]
     assert "seed_community_catalog" not in request_prompt
-    assert "candidate_dynamic_context" not in request_prompt
+    assert "candidate_updates" not in request_prompt
     assert all(not item["community_id"].startswith("c_") for item in prompt_candidates)
-    dynamic_context = [item["dynamic_context"] for item in prompt_candidates if item.get("dynamic_context")]
-    assert len(dynamic_context) >= 3
     for item in prompt_candidates:
+        assert "origin" not in item
+        assert "level" not in item
+        assert "dynamic_context" not in item
         assert "source_count" not in item
         assert "directory_scope" not in item
         assert "retrieval_score" not in item
@@ -1129,10 +1774,12 @@ async def test_assignment_prompt_uses_persistent_prefix_order_and_slim_candidate
         assert "summary" not in item
         assert "coverage_contract" not in item
         assert "future_coverage" not in item
-    for item in dynamic_context:
-        assert "community_id" not in item
-        assert "coverage_contract" not in item
-        assert "future_coverage" not in item
-        assert "absorbed_subtopics" in item or "recent_signal_summary" in item or "maturity" in item
+        if "include_rules" in item:
+            assert item["include_rules"]
+        if "exclude_rules" in item:
+            assert item["exclude_rules"]
+    assert any(
+        "absorbed_subtopics" in item or "recent_signal_summary" in item or "maturity" in item
+        for item in prompt_candidates
+    )
     assert result.assignments[0].community_id == "kg_community:cognitive_topic:l0:policy"
-    assert order_store.saved == []

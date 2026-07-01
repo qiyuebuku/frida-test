@@ -203,12 +203,13 @@ class CommunityDraft:
             "granularity_note": _clip(self.granularity_note, 180),
             "summary": _clip(self.summary, 240),
             "source_count": len(set(self.source_ids)),
+            "assigned_intent_count": len(self.assigned_intents),
             "directory_scope": _clip(self.scope or _community_coverage_contract(self, signals), 260),
             "parent_themes": signals.get("parent_themes", [])[:8],
             "broad_topics": signals.get("broad_topics", [])[:8],
             "mid_topics": signals.get("mid_topics", [])[:10],
             "specific_topics": signals.get("specific_topics", [])[:10],
-            "future_coverage": _dedupe([*self.future_coverage, *signals.get("mid_topics", []), *signals.get("specific_topics", [])])[:12],
+            "future_coverage": _community_future_coverage(self.future_coverage, signals, limit=12),
             "coverage_contract": _community_coverage_contract(self, signals),
             "coverage_summary": _candidate_coverage_summary(signals, self.future_coverage),
             "canonical_labels": labels,
@@ -610,18 +611,16 @@ COGNITIVE_CARD_SYSTEM_PROMPT = """你是金融知识图谱的 Cognitive Card 抽
 
 ASSIGNMENT_SYSTEM_PROMPT = """你是金融知识图谱的 Community 归档裁决器。
 
-你会收到 compact topic_intent，以及系统召回的候选 L0/L1/L2 community。
-
-候选 community 的 origin 含义：
-- origin=seed：人工预置的高质量长期主线，只是优质先验和边界参考，不是强制分类。
-- origin=emergent：系统从历史新闻中自动发现并已经写入的主题。
+你会收到 compact topic_intent，以及系统维护的候选 community append log。
 
 你的任务：
 - 在候选 community 中判断是否应该挂入已有主题；
 - 如果候选都不适合，创建新的 L0 community；
-- 输入里的 community_candidates 是统一候选列表，包含 seed 和 emergent 两类候选；
-- community_candidates 按系统自增 ID 稳定排序，靠前不代表更相关；
-- community_candidates 中的 dynamic_context 是候选已吸收方向的动态摘要，只作为辅助证据，不得覆盖 seed 的 include/exclude 边界；
+- 输入里的 candidate_append_log 是唯一候选上下文；
+- candidate_append_log 只追加，不在中间改写既有条目；靠前不代表更相关；
+- entry_type=candidate_base 表示一个 community 第一次进入候选账本时的稳定目录信息；
+- entry_type=candidate_update 表示这个 community 后续新增吸收的子方向，只包含 community_id 和 absorbed；
+- candidate_update 只能辅助理解该目录最近吸收过哪些子方向，不得覆盖 candidate_base 中的 scope、include_rules、exclude_rules、canonical_labels 和 granularity_note；
 - Cognitive Card 的 parent_themes、title_candidate、raw_theme 都只是候选信号，不是最终 community 名称；你必须在本阶段归一化主题边界。
 - 输入候选 community_id 是系统真实 community ID；attach_existing 时必须原样使用候选 community_id，禁止输出标题或自造 ID。
 - 一个 topic_intent 可以归属到一个或多个 community；
@@ -631,20 +630,19 @@ ASSIGNMENT_SYSTEM_PROMPT = """你是金融知识图谱的 Community 归档裁决
 - assignments 数量不要超过 max_attach 限制；
 - 不要输出 uncertain，不走人工 pending；
 - 低置信也必须在 attach_existing 或 create_new 中二选一；
-- seed 主题如果 scope、include_rules、canonical_labels 能承接当前 intent，应优先 attach_existing。
-- seed 主题不是笼子；如果当前 intent 明显不在 seed scope 或命中 exclude_rules，必须 create_new 或挂入更合适的 emergent community。
-- emergent 主题和 seed 主题地位相同，都可以承接 intent；区别只在于 seed 给你更稳定的业务边界参考。
+- 如果候选主题的 scope、include_rules、canonical_labels 能承接当前 intent，应优先 attach_existing。
+- 候选主题不是笼子；如果当前 intent 明显不在候选 scope 或命中 exclude_rules，必须 create_new 或挂入更合适的候选 community。
 - 归档判断必须综合 parent_themes、broad_topics、mid_topics、specific_topics、raw_theme、title_candidate、driver、impact_target、risk_type、event_thread、event_action、actors。
 - parent_themes 是 L0 归档主信号。如果 topic_intent.parent_themes 与候选 community 的 title、canonical_labels、summary 或 scope 明显匹配，应优先 attach_existing。
 - broad_topics、mid_topics、specific_topics 都只是候选信号，不是标题指令；你必须判断它们的真实层级是否适合作为 L0。
 - L0 community 是可长期复用的父级主题，应该能承载多条不同来源、不同时间、不同主体的资料，并且未来可以继续拆出 L1/L2。
-- 候选 community 的 scope、include_rules、exclude_rules、canonical_labels、granularity_note 用来判断长期目录边界；dynamic_context 的 absorbed_subtopics、recent_signal_summary 只用于辅助理解该目录过去吸收过哪些子方向。
+- 候选 community 的 scope、include_rules、exclude_rules、canonical_labels、granularity_note 用来判断长期目录边界；candidate_update.absorbed 只用于辅助理解该目录后续新增吸收过哪些子方向。
 - 判断重点不是候选 summary 是否已经写过当前细节，而是候选是否能作为父级目录承接当前细节。
 - 不要因为候选没有直接提到当前 chunk 的细节就判为 related_but_separate；L0 的职责就是吸收同一父主题下的新子方向。
 - 如果当前细节是候选 community 的新增子方向，应 attach_existing，并把 fit_type 写成 new_subtopic；不要因为 summary 里没有当前细节而新建平级 L0。
 - 如果候选 community 比当前 intent 更宽，但能承接当前 intent，应 attach_existing，并把 fit_type 写成 broader_parent。
 - 只有当候选 community 的目录范围无法承接当前 intent 时，才 create_new；create_new 的 fit_type 必须是 new_parent_topic。
-- create_new 时必须在 reason 中说明：为什么现有 seed/emergent 候选无法承接、这个新主题未来能持续覆盖什么边界、它与最接近候选的区别。
+- create_new 时必须在 reason 中说明：为什么现有候选无法承接、这个新主题未来能持续覆盖什么边界、它与最接近候选的区别。
 - 如果当前 topic_intent 是 mid/specific 层级，不能直接把细主题包装成 L0；必须先寻找已有父级或子级 community 是否可挂入，没有合适候选时再提炼更高一层的父级 L0。
 - 如果创建新 L0，title 必须优先使用 parent_themes 中可长期复用的父级主题；只有 parent_themes 为空或明显不适合时，才从 broad_topics 中提炼父级主题。
 - 如果当前 broad/mid/specific 是已有 parent_theme 的子方向，必须挂入该父主题，不要创建平级 L0。
@@ -653,7 +651,7 @@ ASSIGNMENT_SYSTEM_PROMPT = """你是金融知识图谱的 Community 归档裁决
 - 不要创建只表示行情表现的 L0，例如“市场行情”“板块异动”“个股涨跌”“成交放量”“资金流向”“ETF表现”“概念异动”“盘面表现”。这些只是 market signal，不是 community 边界。
 - 如果 topic_intent 主要是上涨、下跌、反弹、涨停、成交放量或资金流入，必须追溯它背后的驱动主题或产业/风险主题；例如油气设备股反弹应优先考虑能源供应、地缘风险或大宗商品供需，AI硬件股回暖应优先考虑 AI算力链。
 - 如果无法从当前 intent 提炼出驱动主题，也不要新建“市场行情”这类泛化桶；应创建更具体且可长期复用的驱动型父主题，或挂入最接近的已有父主题并说明弱相关原因。
-- 如果 action=attach_existing，community_id 必须引用 community_candidates 中真实存在的 community_id。
+- 如果 action=attach_existing，community_id 必须引用 candidate_append_log 中真实存在的 candidate_base community_id。
 - 如果 action=create_new，community_id 必须引用 new_communities 中的 client_id，例如 new_1。
 - new_communities 只包含本次新建 community 的 client_id、title、scope。不要输出 level、title_quality、future_coverage、maintenance_hints、rejected_candidates 或 candidate_fit_judgements。
 - 输出必须符合 JSON Schema，不要 Markdown。"""
@@ -1171,7 +1169,7 @@ def _graph_community_from_draft(adapter_name: str, draft: CommunityDraft) -> Gra
         "impact_tags": signals.get("impact_target", [])[:32],
         "risk_tags": signals.get("risk_type", [])[:24],
         "event_threads": signals.get("event_thread", [])[:24],
-        "future_coverage": _dedupe([*draft.future_coverage, *signals.get("mid_topics", []), *signals.get("specific_topics", [])])[:32],
+        "future_coverage": _community_future_coverage(draft.future_coverage, signals, limit=32),
         "canonical_labels": _community_canonical_labels(draft, signals),
         "coverage_contract": _community_coverage_contract(draft, signals),
         "maturity_level": maturity_label(len(set(draft.source_ids))),
@@ -1308,27 +1306,6 @@ def assignment_query_lanes(intent: dict[str, Any]) -> list[dict[str, str]]:
     ]
 
 
-def assignment_candidate_order_key(intent: dict[str, Any]) -> str:
-    """Stable semantic key for remembering prompt candidate order.
-
-    Evidence/chunk/source identifiers are intentionally excluded. The key
-    represents the assignment question, not the source record that produced it.
-    """
-
-    payload = {
-        "parent_themes": sorted(_normalize_label(item) for item in _as_list(intent.get("parent_themes"))),
-        "broad_topics": sorted(_normalize_label(item) for item in _as_list(intent.get("broad_topics"))),
-        "mid_topics": sorted(_normalize_label(item) for item in _as_list(intent.get("mid_topics"))),
-        "event_thread": sorted(_normalize_label(item) for item in _as_list(intent.get("event_thread"))),
-        "impact_target": sorted(_normalize_label(item) for item in _as_list(intent.get("impact_target"))),
-        "risk_type": sorted(_normalize_label(item) for item in _as_list(intent.get("risk_type"))),
-        "title_candidate": _normalize_label(intent.get("title_candidate")),
-        "raw_theme": _normalize_label(intent.get("raw_theme")),
-    }
-    raw = json.dumps(payload, sort_keys=True, ensure_ascii=False, separators=(",", ":"))
-    return "kg_assignment_query:" + _digest([raw])
-
-
 def _candidate_aliases(
     candidates: list[dict[str, Any]],
 ) -> tuple[dict[str, str], list[dict[str, Any]]]:
@@ -1344,15 +1321,9 @@ def _candidate_aliases(
             prompt_candidate = _emergent_candidate_payload(candidate, original_id)
         dynamic = _candidate_dynamic_payload(candidate, original_id)
         if len(dynamic) > 1:
-            prompt_candidate["dynamic_context"] = {
-                key: value for key, value in dynamic.items() if key != "community_id"
-            }
-        prompt_candidates.append(prompt_candidate)
+            prompt_candidate.update({key: value for key, value in dynamic.items() if key != "community_id"})
+        prompt_candidates.append(_compact_candidate_prompt_payload(prompt_candidate))
     return alias_map, prompt_candidates
-
-
-def _stable_candidate_alias(community_id: str) -> str:
-    return "c_" + _digest([community_id])[:6]
 
 
 def _seed_definition_for_candidate(candidate: dict[str, Any]) -> SeedCommunityDefinition | None:
@@ -1373,8 +1344,6 @@ def _seed_candidate_payload(
     return {
         "community_id": alias,
         "title": definition.title,
-        "origin": "seed",
-        "level": int(candidate.get("level") or 0),
         "scope": _clip(definition.scope, 260),
         "include_rules": [_clip(item, 120) for item in definition.include_rules[:6]],
         "exclude_rules": [_clip(item, 120) for item in definition.exclude_rules[:6]],
@@ -1387,8 +1356,6 @@ def _emergent_candidate_payload(candidate: dict[str, Any], alias: str) -> dict[s
     return {
         "community_id": alias,
         "title": _clean_text(candidate.get("title")),
-        "origin": _clean_text(candidate.get("origin")) or "emergent",
-        "level": int(candidate.get("level") or 0),
         "scope": _clip(str(candidate.get("scope") or candidate.get("directory_scope") or ""), 260),
         "include_rules": [_clip(item, 120) for item in _as_list(candidate.get("include_rules"))[:6]],
         "exclude_rules": [_clip(item, 120) for item in _as_list(candidate.get("exclude_rules"))[:6]],
@@ -1409,16 +1376,34 @@ def _stable_candidate_labels(candidate: dict[str, Any]) -> list[str]:
 
 def _candidate_dynamic_payload(candidate: dict[str, Any], alias: str) -> dict[str, Any]:
     subtopics = _candidate_absorbed_subtopics(candidate)
-    summaries = _candidate_recent_signal_summary(candidate, subtopics)
     payload: dict[str, Any] = {"community_id": alias}
     if subtopics:
         payload["absorbed_subtopics"] = subtopics
-    if summaries:
-        payload["recent_signal_summary"] = summaries
     maturity = _clean_text(candidate.get("maturity"))
     if maturity:
         payload["maturity"] = maturity
     return payload
+
+
+def _compact_candidate_prompt_payload(payload: dict[str, Any]) -> dict[str, Any]:
+    result: dict[str, Any] = {}
+    for key, value in payload.items():
+        if key in {"origin", "level", "dynamic_context"}:
+            continue
+        if isinstance(value, str):
+            cleaned = _clean_text(value)
+            if cleaned:
+                result[key] = cleaned
+            continue
+        if isinstance(value, list):
+            cleaned_items = [item for item in value if not (isinstance(item, str) and not item.strip())]
+            if cleaned_items:
+                result[key] = cleaned_items
+            continue
+        if value is None:
+            continue
+        result[key] = value
+    return result
 
 
 def _candidate_absorbed_subtopics(candidate: dict[str, Any]) -> list[str]:
@@ -1485,12 +1470,24 @@ def _future_coverage_from_intent(intent: dict[str, Any]) -> list[str]:
             *_as_list(intent.get("parent_themes")),
             *_as_list(intent.get("broad_topics")),
             *_as_list(intent.get("mid_topics")),
-            *_as_list(intent.get("specific_topics")),
-            *_as_list(intent.get("driver")),
-            *_as_list(intent.get("impact_target")),
-            *_as_list(intent.get("event_thread")),
         ]
-    )[:16]
+    )[:8]
+
+
+def _community_future_coverage(
+    base_coverage: list[str],
+    signals: dict[str, list[str]],
+    *,
+    limit: int,
+) -> list[str]:
+    return _dedupe(
+        [
+            *base_coverage,
+            *signals.get("parent_themes", []),
+            *signals.get("broad_topics", []),
+            *signals.get("mid_topics", []),
+        ]
+    )[:limit]
 
 
 def _assignment_update_mode(*, action: str, weight: float) -> str:

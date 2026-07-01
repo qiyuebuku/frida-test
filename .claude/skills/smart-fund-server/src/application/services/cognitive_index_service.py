@@ -3,15 +3,12 @@
 from __future__ import annotations
 
 import asyncio
-import hashlib
 import json
 import re
 from collections.abc import Awaitable, Callable
-from datetime import datetime, timezone
 from typing import Any
 
-from sqlalchemy import select
-from sqlalchemy.dialects.postgresql import insert as pg_insert
+import redis
 
 from src.application.services.knowledge_llm_config import resolve_kg_llm_model
 from src.domain.knowledge.cognitive_index import (
@@ -36,8 +33,6 @@ from src.domain.knowledge.cognitive_index import (
     _drafts_from_existing,
     _graph_community_from_draft,
     _is_complex_intent,
-    _resolve_aliases,
-    assignment_candidate_order_key,
     assignment_query_lanes,
     assignment_query_text,
     assignment_prompt_topic_intent,
@@ -51,12 +46,19 @@ from src.domain.knowledge.schemas import EvidenceChunk
 from src.infrastructure.clients.reranker import RerankerClient
 from src.domain.knowledge.semantic_index_materials import SEMANTIC_COLLECTION_COMMUNITY
 from src.infrastructure.clients.embedding import embed_texts
+from src.infrastructure.config.settings import REDIS_URL
 from src.infrastructure.llm_proxy.service import get_llm_gateway_service
 from src.infrastructure.llm_proxy.types import LLMProxyRequest
 from src.infrastructure.observability.langfuse_tracing import langfuse_observation, langfuse_update_span
-from src.infrastructure.connections import get_session
-from src.infrastructure.persistence.models.knowledge import KnowledgeAssignmentCandidateOrder
 from src.infrastructure.vector_store.milvus_hybrid_store import MilvusTypedHybridStore
+
+
+ASSIGNMENT_LEDGER_SCHEMA_VERSION = "candidate_append_log_v1"
+ASSIGNMENT_LEDGER_TTL_SECONDS = 7 * 24 * 60 * 60
+ASSIGNMENT_LEDGER_MAX_BASE_CANDIDATES = 30
+ASSIGNMENT_LEDGER_KEEP_BASE_CANDIDATES = 10
+ASSIGNMENT_LEDGER_MAX_CHARS = 24_000
+ASSIGNMENT_LEDGER_CHECKPOINT_REUSE_OVERLAP = 0.7
 
 
 class CognitiveCardExtractor:
@@ -249,102 +251,320 @@ class CommunitySemanticCandidateProvider:
 
 
 class AssignmentCandidateOrderStore:
-    """Persistent append-only candidate order memory for assignment prompts."""
+    """Redis-backed append-only candidate ledger for assignment prompts."""
 
-    def __init__(self, *, target: str = "prod") -> None:
-        self._target = target
-
-    def order_candidates(
+    def __init__(
         self,
         *,
-        adapter_name: str,
-        query_key: str,
-        candidates: list[dict[str, Any]],
-    ) -> list[dict[str, Any]]:
-        if not candidates:
-            return []
-        previous_order = self._load_order(adapter_name=adapter_name, query_key=query_key)
-        by_id = {
-            str(candidate.get("community_id") or ""): candidate
-            for candidate in candidates
-            if str(candidate.get("community_id") or "")
-        }
-        ordered: list[dict[str, Any]] = []
-        for community_id in previous_order:
-            candidate = by_id.pop(community_id, None)
-            if candidate is not None:
-                ordered.append(candidate)
-        ordered.extend(sorted(by_id.values(), key=_stable_candidate_prompt_sort_key))
-        return ordered
-
-    def save_order(
-        self,
-        *,
-        adapter_name: str,
-        query_key: str,
-        candidates: list[dict[str, Any]],
+        target: str = "prod",
+        redis_client: Any | None = None,
+        ttl_seconds: int = ASSIGNMENT_LEDGER_TTL_SECONDS,
+        max_base_candidates: int = ASSIGNMENT_LEDGER_MAX_BASE_CANDIDATES,
+        keep_base_candidates: int = ASSIGNMENT_LEDGER_KEEP_BASE_CANDIDATES,
+        max_chars: int = ASSIGNMENT_LEDGER_MAX_CHARS,
+        checkpoint_reuse_overlap: float = ASSIGNMENT_LEDGER_CHECKPOINT_REUSE_OVERLAP,
     ) -> None:
-        ordered_ids = [
-            community_id
-            for community_id in (
-                str(candidate.get("community_id") or "") for candidate in candidates
-            )
-            if community_id
-        ]
-        if not ordered_ids:
-            return
-        now = datetime.now(timezone.utc)
-        order_digest = hashlib.sha256(
-            f"{adapter_name}|{self._target}|{query_key}".encode("utf-8")
-        ).hexdigest()[:16]
-        order_id = f"kg_assignment_candidate_order:{order_digest}"
-        payload = {
-            "order_strategy": "history_prefix_then_stable_append_v1",
-            "candidate_count": len(ordered_ids),
-        }
-        with get_session(self._target) as session:
-            stmt = pg_insert(KnowledgeAssignmentCandidateOrder).values(
-                {
-                    "order_id": order_id,
-                    "adapter_name": adapter_name,
-                    "target": self._target,
-                    "query_key": query_key,
-                    "ordered_community_ids": ordered_ids,
-                    "payload": payload,
-                    "updated_at": now,
-                }
-            )
-            excluded = stmt.excluded
-            session.execute(
-                stmt.on_conflict_do_update(
-                    index_elements=["adapter_name", "target", "query_key"],
-                    set_={
-                        "ordered_community_ids": excluded.ordered_community_ids,
-                        "payload": excluded.payload,
-                        "updated_at": now,
-                    },
-                )
-            )
+        self._target = target
+        self._redis = redis_client
+        self._ttl_seconds = ttl_seconds
+        self._max_base_candidates = max_base_candidates
+        self._keep_base_candidates = keep_base_candidates
+        self._max_chars = max_chars
+        self._checkpoint_reuse_overlap = checkpoint_reuse_overlap
 
-    def _load_order(self, *, adapter_name: str, query_key: str) -> list[str]:
-        with get_session(self._target) as session:
-            row = session.scalar(
-                select(KnowledgeAssignmentCandidateOrder).where(
-                    KnowledgeAssignmentCandidateOrder.adapter_name == adapter_name,
-                    KnowledgeAssignmentCandidateOrder.target == self._target,
-                    KnowledgeAssignmentCandidateOrder.query_key == query_key,
-                )
+    def prepare_append_log(
+        self,
+        *,
+        adapter_name: str,
+        candidates: list[dict[str, Any]],
+        allow_checkpoint: bool = True,
+    ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+        ordered_candidates = _dedupe_assignment_candidates(
+            sorted(candidates, key=_stable_candidate_prompt_sort_key)
+        )
+        diagnostics: dict[str, Any] = {
+            "redis_available": True,
+            "appended_base": 0,
+            "appended_update": 0,
+            "checkpointed": False,
+            "checkpoint_skipped_by_overlap": False,
+        }
+        redis_client = self._redis_client()
+        ledger = self._load_ledger(redis_client, adapter_name=adapter_name)
+        append_log = _compact_ledger_append_log(
+            item for item in ledger.get("candidate_append_log") or [] if isinstance(item, dict)
+        )
+        stats = {
+            str(key): value
+            for key, value in (ledger.get("candidate_stats") or {}).items()
+            if isinstance(value, dict)
+        }
+        counters = {
+            str(key): value
+            for key, value in (ledger.get("candidate_counters") or {}).items()
+            if isinstance(value, dict)
+        }
+        checkpoint_meta = dict(ledger.get("checkpoint_meta") or {})
+        base_ids = _candidate_append_log_base_ids(append_log)
+        for candidate in ordered_candidates:
+            community_id = str(candidate.get("community_id") or "")
+            if not community_id:
+                continue
+            counters.setdefault(community_id, {"retrieved": 0, "accepted": 0})
+            counters[community_id]["retrieved"] = int(counters[community_id].get("retrieved") or 0) + 1
+            current_stats = _candidate_stats(candidate)
+            if community_id not in base_ids:
+                append_log.append(_candidate_base_entry(candidate))
+                stats[community_id] = current_stats
+                base_ids.add(community_id)
+                diagnostics["appended_base"] += 1
+                continue
+            update = _candidate_update_entry(candidate, previous=stats.get(community_id) or {}, current=current_stats)
+            if update:
+                append_log.append(update)
+                stats[community_id] = current_stats
+                diagnostics["appended_update"] += 1
+        checkpointed = False
+        skipped_by_overlap = False
+        if allow_checkpoint:
+            append_log, stats, counters, checkpointed, skipped_by_overlap = self._maybe_checkpoint(
+                append_log=append_log,
+                stats=stats,
+                counters=counters,
+                current_candidates=ordered_candidates,
             )
-            if row is None:
-                return []
-            return [str(item) for item in row.ordered_community_ids or [] if str(item).strip()]
+        diagnostics["checkpointed"] = checkpointed
+        diagnostics["checkpoint_skipped_by_overlap"] = skipped_by_overlap
+        checkpoint_meta = _updated_checkpoint_meta(
+            checkpoint_meta,
+            checkpointed=checkpointed,
+            skipped_by_overlap=skipped_by_overlap,
+            base_count=_candidate_append_log_base_count(append_log),
+            update_count=_candidate_append_log_update_count(append_log),
+        )
+        diagnostics["candidate_append_log_entries"] = len(append_log)
+        diagnostics["candidate_append_log_base_count"] = _candidate_append_log_base_count(append_log)
+        diagnostics["candidate_append_log_update_count"] = _candidate_append_log_update_count(append_log)
+        diagnostics["checkpoint_meta"] = checkpoint_meta
+        self._save_ledger(
+            redis_client,
+            adapter_name=adapter_name,
+            ledger={
+                "schema_version": ASSIGNMENT_LEDGER_SCHEMA_VERSION,
+                "candidate_append_log": append_log,
+                "candidate_stats": stats,
+                "candidate_counters": counters,
+                "checkpoint_meta": checkpoint_meta,
+            },
+        )
+        return append_log, diagnostics
+
+    def checkpoint_if_needed(self, *, adapter_name: str) -> dict[str, Any]:
+        redis_client = self._redis_client()
+        ledger = self._load_ledger(redis_client, adapter_name=adapter_name)
+        append_log = _compact_ledger_append_log(
+            item for item in ledger.get("candidate_append_log") or [] if isinstance(item, dict)
+        )
+        stats = {
+            str(key): value
+            for key, value in (ledger.get("candidate_stats") or {}).items()
+            if isinstance(value, dict)
+        }
+        counters = {
+            str(key): value
+            for key, value in (ledger.get("candidate_counters") or {}).items()
+            if isinstance(value, dict)
+        }
+        checkpoint_meta = dict(ledger.get("checkpoint_meta") or {})
+        append_log, stats, counters, checkpointed, skipped_by_overlap = self._maybe_checkpoint(
+            append_log=append_log,
+            stats=stats,
+            counters=counters,
+            current_candidates=[],
+        )
+        checkpoint_meta = _updated_checkpoint_meta(
+            checkpoint_meta,
+            checkpointed=checkpointed,
+            skipped_by_overlap=skipped_by_overlap,
+            base_count=_candidate_append_log_base_count(append_log),
+            update_count=_candidate_append_log_update_count(append_log),
+        )
+        diagnostics = {
+            "redis_available": True,
+            "appended_base": 0,
+            "appended_update": 0,
+            "checkpointed": checkpointed,
+            "checkpoint_skipped_by_overlap": skipped_by_overlap,
+            "candidate_append_log_entries": len(append_log),
+            "candidate_append_log_base_count": _candidate_append_log_base_count(append_log),
+            "candidate_append_log_update_count": _candidate_append_log_update_count(append_log),
+            "checkpoint_meta": checkpoint_meta,
+            "phase": "checkpoint",
+        }
+        self._save_ledger(
+            redis_client,
+            adapter_name=adapter_name,
+            ledger={
+                "schema_version": ASSIGNMENT_LEDGER_SCHEMA_VERSION,
+                "candidate_append_log": append_log,
+                "candidate_stats": stats,
+                "candidate_counters": counters,
+                "checkpoint_meta": checkpoint_meta,
+            },
+        )
+        return diagnostics
+
+    def record_assignment_decision(
+        self,
+        *,
+        adapter_name: str,
+        decision: dict[str, Any],
+        topic_intent: dict[str, Any] | None = None,
+    ) -> None:
+        redis_client = self._redis_client()
+        ledger = self._load_ledger(redis_client, adapter_name=adapter_name)
+        append_log = _compact_ledger_append_log(
+            item for item in ledger.get("candidate_append_log") or [] if isinstance(item, dict)
+        )
+        stats = {
+            str(key): value
+            for key, value in (ledger.get("candidate_stats") or {}).items()
+            if isinstance(value, dict)
+        }
+        counters = {
+            str(key): value
+            for key, value in (ledger.get("candidate_counters") or {}).items()
+            if isinstance(value, dict)
+        }
+        changed = False
+        for assignment in decision.get("assignments") or []:
+            if not isinstance(assignment, dict) or assignment.get("action") != "attach_existing":
+                continue
+            community_id = str(assignment.get("community_id") or "")
+            if not community_id:
+                continue
+            counters.setdefault(community_id, {"retrieved": 0, "accepted": 0})
+            counters[community_id]["accepted"] = int(counters[community_id].get("accepted") or 0) + 1
+            update = _candidate_assignment_update_entry(
+                community_id=community_id,
+                assignment=assignment,
+                previous=stats.get(community_id) or {},
+                topic_intent=topic_intent or {},
+            )
+            if update:
+                append_log.append(update)
+                previous_topics = _candidate_list((stats.get(community_id) or {}).get("future_coverage"))
+                stats.setdefault(community_id, {})
+                stats[community_id]["future_coverage"] = _ordered_unique(
+                    [*previous_topics, *update.get("absorbed", [])]
+                )[:32]
+            changed = True
+        if not changed:
+            return
+        ledger["candidate_append_log"] = append_log
+        ledger["candidate_stats"] = stats
+        ledger["candidate_counters"] = counters
+        self._save_ledger(redis_client, adapter_name=adapter_name, ledger=ledger)
+
+    def _redis_client(self) -> Any:
+        if self._redis is None:
+            self._redis = redis.from_url(REDIS_URL, decode_responses=True)
+        return self._redis
+
+    def _ledger_key(self, *, adapter_name: str) -> str:
+        return f"kg:assignment_candidate_ledger:{self._target}:{adapter_name}"
+
+    def _load_ledger(self, redis_client: Any, *, adapter_name: str) -> dict[str, Any]:
+        raw = redis_client.get(self._ledger_key(adapter_name=adapter_name))
+        if not raw:
+            return {
+                "schema_version": ASSIGNMENT_LEDGER_SCHEMA_VERSION,
+                "candidate_append_log": [],
+                "candidate_stats": {},
+                "candidate_counters": {},
+                "checkpoint_meta": {},
+            }
+        data = json.loads(raw)
+        if not isinstance(data, dict) or data.get("schema_version") != ASSIGNMENT_LEDGER_SCHEMA_VERSION:
+            return {
+                "schema_version": ASSIGNMENT_LEDGER_SCHEMA_VERSION,
+                "candidate_append_log": [],
+                "candidate_stats": {},
+                "candidate_counters": {},
+                "checkpoint_meta": {},
+            }
+        return data
+
+    def _save_ledger(self, redis_client: Any, *, adapter_name: str, ledger: dict[str, Any]) -> None:
+        redis_client.setex(
+            self._ledger_key(adapter_name=adapter_name),
+            self._ttl_seconds,
+            json.dumps(ledger, ensure_ascii=False, separators=(",", ":")),
+        )
+
+    def _maybe_checkpoint(
+        self,
+        *,
+        append_log: list[dict[str, Any]],
+        stats: dict[str, dict[str, Any]],
+        counters: dict[str, dict[str, Any]],
+        current_candidates: list[dict[str, Any]],
+    ) -> tuple[list[dict[str, Any]], dict[str, dict[str, Any]], dict[str, dict[str, Any]], bool, bool]:
+        base_count = _candidate_append_log_base_count(append_log)
+        base_entries = [item for item in append_log if item.get("entry_type") == "candidate_base"]
+        base_payload_chars = len(json.dumps(base_entries, ensure_ascii=False, separators=(",", ":")))
+        if (
+            base_count <= self._max_base_candidates
+            and base_payload_chars <= self._max_chars
+        ):
+            return append_log, stats, counters, False, False
+        old_base_ids = _candidate_append_log_base_ids_in_order(append_log)
+        first_order = {community_id: index for index, community_id in enumerate(old_base_ids)}
+        current_ids = [str(candidate.get("community_id") or "") for candidate in current_candidates if candidate.get("community_id")]
+        ranked_ids = sorted(
+            first_order,
+            key=lambda community_id: (
+                -int((counters.get(community_id) or {}).get("accepted") or 0),
+                -int((counters.get(community_id) or {}).get("retrieved") or 0),
+                first_order[community_id],
+            ),
+        )
+        selected_ids = _ordered_unique([*ranked_ids[: self._keep_base_candidates], *current_ids])
+        if base_payload_chars <= self._max_chars and _candidate_prefix_overlap_ratio(old_base_ids, selected_ids) >= self._checkpoint_reuse_overlap:
+            return append_log, stats, counters, False, True
+        base_by_id = {
+            str(item.get("community_id") or ""): item
+            for item in append_log
+            if item.get("entry_type") == "candidate_base" and item.get("community_id")
+        }
+        sorted_selected_ids = sorted(selected_ids, key=_stable_community_id_sort_key)
+        rebuilt = [
+            dict(base_by_id[community_id])
+            for community_id in sorted_selected_ids
+            if community_id in base_by_id
+        ]
+        selected = {str(item.get("community_id") or "") for item in rebuilt if item.get("community_id")}
+        return (
+            rebuilt,
+            {community_id: value for community_id, value in stats.items() if community_id in selected},
+            {},
+            True,
+            False,
+        )
 
 
 def _stable_candidate_prompt_sort_key(candidate: dict[str, Any]) -> tuple[int, int, int, str]:
     community_id = str(candidate.get("community_id") or "")
-    sequence = _community_id_sequence_order(community_id)
+    id_key = _stable_community_id_sort_key(community_id)
     return (
         int(candidate.get("level") or 0),
+        *id_key,
+    )
+
+
+def _stable_community_id_sort_key(community_id: str) -> tuple[int, int, str]:
+    sequence = _community_id_sequence_order(community_id)
+    return (
         0 if sequence is not None else 1,
         sequence or 0,
         community_id,
@@ -359,6 +579,210 @@ def _community_id_sequence_order(community_id: str) -> int | None:
         return int(match.group(1))
     except ValueError:
         return None
+
+
+def _candidate_append_log_base_count(append_log: list[dict[str, Any]]) -> int:
+    return sum(1 for item in append_log if item.get("entry_type") == "candidate_base")
+
+
+def _candidate_append_log_update_count(append_log: list[dict[str, Any]]) -> int:
+    return sum(1 for item in append_log if item.get("entry_type") == "candidate_update")
+
+
+def _candidate_append_log_base_ids(append_log: list[dict[str, Any]]) -> set[str]:
+    return set(_candidate_append_log_base_ids_in_order(append_log))
+
+
+def _candidate_append_log_base_ids_in_order(append_log: list[dict[str, Any]]) -> list[str]:
+    result: list[str] = []
+    seen: set[str] = set()
+    for item in append_log:
+        if item.get("entry_type") != "candidate_base":
+            continue
+        community_id = str(item.get("community_id") or "")
+        if not community_id or community_id in seen:
+            continue
+        seen.add(community_id)
+        result.append(community_id)
+    return result
+
+
+def _compact_ledger_append_log(items: Any) -> list[dict[str, Any]]:
+    result: list[dict[str, Any]] = []
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        entry_type = item.get("entry_type")
+        if entry_type == "candidate_base":
+            compacted = _compact_append_log_entry(_legacy_candidate_base_entry(item))
+        elif entry_type == "candidate_update":
+            compacted = _compact_append_log_entry(_legacy_candidate_update_entry(item))
+        else:
+            continue
+        if compacted.get("entry_type") == "candidate_base" and compacted.get("community_id"):
+            result.append(compacted)
+        elif compacted.get("entry_type") == "candidate_update" and compacted.get("community_id") and compacted.get("absorbed"):
+            result.append(compacted)
+    return result
+
+
+def _legacy_candidate_base_entry(item: dict[str, Any]) -> dict[str, Any]:
+    dynamic = item.get("dynamic_context") if isinstance(item.get("dynamic_context"), dict) else {}
+    payload = {
+        "entry_type": "candidate_base",
+        "community_id": str(item.get("community_id") or ""),
+        "title": str(item.get("title") or ""),
+        "scope": str(item.get("scope") or ""),
+        "include_rules": _candidate_list(item.get("include_rules")),
+        "exclude_rules": _candidate_list(item.get("exclude_rules")),
+        "canonical_labels": _candidate_list(item.get("canonical_labels")),
+        "granularity_note": str(item.get("granularity_note") or ""),
+        "absorbed_subtopics": _candidate_list(item.get("absorbed_subtopics") or dynamic.get("absorbed_subtopics")),
+        "maturity": str(item.get("maturity") or dynamic.get("maturity") or ""),
+    }
+    return payload
+
+
+def _legacy_candidate_update_entry(item: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "entry_type": "candidate_update",
+        "community_id": str(item.get("community_id") or ""),
+        "absorbed": _candidate_list(item.get("absorbed") or item.get("new_absorbed_subtopics")),
+    }
+
+
+def _candidate_prefix_overlap_ratio(old_base_ids: list[str], selected_ids: list[str]) -> float:
+    if not selected_ids:
+        return 0.0
+    old_prefix = set(old_base_ids[: len(selected_ids)])
+    if not old_prefix:
+        return 0.0
+    return len(old_prefix.intersection(selected_ids)) / len(selected_ids)
+
+
+def _updated_checkpoint_meta(
+    checkpoint_meta: dict[str, Any],
+    *,
+    checkpointed: bool,
+    skipped_by_overlap: bool,
+    base_count: int,
+    update_count: int,
+) -> dict[str, Any]:
+    result = dict(checkpoint_meta)
+    if checkpointed:
+        result["checkpoint_count"] = int(result.get("checkpoint_count") or 0) + 1
+    else:
+        result.setdefault("checkpoint_count", int(result.get("checkpoint_count") or 0))
+    result["last_checkpointed"] = bool(checkpointed)
+    result["last_checkpoint_skipped_by_overlap"] = bool(skipped_by_overlap)
+    result["last_base_count"] = int(base_count)
+    result["last_update_count"] = int(update_count)
+    return result
+
+
+def _candidate_base_entry(candidate: dict[str, Any]) -> dict[str, Any]:
+    alias_map, prompt_candidates = _candidate_aliases([candidate])
+    _ = alias_map
+    payload = dict(prompt_candidates[0]) if prompt_candidates else {
+        "community_id": str(candidate.get("community_id") or ""),
+        "title": str(candidate.get("title") or ""),
+        "scope": str(candidate.get("scope") or ""),
+    }
+    payload["entry_type"] = "candidate_base"
+    return _compact_append_log_entry(payload)
+
+
+def _candidate_stats(candidate: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "title": str(candidate.get("title") or ""),
+        "source_count": int(candidate.get("source_count") or 0),
+        "assigned_intent_count": int(candidate.get("assigned_intent_count") or 0),
+        "maturity": str(candidate.get("maturity") or ""),
+        "future_coverage": _candidate_list(candidate.get("future_coverage"))[:10],
+        "mid_topics": _candidate_list(candidate.get("mid_topics"))[:10],
+        "specific_topics": _candidate_list(candidate.get("specific_topics"))[:10],
+    }
+
+
+def _candidate_update_entry(
+    candidate: dict[str, Any],
+    *,
+    previous: dict[str, Any],
+    current: dict[str, Any],
+) -> dict[str, Any] | None:
+    community_id = str(candidate.get("community_id") or "")
+    if not community_id or not previous:
+        return None
+    previous_topics = set(_candidate_list(previous.get("future_coverage")))
+    current_topics = _candidate_list(current.get("future_coverage"))
+    new_topics = [item for item in current_topics if item not in previous_topics][:4]
+    if not new_topics:
+        return None
+    return {
+        "entry_type": "candidate_update",
+        "community_id": community_id,
+        "absorbed": new_topics,
+    }
+
+
+def _candidate_assignment_update_entry(
+    *,
+    community_id: str,
+    assignment: dict[str, Any],
+    previous: dict[str, Any],
+    topic_intent: dict[str, Any],
+) -> dict[str, Any] | None:
+    if not _assignment_should_update_candidate_context(assignment):
+        return None
+    previous_topics = set(_candidate_list(previous.get("future_coverage")))
+    current_topics = _assignment_absorbed_topics(topic_intent)
+    new_topics = [item for item in current_topics if item not in previous_topics][:4]
+    if not community_id or not new_topics:
+        return None
+    return {
+        "entry_type": "candidate_update",
+        "community_id": community_id,
+        "absorbed": new_topics,
+    }
+
+
+def _assignment_absorbed_topics(topic_intent: dict[str, Any]) -> list[str]:
+    return _ordered_unique(
+        [
+            *_candidate_list(topic_intent.get("parent_themes")),
+            *_candidate_list(topic_intent.get("broad_topics")),
+            *_candidate_list(topic_intent.get("mid_topics")),
+        ]
+    )[:4]
+
+
+def _assignment_should_update_candidate_context(assignment: dict[str, Any]) -> bool:
+    fit_type = str(assignment.get("fit_type") or "")
+    if fit_type == "adjacent_context":
+        return False
+    try:
+        weight = float(assignment.get("weight") or 0)
+    except (TypeError, ValueError):
+        weight = 0.0
+    if weight < 0.65:
+        return False
+    return fit_type in {"existing_direction", "new_subtopic", "broader_parent"}
+
+
+def _compact_append_log_entry(payload: dict[str, Any]) -> dict[str, Any]:
+    result: dict[str, Any] = {}
+    for key, value in payload.items():
+        if isinstance(value, str):
+            if value.strip():
+                result[key] = value
+            continue
+        if isinstance(value, list):
+            if value:
+                result[key] = value
+            continue
+        if value is not None:
+            result[key] = value
+    return result
 
 
 class CommunityCardBuilder:
@@ -395,11 +819,17 @@ class CommunityCardBuilder:
         assignments: list[CommunityAssignment] = []
         intent_count = 0
         validation_errors = 0
+        candidate_ledger_diagnostics: list[dict[str, Any]] = []
+        self._candidate_ledger_diagnostics = candidate_ledger_diagnostics
         with langfuse_observation(
             name="kg.community_card.build",
             as_type="span",
             input={"cards": len(cards), "existing_communities": len(existing_communities)},
         ):
+            if self._candidate_order_store is not None:
+                candidate_ledger_diagnostics.append(
+                    self._candidate_order_store.checkpoint_if_needed(adapter_name=adapter_name)
+                )
             for card in sorted(cards, key=lambda item: (item.source_id, item.chunk_index, item.cognitive_card_id)):
                 for index, intent in enumerate(card.topic_intents, start=1):
                     intent_count += 1
@@ -433,6 +863,10 @@ class CommunityCardBuilder:
                         ]
                         if updated:
                             await self._on_communities_updated(updated)
+            if self._candidate_order_store is not None:
+                candidate_ledger_diagnostics.append(
+                    self._candidate_order_store.checkpoint_if_needed(adapter_name=adapter_name)
+                )
             graph_communities = [
                 _graph_community_from_draft(adapter_name, community)
                 for community in communities.values()
@@ -449,6 +883,7 @@ class CommunityCardBuilder:
                 "seed_candidates": len([item for item in communities.values() if getattr(item, "origin", "") == "seed"]),
                 "candidate_rerank": "external_reranker" if self._reranker_client is not None else "disabled",
                 "community_builder": "cognitive_card_assignment_v1",
+                "candidate_ledger": _aggregate_candidate_ledger_diagnostics(candidate_ledger_diagnostics),
             }
             langfuse_update_span(output=diagnostics, status_message="completed")
             return CognitiveCommunityBuildResult(
@@ -552,13 +987,20 @@ class CommunityCardBuilder:
     ) -> dict[str, Any]:
         max_attach = COMPLEX_MAX_ATTACH if _is_complex_intent(topic_intent) else DEFAULT_MAX_ATTACH
         deduped_candidates = _dedupe_assignment_candidates(candidates)
-        prompt_ordered_candidates = self._prompt_order_candidates(
+        if self._candidate_order_store is None:
+            raise RuntimeError("assignment candidate ledger is required; configure Redis-backed AssignmentCandidateOrderStore")
+        candidate_append_log, ledger_diagnostics = self._candidate_order_store.prepare_append_log(
             adapter_name=card.adapter_name,
-            query_key=assignment_candidate_order_key(topic_intent),
             candidates=deduped_candidates,
-        )[:MAX_ASSIGNMENT_CANDIDATES]
-        alias_map, prompt_candidates = _candidate_aliases(prompt_ordered_candidates)
-        validation_candidates = prompt_ordered_candidates
+            allow_checkpoint=False,
+        )
+        active_candidate_ids = set(communities)
+        candidate_append_log = [
+            item
+            for item in candidate_append_log
+            if str(item.get("community_id") or "") in active_candidate_ids
+        ]
+        validation_candidates = _validation_candidates_from_append_log(candidate_append_log)
         candidate_ids = [str(candidate.get("community_id") or "") for candidate in candidates if candidate.get("community_id")]
         deduped_candidate_ids = [
             str(candidate.get("community_id") or "")
@@ -567,11 +1009,11 @@ class CommunityCardBuilder:
         ]
         prompt_candidate_ids = [
             str(candidate.get("community_id") or "")
-            for candidate in prompt_ordered_candidates
+            for candidate in validation_candidates
             if candidate.get("community_id")
         ]
         prompt = {
-            "community_candidates": prompt_candidates,
+            "candidate_append_log": candidate_append_log,
             "topic_intent": assignment_prompt_topic_intent(topic_intent, max_attach=max_attach),
             "max_attach": max_attach,
         }
@@ -586,17 +1028,20 @@ class CommunityCardBuilder:
                 "task": "kg_community_assignment",
                 "raw_candidate_count": len(candidate_ids),
                 "deduped_candidate_count": len(deduped_candidate_ids),
-                "prompt_candidate_count": len(prompt_ordered_candidates),
+                "prompt_candidate_count": len(validation_candidates),
                 "duplicate_candidate_count": max(0, len(candidate_ids) - len(set(candidate_ids))),
                 "prompt_candidate_id_sample": prompt_candidate_ids[:5],
+                "candidate_ledger": ledger_diagnostics,
             },
             use_cache=True,
         )
+        ledger_sink = getattr(self, "_candidate_ledger_diagnostics", None)
+        if isinstance(ledger_sink, list):
+            ledger_sink.append(dict(ledger_diagnostics))
         response = await self._llm.generate(request)
         decision = response.structured_output
         if not isinstance(decision, dict):
             raise RuntimeError(f"assignment output is not object: card={card.cognitive_card_id}")
-        decision = _resolve_aliases(decision, alias_map)
         try:
             validate_assignment_decision(decision, validation_candidates, topic_intent=topic_intent)
         except Exception as exc:
@@ -608,7 +1053,7 @@ class CommunityCardBuilder:
                     "上一轮 Community Assignment 输出未通过业务校验。"
                     "只修复 JSON 结构和字段合规性，不改变业务裁决含义。"
                     "顶层只能包含 assignments 和 new_communities。"
-                    "action=attach_existing 时 community_id 必须引用 community_candidates 中真实存在的 community_id；"
+                    "action=attach_existing 时 community_id 必须引用 candidate_append_log 中真实存在的 candidate_base community_id；"
                     "action=create_new 时 community_id 必须引用 new_communities 中的 client_id。"
                     "每条 assignment 必须包含 fit_type；attach_existing 不能使用 new_parent_topic，"
                     "create_new 必须使用 new_parent_topic。"
@@ -621,18 +1066,62 @@ class CommunityCardBuilder:
             decision = repaired.structured_output
             if not isinstance(decision, dict):
                 raise RuntimeError(f"assignment repair output is not object: card={card.cognitive_card_id}") from exc
-            decision = _resolve_aliases(decision, alias_map)
             validate_assignment_decision(decision, validation_candidates, topic_intent=topic_intent)
+        self._candidate_order_store.record_assignment_decision(
+            adapter_name=card.adapter_name,
+            decision=decision,
+            topic_intent=topic_intent,
+        )
         return decision
 
-    def _prompt_order_candidates(
-        self,
-        *,
-        adapter_name: str,
-        query_key: str,
-        candidates: list[dict[str, Any]],
-    ) -> list[dict[str, Any]]:
-        return sorted(candidates, key=_stable_candidate_prompt_sort_key)
+
+def _validation_candidates_from_append_log(candidate_append_log: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    result: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for item in candidate_append_log:
+        if item.get("entry_type") != "candidate_base":
+            continue
+        community_id = str(item.get("community_id") or "")
+        if not community_id or community_id in seen:
+            continue
+        seen.add(community_id)
+        result.append({"community_id": community_id, "title": str(item.get("title") or "")})
+    return result
+
+
+def _aggregate_candidate_ledger_diagnostics(items: list[dict[str, Any]]) -> dict[str, Any]:
+    if not items:
+        return {
+            "calls": 0,
+            "redis_available_count": 0,
+            "redis_unavailable_count": 0,
+            "appended_base_total": 0,
+            "appended_update_total": 0,
+            "checkpointed_count": 0,
+            "checkpoint_skipped_by_overlap_count": 0,
+            "max_append_log_entries": 0,
+            "max_base_count": 0,
+            "max_update_count": 0,
+            "error_types": {},
+        }
+    error_types: dict[str, int] = {}
+    for item in items:
+        error = str(item.get("error") or "").strip()
+        if error:
+            error_types[error] = error_types.get(error, 0) + 1
+    return {
+        "calls": len(items),
+        "redis_available_count": sum(1 for item in items if item.get("redis_available") is True),
+        "redis_unavailable_count": sum(1 for item in items if item.get("redis_available") is not True),
+        "appended_base_total": sum(int(item.get("appended_base") or 0) for item in items),
+        "appended_update_total": sum(int(item.get("appended_update") or 0) for item in items),
+        "checkpointed_count": sum(1 for item in items if item.get("checkpointed") is True),
+        "checkpoint_skipped_by_overlap_count": sum(1 for item in items if item.get("checkpoint_skipped_by_overlap") is True),
+        "max_append_log_entries": max(int(item.get("candidate_append_log_entries") or 0) for item in items),
+        "max_base_count": max(int(item.get("candidate_append_log_base_count") or 0) for item in items),
+        "max_update_count": max(int(item.get("candidate_append_log_update_count") or 0) for item in items),
+        "error_types": error_types,
+    }
 
 
 def _dedupe_assignment_candidates(candidates: list[dict[str, Any]]) -> list[dict[str, Any]]:
