@@ -495,18 +495,12 @@ def test_candidate_ledger_uses_single_append_log_without_reordering_or_midstream
         "candidate_base",
         "candidate_base",
         "candidate_base",
-        "candidate_update",
     ]
-    assert third_log[-1]["community_id"] == "kgc:financial:l0:1"
-    assert third_log[-1] == {
-        "entry_type": "candidate_update",
-        "community_id": "kgc:financial:l0:1",
-        "absorbed": ["AI芯片供需", "光模块/CPO"],
-    }
     assert first_diag["redis_available"] is True
     assert second_diag["appended_base"] == 1
-    assert third_diag["appended_update"] == 1
+    assert third_diag["appended_update"] == 0
     assert _candidate_append_log_base_count(third_log) == 3
+    assert sum(1 for item in third_log if item["entry_type"] == "candidate_update") == 0
 
 
 def test_candidate_ledger_compacts_legacy_entries_loaded_from_redis():
@@ -572,7 +566,7 @@ def test_candidate_ledger_compacts_legacy_entries_loaded_from_redis():
     assert saved["candidate_append_log"] == append_log
 
 
-def test_candidate_ledger_appends_only_reusable_topics_after_attach_decision():
+def test_candidate_ledger_does_not_append_update_after_attach_decision():
     redis = _MemoryRedis()
     store = AssignmentCandidateOrderStore(target="test", redis_client=redis)
     store.prepare_append_log(
@@ -615,15 +609,9 @@ def test_candidate_ledger_appends_only_reusable_topics_after_attach_decision():
     )
 
     saved = json.loads(redis.get(store._ledger_key(adapter_name="financial")))
-    assert saved["candidate_append_log"][-1] == {
-        "entry_type": "candidate_update",
-        "community_id": "kgc:financial:l0:1",
-        "absorbed": ["AI基础设施", "AI芯片供需"],
-    }
+    assert [item["entry_type"] for item in saved["candidate_append_log"]] == ["candidate_base"]
     assert saved["candidate_stats"]["kgc:financial:l0:1"]["future_coverage"] == [
         "AI算力链",
-        "AI基础设施",
-        "AI芯片供需",
     ]
 
 
@@ -760,7 +748,7 @@ def test_candidate_ledger_checkpoint_rebuilds_when_hot_prefix_overlap_is_low():
     assert ledger["checkpoint_meta"]["last_checkpointed"] is True
 
 
-def test_candidate_ledger_updates_do_not_trigger_checkpoint():
+def test_candidate_ledger_does_not_create_updates_from_candidate_stat_changes():
     redis = _MemoryRedis()
     store = AssignmentCandidateOrderStore(
         target="test",
@@ -798,11 +786,10 @@ def test_candidate_ledger_updates_do_not_trigger_checkpoint():
             ],
         )
 
-    assert last_log[0]["entry_type"] == "candidate_base"
-    assert {item["entry_type"] for item in last_log[1:]} == {"candidate_update"}
+    assert [item["entry_type"] for item in last_log] == ["candidate_base"]
     assert last_diag["checkpointed"] is False
     assert last_diag["checkpoint_skipped_by_overlap"] is False
-    assert last_diag["candidate_append_log_update_count"] == 63
+    assert last_diag["candidate_append_log_update_count"] == 0
     ledger = json.loads(next(iter(redis.data.values())))
     assert ledger["checkpoint_meta"]["checkpoint_count"] == 0
     assert ledger["checkpoint_meta"]["last_checkpoint_skipped_by_overlap"] is False

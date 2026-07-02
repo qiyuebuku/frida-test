@@ -26,6 +26,8 @@
 | `12. Milvus语义检索与PG关系展开查询链路实施方案.md` | 细化双层架构的查询链路，说明 Query Parser、多入口召回、PG exact / graph expand、Milvus get-by-id、chunk pool、rerank、Agent tools、Langfuse trace 和查询回归测试。 |
 | `13. Milvus多集合语义索引拆分优化方案.md` | 说明 Milvus chunk/entity/relation/community 多集合拆分、各集合职责、写入刷新和查询聚合方式。 |
 | `14. Graph Index增量构建与多索引分层实施方案.md` | 承接 Graph Index 增量构建设计，说明基础分析图、Projection、层级 Community、Lineage、Dirty Subgraph、Community Change Score、Report、Delta、Finding 和 Milvus 发布的实施方案。 |
+| `18. Community Assignment候选上下文账本缓存优化实施方案.md` | 说明 Community Assignment 阶段如何使用 Redis 候选账本稳定 prompt 前缀、降低候选上下文抖动，并记录当前实现边界。 |
+| `19. Agent检索与决策上下文实施方案.md` | 说明面向 Agent 的 search / open / expand / refine 检索运行时如何基于 Community、Cognitive Card 和 Evidence/Chunk 构建 Retrieval Decision Context。 |
 
 ## 3. 实施规则
 

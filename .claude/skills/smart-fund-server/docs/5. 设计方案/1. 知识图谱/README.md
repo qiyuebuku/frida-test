@@ -26,6 +26,11 @@
 | `12. Milvus语义检索、PG关系展开与叙事图谱设计方案.md` | 收敛最新检索架构决策：Milvus 负责语义召回和按 ID 取回可读 chunk/card，PG 负责事实、关系、原文和不含 chunk text 的证据指针，叙事图谱负责异步 topic cluster / market narrative。 |
 | `13. GraphRAG数据编译入库与检索机制调研.md` | 调研 GraphRAG 如何以 TextUnit 为证据中枢构建 entity、relationship、community report 和多入口检索，并明确哪些机制可借鉴、哪些不能照搬。 |
 | `14. Graph Index增量构建与多索引分层设计方案.md` | 专门说明 Graph Index 如何分层、如何划分多类索引、如何用 dirty subgraph / delta view / 局部重算降低全局 community 重构成本。 |
+| `15. Graph Index社区化重构设计方案.md` | 记录 Graph Index 社区化重构过程中的设计判断和历史方案，阅读时应以 16/17/18/19 的最新结论为准。 |
+| `16. Community Topic高维信号提取验证方案.md` | 说明当前最新写入主线：原文 / chunk -> Cognitive Card -> Community Card。 |
+| `17. Seed Community Topic与归档Prompt优化方案.md` | 说明 Seed Community 如何作为真实 Community 进入系统，并辅助 LLM 稳定 L0 主题粒度。 |
+| `18. Community Assignment候选上下文账本缓存优化实施方案.md` | 说明 Community Assignment 阶段如何使用候选上下文账本稳定 LLM 前缀，减少候选顺序抖动和 cache miss。 |
+| `19. Agent检索与决策上下文设计方案.md` | 说明写入链路跑通后，如何为 Agent 提供 search / open / expand / refine 检索能力，并返回 evidence package、覆盖摘要、质量诊断和下一步搜索建议。 |
 
 ## 3. 总体设计结论
 

@@ -319,11 +319,7 @@ class AssignmentCandidateOrderStore:
                 base_ids.add(community_id)
                 diagnostics["appended_base"] += 1
                 continue
-            update = _candidate_update_entry(candidate, previous=stats.get(community_id) or {}, current=current_stats)
-            if update:
-                append_log.append(update)
-                stats[community_id] = current_stats
-                diagnostics["appended_update"] += 1
+            stats[community_id] = current_stats
         checkpointed = False
         skipped_by_overlap = False
         if allow_checkpoint:
@@ -445,19 +441,6 @@ class AssignmentCandidateOrderStore:
                 continue
             counters.setdefault(community_id, {"retrieved": 0, "accepted": 0})
             counters[community_id]["accepted"] = int(counters[community_id].get("accepted") or 0) + 1
-            update = _candidate_assignment_update_entry(
-                community_id=community_id,
-                assignment=assignment,
-                previous=stats.get(community_id) or {},
-                topic_intent=topic_intent or {},
-            )
-            if update:
-                append_log.append(update)
-                previous_topics = _candidate_list((stats.get(community_id) or {}).get("future_coverage"))
-                stats.setdefault(community_id, {})
-                stats[community_id]["future_coverage"] = _ordered_unique(
-                    [*previous_topics, *update.get("absorbed", [])]
-                )[:32]
             changed = True
         if not changed:
             return
@@ -615,13 +598,9 @@ def _compact_ledger_append_log(items: Any) -> list[dict[str, Any]]:
         entry_type = item.get("entry_type")
         if entry_type == "candidate_base":
             compacted = _compact_append_log_entry(_legacy_candidate_base_entry(item))
-        elif entry_type == "candidate_update":
-            compacted = _compact_append_log_entry(_legacy_candidate_update_entry(item))
         else:
             continue
         if compacted.get("entry_type") == "candidate_base" and compacted.get("community_id"):
-            result.append(compacted)
-        elif compacted.get("entry_type") == "candidate_update" and compacted.get("community_id") and compacted.get("absorbed"):
             result.append(compacted)
     return result
 
@@ -641,14 +620,6 @@ def _legacy_candidate_base_entry(item: dict[str, Any]) -> dict[str, Any]:
         "maturity": str(item.get("maturity") or dynamic.get("maturity") or ""),
     }
     return payload
-
-
-def _legacy_candidate_update_entry(item: dict[str, Any]) -> dict[str, Any]:
-    return {
-        "entry_type": "candidate_update",
-        "community_id": str(item.get("community_id") or ""),
-        "absorbed": _candidate_list(item.get("absorbed") or item.get("new_absorbed_subtopics")),
-    }
 
 
 def _candidate_prefix_overlap_ratio(old_base_ids: list[str], selected_ids: list[str]) -> float:
@@ -702,71 +673,6 @@ def _candidate_stats(candidate: dict[str, Any]) -> dict[str, Any]:
         "mid_topics": _candidate_list(candidate.get("mid_topics"))[:10],
         "specific_topics": _candidate_list(candidate.get("specific_topics"))[:10],
     }
-
-
-def _candidate_update_entry(
-    candidate: dict[str, Any],
-    *,
-    previous: dict[str, Any],
-    current: dict[str, Any],
-) -> dict[str, Any] | None:
-    community_id = str(candidate.get("community_id") or "")
-    if not community_id or not previous:
-        return None
-    previous_topics = set(_candidate_list(previous.get("future_coverage")))
-    current_topics = _candidate_list(current.get("future_coverage"))
-    new_topics = [item for item in current_topics if item not in previous_topics][:4]
-    if not new_topics:
-        return None
-    return {
-        "entry_type": "candidate_update",
-        "community_id": community_id,
-        "absorbed": new_topics,
-    }
-
-
-def _candidate_assignment_update_entry(
-    *,
-    community_id: str,
-    assignment: dict[str, Any],
-    previous: dict[str, Any],
-    topic_intent: dict[str, Any],
-) -> dict[str, Any] | None:
-    if not _assignment_should_update_candidate_context(assignment):
-        return None
-    previous_topics = set(_candidate_list(previous.get("future_coverage")))
-    current_topics = _assignment_absorbed_topics(topic_intent)
-    new_topics = [item for item in current_topics if item not in previous_topics][:4]
-    if not community_id or not new_topics:
-        return None
-    return {
-        "entry_type": "candidate_update",
-        "community_id": community_id,
-        "absorbed": new_topics,
-    }
-
-
-def _assignment_absorbed_topics(topic_intent: dict[str, Any]) -> list[str]:
-    return _ordered_unique(
-        [
-            *_candidate_list(topic_intent.get("parent_themes")),
-            *_candidate_list(topic_intent.get("broad_topics")),
-            *_candidate_list(topic_intent.get("mid_topics")),
-        ]
-    )[:4]
-
-
-def _assignment_should_update_candidate_context(assignment: dict[str, Any]) -> bool:
-    fit_type = str(assignment.get("fit_type") or "")
-    if fit_type == "adjacent_context":
-        return False
-    try:
-        weight = float(assignment.get("weight") or 0)
-    except (TypeError, ValueError):
-        weight = 0.0
-    if weight < 0.65:
-        return False
-    return fit_type in {"existing_direction", "new_subtopic", "broader_parent"}
 
 
 def _compact_append_log_entry(payload: dict[str, Any]) -> dict[str, Any]:
