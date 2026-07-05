@@ -22,7 +22,6 @@ GROUPS = {
         "ft_news", "ft_market_flow", "ft_market_cache",
         "ft_sentiment", "ft_macro_indicators", "ft_collection_state",
     ],
-    "02_extraction.sql": ["ft_events", "ft_event_streams"],
     "03_trading.sql": [
         "ft_pending_decisions", "ft_decisions", "ft_trades", "ft_positions",
         "ft_industry_mapping", "ft_industry_index", "ft_index_fund",

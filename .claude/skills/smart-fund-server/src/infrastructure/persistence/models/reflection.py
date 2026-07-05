@@ -25,7 +25,7 @@ class Review(Base):
 
     流程: ft_trades(T-N) → 拿 ETF 净值 → 计算 T+1/T+2 收益 → 判断 outcome
     outcome: correct / wrong / neutral / pending
-    胜率统计: 写入 ft_config.event_driven_winrate,反哺动态仓位
+    胜率统计可用于后续策略评估。
     """
     __tablename__ = "ft_reviews"
 
@@ -63,7 +63,7 @@ class Review(Base):
     )
 
     decision_source: Mapped[str | None] = mapped_column(
-        String, default="llm", comment="llm/event_driven"
+        String, default="llm", comment="决策来源"
     )
     dry_run: Mapped[bool | None] = mapped_column(Boolean, default=False)
 

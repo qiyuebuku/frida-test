@@ -19,7 +19,7 @@ from src.domain.knowledge.retrieval_eval import (
     RetrievalLabel,
     RetrievalTraceSnapshot,
 )
-from src.domain.knowledge.schemas import CompiledEdge, CompiledEvidence, CompiledNode, EvidenceChunk
+from src.domain.knowledge.schemas import CompiledEvidence, EvidenceChunk
 
 
 class KnowledgeRepository(ABC):
@@ -28,44 +28,12 @@ class KnowledgeRepository(ABC):
         """Verify repository connectivity with a lightweight query."""
 
     @abstractmethod
-    def upsert_nodes(self, nodes: list[CompiledNode]) -> int:
-        """Insert or update nodes and return affected row count."""
-
-    @abstractmethod
-    def upsert_edges(self, edges: list[CompiledEdge]) -> int:
-        """Insert or update edges and return affected row count."""
-
-    @abstractmethod
     def upsert_evidence(self, evidence: list[CompiledEvidence]) -> int:
         """Insert or update evidence records and return affected row count."""
 
     @abstractmethod
-    def attach_edge_evidence(self, edge_id: str, evidence_ids: list[str]) -> int:
-        """Attach evidence records to an edge and return affected row count."""
-
-    @abstractmethod
-    def get_node(self, node_id: str) -> CompiledNode | None:
-        """Load one compiled node by ID."""
-
-    @abstractmethod
-    def get_edge(self, edge_id: str) -> CompiledEdge | None:
-        """Load one compiled edge by ID."""
-
-    @abstractmethod
     def get_evidence(self, evidence_id: str) -> CompiledEvidence | None:
         """Load one compiled evidence record by ID."""
-
-    @abstractmethod
-    def get_edge_evidence(self, edge_id: str) -> list[CompiledEvidence]:
-        """Load evidence records attached to an edge."""
-
-    @abstractmethod
-    def list_nodes(self, adapter_name: str) -> list[CompiledNode]:
-        """Load nodes for one adapter."""
-
-    @abstractmethod
-    def list_edges(self, adapter_name: str) -> list[CompiledEdge]:
-        """Load edges for one adapter."""
 
     @abstractmethod
     def list_evidence(self, adapter_name: str, *, include_inactive: bool = False) -> list[CompiledEvidence]:
@@ -74,18 +42,6 @@ class KnowledgeRepository(ABC):
     @abstractmethod
     def cleanup_evidence_versions(self, adapter_name: str) -> dict[str, Any]:
         """Mark stale same-source evidence versions inactive/superseded."""
-
-    @abstractmethod
-    def rebuild_graph_adjacency(self, adapter_name: str) -> int:
-        """Replace generated adjacency records for one adapter."""
-
-    @abstractmethod
-    def upsert_graph_adjacency(self, edges: list[CompiledEdge]) -> int:
-        """Insert or update generated adjacency records for changed edges."""
-
-    @abstractmethod
-    def get_neighbors(self, node_id: str, adapter_name: str | None = None) -> list[str]:
-        """Load direct neighbor node IDs."""
 
     @abstractmethod
     def rebuild_evidence_chunks(self, adapter_name: str) -> int:
@@ -98,6 +54,20 @@ class KnowledgeRepository(ABC):
     @abstractmethod
     def list_evidence_chunks(self, adapter_name: str) -> list[EvidenceChunk]:
         """Load generated evidence chunks for one adapter."""
+
+    def list_evidence_chunks_by_refs(
+        self,
+        adapter_name: str,
+        *,
+        chunk_ids: list[str],
+        evidence_ids: list[str],
+    ) -> list[EvidenceChunk]:
+        """Load generated evidence chunks matching chunk IDs or evidence IDs."""
+        return [
+            chunk
+            for chunk in self.list_evidence_chunks(adapter_name)
+            if chunk.chunk_id in set(chunk_ids) or chunk.evidence_id in set(evidence_ids)
+        ]
 
     @abstractmethod
     def replace_cognitive_cards_for_evidence(
@@ -113,6 +83,36 @@ class KnowledgeRepository(ABC):
     def list_cognitive_cards(self, adapter_name: str, *, status: str = "active") -> list[CognitiveCard]:
         """Load Cognitive Cards for one adapter."""
 
+    def list_cognitive_cards_by_ids(
+        self,
+        adapter_name: str,
+        *,
+        cognitive_card_ids: list[str],
+        status: str = "active",
+    ) -> list[CognitiveCard]:
+        """Load scoped Cognitive Cards by ID."""
+        ids = set(cognitive_card_ids)
+        return [card for card in self.list_cognitive_cards(adapter_name, status=status) if card.cognitive_card_id in ids]
+
+    def list_cognitive_cards_by_chunk_refs(
+        self,
+        adapter_name: str,
+        *,
+        chunk_ids: list[str],
+        evidence_ids: list[str],
+        status: str = "active",
+    ) -> list[CognitiveCard]:
+        """Load scoped Cognitive Cards by chunk or evidence refs."""
+        chunk_set = set(chunk_ids)
+        evidence_set = set(evidence_ids)
+        return [
+            card
+            for card in self.list_cognitive_cards(adapter_name, status=status)
+            if card.evidence_id in evidence_set
+            or card.primary_chunk_id in chunk_set
+            or bool(set(card.chunk_ids).intersection(chunk_set))
+        ]
+
     @abstractmethod
     def replace_community_assignments_for_cards(
         self,
@@ -124,8 +124,17 @@ class KnowledgeRepository(ABC):
         """Replace Community Assignment decisions for Cognitive Cards."""
 
     @abstractmethod
+    def migrate_community_assignments(
+        self,
+        adapter_name: str,
+        *,
+        community_id_map: dict[str, str],
+    ) -> int:
+        """Rewrite Community Assignment community_id refs after community absorption."""
+
+    @abstractmethod
     def count_graph_index_materials(self, adapter_name: str) -> dict[str, int]:
-        """Count nodes, edges and chunks used by Graph Index planning."""
+        """Count chunk/card materials used by high-level index planning."""
 
     @abstractmethod
     def list_graph_index_materials(
@@ -137,11 +146,35 @@ class KnowledgeRepository(ABC):
         evidence_ids: list[str],
         chunk_ids: list[str],
     ) -> dict[str, list[Any]]:
-        """Load scoped nodes, edges and chunks for Graph Index local rebuild."""
+        """Load scoped chunks for high-level index local rebuild."""
 
     @abstractmethod
     def list_graph_communities(self, adapter_name: str) -> list[GraphIndexCommunity]:
         """Load current Graph Index communities for one adapter."""
+
+    def list_graph_communities_by_ids(
+        self,
+        adapter_name: str,
+        *,
+        community_ids: list[str],
+    ) -> list[GraphIndexCommunity]:
+        """Load scoped Graph Index communities by ID."""
+        ids = set(community_ids)
+        return [community for community in self.list_graph_communities(adapter_name) if community.community_id in ids]
+
+    def list_graph_communities_by_card_ids(
+        self,
+        adapter_name: str,
+        *,
+        cognitive_card_ids: list[str],
+    ) -> list[GraphIndexCommunity]:
+        """Load scoped Graph Index communities containing any Cognitive Card refs."""
+        ids = set(cognitive_card_ids)
+        return [
+            community
+            for community in self.list_graph_communities(adapter_name)
+            if ids.intersection(set((community.metrics or {}).get("cognitive_card_ids") or []))
+        ]
 
     @abstractmethod
     def allocate_graph_community_id(self, adapter_name: str, *, level: int = 0) -> str:

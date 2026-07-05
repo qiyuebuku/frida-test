@@ -66,7 +66,7 @@ src/application/
 ```
 
 直接结果：
-- `interfaces/tasks/aggregator_tasks.py` 直接 import domain 类调 `.tick()`
+- `interfaces/tasks/collection_tasks.py` 直接 import domain 类调 `.tick()`
 - 没有"用例"概念，事务边界、统一日志埋点、跨聚合协调没地方放
 
 ---
@@ -229,7 +229,7 @@ src/
     ├── cli/                               # 改为 click 命令组（可选）
     │   └── main.py                        # python -m smart_fund {worker|scheduler|persist|trigger|init-db}
     └── tasks/                             # jettask task 入口
-        └── aggregator_tasks.py            # 改为 thin wrapper 调 application services
+        └── collection_tasks.py            # 改为 thin wrapper 调 application services
 ```
 
 ---
@@ -518,7 +518,7 @@ class NewsRepositoryImpl(NewsRepository):
 
 ### 5.2 直接 import jettask 类的入口（不动）
 
-- `interfaces/tasks/aggregator_tasks.py` —— 内部调 application services
+- `interfaces/tasks/collection_tasks.py` —— 内部调 application services
 - `interfaces/cli/start_*.py` —— 不动
 - `interfaces/api/routes/*.py` —— 已经是 thin layer，按需调 application services
 
@@ -693,7 +693,7 @@ tests/integration/repositories/test_<name>_repository.py::test_upsert_then_find_
 | R3.4 | 拆分 `decision/event_driven_decider.py` → `trading/services/decision_scoring.py` + `industry_router.py` |
 | R3.5 | 新建 `application/services/collection_app_service.py` —— 一个 use case 一个方法 |
 | R3.6 | 新建 `application/dto/*` |
-| R3.7 | 改 `interfaces/tasks/aggregator_tasks.py` 调 application services |
+| R3.7 | 改 `interfaces/tasks/collection_tasks.py` 调 application services |
 | R3.8 | 删除/合并旧的 `domain/aggregation/` `domain/decision/` `domain/trading/` 目录 |
 
 **完成标志**：
@@ -708,7 +708,7 @@ R3 主要是文件搬迁 + 接口调整,**重点测 import 不破和 task → ap
 | 测试 ID | 关联步骤 | 类型 | 测试内容 | 通过标准 |
 |---|---|---|---|---|
 | **T-R3.1-1** | R3.1 | 静态 | 创建新目录后 `tree src/domain` | 4 个聚合根目录都在 |
-| **T-R3.2-1** | R3.2 | 静态 | `git mv` 完成后 `python -c "from src.interfaces.tasks.aggregator_tasks import *"` | import 0 错误 |
+| **T-R3.2-1** | R3.2 | 静态 | `git mv` 完成后 `python -c "from src.interfaces.tasks.collection_tasks import *"` | import 0 错误 |
 | **T-R3.2-2** | R3.2 | 静态 | `grep -rn "from src.domain.aggregation\|from src.domain.decision\|from src.domain.trading" src/` | **0 行**（旧路径已全部替换） |
 | **T-R3.3-1** | R3.3 | 单元 | `EventExtractor.extract_one(news)` 用 mock claude 跑 | 返回 Event 对象 |
 | **T-R3.3-2** | R3.3 | 单元 | `EmbeddingGenerator.generate([text])` 用 mock httpx 跑 | 返回 1024 维 list |
@@ -720,7 +720,7 @@ R3 主要是文件搬迁 + 接口调整,**重点测 import 不破和 task → ap
 | **T-R3.5-3** | R3.5 | 单元 | `TradingAppService.execute_pending_dry_run()` mock domain | 不应触发真实下单 |
 | **T-R3.5-4** | R3.5 | 单元 | `ReflectionAppService.run_review()` mock | 调用 review_engine 一次 |
 | **T-R3.6-1** | R3.6 | 静态 | `from src.application.dto.collection_dto import NewsCollectionResult` | 能 import |
-| **T-R3.7-1** | R3.7 | 集成 | `agg_news task` 内部应该只调 `CollectionAppService.run_news_collection()`，不再 import domain | grep 验证 |
+| **T-R3.7-1** | R3.7 | 集成 | `collect_news task` 内部应该只调 `CollectionAppService.run_news_collection()`，不再 import domain | grep 验证 |
 | **T-R3.7-2** | R3.7 | 集成 | trigger_tasks.py news → 完整跑通 | 等价 |
 | **T-R3.7-3** | R3.7 | 集成 | trigger_tasks.py 全部 12 个 task | 全部成功 |
 | **T-R3.8-1** | R3.8 | 静态 | 旧目录 `src/domain/aggregation/` 应该被删除 | `ls` 不存在 |

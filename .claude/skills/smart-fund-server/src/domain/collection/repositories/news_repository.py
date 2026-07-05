@@ -22,6 +22,10 @@ class NewsRepository(ABC):
         """
         ...
 
+    def upsert_batch_returning_ids(self, items: list[dict]) -> list[int]:
+        """批量插入新闻并返回真实新增 ID，fingerprint 冲突跳过。"""
+        ...
+
     @abstractmethod
     def find_today_titles(self, today: date | None = None) -> list[str]:
         """跨源相似度去重: 取今日已入库的所有标题"""

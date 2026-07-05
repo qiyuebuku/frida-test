@@ -3,12 +3,16 @@
 from __future__ import annotations
 
 import json
+import asyncio
 
 import pytest
 
 from src.application.services.cognitive_index_service import (
+    AssignmentBucketStore,
+    AssignmentBucketSemanticCache,
     AssignmentCandidateOrderStore,
     CognitiveCardExtractor,
+    CommunityBucketPlanner,
     CommunityCardBuilder,
     _candidate_append_log_base_count,
     _dedupe_assignment_candidates,
@@ -26,6 +30,7 @@ from src.domain.knowledge.cognitive_index import (
 )
 from src.domain.knowledge.graph_index import GraphIndexCommunity
 from src.domain.knowledge.schemas import EvidenceChunk
+from src.infrastructure.config import settings
 from src.infrastructure.llm_proxy.types import LLMProxyResponse
 from src.infrastructure.clients.reranker import RerankResponse, RerankResult
 
@@ -135,54 +140,34 @@ def test_assignment_validation_rejects_empty_title_as_new_l0():
         )
 
 
-def test_assignment_validation_rejects_generic_market_signal_bucket_as_new_l0():
-    with pytest.raises(RuntimeError, match="market signal"):
-        validate_assignment_decision(
-            {
-                "assignments": [
-                    {
-                        "action": "create_new",
-                        "community_id": "new_1",
-                        "weight": 0.82,
-                        "confidence": 0.86,
-                        "fit_type": "new_parent_topic",
-                        "reason": "候选主题无法承接，创建行情主题。",
-                    }
-                ],
-                "new_communities": [{"client_id": "new_1", "title": "市场行情", "scope": "承接板块异动、个股涨跌和成交放量"}],
-            },
-            [],
-            topic_intent={
-                "raw_theme": "港股油气设备股反弹",
-                "parent_themes": ["市场行情", "能源板块"],
-                "specific_topics": ["港股油气设备股反弹"],
-            },
-        )
-
-
-def test_assignment_validation_rejects_single_market_move_as_new_l0():
-    with pytest.raises(RuntimeError, match="market signal"):
-        validate_assignment_decision(
-            {
-                "assignments": [
-                    {
-                        "action": "create_new",
-                        "community_id": "new_1",
-                        "weight": 0.78,
-                        "confidence": 0.8,
-                        "fit_type": "new_parent_topic",
-                        "reason": "创建港股油气设备行情主题。",
-                    }
-                ],
-                "new_communities": [{"client_id": "new_1", "title": "港股油气设备股反弹", "scope": "承接港股油气设备股上涨和板块反弹"}],
-            },
-            [],
-            topic_intent={
-                "raw_theme": "港股油气设备股反弹",
-                "parent_themes": ["市场行情", "能源板块"],
-                "specific_topics": ["港股油气设备股反弹"],
-            },
-        )
+def test_assignment_validation_does_not_override_llm_market_boundary_decision():
+    validate_assignment_decision(
+        {
+            "assignments": [
+                {
+                    "action": "create_new",
+                    "community_id": "new_1",
+                    "weight": 0.82,
+                    "confidence": 0.86,
+                    "fit_type": "new_parent_topic",
+                    "reason": "模型认为该主题可长期承接市场微观结构变化。",
+                }
+            ],
+            "new_communities": [
+                {
+                    "client_id": "new_1",
+                    "title": "市场微观结构变化",
+                    "scope": "承接成交结构、资金行为和交易制度变化等可复用市场结构主题。",
+                }
+            ],
+        },
+        [],
+        topic_intent={
+            "raw_theme": "成交结构变化影响板块轮动",
+            "parent_themes": ["市场微观结构变化"],
+            "specific_topics": ["成交额放量"],
+        },
+    )
 
 
 def test_assignment_validation_allows_driver_topic_as_new_l0():
@@ -387,6 +372,44 @@ class _LLM:
         return await self.generate(request)
 
 
+class _ConcurrentAssignmentLLM:
+    def __init__(self, planning_output: dict, *, assignment_delay: float = 0.02) -> None:
+        self.planning_output = planning_output
+        self.assignment_delay = assignment_delay
+        self.requests = []
+        self.active_assignments = 0
+        self.max_active_assignments = 0
+
+    async def generate(self, request):
+        self.requests.append(request)
+        task = request.metadata.get("task")
+        if task == "kg_assignment_bucket_planning":
+            output = self.planning_output
+        elif task == "kg_community_assignment":
+            self.active_assignments += 1
+            self.max_active_assignments = max(self.max_active_assignments, self.active_assignments)
+            try:
+                await asyncio.sleep(self.assignment_delay)
+            finally:
+                self.active_assignments -= 1
+            prompt = json.loads(request.prompt)
+            title = str(prompt["topic_intent"].get("title_candidate") or "测试主题")
+            output = _create_assignment(title)
+        else:
+            output = {}
+        return LLMProxyResponse(
+            text="",
+            structured_output=output,
+            usage={},
+            session_id=None,
+            duration_ms=1,
+            raw_payload={},
+        )
+
+    async def repair_with_feedback(self, request, response, validation_issues, **kwargs):
+        return await self.generate(request)
+
+
 class _Reranker:
     def __init__(self, order: list[int]) -> None:
         self.order = order
@@ -418,10 +441,44 @@ class _MemoryRedis:
         self.ttl[key] = ttl
         return True
 
+    def delete(self, *keys):
+        deleted = 0
+        for key in keys:
+            if key in self.data:
+                deleted += 1
+                self.data.pop(key, None)
+                self.ttl.pop(key, None)
+        return deleted
+
 
 class _BrokenRedis:
     def get(self, _key):
         raise ConnectionError("redis unavailable")
+
+
+class _BucketSemanticCache:
+    def __init__(self, responses=None, *, has_entries: bool = True):
+        self.responses = list(responses or [])
+        self.has_entries_value = has_entries
+        self.resolve_calls = []
+        self.upserts = []
+        self.deletes = []
+
+    def has_entries(self, **_kwargs):
+        return self.has_entries_value
+
+    async def resolve(self, **kwargs):
+        self.resolve_calls.append(kwargs)
+        if self.responses:
+            return self.responses.pop(0)
+        return {"direct": None, "candidates": []}
+
+    async def upsert_buckets(self, **kwargs):
+        self.upserts.append(kwargs)
+        return len(kwargs.get("buckets") or [])
+
+    def delete_buckets(self, **kwargs):
+        self.deletes.append(kwargs)
 
 
 def _order_store() -> AssignmentCandidateOrderStore:
@@ -793,6 +850,853 @@ def test_candidate_ledger_does_not_create_updates_from_candidate_stat_changes():
     ledger = json.loads(next(iter(redis.data.values())))
     assert ledger["checkpoint_meta"]["checkpoint_count"] == 0
     assert ledger["checkpoint_meta"]["last_checkpoint_skipped_by_overlap"] is False
+
+
+@pytest.mark.asyncio
+async def test_bucket_planner_uses_llm_then_reuses_theme_cache():
+    redis = _MemoryRedis()
+    store = AssignmentBucketStore(target="test", redis_client=redis)
+    llm = _LLM(
+        [
+            {
+                "assignments": [
+                    {
+                        "canonical_theme": "AI芯片",
+                        "bucket_id": "ai_infra",
+                    }
+                ],
+                "new_buckets": [
+                    {
+                        "bucket_id": "ai_infra",
+                        "bucket_title": "AI算力链",
+                        "scope": "承接 AI 芯片、光模块、数据中心和算电协同。",
+                        "canonical_themes": ["AI芯片"],
+                    }
+                ],
+                "theme_bucket_updates": [{"canonical_theme": "AI芯片", "bucket_id": "ai_infra"}],
+            }
+        ]
+    )
+    planner = CommunityBucketPlanner(store=store, llm=llm, model="test-model")
+    first = await planner.plan(
+        adapter_name="financial",
+        intent_refs=[
+            {
+                "intent_id": "intent-1",
+                "card": None,
+                "intent_index": 1,
+                "topic_intent": {
+                    "parent_themes": ["AI芯片"],
+                    "broad_topics": ["人工智能基础设施"],
+                    "mid_topics": ["AI芯片供需"],
+                    "event_action": ["扩产"],
+                    "driver": ["AI需求增长"],
+                    "risk_type": ["供应短缺"],
+                    "impact_target": ["某公司"],
+                    "title_candidate": "AI算力链",
+                    "summary": (
+                        "AI芯片供需紧张，算力基础设施资本开支提升，光模块和服务器需求持续增长，"
+                        "产业链公司订单和产能利用率同步改善，海外云厂商资本开支继续上修。"
+                    ),
+                },
+            }
+        ],
+    )
+    second = await planner.plan(
+        adapter_name="financial",
+        intent_refs=[
+            {
+                "intent_id": "intent-2",
+                "card": None,
+                "intent_index": 1,
+                "topic_intent": {
+                    "parent_themes": ["AI芯片"],
+                    "broad_topics": ["人工智能基础设施"],
+                    "title_candidate": "AI算力链",
+                    "summary": "AI芯片继续短缺。",
+                },
+            }
+        ],
+    )
+
+    assert len(llm.requests) == 1
+    prompt_payload = json.loads(llm.requests[0].prompt)
+    prompt_signature = prompt_payload["topic_intent_signatures"][0]
+    assert "intent_id" not in prompt_signature
+    assert "source_id" not in prompt_signature
+    assert "chunk_index" not in prompt_signature
+    assert "broad_topics" not in prompt_signature
+    assert "mid_topics" not in prompt_signature
+    assert "impact_target" not in prompt_signature
+    assert "summary" not in prompt_signature
+    assert "event_action" not in prompt_signature
+    assert "driver" not in prompt_signature
+    assert "risk_type" not in prompt_signature
+    assert prompt_signature["routing_signals"] == ["扩产", "AI需求增长", "供应短缺"]
+    expected_summary = (
+        "AI芯片供需紧张，算力基础设施资本开支提升，光模块和服务器需求持续增长，"
+        "产业链公司订单和产能利用率同步改善，海外云厂商资本开支继续上修。"
+    )
+    assert prompt_signature["context_hint"] == expected_summary[:60]
+    assert len(prompt_signature["context_hint"]) <= 60
+    assert set(first["buckets"]) == {"ai_infra"}
+    assert set(second["buckets"]) == {"ai_infra"}
+    assert second["unknown_intents"] == 0
+    saved = json.loads(redis.get(store._state_key(adapter_name="financial")))
+    assert saved["theme_bucket_map"]["ai芯片"] == "ai_infra"
+
+
+def test_assignment_bucket_store_force_clear_deletes_state_and_stale_lock():
+    redis = _MemoryRedis()
+    store = AssignmentBucketStore(target="test", redis_client=redis)
+    state_key = store._state_key(adapter_name="financial")
+    lock_key = store._lock_key(adapter_name="financial", name="bucket_catalog")
+    redis.setex(state_key, 60, "{}")
+    redis.setex(lock_key, 60, "stale")
+
+    result = store.clear(adapter_name="financial", force_stale_lock=True)
+
+    assert result["deleted"] == 1
+    assert result["lock_deleted"] == 1
+    assert result["force_stale_lock"] is True
+    assert redis.get(state_key) is None
+    assert redis.get(lock_key) is None
+
+
+@pytest.mark.asyncio
+async def test_bucket_planner_uses_semantic_cache_direct_hit_without_llm():
+    redis = _MemoryRedis()
+    store = AssignmentBucketStore(target="test", redis_client=redis)
+    store.apply_planning_decision(
+        adapter_name="financial",
+        decision={
+            "assignments": [],
+            "new_buckets": [
+                {
+                    "bucket_id": "bucket_ai_infra",
+                    "bucket_title": "AI算力链",
+                    "scope": "承接 AI 芯片、光模块和数据中心。",
+                    "canonical_themes": ["AI算力链"],
+                }
+            ],
+            "theme_bucket_updates": [],
+        },
+    )
+    semantic_cache = _BucketSemanticCache(
+        [
+            {
+                "direct": {
+                    "bucket_id": "bucket_ai_infra",
+                    "bucket_title": "AI算力链",
+                    "semantic_score": 0.93,
+                },
+                "candidates": [],
+            }
+        ]
+    )
+    llm = _LLM([])
+    planner = CommunityBucketPlanner(
+        store=store,
+        llm=llm,
+        model="test-model",
+        semantic_bucket_cache=semantic_cache,
+    )
+
+    result = await planner.plan(
+        adapter_name="financial",
+        intent_refs=[
+            {
+                "intent_id": "intent-1",
+                "card": None,
+                "intent_index": 1,
+                "topic_intent": {"parent_themes": ["人工智能基础设施"], "title_candidate": "AI硬件链"},
+            }
+        ],
+    )
+
+    assert llm.requests == []
+    assert len(semantic_cache.resolve_calls) == 1
+    assert result["assignments"]["intent-1"]["bucket_id"] == "bucket_ai_infra"
+    assert result["assignments"]["intent-1"]["cache_source"] == "semantic"
+    saved = json.loads(redis.get(store._state_key(adapter_name="financial")))
+    assert saved["theme_bucket_map"]["人工智能基础设施"] == "bucket_ai_infra"
+
+
+@pytest.mark.asyncio
+async def test_bucket_planner_passes_semantic_candidates_to_llm_and_upserts_bucket_cache():
+    redis = _MemoryRedis()
+    store = AssignmentBucketStore(target="test", redis_client=redis)
+    store.apply_planning_decision(
+        adapter_name="financial",
+        decision={
+            "assignments": [],
+            "new_buckets": [
+                {
+                    "bucket_id": "bucket_ai_infra",
+                    "bucket_title": "AI算力链",
+                    "scope": "承接 AI 芯片、光模块和数据中心。",
+                    "canonical_themes": ["AI算力链"],
+                }
+            ],
+            "theme_bucket_updates": [],
+        },
+    )
+    semantic_cache = _BucketSemanticCache(
+        [
+            {
+                "direct": None,
+                "candidates": [
+                    {
+                        "bucket_id": "bucket_ai_infra",
+                        "bucket_title": "AI算力链",
+                        "scope": "承接 AI 芯片、光模块和数据中心。",
+                        "semantic_score": 0.84,
+                    }
+                ],
+            }
+        ]
+    )
+    llm = _LLM(
+        [
+            {
+                "assignments": [{"canonical_theme": "AI硬件产业链", "bucket_id": "bucket_ai_infra"}],
+                "new_buckets": [],
+                "theme_bucket_updates": [],
+            }
+        ]
+    )
+    planner = CommunityBucketPlanner(
+        store=store,
+        llm=llm,
+        model="test-model",
+        semantic_bucket_cache=semantic_cache,
+    )
+
+    await planner.plan(
+        adapter_name="financial",
+        intent_refs=[
+            {
+                "intent_id": "intent-1",
+                "card": None,
+                "intent_index": 1,
+                "topic_intent": {"parent_themes": ["AI硬件产业链"], "title_candidate": "AI硬件链"},
+            }
+        ],
+    )
+
+    prompt = json.loads(llm.requests[0].prompt)
+    assert prompt["topic_intent_signatures"][0]["semantic_bucket_candidates"] == [
+        {
+            "bucket_id": "bucket_ai_infra",
+            "bucket_title": "AI算力链",
+            "scope": "承接 AI 芯片、光模块和数据中心。",
+            "semantic_score": 0.84,
+        }
+    ]
+    assert semantic_cache.upserts
+    assert semantic_cache.upserts[0]["buckets"][0]["bucket_id"] == "bucket_ai_infra"
+
+
+@pytest.mark.asyncio
+async def test_bucket_planner_repairs_non_object_output():
+    redis = _MemoryRedis()
+    store = AssignmentBucketStore(target="test", redis_client=redis)
+    llm = _LLM(
+        [
+            ["not", "object"],
+            {
+                "assignments": [
+                    {
+                        "canonical_theme": "AI芯片",
+                        "bucket_id": "ai_infra",
+                    }
+                ],
+                "new_buckets": [
+                    {
+                        "bucket_id": "ai_infra",
+                        "bucket_title": "AI算力链",
+                        "scope": "承接 AI 芯片、光模块、数据中心和算电协同。",
+                        "canonical_themes": ["AI芯片"],
+                    }
+                ],
+                "theme_bucket_updates": [{"canonical_theme": "AI芯片", "bucket_id": "ai_infra"}],
+            },
+        ]
+    )
+    planner = CommunityBucketPlanner(store=store, llm=llm, model="test-model")
+
+    result = await planner.plan(
+        adapter_name="financial",
+        intent_refs=[
+            {
+                "intent_id": "intent-1",
+                "card": None,
+                "intent_index": 1,
+                "topic_intent": {
+                    "parent_themes": ["AI芯片"],
+                    "broad_topics": ["人工智能基础设施"],
+                    "title_candidate": "AI算力链",
+                    "summary": "AI芯片供需紧张。",
+                },
+            }
+        ],
+    )
+
+    assert set(result["buckets"]) == {"ai_infra"}
+    assert len(llm.repairs) == 1
+    assert "must be JSON object" in llm.repairs[0]["validation_issues"][0]
+    assert llm.repairs[0]["kwargs"]["retry_reason"] == "bucket_planning_validation_invalid"
+
+
+@pytest.mark.asyncio
+async def test_bucket_planner_can_bypass_llm_cache_for_validation_runs():
+    redis = _MemoryRedis()
+    store = AssignmentBucketStore(target="test", redis_client=redis)
+    llm = _LLM(
+        [
+            {
+                "assignments": [
+                    {
+                        "canonical_theme": "AI芯片",
+                        "bucket_id": "ai_infra",
+                    }
+                ],
+                "new_buckets": [
+                    {
+                        "bucket_id": "ai_infra",
+                        "bucket_title": "AI算力链",
+                        "scope": "承接 AI 芯片、光模块、数据中心和算电协同。",
+                        "canonical_themes": ["AI芯片"],
+                    }
+                ],
+                "theme_bucket_updates": [],
+            }
+        ]
+    )
+    planner = CommunityBucketPlanner(store=store, llm=llm, model="test-model", use_cache=False)
+
+    await planner.plan(
+        adapter_name="financial",
+        intent_refs=[
+            {
+                "intent_id": "intent-1",
+                "card": None,
+                "intent_index": 1,
+                "topic_intent": {
+                    "parent_themes": ["AI芯片"],
+                    "title_candidate": "AI算力链",
+                    "summary": "AI芯片供需紧张。",
+                },
+            }
+        ],
+    )
+
+    assert llm.requests[0].use_cache is False
+    assert llm.requests[0].metadata["llm_use_cache"] is False
+    assert llm.requests[0].provider_options["thinking_type"] == "disabled"
+    assert llm.requests[0].metadata["thinking_type"] == "disabled"
+    assert llm.requests[0].metadata["merge_decoupled"] is True
+
+
+@pytest.mark.asyncio
+async def test_bucket_planner_uses_semantic_cache_when_redis_catalog_is_empty():
+    redis = _MemoryRedis()
+    store = AssignmentBucketStore(target="test", redis_client=redis)
+    semantic_cache = _BucketSemanticCache(
+        [
+            {
+                "direct": {
+                    "bucket_id": "bucket_ai_infra",
+                    "bucket_title": "AI算力链",
+                    "scope": "承接 AI 芯片、光模块、数据中心和算电协同。",
+                    "canonical_themes": ["AI算力链", "AI芯片"],
+                    "semantic_score": 0.93,
+                    "semantic_cache_source": "milvus_metadata",
+                },
+                "candidates": [
+                    {
+                        "bucket_id": "bucket_ai_infra",
+                        "bucket_title": "AI算力链",
+                        "scope": "承接 AI 芯片、光模块、数据中心和算电协同。",
+                        "semantic_score": 0.93,
+                    }
+                ],
+                "raw_hits": 1,
+            }
+        ]
+    )
+    llm = _LLM([])
+    planner = CommunityBucketPlanner(
+        store=store,
+        llm=llm,
+        model="test-model",
+        semantic_bucket_cache=semantic_cache,
+    )
+
+    result = await planner.plan(
+        adapter_name="financial",
+        intent_refs=[
+            {
+                "intent_id": "intent-1",
+                "card": None,
+                "intent_index": 1,
+                "topic_intent": {
+                    "parent_themes": ["AI算力链"],
+                    "title_candidate": "AI算力链",
+                    "summary": "AI 芯片供需紧张。",
+                },
+            }
+        ],
+    )
+
+    assert llm.requests == []
+    assert result["assignments"]["intent-1"]["bucket_id"] == "bucket_ai_infra"
+    assert result["assignments"]["intent-1"]["cache_source"] == "semantic"
+    assert result["semantic_cache"]["semantic_requests"] == 1
+    assert result["semantic_cache"]["semantic_raw_hits"] == 1
+    assert result["semantic_cache"]["semantic_candidate_hits"] == 1
+    assert result["semantic_cache"]["semantic_direct_hits"] == 1
+    saved = json.loads(redis.get(store._state_key(adapter_name="financial")))
+    assert saved["bucket_catalog"]["bucket_ai_infra"]["bucket_title"] == "AI算力链"
+    assert saved["bucket_catalog"]["bucket_ai_infra"]["scope"] == "承接 AI 芯片、光模块、数据中心和算电协同。"
+    assert saved["theme_bucket_map"]["ai算力链"] == "bucket_ai_infra"
+
+
+@pytest.mark.asyncio
+async def test_assignment_bucket_semantic_cache_directs_by_metadata_theme_match(monkeypatch):
+    class _Store:
+        def list_target_ids(self, **_kwargs):
+            return ["bucket_doc"]
+
+        def vector_search(self, **_kwargs):
+            from src.infrastructure.vector_store.milvus_hybrid_store import MilvusHybridHit
+
+            return [
+                MilvusHybridHit(
+                    chunk_id="bucket_doc",
+                    evidence_id="",
+                    text="",
+                    score=0.55,
+                    metadata={
+                        "bucket_id": "bucket_ma",
+                        "bucket_title": "并购重组",
+                        "scope": "承接并购重组相关写冲突域。",
+                        "canonical_themes": ["A股并购重组热潮"],
+                    },
+                )
+            ]
+
+    async def _fake_embed_texts(_texts):
+        return [[0.1, 0.2, 0.3]]
+
+    monkeypatch.setattr("src.application.services.cognitive_index_service.embed_texts", _fake_embed_texts)
+    cache = AssignmentBucketSemanticCache(target="test", store=_Store())
+
+    result = await cache.resolve(
+        adapter_name="financial",
+        topic_intent={
+            "parent_themes": ["A股并购重组热潮"],
+            "title_candidate": "A股并购重组热潮",
+        },
+        catalog={},
+    )
+
+    assert result["direct"]["bucket_id"] == "bucket_ma"
+    assert result["direct"]["semantic_direct_reason"] == "exact_theme_match"
+    assert result["candidates"][0]["semantic_score"] == 0.55
+
+
+@pytest.mark.asyncio
+async def test_bucket_planner_default_model_uses_bucket_specific_pro_model(monkeypatch):
+    monkeypatch.setattr(settings, "KG_ASSIGNMENT_BUCKET_MODEL", "deepseek-v4-pro")
+    redis = _MemoryRedis()
+    store = AssignmentBucketStore(target="test", redis_client=redis)
+    llm = _LLM(
+        [
+            {
+                "assignments": [
+                    {
+                        "canonical_theme": "AI芯片",
+                        "bucket_id": "ai_infra",
+                    }
+                ],
+                "new_buckets": [
+                    {
+                        "bucket_id": "ai_infra",
+                        "bucket_title": "AI算力链",
+                        "scope": "承接 AI 芯片、光模块、数据中心和算电协同。",
+                        "canonical_themes": ["AI芯片"],
+                    }
+                ],
+                "theme_bucket_updates": [],
+            }
+        ]
+    )
+    planner = CommunityBucketPlanner(store=store, llm=llm)
+
+    await planner.plan(
+        adapter_name="financial",
+        intent_refs=[
+            {
+                "intent_id": "intent-1",
+                "card": None,
+                "intent_index": 1,
+                "topic_intent": {
+                    "parent_themes": ["AI芯片"],
+                    "title_candidate": "AI算力链",
+                    "summary": "AI芯片供需紧张。",
+                },
+            }
+        ],
+    )
+
+    assert llm.requests[0].model == "deepseek-v4-pro"
+
+
+@pytest.mark.asyncio
+async def test_bucket_planner_can_enable_thinking_for_ab_validation():
+    redis = _MemoryRedis()
+    store = AssignmentBucketStore(target="test", redis_client=redis)
+    llm = _LLM(
+        [
+            {
+                "assignments": [
+                    {
+                        "canonical_theme": "AI芯片",
+                        "bucket_id": "ai_infra",
+                    }
+                ],
+                "new_buckets": [
+                    {
+                        "bucket_id": "ai_infra",
+                        "bucket_title": "AI算力链",
+                        "scope": "承接 AI 芯片、光模块、数据中心和算电协同。",
+                        "canonical_themes": ["AI芯片"],
+                    }
+                ],
+                "theme_bucket_updates": [],
+            }
+        ]
+    )
+    planner = CommunityBucketPlanner(
+        store=store,
+        llm=llm,
+        model="test-model",
+        bucket_thinking="enabled",
+    )
+
+    await planner.plan(
+        adapter_name="financial",
+        intent_refs=[
+            {
+                "intent_id": "intent-1",
+                "card": None,
+                "intent_index": 1,
+                "topic_intent": {
+                    "parent_themes": ["AI芯片"],
+                    "title_candidate": "AI算力链",
+                    "summary": "AI芯片供需紧张。",
+                },
+            }
+        ],
+    )
+
+    assert llm.requests[0].provider_options["thinking_type"] == "enabled"
+    assert llm.requests[0].metadata["thinking_type"] == "enabled"
+
+
+@pytest.mark.asyncio
+async def test_bucket_planner_batches_unknown_intents_and_updates_cache_between_batches():
+    redis = _MemoryRedis()
+    store = AssignmentBucketStore(target="test", redis_client=redis)
+    llm = _LLM(
+        [
+            {
+                "assignments": [
+                    {
+                        "canonical_theme": "AI芯片",
+                        "bucket_id": "bucket_ai_infra",
+                    },
+                    {
+                        "canonical_theme": "AI芯片供需",
+                        "bucket_id": "bucket_ai_infra",
+                    },
+                ],
+                "new_buckets": [
+                    {
+                        "bucket_id": "bucket_ai_infra",
+                        "bucket_title": "AI算力链",
+                        "scope": "承接 AI 芯片、光模块、数据中心和算电协同。",
+                        "canonical_themes": ["AI芯片", "AI芯片供需"],
+                    }
+                ],
+                "theme_bucket_updates": [{"canonical_theme": "AI芯片", "bucket_id": "bucket_ai_infra"}],
+            },
+            {
+                "assignments": [
+                    {
+                        "canonical_theme": "券商自营风险",
+                        "bucket_id": "bucket_broker_risk",
+                    }
+                ],
+                "new_buckets": [
+                    {
+                        "bucket_id": "bucket_broker_risk",
+                        "bucket_title": "券商业务风险",
+                        "scope": "承接券商业务风险、信用风险和自营业务困境。",
+                        "canonical_themes": ["券商自营风险"],
+                    }
+                ],
+                "theme_bucket_updates": [],
+            },
+        ]
+    )
+    planner = CommunityBucketPlanner(store=store, llm=llm, model="test-model", planning_batch_size=2)
+    intent_refs = [
+        {
+            "intent_id": "intent-1",
+            "card": None,
+            "intent_index": 1,
+            "topic_intent": {"parent_themes": ["AI芯片"], "title_candidate": "AI算力链"},
+        },
+        {
+            "intent_id": "intent-2",
+            "card": None,
+            "intent_index": 1,
+            "topic_intent": {"parent_themes": ["AI芯片供需"], "title_candidate": "AI算力链"},
+        },
+        {
+            "intent_id": "intent-3",
+            "card": None,
+            "intent_index": 1,
+            "topic_intent": {"parent_themes": ["券商自营风险"], "title_candidate": "券商业务风险"},
+        },
+        {
+            "intent_id": "intent-4",
+            "card": None,
+            "intent_index": 1,
+            "topic_intent": {"parent_themes": ["AI芯片"], "title_candidate": "AI算力链"},
+        },
+    ]
+
+    result = await planner.plan(adapter_name="financial", intent_refs=intent_refs)
+
+    assert len(llm.requests) == 2
+    assert llm.requests[0].metadata["batch_index"] == 1
+    assert llm.requests[0].metadata["unknown_intents"] == 2
+    assert llm.requests[1].metadata["batch_index"] == 2
+    assert llm.requests[1].metadata["unknown_intents"] == 1
+    first_prompt = json.loads(llm.requests[0].prompt)
+    second_prompt = json.loads(llm.requests[1].prompt)
+    assert first_prompt["existing_bucket_catalog"] == []
+    assert second_prompt["existing_bucket_catalog"] == [
+        {
+            "bucket_id": "bucket_ai_infra",
+            "bucket_title": "AI算力链",
+            "scope": "承接 AI 芯片、光模块、数据中心和算电协同。",
+        }
+    ]
+    assert "canonical_themes" not in second_prompt["existing_bucket_catalog"][0]
+    assert result["planning_batches"] == 2
+    assert result["assignments"]["intent-4"]["from_cache"] is True
+    assert result["assignments"]["intent-4"]["bucket_id"] == "bucket_ai_infra"
+    saved = json.loads(redis.get(store._state_key(adapter_name="financial")))
+    assert saved["bucket_catalog"]["bucket_ai_infra"]["canonical_themes"] == ["AI芯片", "AI芯片供需"]
+
+
+@pytest.mark.asyncio
+async def test_bucket_planner_auto_runs_independent_merge_when_catalog_exceeds_threshold():
+    redis = _MemoryRedis()
+    store = AssignmentBucketStore(target="test", redis_client=redis)
+    llm = _LLM(
+        [
+            {
+                "assignments": [
+                    {"canonical_theme": "AI芯片", "bucket_id": "bucket_ai_chip"},
+                    {"canonical_theme": "AI算力", "bucket_id": "bucket_ai_compute"},
+                    {"canonical_theme": "券商风险", "bucket_id": "bucket_broker_risk"},
+                ],
+                "new_buckets": [
+                    {
+                        "bucket_id": "bucket_ai_chip",
+                        "bucket_title": "AI芯片",
+                        "scope": "承接 AI 芯片供需。",
+                        "canonical_themes": ["AI芯片"],
+                    },
+                    {
+                        "bucket_id": "bucket_ai_compute",
+                        "bucket_title": "AI算力链",
+                        "scope": "承接 AI 算力基础设施。",
+                        "canonical_themes": ["AI算力"],
+                    },
+                    {
+                        "bucket_id": "bucket_broker_risk",
+                        "bucket_title": "券商业务风险",
+                        "scope": "承接券商业务风险。",
+                        "canonical_themes": ["券商风险"],
+                    },
+                ],
+                "theme_bucket_updates": [],
+            },
+            {
+                "merge_actions": [
+                    {
+                        "source_bucket_id": "bucket_ai_chip",
+                        "target_bucket_id": "bucket_ai_compute",
+                        "confidence": 0.88,
+                    }
+                ],
+                "rejected_merge_candidates": [],
+            },
+        ]
+    )
+    planner = CommunityBucketPlanner(
+        store=store,
+        llm=llm,
+        model="test-model",
+        auto_merge_threshold=2,
+        auto_merge_candidate_limit=8,
+    )
+
+    result = await planner.plan(
+        adapter_name="financial",
+        intent_refs=[
+            {
+                "intent_id": "intent-1",
+                "card": None,
+                "intent_index": 1,
+                "topic_intent": {"parent_themes": ["AI芯片"], "title_candidate": "AI芯片"},
+            },
+            {
+                "intent_id": "intent-2",
+                "card": None,
+                "intent_index": 1,
+                "topic_intent": {"parent_themes": ["AI算力"], "title_candidate": "AI算力链"},
+            },
+            {
+                "intent_id": "intent-3",
+                "card": None,
+                "intent_index": 1,
+                "topic_intent": {"parent_themes": ["券商风险"], "title_candidate": "券商业务风险"},
+            },
+        ],
+    )
+
+    assert len(llm.requests) == 2
+    assert llm.requests[0].metadata["task"] == "kg_assignment_bucket_planning"
+    assert llm.requests[1].metadata["task"] == "kg_assignment_bucket_merge"
+    merge_prompt = json.loads(llm.requests[1].prompt)
+    assert "current_bucket_catalog" not in merge_prompt
+    assert "community_summaries" not in merge_prompt
+    assert 1 <= len(merge_prompt["merge_candidates"]) <= 4
+    assert all("source_scope" in item and "target_scope" in item for item in merge_prompt["merge_candidates"])
+    assert llm.requests[1].provider_options["thinking_type"] == "disabled"
+    assert result["merge_result"]["triggered"] is True
+    assert result["merge_result"]["merged"] == 1
+    saved = json.loads(redis.get(store._state_key(adapter_name="financial")))
+    assert "bucket_ai_chip" not in saved["bucket_catalog"]
+    assert saved["theme_bucket_map"]["ai芯片"] == "bucket_ai_compute"
+
+
+@pytest.mark.asyncio
+async def test_community_builder_skips_bucket_planning_for_single_intent():
+    card = cognitive_card_from_llm(_chunk(), _card_payload("AI算力链"))
+    redis = _MemoryRedis()
+    bucket_store = AssignmentBucketStore(target="test", redis_client=redis)
+    order_store = AssignmentCandidateOrderStore(target="test", redis_client=redis)
+    llm = _LLM(
+        [
+            _create_assignment("AI算力链"),
+        ]
+    )
+
+    result = await CommunityCardBuilder(
+        llm=llm,
+        model="test-model",
+        candidate_order_store=order_store,
+        bucket_planner=CommunityBucketPlanner(store=bucket_store, llm=llm, model="test-model"),
+        bucket_concurrency=1,
+        community_id_factory=lambda adapter_name, level, title: f"kgc:{adapter_name}:l{level}:501",
+    ).build(adapter_name="financial", cards=[card], existing_communities=[])
+
+    assert len(llm.requests) == 1
+    assert llm.requests[0].metadata["task"] == "kg_community_assignment"
+    assert result.diagnostics["bucket_planning"]["enabled"] is False
+    assert result.diagnostics["bucket_planning"]["bucket_count"] == 1
+    assert result.diagnostics["bucket_concurrency"] == 1
+    assert result.assignments[0].community_id == "kgc:financial:l0:501"
+
+
+@pytest.mark.asyncio
+async def test_community_builder_runs_assignment_buckets_concurrently():
+    chunk_a = _chunk()
+    chunk_b = EvidenceChunk(
+        chunk_id="kg_chunk:kg_ev:financial:news_articles:test:2:0",
+        adapter_name="financial",
+        evidence_id="kg_ev:financial:news_articles:test:2",
+        content="AI 芯片供需紧张带动光模块和数据中心资本开支。",
+        chunk_index=0,
+        start_offset=0,
+        end_offset=25,
+        previous_chunk_id="",
+        next_chunk_id="",
+        text_hash="h2",
+        chunker_version="recursive_zh_v1",
+        payload={
+            "source_type": "news_articles",
+            "source_id": "test:2",
+            "title": "AI芯片供需紧张",
+        },
+    )
+    card_a = cognitive_card_from_llm(chunk_a, _card_payload("A股并购重组"))
+    card_b = cognitive_card_from_llm(chunk_b, _card_payload("AI算力链"))
+    planning_output = {
+        "assignments": [
+            {
+                "intent_id": f"{card_a.cognitive_card_id}:1",
+                "canonical_theme": "A股并购重组",
+                "bucket_id": "bucket_ma",
+            },
+            {
+                "intent_id": f"{card_b.cognitive_card_id}:1",
+                "canonical_theme": "AI算力链",
+                "bucket_id": "bucket_ai",
+            },
+        ],
+        "new_buckets": [
+            {
+                "bucket_id": "bucket_ma",
+                "bucket_title": "并购重组",
+                "scope": "上市公司并购重组和产业整合。",
+            },
+            {
+                "bucket_id": "bucket_ai",
+                "bucket_title": "AI算力链",
+                "scope": "AI 芯片、光模块和数据中心。",
+            },
+        ],
+        "theme_bucket_updates": [
+            {"canonical_theme": "A股并购重组", "bucket_id": "bucket_ma"},
+            {"canonical_theme": "AI算力链", "bucket_id": "bucket_ai"},
+        ],
+    }
+    redis = _MemoryRedis()
+    llm = _ConcurrentAssignmentLLM(planning_output)
+
+    result = await CommunityCardBuilder(
+        llm=llm,
+        model="test-model",
+        candidate_order_store=AssignmentCandidateOrderStore(target="test", redis_client=redis),
+        bucket_planner=CommunityBucketPlanner(store=AssignmentBucketStore(target="test", redis_client=redis), llm=llm, model="test-model"),
+        bucket_concurrency=2,
+        community_id_factory=lambda adapter_name, level, title: f"kgc:{adapter_name}:l{level}:{title}",
+    ).build(adapter_name="financial", cards=[card_a, card_b], existing_communities=[])
+
+    assert [request.metadata["task"] for request in llm.requests].count("kg_community_assignment") == 2
+    assert llm.max_active_assignments == 2
+    assert result.diagnostics["bucket_planning"]["bucket_count"] == 2
+    assert result.diagnostics["bucket_concurrency"] == 2
+    assert result.diagnostics["bucket_planning"]["bucket_sizes"] == {"bucket_ai": 1, "bucket_ma": 1}
 
 
 @pytest.mark.asyncio

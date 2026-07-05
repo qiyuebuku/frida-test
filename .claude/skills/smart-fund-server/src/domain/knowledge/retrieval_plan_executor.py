@@ -87,6 +87,8 @@ class RetrievalPlanExecutor:
                     graph_time_enabled=(
                         self.registry.options.graph_time_start is not None
                         or self.registry.options.graph_time_end is not None
+                        or self.registry.options.semantic_time_start is not None
+                        or self.registry.options.semantic_time_end is not None
                     ),
                 )
                 + execution_warnings,

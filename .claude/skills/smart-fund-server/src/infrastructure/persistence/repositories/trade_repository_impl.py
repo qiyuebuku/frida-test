@@ -8,6 +8,7 @@ from sqlalchemy import func, select
 from src.domain.trading.repositories.trade_repository import TradeRepository
 from src.infrastructure.connections import get_session
 from src.infrastructure.persistence.models.trading import Trade
+from src.infrastructure.time_utils import app_today
 
 logger = logging.getLogger(__name__)
 
@@ -87,7 +88,7 @@ class TradeRepositoryImpl(TradeRepository):
                 total = s.scalar(
                     select(func.coalesce(func.sum(Trade.amount), 0))
                     .where(
-                        Trade.trade_date == date.today(),
+                        Trade.trade_date == app_today(),
                         Trade.action == "buy",
                         Trade.dry_run.is_(False),
                     )

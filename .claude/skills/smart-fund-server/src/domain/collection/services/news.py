@@ -452,6 +452,7 @@ class NewsAggregator(BaseAggregator):
         super().__init__()
         self._init_sources()
         self._backfill_cursor = None  # fetch 方法设置，_compute_checkpoint 读取
+        self.last_saved_ids: list[int] = []
 
     # ==================== 时间工具 ====================
 
@@ -990,7 +991,10 @@ class NewsAggregator(BaseAggregator):
                 "published_at": item["published_at"],
                 "fingerprint": item["fingerprint"],
             })
-        return self._news_repo().upsert_batch(records)
+        repo = self._news_repo()
+        new_ids = repo.upsert_batch_returning_ids(records)
+        self.last_saved_ids.extend(new_ids)
+        return len(new_ids)
 
     # ==================== 查询 ====================
 

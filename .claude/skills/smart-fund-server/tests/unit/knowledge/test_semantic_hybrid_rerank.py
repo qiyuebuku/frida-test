@@ -17,6 +17,11 @@ from src.infrastructure.vector_store.semantic_hybrid_retriever import (
     _roles_for_target_ids,
     _strong_query_terms,
 )
+from src.domain.knowledge.cognitive_index import CognitiveCard, cognitive_card_document
+from src.domain.knowledge.semantic_index_materials import (
+    SEMANTIC_COLLECTION_COGNITIVE_CARD,
+    _semantic_document_from_graph_index,
+)
 
 
 class _Store:
@@ -53,7 +58,7 @@ class _Store:
         self.documents_by_role = kwargs["documents_by_role"]
         self.documents = [
             document
-            for role in ("chunk", "entity", "relation", "community")
+            for role in ("chunk", "cognitive_card", "entity", "relation", "community")
             for document in self.documents_by_role.get(role, [])
         ]
         self.calls.append(kwargs)
@@ -63,7 +68,7 @@ class _Store:
         self.documents_by_role = kwargs["documents_by_role"]
         self.documents = [
             document
-            for role in ("chunk", "entity", "relation", "community")
+            for role in ("chunk", "cognitive_card", "entity", "relation", "community")
             for document in self.documents_by_role.get(role, [])
         ]
         self.calls.append(kwargs)
@@ -152,6 +157,11 @@ def test_candidate_limit_overfetches_without_unbounded_growth() -> None:
 
 def test_roles_for_target_ids_routes_cognitive_community_ids_to_community_collection() -> None:
     assert _roles_for_target_ids(["kgc:financial:l0:3"]) == ("community",)
+    assert _roles_for_target_ids(["kg_edge:financial:affects:catl"]) == (
+        "chunk",
+        "cognitive_card",
+        "community",
+    )
 
 
 @pytest.mark.asyncio
@@ -375,6 +385,64 @@ async def test_upsert_index_writes_event_card_with_relation_preview(monkeypatch)
 
 
 @pytest.mark.asyncio
+async def test_upsert_semantic_documents_writes_cognitive_card_collection(monkeypatch) -> None:
+    async def fake_embed_texts(texts):
+        return [[0.1, 0.2] for _ in texts]
+
+    monkeypatch.setattr(retriever_module, "embed_texts", fake_embed_texts)
+    store = _Store()
+    card = CognitiveCard(
+        cognitive_card_id="kg_cognitive_card:test",
+        adapter_name="financial",
+        source_type="news_articles",
+        source_id="ft_news:1",
+        evidence_id="kg_ev:financial:news:1",
+        primary_chunk_id="kg_chunk:kg_ev:financial:news:1:0",
+        chunk_ids=["kg_chunk:kg_ev:financial:news:1:0"],
+        chunk_index=0,
+        summary="AI芯片供需紧张影响算力链。",
+        title_candidates=["AI算力链"],
+        topic_intents=[
+            {
+                "raw_theme": "AI芯片供需",
+                "title_candidate": "AI算力链",
+                "parent_themes": ["AI算力链"],
+                "broad_topics": ["人工智能基础设施"],
+                "mid_topics": ["AI芯片供需"],
+                "specific_topics": ["芯片供应不足"],
+                "driver": ["AI应用需求"],
+                "impact_target": ["AI芯片"],
+                "risk_type": ["供应瓶颈"],
+                "event_thread": ["AI算力链供需"],
+                "event_action": ["扩产"],
+                "actors": ["特斯拉"],
+                "summary": "AI芯片供需紧张。",
+            }
+        ],
+        risk_signals=[],
+        local_impact_signals=[],
+        actor_signals={"companies": ["特斯拉"]},
+        supporting_text=["预计未来AI芯片将严重不足"],
+        system_pointers={},
+        payload={"title": "AI芯片新闻", "published_at": "2026-04-23T00:00:00+00:00"},
+    )
+
+    count = await MilvusSemanticHybridRetriever(store=store).upsert_semantic_documents(
+        adapter_name="financial",
+        target="prod",
+        documents=[_semantic_document_from_graph_index(cognitive_card_document(card))],
+    )
+
+    assert count == 1
+    assert store.calls[-1]["documents_by_role"][SEMANTIC_COLLECTION_COGNITIVE_CARD][0].chunk_id == "kg_cognitive_card:test"
+    document = store.calls[-1]["documents_by_role"][SEMANTIC_COLLECTION_COGNITIVE_CARD][0]
+    assert document.metadata["source_type"] == "kg_cognitive_card"
+    assert document.metadata["target_type"] == "cognitive_card"
+    assert "Document Type: Cognitive Card" in document.text
+    assert "AI芯片供需" in document.text
+
+
+@pytest.mark.asyncio
 async def test_delete_evidence_deletes_unique_evidence_ids() -> None:
     store = _Store()
 
@@ -469,7 +537,7 @@ async def test_get_by_ids_routes_finding_targets_to_community_collection() -> No
 
 
 @pytest.mark.asyncio
-async def test_semantic_hybrid_maps_enriched_card_hits_to_graph_refs(monkeypatch) -> None:
+async def test_semantic_hybrid_search_skips_legacy_entity_relation_collections(monkeypatch) -> None:
     async def fake_embed_texts(_texts):
         return [[0.1, 0.2]]
 
@@ -477,33 +545,12 @@ async def test_semantic_hybrid_maps_enriched_card_hits_to_graph_refs(monkeypatch
 
     class Store(_Store):
         def hybrid_search(self, **kwargs):
+            self.calls.append(kwargs)
             collection_role = kwargs.get("collection_role")
             if collection_role == "entity":
-                return [
-                    MilvusHybridHit(
-                        chunk_id="kg_card:node_card:kg:financial:stock:300750",
-                        evidence_id="",
-                        text="Document Type: Node Card\nNode Key: 宁德时代\nAliases: 300750",
-                        score=0.9,
-                        metadata={
-                            "source_type": "kg_node_card",
-                            "source_id": "kg:financial:stock:300750",
-                        },
-                    )
-                ]
+                raise AssertionError("Agent semantic search must not query legacy entity collection")
             if collection_role == "relation":
-                return [
-                    MilvusHybridHit(
-                        chunk_id="kg_card:edge:kg_edge:financial:affects:catl",
-                        evidence_id="kg_ev:financial:news:1",
-                        text="Document Type: Edge Card\nEdge Key: 海外产能 affects 宁德时代",
-                        score=0.8,
-                        metadata={
-                            "source_type": "kg_edge_card",
-                            "source_id": "kg_edge:financial:affects:catl",
-                        },
-                    )
-                ]
+                raise AssertionError("Agent semantic search must not query legacy relation collection")
             if collection_role == "chunk":
                 return [
                     MilvusHybridHit(
@@ -519,16 +566,19 @@ async def test_semantic_hybrid_maps_enriched_card_hits_to_graph_refs(monkeypatch
                 ]
             return []
 
-    hits = await MilvusSemanticHybridRetriever(store=Store()).search(
+    store = Store()
+    hits = await MilvusSemanticHybridRetriever(store=store).search(
         "宁德时代 300750",
         RetrievalOptions(adapter_name="financial", target="prod", semantic_hybrid_limit=10),
     )
 
     hit_by_type = {hit.hit_type: hit for hit in hits}
-    assert hit_by_type["node"].node_refs == ["kg:financial:stock:300750"]
-    assert hit_by_type["edge"].edge_refs == ["kg_edge:financial:affects:catl"]
-    assert hit_by_type["edge"].evidence_refs == ["kg_ev:financial:news:1"]
     assert hit_by_type["evidence"].evidence_refs == ["kg_ev:financial:news:1"]
+    assert {call["collection_role"] for call in store.calls if "collection_role" in call} == {
+        "chunk",
+        "cognitive_card",
+        "community",
+    }
 
 
 @pytest.mark.asyncio

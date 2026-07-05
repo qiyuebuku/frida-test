@@ -12,10 +12,14 @@ class CollectionResult:
     aggregator: str
     sources_run: int
     total_saved: int
+    new_ids: list[int] | None = None
 
     def to_dict(self) -> dict:
-        return {
+        data = {
             "aggregator": self.aggregator,
             "sources_run": self.sources_run,
             "total_saved": self.total_saved,
         }
+        if self.new_ids is not None:
+            data["new_ids"] = self.new_ids
+        return data

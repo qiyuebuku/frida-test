@@ -13,16 +13,17 @@ import time
 from datetime import date, datetime
 
 from src.domain.collection.services.base import BaseAggregator, SourceDef
+from src.infrastructure.time_utils import app_now, app_today_iso
 
 logger = logging.getLogger(__name__)
 
 # ft_market_cache 已由 fund_db.py 创建，此处只确保索引
 def _today() -> str:
-    return date.today().isoformat()
+    return app_today_iso()
 
 
 def _expires_seconds(seconds: int) -> str:
-    return (datetime.now() + __import__("datetime").timedelta(seconds=seconds)).isoformat()
+    return (app_now() + __import__("datetime").timedelta(seconds=seconds)).isoformat()
 
 
 # ==================== Normalize 函数 ====================
@@ -212,7 +213,7 @@ async def _fetch_sector_kline(em_client) -> dict:
     logger.info(f"[sector_kline] 完成: {success}/{len(all_sectors)} 板块有 K 线数据")
 
     data = {
-        "updated_at": datetime.now().isoformat(),
+        "updated_at": app_now().isoformat(),
         "trade_date": _today(),
         "sectors": sectors,
         "name_map": name_map,
@@ -222,7 +223,7 @@ async def _fetch_sector_kline(em_client) -> dict:
     from src.infrastructure.persistence.repositories import MarketCacheRepositoryImpl
     from datetime import timedelta as _td
     repo = MarketCacheRepositoryImpl()
-    expires_at = datetime.now() + _td(seconds=900)
+    expires_at = (app_now() + _td(seconds=900)).replace(tzinfo=None)
     try:
         repo.upsert("sector_map", {"name_map": name_map, "updated_at": data["updated_at"]}, expires_at)
     except Exception as e:
@@ -342,7 +343,7 @@ class MarketAggregator(BaseAggregator):
             if not data_type:
                 continue
             ttl = item.get("ttl", 300)
-            expires_at = datetime.now() + _td(seconds=ttl)
+            expires_at = (app_now() + _td(seconds=ttl)).replace(tzinfo=None)
             try:
                 repo.upsert(data_type, item.get("data", {}), expires_at)
                 saved += 1

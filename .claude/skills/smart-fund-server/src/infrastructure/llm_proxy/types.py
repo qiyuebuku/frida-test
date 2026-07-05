@@ -28,6 +28,7 @@ class LLMProxyRequest:
     tools: list[dict[str, Any]] | None = None
     tool_choice: str | dict[str, Any] | None = None
     metadata: dict[str, Any] = field(default_factory=dict)
+    provider_options: dict[str, Any] = field(default_factory=dict)
     timeout: float | None = None
     use_cache: bool = True
 

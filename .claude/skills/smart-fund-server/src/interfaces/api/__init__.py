@@ -10,9 +10,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
 from src.common.exceptions import AppException
-from src.infrastructure.db import fund_db, ocr_db, task_db, raw_data
 from src.infrastructure.tools import skill_registry as sr
-from src.infrastructure.tools.scheduler import scheduler
 from src.interfaces.api.middleware.error_handler import app_exception_handler
 from src.interfaces.api.routes import router, start_auth_auto_refresh
 from src.infrastructure.clients import init_clients, close_clients
@@ -28,22 +26,8 @@ logging.basicConfig(
 
 @asynccontextmanager
 async def _lifespan(app: FastAPI):
-    # 初始化数据库表
-    try:
-        fund_db.init_tables()
-        ocr_db.init_ocr_tables()
-        task_db.init_task_tables()
-        raw_data.init_raw_data_tables()
-        print("✅ 数据库表已初始化")
-    except Exception as e:
-        print(f"⚠️ 数据库表初始化失败: {e}")
-
     # 初始化所有数据源客户端
     init_clients()
-
-    # 启动定时任务调度器
-    scheduler.start()
-    print("✅ 定时任务调度器已启动")
 
     # 初始化 SkillRegistry
     skills_dir = os.getenv("SKILLS_DIR", str(_PROJECT_ROOT.parent))
@@ -55,7 +39,6 @@ async def _lifespan(app: FastAPI):
 
     yield
 
-    scheduler.stop()
     await close_clients()
 
 

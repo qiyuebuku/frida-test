@@ -31,6 +31,67 @@ def cli(log_level: str | None):
 # ==================== worker / scheduler / persist ====================
 
 
+def _ensure_jettask_partitions(db_url: str, *, months_back: int = 3, months_ahead: int = 6) -> int:
+    """Ensure jettask queue partitions around the current month.
+
+    PostgreSQL partition DDL cannot be expressed through SQLAlchemy ORM, so this
+    helper intentionally uses SQLAlchemy text() for partition maintenance only.
+    """
+    from datetime import datetime, timezone
+    from zoneinfo import ZoneInfo
+
+    from sqlalchemy import create_engine, text
+
+    def add_months(dt: datetime, offset: int) -> datetime:
+        year = dt.year + (dt.month - 1 + offset) // 12
+        month = (dt.month - 1 + offset) % 12 + 1
+        return dt.replace(year=year, month=month)
+
+    sync_url = db_url.replace("postgresql+asyncpg://", "postgresql+psycopg2://")
+    engine = create_engine(sync_url)
+    sh_tz = ZoneInfo("Asia/Shanghai")
+    now = datetime.now(sh_tz)
+    base_month = datetime(now.year, now.month, 1, tzinfo=sh_tz)
+    ensured = 0
+
+    try:
+        with engine.begin() as conn:
+            parent_tables = (
+                "tasks",
+                "task_runs",
+                "task_metrics_minute",
+                "task_runs_metrics_minute",
+            )
+            for parent_table in parent_tables:
+                table_exists = conn.execute(text(f"SELECT to_regclass('public.{parent_table}')")).scalar()
+                if table_exists is None:
+                    continue
+
+                partkey = conn.execute(text(f"SELECT pg_get_partkeydef('public.{parent_table}'::regclass)")).scalar()
+                if not partkey:
+                    continue
+
+                for offset in range(-months_back, months_ahead + 1):
+                    start_local = add_months(base_month, offset)
+                    end_local = add_months(base_month, offset + 1)
+                    partition_name = f"{parent_table}_{start_local.year}_{start_local.month:02d}"
+                    start_utc = start_local.astimezone(timezone.utc).strftime("%Y-%m-%d %H:%M:%S+00")
+                    end_utc = end_local.astimezone(timezone.utc).strftime("%Y-%m-%d %H:%M:%S+00")
+
+                    conn.execute(text(
+                        f"""
+                        CREATE TABLE IF NOT EXISTS public.{partition_name}
+                        PARTITION OF public.{parent_table}
+                        FOR VALUES FROM ('{start_utc}') TO ('{end_utc}')
+                        """
+                    ))
+                    ensured += 1
+    finally:
+        engine.dispose()
+
+    return ensured
+
+
 @cli.command()
 @click.option("-c", "--concurrency", type=int, default=1, help="并发数")
 @click.argument("tasks", nargs=-1)
@@ -40,20 +101,18 @@ def worker(concurrency: int, tasks: tuple[str, ...]):
     不传 TASKS 则消费全部任务，传则只消费指定的：
 
     \b
-      worker                          # 全部 12 个任务
-      worker agg_news agg_fund_flow   # 只跑这两个
+      worker                          # 默认采集任务
+      worker collect_news collect_fund_flow   # 只跑这两个
     """
     from src.interfaces.tasks import app
 
     ALL_TASKS = [
-        "agg_news",
-        "agg_fund_flow",
-        # "agg_market",
-        "agg_macro",
-        # "agg_sentiment",
-        # "agg_event_extraction", "agg_event_stream", "agg_event_feedback",
-        # "trade_decision", "trade_execution", "trade_monitor",
-        # "review_decision",
+        "collect_news",
+        "collect_fund_flow",
+        "collect_market",
+        "collect_macro",
+        "collect_sentiment",
+        "kg_news_ingest",
     ]
     task_names = list(tasks) if tasks else ALL_TASKS
 
@@ -76,6 +135,9 @@ def persist():
     """启动 jettask Persist 消费 _commands 队列落库"""
     from src.interfaces.tasks import app, DB_URL
 
+    partition_count = _ensure_jettask_partitions(DB_URL)
+    if partition_count:
+        click.echo(f"✅ jettask 分区已检查/初始化: {partition_count} 个")
     click.echo(f"📦 启动 Persist  db_url={DB_URL}")
     app.start_persist(db_url=DB_URL)
 
@@ -149,8 +211,9 @@ def data_types():
 @cli.command()
 @click.argument("queues", nargs=-1)
 @click.option("--list", "list_only", is_flag=True, help="只列出可触发的 queue")
-def trigger(queues: tuple[str, ...], list_only: bool):
-    """手动触发聚合任务(绕过 scheduler)"""
+@click.option("--news-id", "news_ids", multiple=True, type=int, help="触发 kg_news_ingest 时传入的 ft_news.id，可重复")
+def trigger(queues: tuple[str, ...], list_only: bool, news_ids: tuple[int, ...]):
+    """手动触发任务(绕过 scheduler)"""
     from jettask import TaskMessage
     from src.interfaces.tasks import app
 
@@ -168,10 +231,8 @@ def trigger(queues: tuple[str, ...], list_only: bool):
         for a in queues:
             if a in qset:
                 target.append(a)
-            elif f"agg_{a}" in qset:
-                target.append(f"agg_{a}")
-            elif f"trade_{a}" in qset:
-                target.append(f"trade_{a}")
+            elif f"collect_{a}" in qset:
+                target.append(f"collect_{a}")
             else:
                 click.echo(f"⚠️  未知 queue: {a}", err=True)
         if not target:
@@ -181,7 +242,13 @@ def trigger(queues: tuple[str, ...], list_only: bool):
     else:
         target = available
 
-    msgs = [TaskMessage(queue=q, kwargs={}) for q in target]
+    msgs = []
+    for q in target:
+        kwargs = {"news_ids": list(news_ids)} if q == "kg_news_ingest" and news_ids else {}
+        if q == "kg_news_ingest":
+            msgs.append(TaskMessage(queue=q, kwargs=kwargs, max_retries=10, timeout=5000))
+        else:
+            msgs.append(TaskMessage(queue=q, kwargs=kwargs))
     click.echo(f"🚀 触发 {len(msgs)} 个 task:")
     for q in target:
         click.echo(f"   → {q}")
@@ -270,7 +337,19 @@ def init_schedules():
     click.echo(f"注册 {len(SCHEDULES)} 个调度:")
     for s in SCHEDULES:
         click.echo(f"  - {s.name}")
-    count = app.schedule_register(SCHEDULES)
+    try:
+        count = app.schedule_register(SCHEDULES)
+    except RuntimeError as exc:
+        if "command result polling timeout" in str(exc):
+            click.echo(
+                "❌ 注册调度超时：jettask persist 没有运行或没有消费当前 JETTASK_PREFIX 的 _commands 队列。\n"
+                "请在另一个终端先启动：python -m src.interfaces.cli persist\n"
+                "然后重新执行：python -m src.interfaces.cli init schedules",
+                err=True,
+            )
+            app.close()
+            sys.exit(1)
+        raise
     click.echo(f"✅ 已发送 {count} 个调度命令")
     app.close()
 

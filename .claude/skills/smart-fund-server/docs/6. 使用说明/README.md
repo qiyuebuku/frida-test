@@ -13,6 +13,7 @@
 
 | 目录 | 文档 | 用途 |
 |---|---|---|
+| 根目录 | `1. Tasks启动说明.md` | 说明 jettask-rs tasks 的初始化、常驻进程启动、队列触发、调度注册和常见问题排查 |
 | `知识图谱` | `1_kg_source_record_projection_demo.py` | 演示从真实数据库业务表读取记录并投影为 Source Record，不写 KG、不调用 LLM |
 | `知识图谱` | `2_kg_compile_and_write_demo.py` | 演示 Source Record 编译、写入 KG、增量刷新、检索和质量扫描 |
 | `知识图谱` | `3_kg_real_replay_quality_baseline.py` | 真实库回放、质量基线、Agentic A-RAG 观测和数据库抽查 |

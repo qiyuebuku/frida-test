@@ -631,7 +631,7 @@ async def test_graph_index_light_refresh_uses_delta_reporter(monkeypatch) -> Non
         adapter_name="financial",
         evidence_id="kg_ev:financial:news:1",
         content="半导体相关叙事增强。",
-        payload={"published_at": "2026-05-30T00:00:00+00:00"},
+        payload={"published_at": "2026-07-01T00:00:00+00:00"},
     )
     plan = GraphIndexRefreshPlan(
         action="light_refresh_required",

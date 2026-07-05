@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import asyncio
 import time
 from dataclasses import dataclass
 from typing import Any
@@ -11,6 +12,9 @@ import httpx
 
 from src.infrastructure.config.settings import (
     RERANKER_MAX_DOCUMENTS,
+    RERANKER_MAX_RETRIES,
+    RERANKER_RETRY_BASE_DELAY,
+    RERANKER_RETRY_MAX_DELAY,
     RERANKER_TIMEOUT,
     RERANKER_URL,
 )
@@ -21,6 +25,14 @@ from src.infrastructure.observability.langfuse_tracing import (
 )
 
 logger = logging.getLogger(__name__)
+_RETRYABLE_STATUS_CODES = {408, 409, 425, 429, 500, 502, 503, 504}
+_RETRYABLE_EXCEPTIONS = (
+    httpx.TimeoutException,
+    httpx.ConnectError,
+    httpx.NetworkError,
+    httpx.RemoteProtocolError,
+    httpx.ProxyError,
+)
 
 
 class RerankerError(RuntimeError):
@@ -51,10 +63,12 @@ class RerankerClient:
         base_url: str = RERANKER_URL,
         timeout: float = RERANKER_TIMEOUT,
         max_documents: int = RERANKER_MAX_DOCUMENTS,
+        max_retries: int = RERANKER_MAX_RETRIES,
     ) -> None:
         self.base_url = base_url.rstrip("/")
         self.timeout = timeout
         self.max_documents = max_documents
+        self.max_retries = max(1, int(max_retries))
 
     async def rerank(
         self,
@@ -91,18 +105,19 @@ class RerankerClient:
                 "endpoint": f"{self.base_url}/v1/rerank",
                 "max_documents": self.max_documents,
                 "timeout": self.timeout,
+                "max_retries": self.max_retries,
             },
         ):
             try:
-                async with httpx.AsyncClient(timeout=self.timeout) as client:
-                    response = await client.post(f"{self.base_url}/v1/rerank", json=payload)
+                response, attempts = await self._post_with_retry(payload)
                 latency_ms = (time.perf_counter() - started) * 1000
                 logger.info(
-                    "reranker http request done: documents=%d top_n=%s latency=%.2fs status_code=%d endpoint=%s",
+                    "reranker http request done: documents=%d top_n=%s latency=%.2fs status_code=%d attempts=%d endpoint=%s",
                     len(documents),
                     top_n or "all",
                     latency_ms / 1000,
                     response.status_code,
+                    attempts,
                     f"{self.base_url}/v1/rerank",
                 )
                 langfuse_update_span(
@@ -111,15 +126,10 @@ class RerankerClient:
                         "latency_ms": round(latency_ms, 2),
                         "documents": len(documents),
                         "top_n": top_n or "all",
+                        "attempts": attempts,
                     },
-                    metadata={"status_code": response.status_code, "latency_ms": latency_ms},
+                    metadata={"status_code": response.status_code, "latency_ms": latency_ms, "attempts": attempts},
                 )
-                try:
-                    response.raise_for_status()
-                except httpx.HTTPStatusError as exc:
-                    raise RerankerError(
-                        f"reranker request failed: status={response.status_code} body={response.text[:1000]}"
-                    ) from exc
             except Exception as exc:
                 langfuse_update_span(
                     metadata={"error_type": exc.__class__.__name__},
@@ -155,6 +165,54 @@ class RerankerClient:
                 status_message="completed",
             )
             return parsed
+
+    async def _post_with_retry(self, payload: dict[str, Any]) -> tuple[httpx.Response, int]:
+        last_error: Exception | None = None
+        endpoint = f"{self.base_url}/v1/rerank"
+        async with httpx.AsyncClient(timeout=self.timeout) as client:
+            for attempt in range(1, self.max_retries + 1):
+                try:
+                    response = await client.post(endpoint, json=payload)
+                    if response.status_code in _RETRYABLE_STATUS_CODES and attempt < self.max_retries:
+                        delay = _retry_delay(attempt)
+                        logger.warning(
+                            "reranker request retryable status: status=%d attempt=%d/%d delay=%.1fs endpoint=%s",
+                            response.status_code,
+                            attempt,
+                            self.max_retries,
+                            delay,
+                            endpoint,
+                        )
+                        await asyncio.sleep(delay)
+                        continue
+                    try:
+                        response.raise_for_status()
+                    except httpx.HTTPStatusError as exc:
+                        raise RerankerError(
+                            f"reranker request failed: status={response.status_code} body={response.text[:1000]}"
+                        ) from exc
+                    return response, attempt
+                except _RETRYABLE_EXCEPTIONS as exc:
+                    last_error = exc
+                    if attempt >= self.max_retries:
+                        break
+                    delay = _retry_delay(attempt)
+                    logger.warning(
+                        "reranker request retry: error=%s attempt=%d/%d delay=%.1fs endpoint=%s",
+                        exc.__class__.__name__,
+                        attempt,
+                        self.max_retries,
+                        delay,
+                        endpoint,
+                    )
+                    await asyncio.sleep(delay)
+        assert last_error is not None
+        raise last_error
+
+
+def _retry_delay(attempt: int) -> float:
+    delay = RERANKER_RETRY_BASE_DELAY * (2 ** max(0, attempt - 1))
+    return min(delay, RERANKER_RETRY_MAX_DELAY)
 
 
 def _parse_rerank_response(data: Any, *, fallback_latency_ms: float) -> RerankResponse:

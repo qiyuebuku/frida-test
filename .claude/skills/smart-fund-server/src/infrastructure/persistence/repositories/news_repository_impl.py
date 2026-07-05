@@ -1,4 +1,4 @@
-"""NewsRepository SQLAlchemy 实现"""
+"""新闻仓储 SQLAlchemy 实现。"""
 import logging
 from datetime import date, datetime, timedelta, timezone
 
@@ -8,28 +8,32 @@ from sqlalchemy.dialects.postgresql import insert as pg_insert
 from src.domain.collection.repositories.news_repository import NewsRepository
 from src.infrastructure.connections import get_session
 from src.infrastructure.persistence.models.collection import News
+from src.infrastructure.time_utils import APP_TZ, app_today
 
 logger = logging.getLogger(__name__)
 
 
 class NewsRepositoryImpl(NewsRepository):
     def upsert_batch(self, items: list[dict]) -> int:
+        return len(self.upsert_batch_returning_ids(items))
+
+    def upsert_batch_returning_ids(self, items: list[dict]) -> list[int]:
         if not items:
-            return 0
+            return []
         with get_session() as s:
             stmt = pg_insert(News).values(items).on_conflict_do_nothing(
                 index_elements=["fingerprint"]
-            )
+            ).returning(News.id)
             result = s.execute(stmt)
-            return result.rowcount or 0
+            return [int(row[0]) for row in result.fetchall()]
 
     def find_today_titles(self, today: date | None = None) -> list[str]:
-        from datetime import datetime, time, timezone
+        from datetime import time
         if today is None:
-            today = date.today()
-        # 用 published_at 过滤当日(timezone-aware)
-        start = datetime.combine(today, time.min, tzinfo=timezone.utc)
-        end = datetime.combine(today, time.max, tzinfo=timezone.utc)
+            today = app_today()
+        # 业务日期按 Asia/Shanghai 计算；published_at 在数据库中按 TIMESTAMPTZ 存储。
+        start = datetime.combine(today, time.min, tzinfo=APP_TZ).astimezone(timezone.utc)
+        end = datetime.combine(today, time.max, tzinfo=APP_TZ).astimezone(timezone.utc)
         with get_session() as s:
             rows = s.scalars(
                 select(News.title).where(

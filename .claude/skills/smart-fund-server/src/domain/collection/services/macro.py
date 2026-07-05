@@ -12,6 +12,7 @@ from collections import defaultdict
 from datetime import date, datetime, timedelta
 
 from src.domain.collection.services.base import BaseAggregator, SourceDef
+from src.infrastructure.time_utils import app_today_iso
 
 logger = logging.getLogger(__name__)
 
@@ -187,7 +188,7 @@ def normalize_shibor_lpr(raw) -> list[dict]:
     if not isinstance(data, dict):
         return results
 
-    today = date.today().isoformat()
+    today = app_today_iso()
 
     # ── Shibor 各期限：每个期限作为独立指标 ──
     shibor_dict = data.get("shibor") or {}
@@ -269,7 +270,7 @@ def normalize_usdcny(raw) -> list[dict]:
     if not isinstance(items, list) or not items:
         return results
 
-    today = date.today().isoformat()
+    today = app_today_iso()
     # items 按时间升序，取近 60 天反转为最新优先
     rev = list(reversed(items[-60:]))
     for i, row in enumerate(rev):

@@ -2,12 +2,17 @@
 
 from __future__ import annotations
 
+from datetime import datetime
 from typing import Any, Literal
 
 from fastapi import APIRouter, BackgroundTasks, HTTPException, Query
 from pydantic import BaseModel, Field
 
 from src.application.dto.knowledge_dto import (
+    KnowledgeAgentExpandCommand,
+    KnowledgeAgentOpenCommand,
+    KnowledgeAgentRefineCommand,
+    KnowledgeAgentSearchCommand,
     KnowledgeCompileCommand,
     KnowledgeIncrementalRefreshCommand,
     KnowledgeQualityScanCommand,
@@ -108,6 +113,51 @@ class KGReviewActionRequest(BaseModel):
     reason: str | None = None
 
 
+class KGAgentTimeRangeRequest(BaseModel):
+    start: str | None = None
+    end: str | None = None
+
+
+class KGAgentSearchRequest(BaseModel):
+    query: str = Field(..., min_length=1, description="Agent 的自然语言检索意图")
+    adapter_name: str = Field("financial")
+    target: Target = "prod"
+    session_id: str = Field(..., min_length=1, description="Agent 检索会话 ID；同一任务的 search/open/expand/refine 必须复用同一个值")
+    limit: int = Field(8, ge=1, le=50, description="最终返回给 Agent 的 evidence package 数量")
+    candidate_limit: int | None = Field(None, ge=1, le=300, description="内部候选池规模")
+    sort: Literal["relevance", "freshness", "evidence_strength", "diversity"] = "relevance"
+    time_range: KGAgentTimeRangeRequest | None = None
+    max_chars: int = Field(8000, ge=1000, le=40000)
+    focus_aspects: list[str] = Field(default_factory=list, description="Agent 显式关注的检索侧面")
+
+
+class KGAgentOpenRequest(BaseModel):
+    target_ids: list[str] = Field(..., min_length=1)
+    query: str | None = Field(None, description="可选原始查询；提供后用于对邻接上下文做 query-aware 排序")
+    adapter_name: str = Field("financial")
+    target: Target = "prod"
+    session_id: str = Field(..., min_length=1, description="Agent 检索会话 ID；用于串联上下文和过滤重复结果")
+    include_neighbors: bool = True
+    limit: int = Field(12, ge=1, le=100)
+    max_chars: int = Field(12000, ge=1000, le=60000)
+
+
+class KGAgentExpandRequest(BaseModel):
+    target_id: str = Field(..., min_length=1)
+    query: str | None = Field(None, description="可选原始查询；提供后用于对展开结果做 query-aware 排序")
+    adapter_name: str = Field("financial")
+    target: Target = "prod"
+    session_id: str = Field(..., min_length=1, description="Agent 检索会话 ID；用于串联上下文和过滤重复结果")
+    direction: Literal["supporting_cards", "supporting_chunks", "neighbors", "auto"] = "auto"
+    limit: int = Field(20, ge=1, le=150)
+    max_chars: int = Field(12000, ge=1000, le=60000)
+
+
+class KGAgentRefineRequest(KGAgentSearchRequest):
+    previous_context: dict[str, Any] = Field(default_factory=dict)
+    refinement: str = ""
+
+
 @router.get("/health", summary="知识图谱健康检查")
 async def knowledge_health(target: Target = Query("prod")):
     service = create_knowledge_service(target=target)
@@ -177,6 +227,90 @@ async def research_context(req: KGResearchContextRequest):
                 wiki_limit=req.wiki_limit,
                 evidence_limit=req.evidence_limit,
                 max_chars=req.max_chars,
+            )
+        )
+    )
+
+
+@router.post("/agent/search", summary="Agent 知识检索")
+async def agent_search(req: KGAgentSearchRequest):
+    service = create_knowledge_service(target=req.target)
+    return await _call(
+        service.agent_search(
+            KnowledgeAgentSearchCommand(
+                query=req.query,
+                adapter_name=req.adapter_name,
+                target=req.target,
+                session_id=req.session_id,
+                limit=req.limit,
+                candidate_limit=req.candidate_limit,
+                sort=req.sort,
+                time_start=_parse_api_datetime(req.time_range.start) if req.time_range else None,
+                time_end=_parse_api_datetime(req.time_range.end) if req.time_range else None,
+                max_chars=req.max_chars,
+                focus_aspects=req.focus_aspects,
+            )
+        )
+    )
+
+
+@router.post("/agent/open", summary="Agent 打开检索命中上下文")
+async def agent_open(req: KGAgentOpenRequest):
+    service = create_knowledge_service(target=req.target)
+    return await _call(
+        service.agent_open(
+            KnowledgeAgentOpenCommand(
+                target_ids=req.target_ids,
+                query=req.query,
+                adapter_name=req.adapter_name,
+                target=req.target,
+                session_id=req.session_id,
+                include_neighbors=req.include_neighbors,
+                limit=req.limit,
+                max_chars=req.max_chars,
+            )
+        )
+    )
+
+
+@router.post("/agent/expand", summary="Agent 展开 community/card/chunk")
+async def agent_expand(req: KGAgentExpandRequest):
+    service = create_knowledge_service(target=req.target)
+    return await _call(
+        service.agent_expand(
+            KnowledgeAgentExpandCommand(
+                target_id=req.target_id,
+                query=req.query,
+                adapter_name=req.adapter_name,
+                target=req.target,
+                session_id=req.session_id,
+                direction=req.direction,
+                limit=req.limit,
+                max_chars=req.max_chars,
+            )
+        )
+    )
+
+
+@router.post("/agent/refine", summary="Agent 基于上一轮检索继续 refine")
+async def agent_refine(req: KGAgentRefineRequest):
+    service = create_knowledge_service(target=req.target)
+    return await _call(
+        service.agent_refine(
+            KnowledgeAgentRefineCommand(
+                query=req.query,
+                adapter_name=req.adapter_name,
+                target=req.target,
+                session_id=req.session_id,
+                limit=req.limit,
+                candidate_limit=req.candidate_limit,
+                sort=req.sort,
+                time_start=_parse_api_datetime(req.time_range.start) if req.time_range else None,
+                time_end=_parse_api_datetime(req.time_range.end) if req.time_range else None,
+                max_chars=req.max_chars,
+                focus_aspects=req.focus_aspects,
+                previous_context=req.previous_context,
+                refinement=req.refinement,
             )
         )
     )
@@ -299,6 +433,15 @@ async def apply_review_action(review_id: str, req: KGReviewActionRequest):
             )
         )
     )
+
+
+def _parse_api_datetime(value: str | None) -> datetime | None:
+    if value is None or not str(value).strip():
+        return None
+    try:
+        return datetime.fromisoformat(str(value).strip().replace("Z", "+00:00"))
+    except ValueError as exc:
+        raise ValueError(f"time_range 时间格式无效: {value}") from exc
 
 
 async def _call(coro):

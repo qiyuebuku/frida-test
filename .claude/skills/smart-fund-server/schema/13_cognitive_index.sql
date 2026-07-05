@@ -42,7 +42,7 @@ CREATE TABLE IF NOT EXISTS public.kg_community_assignments (
     intent_index integer NOT NULL DEFAULT 0,
     intent_id character varying(220) NOT NULL DEFAULT '',
     community_id character varying(180) NOT NULL DEFAULT '',
-    action character varying(32) NOT NULL DEFAULT '',
+    action character varying(64) NOT NULL DEFAULT '',
     weight double precision NOT NULL DEFAULT 0.0,
     confidence double precision NOT NULL DEFAULT 0.0,
     matched_reason text NOT NULL DEFAULT '',

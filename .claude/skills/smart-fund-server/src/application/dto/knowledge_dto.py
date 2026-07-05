@@ -158,6 +158,64 @@ class KnowledgeResearchContextCommand:
 
 
 @dataclass
+class KnowledgeAgentSearchCommand:
+    query: str
+    adapter_name: str = "financial"
+    target: Target = "prod"
+    session_id: str | None = None
+    limit: int = 8
+    candidate_limit: int | None = None
+    sort: Literal["relevance", "freshness", "evidence_strength", "diversity"] = "relevance"
+    time_start: datetime | None = None
+    time_end: datetime | None = None
+    max_chars: int = 8000
+    focus_aspects: list[str] = field(default_factory=list)
+
+
+@dataclass
+class KnowledgeAgentOpenCommand:
+    target_ids: list[str] = field(default_factory=list)
+    query: str | None = None
+    adapter_name: str = "financial"
+    target: Target = "prod"
+    session_id: str | None = None
+    include_neighbors: bool = True
+    limit: int = 12
+    max_chars: int = 12000
+
+
+@dataclass
+class KnowledgeAgentExpandCommand:
+    target_id: str = ""
+    query: str | None = None
+    adapter_name: str = "financial"
+    target: Target = "prod"
+    session_id: str | None = None
+    direction: Literal["supporting_cards", "supporting_chunks", "neighbors", "auto"] = "auto"
+    limit: int = 20
+    max_chars: int = 12000
+
+
+@dataclass
+class KnowledgeAgentRefineCommand(KnowledgeAgentSearchCommand):
+    previous_context: dict[str, Any] = field(default_factory=dict)
+    refinement: str = ""
+
+
+@dataclass
+class KnowledgeAgentRetrievalContextDTO(KnowledgeDTO):
+    query: str
+    session_id: str | None
+    mode: str
+    request: dict[str, Any] = field(default_factory=dict)
+    evidence_package: list[dict[str, Any]] = field(default_factory=list)
+    coverage_summary: dict[str, Any] = field(default_factory=dict)
+    quality_diagnostics: dict[str, Any] = field(default_factory=dict)
+    available_operations: list[dict[str, Any]] = field(default_factory=list)
+    trace: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass
 class KnowledgeResearchContextDTO(KnowledgeDTO):
     query: str
     hits: list[dict[str, Any]] = field(default_factory=list)

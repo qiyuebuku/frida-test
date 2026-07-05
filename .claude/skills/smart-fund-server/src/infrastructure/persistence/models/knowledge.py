@@ -15,74 +15,8 @@ from src.infrastructure.persistence.models.base import Base
 GRAPH_COMMUNITY_ID_SEQUENCE = Sequence("kg_graph_community_id_seq", metadata=Base.metadata)
 
 
-class KnowledgeNode(Base):
-    """Generic knowledge node persisted as a versioned fact."""
-
-    __tablename__ = "kg_nodes"
-    __table_args__ = (
-        UniqueConstraint(
-            "adapter_name",
-            "node_type",
-            "stable_key",
-            name="uq_kg_nodes_adapter_type_key",
-        ),
-        Index("ix_kg_nodes_adapter_type", "adapter_name", "node_type"),
-        Index("ix_kg_nodes_status", "status"),
-    )
-
-    node_id: Mapped[str] = mapped_column(String(128), primary_key=True)
-    adapter_name: Mapped[str] = mapped_column(String(64), nullable=False)
-    adapter_version: Mapped[str] = mapped_column(String(32), nullable=False, default="")
-    node_type: Mapped[str] = mapped_column(String(64), nullable=False)
-    stable_key: Mapped[str] = mapped_column(String(256), nullable=False)
-    canonical_name: Mapped[str] = mapped_column(Text, nullable=False)
-    aliases: Mapped[list] = mapped_column(JSONB, default=list, nullable=False)
-    external_ids: Mapped[dict] = mapped_column(JSONB, default=dict, nullable=False)
-    properties: Mapped[dict] = mapped_column(JSONB, default=dict, nullable=False)
-    status: Mapped[str] = mapped_column(String(32), nullable=False)
-    version: Mapped[str] = mapped_column(String(64), nullable=False)
-    created_at: Mapped[datetime | None] = mapped_column(
-        DateTime(timezone=True), server_default=func.now()
-    )
-    updated_at: Mapped[datetime | None] = mapped_column(
-        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
-    )
-
-
-class KnowledgeEdge(Base):
-    """Generic directed relationship persisted as a versioned fact."""
-
-    __tablename__ = "kg_edges"
-    __table_args__ = (
-        Index("ix_kg_edges_source", "source_node_id"),
-        Index("ix_kg_edges_target", "target_node_id"),
-        Index("ix_kg_edges_relation", "relation_type"),
-        Index("ix_kg_edges_status", "status"),
-    )
-
-    edge_id: Mapped[str] = mapped_column(String(160), primary_key=True)
-    adapter_name: Mapped[str] = mapped_column(String(64), nullable=False)
-    adapter_version: Mapped[str] = mapped_column(String(32), nullable=False, default="")
-    source_node_id: Mapped[str] = mapped_column(String(128), nullable=False)
-    target_node_id: Mapped[str] = mapped_column(String(128), nullable=False)
-    relation_type: Mapped[str] = mapped_column(String(64), nullable=False)
-    properties: Mapped[dict] = mapped_column(JSONB, default=dict, nullable=False)
-    confidence_label: Mapped[str] = mapped_column(String(32), nullable=False)
-    confidence_score: Mapped[float] = mapped_column(Float, nullable=False)
-    status: Mapped[str] = mapped_column(String(32), nullable=False)
-    valid_from: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
-    valid_to: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
-    version: Mapped[str] = mapped_column(String(64), nullable=False)
-    created_at: Mapped[datetime | None] = mapped_column(
-        DateTime(timezone=True), server_default=func.now()
-    )
-    updated_at: Mapped[datetime | None] = mapped_column(
-        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
-    )
-
-
 class KnowledgeEvidence(Base):
-    """Evidence backing nodes or edges."""
+    """Source evidence used by Cognitive Cards and high-level graph indexes."""
 
     __tablename__ = "kg_evidence"
     __table_args__ = (
@@ -111,35 +45,6 @@ class KnowledgeEvidence(Base):
     )
     updated_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
-    )
-
-
-class KnowledgeEdgeEvidence(Base):
-    """Many-to-many link between edges and evidence."""
-
-    __tablename__ = "kg_edge_evidence"
-
-    edge_id: Mapped[str] = mapped_column(String(160), primary_key=True)
-    evidence_id: Mapped[str] = mapped_column(String(180), primary_key=True)
-    created_at: Mapped[datetime | None] = mapped_column(
-        DateTime(timezone=True), server_default=func.now()
-    )
-
-
-class KnowledgeEdgeEvidenceChunk(Base):
-    """Chunk-level refs for edge evidence links."""
-
-    __tablename__ = "kg_edge_evidence_chunks"
-    __table_args__ = (
-        Index("ix_kg_edge_evidence_chunks_evidence", "evidence_id"),
-        Index("ix_kg_edge_evidence_chunks_chunk", "chunk_id"),
-    )
-
-    edge_id: Mapped[str] = mapped_column(String(160), primary_key=True)
-    evidence_id: Mapped[str] = mapped_column(String(180), primary_key=True)
-    chunk_id: Mapped[str] = mapped_column(String(220), primary_key=True)
-    created_at: Mapped[datetime | None] = mapped_column(
-        DateTime(timezone=True), server_default=func.now()
     )
 
 
@@ -243,25 +148,6 @@ class KnowledgeCompilationRun(Base):
     evidence_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     failed_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     metadata_: Mapped[dict] = mapped_column("metadata", JSONB, default=dict, nullable=False)
-
-
-class KnowledgeGraphAdjacency(Base):
-    """Generated graph adjacency row derived from directed edges."""
-
-    __tablename__ = "kg_graph_adjacency"
-    __table_args__ = (
-        Index("ix_kg_graph_adjacency_adapter_source", "adapter_name", "source_node_id"),
-        Index("ix_kg_graph_adjacency_target", "target_node_id"),
-    )
-
-    adapter_name: Mapped[str] = mapped_column(String(64), primary_key=True)
-    source_node_id: Mapped[str] = mapped_column(String(128), primary_key=True)
-    target_node_id: Mapped[str] = mapped_column(String(128), primary_key=True)
-    edge_id: Mapped[str] = mapped_column(String(160), primary_key=True)
-    relation_type: Mapped[str] = mapped_column(String(64), nullable=False)
-    created_at: Mapped[datetime | None] = mapped_column(
-        DateTime(timezone=True), server_default=func.now()
-    )
 
 
 class KnowledgeEvidenceChunk(Base):
@@ -381,7 +267,7 @@ class KnowledgeCommunityAssignment(Base):
     intent_index: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     intent_id: Mapped[str] = mapped_column(String(220), nullable=False, default="")
     community_id: Mapped[str] = mapped_column(String(180), nullable=False, default="")
-    action: Mapped[str] = mapped_column(String(32), nullable=False, default="")
+    action: Mapped[str] = mapped_column(String(64), nullable=False, default="")
     weight: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
     confidence: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
     matched_reason: Mapped[str] = mapped_column(Text, nullable=False, default="")

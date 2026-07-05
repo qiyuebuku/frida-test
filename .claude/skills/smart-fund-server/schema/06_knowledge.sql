@@ -1,40 +1,7 @@
--- Knowledge infrastructure fact store.
--- Source of truth for generic nodes, edges, evidence, versions, reviews, and compile runs.
-
-CREATE TABLE IF NOT EXISTS public.kg_nodes (
-    node_id character varying(128) PRIMARY KEY,
-    adapter_name character varying(64) NOT NULL,
-    adapter_version character varying(32) NOT NULL DEFAULT '',
-    node_type character varying(64) NOT NULL,
-    stable_key character varying(256) NOT NULL,
-    canonical_name text NOT NULL,
-    aliases jsonb NOT NULL DEFAULT '[]'::jsonb,
-    external_ids jsonb NOT NULL DEFAULT '{}'::jsonb,
-    properties jsonb NOT NULL DEFAULT '{}'::jsonb,
-    status character varying(32) NOT NULL,
-    version character varying(64) NOT NULL,
-    created_at timestamp with time zone DEFAULT now(),
-    updated_at timestamp with time zone DEFAULT now(),
-    CONSTRAINT uq_kg_nodes_adapter_type_key UNIQUE (adapter_name, node_type, stable_key)
-);
-
-CREATE TABLE IF NOT EXISTS public.kg_edges (
-    edge_id character varying(160) PRIMARY KEY,
-    adapter_name character varying(64) NOT NULL,
-    adapter_version character varying(32) NOT NULL DEFAULT '',
-    source_node_id character varying(128) NOT NULL,
-    target_node_id character varying(128) NOT NULL,
-    relation_type character varying(64) NOT NULL,
-    properties jsonb NOT NULL DEFAULT '{}'::jsonb,
-    confidence_label character varying(32) NOT NULL,
-    confidence_score double precision NOT NULL,
-    status character varying(32) NOT NULL,
-    valid_from timestamp with time zone,
-    valid_to timestamp with time zone,
-    version character varying(64) NOT NULL,
-    created_at timestamp with time zone DEFAULT now(),
-    updated_at timestamp with time zone DEFAULT now()
-);
+-- Knowledge infrastructure store.
+-- Current KG architecture stores source evidence/chunk manifests in PG,
+-- readable/searchable text in Milvus, and high-level indexes in Cognitive
+-- Cards, Community Assignments, and Graph Communities.
 
 CREATE TABLE IF NOT EXISTS public.kg_evidence (
     evidence_id character varying(180) PRIMARY KEY,
@@ -53,21 +20,6 @@ CREATE TABLE IF NOT EXISTS public.kg_evidence (
     metadata jsonb NOT NULL DEFAULT '{}'::jsonb,
     created_at timestamp with time zone DEFAULT now(),
     updated_at timestamp with time zone DEFAULT now()
-);
-
-CREATE TABLE IF NOT EXISTS public.kg_edge_evidence (
-    edge_id character varying(160) NOT NULL,
-    evidence_id character varying(180) NOT NULL,
-    created_at timestamp with time zone DEFAULT now(),
-    PRIMARY KEY (edge_id, evidence_id)
-);
-
-CREATE TABLE IF NOT EXISTS public.kg_edge_evidence_chunks (
-    edge_id character varying(160) NOT NULL,
-    evidence_id character varying(180) NOT NULL,
-    chunk_id character varying(220) NOT NULL,
-    created_at timestamp with time zone DEFAULT now(),
-    PRIMARY KEY (edge_id, evidence_id, chunk_id)
 );
 
 CREATE TABLE IF NOT EXISTS public.kg_versions (
@@ -124,16 +76,6 @@ CREATE TABLE IF NOT EXISTS public.kg_compilation_runs (
     evidence_count integer NOT NULL DEFAULT 0,
     failed_count integer NOT NULL DEFAULT 0,
     metadata jsonb NOT NULL DEFAULT '{}'::jsonb
-);
-
-CREATE TABLE IF NOT EXISTS public.kg_graph_adjacency (
-    adapter_name character varying(64) NOT NULL,
-    source_node_id character varying(128) NOT NULL,
-    target_node_id character varying(128) NOT NULL,
-    edge_id character varying(160) NOT NULL,
-    relation_type character varying(64) NOT NULL,
-    created_at timestamp with time zone DEFAULT now(),
-    PRIMARY KEY (adapter_name, source_node_id, target_node_id, edge_id)
 );
 
 CREATE TABLE IF NOT EXISTS public.kg_evidence_chunks (
@@ -212,7 +154,7 @@ CREATE TABLE IF NOT EXISTS public.kg_community_assignments (
     intent_index integer NOT NULL DEFAULT 0,
     intent_id character varying(220) NOT NULL DEFAULT '',
     community_id character varying(180) NOT NULL DEFAULT '',
-    action character varying(32) NOT NULL DEFAULT '',
+    action character varying(64) NOT NULL DEFAULT '',
     weight double precision NOT NULL DEFAULT 0.0,
     confidence double precision NOT NULL DEFAULT 0.0,
     matched_reason text NOT NULL DEFAULT '',
@@ -347,19 +289,6 @@ CREATE TABLE IF NOT EXISTS public.kg_retrieval_eval_metrics (
     CONSTRAINT uq_kg_retrieval_eval_metrics_run_case UNIQUE (run_id, case_id)
 );
 
-CREATE INDEX IF NOT EXISTS ix_kg_nodes_adapter_type ON public.kg_nodes(adapter_name, node_type);
-CREATE INDEX IF NOT EXISTS ix_kg_nodes_status ON public.kg_nodes(status);
-
-CREATE INDEX IF NOT EXISTS ix_kg_edges_source ON public.kg_edges(source_node_id);
-CREATE INDEX IF NOT EXISTS ix_kg_edges_target ON public.kg_edges(target_node_id);
-CREATE INDEX IF NOT EXISTS ix_kg_edges_relation ON public.kg_edges(relation_type);
-CREATE INDEX IF NOT EXISTS ix_kg_edges_status ON public.kg_edges(status);
-
-CREATE INDEX IF NOT EXISTS ix_kg_edge_evidence_chunks_evidence
-    ON public.kg_edge_evidence_chunks(evidence_id);
-CREATE INDEX IF NOT EXISTS ix_kg_edge_evidence_chunks_chunk
-    ON public.kg_edge_evidence_chunks(chunk_id);
-
 CREATE INDEX IF NOT EXISTS ix_kg_evidence_source ON public.kg_evidence(source_type, source_id);
 CREATE INDEX IF NOT EXISTS ix_kg_evidence_adapter ON public.kg_evidence(adapter_name);
 CREATE INDEX IF NOT EXISTS ix_kg_evidence_status ON public.kg_evidence(status);
@@ -377,11 +306,6 @@ CREATE INDEX IF NOT EXISTS ix_kg_normalization_rules_status
 CREATE INDEX IF NOT EXISTS ix_kg_compilation_runs_adapter
     ON public.kg_compilation_runs(adapter_name, adapter_version);
 CREATE INDEX IF NOT EXISTS ix_kg_compilation_runs_status ON public.kg_compilation_runs(status);
-
-CREATE INDEX IF NOT EXISTS ix_kg_graph_adjacency_adapter_source
-    ON public.kg_graph_adjacency(adapter_name, source_node_id);
-CREATE INDEX IF NOT EXISTS ix_kg_graph_adjacency_target
-    ON public.kg_graph_adjacency(target_node_id);
 
 CREATE INDEX IF NOT EXISTS ix_kg_evidence_chunks_adapter
     ON public.kg_evidence_chunks(adapter_name);

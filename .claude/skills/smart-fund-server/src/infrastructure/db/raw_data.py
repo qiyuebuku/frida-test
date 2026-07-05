@@ -13,15 +13,18 @@ import logging
 from datetime import datetime, timedelta
 
 from sqlalchemy import text
+from sqlalchemy.exc import SQLAlchemyError
 
 from src.infrastructure.connections import get_session
+from src.infrastructure.time_utils import utc_now
 
 logger = logging.getLogger(__name__)
+_partition_warning_keys: set[str] = set()
 
 
 # ==================== 建表 ====================
 
-INIT_SQL = """
+INIT_TABLE_SQL = """
 -- 主表（按月分区）
 CREATE TABLE IF NOT EXISTS ft_raw_data (
     id              BIGSERIAL,
@@ -44,7 +47,10 @@ CREATE TABLE IF NOT EXISTS ft_raw_data (
     error_msg       TEXT DEFAULT '',
     PRIMARY KEY (id, fetched_at)
 ) PARTITION BY RANGE (fetched_at);
+"""
 
+
+INIT_INDEX_SQL = """
 -- 索引（在主表上创建，自动应用到所有分区）
 CREATE INDEX IF NOT EXISTS idx_raw_cache
     ON ft_raw_data(source, method, params_hash, fetched_at DESC);
@@ -58,16 +64,50 @@ CREATE INDEX IF NOT EXISTS idx_raw_trade_date
 def init_raw_data_tables():
     """初始化 ft_raw_data 主表 + 当月及未来 2 个月的分区"""
     with get_session() as s:
-        s.execute(text(INIT_SQL))
-        now = datetime.now()
-        for i in range(3):
-            dt = now + timedelta(days=30 * i)
-            _ensure_partition(s, dt.year, dt.month)
-    logger.info("ft_raw_data 表及分区已初始化")
+        s.execute(text(INIT_TABLE_SQL))
+        if _can_manage_raw_data_ddl(s):
+            s.execute(text(INIT_INDEX_SQL))
+            _ensure_partitions_from(s, utc_now(), months_ahead=2)
+            logger.info("ft_raw_data 表及分区已初始化")
+        elif _can_call_partition_function(s):
+            _ensure_partitions_from(s, utc_now(), months_ahead=2)
+            logger.info("ft_raw_data 分区已通过受控函数初始化")
+        else:
+            logger.warning(
+                "当前数据库用户不是 ft_raw_data owner，跳过索引和分区 DDL；"
+                "如写入跨月数据，需要由表 owner 预创建对应月份分区。"
+            )
+
+
+def _can_manage_raw_data_ddl(session) -> bool:
+    row = session.execute(text("""
+        SELECT pg_get_userbyid(c.relowner) = current_user
+        FROM pg_class c
+        WHERE c.oid = 'ft_raw_data'::regclass
+    """)).scalar()
+    return bool(row)
+
+
+def _can_call_partition_function(session) -> bool:
+    row = session.execute(text("""
+        SELECT has_function_privilege(
+            current_user,
+            'public.ensure_ft_raw_data_partition(int, int)',
+            'EXECUTE'
+        )
+    """)).scalar()
+    return bool(row)
 
 
 def _ensure_partition(session, year: int, month: int):
     """确保某个月份的分区存在"""
+    if not _can_manage_raw_data_ddl(session):
+        session.execute(
+            text("SELECT public.ensure_ft_raw_data_partition(:year, :month)"),
+            {"year": year, "month": month},
+        )
+        return
+
     name = f"ft_raw_data_{year}{month:02d}"
     start = f"{year}-{month:02d}-01"
     if month == 12:
@@ -75,6 +115,9 @@ def _ensure_partition(session, year: int, month: int):
     else:
         end = f"{year}-{month + 1:02d}-01"
 
+    # ft_raw_data 是按 fetched_at 分区的归档表；分区 DDL 无法用 ORM 表达，
+    # 表名只由 year/month 数字拼接产生，避免接收外部输入。
+    session.execute(text(f"SELECT pg_advisory_xact_lock(hashtext('ft_raw_data:{year}{month:02d}'))"))
     session.execute(text(f"""
         CREATE TABLE IF NOT EXISTS {name}
         PARTITION OF ft_raw_data
@@ -82,13 +125,69 @@ def _ensure_partition(session, year: int, month: int):
     """))
 
 
+def _add_months(dt: datetime, months: int) -> datetime:
+    """返回 dt 所在月后第 months 个月的月初。"""
+    month_index = (dt.year * 12 + dt.month - 1) + months
+    year = month_index // 12
+    month = month_index % 12 + 1
+    return datetime(year, month, 1)
+
+
+def _ensure_partitions_from(session, dt: datetime, *, months_ahead: int):
+    for i in range(months_ahead + 1):
+        partition_dt = _add_months(dt, i)
+        _ensure_partition(session, partition_dt.year, partition_dt.month)
+
+
+def ensure_partition_for(dt: datetime):
+    """确保指定时间所在月份的分区存在。"""
+    with get_session() as s:
+        if _can_manage_raw_data_ddl(s) or _can_call_partition_function(s):
+            _ensure_partition(s, dt.year, dt.month)
+        else:
+            _warn_missing_partition_once(dt.year, dt.month)
+
+
 def ensure_future_partitions(months_ahead: int = 2):
     """确保未来 N 个月的分区已创建"""
     with get_session() as s:
-        now = datetime.now()
-        for i in range(months_ahead + 1):
-            dt = now + timedelta(days=30 * i)
-            _ensure_partition(s, dt.year, dt.month)
+        if _can_manage_raw_data_ddl(s) or _can_call_partition_function(s):
+            _ensure_partitions_from(s, utc_now(), months_ahead=months_ahead)
+        else:
+            logger.warning(
+                "当前数据库用户不是 ft_raw_data owner，无法自动创建未来分区；"
+                "请使用表 owner 执行分区维护。"
+            )
+
+
+def _partition_ddl_hint(year: int, month: int) -> str:
+    name = f"ft_raw_data_{year}{month:02d}"
+    start = f"{year}-{month:02d}-01"
+    end = f"{year + 1}-01-01" if month == 12 else f"{year}-{month + 1:02d}-01"
+    return (
+        f"ft_raw_data 缺少 {year}-{month:02d} 分区，且当前用户无 DDL 权限；"
+        f"请用表 owner 执行: CREATE TABLE IF NOT EXISTS {name} "
+        f"PARTITION OF ft_raw_data FOR VALUES FROM ('{start}') TO ('{end}');"
+    )
+
+
+def _warn_missing_partition_once(year: int, month: int):
+    key = f"{year}{month:02d}"
+    if key in _partition_warning_keys:
+        return
+    _partition_warning_keys.add(key)
+    logger.warning(_partition_ddl_hint(year, month))
+
+
+def _is_missing_partition_error(exc: Exception) -> bool:
+    message = str(exc)
+    return "no partition of relation \"ft_raw_data\" found for row" in message
+
+
+def _is_insufficient_privilege_error(exc: Exception) -> bool:
+    orig = getattr(exc, "orig", None)
+    pgcode = getattr(orig, "pgcode", "")
+    return pgcode == "42501" or "must be owner of table ft_raw_data" in str(exc)
 
 
 # ==================== 参数哈希 ====================
@@ -104,7 +203,7 @@ def params_hash(params: dict) -> str:
 def get_cached(source: str, method: str, params: dict, ttl_seconds: int) -> dict | None:
     """查询缓存：参数相同 + 未过期 → 返回 data，否则 None"""
     ph = params_hash(params)
-    min_time = datetime.now() - timedelta(seconds=ttl_seconds)
+    min_time = utc_now() - timedelta(seconds=ttl_seconds)
 
     with get_session() as s:
         row = s.execute(text("""
@@ -138,7 +237,7 @@ def save_raw(
 ):
     """将客户端方法的原始返回值存入 ft_raw_data"""
     ph = params_hash(params)
-    now = datetime.now()
+    now = utc_now()
     expires = (now + timedelta(seconds=ttl_seconds)) if ttl_seconds else None
 
     # 计算 data_count
@@ -165,6 +264,14 @@ def save_raw(
 
     try:
         with get_session() as s:
+            try:
+                if _can_manage_raw_data_ddl(s) or _can_call_partition_function(s):
+                    _ensure_partition(s, now.year, now.month)
+            except SQLAlchemyError as e:
+                if _is_insufficient_privilege_error(e):
+                    _warn_missing_partition_once(now.year, now.month)
+                else:
+                    raise
             s.execute(text("""
                 INSERT INTO ft_raw_data
                 (source, method, params_hash, params, data, data_count,
@@ -185,7 +292,10 @@ def save_raw(
                 "is_success": is_success, "error_msg": error_msg,
             })
     except Exception as e:
-        logger.warning(f"ft_raw_data 写入失败: {e}")
+        if _is_missing_partition_error(e):
+            _warn_missing_partition_once(now.year, now.month)
+        else:
+            logger.warning(f"ft_raw_data 写入失败: {type(e).__name__}: {e}")
 
 
 # ==================== 重放查询 ====================

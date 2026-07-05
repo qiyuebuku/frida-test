@@ -15,6 +15,7 @@ import hashlib
 import json
 import re
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from collections.abc import Callable
 from typing import Any
 
@@ -39,67 +40,11 @@ ASSIGNMENT_FIT_TYPES = {
     "adjacent_context",
     "new_parent_topic",
 }
-MARKET_SIGNAL_BUCKET_TITLES = {
-    "市场行情",
-    "板块异动",
-    "个股涨跌",
-    "个股表现",
-    "成交放量",
-    "成交额放量",
-    "资金流向",
-    "资金净流入",
-    "ETF表现",
-    "概念异动",
-    "盘面表现",
-    "行情异动",
+ASSIGNMENT_ACTIONS = {
+    "attach_existing",
+    "create_new",
+    "create_parent_and_absorb_existing",
 }
-MARKET_SIGNAL_ONLY_TERMS = (
-    "行情",
-    "异动",
-    "反弹",
-    "拉升",
-    "上涨",
-    "下跌",
-    "转跌",
-    "涨停",
-    "跌停",
-    "走高",
-    "走低",
-    "回暖",
-    "回落",
-    "成交放量",
-    "资金流入",
-    "资金净流入",
-    "ETF",
-)
-MARKET_TOPIC_DRIVER_TERMS = (
-    "供需",
-    "供应",
-    "需求",
-    "政策",
-    "监管",
-    "产业",
-    "链",
-    "风险",
-    "安全",
-    "基础设施",
-    "地缘",
-    "冲突",
-    "制裁",
-    "关税",
-    "货币",
-    "利率",
-    "汇率",
-    "流动性",
-    "通胀",
-    "产能",
-    "出海",
-    "并购",
-    "重组",
-    "算力",
-    "债务",
-    "融资",
-)
 
 
 @dataclass(frozen=True)
@@ -166,6 +111,7 @@ class CommunityDraft:
     rejected_candidates: list[dict[str, Any]] = field(default_factory=list)
     future_coverage: list[str] = field(default_factory=list)
     created_from_source_id: str = ""
+    absorbed_community_ids: list[str] = field(default_factory=list)
 
     def signal_values(self) -> dict[str, list[str]]:
         keys = (
@@ -245,18 +191,18 @@ class SeedCommunityDefinition:
 SEED_COMMUNITY_DEFINITIONS: tuple[SeedCommunityDefinition, ...] = (
     SeedCommunityDefinition(
         title="地缘政治与能源风险",
-        scope="承接地缘冲突、制裁、航运通道、油气供应、能源价格冲击及其对市场风险偏好的影响。",
+        scope="承接地缘冲突、军事安全、外交摩擦、制裁、航运通道、油气供应、能源价格冲击及其对市场风险偏好的影响。",
         include_rules=(
-            "中东、俄乌、红海、霍尔木兹海峡等地缘冲突或通道风险。",
+            "中东、俄乌、红海、霍尔木兹海峡等地缘冲突、军事安全、外交摩擦或通道风险。",
             "制裁、反制裁、供应中断、油气运输受阻、能源价格冲击。",
-            "地缘事件对权益、债券、商品、外汇或风险偏好的传导。",
+            "地缘或安全事件对权益、债券、商品、外汇、供应链或风险偏好的传导。",
         ),
         exclude_rules=(
             "单纯公司业绩、常规能源项目投产，不归入本主题。",
-            "没有地缘或能源供应冲击含义的普通商品价格波动，不归入本主题。",
+            "没有地缘、安全或能源供应冲击含义的普通商品价格波动，不归入本主题。",
         ),
-        canonical_labels=("地缘风险", "能源安全", "油气供应", "航运通道风险", "制裁影响"),
-        granularity_note="这是 L0 长期风险主线；具体国家、海峡、制裁轮次和油气品种作为子方向进入。",
+        canonical_labels=("地缘风险", "军事安全", "能源安全", "油气供应", "航运通道风险", "制裁影响"),
+        granularity_note="这是 L0 长期风险主线；具体国家、军事合作、地区安全事件、海峡、制裁轮次和油气品种作为子方向进入。",
     ),
     SeedCommunityDefinition(
         title="公司业绩与产业景气",
@@ -531,8 +477,13 @@ ASSIGNMENT_SCHEMA: dict[str, Any] = {
             "items": {
                 "type": "object",
                 "properties": {
-                    "action": {"type": "string", "enum": ["attach_existing", "create_new"]},
+                    "action": {"type": "string", "enum": sorted(ASSIGNMENT_ACTIONS)},
                     "community_id": {"type": "string"},
+                    "absorb_community_ids": {
+                        "type": "array",
+                        "maxItems": 8,
+                        "items": {"type": "string"},
+                    },
                     "weight": {"type": "number", "minimum": 0, "maximum": 1},
                     "confidence": {"type": "number", "minimum": 0, "maximum": 1},
                     "fit_type": {
@@ -544,6 +495,7 @@ ASSIGNMENT_SCHEMA: dict[str, Any] = {
                 "required": [
                     "action",
                     "community_id",
+                    "absorb_community_ids",
                     "weight",
                     "confidence",
                     "fit_type",
@@ -590,8 +542,8 @@ COGNITIVE_CARD_SYSTEM_PROMPT = """你是金融知识图谱的 Cognitive Card 抽
 - parent_themes 写交易认知层 L0 父主题，是后续 Community 归档最重要的信号；它应该能承载多条不同来源、不同主体、不同时间的资料。
 - parent_themes 不要写公司名、项目名、单一产品、单次交易或单条行情；遇到细方向时必须上提到可复用父主题。
 - parent_themes 应像图书馆一级目录名：短、稳定、可复用；不要写成一句新闻摘要、原因解释或长标题。
-- parent_themes 不要写“市场行情”“板块异动”“个股涨跌”“成交放量”“资金流向”“ETF表现”“概念异动”“盘面表现”这类行情表现桶；这些只能作为 specific_topics 或 supporting_text 的细节。
-- 如果 chunk 描述上涨、下跌、反弹、涨停、成交放量或资金流入，parent_themes 必须追溯背后的驱动主题、产业链主题、政策主题、风险主题或流动性主题。
+- parent_themes 必须有稳定对象和稳定机制边界：能说明“哪类资产、产业、政策、风险、公司经营或宏观变量为什么被影响”。只描述短期表现、资金行为、交易热度或盘面状态的表达，不应作为 parent_themes。
+- 如果 chunk 主要描述市场短期表现，parent_themes 必须追溯背后的驱动主题、产业链主题、政策主题、风险主题或流动性主题；无法追溯时，把短期表现放入 mid_topics / specific_topics / supporting_text。
 - 如果一个表达只描述某个父主题下的供需变化、风险变化、资金变化、项目进展或单一主体动作，应放入 mid_topics / specific_topics，而不是 parent_themes。
 - broad_topics 写父主题下仍然较宽的行业、政策、市场或风险主题。
 - mid_topics 写父级主题下的子方向，适合未来 L1/L2。
@@ -616,10 +568,12 @@ ASSIGNMENT_SYSTEM_PROMPT = """你是金融知识图谱的 Community 归档裁决
 你的任务：
 - 在候选 community 中判断是否应该挂入已有主题；
 - 如果候选都不适合，创建新的 L0 community；
+- 如果候选相关但粒度偏细、边界按生命周期/动作阶段拆错，创建更合适的父级 L0 并吸收这些已有候选；
 - 输入里的 candidate_append_log 是唯一候选上下文；
 - candidate_append_log 只追加，不在中间改写既有条目；靠前不代表更相关；
 - entry_type=candidate_base 表示一个 community 第一次进入候选账本时的稳定目录信息；
 - entry_type=candidate_update 表示这个 community 后续新增吸收的子方向，只包含 community_id 和 absorbed；
+- entry_type=candidate_redirect 表示旧 community 已经被物理移除并合并到 to_community_id；from_community_id 已失效，禁止输出它，只能把它作为理解历史上下文的标记。
 - candidate_update 只能辅助理解该目录最近吸收过哪些子方向，不得覆盖 candidate_base 中的 scope、include_rules、exclude_rules、canonical_labels 和 granularity_note；
 - Cognitive Card 的 parent_themes、title_candidate、raw_theme 都只是候选信号，不是最终 community 名称；你必须在本阶段归一化主题边界。
 - 输入候选 community_id 是系统真实 community ID；attach_existing 时必须原样使用候选 community_id，禁止输出标题或自造 ID。
@@ -627,9 +581,20 @@ ASSIGNMENT_SYSTEM_PROMPT = """你是金融知识图谱的 Community 归档裁决
 - 不区分 primary / secondary；
 - 每条归属必须输出 weight，表示这个 topic_intent 和 community 的关联强度；
 - 每条归属必须输出 fit_type，用来说明这是既有方向、新增子方向、更宽父主题、相邻上下文，还是全新的父主题；
+- 每条归属必须输出 absorb_community_ids；非 create_parent_and_absorb_existing 时输出空数组 []。
 - assignments 数量不要超过 max_attach 限制；
 - 不要输出 uncertain，不走人工 pending；
-- 低置信也必须在 attach_existing 或 create_new 中二选一；
+- 低置信也必须在 attach_existing、create_new、create_parent_and_absorb_existing 中选择一个合法 action；
+- action 只能是 attach_existing、create_new、create_parent_and_absorb_existing。
+- action 选择顺序必须是：先判断能否 attach_existing；如果不能直接 attach，但候选中存在同一稳定对象/机制下的窄主题，必须判断 create_parent_and_absorb_existing；只有两者都不成立时才 create_new。
+- create_parent_and_absorb_existing 表示：候选中已有相关 community，但它们只是当前更大父主题下的子方向、生命周期阶段、动作阶段或局部表达；你要创建一个更稳定的父级 L0，并吸收这些已有候选。
+- 当已有候选只是把某个父主题下的局部阶段、动作环节或子方向当成 L0，而当前 intent 能提炼出更合适、更稳定的父级目录时，优先 create_parent_and_absorb_existing，而不是继续 create_new 一个平级主题。
+- create_parent_and_absorb_existing 创建的新父主题必须保留当前 intent 的稳定对象和机制边界，不能为了吸收多个候选而上提到过粗父类。
+- create_new 只适用于候选里没有可被当前新父主题稳定吸收的相关 community；如果你准备创建的新 L0 能自然覆盖某个候选的对象、风险来源或产业链边界，就不能把该候选留在旁边形成平级重复主题。
+- 如果你准备 create_new 的原因是“已有候选只覆盖当前父主题下的局部子方向、生命周期阶段、动作环节、影响环节或风险暴露环节”，这通常不是普通 create_new 的理由，而是 create_parent_and_absorb_existing 的信号：应该创建覆盖完整对象/机制链条的父主题并吸收该窄候选。
+- 判断是否吸收时，优先看稳定对象、风险来源、产业链位置、政策机制、市场机制或经营机制是否相同，而不是看当前新闻描述的是同一事件阶段还是同一动作环节。
+- 只共享过粗上位类、但底层对象或风险来源不同的候选，不应被吸收。
+- 如果候选分别属于不同稳定对象或不同风险来源，只能吸收与新父主题对象边界一致的候选；其他候选继续保留为独立 L0。
 - 如果候选主题的 scope、include_rules、canonical_labels 能承接当前 intent，应优先 attach_existing。
 - 候选主题不是笼子；如果当前 intent 明显不在候选 scope 或命中 exclude_rules，必须 create_new 或挂入更合适的候选 community。
 - 归档判断必须综合 parent_themes、broad_topics、mid_topics、specific_topics、raw_theme、title_candidate、driver、impact_target、risk_type、event_thread、event_action、actors。
@@ -643,16 +608,35 @@ ASSIGNMENT_SYSTEM_PROMPT = """你是金融知识图谱的 Community 归档裁决
 - 如果候选 community 比当前 intent 更宽，但能承接当前 intent，应 attach_existing，并把 fit_type 写成 broader_parent。
 - 只有当候选 community 的目录范围无法承接当前 intent 时，才 create_new；create_new 的 fit_type 必须是 new_parent_topic。
 - create_new 时必须在 reason 中说明：为什么现有候选无法承接、这个新主题未来能持续覆盖什么边界、它与最接近候选的区别。
+- 如果现有候选无法直接承接当前 intent，但它与当前 intent 属于同一更高层稳定父主题下的窄方向，不要并列 create_new；必须 create_parent_and_absorb_existing，创建共同父主题并吸收这些窄候选。
+- “候选只覆盖某个子方向，所以无法承接当前 intent”不是直接 create_new 的理由；这通常意味着需要上提共同父主题并吸收候选，除非二者底层对象、机制或风险来源确实不同。
+- 如果现有候选标题比当前准备创建的新标题更窄，但它的 scope、canonical_labels、assigned signals 与新标题共享同一稳定对象或风险来源，应把它作为 absorb_community_ids；不要让两个 L0 分别表达“父主题”和“父主题下的阶段/动作”。
+- create_parent_and_absorb_existing 时，community_id 必须引用 new_communities 中的 client_id；absorb_community_ids 必须列出要吸收的候选 candidate_base community_id。
+- create_parent_and_absorb_existing 只允许吸收 candidate_append_log 中真实存在的 candidate_base community；禁止吸收 seed community，除非 seed 的 scope 明显错误且当前输入直接证明它应被替代。
+- create_parent_and_absorb_existing 不能只吸收最近或最相似的一个候选；你必须扫描全部 candidate_base，把同一父主题下的局部阶段、动作环节或子方向候选一次性列入 absorb_community_ids。
+- 但如果一个候选与当前 intent 只共享过粗上位类，具体对象、机制或风险来源不同，不要吸收；过粗上位类不能作为跨对象合并的唯一依据。
+- 如果你认为某个相近候选不应被吸收，新父主题的 scope 必须清楚排除它；否则应吸收。
+- create_parent_and_absorb_existing 的 reason 必须说明：旧候选为什么是偏细/偏阶段化主题、新父主题如何稳定承接它们、为什么新父主题不会变成泛化桶。
+- 如果 candidate_redirect 显示某个旧主题已经合并到 to_community_id，后续判断应以 to_community_id 对应的 candidate_base 为准；redirect 本身不是可挂载候选。
 - 如果当前 topic_intent 是 mid/specific 层级，不能直接把细主题包装成 L0；必须先寻找已有父级或子级 community 是否可挂入，没有合适候选时再提炼更高一层的父级 L0。
 - 如果创建新 L0，title 必须优先使用 parent_themes 中可长期复用的父级主题；只有 parent_themes 为空或明显不适合时，才从 broad_topics 中提炼父级主题。
 - 如果当前 broad/mid/specific 是已有 parent_theme 的子方向，必须挂入该父主题，不要创建平级 L0。
 - 如果创建新 L0，title 必须是可长期复用的父级主题，不能是新闻标题、公司项目名、单一交易名、单个产品、单次行情、单个技术细节。
+- 上提标题时不能丢掉当前 intent 的稳定对象边界；如果输入已经明确属于某个子领域、子风险来源或子产业链，不要上提到能吞下大量异质内容的过粗父类。
 - create_new 的 title 应像索引目录名，优先短标题；不要输出带有“政策与市场动态”“结构性变化”“投资机会”等摘要式尾巴的长标题，除非这是不可再压缩的稳定主题名。
-- 不要创建只表示行情表现的 L0，例如“市场行情”“板块异动”“个股涨跌”“成交放量”“资金流向”“ETF表现”“概念异动”“盘面表现”。这些只是 market signal，不是 community 边界。
-- 如果 topic_intent 主要是上涨、下跌、反弹、涨停、成交放量或资金流入，必须追溯它背后的驱动主题或产业/风险主题；例如油气设备股反弹应优先考虑能源供应、地缘风险或大宗商品供需，AI硬件股回暖应优先考虑 AI算力链。
-- 如果无法从当前 intent 提炼出驱动主题，也不要新建“市场行情”这类泛化桶；应创建更具体且可长期复用的驱动型父主题，或挂入最接近的已有父主题并说明弱相关原因。
-- 如果 action=attach_existing，community_id 必须引用 candidate_append_log 中真实存在的 candidate_base community_id。
+- L0 标题不能只描述动作、流程、阶段或组织行为；必须带有稳定对象边界，例如产业链、资产类别、政策机制、风险来源、技术链条、供需机制或经营基本面对象。
+- 如果一个候选标题只表达“转型、孵化、合作、预警、响应、扩张、布局、升级、回暖、异动”等动作或阶段，你必须判断它背后的稳定对象是什么；能挂入已有对象型父主题就 attach_existing，能覆盖多个窄对象且边界清楚才 create_parent_and_absorb_existing，不能直接创建动作型 L0。
+- 政策主题只承接政策或监管机制本身；如果新闻核心是某个产业/技术/资产链条在发展，即使它来自政府报告或地方文件，也应优先归入该产业/技术/资产父主题，政策只能作为低权重相邻上下文。
+- 地缘政治主题不只等于能源风险；军事安全、外交摩擦、地区安全、制裁和通道风险只要会影响市场、供应链、风险偏好或资产定价，都应先考虑地缘风险父主题，而不是把单一国家关系或单一安全动作新建为 L0。
+- L0 不能只是描述市场短期状态或交易表现。合格 L0 必须同时满足：有明确覆盖对象、有稳定驱动机制、有可复用边界、有可解释的排除边界。
+- 如果一个新主题可能吸收大量互不相关的新闻，只因为它们都表现为短期价格、成交、资金、情绪或热度变化，那么它不是合格 L0。
+- 如果当前 intent 描述的是短期市场表现，必须先判断它背后的对象和机制。只有对象和机制边界清楚、未来不会吸收互不相关主题时才允许 create_new。
+- 如果多个线索只有市场表现相似，但底层对象、驱动机制或风险来源不同，应分别挂到各自更有边界的父主题，而不是创建一个统一的表现型 L0。
+- 如果只能说明“市场短期怎么动”，而不能说明“哪个稳定主题为什么被影响”，不要 create_new；应 attach_existing 到最接近的驱动主题，并用较低 weight 表示它只是相邻上下文。
+- 如果无法从当前 intent 提炼出稳定驱动主题，不要创建表现型泛化桶；应挂入最接近的已有父主题并说明弱相关原因。
+- 如果 action=attach_existing，community_id 必须引用 candidate_append_log 中真实存在且未被 redirect 失效的 candidate_base community_id，不能引用 candidate_redirect.from_community_id。
 - 如果 action=create_new，community_id 必须引用 new_communities 中的 client_id，例如 new_1。
+- 如果 action=create_parent_and_absorb_existing，community_id 必须引用 new_communities 中的 client_id，例如 new_1，并且 absorb_community_ids 至少包含 1 个候选 community_id。
 - new_communities 只包含本次新建 community 的 client_id、title、scope。不要输出 level、title_quality、future_coverage、maintenance_hints、rejected_candidates 或 candidate_fit_judgements。
 - 输出必须符合 JSON Schema，不要 Markdown。"""
 
@@ -704,7 +688,16 @@ def cognitive_card_from_llm(chunk: EvidenceChunk, data: dict[str, Any]) -> Cogni
         actor_signals=data.get("actor_signals") if isinstance(data.get("actor_signals"), dict) else {},
         supporting_text=_dedupe(_as_list(data.get("supporting_text")))[:5],
         system_pointers=pointers,
-        payload={**data, "title": payload.get("title") or "", "source_name": payload.get("source_name") or ""},
+        payload={
+            **data,
+            "title": payload.get("title") or "",
+            "source_name": payload.get("source_name") or "",
+            "source_type": source_type,
+            "source_id": source_id,
+            "published_at": payload.get("published_at") or "",
+            "created_at": payload.get("created_at") or "",
+            "observed_at": payload.get("observed_at") or "",
+        },
     )
 
 
@@ -731,19 +724,37 @@ def validate_assignment_decision(
         if not isinstance(assignment, dict):
             raise RuntimeError(f"assignment must be object: {assignment}; decision={decision}")
         action = assignment.get("action")
-        if action not in {"attach_existing", "create_new"}:
+        if action not in ASSIGNMENT_ACTIONS:
             raise RuntimeError(f"assignment.action invalid: {action}; decision={decision}")
         community_id = assignment.get("community_id")
         if not isinstance(community_id, str) or not community_id.strip():
             raise RuntimeError(f"assignment.community_id must be non-empty string; decision={decision}")
+        absorb_ids = _dedupe(_as_list(assignment.get("absorb_community_ids")))
         if action == "attach_existing":
             if community_id not in candidate_ids:
                 raise RuntimeError(f"community_id not in candidates: {community_id}; decision={decision}")
+            if absorb_ids:
+                raise RuntimeError(f"attach_existing cannot absorb communities: {absorb_ids}; decision={decision}")
             dedupe = "attach:" + community_id
-        else:
+        elif action == "create_new":
             if community_id not in new_communities:
                 raise RuntimeError(f"create_new references unknown new community: {community_id}; decision={decision}")
+            if absorb_ids:
+                raise RuntimeError(f"create_new cannot absorb communities: {absorb_ids}; decision={decision}")
             dedupe = "create:" + _normalize_label(str(new_communities[community_id].get("title") or ""))
+        else:
+            if community_id not in new_communities:
+                raise RuntimeError(
+                    f"create_parent_and_absorb_existing references unknown new community: {community_id}; decision={decision}"
+                )
+            if not absorb_ids:
+                raise RuntimeError(f"create_parent_and_absorb_existing requires absorb_community_ids; decision={decision}")
+            invalid_absorb_ids = [item for item in absorb_ids if item not in candidate_ids]
+            if invalid_absorb_ids:
+                raise RuntimeError(
+                    f"absorb_community_ids must reference candidates: {invalid_absorb_ids}; decision={decision}"
+                )
+            dedupe = "absorb:" + _normalize_label(str(new_communities[community_id].get("title") or ""))
         if dedupe in seen:
             raise RuntimeError(f"duplicate assignment target: {dedupe}; decision={decision}")
         seen.add(dedupe)
@@ -754,8 +765,8 @@ def validate_assignment_decision(
         fit_type = _clean_text(assignment.get("fit_type"))
         if fit_type not in ASSIGNMENT_FIT_TYPES:
             raise RuntimeError(f"assignment.fit_type invalid: {fit_type}; decision={decision}")
-        if action == "create_new" and fit_type != "new_parent_topic":
-            raise RuntimeError(f"create_new fit_type must be new_parent_topic; decision={decision}")
+        if action in {"create_new", "create_parent_and_absorb_existing"} and fit_type != "new_parent_topic":
+            raise RuntimeError(f"{action} fit_type must be new_parent_topic; decision={decision}")
         if action == "attach_existing" and fit_type == "new_parent_topic":
             raise RuntimeError(f"attach_existing fit_type cannot be new_parent_topic; decision={decision}")
         if not _clean_text(assignment.get("reason")):
@@ -782,48 +793,8 @@ def _validate_new_communities(
             raise RuntimeError(f"new_community.title must be non-empty; decision={decision}")
         if not scope:
             raise RuntimeError(f"new_community.scope must be non-empty; decision={decision}")
-        if _is_market_signal_l0_title(title=title, scope=scope, topic_intent=topic_intent):
-            raise RuntimeError(
-                "new_community.title is a market signal, not a durable L0 community boundary; "
-                f"title={title}; scope={scope}; decision={decision}"
-            )
         result[client_id] = {"client_id": client_id, "title": title, "scope": scope}
     return result
-
-
-def _is_market_signal_l0_title(
-    *,
-    title: str,
-    scope: str,
-    topic_intent: dict[str, Any] | None,
-) -> bool:
-    normalized_title = _normalize_label(title)
-    if normalized_title in {_normalize_label(item) for item in MARKET_SIGNAL_BUCKET_TITLES}:
-        return True
-    title_scope = f"{title}\n{scope}"
-    if _has_market_signal_term(title) and not _has_market_topic_driver(title_scope):
-        return True
-    if not topic_intent:
-        return False
-    parent_themes = _as_list(topic_intent.get("parent_themes"))
-    if any(_normalize_label(title) == _normalize_label(theme) for theme in parent_themes):
-        if normalized_title in {_normalize_label(item) for item in MARKET_SIGNAL_BUCKET_TITLES}:
-            return True
-    return False
-
-
-def _has_market_signal_term(value: Any) -> bool:
-    text = _clean_text(value)
-    if not text:
-        return False
-    return any(term in text for term in MARKET_SIGNAL_ONLY_TERMS)
-
-
-def _has_market_topic_driver(value: Any) -> bool:
-    text = _clean_text(value)
-    if not text:
-        return False
-    return any(term in text for term in MARKET_TOPIC_DRIVER_TERMS)
 
 
 def _assignment_topic_intent(card: CognitiveCard, intent_payload: dict[str, Any]) -> dict[str, Any]:
@@ -848,6 +819,8 @@ def _assignment_topic_intent(card: CognitiveCard, intent_payload: dict[str, Any]
         "evidence_id": card.evidence_id,
         "chunk_ids": card.chunk_ids,
         "primary_chunk_id": card.primary_chunk_id,
+        "source_published_at": (card.payload or {}).get("published_at") or "",
+        "event_time": _clean_text(intent_payload.get("event_time")),
     }
     impact_direction = str(intent_payload.get("impact_direction") or "").strip()
     if impact_direction and impact_direction != "uncertain":
@@ -899,7 +872,7 @@ def _apply_assignment(
     for assignment in decision["assignments"]:
         action = str(assignment["action"])
         intent_id = f"{card.cognitive_card_id}:intent:{intent_index}"
-        if action == "create_new":
+        if action in {"create_new", "create_parent_and_absorb_existing"}:
             payload = new_communities[str(assignment["community_id"])]
             community_id = (
                 community_id_factory(adapter_name, 0, str(payload["title"]))
@@ -914,6 +887,12 @@ def _apply_assignment(
                     level=0,
                     future_coverage=_future_coverage_from_intent(topic_intent),
                     created_from_source_id=card.source_id,
+                )
+            if action == "create_parent_and_absorb_existing":
+                _absorb_existing_communities(
+                    parent=communities[community_id],
+                    absorbed_ids=_dedupe(_as_list(assignment.get("absorb_community_ids"))),
+                    communities=communities,
                 )
         else:
             community_id = str(assignment["community_id"])
@@ -968,6 +947,63 @@ def _apply_assignment(
     return applied
 
 
+def _absorb_existing_communities(
+    *,
+    parent: CommunityDraft,
+    absorbed_ids: list[str],
+    communities: dict[str, CommunityDraft],
+) -> None:
+    for absorbed_id in absorbed_ids:
+        if absorbed_id == parent.community_id:
+            continue
+        child = communities.get(absorbed_id)
+        if child is None:
+            continue
+        parent.source_ids = _dedupe([*parent.source_ids, *child.source_ids])
+        parent.evidence_ids = _dedupe([*parent.evidence_ids, *child.evidence_ids])
+        parent.chunk_ids = _dedupe([*parent.chunk_ids, *child.chunk_ids])
+        parent.cognitive_card_ids = _dedupe([*parent.cognitive_card_ids, *child.cognitive_card_ids])
+        parent.assigned_intents = _dedupe_dicts_by_identity([*parent.assigned_intents, *child.assigned_intents])
+        parent.assignments = _dedupe_dicts_by_key(
+            [
+                *parent.assignments,
+                *[
+                    _rewrite_absorbed_assignment_payload(
+                        item,
+                        parent_community_id=parent.community_id,
+                        absorbed_community_id=absorbed_id,
+                    )
+                    for item in child.assignments
+                ],
+            ],
+            key="assignment_id",
+        )
+        parent.future_coverage = _dedupe([*parent.future_coverage, *child.future_coverage])
+        parent.canonical_labels = _dedupe([*parent.canonical_labels, child.title, *child.canonical_labels])
+        parent.absorbed_community_ids = _dedupe(
+            [*parent.absorbed_community_ids, absorbed_id, *child.absorbed_community_ids]
+        )
+        del communities[absorbed_id]
+    parent.summary = _community_summary(parent)
+
+
+def _rewrite_absorbed_assignment_payload(
+    item: dict[str, Any],
+    *,
+    parent_community_id: str,
+    absorbed_community_id: str,
+) -> dict[str, Any]:
+    if not isinstance(item, dict):
+        return {}
+    copied = dict(item)
+    if str(copied.get("resolved_community_id") or "") == absorbed_community_id:
+        copied["resolved_community_id"] = parent_community_id
+    if str(copied.get("community_id") or "") == absorbed_community_id:
+        copied["community_id"] = parent_community_id
+    copied["absorbed_from_community_id"] = absorbed_community_id
+    return copied
+
+
 def _drafts_from_existing(existing: list[GraphIndexCommunity]) -> dict[str, CommunityDraft]:
     drafts: dict[str, CommunityDraft] = {}
     for community in existing:
@@ -996,6 +1032,7 @@ def _drafts_from_existing(existing: list[GraphIndexCommunity]) -> dict[str, Comm
             assigned_intents=assigned_intents,
             assignments=[item for item in (metrics.get("assignments") or []) if isinstance(item, dict)],
             future_coverage=[str(item) for item in metrics.get("future_coverage") or [] if str(item).strip()],
+            absorbed_community_ids=[str(item) for item in metrics.get("absorbed_community_ids") or [] if str(item).strip()],
         )
     return drafts
 
@@ -1142,6 +1179,11 @@ def _graph_community_from_draft(adapter_name: str, draft: CommunityDraft) -> Gra
             *signals.get("event_thread", []),
         ]
     )
+    source_times = _dedupe(
+        _clean_text(intent.get("source_published_at"))
+        for intent in draft.assigned_intents
+        if isinstance(intent, dict)
+    )
     metrics = {
         "origin": draft.origin,
         "include_rules": draft.include_rules,
@@ -1175,7 +1217,12 @@ def _graph_community_from_draft(adapter_name: str, draft: CommunityDraft) -> Gra
         "maturity_level": maturity_label(len(set(draft.source_ids))),
         "scope": draft.scope,
         "community_builder": "cognitive_card_assignment_v1",
+        "absorbed_community_ids": draft.absorbed_community_ids,
     }
+    if source_times:
+        ordered_source_times = sorted(source_times, key=_datetime_sort_key)
+        metrics["earliest_source_published_at"] = ordered_source_times[0]
+        metrics["latest_source_published_at"] = ordered_source_times[-1]
     return GraphIndexCommunity(
         community_id=draft.community_id,
         version_id=version_id,
@@ -1194,7 +1241,7 @@ def _graph_community_from_draft(adapter_name: str, draft: CommunityDraft) -> Gra
         previous_version_id="",
         change_reason="cognitive_assignment",
         lineage_id="kg_community_lineage:" + _digest([draft.title]),
-        previous_community_ids=[],
+        previous_community_ids=draft.absorbed_community_ids,
     )
 
 
@@ -1254,6 +1301,105 @@ def _community_document(community: GraphIndexCommunity) -> GraphIndexVectorDocum
             "metrics": metrics,
             "maturity_level": metrics.get("maturity_level") or "",
             "cognitive_card_ids": metrics.get("cognitive_card_ids") or [],
+            "earliest_source_published_at": metrics.get("earliest_source_published_at") or "",
+            "latest_source_published_at": metrics.get("latest_source_published_at") or "",
+            "event_time_start": metrics.get("earliest_source_published_at") or "",
+            "event_time_end": metrics.get("latest_source_published_at") or "",
+        },
+    )
+
+
+def cognitive_card_document(card: CognitiveCard) -> GraphIndexVectorDocument:
+    payload = getattr(card, "payload", None) or {}
+    topic_intents = [
+        item for item in (getattr(card, "topic_intents", None) or []) if isinstance(item, dict)
+    ]
+    risk_signals = getattr(card, "risk_signals", None) or []
+    local_impact_signals = getattr(card, "local_impact_signals", None) or []
+    actor_signals = getattr(card, "actor_signals", None) or {}
+    supporting_text = _as_list(getattr(card, "supporting_text", None))
+    title_candidates = _as_list(getattr(card, "title_candidates", None))
+    summary = _clean_text(getattr(card, "summary", ""))
+    chunk_ids = _as_list(getattr(card, "chunk_ids", None)) or [_clean_text(getattr(card, "primary_chunk_id", ""))]
+    source_type = _clean_text(getattr(card, "source_type", ""))
+    source_id = _clean_text(getattr(card, "source_id", ""))
+    topic_lines = []
+    for intent in topic_intents[:10]:
+        topic_lines.append(
+            _join_non_empty(
+                [
+                    _clean_text(intent.get("raw_theme")),
+                    "parent=" + "、".join(_as_list(intent.get("parent_themes"))[:4]),
+                    "broad=" + "、".join(_as_list(intent.get("broad_topics"))[:4]),
+                    "mid=" + "、".join(_as_list(intent.get("mid_topics"))[:5]),
+                    "specific=" + "、".join(_as_list(intent.get("specific_topics"))[:5]),
+                    "driver=" + "、".join(_as_list(intent.get("driver"))[:5]),
+                    "impact=" + "、".join(_as_list(intent.get("impact_target"))[:6]),
+                    "risk=" + "、".join(_as_list(intent.get("risk_type"))[:4]),
+                    "event_thread=" + "、".join(_as_list(intent.get("event_thread"))[:4]),
+                    "actors=" + "、".join(_as_list(intent.get("actors"))[:6]),
+                    _clean_text(intent.get("summary")),
+                ],
+                sep=" | ",
+            )
+        )
+    text = "\n".join(
+        part
+        for part in [
+            "Document Type: Cognitive Card",
+            f"Cognitive Card: {card.cognitive_card_id}",
+            f"Title: {payload.get('title') or ''}",
+            f"Source: {source_type}:{source_id}",
+            f"Evidence: {card.evidence_id}",
+            f"Primary Chunk: {card.primary_chunk_id}",
+            f"Summary: {summary}",
+            f"Title Candidates: {'；'.join(title_candidates)}",
+            f"Topic Intents: {'；'.join(topic_lines)}",
+            f"Risk Signals: {_json_text(risk_signals)}",
+            f"Impact Signals: {_json_text(local_impact_signals)}",
+            f"Actor Signals: {_json_text(actor_signals)}",
+            f"Supporting Text: {'；'.join(supporting_text)}",
+            f"Expandable Handles: cognitive_card_id={card.cognitive_card_id} evidence_id={card.evidence_id} chunk_id={card.primary_chunk_id}",
+        ]
+        if part and not part.endswith(": ")
+    )
+    event_times = [
+        _clean_text(intent.get("event_time"))
+        for intent in topic_intents
+        if _clean_text(intent.get("event_time"))
+    ]
+    return GraphIndexVectorDocument(
+        document_id=card.cognitive_card_id,
+        document_type="cognitive_card",
+        collection_role="cognitive_card",
+        source_type="kg_cognitive_card",
+        source_id=card.cognitive_card_id,
+        evidence_id=card.evidence_id,
+        text=text,
+        metadata={
+            "cognitive_card_id": card.cognitive_card_id,
+            "source_type": "kg_cognitive_card",
+            "source_id": card.cognitive_card_id,
+            "original_source_type": source_type,
+            "original_source_id": source_id,
+            "evidence_id": card.evidence_id,
+            "primary_chunk_id": card.primary_chunk_id,
+            "cited_chunk_ids": chunk_ids,
+            "cited_evidence_ids": [card.evidence_id],
+            "title": payload.get("title") or "",
+            "title_candidates": title_candidates,
+            "topic_intents": topic_intents,
+            "risk_signals": risk_signals,
+            "local_impact_signals": local_impact_signals,
+            "actor_signals": actor_signals,
+            "supporting_text": supporting_text,
+            "published_at": payload.get("published_at") or "",
+            "source_published_at": payload.get("published_at") or "",
+            "created_at": payload.get("created_at") or "",
+            "observed_at": payload.get("observed_at") or "",
+            "event_time": event_times[0] if event_times else "",
+            "event_time_start": payload.get("published_at") or "",
+            "event_time_end": payload.get("published_at") or "",
         },
     )
 
@@ -1464,6 +1610,29 @@ def _resolve_aliases(decision: dict[str, Any], alias_map: dict[str, str]) -> dic
     return copied
 
 
+def _join_non_empty(parts: list[str], *, sep: str = " ") -> str:
+    return sep.join(part for part in parts if part)
+
+
+def _json_text(value: Any) -> str:
+    if value is None or value == "" or value == [] or value == {}:
+        return ""
+    return json.dumps(value, ensure_ascii=False, sort_keys=True)[:1200]
+
+
+def _datetime_sort_key(value: Any) -> float:
+    text = _clean_text(value)
+    if not text:
+        return 0.0
+    try:
+        parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
+    except ValueError:
+        return 0.0
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed.timestamp()
+
+
 def _future_coverage_from_intent(intent: dict[str, Any]) -> list[str]:
     return _dedupe(
         [
@@ -1491,7 +1660,7 @@ def _community_future_coverage(
 
 
 def _assignment_update_mode(*, action: str, weight: float) -> str:
-    if action == "create_new":
+    if action in {"create_new", "create_parent_and_absorb_existing"}:
         return "rewrite_summary"
     if weight >= 0.80:
         return "update_delta"
@@ -1515,6 +1684,34 @@ def _intent_identity(intent: dict[str, Any]) -> str:
             chunk_ids,
         ]
     )
+
+
+def _dedupe_dicts_by_identity(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    result: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        key = _intent_identity(item)
+        if key in seen:
+            continue
+        seen.add(key)
+        result.append(item)
+    return result
+
+
+def _dedupe_dicts_by_key(items: list[dict[str, Any]], *, key: str) -> list[dict[str, Any]]:
+    result: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for index, item in enumerate(items):
+        if not isinstance(item, dict):
+            continue
+        value = _clean_text(item.get(key)) or _digest([json.dumps(item, ensure_ascii=False, sort_keys=True), str(index)])
+        if value in seen:
+            continue
+        seen.add(value)
+        result.append(item)
+    return result
 
 
 def maturity_label(source_count: int) -> str:

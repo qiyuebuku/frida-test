@@ -12,9 +12,8 @@ from src.domain.knowledge.schemas import CompiledEdge, CompiledNode, EvidenceChu
 from src.domain.knowledge.graph_index import GraphProjectionProfile
 from src.domain.knowledge.semantic_index_materials import (
     SEMANTIC_COLLECTION_CHUNK,
+    SEMANTIC_COLLECTION_COGNITIVE_CARD,
     SEMANTIC_COLLECTION_COMMUNITY,
-    SEMANTIC_COLLECTION_ENTITY,
-    SEMANTIC_COLLECTION_RELATION,
     SEMANTIC_COLLECTION_ROLES,
     SemanticVectorDocument,
     build_semantic_vector_documents,
@@ -32,6 +31,13 @@ from src.infrastructure.vector_store.milvus_hybrid_store import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+AGENT_READ_COLLECTION_ROLES = (
+    SEMANTIC_COLLECTION_CHUNK,
+    SEMANTIC_COLLECTION_COGNITIVE_CARD,
+    SEMANTIC_COLLECTION_COMMUNITY,
+)
 
 
 class MilvusSemanticHybridRetriever(SemanticHybridRetriever):
@@ -122,6 +128,8 @@ class MilvusSemanticHybridRetriever(SemanticHybridRetriever):
                     adapter_name=options.adapter_name,
                     target=options.target,
                     limit=role_search_limit,
+                    time_start=options.semantic_time_start or options.graph_time_start,
+                    time_end=options.semantic_time_end or options.graph_time_end,
                 )
             per_collection_latency_ms[collection_role] = round((time.perf_counter() - started_at) * 1000, 1)
             raw_count += len(hits)
@@ -605,8 +613,7 @@ def _candidate_limit(limit: int) -> int:
 def _typed_search_limits(limit: int) -> dict[str, int]:
     return {
         SEMANTIC_COLLECTION_CHUNK: _configured_role_limit(settings.MILVUS_SEMANTIC_CHUNK_TOPK, fallback=limit, limit=limit),
-        SEMANTIC_COLLECTION_ENTITY: _configured_role_limit(settings.MILVUS_SEMANTIC_ENTITY_TOPK, fallback=15, limit=limit),
-        SEMANTIC_COLLECTION_RELATION: _configured_role_limit(settings.MILVUS_SEMANTIC_RELATION_TOPK, fallback=20, limit=limit),
+        SEMANTIC_COLLECTION_COGNITIVE_CARD: _configured_role_limit(settings.MILVUS_SEMANTIC_COGNITIVE_CARD_TOPK, fallback=12, limit=limit),
         SEMANTIC_COLLECTION_COMMUNITY: _configured_role_limit(settings.MILVUS_SEMANTIC_COMMUNITY_TOPK, fallback=8, limit=limit),
     }
 
@@ -616,23 +623,13 @@ def _roles_for_target_ids(target_ids: list[str]) -> tuple[str, ...]:
     for target_id in target_ids:
         if target_id.startswith(("kg_chunk:", "chunk:")):
             roles.add(SEMANTIC_COLLECTION_CHUNK)
+        elif target_id.startswith(("kg_cognitive_card:", "kg_card:cognitive:")):
+            roles.add(SEMANTIC_COLLECTION_COGNITIVE_CARD)
         elif target_id.startswith(("kgc:", "kg_finding:", "kg_community:")):
             roles.add(SEMANTIC_COLLECTION_COMMUNITY)
-        elif target_id.startswith(("kg_edge:", "kg_card:edge:")):
-            roles.add(SEMANTIC_COLLECTION_RELATION)
-        elif target_id.startswith(
-            (
-                "kg:",
-                "kg_card:node:",
-                "kg_card:event:",
-                "kg_card:node_card:",
-                "kg_card:event_card:",
-            )
-        ):
-            roles.add(SEMANTIC_COLLECTION_ENTITY)
         elif not roles:
-            return SEMANTIC_COLLECTION_ROLES
-    return tuple(role for role in SEMANTIC_COLLECTION_ROLES if role in roles)
+            return AGENT_READ_COLLECTION_ROLES
+    return tuple(role for role in AGENT_READ_COLLECTION_ROLES if role in roles)
 
 
 def _configured_role_limit(value: int, *, fallback: int, limit: int) -> int:
@@ -684,6 +681,19 @@ def _retrieval_hit_from_milvus_hit(hit: MilvusHybridHit, *, score: float) -> Ret
             source="semantic_hybrid",
             edge_refs=[source_id],
             evidence_refs=evidence_refs,
+        )
+    if source_type == "kg_cognitive_card" and source_id:
+        return RetrievalHit(
+            hit_id=hit.chunk_id,
+            hit_type="cognitive_card",
+            title=_semantic_hit_title(hit, fallback=f"cognitive_card:{source_id}"),
+            snippet=hit.text[:800],
+            score=score,
+            source="semantic_hybrid",
+            source_channels=["semantic_hybrid"],
+            chunk_refs=[str(item) for item in (hit.metadata.get("cited_chunk_ids") or []) if item],
+            evidence_refs=evidence_refs,
+            matched_fields=["milvus.cognitive_card"],
         )
     if source_type in {"kg_community_report", "kg_finding"} and source_id:
         return RetrievalHit(

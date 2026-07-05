@@ -10,6 +10,7 @@ from src.domain.collection.repositories.market_cache_repository import (
 )
 from src.infrastructure.connections import get_session
 from src.infrastructure.persistence.models.collection import MarketCache
+from src.infrastructure.time_utils import app_now
 
 logger = logging.getLogger(__name__)
 
@@ -24,7 +25,11 @@ class MarketCacheRepositoryImpl(MarketCacheRepository):
                 data_type=data_type, data=data, expires_at=expires_at,
             ).on_conflict_do_update(
                 index_elements=["data_type"],
-                set_={"data": data, "expires_at": expires_at, "created_at": datetime.now()},
+                set_={
+                    "data": data,
+                    "expires_at": expires_at,
+                    "created_at": app_now().replace(tzinfo=None),
+                },
             )
             s.execute(stmt)
 

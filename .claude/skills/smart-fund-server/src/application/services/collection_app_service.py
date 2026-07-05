@@ -24,16 +24,19 @@ logger = get_logger(__name__)
 async def _run(aggregator_name: str, agg_class) -> CollectionResult:
     """通用采集 use case 包装: 计时 + 上报 metrics"""
     t0 = time.time()
+    agg = agg_class()
     try:
-        result = await agg_class().tick() or {}
+        result = await agg.tick() or {}
     finally:
         duration = time.time() - t0
     saved = result.get("total_saved", 0)
     record_collection(aggregator_name, duration, saved)
+    new_ids = list(getattr(agg, "last_saved_ids")) if hasattr(agg, "last_saved_ids") else None
     return CollectionResult(
         aggregator=aggregator_name,
         sources_run=result.get("sources_run", 0),
         total_saved=saved,
+        new_ids=new_ids,
     )
 
 
@@ -41,7 +44,7 @@ class CollectionAppService:
     """数据采集 use case 入口"""
 
     async def run_news_collection(self) -> CollectionResult:
-        """新闻采集 use case (agg_news task)"""
+        """新闻采集 use case (collect_news task)"""
         from src.domain.collection.services.news import NewsAggregator
         return await _run("news", NewsAggregator)
 

@@ -14,7 +14,7 @@ from sqlalchemy import case, cast, delete, func, or_, select, text, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.orm import Session
 
-from src.domain.knowledge.enums import ConfidenceLabel, EdgeStatus, EvidenceStatus, EvidenceType, NodeStatus
+from src.domain.knowledge.enums import EvidenceStatus, EvidenceType
 from src.domain.knowledge.chunking import build_evidence_chunks, evidence_content_for_chunking
 from src.domain.knowledge.cognitive_index import CognitiveCard, CommunityAssignment
 from src.domain.knowledge.graph_index import (
@@ -32,24 +32,19 @@ from src.domain.knowledge.retrieval_eval import (
     RetrievalTraceSnapshot,
 )
 from src.domain.knowledge.retrieval_profile import profile_span
-from src.domain.knowledge.schemas import CompiledEdge, CompiledEvidence, CompiledNode, EvidenceChunk
+from src.domain.knowledge.schemas import CompiledEvidence, EvidenceChunk
 from src.infrastructure.connections import get_session
 from src.infrastructure.persistence.models.knowledge import (
     GRAPH_COMMUNITY_ID_SEQUENCE,
     KnowledgeCompilationRun,
     KnowledgeCognitiveCard,
     KnowledgeCommunityAssignment,
-    KnowledgeEdge,
-    KnowledgeEdgeEvidence,
-    KnowledgeEdgeEvidenceChunk,
     KnowledgeEvidenceChunk,
     KnowledgeEvidence,
-    KnowledgeGraphAdjacency,
     KnowledgeGraphCommunity,
     KnowledgeGraphDelta,
     KnowledgeGraphFinding,
     KnowledgeGraphUnassignedSignal,
-    KnowledgeNode,
     KnowledgeReviewItem,
     KnowledgeRetrievalEvalMetric,
     KnowledgeRetrievalEvalRun,
@@ -73,65 +68,6 @@ class KnowledgeRepositoryImpl(KnowledgeRepository):
         with profile_span("kg_repository.ping"):
             with self._session_scope() as session:
                 session.execute(text("select 1"))
-
-    def upsert_nodes(self, nodes: list[CompiledNode]) -> int:
-        if not nodes:
-            return 0
-        with profile_span("kg_repository.upsert_nodes", nodes=len(nodes)):
-            rows = [_node_values(node) for node in nodes]
-            with self._session_scope() as session:
-                stmt = pg_insert(KnowledgeNode).values(rows)
-                excluded = stmt.excluded
-                result = session.execute(
-                    stmt.on_conflict_do_update(
-                        index_elements=["node_id"],
-                        set_={
-                            "adapter_name": excluded.adapter_name,
-                            "adapter_version": excluded.adapter_version,
-                            "node_type": excluded.node_type,
-                            "stable_key": excluded.stable_key,
-                            "canonical_name": excluded.canonical_name,
-                            "aliases": excluded.aliases,
-                            "external_ids": excluded.external_ids,
-                            "properties": excluded.properties,
-                            "status": excluded.status,
-                            "version": excluded.version,
-                            "updated_at": datetime.now(timezone.utc),
-                        },
-                    )
-                )
-                return result.rowcount or 0
-
-    def upsert_edges(self, edges: list[CompiledEdge]) -> int:
-        if not edges:
-            return 0
-        with profile_span("kg_repository.upsert_edges", edges=len(edges)):
-            rows = [_edge_values(edge) for edge in edges]
-            with self._session_scope() as session:
-                stmt = pg_insert(KnowledgeEdge).values(rows)
-                excluded = stmt.excluded
-                result = session.execute(
-                    stmt.on_conflict_do_update(
-                        index_elements=["edge_id"],
-                        set_={
-                            "adapter_name": excluded.adapter_name,
-                            "adapter_version": excluded.adapter_version,
-                            "source_node_id": excluded.source_node_id,
-                            "target_node_id": excluded.target_node_id,
-                            "relation_type": excluded.relation_type,
-                            "properties": excluded.properties,
-                            "confidence_label": excluded.confidence_label,
-                            "confidence_score": excluded.confidence_score,
-                            "status": excluded.status,
-                            "valid_from": excluded.valid_from,
-                            "valid_to": excluded.valid_to,
-                            "version": excluded.version,
-                            "updated_at": datetime.now(timezone.utc),
-                        },
-                    )
-                )
-                self._attach_edges_evidence_in_session(session, edges)
-                return result.rowcount or 0
 
     def upsert_evidence(self, evidence: list[CompiledEvidence]) -> int:
         if not evidence:
@@ -164,34 +100,7 @@ class KnowledgeRepositoryImpl(KnowledgeRepository):
                         },
                     )
                 )
-                if superseded["edge_ids"]:
-                    session.execute(
-                        delete(KnowledgeGraphAdjacency).where(
-                            KnowledgeGraphAdjacency.edge_id.in_(superseded["edge_ids"])
-                        )
-                    )
                 return result.rowcount or 0
-
-    def attach_edge_evidence(self, edge_id: str, evidence_ids: list[str]) -> int:
-        with self._session_scope() as session:
-            return self._attach_edge_evidence_in_session(session, edge_id, evidence_ids)
-
-    def get_node(self, node_id: str) -> CompiledNode | None:
-        with self._session_scope() as session:
-            row = session.scalar(select(KnowledgeNode).where(KnowledgeNode.node_id == node_id))
-            return _node_schema(row) if row else None
-
-    def get_edge(self, edge_id: str) -> CompiledEdge | None:
-        with self._session_scope() as session:
-            row = session.scalar(select(KnowledgeEdge).where(KnowledgeEdge.edge_id == edge_id))
-            if not row:
-                return None
-            evidence_ids = session.scalars(
-                select(KnowledgeEdgeEvidence.evidence_id).where(
-                    KnowledgeEdgeEvidence.edge_id == edge_id
-                )
-            ).all()
-            return _edge_schema(row, list(evidence_ids))
 
     def get_evidence(self, evidence_id: str) -> CompiledEvidence | None:
         with self._session_scope() as session:
@@ -203,67 +112,15 @@ class KnowledgeRepositoryImpl(KnowledgeRepository):
             )
             return _evidence_schema(row) if row else None
 
-    def get_edge_evidence(self, edge_id: str) -> list[CompiledEvidence]:
-        with self._session_scope() as session:
-            self._ensure_evidence_version_columns(session)
-            rows = session.scalars(
-                select(KnowledgeEvidence)
-                .join(
-                    KnowledgeEdgeEvidence,
-                    KnowledgeEvidence.evidence_id == KnowledgeEdgeEvidence.evidence_id,
-                )
-                .where(KnowledgeEdgeEvidence.edge_id == edge_id)
-                .where(KnowledgeEvidence.status == EvidenceStatus.ACTIVE.value)
-                .order_by(KnowledgeEvidence.evidence_id)
-            ).all()
-            return [_evidence_schema(row) for row in rows]
-
-    def list_nodes(self, adapter_name: str) -> list[CompiledNode]:
-        with profile_span("kg_repository.list_nodes", adapter=adapter_name):
-            with self._session_scope() as session:
-                rows = session.scalars(
-                    select(KnowledgeNode)
-                    .where(KnowledgeNode.adapter_name == adapter_name)
-                    .order_by(KnowledgeNode.node_id)
-                ).all()
-                return [_node_schema(row) for row in rows]
-
-    def list_edges(self, adapter_name: str) -> list[CompiledEdge]:
-        with profile_span("kg_repository.list_edges", adapter=adapter_name):
-            with self._session_scope() as session:
-                rows = session.scalars(
-                    select(KnowledgeEdge)
-                    .where(KnowledgeEdge.adapter_name == adapter_name)
-                    .order_by(KnowledgeEdge.edge_id)
-                ).all()
-                edge_ids = [row.edge_id for row in rows]
-                evidence_by_edge: dict[str, list[str]] = {edge_id: [] for edge_id in edge_ids}
-                if edge_ids:
-                    with profile_span("kg_repository.list_edges.load_evidence_links", edges=len(edge_ids)):
-                        links = session.execute(
-                            select(KnowledgeEdgeEvidence.edge_id, KnowledgeEdgeEvidence.evidence_id)
-                            .where(KnowledgeEdgeEvidence.edge_id.in_(edge_ids))
-                            .order_by(KnowledgeEdgeEvidence.edge_id, KnowledgeEdgeEvidence.evidence_id)
-                        ).all()
-                    for edge_id, evidence_id in links:
-                        evidence_by_edge.setdefault(edge_id, []).append(evidence_id)
-                return [_edge_schema(row, evidence_by_edge.get(row.edge_id, [])) for row in rows]
-
     def count_graph_index_materials(self, adapter_name: str) -> dict[str, int]:
         with profile_span("kg_repository.count_graph_index_materials", adapter=adapter_name):
             with self._session_scope() as session:
-                nodes = session.scalar(
-                    select(func.count()).select_from(KnowledgeNode).where(KnowledgeNode.adapter_name == adapter_name)
-                )
-                edges = session.scalar(
-                    select(func.count()).select_from(KnowledgeEdge).where(KnowledgeEdge.adapter_name == adapter_name)
-                )
                 chunks = session.scalar(
                     select(func.count())
                     .select_from(KnowledgeEvidenceChunk)
                     .where(KnowledgeEvidenceChunk.adapter_name == adapter_name)
                 )
-                return {"nodes": int(nodes or 0), "edges": int(edges or 0), "chunks": int(chunks or 0)}
+                return {"nodes": 0, "edges": 0, "chunks": int(chunks or 0)}
 
     def list_graph_index_materials(
         self,
@@ -283,47 +140,8 @@ class KnowledgeRepositoryImpl(KnowledgeRepository):
             chunk_ids=len(chunk_ids),
         ):
             with self._session_scope() as session:
-                node_set = set(_ordered_unique(node_ids))
-                edge_set = set(_ordered_unique(edge_ids))
                 evidence_set = set(_ordered_unique(evidence_ids))
                 chunk_set = set(_ordered_unique(chunk_ids))
-
-                edge_stmt = select(KnowledgeEdge).where(KnowledgeEdge.adapter_name == adapter_name)
-                predicates = []
-                if edge_set:
-                    predicates.append(KnowledgeEdge.edge_id.in_(edge_set))
-                if node_set:
-                    predicates.append(or_(KnowledgeEdge.source_node_id.in_(node_set), KnowledgeEdge.target_node_id.in_(node_set)))
-                if predicates:
-                    edge_stmt = edge_stmt.where(or_(*predicates))
-                else:
-                    edge_stmt = edge_stmt.where(False)
-                edge_rows = list(session.scalars(edge_stmt.order_by(KnowledgeEdge.edge_id)).all())
-                for row in edge_rows:
-                    node_set.add(row.source_node_id)
-                    node_set.add(row.target_node_id)
-                    edge_set.add(row.edge_id)
-
-                evidence_by_edge: dict[str, list[str]] = {edge_id: [] for edge_id in edge_set}
-                if edge_set:
-                    links = session.execute(
-                        select(KnowledgeEdgeEvidence.edge_id, KnowledgeEdgeEvidence.evidence_id)
-                        .where(KnowledgeEdgeEvidence.edge_id.in_(edge_set))
-                        .order_by(KnowledgeEdgeEvidence.edge_id, KnowledgeEdgeEvidence.evidence_id)
-                    ).all()
-                    for edge_id, evidence_id in links:
-                        evidence_by_edge.setdefault(edge_id, []).append(evidence_id)
-                        evidence_set.add(evidence_id)
-
-                node_rows = []
-                if node_set:
-                    node_rows = list(
-                        session.scalars(
-                            select(KnowledgeNode)
-                            .where(KnowledgeNode.adapter_name == adapter_name, KnowledgeNode.node_id.in_(node_set))
-                            .order_by(KnowledgeNode.node_id)
-                        ).all()
-                    )
 
                 chunk_stmt = select(KnowledgeEvidenceChunk).where(KnowledgeEvidenceChunk.adapter_name == adapter_name)
                 chunk_predicates = []
@@ -351,8 +169,8 @@ class KnowledgeRepositoryImpl(KnowledgeRepository):
                     if row.evidence_id in evidence_rows
                 ]
                 return {
-                    "nodes": [_node_schema(row) for row in node_rows],
-                    "edges": [_edge_schema(row, evidence_by_edge.get(row.edge_id, [])) for row in edge_rows],
+                    "nodes": [],
+                    "edges": [],
                     "chunks": chunks,
                 }
 
@@ -429,89 +247,11 @@ class KnowledgeRepositoryImpl(KnowledgeRepository):
                     "edge_ids": edge_ids,
                 }
 
-    def rebuild_graph_adjacency(self, adapter_name: str) -> int:
-        with profile_span("kg_repository.rebuild_graph_adjacency", adapter=adapter_name):
-            with self._session_scope() as session:
-                with profile_span("kg_repository.rebuild_graph_adjacency.delete_old"):
-                    session.execute(
-                        delete(KnowledgeGraphAdjacency).where(
-                            KnowledgeGraphAdjacency.adapter_name == adapter_name
-                        )
-                    )
-                with profile_span("kg_repository.rebuild_graph_adjacency.load_edges"):
-                    edges = session.scalars(
-                        select(KnowledgeEdge)
-                        .where(KnowledgeEdge.adapter_name == adapter_name)
-                        .where(KnowledgeEdge.status == EdgeStatus.ACTIVE.value)
-                    ).all()
-                if not edges:
-                    return 0
-                rows = [
-                    {
-                        "adapter_name": adapter_name,
-                        "source_node_id": edge.source_node_id,
-                        "target_node_id": edge.target_node_id,
-                        "edge_id": edge.edge_id,
-                        "relation_type": edge.relation_type,
-                    }
-                    for edge in edges
-                ]
-                with profile_span("kg_repository.rebuild_graph_adjacency.insert", rows=len(rows)):
-                    result = session.execute(pg_insert(KnowledgeGraphAdjacency).values(rows))
-                return result.rowcount or 0
-
-    def upsert_graph_adjacency(self, edges: list[CompiledEdge]) -> int:
-        if not edges:
-            return 0
-        with profile_span("kg_repository.upsert_graph_adjacency", edges=len(edges)):
-            edge_ids = [edge.edge_id for edge in edges]
-            active_edges = [edge for edge in edges if edge.status == EdgeStatus.ACTIVE]
-            if not active_edges:
-                return 0
-            rows = [
-                {
-                    "adapter_name": edge.adapter_name,
-                    "source_node_id": edge.source_node_id,
-                    "target_node_id": edge.target_node_id,
-                    "edge_id": edge.edge_id,
-                    "relation_type": edge.relation_type,
-                }
-                for edge in active_edges
-            ]
-            with self._session_scope() as session:
-                with profile_span("kg_repository.upsert_graph_adjacency.delete_old", edges=len(edge_ids)):
-                    session.execute(
-                        delete(KnowledgeGraphAdjacency).where(
-                            KnowledgeGraphAdjacency.edge_id.in_(edge_ids)
-                        )
-                    )
-                with profile_span("kg_repository.upsert_graph_adjacency.insert", rows=len(rows)):
-                    result = session.execute(pg_insert(KnowledgeGraphAdjacency).values(rows))
-                return result.rowcount or 0
-
-    def get_neighbors(self, node_id: str, adapter_name: str | None = None) -> list[str]:
-        with profile_span("kg_repository.get_neighbors", adapter=adapter_name or "", node_id=node_id):
-            with self._session_scope() as session:
-                stmt = select(KnowledgeGraphAdjacency.target_node_id).where(
-                    KnowledgeGraphAdjacency.source_node_id == node_id
-                )
-                if adapter_name is not None:
-                    stmt = stmt.where(KnowledgeGraphAdjacency.adapter_name == adapter_name)
-                return list(session.scalars(stmt.order_by(KnowledgeGraphAdjacency.target_node_id)).all())
-
     def rebuild_evidence_chunks(self, adapter_name: str) -> int:
         with profile_span("kg_repository.rebuild_evidence_chunks", adapter=adapter_name):
             with self._session_scope() as session:
                 self._ensure_evidence_chunk_manifest_columns(session)
                 with profile_span("kg_repository.rebuild_evidence_chunks.delete_old"):
-                    evidence_ids_for_adapter = select(KnowledgeEvidence.evidence_id).where(
-                        KnowledgeEvidence.adapter_name == adapter_name
-                    )
-                    session.execute(
-                        delete(KnowledgeEdgeEvidenceChunk).where(
-                            KnowledgeEdgeEvidenceChunk.evidence_id.in_(evidence_ids_for_adapter)
-                        )
-                    )
                     session.execute(
                         delete(KnowledgeEvidenceChunk).where(
                             KnowledgeEvidenceChunk.adapter_name == adapter_name
@@ -555,11 +295,6 @@ class KnowledgeRepositoryImpl(KnowledgeRepository):
                     ]
                 with profile_span("kg_repository.upsert_evidence_chunks.delete_old", evidence=len(evidence_ids)):
                     session.execute(
-                        delete(KnowledgeEdgeEvidenceChunk).where(
-                            KnowledgeEdgeEvidenceChunk.evidence_id.in_(evidence_ids)
-                        )
-                    )
-                    session.execute(
                         delete(KnowledgeEvidenceChunk).where(KnowledgeEvidenceChunk.evidence_id.in_(evidence_ids))
                     )
                 if not rows:
@@ -582,6 +317,62 @@ class KnowledgeRepositoryImpl(KnowledgeRepository):
                     .order_by(KnowledgeEvidenceChunk.evidence_id, KnowledgeEvidenceChunk.chunk_index)
                 ).all()
                 return [_chunk_schema(chunk, evidence) for chunk, evidence in rows]
+
+    def list_evidence_chunks_by_refs(
+        self,
+        adapter_name: str,
+        *,
+        chunk_ids: list[str],
+        evidence_ids: list[str],
+    ) -> list[EvidenceChunk]:
+        unique_chunk_ids = _ordered_unique(chunk_ids)
+        unique_evidence_ids = _ordered_unique(evidence_ids)
+        if not unique_chunk_ids and not unique_evidence_ids:
+            return []
+        with profile_span(
+            "kg_repository.list_evidence_chunks_by_refs",
+            adapter=adapter_name,
+            chunk_ids=len(unique_chunk_ids),
+            evidence_ids=len(unique_evidence_ids),
+        ):
+            with self._session_scope() as session:
+                self._ensure_evidence_chunk_manifest_columns(session)
+                filters = []
+                if unique_chunk_ids:
+                    filters.append(KnowledgeEvidenceChunk.chunk_id.in_(unique_chunk_ids))
+                if unique_evidence_ids:
+                    filters.append(KnowledgeEvidenceChunk.evidence_id.in_(unique_evidence_ids))
+                rows = session.execute(
+                    select(
+                        KnowledgeEvidenceChunk,
+                        KnowledgeEvidence.evidence_id,
+                        KnowledgeEvidence.source_type,
+                        KnowledgeEvidence.source_id,
+                        KnowledgeEvidence.evidence_type,
+                        KnowledgeEvidence.payload,
+                        KnowledgeEvidence.version,
+                        KnowledgeEvidence.status,
+                    )
+                    .join(KnowledgeEvidence, KnowledgeEvidence.evidence_id == KnowledgeEvidenceChunk.evidence_id)
+                    .where(
+                        KnowledgeEvidenceChunk.adapter_name == adapter_name,
+                        or_(*filters),
+                    )
+                    .order_by(KnowledgeEvidenceChunk.evidence_id, KnowledgeEvidenceChunk.chunk_index)
+                ).all()
+                return [
+                    _chunk_manifest_schema(
+                        chunk,
+                        evidence_id=evidence_id,
+                        source_type=source_type,
+                        source_id=source_id,
+                        evidence_type=evidence_type,
+                        payload=payload,
+                        version=version,
+                        status=status,
+                    )
+                    for chunk, evidence_id, source_type, source_id, evidence_type, payload, version, status in rows
+                ]
 
     def replace_cognitive_cards_for_evidence(
         self,
@@ -633,6 +424,7 @@ class KnowledgeRepositoryImpl(KnowledgeRepository):
                     card_count = result.rowcount or 0
                 return {
                     "deleted_cards": len(old_card_ids),
+                    "deleted_card_ids": old_card_ids,
                     "inserted_cards": card_count,
                     "evidence_ids": unique_evidence_ids,
                 }
@@ -642,6 +434,83 @@ class KnowledgeRepositoryImpl(KnowledgeRepository):
             with self._session_scope() as session:
                 query = select(KnowledgeCognitiveCard).where(
                     KnowledgeCognitiveCard.adapter_name == adapter_name
+                )
+                if status:
+                    query = query.where(KnowledgeCognitiveCard.status == status)
+                rows = list(
+                    session.scalars(
+                        query.order_by(
+                            KnowledgeCognitiveCard.source_id,
+                            KnowledgeCognitiveCard.chunk_index,
+                            KnowledgeCognitiveCard.cognitive_card_id,
+                        )
+                    ).all()
+                )
+                return [_cognitive_card_schema(row) for row in rows]
+
+    def list_cognitive_cards_by_ids(
+        self,
+        adapter_name: str,
+        *,
+        cognitive_card_ids: list[str],
+        status: str = "active",
+    ) -> list[CognitiveCard]:
+        unique_ids = _ordered_unique(cognitive_card_ids)
+        if not unique_ids:
+            return []
+        with profile_span(
+            "kg_repository.list_cognitive_cards_by_ids",
+            adapter=adapter_name,
+            cards=len(unique_ids),
+            status=status,
+        ):
+            with self._session_scope() as session:
+                query = select(KnowledgeCognitiveCard).where(
+                    KnowledgeCognitiveCard.adapter_name == adapter_name,
+                    KnowledgeCognitiveCard.cognitive_card_id.in_(unique_ids),
+                )
+                if status:
+                    query = query.where(KnowledgeCognitiveCard.status == status)
+                rows = list(
+                    session.scalars(
+                        query.order_by(
+                            KnowledgeCognitiveCard.source_id,
+                            KnowledgeCognitiveCard.chunk_index,
+                            KnowledgeCognitiveCard.cognitive_card_id,
+                        )
+                    ).all()
+                )
+                return [_cognitive_card_schema(row) for row in rows]
+
+    def list_cognitive_cards_by_chunk_refs(
+        self,
+        adapter_name: str,
+        *,
+        chunk_ids: list[str],
+        evidence_ids: list[str],
+        status: str = "active",
+    ) -> list[CognitiveCard]:
+        unique_chunk_ids = _ordered_unique(chunk_ids)
+        unique_evidence_ids = _ordered_unique(evidence_ids)
+        if not unique_chunk_ids and not unique_evidence_ids:
+            return []
+        with profile_span(
+            "kg_repository.list_cognitive_cards_by_chunk_refs",
+            adapter=adapter_name,
+            chunk_ids=len(unique_chunk_ids),
+            evidence_ids=len(unique_evidence_ids),
+            status=status,
+        ):
+            with self._session_scope() as session:
+                predicates = []
+                if unique_evidence_ids:
+                    predicates.append(KnowledgeCognitiveCard.evidence_id.in_(unique_evidence_ids))
+                if unique_chunk_ids:
+                    predicates.append(KnowledgeCognitiveCard.primary_chunk_id.in_(unique_chunk_ids))
+                    predicates.extend(KnowledgeCognitiveCard.chunk_ids.contains([chunk_id]) for chunk_id in unique_chunk_ids)
+                query = select(KnowledgeCognitiveCard).where(
+                    KnowledgeCognitiveCard.adapter_name == adapter_name,
+                    or_(*predicates),
                 )
                 if status:
                     query = query.where(KnowledgeCognitiveCard.status == status)
@@ -683,6 +552,42 @@ class KnowledgeRepositoryImpl(KnowledgeRepository):
                 result = session.execute(
                     pg_insert(KnowledgeCommunityAssignment).values(
                         [_community_assignment_values(item) for item in assignments]
+                    )
+                )
+                return result.rowcount or 0
+
+    def migrate_community_assignments(
+        self,
+        adapter_name: str,
+        *,
+        community_id_map: dict[str, str],
+    ) -> int:
+        mapping = {
+            str(old_id): str(new_id)
+            for old_id, new_id in (community_id_map or {}).items()
+            if str(old_id).strip() and str(new_id).strip() and str(old_id) != str(new_id)
+        }
+        if not mapping:
+            return 0
+        with profile_span(
+            "kg_repository.migrate_community_assignments",
+            adapter=adapter_name,
+            communities=len(mapping),
+        ):
+            with self._session_scope() as session:
+                result = session.execute(
+                    update(KnowledgeCommunityAssignment)
+                    .where(
+                        KnowledgeCommunityAssignment.adapter_name == adapter_name,
+                        KnowledgeCommunityAssignment.community_id.in_(list(mapping)),
+                    )
+                    .values(
+                        community_id=case(
+                            mapping,
+                            value=KnowledgeCommunityAssignment.community_id,
+                            else_=KnowledgeCommunityAssignment.community_id,
+                        ),
+                        updated_at=datetime.now(timezone.utc),
                     )
                 )
                 return result.rowcount or 0
@@ -830,6 +735,77 @@ class KnowledgeRepositoryImpl(KnowledgeRepository):
                     session.scalars(
                         select(KnowledgeGraphCommunity)
                         .where(KnowledgeGraphCommunity.adapter_name == adapter_name)
+                        .order_by(
+                            KnowledgeGraphCommunity.projection,
+                            KnowledgeGraphCommunity.level,
+                            KnowledgeGraphCommunity.id.asc().nullslast(),
+                            KnowledgeGraphCommunity.community_id,
+                        )
+                    ).all()
+                )
+                return [_graph_community_schema(row) for row in rows]
+
+    def list_graph_communities_by_ids(
+        self,
+        adapter_name: str,
+        *,
+        community_ids: list[str],
+    ) -> list[GraphIndexCommunity]:
+        unique_ids = _ordered_unique(community_ids)
+        if not unique_ids:
+            return []
+        with profile_span(
+            "kg_repository.list_graph_communities_by_ids",
+            adapter=adapter_name,
+            communities=len(unique_ids),
+        ):
+            with self._session_scope() as session:
+                self._ensure_graph_community_id_columns(session)
+                rows = list(
+                    session.scalars(
+                        select(KnowledgeGraphCommunity)
+                        .where(
+                            KnowledgeGraphCommunity.adapter_name == adapter_name,
+                            KnowledgeGraphCommunity.community_id.in_(unique_ids),
+                        )
+                        .order_by(
+                            KnowledgeGraphCommunity.projection,
+                            KnowledgeGraphCommunity.level,
+                            KnowledgeGraphCommunity.id.asc().nullslast(),
+                            KnowledgeGraphCommunity.community_id,
+                        )
+                    ).all()
+                )
+                return [_graph_community_schema(row) for row in rows]
+
+    def list_graph_communities_by_card_ids(
+        self,
+        adapter_name: str,
+        *,
+        cognitive_card_ids: list[str],
+    ) -> list[GraphIndexCommunity]:
+        unique_ids = _ordered_unique(cognitive_card_ids)
+        if not unique_ids:
+            return []
+        with profile_span(
+            "kg_repository.list_graph_communities_by_card_ids",
+            adapter=adapter_name,
+            cards=len(unique_ids),
+        ):
+            with self._session_scope() as session:
+                self._ensure_graph_community_id_columns(session)
+                predicates = [
+                    KnowledgeGraphCommunity.metrics["cognitive_card_ids"].contains([card_id])
+                    for card_id in unique_ids
+                ]
+                rows = list(
+                    session.scalars(
+                        select(KnowledgeGraphCommunity)
+                        .where(
+                            KnowledgeGraphCommunity.adapter_name == adapter_name,
+                            KnowledgeGraphCommunity.status == "active",
+                            or_(*predicates),
+                        )
                         .order_by(
                             KnowledgeGraphCommunity.projection,
                             KnowledgeGraphCommunity.level,
@@ -1499,42 +1475,6 @@ class KnowledgeRepositoryImpl(KnowledgeRepository):
         with get_session(self._target) as session:
             yield session
 
-    def _attach_edge_evidence_in_session(
-        self,
-        session: Session,
-        edge_id: str,
-        evidence_ids: list[str],
-    ) -> int:
-        if not evidence_ids:
-            return 0
-        with profile_span("kg_repository.attach_edge_evidence", evidence=len(evidence_ids)):
-            rows = [{"edge_id": edge_id, "evidence_id": evidence_id} for evidence_id in evidence_ids]
-            stmt = pg_insert(KnowledgeEdgeEvidence).values(rows).on_conflict_do_nothing()
-            result = session.execute(stmt)
-            _refresh_edge_evidence_chunk_refs_for_evidence(session, evidence_ids)
-            return result.rowcount or 0
-
-    def _attach_edges_evidence_in_session(
-        self,
-        session: Session,
-        edges: list[CompiledEdge],
-    ) -> int:
-        rows = [
-            {"edge_id": edge.edge_id, "evidence_id": evidence_id}
-            for edge in edges
-            for evidence_id in edge.evidence_ids
-        ]
-        if not rows:
-            return 0
-        with profile_span("kg_repository.attach_edges_evidence", edges=len(edges), links=len(rows)):
-            stmt = pg_insert(KnowledgeEdgeEvidence).values(rows).on_conflict_do_nothing()
-            result = session.execute(stmt)
-            _refresh_edge_evidence_chunk_refs_for_evidence(
-                session,
-                _ordered_unique(row["evidence_id"] for row in rows),
-            )
-            return result.rowcount or 0
-
     def _ensure_evidence_version_columns(self, session: Session) -> None:
         if self._evidence_version_columns_ready:
             return
@@ -1753,11 +1693,6 @@ class KnowledgeRepositoryImpl(KnowledgeRepository):
             return {"evidence_ids": set(), "edge_ids": set()}
         with profile_span("kg_repository.supersede_evidence_ids", evidence=len(evidence_ids)):
             now = datetime.now(timezone.utc)
-            edge_ids = set(
-                session.scalars(
-                    select(KnowledgeEdgeEvidence.edge_id).where(KnowledgeEdgeEvidence.evidence_id.in_(evidence_ids))
-                ).all()
-            )
             session.execute(
                 update(KnowledgeEvidence)
                 .where(KnowledgeEvidence.evidence_id.in_(evidence_ids))
@@ -1767,53 +1702,10 @@ class KnowledgeRepositoryImpl(KnowledgeRepository):
                     updated_at=now,
                 )
             )
-            if edge_ids:
-                session.execute(
-                    update(KnowledgeEdge)
-                    .where(KnowledgeEdge.edge_id.in_(edge_ids))
-                    .values(status=EdgeStatus.DEPRECATED.value, updated_at=now)
-                )
-                session.execute(
-                    delete(KnowledgeGraphAdjacency).where(KnowledgeGraphAdjacency.edge_id.in_(edge_ids))
-                )
             session.execute(
                 delete(KnowledgeEvidenceChunk).where(KnowledgeEvidenceChunk.evidence_id.in_(evidence_ids))
             )
-            return {"evidence_ids": set(evidence_ids), "edge_ids": edge_ids}
-
-
-def _node_values(node: CompiledNode) -> dict[str, Any]:
-    return {
-        "node_id": node.node_id,
-        "adapter_name": node.adapter_name,
-        "adapter_version": node.version,
-        "node_type": node.node_type,
-        "stable_key": node.node_id,
-        "canonical_name": node.canonical_name,
-        "aliases": node.aliases,
-        "external_ids": node.external_ids,
-        "properties": node.properties,
-        "status": _enum_value(node.status),
-        "version": node.version,
-    }
-
-
-def _edge_values(edge: CompiledEdge) -> dict[str, Any]:
-    return {
-        "edge_id": edge.edge_id,
-        "adapter_name": edge.adapter_name,
-        "adapter_version": edge.version,
-        "source_node_id": edge.source_node_id,
-        "target_node_id": edge.target_node_id,
-        "relation_type": edge.relation_type,
-        "properties": edge.properties,
-        "confidence_label": _enum_value(edge.confidence_label),
-        "confidence_score": edge.confidence_score,
-        "status": _enum_value(edge.status),
-        "valid_from": edge.valid_from,
-        "valid_to": edge.valid_to,
-        "version": edge.version,
-    }
+            return {"evidence_ids": set(evidence_ids), "edge_ids": set()}
 
 
 def _evidence_values(evidence: CompiledEvidence) -> dict[str, Any]:
@@ -1926,38 +1818,6 @@ def _review_entry_values(entry: ReviewEntry) -> dict[str, Any]:
         "status": entry.status,
         "payload": entry.payload,
     }
-
-
-def _node_schema(row: KnowledgeNode) -> CompiledNode:
-    return CompiledNode(
-        node_id=row.node_id,
-        adapter_name=row.adapter_name,
-        node_type=row.node_type,
-        canonical_name=row.canonical_name,
-        aliases=row.aliases or [],
-        external_ids=row.external_ids or {},
-        properties=row.properties or {},
-        status=NodeStatus(row.status),
-        version=row.version,
-    )
-
-
-def _edge_schema(row: KnowledgeEdge, evidence_ids: list[str]) -> CompiledEdge:
-    return CompiledEdge(
-        edge_id=row.edge_id,
-        adapter_name=row.adapter_name,
-        source_node_id=row.source_node_id,
-        target_node_id=row.target_node_id,
-        relation_type=row.relation_type,
-        properties=row.properties or {},
-        confidence_label=ConfidenceLabel(row.confidence_label),
-        confidence_score=row.confidence_score,
-        status=EdgeStatus(row.status),
-        evidence_ids=evidence_ids,
-        valid_from=row.valid_from,
-        valid_to=row.valid_to,
-        version=row.version,
-    )
 
 
 def _evidence_schema(row: KnowledgeEvidence) -> CompiledEvidence:
@@ -2198,23 +2058,6 @@ def _chunks_by_evidence(session: Session, evidence_ids: list[str]) -> dict[str, 
         schema = _chunk_schema(chunk, evidence)
         result.setdefault(schema.evidence_id, []).append(schema)
     return result
-
-
-def _chunk_ids_for_edge(properties: dict[str, Any], chunks: list[EvidenceChunk]) -> list[str]:
-    if not chunks:
-        return []
-    chunk_ids = {chunk.chunk_id for chunk in chunks}
-    spans = properties.get("evidence_spans")
-    explicit = _explicit_chunk_ids_from_spans(spans, chunk_ids)
-    if explicit:
-        return explicit
-
-    matched: list[str] = []
-    if isinstance(spans, list):
-        for chunk in chunks:
-            if _chunk_matches_any_span(chunk, spans):
-                matched.append(chunk.chunk_id)
-    return _ordered_unique(matched) or [chunk.chunk_id for chunk in chunks]
 
 
 def _graph_community_values(item: GraphIndexCommunity) -> dict[str, Any]:
@@ -2488,81 +2331,6 @@ def _stable_digest(parts: list[str]) -> str:
     return hashlib.sha256(data.encode("utf-8")).hexdigest()[:16]
 
 
-def _explicit_chunk_ids_from_spans(spans: Any, known_chunk_ids: set[str]) -> list[str]:
-    if not isinstance(spans, list):
-        return []
-    result: list[str] = []
-    for span in spans:
-        if not isinstance(span, dict):
-            continue
-        chunk_id = str(span.get("chunk_id") or "").strip()
-        if chunk_id and chunk_id in known_chunk_ids:
-            result.append(chunk_id)
-    return _ordered_unique(result)
-
-
-def _chunk_matches_any_span(chunk: EvidenceChunk, spans: list[Any]) -> bool:
-    chunk_text = _normalize_text_for_span_match(chunk.content)
-    for span in spans:
-        if not isinstance(span, dict):
-            continue
-        span_text = _normalize_text_for_span_match(span.get("text"))
-        if span_text and (span_text in chunk_text or chunk_text in span_text):
-            return True
-        if _span_offsets_overlap_chunk(span, chunk):
-            return True
-    return False
-
-
-def _span_offsets_overlap_chunk(span: dict[str, Any], chunk: EvidenceChunk) -> bool:
-    if chunk.start_offset is None or chunk.end_offset is None:
-        return False
-    start = span.get("start")
-    end = span.get("end")
-    if not isinstance(start, int) or not isinstance(end, int):
-        return False
-    return max(start, chunk.start_offset) < min(end, chunk.end_offset)
-
-
-def _normalize_text_for_span_match(value: Any) -> str:
-    return re.sub(r"\s+", "", str(value or "").strip())
-
-
-def _refresh_edge_evidence_chunk_refs_for_adapter(session: Session, adapter_name: str) -> None:
-    evidence_ids = list(
-        session.scalars(
-            select(KnowledgeEvidence.evidence_id).where(KnowledgeEvidence.adapter_name == adapter_name)
-        ).all()
-    )
-    _refresh_edge_evidence_chunk_refs_for_evidence(session, evidence_ids)
-
-
-def _refresh_edge_evidence_chunk_refs_for_evidence(session: Session, evidence_ids: list[str]) -> None:
-    evidence_ids = _ordered_unique(evidence_ids)
-    if not evidence_ids:
-        return
-    chunks_by_evidence = _chunks_by_evidence(session, evidence_ids)
-    link_rows = session.execute(
-        select(
-            KnowledgeEdgeEvidence.edge_id,
-            KnowledgeEdgeEvidence.evidence_id,
-            KnowledgeEdge.properties,
-        )
-        .join(KnowledgeEdge, KnowledgeEdge.edge_id == KnowledgeEdgeEvidence.edge_id)
-        .where(KnowledgeEdgeEvidence.evidence_id.in_(evidence_ids))
-    ).all()
-    session.execute(
-        delete(KnowledgeEdgeEvidenceChunk).where(KnowledgeEdgeEvidenceChunk.evidence_id.in_(evidence_ids))
-    )
-    rows = [
-        {"edge_id": edge_id, "evidence_id": evidence_id, "chunk_id": chunk_id}
-        for edge_id, evidence_id, properties in link_rows
-        for chunk_id in _chunk_ids_for_edge(properties or {}, chunks_by_evidence.get(evidence_id, []))
-    ]
-    if rows:
-        session.execute(pg_insert(KnowledgeEdgeEvidenceChunk).values(rows).on_conflict_do_nothing())
-
-
 def _chunk_schema(row: KnowledgeEvidenceChunk, evidence: KnowledgeEvidence) -> EvidenceChunk:
     content = _slice_chunk_content(evidence, row)
     payload = {
@@ -2585,6 +2353,49 @@ def _chunk_schema(row: KnowledgeEvidenceChunk, evidence: KnowledgeEvidence) -> E
         adapter_name=row.adapter_name,
         evidence_id=row.evidence_id,
         content=content,
+        chunk_index=row.chunk_index,
+        start_offset=row.start_offset,
+        end_offset=row.end_offset,
+        previous_chunk_id=row.previous_chunk_id,
+        next_chunk_id=row.next_chunk_id,
+        text_hash=row.text_hash or "",
+        chunker_version=row.chunker_version or "",
+        payload=payload,
+    )
+
+
+def _chunk_manifest_schema(
+    row: KnowledgeEvidenceChunk,
+    *,
+    evidence_id: str,
+    source_type: str,
+    source_id: str,
+    evidence_type: str,
+    payload: dict | None,
+    version: str,
+    status: str,
+) -> EvidenceChunk:
+    payload = {
+        **(payload or {}),
+        "status": status,
+        "source_type": source_type,
+        "source_id": source_id,
+        "evidence_type": evidence_type,
+        "version": version,
+        "chunk_index": row.chunk_index,
+        "start_offset": row.start_offset,
+        "end_offset": row.end_offset,
+        "previous_chunk_id": row.previous_chunk_id,
+        "next_chunk_id": row.next_chunk_id,
+        "chunker_version": row.chunker_version or "",
+        "text_hash": row.text_hash or "",
+        "content_deferred_to_milvus": True,
+    }
+    return EvidenceChunk(
+        chunk_id=row.chunk_id,
+        adapter_name=row.adapter_name,
+        evidence_id=evidence_id,
+        content="<content_in_milvus>",
         chunk_index=row.chunk_index,
         start_offset=row.start_offset,
         end_offset=row.end_offset,

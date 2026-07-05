@@ -35,6 +35,9 @@ class DeepSeekOpenAIProvider:
         rate_limit_cooldown_seconds: float = 60,
         thinking_type: str | None = None,
         reasoning_effort: str | None = None,
+        max_retries: int = 10,
+        initial_retry_delay_seconds: float = 1.0,
+        max_retry_delay_seconds: float = 60.0,
     ):
         self.base_url = base_url.rstrip("/")
         self.api_key = api_key
@@ -43,6 +46,9 @@ class DeepSeekOpenAIProvider:
         self.enabled = enabled
         self.max_concurrency = max(1, int(max_concurrency or 1))
         self.rate_limit_cooldown_seconds = max(0.0, float(rate_limit_cooldown_seconds or 0))
+        self.max_retries = max(0, int(max_retries or 0))
+        self.initial_retry_delay_seconds = max(0.0, float(initial_retry_delay_seconds or 0.0))
+        self.max_retry_delay_seconds = max(0.0, float(max_retry_delay_seconds or 0.0))
         self._sem = asyncio.Semaphore(self.max_concurrency)
         self._cooldown_until = 0.0
         self.thinking_type = thinking_type
@@ -61,19 +67,15 @@ class DeepSeekOpenAIProvider:
             payload = self._request_payload(request, route)
             original_messages = list(payload.get("messages") or [])
             started_at = time.perf_counter()
-            retry_count = 0
+            retry_stats: dict[str, Any] = {"count": 0, "events": []}
             json_mode_retry_data: dict[str, Any] | None = None
             json_mode_retry_error: str | None = None
 
-            try:
-                data = await self._post(payload)
-            except LLMProxyError as exc:
-                if exc.error_type == "rate_limited":
-                    self._record_cooldown()
-                if exc.error_type not in {"upstream_unavailable", "timeout"}:
-                    raise
-                retry_count = 1
-                data = await self._post(payload)
+            data = await self._post_with_retries(
+                payload,
+                retry_stats=retry_stats,
+                purpose="initial",
+            )
             primary_data = data
 
             choice = (data.get("choices") or [{}])[0]
@@ -91,12 +93,14 @@ class DeepSeekOpenAIProvider:
                 and not tool_calls
             ):
                 try:
-                    json_mode_retry_data = await self._post(
+                    json_mode_retry_data = await self._post_with_retries(
                         self._json_empty_continuation_payload(
                             request,
                             route,
                             original_messages,
-                        )
+                        ),
+                        retry_stats=retry_stats,
+                        purpose="json_mode_retry",
                     )
                     data = json_mode_retry_data
                     choice = (data.get("choices") or [{}])[0]
@@ -109,8 +113,10 @@ class DeepSeekOpenAIProvider:
                     json_mode_retry_error = f"{exc.error_type}: {str(exc)[:200]}"
             if structured_output is None and self._expects_json(request) and text.strip():
                 try:
-                    repair_data = await self._post(
-                        self._json_repair_payload(request, route, text, original_messages)
+                    repair_data = await self._post_with_retries(
+                        self._json_repair_payload(request, route, text, original_messages),
+                        retry_stats=retry_stats,
+                        purpose="json_repair",
                     )
                     repair_text = self._response_text(repair_data)
                     structured_output = self._try_parse_json(repair_text, request)
@@ -177,7 +183,10 @@ class DeepSeekOpenAIProvider:
                 "resolved_model": route.resolved_model,
                 "upstream_model": data.get("model") or route.resolved_model,
                 "route_reason": route.route_reason,
-                "retry_count": retry_count,
+                "retry_count": retry_stats["count"],
+                "upstream_retry_events": retry_stats["events"],
+                "upstream_max_retries": self.max_retries,
+                "upstream_max_retry_delay_seconds": self.max_retry_delay_seconds,
                 "json_mode_retry_attempted": json_mode_retry_data is not None
                 or json_mode_retry_error is not None,
                 "json_mode_retry_success": json_mode_retry_data is not None and bool(text.strip()),
@@ -201,6 +210,57 @@ class DeepSeekOpenAIProvider:
                 ).get("usage"),
             },
         )
+
+    async def _post_with_retries(
+        self,
+        payload: dict[str, Any],
+        *,
+        retry_stats: dict[str, Any],
+        purpose: str,
+    ) -> dict[str, Any]:
+        attempt = 0
+        while True:
+            try:
+                return await self._post(payload)
+            except LLMProxyError as exc:
+                if not self._is_retriable_error(exc) or attempt >= self.max_retries:
+                    if exc.error_type == "rate_limited":
+                        self._record_cooldown()
+                    raise
+
+                if exc.error_type == "rate_limited":
+                    self._record_cooldown()
+
+                attempt += 1
+                delay = self._retry_delay_seconds(attempt, exc)
+                retry_stats["count"] = int(retry_stats.get("count", 0)) + 1
+                events = retry_stats.setdefault("events", [])
+                if isinstance(events, list):
+                    events.append(
+                        {
+                            "purpose": purpose,
+                            "retry_index": attempt,
+                            "error_type": exc.error_type,
+                            "wait_seconds": delay,
+                            "error": str(exc)[:200],
+                        }
+                    )
+                await asyncio.sleep(delay)
+
+    @staticmethod
+    def _is_retriable_error(exc: LLMProxyError) -> bool:
+        return exc.error_type in {"upstream_unavailable", "timeout", "rate_limited"}
+
+    def _retry_delay_seconds(self, retry_index: int, exc: LLMProxyError | None = None) -> float:
+        if self.initial_retry_delay_seconds <= 0:
+            delay = 0.0
+        else:
+            delay = self.initial_retry_delay_seconds * (2 ** max(0, retry_index - 1))
+        if exc and exc.error_type == "rate_limited":
+            delay = max(delay, self._cooldown_until - time.monotonic())
+        if self.max_retry_delay_seconds > 0:
+            delay = min(delay, self.max_retry_delay_seconds)
+        return max(0.0, delay)
 
     async def _post(self, payload: dict[str, Any]) -> dict[str, Any]:
         try:
@@ -305,10 +365,7 @@ class DeepSeekOpenAIProvider:
             payload["tools"] = request.tools
         if request.tool_choice is not None:
             payload["tool_choice"] = request.tool_choice
-        if self.thinking_type:
-            payload["thinking"] = {"type": self.thinking_type}
-        if self.reasoning_effort:
-            payload["reasoning_effort"] = self.reasoning_effort
+        self._apply_reasoning_options(payload, request)
         return payload
 
     def _messages_for_request(
@@ -458,11 +515,19 @@ class DeepSeekOpenAIProvider:
             payload["tools"] = request.tools
         if request.tool_choice is not None:
             payload["tool_choice"] = request.tool_choice
-        if self.thinking_type:
-            payload["thinking"] = {"type": self.thinking_type}
-        if self.reasoning_effort:
-            payload["reasoning_effort"] = self.reasoning_effort
+        self._apply_reasoning_options(payload, request)
         return payload
+
+    def _apply_reasoning_options(self, payload: dict[str, Any], request: LLMProxyRequest) -> None:
+        options = request.provider_options or {}
+        thinking_type = options.get("thinking_type", self.thinking_type)
+        if thinking_type:
+            payload["thinking"] = {"type": str(thinking_type)}
+        if str(thinking_type or "").strip().lower() == "disabled":
+            return
+        reasoning_effort = options.get("reasoning_effort", self.reasoning_effort)
+        if reasoning_effort:
+            payload["reasoning_effort"] = str(reasoning_effort)
 
     @staticmethod
     def _response_text(data: dict[str, Any]) -> str:

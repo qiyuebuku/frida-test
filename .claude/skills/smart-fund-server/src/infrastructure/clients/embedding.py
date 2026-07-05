@@ -14,6 +14,7 @@
 - 失败时返回空列表，调用方应优雅降级（保留事件，跳过 embedding）
 - 当前 Qwen3-Embedding-4B vLLM 服务拒绝 dimensions/MRL 参数，默认不发送 dimensions，直接使用 2560 维原始向量
 """
+import asyncio
 import logging
 import math
 import hashlib
@@ -33,8 +34,11 @@ from src.infrastructure.config.settings import (
     EMBEDDING_DIM,
     EMBEDDING_FILE_CACHE_DIR,
     EMBEDDING_FILE_CACHE_ENABLED,
+    EMBEDDING_MAX_RETRIES,
     EMBEDDING_MODEL,
     EMBEDDING_REQUEST_DIMENSIONS,
+    EMBEDDING_RETRY_BASE_DELAY,
+    EMBEDDING_RETRY_MAX_DELAY,
     EMBEDDING_TIMEOUT,
     EMBEDDING_URL,
 )
@@ -46,6 +50,14 @@ from src.infrastructure.observability.langfuse_tracing import (
 
 logger = logging.getLogger(__name__)
 _REMOTE_DIMENSIONS_SUPPORTED: bool | None = None
+_RETRYABLE_STATUS_CODES = {408, 409, 425, 429, 500, 502, 503, 504}
+_RETRYABLE_EXCEPTIONS = (
+    httpx.TimeoutException,
+    httpx.ConnectError,
+    httpx.NetworkError,
+    httpx.RemoteProtocolError,
+    httpx.ProxyError,
+)
 
 
 async def embed_texts(
@@ -275,7 +287,6 @@ async def _post_embeddings(client: httpx.AsyncClient, batch: list[str], *, dim: 
         "model": EMBEDDING_MODEL,
         "input": batch,
     }
-    start_time = time.time()
     should_request_dimensions = EMBEDDING_REQUEST_DIMENSIONS and _REMOTE_DIMENSIONS_SUPPORTED is not False
     if should_request_dimensions:
         payload["dimensions"] = dim
@@ -289,25 +300,145 @@ async def _post_embeddings(client: httpx.AsyncClient, batch: list[str], *, dim: 
             "dim": dim,
             "batch_size": len(batch),
             "request_dimensions": should_request_dimensions,
+            "timeout_s": EMBEDDING_TIMEOUT,
+            "max_retries": EMBEDDING_MAX_RETRIES,
+            "retry_base_delay_s": EMBEDDING_RETRY_BASE_DELAY,
+            "retry_max_delay_s": EMBEDDING_RETRY_MAX_DELAY,
         },
     ):
+        attempts: list[dict[str, Any]] = []
+        max_attempts = max(1, EMBEDDING_MAX_RETRIES + 1)
         try:
-            resp = await client.post(_embedding_endpoint(), json=payload)
-            latency = time.time() - start_time
-            logger.info(
-                "embedding http request done: batch_size=%d latency=%.2fs request_dimensions=%s status_code=%d",
-                len(batch),
-                latency,
-                should_request_dimensions,
-                resp.status_code,
-            )
+            for attempt in range(1, max_attempts + 1):
+                attempt_start = time.time()
+                try:
+                    resp = await client.post(_embedding_endpoint(), json=payload)
+                    latency = time.time() - attempt_start
+                    attempts.append(
+                        {
+                            "attempt": attempt,
+                            "status_code": resp.status_code,
+                            "latency_s": round(latency, 4),
+                        }
+                    )
+                    logger.info(
+                        "embedding http request done: batch_size=%d attempt=%d/%d latency=%.2fs "
+                        "request_dimensions=%s status_code=%d",
+                        len(batch),
+                        attempt,
+                        max_attempts,
+                        latency,
+                        should_request_dimensions,
+                        resp.status_code,
+                    )
+                    if resp.status_code == 400:
+                        break
+                    if resp.status_code in _RETRYABLE_STATUS_CODES and attempt < max_attempts:
+                        delay = _embedding_retry_delay(attempt)
+                        logger.warning(
+                            "embedding http retryable status: batch_size=%d attempt=%d/%d status_code=%d delay=%.2fs",
+                            len(batch),
+                            attempt,
+                            max_attempts,
+                            resp.status_code,
+                            delay,
+                        )
+                        langfuse_update_span(
+                            output={
+                                "status_code": resp.status_code,
+                                "latency_s": round(latency, 4),
+                                "attempt": attempt,
+                                "attempts": attempts,
+                                "retrying": True,
+                                "retry_delay_s": delay,
+                            },
+                            metadata={
+                                "status_code": resp.status_code,
+                                "latency_s": latency,
+                                "attempt": attempt,
+                                "attempts": attempts,
+                                "retrying": True,
+                                "retry_delay_s": delay,
+                            },
+                            status_message=f"retrying status_code={resp.status_code}",
+                        )
+                        await asyncio.sleep(delay)
+                        continue
+                    langfuse_update_span(
+                        output={
+                            "status_code": resp.status_code,
+                            "latency_s": round(latency, 4),
+                            "attempt": attempt,
+                            "attempts": attempts,
+                            "retries": attempt - 1,
+                        },
+                        metadata={
+                            "status_code": resp.status_code,
+                            "latency_s": latency,
+                            "attempt": attempt,
+                            "attempts": attempts,
+                            "retries": attempt - 1,
+                        },
+                    )
+                    resp.raise_for_status()
+                    return resp.json()
+                except _RETRYABLE_EXCEPTIONS as exc:
+                    latency = time.time() - attempt_start
+                    attempts.append(
+                        {
+                            "attempt": attempt,
+                            "error_type": exc.__class__.__name__,
+                            "latency_s": round(latency, 4),
+                        }
+                    )
+                    if attempt >= max_attempts:
+                        raise
+                    delay = _embedding_retry_delay(attempt)
+                    logger.warning(
+                        "embedding http retryable error: batch_size=%d attempt=%d/%d error=%s delay=%.2fs",
+                        len(batch),
+                        attempt,
+                        max_attempts,
+                        exc,
+                        delay,
+                    )
+                    langfuse_update_span(
+                        output={
+                            "latency_s": round(latency, 4),
+                            "attempt": attempt,
+                            "attempts": attempts,
+                            "retrying": True,
+                            "retry_delay_s": delay,
+                        },
+                        metadata={
+                            "error_type": exc.__class__.__name__,
+                            "latency_s": latency,
+                            "attempt": attempt,
+                            "attempts": attempts,
+                            "retrying": True,
+                            "retry_delay_s": delay,
+                        },
+                        status_message=f"retrying {exc.__class__.__name__}: {exc}",
+                    )
+                    await asyncio.sleep(delay)
+
+            latency = attempts[-1]["latency_s"] if attempts else 0
             langfuse_update_span(
-                output={"status_code": resp.status_code, "latency_s": round(latency, 4)},
-                metadata={"status_code": resp.status_code, "latency_s": latency},
+                output={
+                    "status_code": resp.status_code,
+                    "latency_s": latency,
+                    "attempt": len(attempts),
+                    "attempts": attempts,
+                    "retries": max(0, len(attempts) - 1),
+                },
+                metadata={
+                    "status_code": resp.status_code,
+                    "latency_s": latency,
+                    "attempt": len(attempts),
+                    "attempts": attempts,
+                    "retries": max(0, len(attempts) - 1),
+                },
             )
-            if resp.status_code != 400:
-                resp.raise_for_status()
-                return resp.json()
 
             body = resp.text
             if not should_request_dimensions or ("matryoshka" not in body and "dimensions" not in body):
@@ -322,20 +453,74 @@ async def _post_embeddings(client: httpx.AsyncClient, batch: list[str], *, dim: 
                 "model": EMBEDDING_MODEL,
                 "input": batch,
             }
-            fallback_resp = await client.post(_embedding_endpoint(), json=fallback_payload)
+            fallback_resp = await _post_embeddings_without_dimensions_retry(client, fallback_payload, batch_size=len(batch))
             fallback_resp.raise_for_status()
             langfuse_update_span(
-                output={"status_code": fallback_resp.status_code, "fallback_without_dimensions": True},
-                metadata={"fallback_without_dimensions": True, "status_code": fallback_resp.status_code},
+                output={
+                    "status_code": fallback_resp.status_code,
+                    "fallback_without_dimensions": True,
+                    "attempts": attempts,
+                },
+                metadata={
+                    "fallback_without_dimensions": True,
+                    "status_code": fallback_resp.status_code,
+                    "attempts": attempts,
+                },
             )
             return fallback_resp.json()
         except Exception as exc:
             langfuse_update_span(
-                metadata={"error_type": exc.__class__.__name__},
+                output={"attempts": attempts} if attempts else None,
+                metadata={"error_type": exc.__class__.__name__, "attempts": attempts},
                 level="ERROR",
                 status_message=str(exc),
             )
             raise
+
+
+async def _post_embeddings_without_dimensions_retry(
+    client: httpx.AsyncClient,
+    payload: dict[str, object],
+    *,
+    batch_size: int,
+) -> httpx.Response:
+    max_attempts = max(1, EMBEDDING_MAX_RETRIES + 1)
+    for attempt in range(1, max_attempts + 1):
+        try:
+            response = await client.post(_embedding_endpoint(), json=payload)
+            if response.status_code in _RETRYABLE_STATUS_CODES and attempt < max_attempts:
+                delay = _embedding_retry_delay(attempt)
+                logger.warning(
+                    "embedding fallback retryable status: batch_size=%d attempt=%d/%d status_code=%d delay=%.2fs",
+                    batch_size,
+                    attempt,
+                    max_attempts,
+                    response.status_code,
+                    delay,
+                )
+                await asyncio.sleep(delay)
+                continue
+            return response
+        except _RETRYABLE_EXCEPTIONS as exc:
+            if attempt >= max_attempts:
+                raise
+            delay = _embedding_retry_delay(attempt)
+            logger.warning(
+                "embedding fallback retryable error: batch_size=%d attempt=%d/%d error=%s delay=%.2fs",
+                batch_size,
+                attempt,
+                max_attempts,
+                exc,
+                delay,
+            )
+            await asyncio.sleep(delay)
+    raise RuntimeError("embedding fallback retry exhausted")
+
+
+def _embedding_retry_delay(attempt: int) -> float:
+    base = max(0.0, EMBEDDING_RETRY_BASE_DELAY)
+    max_delay = max(base, EMBEDDING_RETRY_MAX_DELAY)
+    return min(max_delay, base * (2 ** max(0, attempt - 1)))
 
 
 def _openai_embeddings_from_response(data: object) -> list[list[float]] | None:

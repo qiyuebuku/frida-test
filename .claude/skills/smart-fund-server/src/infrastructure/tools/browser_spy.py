@@ -21,6 +21,7 @@ class BrowserSpy:
     def __init__(self):
         self._browser_ctx = None
         self._browser = None
+        self._context = None
         self.page = None
         self.requests = []
         self.responses = []
@@ -41,24 +42,35 @@ class BrowserSpy:
             raise RuntimeError("camoufox 未安装，请: pip install camoufox[geoip] && camoufox fetch")
         if self._started:
             return
-        self._browser_ctx = AsyncCamoufox(headless=headless)
-        self._browser = await self._browser_ctx.__aenter__()
-        self.page = await self._browser.new_page()
-        self.page.on("request", self._on_request)
-        self.page.on("response", self._on_response)
-        self.page.on("requestfailed", self._on_request_failed)
-        self.page.on("console", self._on_console)
-        self._started = True
+        try:
+            self._browser_ctx = AsyncCamoufox(headless=headless)
+            self._browser = await self._browser_ctx.__aenter__()
+            # camoufox 0.4.11 + playwright 1.61.0 cannot create a page through
+            # Browser.new_page(), because Playwright sends viewport.isMobile to
+            # Camoufox's Firefox protocol. Creating an explicit no_viewport
+            # context avoids that incompatible protocol field.
+            self._context = await self._browser.new_context(no_viewport=True)
+            self.page = await self._context.new_page()
+            self.page.on("request", self._on_request)
+            self.page.on("response", self._on_response)
+            self.page.on("requestfailed", self._on_request_failed)
+            self.page.on("console", self._on_console)
+            self._started = True
+        except Exception:
+            await self.stop()
+            raise
 
     async def stop(self):
-        if not self._started:
-            return
         if self.page:
             await self.page.close()
             self.page = None
+        if self._context:
+            await self._context.close()
+            self._context = None
         if self._browser_ctx:
             await self._browser_ctx.__aexit__(None, None, None)
             self._browser_ctx = None
+        self._browser = None
         self._started = False
         self.clear()
 

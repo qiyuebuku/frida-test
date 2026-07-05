@@ -86,30 +86,6 @@ ALTER TABLE ONLY public.ft_config
 ALTER TABLE ONLY public.ft_decisions
     ADD CONSTRAINT ft_decisions_pkey PRIMARY KEY (id);
 
--- CONSTRAINT: ft_event_streams ft_event_streams_pkey
---
--- Name: ft_event_streams ft_event_streams_pkey; Type: CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.ft_event_streams
-    ADD CONSTRAINT ft_event_streams_pkey PRIMARY KEY (id);
-
--- CONSTRAINT: ft_events ft_events_fingerprint_key
---
--- Name: ft_events ft_events_fingerprint_key; Type: CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.ft_events
-    ADD CONSTRAINT ft_events_fingerprint_key UNIQUE (fingerprint);
-
--- CONSTRAINT: ft_events ft_events_pkey
---
--- Name: ft_events ft_events_pkey; Type: CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.ft_events
-    ADD CONSTRAINT ft_events_pkey PRIMARY KEY (id);
-
 -- CONSTRAINT: ft_fund_limits ft_fund_limits_fund_code_key
 --
 -- Name: ft_fund_limits ft_fund_limits_fund_code_key; Type: CONSTRAINT; Schema: public; Owner: -
@@ -481,48 +457,6 @@ CREATE INDEX idx_ft_collection_state_enabled ON public.ft_collection_state USING
 
 CREATE INDEX idx_ft_decisions_date ON public.ft_decisions USING btree (decision_date);
 
--- INDEX: idx_ft_event_streams_industry
---
--- Name: idx_ft_event_streams_industry; Type: INDEX; Schema: public; Owner: -
---
-
-CREATE INDEX idx_ft_event_streams_industry ON public.ft_event_streams USING btree (industry, last_event_at DESC);
-
--- INDEX: idx_ft_event_streams_state
---
--- Name: idx_ft_event_streams_state; Type: INDEX; Schema: public; Owner: -
---
-
-CREATE INDEX idx_ft_event_streams_state ON public.ft_event_streams USING btree (state, momentum);
-
--- INDEX: idx_ft_events_companies
---
--- Name: idx_ft_events_companies; Type: INDEX; Schema: public; Owner: -
---
-
-CREATE INDEX idx_ft_events_companies ON public.ft_events USING gin (companies);
-
--- INDEX: idx_ft_events_event_time
---
--- Name: idx_ft_events_event_time; Type: INDEX; Schema: public; Owner: -
---
-
-CREATE INDEX idx_ft_events_event_time ON public.ft_events USING btree (event_time DESC);
-
--- INDEX: idx_ft_events_industries
---
--- Name: idx_ft_events_industries; Type: INDEX; Schema: public; Owner: -
---
-
-CREATE INDEX idx_ft_events_industries ON public.ft_events USING gin (industries);
-
--- INDEX: idx_ft_events_type
---
--- Name: idx_ft_events_type; Type: INDEX; Schema: public; Owner: -
---
-
-CREATE INDEX idx_ft_events_type ON public.ft_events USING btree (event_type, event_time);
-
 -- INDEX: idx_ft_fund_limits_code
 --
 -- Name: idx_ft_fund_limits_code; Type: INDEX; Schema: public; Owner: -
@@ -614,13 +548,6 @@ CREATE INDEX idx_ft_news_source_time ON public.ft_news USING btree (source, publ
 
 CREATE INDEX idx_ft_pending_date ON public.ft_pending_decisions USING btree (decision_date);
 
--- INDEX: idx_ft_pending_event_stream
---
--- Name: idx_ft_pending_event_stream; Type: INDEX; Schema: public; Owner: -
---
-
-CREATE INDEX idx_ft_pending_event_stream ON public.ft_pending_decisions USING btree (event_stream_id);
-
 -- INDEX: idx_ft_pending_source
 --
 -- Name: idx_ft_pending_source; Type: INDEX; Schema: public; Owner: -
@@ -676,13 +603,6 @@ CREATE INDEX idx_ft_trades_date ON public.ft_trades USING btree (fund_code, trad
 --
 
 CREATE INDEX idx_ft_trades_dry_run ON public.ft_trades USING btree (dry_run, trade_date);
-
--- INDEX: uq_ft_pending_event_fund_date
---
--- Name: uq_ft_pending_event_fund_date; Type: INDEX; Schema: public; Owner: -
---
-
-CREATE UNIQUE INDEX uq_ft_pending_event_fund_date ON public.ft_pending_decisions USING btree (event_stream_id, fund_code, decision_date) WHERE ((decision_source)::text = 'event_driven'::text);
 
 -- INDEX: uq_ft_reviews_dec_fund
 --
@@ -845,9 +765,3 @@ ALTER INDEX public.idx_raw_trade_date ATTACH PARTITION public.ft_raw_data_202606
 -- ft_watchlist_data indexes
 CREATE UNIQUE INDEX IF NOT EXISTS idx_watchlist_data_unique ON public.ft_watchlist_data(code, data_type, trade_date);
 CREATE INDEX IF NOT EXISTS idx_watchlist_data_code ON public.ft_watchlist_data(code, data_type);
-
--- L1 事件识别层索引
-ALTER TABLE ONLY public.ft_events ADD CONSTRAINT ft_events_dedup_key_key UNIQUE (dedup_key);
-CREATE INDEX IF NOT EXISTS idx_ft_events_source_type ON public.ft_events(source_type, event_time DESC);
-CREATE INDEX IF NOT EXISTS idx_ft_events_event_subtype ON public.ft_events(event_subtype, event_time DESC) WHERE event_subtype IS NOT NULL AND event_subtype != '';
-CREATE INDEX IF NOT EXISTS idx_ft_rule_thresholds_rule ON public.ft_rule_thresholds(rule_name);

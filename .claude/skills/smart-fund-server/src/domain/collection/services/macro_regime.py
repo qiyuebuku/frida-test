@@ -7,6 +7,8 @@ import logging
 import math
 from datetime import date, datetime, timedelta, timezone
 
+from src.infrastructure.time_utils import app_today
+
 logger = logging.getLogger(__name__)
 
 
@@ -119,7 +121,7 @@ class MacroRegimeEngine:
         multiplier = max(0.6, min(1.2, multiplier))
 
         snapshot = {
-            "snapshot_date": date.today(),
+            "snapshot_date": app_today(),
             "regime": regime,
             "overall_score": round(overall, 3),
             "multiplier": multiplier,
@@ -141,7 +143,7 @@ class MacroRegimeEngine:
         """从 ft_news 近 7 天 macro/policy 类新闻计算政策方向分
 
         v1: 关键词统计 + 公司公告噪声过滤。
-        TODO: Phase 3 AI 事件抽取完成后替换为 ft_events.stance 字段。
+        TODO: 后续可替换为 Knowledge / Cognitive Card 的政策方向信号。
         """
         try:
             from src.infrastructure.persistence.repositories import NewsRepositoryImpl

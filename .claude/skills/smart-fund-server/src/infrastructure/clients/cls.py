@@ -1,5 +1,7 @@
 """财联社数据客户端 (www.cls.cn)"""
 
+import hashlib
+
 import httpx
 
 from src.infrastructure.clients.base import BaseClient, cached
@@ -8,7 +10,8 @@ from src.infrastructure.clients.base import BaseClient, cached
 class CLSClient(BaseClient):
     """财联社电报快讯采集"""
 
-    CLS_API = "https://www.cls.cn/nodeapi"
+    CLS_API = "https://www.cls.cn"
+    CLS_WEB_VERSION = "8.7.9"
 
     def __init__(self, timeout: float = 10.0):
         # 使用干净的 httpx 客户端，不带任何默认 headers
@@ -31,28 +34,55 @@ class CLSClient(BaseClient):
             快讯列表，每条包含 id, title, brief, content, ctime, subjects, stock_list 等字段
             按 ctime 降序排列（最新的在前）
         """
-        params = {
+        params: dict[str, str | int] = {
             "app": "CailianpressWeb",
             "os": "web",
             "rn": rn,
             "refresh_type": 1,
-            "order": 1,
-            "sv": "8.4.6",
+            "sv": self.CLS_WEB_VERSION,
         }
         if last_time is not None:
-            params["lastTime"] = last_time
+            params["last_time"] = last_time
+        params["sign"] = self._sign(params)
 
         resp = await self._client.get(
-            f"{self.CLS_API}/telegraphList",
+            f"{self.CLS_API}/v1/roll/get_roll_list",
             params=params,
             headers={
                 "Referer": "https://www.cls.cn/telegraph",
                 "User-Agent": "Mozilla/5.0",
-                "Accept": "*/*",
+                "Accept": "application/json, text/plain, */*",
             },
         )
         resp.raise_for_status()
-        return resp.json().get("data", {}).get("roll_data", [])
+        payload = resp.json()
+        if payload.get("errno") != 0:
+            raise RuntimeError(f"CLS get_roll_list failed: errno={payload.get('errno')} msg={payload.get('msg')}")
+        return payload.get("data", {}).get("roll_data", [])
+
+    @classmethod
+    def _sign(cls, params: dict) -> str:
+        """复刻财联社 Web 端签名：MD5(SHA1(sorted query string))."""
+        sorted_query = cls._stringify_params(params)
+        sha1 = hashlib.sha1(sorted_query.encode("utf-8")).hexdigest()
+        return hashlib.md5(sha1.encode("utf-8")).hexdigest()
+
+    @classmethod
+    def _stringify_params(cls, params: dict) -> str:
+        def stringify(key: str, value) -> str:
+            if value is None:
+                return ""
+            if isinstance(value, (str, int, float, bool)):
+                return f"{key}={value}"
+            if isinstance(value, list):
+                if not value:
+                    return f"{key}[]"
+                return "&".join(filter(None, (stringify(f"{key}[{idx}]", item) for idx, item in enumerate(value))))
+            if isinstance(value, dict):
+                return "&".join(filter(None, (stringify(f"{key}[{child_key}]", value[child_key]) for child_key in sorted(value))))
+            return ""
+
+        return "&".join(filter(None, (stringify(key, params[key]) for key in sorted(params))))
 
     @cached(ttl=1209600, source="cls", domain="news", frequency="realtime", market="a_share", source_name="财联社")
     async def get_telegraph_since(self, since_ctime: int, max_pages: int = 5, page_size: int = 20) -> list:

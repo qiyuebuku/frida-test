@@ -50,22 +50,3 @@ def test_r1_8_3_industry_mapping_keywords_jsonb():
         if m:
             assert isinstance(m.keywords, list)
             assert isinstance(m.aliases, list)
-
-
-@pytest.mark.integration
-def test_r1_8_4_event_driven_decisions_query():
-    """T-R1.8-4: 能查询 event_driven 来源的决策"""
-    from src.infrastructure.connections import get_session
-    from src.infrastructure.persistence.models import PendingDecision
-
-    with get_session("prod") as s:
-        rows = s.scalars(
-            select(PendingDecision)
-            .where(PendingDecision.decision_source == "event_driven")
-            .limit(3)
-        ).all()
-        for r in rows:
-            assert r.decision_source == "event_driven"
-            # event_driven 决策应有 score
-            if r.score is not None:
-                assert isinstance(r.score, float)

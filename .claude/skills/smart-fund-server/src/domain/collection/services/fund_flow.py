@@ -54,6 +54,7 @@ import logging
 from datetime import datetime, date
 
 from src.domain.collection.services.base import BaseAggregator, SourceDef
+from src.infrastructure.time_utils import app_today, app_today_iso
 
 logger = logging.getLogger(__name__)
 
@@ -61,7 +62,7 @@ logger = logging.getLogger(__name__)
 
 
 def _today() -> str:
-    return date.today().isoformat()
+    return app_today_iso()
 
 
 def normalize_northbound(raw) -> list[dict]:
@@ -650,7 +651,7 @@ async def _fetch_watchlist_data(ths_client, tencent_client, sina_client=None, em
 
     cp = cp or {}
     newest_time = cp.get("newest_time")
-    today = date.today()
+    today = app_today()
 
     if newest_time:
         if isinstance(newest_time, str):

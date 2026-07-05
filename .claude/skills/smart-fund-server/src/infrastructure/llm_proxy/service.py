@@ -1256,6 +1256,7 @@ class LLMGatewayService:
             "response_format": request.response_format,
             "tools": request.tools,
             "tool_choice": request.tool_choice,
+            "provider_options": request.provider_options,
             "metadata": _cache_key_metadata(request.metadata),
         }
         raw = json.dumps(payload, sort_keys=True, ensure_ascii=False, separators=(",", ":"))

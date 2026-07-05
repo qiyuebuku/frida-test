@@ -8,8 +8,6 @@
     "ft_sentiment": 24,
     "ft_macro_indicators": 336,
     "ft_collection_state": 39,
-    "ft_events": 119,
-    "ft_event_streams": 69,
     "ft_pending_decisions": 129,
     "ft_decisions": 66,
     "ft_trades": 60,

@@ -9,6 +9,11 @@ from typing import Any, Literal
 from uuid import uuid4
 
 from src.application.dto.knowledge_dto import (
+    KnowledgeAgentExpandCommand,
+    KnowledgeAgentOpenCommand,
+    KnowledgeAgentRefineCommand,
+    KnowledgeAgentRetrievalContextDTO,
+    KnowledgeAgentSearchCommand,
     KnowledgeBadCaseReplayCommand,
     KnowledgeBadCaseReplayResultDTO,
     KnowledgeBootstrapStockNewsCommand,
@@ -50,8 +55,11 @@ from src.application.services.graph_index_reporter import GraphIndexLLMReporter
 from src.application.services.graph_index_profiles import FINANCIAL_GRAPH_PROJECTIONS, GRAPH_INDEX_PUBLIC_LENS_ALIASES
 from src.application.services.cognitive_index_service import (
     AssignmentCandidateOrderStore,
+    AssignmentBucketStore,
+    AssignmentBucketSemanticCache,
     CognitiveCardExtractor,
     CommunityCardBuilder,
+    CommunityBucketPlanner,
     CommunitySemanticCandidateProvider,
 )
 from src.application.services.openai_agents_retrieval_runtime import (
@@ -60,6 +68,14 @@ from src.application.services.openai_agents_retrieval_runtime import (
 from src.domain.knowledge.agentic_retrieval import (
     AgenticRetrievalConstraints,
     AgenticRetrievalController,
+)
+from src.domain.knowledge.agent_retrieval_context import (
+    AgentExpandRequest,
+    AgentOpenRequest,
+    AgentRefineRequest,
+    AgentRetrievalContextFacade,
+    AgentSearchRequest,
+    AgentTimeRange,
 )
 from src.domain.knowledge.adapter import DomainAdapter
 from src.domain.knowledge.chunking import build_chunks_for_compiled_evidence
@@ -80,7 +96,7 @@ from src.domain.knowledge.graph_index import (
     resolve_graph_index_lineage,
 )
 from src.domain.knowledge.cognitive_index import _community_document as _cognitive_community_document
-from src.domain.knowledge.cognitive_index import seed_graph_communities
+from src.domain.knowledge.cognitive_index import cognitive_card_document, seed_graph_communities
 from src.domain.knowledge.quality import (
     BadCaseReplay,
     KnowledgeQualityScanner,
@@ -114,7 +130,11 @@ from src.domain.knowledge.repositories import (
     KnowledgeRepository,
     KnowledgeSourceProjectionRepository,
 )
-from src.domain.knowledge.semantic_index_materials import SEMANTIC_COLLECTION_COMMUNITY, SemanticVectorDocument
+from src.domain.knowledge.semantic_index_materials import (
+    SEMANTIC_COLLECTION_COGNITIVE_CARD,
+    SEMANTIC_COLLECTION_COMMUNITY,
+    SemanticVectorDocument,
+)
 from src.domain.knowledge.schemas import (
     CompileResult,
     CompiledEdge,
@@ -190,6 +210,10 @@ class KnowledgeService:
                 "source_projection",
                 "quality_scan",
                 "reviews",
+                "agent_search",
+                "agent_open",
+                "agent_expand",
+                "agent_refine",
             ],
         )
 
@@ -209,6 +233,116 @@ class KnowledgeService:
             target=self.target,
             kg_version="seed_bootstrap",
         )
+
+    async def agent_search(self, command: KnowledgeAgentSearchCommand) -> KnowledgeAgentRetrievalContextDTO:
+        metadata = _knowledge_command_metadata(command)
+        with langfuse_propagation_context(
+            trace_name=f"kg.agent_search:{command.adapter_name}",
+            session_id=command.session_id,
+            tags=["kg", "agent-retrieval", "search"],
+            metadata=metadata,
+        ):
+            with langfuse_observation(name="kg.agent_search", as_type="chain", input=metadata, metadata=metadata):
+                facade = self._agent_retrieval_facade()
+                context = await facade.search(
+                    AgentSearchRequest(
+                        query=command.query,
+                        adapter_name=command.adapter_name,
+                        target=command.target,
+                        session_id=command.session_id,
+                        limit=command.limit,
+                        candidate_limit=command.candidate_limit,
+                        sort=command.sort,
+                        time_range=AgentTimeRange(start=command.time_start, end=command.time_end)
+                        if command.time_start or command.time_end
+                        else None,
+                        max_chars=command.max_chars,
+                        focus_aspects=command.focus_aspects,
+                    )
+                )
+                langfuse_update_span(output=_agent_trace_output(context), status_message="completed")
+                return _agent_context_dto(context)
+
+    async def agent_open(self, command: KnowledgeAgentOpenCommand) -> KnowledgeAgentRetrievalContextDTO:
+        metadata = _knowledge_command_metadata(command)
+        with langfuse_propagation_context(
+            trace_name=f"kg.agent_open:{command.adapter_name}",
+            session_id=command.session_id,
+            tags=["kg", "agent-retrieval", "open"],
+            metadata=metadata,
+        ):
+            with langfuse_observation(name="kg.agent_open", as_type="chain", input=metadata, metadata=metadata):
+                facade = self._agent_retrieval_facade()
+                context = await facade.open(
+                    AgentOpenRequest(
+                        target_ids=command.target_ids,
+                        query=command.query,
+                        adapter_name=command.adapter_name,
+                        target=command.target,
+                        session_id=command.session_id,
+                        include_neighbors=command.include_neighbors,
+                        limit=command.limit,
+                        max_chars=command.max_chars,
+                    )
+                )
+                langfuse_update_span(output=_agent_trace_output(context), status_message="completed")
+                return _agent_context_dto(context)
+
+    async def agent_expand(self, command: KnowledgeAgentExpandCommand) -> KnowledgeAgentRetrievalContextDTO:
+        metadata = _knowledge_command_metadata(command)
+        with langfuse_propagation_context(
+            trace_name=f"kg.agent_expand:{command.adapter_name}",
+            session_id=command.session_id,
+            tags=["kg", "agent-retrieval", "expand"],
+            metadata=metadata,
+        ):
+            with langfuse_observation(name="kg.agent_expand", as_type="chain", input=metadata, metadata=metadata):
+                facade = self._agent_retrieval_facade()
+                context = await facade.expand(
+                    AgentExpandRequest(
+                        target_id=command.target_id,
+                        query=command.query,
+                        adapter_name=command.adapter_name,
+                        target=command.target,
+                        session_id=command.session_id,
+                        direction=command.direction,
+                        limit=command.limit,
+                        max_chars=command.max_chars,
+                    )
+                )
+                langfuse_update_span(output=_agent_trace_output(context), status_message="completed")
+                return _agent_context_dto(context)
+
+    async def agent_refine(self, command: KnowledgeAgentRefineCommand) -> KnowledgeAgentRetrievalContextDTO:
+        metadata = _knowledge_command_metadata(command)
+        with langfuse_propagation_context(
+            trace_name=f"kg.agent_refine:{command.adapter_name}",
+            session_id=command.session_id,
+            tags=["kg", "agent-retrieval", "refine"],
+            metadata=metadata,
+        ):
+            with langfuse_observation(name="kg.agent_refine", as_type="chain", input=metadata, metadata=metadata):
+                facade = self._agent_retrieval_facade()
+                context = await facade.refine(
+                    AgentRefineRequest(
+                        query=command.query,
+                        adapter_name=command.adapter_name,
+                        target=command.target,
+                        session_id=command.session_id,
+                        limit=command.limit,
+                        candidate_limit=command.candidate_limit,
+                        sort=command.sort,
+                        time_range=AgentTimeRange(start=command.time_start, end=command.time_end)
+                        if command.time_start or command.time_end
+                        else None,
+                        max_chars=command.max_chars,
+                        focus_aspects=command.focus_aspects,
+                        previous_context=command.previous_context,
+                        refinement=command.refinement,
+                    )
+                )
+                langfuse_update_span(output=_agent_trace_output(context), status_message="completed")
+                return _agent_context_dto(context)
 
     async def compile_kg(self, command: KnowledgeCompileCommand) -> KnowledgeCompileResultDTO:
         metadata = _knowledge_command_metadata(command)
@@ -736,6 +870,8 @@ class KnowledgeService:
                 update={
                     "graph_time_start": graph_time_window[0],
                     "graph_time_end": graph_time_window[1],
+                    "semantic_time_start": graph_time_window[0],
+                    "semantic_time_end": graph_time_window[1],
                 }
             )
         context = await self._build_research_answer_context(
@@ -1454,6 +1590,17 @@ class KnowledgeService:
             raise RuntimeError("Knowledge repository is required for this use case")
         return self.repository
 
+    def _agent_retrieval_facade(self) -> AgentRetrievalContextFacade:
+        return AgentRetrievalContextFacade(
+            repository=self._require_repository(),
+            semantic_retriever=_semantic_hybrid_retriever(),
+            reranker_client=RerankerClient(
+                base_url=settings.RERANKER_URL,
+                timeout=settings.RERANKER_TIMEOUT,
+                max_documents=settings.RERANKER_MAX_DOCUMENTS,
+            ),
+        )
+
 
 Target = Literal["prod", "test"]
 
@@ -1494,111 +1641,141 @@ async def _refresh_cognitive_index(
             evidence_ids=changed_evidence_ids,
             cards=cards,
         )
+    card_semantic_documents = [
+        _semantic_document_from_graph_index_document(cognitive_card_document(item))
+        for item in cards
+    ]
+    with profile_span("kg_cognitive_index.upsert_cognitive_card_documents", documents=len(card_semantic_documents)):
+        card_documents_written = await _semantic_hybrid_retriever().upsert_semantic_documents(
+            adapter_name=result.adapter_name,
+            target=target,
+            documents=card_semantic_documents,
+            kg_version=result.version,
+        )
 
-    with profile_span("kg_cognitive_index.load_all_cards", adapter=result.adapter_name):
-        all_cards = repository.list_cognitive_cards(result.adapter_name)
+    stale_card_ids = [
+        card_id
+        for card_id in (card_persistence.get("deleted_card_ids") or [])
+        if card_id and card_id not in {item.cognitive_card_id for item in cards}
+    ]
+    with profile_span("kg_cognitive_index.delete_stale_cognitive_card_documents", documents=len(stale_card_ids)):
+        stale_cognitive_card_documents = await _delete_hybrid_documents(
+            adapter_name=result.adapter_name,
+            target=target,
+            chunk_ids=stale_card_ids,
+        )
 
     existing_communities = repository.list_graph_communities(result.adapter_name)
     semantic_retriever = _semantic_hybrid_retriever()
     semantic_store = getattr(semantic_retriever, "store", None)
+    stream_graph_persistence: list[dict[str, Any]] = []
+    stream_documents_written = 0
+    stream_committed_community_ids: set[str] = set()
 
-    async def commit_updated_communities(communities: list[GraphIndexCommunity]) -> None:
+    async def commit_updated_communities(
+        communities: list[GraphIndexCommunity],
+        remove_community_ids: list[str] | None = None,
+    ) -> None:
+        nonlocal stream_documents_written
         if not communities:
             return
+        remove_community_ids = list(dict.fromkeys(str(item) for item in remove_community_ids or [] if str(item)))
+        assignment_migration_map = {
+            str(old_id): community.community_id
+            for community in communities
+            for old_id in (community.previous_community_ids or [])
+            if str(old_id) in set(remove_community_ids)
+        }
         with profile_span("kg_cognitive_index.stream_commit_pg", communities=len(communities)):
-            repository.replace_graph_index_scope(
+            migrated_assignments = repository.migrate_community_assignments(
                 result.adapter_name,
-                remove_community_ids=[],
+                community_id_map=assignment_migration_map,
+            )
+            persistence = repository.replace_graph_index_scope(
+                result.adapter_name,
+                remove_community_ids=remove_community_ids,
                 communities=communities,
                 findings=[],
                 deltas=[],
                 unassigned_signals=[],
             )
+            persistence["migrated_assignments"] = migrated_assignments
+            stream_graph_persistence.append(persistence)
+            stream_committed_community_ids.update(item.community_id for item in communities)
+        stale_target_ids = [str(item) for item in persistence.get("stale_target_ids") or [] if str(item)]
+        if stale_target_ids:
+            with profile_span("kg_cognitive_index.stream_delete_absorbed_milvus", communities=len(stale_target_ids)):
+                await _delete_hybrid_documents(
+                    adapter_name=result.adapter_name,
+                    target=target,
+                    chunk_ids=stale_target_ids,
+                )
         semantic_documents = [
             _semantic_document_from_graph_index_document(_cognitive_community_document(item))
             for item in communities
         ]
         with profile_span("kg_cognitive_index.stream_commit_milvus", communities=len(communities)):
-            await _semantic_hybrid_retriever().upsert_semantic_documents(
+            stream_documents_written += await _semantic_hybrid_retriever().upsert_semantic_documents(
                 adapter_name=result.adapter_name,
                 target=target,
                 documents=semantic_documents,
                 kg_version=result.version,
             )
 
+    bucket_store = AssignmentBucketStore(target=target)
+    bucket_semantic_cache = (
+        AssignmentBucketSemanticCache(target=target, store=semantic_store)
+        if semantic_store is not None
+        else None
+    )
     builder = CommunityCardBuilder(
         candidate_provider=CommunitySemanticCandidateProvider(store=semantic_store) if semantic_store is not None else None,
         reranker_client=RerankerClient(),
         target=target,
         on_communities_updated=commit_updated_communities,
         candidate_order_store=AssignmentCandidateOrderStore(target=target),
+        bucket_planner=CommunityBucketPlanner(store=bucket_store, semantic_bucket_cache=bucket_semantic_cache),
         community_id_factory=lambda adapter_name, level, _title: repository.allocate_graph_community_id(
             adapter_name,
             level=level,
         ),
     )
-    with profile_span("kg_cognitive_index.build_communities", cards=len(all_cards)):
+    with profile_span("kg_cognitive_index.build_communities", cards=len(cards), mode="incremental_changed_cards"):
         build_result = await builder.build(
             adapter_name=result.adapter_name,
-            cards=all_cards,
+            cards=cards,
             existing_communities=existing_communities,
         )
 
-    all_card_ids = [item.cognitive_card_id for item in all_cards]
+    changed_card_ids = [item.cognitive_card_id for item in cards]
     with profile_span("kg_cognitive_index.persist_assignments", assignments=len(build_result.assignments)):
         assignment_rows = repository.replace_community_assignments_for_cards(
             result.adapter_name,
-            cognitive_card_ids=all_card_ids,
+            cognitive_card_ids=changed_card_ids,
             assignments=build_result.assignments,
         )
 
-    with profile_span("kg_cognitive_index.replace_graph_index", communities=len(build_result.communities)):
-        graph_persistence = repository.replace_graph_index(
-            result.adapter_name,
-            communities=build_result.communities,
-            findings=[],
-            deltas=[],
-            unassigned_signals=[],
-        )
-
-    stale_target_ids = list(graph_persistence.get("stale_target_ids") or [])
-    with profile_span("kg_cognitive_index.delete_stale_documents", documents=len(stale_target_ids)):
-        stale_documents = await _delete_hybrid_documents(
-            adapter_name=result.adapter_name,
-            target=target,
-            chunk_ids=stale_target_ids,
-        )
-
-    semantic_documents = [
-        _semantic_document_from_graph_index_document(item)
-        for item in build_result.documents
-    ]
-    with profile_span("kg_cognitive_index.upsert_community_documents", documents=len(semantic_documents)):
-        documents_written = await _semantic_hybrid_retriever().upsert_semantic_documents(
-            adapter_name=result.adapter_name,
-            target=target,
-            documents=semantic_documents,
-            kg_version=result.version,
-        )
-    with profile_span("kg_cognitive_index.prune_community_documents", communities=len(build_result.communities)):
-        orphan_community_documents_deleted = await _prune_stale_community_documents(
-            adapter_name=result.adapter_name,
-            target=target,
-            active_target_ids=[item.community_id for item in build_result.communities],
-        )
+    graph_persistence = {
+        "mode": "incremental_stream_commit",
+        "scope_commits": len(stream_graph_persistence),
+        "updated_community_ids": sorted(stream_committed_community_ids),
+        "scope_results": stream_graph_persistence,
+    }
 
     return {
         "status": "completed",
         "changed_chunks": len(changed_chunks),
         "changed_evidence": len(changed_evidence_ids),
         "cards": len(cards),
-        "all_cards": len(all_cards),
+        "all_cards": None,
         "assignments": len(build_result.assignments),
         "assignment_rows": assignment_rows,
-        "communities": len(build_result.communities),
-        "documents_written": documents_written,
-        "stale_documents_deleted": stale_documents,
-        "orphan_community_documents_deleted": orphan_community_documents_deleted,
+        "communities": len(stream_committed_community_ids),
+        "documents_written": stream_documents_written,
+        "cognitive_card_documents_written": card_documents_written,
+        "stale_documents_deleted": 0,
+        "orphan_community_documents_deleted": 0,
+        "orphan_cognitive_card_documents_deleted": stale_cognitive_card_documents,
         "card_persistence": card_persistence,
         "graph_persistence": graph_persistence,
         "diagnostics": build_result.diagnostics,
@@ -1774,6 +1951,39 @@ async def _prune_stale_community_documents(
     except Exception as exc:
         logger.warning(
             "[kg_cleanup] failed to prune stale community documents adapter=%s target=%s active=%d error=%s",
+            adapter_name,
+            target,
+            len(active),
+            exc,
+        )
+        return 0
+
+
+async def _prune_stale_cognitive_card_documents(
+    *,
+    adapter_name: str,
+    target: str,
+    active_target_ids: list[str],
+) -> int:
+    active = {target_id for target_id in active_target_ids if target_id}
+    try:
+        existing = await _semantic_hybrid_retriever().list_target_ids_by_role(
+            collection_role=SEMANTIC_COLLECTION_COGNITIVE_CARD,
+            adapter_name=adapter_name,
+            target=target,
+        )
+        stale = sorted(target_id for target_id in existing if target_id not in active)
+        if not stale:
+            return 0
+        return await _semantic_hybrid_retriever().delete_documents_by_role(
+            collection_role=SEMANTIC_COLLECTION_COGNITIVE_CARD,
+            adapter_name=adapter_name,
+            target=target,
+            target_ids=stale,
+        )
+    except Exception as exc:
+        logger.warning(
+            "[kg_cleanup] failed to prune stale cognitive card documents adapter=%s target=%s active=%d error=%s",
             adapter_name,
             target,
             len(active),
@@ -2644,6 +2854,39 @@ def _semantic_hybrid_retriever():
         with profile_span("kg_semantic_hybrid_retriever.create"):
             _SEMANTIC_HYBRID_RETRIEVER = MilvusSemanticHybridRetriever()
     return _SEMANTIC_HYBRID_RETRIEVER
+
+
+def _agent_context_dto(context) -> KnowledgeAgentRetrievalContextDTO:
+    payload = context.model_dump(mode="json")
+    return KnowledgeAgentRetrievalContextDTO(
+        query=payload.get("query") or "",
+        session_id=payload.get("session_id"),
+        mode=payload.get("mode") or "",
+        request=payload.get("request") or {},
+        evidence_package=payload.get("evidence_package") or [],
+        coverage_summary=payload.get("coverage_summary") or {},
+        quality_diagnostics=payload.get("quality_diagnostics") or {},
+        available_operations=payload.get("available_operations") or [],
+        trace=payload.get("trace") or {},
+    )
+
+
+def _agent_trace_output(context) -> dict[str, Any]:
+    payload = context.model_dump(mode="json")
+    packages = payload.get("evidence_package") or []
+    return {
+        "mode": payload.get("mode"),
+        "result_count": len(packages),
+        "result_ids": [item.get("result_id") for item in packages[:20] if isinstance(item, dict)],
+        "layer_counts": (
+            payload.get("quality_diagnostics", {})
+            .get("diversity", {})
+            .get("layer_counts", {})
+        ),
+        "coverage_summary": payload.get("coverage_summary") or {},
+        "available_operations": payload.get("available_operations") or [],
+        "trace": payload.get("trace") or {},
+    }
 
 
 def _semantic_index_materials_for_result(

@@ -17,13 +17,20 @@ def _route(model="deepseek-v4-flash"):
     )
 
 
-def _provider(api_key="sk-test"):
+def _provider(api_key="sk-test", rate_limit_cooldown_seconds=1, **kwargs):
+    options = {
+        "max_retries": 0,
+        "initial_retry_delay_seconds": 0,
+        "max_retry_delay_seconds": 0,
+    }
+    options.update(kwargs)
     return DeepSeekOpenAIProvider(
         base_url="https://api.deepseek.com",
         api_key=api_key,
         default_model="deepseek-v4-flash",
         timeout=30,
-        rate_limit_cooldown_seconds=1,
+        rate_limit_cooldown_seconds=rate_limit_cooldown_seconds,
+        **options,
     )
 
 
@@ -55,6 +62,33 @@ def test_deepseek_json_object_response_format():
 
     assert payload["response_format"] == {"type": "json_object"}
     assert "JSON Schema" in payload["messages"][0]["content"]
+
+
+def test_deepseek_request_provider_options_override_reasoning_effort():
+    provider = _provider(reasoning_effort="medium")
+    payload = provider._request_payload(
+        LLMProxyRequest(
+            prompt="快速分类",
+            provider_options={"reasoning_effort": "low"},
+        ),
+        _route(),
+    )
+
+    assert payload["reasoning_effort"] == "low"
+
+
+def test_deepseek_request_provider_options_disable_thinking_suppresses_reasoning_effort():
+    provider = _provider(reasoning_effort="high")
+    payload = provider._request_payload(
+        LLMProxyRequest(
+            prompt="快速分类",
+            provider_options={"thinking_type": "disabled"},
+        ),
+        _route(),
+    )
+
+    assert payload["thinking"] == {"type": "disabled"}
+    assert "reasoning_effort" not in payload
 
 
 def test_deepseek_injects_schema_even_when_prompt_mentions_json_schema():
@@ -426,14 +460,15 @@ def test_deepseek_missing_api_key_raises_without_leaking_key():
     assert "sk-" not in str(exc.value)
 
 
-def test_deepseek_500_retries_once(monkeypatch):
-    provider = _provider()
+def test_deepseek_500_retries_with_exponential_backoff(monkeypatch):
+    provider = _provider(max_retries=10, initial_retry_delay_seconds=1, max_retry_delay_seconds=60)
     calls = 0
+    sleeps = []
 
     async def fake_post(payload):
         nonlocal calls
         calls += 1
-        if calls == 1:
+        if calls <= 3:
             raise LLMProxyError("temporary", error_type="upstream_unavailable")
         return {
             "model": payload["model"],
@@ -441,13 +476,44 @@ def test_deepseek_500_retries_once(monkeypatch):
             "usage": {},
         }
 
+    async def fake_sleep(delay):
+        sleeps.append(delay)
+
     monkeypatch.setattr(provider, "_post", fake_post)
+    monkeypatch.setattr(asyncio, "sleep", fake_sleep)
 
     response = asyncio.run(provider.generate(LLMProxyRequest(prompt="hello"), _route()))
 
-    assert calls == 2
+    assert calls == 4
     assert response.text == "ok"
-    assert response.proxy["retry_count"] == 1
+    assert response.proxy["retry_count"] == 3
+    assert sleeps == [1, 2, 4]
+    assert response.proxy["upstream_retry_events"][0]["purpose"] == "initial"
+    assert response.proxy["upstream_max_retries"] == 10
+    assert response.proxy["upstream_max_retry_delay_seconds"] == 60
+
+
+def test_deepseek_retries_are_capped_at_ten(monkeypatch):
+    provider = _provider(max_retries=10, initial_retry_delay_seconds=1, max_retry_delay_seconds=60)
+    calls = 0
+    sleeps = []
+
+    async def fake_post(payload):
+        nonlocal calls
+        calls += 1
+        raise LLMProxyError("busy", error_type="upstream_unavailable")
+
+    async def fake_sleep(delay):
+        sleeps.append(delay)
+
+    monkeypatch.setattr(provider, "_post", fake_post)
+    monkeypatch.setattr(asyncio, "sleep", fake_sleep)
+
+    with pytest.raises(LLMProxyError):
+        asyncio.run(provider.generate(LLMProxyRequest(prompt="hello"), _route()))
+
+    assert calls == 11
+    assert sleeps == [1, 2, 4, 8, 16, 32, 60, 60, 60, 60]
 
 
 def test_deepseek_429_records_cooldown(monkeypatch):
@@ -462,6 +528,40 @@ def test_deepseek_429_records_cooldown(monkeypatch):
         asyncio.run(provider.generate(LLMProxyRequest(prompt="hello"), _route()))
 
     assert provider._cooldown_until > 0
+
+
+def test_deepseek_429_retry_wait_respects_cooldown_cap(monkeypatch):
+    provider = _provider(
+        rate_limit_cooldown_seconds=120,
+        max_retries=1,
+        initial_retry_delay_seconds=1,
+        max_retry_delay_seconds=60,
+    )
+    calls = 0
+    sleeps = []
+
+    async def fake_post(payload):
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            raise LLMProxyError("rate", error_type="rate_limited")
+        return {
+            "model": payload["model"],
+            "choices": [{"message": {"content": "ok"}, "finish_reason": "stop"}],
+            "usage": {},
+        }
+
+    async def fake_sleep(delay):
+        sleeps.append(delay)
+
+    monkeypatch.setattr(provider, "_post", fake_post)
+    monkeypatch.setattr(asyncio, "sleep", fake_sleep)
+
+    response = asyncio.run(provider.generate(LLMProxyRequest(prompt="hello"), _route()))
+
+    assert response.text == "ok"
+    assert len(sleeps) == 1
+    assert 59 <= sleeps[0] <= 60
 
 
 def test_deepseek_http_error_message_contains_safe_exception_type(monkeypatch):

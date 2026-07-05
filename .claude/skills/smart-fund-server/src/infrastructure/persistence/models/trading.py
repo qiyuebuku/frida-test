@@ -1,7 +1,7 @@
 """交易决策与执行 ORM 模型(对应 schema/03_trading.sql)
 
 8 张表:
-- PendingDecision: 待执行决策(event_driven 决策的中间状态)
+- PendingDecision: 待执行决策
 - Decision: LLM 决策(旧表,保留兼容)
 - Trade: 交易记录(dry_run + live)
 - Position: 持仓
@@ -29,12 +29,8 @@ from src.infrastructure.persistence.models.base import Base
 class PendingDecision(Base):
     """待执行决策 - 决策与执行之间的中间状态(23 列)
 
-    decision_source 区分两类:
-    - llm: 旧的 LLM 决策(由 Claude 整体打分)
-    - event_driven: 事件驱动决策(由 EventDrivenDecider 打分)
-
     生命周期:
-    pending → executed (TradeExecutor 处理后)
+    pending → executed
             → cancelled (硬约束失败)
     """
     __tablename__ = "ft_pending_decisions"
@@ -61,19 +57,12 @@ class PendingDecision(Base):
         DateTime(timezone=False), server_default=func.now()
     )
 
-    # event_driven 决策专属
-    event_stream_id: Mapped[int | None] = mapped_column(
-        Integer, comment="关联的 ft_event_streams.id"
-    )
-    source_event_ids: Mapped[list[int] | None] = mapped_column(
-        ARRAY(Integer), comment="参与打分的事件 id"
-    )
     score: Mapped[float | None] = mapped_column(Float, comment="综合打分")
     score_breakdown: Mapped[dict | None] = mapped_column(
         JSONB, default=dict, comment="分项细节"
     )
     decision_source: Mapped[str | None] = mapped_column(
-        String, default="llm", comment="llm/event_driven"
+        String, default="llm", comment="决策来源"
     )
     dry_run: Mapped[bool | None] = mapped_column(
         Boolean, default=True, comment="是否模拟(决策本身的 dry_run 标记)"
@@ -156,7 +145,7 @@ class Trade(Base):
 class Position(Base):
     """持仓(12 列)
 
-    LIVE 模式下由 TradeExecutor 实时维护
+    LIVE 模式下由交易执行链路维护
     DRY_RUN 模式下从 ft_trades 聚合(虚拟 paper position)
     """
     __tablename__ = "ft_positions"

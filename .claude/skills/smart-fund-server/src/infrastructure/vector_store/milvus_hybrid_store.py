@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 import math
 from dataclasses import dataclass
+from datetime import date, datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -17,42 +18,54 @@ _EMPTY_SCOPE_WARNED: set[tuple[str, str, str]] = set()
 
 
 MILVUS_COLLECTION_CHUNK = "chunk"
+MILVUS_COLLECTION_COGNITIVE_CARD = "cognitive_card"
 MILVUS_COLLECTION_ENTITY = "entity"
 MILVUS_COLLECTION_RELATION = "relation"
 MILVUS_COLLECTION_COMMUNITY = "community"
+MILVUS_COLLECTION_ASSIGNMENT_BUCKET = "assignment_bucket"
 MILVUS_COLLECTION_ROLES = (
     MILVUS_COLLECTION_CHUNK,
+    MILVUS_COLLECTION_COGNITIVE_CARD,
     MILVUS_COLLECTION_ENTITY,
     MILVUS_COLLECTION_RELATION,
     MILVUS_COLLECTION_COMMUNITY,
+    MILVUS_COLLECTION_ASSIGNMENT_BUCKET,
 )
 
 
 @dataclass(frozen=True)
 class MilvusCollectionRegistry:
     chunk: str
+    cognitive_card: str
     entity: str
     relation: str
     community: str
+    assignment_bucket: str
 
     @classmethod
     def from_settings(cls) -> "MilvusCollectionRegistry":
         return cls(
             chunk=settings.MILVUS_CHUNK_COLLECTION,
+            cognitive_card=settings.MILVUS_COGNITIVE_CARD_COLLECTION,
             entity=settings.MILVUS_ENTITY_COLLECTION,
             relation=settings.MILVUS_RELATION_COLLECTION,
             community=settings.MILVUS_COMMUNITY_COLLECTION,
+            assignment_bucket=settings.MILVUS_ASSIGNMENT_BUCKET_COLLECTION,
         )
 
     def name_for(self, collection_role: str) -> str:
         if collection_role == MILVUS_COLLECTION_CHUNK:
             return self.chunk
+        if collection_role == MILVUS_COLLECTION_COGNITIVE_CARD:
+            return self.cognitive_card
         if collection_role == MILVUS_COLLECTION_ENTITY:
             return self.entity
         if collection_role == MILVUS_COLLECTION_RELATION:
             return self.relation
         if collection_role == MILVUS_COLLECTION_COMMUNITY:
             return self.community
+        if collection_role == MILVUS_COLLECTION_ASSIGNMENT_BUCKET:
+            return self.assignment_bucket
         raise ValueError(f"unsupported Milvus collection role: {collection_role}")
 
 
@@ -134,23 +147,29 @@ class MilvusHybridStore:
             existing_dim = _collection_dense_dim(client, self.collection_name)
             has_target_id = _collection_has_field(client, self.collection_name, "target_id")
             has_metadata_json = _collection_has_field(client, self.collection_name, "metadata_json")
-            if existing_dim in {None, self.dim} and has_target_id and has_metadata_json:
+            has_time_fields = all(
+                _collection_has_field(client, self.collection_name, field)
+                for field in ("published_at_ts", "event_time_start_ts", "event_time_end_ts")
+            )
+            if existing_dim in {None, self.dim} and has_target_id and has_metadata_json and has_time_fields:
                 return
             if not recreate_on_dim_mismatch:
                 raise RuntimeError(
                     f"Milvus collection {self.collection_name} schema mismatch: "
                     f"existing_dim={existing_dim} configured_dim={self.dim} "
-                    f"has_target_id={has_target_id} has_metadata_json={has_metadata_json}. "
+                    f"has_target_id={has_target_id} has_metadata_json={has_metadata_json} "
+                    f"has_time_fields={has_time_fields}. "
                     "Rebuild the semantic hybrid index before retrieval."
                 )
             logger.warning(
                 "Milvus collection %s schema mismatch: existing_dim=%s configured_dim=%s "
-                "has_target_id=%s has_metadata_json=%s; recreating collection",
+                "has_target_id=%s has_metadata_json=%s has_time_fields=%s; recreating collection",
                 self.collection_name,
                 existing_dim,
                 self.dim,
                 has_target_id,
                 has_metadata_json,
+                has_time_fields,
             )
             client.drop_collection(self.collection_name)
 
@@ -170,6 +189,9 @@ class MilvusHybridStore:
         schema.add_field("content_hash", data_type.VARCHAR, max_length=64)
         schema.add_field("embedding_model", data_type.VARCHAR, max_length=80)
         schema.add_field("kg_version", data_type.VARCHAR, max_length=80)
+        schema.add_field("published_at_ts", data_type.INT64)
+        schema.add_field("event_time_start_ts", data_type.INT64)
+        schema.add_field("event_time_end_ts", data_type.INT64)
         schema.add_field("metadata_json", data_type.JSON)
 
         bm25_function = imports["Function"](
@@ -393,6 +415,9 @@ class MilvusHybridStore:
             "target_type",
             "source_type",
             "source_id",
+            "published_at_ts",
+            "event_time_start_ts",
+            "event_time_end_ts",
             "metadata_json",
         ]
         hits: list[MilvusHybridHit] = []
@@ -439,14 +464,15 @@ class MilvusHybridStore:
         adapter_name: str,
         target: str,
         limit: int,
+        time_start: datetime | None = None,
+        time_end: datetime | None = None,
+        target_type: str | None = None,
     ) -> list[MilvusHybridHit]:
         if not query_text.strip() or not query_vector:
             return []
         if not _finite_vector(query_vector):
             logger.warning("Milvus hybrid search skipped because query vector contains NaN or Inf values")
             return []
-        with profile_span("milvus_store.ensure_collection", collection=self.collection_name):
-            self.ensure_collection()
         with profile_span("milvus_store.hybrid_search_scope_check", adapter=adapter_name, target=target):
             if not self._scope_has_rows(adapter_name=adapter_name, target=target):
                 _log_empty_scope_once(self.collection_name, adapter_name, target)
@@ -457,6 +483,8 @@ class MilvusHybridStore:
                     target=target,
                 )
                 return []
+        with profile_span("milvus_store.ensure_collection", collection=self.collection_name):
+            self.ensure_collection()
         imports = self._load_imports()
         dense_req = imports["AnnSearchRequest"](
             data=[query_vector],
@@ -480,9 +508,17 @@ class MilvusHybridStore:
             "target_type",
             "source_type",
             "source_id",
+            "published_at_ts",
+            "event_time_start_ts",
+            "event_time_end_ts",
             "metadata_json",
         ]
         scope_filter = f'adapter_name == "{adapter_name}" and target == "{target}"'
+        time_filter = _time_range_filter(time_start=time_start, time_end=time_end)
+        if target_type:
+            scope_filter = f'({scope_filter}) and target_type == "{_escape_filter_value(target_type)}"'
+        if time_filter:
+            scope_filter = f"({scope_filter}) and ({time_filter})"
         with profile_span(
             "milvus_store.hybrid_search_rpc",
             collection=self.collection_name,
@@ -511,6 +547,72 @@ class MilvusHybridStore:
                 )
             )
         profile_event("milvus_store.hybrid_search_result", hits=len(hits))
+        return hits
+
+    def vector_search(
+        self,
+        *,
+        query_vector: list[float],
+        adapter_name: str,
+        target: str,
+        limit: int,
+        target_type: str | None = None,
+    ) -> list[MilvusHybridHit]:
+        if not query_vector:
+            return []
+        if not _finite_vector(query_vector):
+            logger.warning("Milvus vector search skipped because query vector contains NaN or Inf values")
+            return []
+        with profile_span("milvus_store.vector_search_scope_check", adapter=adapter_name, target=target):
+            if not self._scope_has_rows(adapter_name=adapter_name, target=target):
+                _log_empty_scope_once(self.collection_name, adapter_name, target)
+                return []
+        with profile_span("milvus_store.vector_search.ensure_collection", collection=self.collection_name):
+            self.ensure_collection()
+        output_fields = [
+            "target_id",
+            "chunk_id",
+            "evidence_id",
+            "text",
+            "adapter_name",
+            "target",
+            "target_type",
+            "source_type",
+            "source_id",
+            "published_at_ts",
+            "event_time_start_ts",
+            "event_time_end_ts",
+            "metadata_json",
+        ]
+        scope_filter = f'adapter_name == "{_escape_filter_value(adapter_name)}" and target == "{_escape_filter_value(target)}"'
+        if target_type:
+            scope_filter = f'({scope_filter}) and target_type == "{_escape_filter_value(target_type)}"'
+        with profile_span(
+            "milvus_store.vector_search.rpc",
+            collection=self.collection_name,
+            adapter=adapter_name,
+            target=target,
+            target_type=target_type or "",
+            limit=limit,
+            vector_dim=len(query_vector),
+        ):
+            results = self._vector_search_with_connection_retry(
+                query_vector=query_vector,
+                scope_filter=scope_filter,
+                limit=limit,
+                output_fields=output_fields,
+            )
+        hits: list[MilvusHybridHit] = []
+        for hit in results[0] if results else []:
+            entity = _hit_value(hit, "entity") or {}
+            hits.append(
+                _hit_from_entity(
+                    entity,
+                    score=float(_hit_value(hit, "distance") or _hit_value(hit, "score") or 0.0),
+                    fallback_chunk_id=str(_hit_value(hit, "id") or ""),
+                )
+            )
+        profile_event("milvus_store.vector_search_result", hits=len(hits))
         return hits
 
     def _scope_has_rows(self, *, adapter_name: str, target: str) -> bool:
@@ -619,6 +721,40 @@ class MilvusHybridStore:
                     continue
                 raise
 
+    def _vector_search_with_connection_retry(
+        self,
+        *,
+        query_vector: list[float],
+        scope_filter: str,
+        limit: int,
+        output_fields: list[str],
+    ) -> Any:
+        for attempt in range(2):
+            try:
+                return self._get_client().search(
+                    collection_name=self.collection_name,
+                    data=[query_vector],
+                    anns_field="dense_vector",
+                    search_params={"metric_type": self.metric_type},
+                    filter=scope_filter,
+                    limit=limit,
+                    output_fields=output_fields,
+                )
+            except Exception as exc:
+                if attempt == 0 and _is_transient_milvus_connection_error(exc):
+                    logger.warning(
+                        "Milvus vector search connection failed; resetting client and retrying once: %s",
+                        exc,
+                    )
+                    profile_event(
+                        "milvus_store.vector_search_connection_retry",
+                        collection=self.collection_name,
+                        error=type(exc).__name__,
+                    )
+                    self._reset_client_connection()
+                    continue
+                raise
+
     def _reset_client_connection(self) -> None:
         imports = self._load_imports()
         self.close()
@@ -715,6 +851,9 @@ class MilvusTypedHybridStore:
         adapter_name: str,
         target: str,
         limit: int,
+        time_start: datetime | None = None,
+        time_end: datetime | None = None,
+        target_type: str | None = None,
     ) -> list[MilvusHybridHit]:
         return self.store_for(collection_role).hybrid_search(
             query_text=query_text,
@@ -722,6 +861,27 @@ class MilvusTypedHybridStore:
             adapter_name=adapter_name,
             target=target,
             limit=limit,
+            time_start=time_start,
+            time_end=time_end,
+            target_type=target_type,
+        )
+
+    def vector_search(
+        self,
+        *,
+        collection_role: str,
+        query_vector: list[float],
+        adapter_name: str,
+        target: str,
+        limit: int,
+        target_type: str | None = None,
+    ) -> list[MilvusHybridHit]:
+        return self.store_for(collection_role).vector_search(
+            query_vector=query_vector,
+            adapter_name=adapter_name,
+            target=target,
+            limit=limit,
+            target_type=target_type,
         )
 
     def get_documents(
@@ -846,6 +1006,28 @@ def _document_rows(
         payload = dict(document.metadata or {})
         source_type = str(payload.get("source_type") or payload.get("source_table") or "")
         source_id = str(payload.get("source_id") or payload.get("source_pk") or "")
+        published_at_ts = _timestamp_value(
+            payload.get("published_at")
+            or payload.get("source_published_at")
+            or payload.get("observed_at")
+            or payload.get("created_at")
+        )
+        event_time_start_ts = _timestamp_value(
+            payload.get("event_time_start")
+            or payload.get("event_time")
+            or payload.get("earliest_evidence_at")
+            or payload.get("earliest_source_published_at")
+        )
+        event_time_end_ts = _timestamp_value(
+            payload.get("event_time_end")
+            or payload.get("event_time")
+            or payload.get("latest_evidence_at")
+            or payload.get("latest_source_published_at")
+        )
+        if event_time_start_ts == 0 and published_at_ts:
+            event_time_start_ts = published_at_ts
+        if event_time_end_ts == 0 and published_at_ts:
+            event_time_end_ts = published_at_ts
         rows.append(
             {
                 "target_id": document.target_id,
@@ -861,6 +1043,9 @@ def _document_rows(
                 "content_hash": _content_hash(document.text),
                 "embedding_model": embedding_model[:80],
                 "kg_version": kg_version[:80],
+                "published_at_ts": published_at_ts,
+                "event_time_start_ts": event_time_start_ts,
+                "event_time_end_ts": event_time_end_ts,
                 "metadata_json": _json_safe_metadata(payload),
             }
         )
@@ -877,6 +1062,9 @@ def _hit_from_entity(
     raw_metadata = entity.get("metadata_json")
     if isinstance(raw_metadata, dict):
         metadata.update(raw_metadata)
+    for key in ("published_at_ts", "event_time_start_ts", "event_time_end_ts"):
+        if key in entity:
+            metadata[key] = entity.get(key)
     return MilvusHybridHit(
         chunk_id=str(entity.get("chunk_id") or entity.get("target_id") or fallback_chunk_id or ""),
         evidence_id=str(entity.get("evidence_id") or metadata.get("evidence_id") or ""),
@@ -944,6 +1132,55 @@ def _document_from_chunk(chunk: EvidenceChunk) -> MilvusHybridDocument:
         text=chunk.content,
         metadata=payload,
     )
+
+
+def _timestamp_value(value: Any) -> int:
+    parsed = _parse_datetime_value(value)
+    if parsed is None:
+        return 0
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return int(parsed.timestamp())
+
+
+def _parse_datetime_value(value: Any) -> datetime | None:
+    if value is None or value == "":
+        return None
+    if isinstance(value, datetime):
+        return value
+    if isinstance(value, date):
+        return datetime(value.year, value.month, value.day, tzinfo=timezone.utc)
+    if isinstance(value, (int, float)) and math.isfinite(float(value)):
+        number = float(value)
+        if number <= 0:
+            return None
+        if number > 10_000_000_000:
+            number = number / 1000
+        return datetime.fromtimestamp(number, tz=timezone.utc)
+    if not isinstance(value, str):
+        return None
+    text = value.strip()
+    if not text:
+        return None
+    try:
+        return datetime.fromisoformat(text.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+
+
+def _time_range_filter(*, time_start: datetime | None, time_end: datetime | None) -> str:
+    start_ts = _timestamp_value(time_start)
+    end_ts = _timestamp_value(time_end)
+    if start_ts <= 0 and end_ts <= 0:
+        return ""
+    filters: list[str] = []
+    if start_ts > 0:
+        filters.append(f"event_time_end_ts >= {start_ts}")
+    if end_ts > 0:
+        filters.append(f"event_time_start_ts <= {end_ts}")
+    filters.append("event_time_start_ts > 0")
+    filters.append("event_time_end_ts > 0")
+    return " and ".join(filters)
 
 
 def _collection_dense_dim(client, collection_name: str) -> int | None:

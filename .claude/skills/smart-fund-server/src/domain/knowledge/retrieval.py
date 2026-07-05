@@ -31,7 +31,7 @@ from src.domain.knowledge.schemas import (
 
 logger = logging.getLogger(__name__)
 
-HitType = Literal["node", "edge", "path", "evidence", "semantic_hybrid"]
+HitType = Literal["node", "edge", "path", "evidence", "cognitive_card", "semantic_hybrid"]
 GraphDirection = Literal["incoming", "outgoing", "undirected", "path"]
 
 
@@ -94,6 +94,8 @@ class RetrievalOptions(KnowledgeBaseModel):
     relation_filters: list[str] = Field(default_factory=list)
     graph_time_start: datetime | None = None
     graph_time_end: datetime | None = None
+    semantic_time_start: datetime | None = None
+    semantic_time_end: datetime | None = None
     wiki_limit: int = Field(default=10, ge=0)
     evidence_limit: int = Field(default=10, ge=0)
     graph_depth: int = Field(default=1, ge=1, le=3)

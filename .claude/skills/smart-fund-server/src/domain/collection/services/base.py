@@ -11,6 +11,7 @@ import psycopg2.extras
 
 from src.infrastructure.db import checkpoint_store, redis_lock
 from src.infrastructure.db.fund_db import get_conn
+from src.infrastructure.time_utils import app_today
 
 logger = logging.getLogger(__name__)
 
@@ -71,8 +72,8 @@ class BaseAggregator:
         """
         if not cls.SOURCE_CONFIGS or not cls.data_domain:
             return
-        from datetime import date, timedelta
-        today = date.today()
+        from datetime import timedelta
+        today = app_today()
         for name, cfg in cls.SOURCE_CONFIGS.items():
             target_days = cfg.get("target_days", 0)
             mode = cfg.get("default_mode", "backfill" if target_days > 0 else "incremental")

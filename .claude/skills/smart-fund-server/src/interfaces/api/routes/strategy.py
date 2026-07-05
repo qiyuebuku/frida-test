@@ -104,20 +104,6 @@ async def evaluate_indicators():
         raise HTTPException(status_code=500, detail=f"量化信号计算失败: {e}")
 
 
-# ==================== 决策复盘模块 ====================
-
-@router.post("/api/review/execute", summary="执行决策复盘", tags=["决策复盘"])
-async def execute_review(limit: int = Query(30, description="复盘数量"), days_back: int = Query(7, description="回溯天数")):
-    """执行待复盘决策的复盘，返回复盘统计结果"""
-    from src.domain.trading import review_decision_executor
-
-    try:
-        result = review_decision_executor.execute_decision_review(limit, days_back)
-        return result
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"决策复盘失败: {e}")
-
-
 @router.post("/api/review/create", summary="创建待复盘记录", tags=["决策复盘"])
 async def create_reviews(decision_date: str = Query(None, description="决策日期 YYYY-MM-DD")):
     """从 ft_decisions 创建待复盘记录到 ft_reviews"""

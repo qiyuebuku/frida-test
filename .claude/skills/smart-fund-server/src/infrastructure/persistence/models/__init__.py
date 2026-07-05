@@ -12,11 +12,6 @@ from src.infrastructure.persistence.models.collection import (
     Sentiment,
     WatchlistData,
 )
-from src.infrastructure.persistence.models.extraction import (
-    Event,
-    EventStream,
-    RuleThreshold,
-)
 from src.infrastructure.persistence.models.trading import (
     Decision,
     FundLimit,
@@ -34,16 +29,11 @@ from src.infrastructure.persistence.models.reflection import (
 from src.infrastructure.persistence.models.knowledge import (
     KnowledgeAssignmentCandidateOrder,
     KnowledgeCompilationRun,
-    KnowledgeEdge,
-    KnowledgeEdgeEvidence,
-    KnowledgeEdgeEvidenceChunk,
     KnowledgeEvidenceChunk,
     KnowledgeEvidence,
-    KnowledgeGraphAdjacency,
     KnowledgeGraphCommunity,
     KnowledgeGraphFinding,
     KnowledgeGraphUnassignedSignal,
-    KnowledgeNode,
     KnowledgeNormalizationRule,
     KnowledgeRetrievalEvalMetric,
     KnowledgeRetrievalEvalRun,
@@ -63,10 +53,6 @@ __all__ = [
     "MacroIndicator",
     "CollectionState",
     "WatchlistData",
-    # extraction
-    "Event",
-    "EventStream",
-    "RuleThreshold",
     # trading
     "PendingDecision",
     "Decision",
@@ -80,17 +66,12 @@ __all__ = [
     "Review",
     "Lesson",
     # knowledge
-    "KnowledgeNode",
     "KnowledgeAssignmentCandidateOrder",
     "KnowledgeNormalizationRule",
-    "KnowledgeEdge",
     "KnowledgeEvidence",
-    "KnowledgeEdgeEvidence",
-    "KnowledgeEdgeEvidenceChunk",
     "KnowledgeVersion",
     "KnowledgeReviewItem",
     "KnowledgeCompilationRun",
-    "KnowledgeGraphAdjacency",
     "KnowledgeGraphCommunity",
     "KnowledgeGraphFinding",
     "KnowledgeGraphUnassignedSignal",

@@ -12,12 +12,13 @@ from collections import Counter
 from datetime import date, datetime
 
 from src.domain.collection.services.base import BaseAggregator, SourceDef
+from src.infrastructure.time_utils import app_now, app_today, app_today_iso
 
 logger = logging.getLogger(__name__)
 
 
 def _today() -> str:
-    return date.today().isoformat()
+    return app_today_iso()
 
 
 def _is_empty(data) -> bool:
@@ -623,7 +624,7 @@ class SentimentAggregator(BaseAggregator):
             return await self._calc_overheat_set()
         except Exception:
             logger.warning("get_overheat_set 失败，返回空集", exc_info=True)
-            return {"codes": {}, "updated_at": datetime.now().isoformat()}
+            return {"codes": {}, "updated_at": app_now().isoformat()}
 
     async def _calc_overheat_set(self) -> dict:
         rows = await self._ensure_cache()
@@ -688,7 +689,7 @@ class SentimentAggregator(BaseAggregator):
                 penalty = min(penalty, 0.5)  # 硬上限
                 codes_penalty[code] = round(penalty, 2)
 
-        return {"codes": codes_penalty, "updated_at": datetime.now().isoformat()}
+        return {"codes": codes_penalty, "updated_at": app_now().isoformat()}
 
     # ==================== L2: leading_theme ====================
 
@@ -767,7 +768,7 @@ class SentimentAggregator(BaseAggregator):
         Args:
             trade_date: 目标日期，None 时使用今天。支持传入历史日期做回补。
         """
-        target = trade_date or date.today()
+        target = trade_date or app_today()
         target_str = target.isoformat()
 
         # 加载目标日期的 ft_sentiment 数据到缓存

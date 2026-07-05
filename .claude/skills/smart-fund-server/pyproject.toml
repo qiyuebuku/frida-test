@@ -9,7 +9,7 @@ dependencies = [
     "psycopg2-binary",
     "sqlalchemy>=2.0",
     "httpx",
-    "jettask-python",
+    "jettask-python @ file:///home/yuyang/easy-task/backend/jettask-rs/bindings/python/dist/jettask_python-0.1.0-py3-none-any.whl",
     "prometheus-client",
     "click>=8.0",
     "pymilvus[milvus_lite]>=2.6",

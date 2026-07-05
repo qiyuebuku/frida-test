@@ -223,8 +223,6 @@ CREATE TABLE public.ft_pending_decisions (
     cancelled_at timestamp without time zone,
     cancel_reason text,
     created_at timestamp without time zone DEFAULT now(),
-    event_stream_id integer,
-    source_event_ids integer[],
     score double precision,
     score_breakdown jsonb DEFAULT '{}'::jsonb,
     decision_source character varying(20) DEFAULT 'llm'::character varying,
