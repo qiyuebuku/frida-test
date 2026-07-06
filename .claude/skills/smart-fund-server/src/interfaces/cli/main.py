@@ -113,6 +113,7 @@ def worker(concurrency: int, tasks: tuple[str, ...]):
         "collect_macro",
         "collect_sentiment",
         "kg_news_ingest",
+        "kg_community_insight_refresh",
     ]
     task_names = list(tasks) if tasks else ALL_TASKS
 
@@ -208,6 +209,39 @@ def data_types():
 # ==================== 手动触发 ====================
 
 
+QUEUE_TO_COLLECTION_AGGREGATOR = {
+    "collect_news": "news",
+    "collect_fund_flow": "fund_flow",
+    "collect_market": "market",
+    "collect_sentiment": "sentiment",
+    "collect_macro": "macro",
+}
+
+
+def _reset_collection_intervals_for_trigger(target_queues: list[str]) -> int:
+    """手动触发采集任务时清空 last_run_at，避免消息被 source interval 跳过。"""
+    aggregators = {
+        QUEUE_TO_COLLECTION_AGGREGATOR[queue]
+        for queue in target_queues
+        if queue in QUEUE_TO_COLLECTION_AGGREGATOR
+    }
+    if not aggregators:
+        return 0
+
+    from sqlalchemy import func, update
+
+    from src.infrastructure.connections import get_session
+    from src.infrastructure.persistence.models.collection import CollectionState
+
+    with get_session() as session:
+        result = session.execute(
+            update(CollectionState)
+            .where(CollectionState.aggregator.in_(aggregators))
+            .values(last_run_at=None, updated_at=func.now())
+        )
+        return int(result.rowcount or 0)
+
+
 @cli.command()
 @click.argument("queues", nargs=-1)
 @click.option("--list", "list_only", is_flag=True, help="只列出可触发的 queue")
@@ -241,6 +275,10 @@ def trigger(queues: tuple[str, ...], list_only: bool, news_ids: tuple[int, ...])
             sys.exit(1)
     else:
         target = available
+
+    reset_count = _reset_collection_intervals_for_trigger(target)
+    if reset_count:
+        click.echo(f"⏰ 已重置 {reset_count} 条采集状态的 last_run_at，手动触发会绕过 interval")
 
     msgs = []
     for q in target:

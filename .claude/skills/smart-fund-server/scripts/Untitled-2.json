@@ -1,0 +1,317 @@
+{
+  "input": {
+    "prompt": "{\n  \"candidate_append_log\": [\n    {\n      \"entry_type\": \"candidate_base\",\n      \"community_id\": \"kgc:financial:l0:640\",\n      \"title\": \"人工智能产业链\",\n      \"scope\": \"承接人工智能产业的整体发展，包括AI芯片、算力基础设施、大模型研发与应用商业化、企业AI应用与价值兑现，以及相关治理、生态与产业政策。不包括非AI领域的半导体或消费电子。\",\n      \"canonical_labels\": [\n        \"人工智能产业链\",\n        \"AI算力链\",\n        \"人工智能基础设施\",\n        \"AI芯片\",\n        \"光模块\",\n        \"数据中心\",\n        \"算电协同\",\n        \"主题ETF产品\",\n        \"AI产业链投资\",\n        \"算力基础设施\"\n      ],\n      \"absorbed_subtopics\": [\n        \"人工智能产业\",\n        \"大模型商业化\",\n        \"大模型竞争格局\",\n        \"企业AI应用\",\n        \"AI模型商业化\",\n        \"国产大模型发展\",\n        \"AI算力链\",\n        \"人工智能基础设施\"\n      ],\n      \"maturity\": \"mature_topic\"\n    },\n    {\n      \"entry_type\": \"candidate_base\",\n      \"community_id\": \"kgc:financial:l0:648\",\n      \"title\": \"机器人产业\",\n      \"scope\": \"承接机器人产业整体发展，包括人形机器人、工业机器人、服务机器人等整机制造、核心零部件（电机、减速器、传感器等）、AI驱动技术（物理AI、大模型）、规模化量产、场景落地、供应链布局、产业政策及企业动态。不包含非机器人领域的通用人工智能或消费电子。\",\n      \"canonical_labels\": [\n        \"机器人产业\",\n        \"人形机器人产业链\",\n        \"机器人产业链\",\n        \"人形机器人\",\n        \"核心零部件\",\n        \"无框力矩电机\",\n        \"旋转关节模组\",\n        \"空心杯电机\",\n        \"人形机器人核心零部件供应链突破\",\n        \"人形机器人核心零部件国产化\"\n      ],\n      \"absorbed_subtopics\": [\n        \"机器人产业\",\n        \"AI机器人\",\n        \"物理AI\",\n        \"机器人核心整机\",\n        \"机器人供应链\",\n        \"机器人产业链\",\n        \"人形机器人\",\n        \"核心零部件\"\n      ],\n      \"maturity\": \"multi_evidence\"\n    },\n    {\n      \"entry_type\": \"candidate_base\",\n      \"community_id\": \"kgc:financial:l0:679\",\n      \"title\": \"权益市场资金面\",\n      \"scope\": \"承接A股市场资金供需变化，包括股票供给（限售股解禁、新股发行、再融资等）和资金需求（公募基金募集、外资流入、散户入市等）及其对市场流动性和估值的影响。不包括跨境资金流动（归入跨境资金流动）和宏观流动性（归入宏观流动性与汇率利率）。\",\n      \"canonical_labels\": [\n        \"权益市场资金面\",\n        \"A股资金面与股票供给\",\n        \"资本市场资金面\",\n        \"股票供给\",\n        \"限售股解禁\",\n        \"新股发行\",\n        \"解禁市值\",\n        \"新股申购\",\n        \"下周资本市场解禁与新股发行\",\n        \"下周解禁市值及新股发行概览\"\n      ],\n      \"absorbed_subtopics\": [\n        \"权益市场资金面\",\n        \"公募基金募集\",\n        \"基金市场动态\",\n        \"投资者行为\",\n        \"基金新开户\",\n        \"新基金发行规模\",\n        \"资本市场资金面\",\n        \"股票供给\"\n      ],\n      \"maturity\": \"multi_evidence\"\n    },\n    {\n      \"entry_type\": \"candidate_base\",\n      \"community_id\": \"kgc:financial:l0:682\",\n      \"title\": \"中外双边外交合作\",\n      \"scope\": \"承接政府间双边外交活动，包括双边会谈、合作声明、高层互访、外交合作领域拓展（经济、贸易、科技、文化等），以及国际关系中的双边外交动态和外交评价。涵盖贸易协定谈判、外交合作声明等。不包含企业间合作、多边外交、地缘冲突或国内政治。\",\n      \"canonical_labels\": [\n        \"中外双边外交合作\",\n        \"国际关系与外交评价\",\n        \"国际关系\",\n        \"外交评价\",\n        \"国际舆论\",\n        \"中国形象\",\n        \"习近平讲话国际反响\",\n        \"肯定评价\",\n        \"国际人士评价习近平讲话\",\n        \"国际反响与外交评价\"\n      ],\n      \"absorbed_subtopics\": [\n        \"中外双边外交合作\",\n        \"双边外交关系\",\n        \"中芬合作领域\",\n        \"国际关系\",\n        \"外交评价\",\n        \"国际舆论\",\n        \"中国形象\",\n        \"习近平讲话国际反响\"\n      ],\n      \"maturity\": \"multi_evidence\"\n    },\n    {\n      \"entry_type\": \"candidate_base\",\n      \"community_id\": \"kgc:financial:l0:698\",\n      \"title\": \"亚洲新兴市场投资策略调整\",\n      \"scope\": \"承接针对亚洲新兴市场的资金流向、投资策略调整、机构调仓、评级变动等动态，涵盖韩国、印度、东南亚等市场。不包括单一国家股市的日常表现（作为子方向进入），也不包括全球宏观流动性或非亚洲新兴市场。\",\n      \"canonical_labels\": [\n        \"亚洲新兴市场投资策略调整\",\n        \"韩国股市\",\n        \"韩国股市整体表现\",\n        \"KOSPI指数\",\n        \"韩国KOSPI指数上涨\",\n        \"韩国股市表现\",\n        \"新兴市场资金流动\",\n        \"国际投资策略调整\",\n        \"亚洲新兴市场\",\n        \"花旗策略师调仓\"\n      ],\n      \"absorbed_subtopics\": [\n        \"新兴市场资金流动\",\n        \"国际投资策略调整\",\n        \"亚洲新兴市场\",\n        \"韩国股市\",\n        \"花旗策略师调仓\",\n        \"新兴市场评级下调\",\n        \"韩国股市整体表现\",\n        \"KOSPI指数\"\n      ],\n      \"maturity\": \"multi_evidence\"\n    },\n    {\n      \"entry_type\": \"candidate_base\",\n      \"community_id\": \"kgc:financial:l0:700\",\n      \"title\": \"全球资金流向与跨境资本流动\",\n      \"scope\": \"承接全球范围内股票、债券等资产的资金流向变化、投资者情绪驱动的资金流动、跨境资本流动（包括南向、北向、QDII、QFII等）及其对市场资金面和风险偏好的影响。涵盖美国、欧洲、亚洲等主要市场的基金资金流、ETF资金流、外资流入流出等。不包含无资金流动含义的宏观政策或单一公司业绩。\",\n      \"canonical_labels\": [\n        \"全球资金流向与跨境资本流动\",\n        \"跨境资金流动\",\n        \"港股市场资金面\",\n        \"南向资金\",\n        \"港股通\",\n        \"资金增持个股\",\n        \"南向资金增持港股特定个股\",\n        \"南向资金增持港股个股\",\n        \"南向资金持股变动\",\n        \"全球宏观叙事\"\n      ],\n      \"absorbed_subtopics\": [\n        \"全球资金流向\",\n        \"美股市场情绪\",\n        \"基金资金流\",\n        \"股票市场\",\n        \"美国股票基金\",\n        \"资金流出\",\n        \"跨境资金流动\",\n        \"港股市场资金面\"\n      ],\n      \"maturity\": \"multi_evidence\"\n    },\n    {\n      \"entry_type\": \"candidate_base\",\n      \"community_id\": \"kgc:financial:l0:702\",\n      \"title\": \"上市公司资本运作\",\n      \"scope\": \"承接A股上市公司公司层面的融资活动（定增、配股、可转债、借款等）、投资活动（收购、股权投资、项目投资、资产处置、终止项目等）以及股东行为（增减持、股份回购、股权激励等），包括相关方案公告、进展、完成及对股价和资本结构的影响。不包含公司日常经营业绩（归入公司业绩与产业景气）、资本市场制度改革（归入资本市场改革）或非A股上市公司的资本事件。\",\n      \"canonical_labels\": [\n        \"上市公司资本运作\",\n        \"上市公司股东行为与资本运作\",\n        \"股东减持行为\",\n        \"A股市场股东行为\",\n        \"5%以上股东减持\",\n        \"股东减持计划公告\",\n        \"股东减持动态\",\n        \"股东减持事件线\",\n        \"A股股东行为\",\n        \"回购机制\"\n      ],\n      \"absorbed_subtopics\": [\n        \"电子制造\",\n        \"存储芯片\",\n        \"AI服务器\",\n        \"高速光模块\",\n        \"存储测试\",\n        \"宇航级存储\",\n        \"鹏鼎控股定增\",\n        \"联动科技收购\"\n      ],\n      \"maturity\": \"multi_evidence\"\n    },\n    {\n      \"entry_type\": \"candidate_base\",\n      \"community_id\": \"kgc:financial:l0:714\",\n      \"title\": \"自然灾害应急响应\",\n      \"scope\": \"承接各类自然灾害（如洪涝、台风、地震、干旱等）的应急响应启动、预警发布、人员疏散、救援行动、应急物资调运与分配等动态，及其对公共安全、基础设施和经济活动的影响。不包括非自然灾害的应急管理或单一灾害的长期成因分析。\",\n      \"canonical_labels\": [\n        \"自然灾害应急响应\",\n        \"自然灾害预警\",\n        \"城市应急管理\",\n        \"极端天气影响\",\n        \"气象灾害\",\n        \"台风灾害\",\n        \"城市内涝\",\n        \"气象预警\",\n        \"柳州暴雨\",\n        \"红色预警\"\n      ],\n      \"absorbed_subtopics\": [\n        \"自然灾害应急响应\",\n        \"防汛抗旱\",\n        \"气象灾害\",\n        \"应急管理\",\n        \"暴雨预警\",\n        \"应急响应启动\",\n        \"自然灾害预警\",\n        \"城市应急管理\"\n      ],\n      \"maturity\": \"mature_topic\"\n    },\n    {\n      \"entry_type\": \"candidate_base\",\n      \"community_id\": \"kgc:financial:l0:728\",\n      \"title\": \"资管行业产品业绩与理财市场\",\n      \"scope\": \"承接资管行业（包括银行理财、公募基金、私募基金、券商资管等）产品业绩盘点、规模变化、行业趋势、机构动态，以及理财市场（含银行理财、理财子公司）的规模增长、产品发行、投资者行为等。不包括具体资产类别的外部市场波动或宏观流动性本身。\",\n      \"canonical_labels\": [\n        \"资管行业产品业绩与理财市场\",\n        \"私募基金行业\",\n        \"资本市场产品发行\",\n        \"资产管理\",\n        \"私募基金监管\",\n        \"备案数据\",\n        \"产品发行节奏\",\n        \"私募产品备案增长反映行业回暖\",\n        \"私募基金产品发行趋势\",\n        \"私募基金备案数据周期\"\n      ],\n      \"absorbed_subtopics\": [\n        \"资产管理\",\n        \"理财市场\",\n        \"资管产品\",\n        \"理财规模\",\n        \"年中业绩盘点\",\n        \"季度规模增长\",\n        \"私募基金行业\",\n        \"资本市场产品发行\"\n      ],\n      \"maturity\": \"multi_evidence\"\n    },\n    {\n      \"entry_type\": \"candidate_base\",\n      \"community_id\": \"kgc:financial:l0:731\",\n      \"title\": \"半导体产业链\",\n      \"scope\": \"承接半导体全产业链发展，包括芯片设计、晶圆制造、封装测试、半导体设备、半导体材料、存储芯片、逻辑芯片等，以及产业链景气度、供需变化、市场表现及其对下游应用的影响。不包含非半导体领域的电子、AI软件应用、数据中心运营、泛科技产业链或地缘政治风险。\",\n      \"canonical_labels\": [\n        \"半导体产业链\",\n        \"半导体设备与检测\",\n        \"半导体先进封装\",\n        \"AI算力基础设施\",\n        \"检测设备市场\",\n        \"半导体设备与材料\",\n        \"AI硬件产业链\",\n        \"晶圆检测设备\",\n        \"光学检测系统\",\n        \"自动化处理系统\"\n      ],\n      \"absorbed_subtopics\": [\n        \"半导体产业链\",\n        \"A股科技板块\",\n        \"半导体制造\",\n        \"半导体设备\",\n        \"半导体设备与检测\",\n        \"检测设备市场\",\n        \"晶圆检测设备\",\n        \"光学检测系统\"\n      ],\n      \"maturity\": \"mature_topic\"\n    },\n    {\n      \"entry_type\": \"candidate_redirect\",\n      \"from_community_id\": \"kgc:financial:l0:3\",\n      \"to_community_id\": \"kgc:financial:l0:640\",\n      \"to_title\": \"人工智能产业链\",\n      \"reason\": \"merged_into_parent\"\n    },\n    {\n      \"entry_type\": \"candidate_redirect\",\n      \"from_community_id\": \"kgc:financial:l0:638\",\n      \"to_community_id\": \"kgc:financial:l0:648\",\n      \"to_title\": \"机器人产业\",\n      \"reason\": \"merged_into_parent\"\n    },\n    {\n      \"entry_type\": \"candidate_redirect\",\n      \"from_community_id\": \"kgc:financial:l0:653\",\n      \"to_community_id\": \"kgc:financial:l0:679\",\n      \"to_title\": \"权益市场资金面\",\n      \"reason\": \"merged_into_parent\"\n    },\n    {\n      \"entry_type\": \"candidate_redirect\",\n      \"from_community_id\": \"kgc:financial:l0:647\",\n      \"to_community_id\": \"kgc:financial:l0:682\",\n      \"to_title\": \"中外双边外交合作\",\n      \"reason\": \"merged_into_parent\"\n    },\n    {\n      \"entry_type\": \"candidate_redirect\",\n      \"from_community_id\": \"kgc:financial:l0:513\",\n      \"to_community_id\": \"kgc:financial:l0:682\",\n      \"to_title\": \"中外双边外交合作\",\n      \"reason\": \"merged_into_parent\"\n    },\n    {\n      \"entry_type\": \"candidate_redirect\",\n      \"from_community_id\": \"kgc:financial:l0:696\",\n      \"to_community_id\": \"kgc:financial:l0:698\",\n      \"to_title\": \"亚洲新兴市场投资策略调整\",\n      \"reason\": \"merged_into_parent\"\n    },\n    {\n      \"entry_type\": \"candidate_redirect\",\n      \"from_community_id\": \"kgc:financial:l0:519\",\n      \"to_community_id\": \"kgc:financial:l0:700\",\n      \"to_title\": \"全球资金流向与跨境资本流动\",\n      \"reason\": \"merged_into_parent\"\n    },\n    {\n      \"entry_type\": \"candidate_redirect\",\n      \"from_community_id\": \"kgc:financial:l0:680\",\n      \"to_community_id\": \"kgc:financial:l0:702\",\n      \"to_title\": \"上市公司资本运作\",\n      \"reason\": \"merged_into_parent\"\n    },\n    {\n      \"entry_type\": \"candidate_redirect\",\n      \"from_community_id\": \"kgc:financial:l0:659\",\n      \"to_community_id\": \"kgc:financial:l0:714\",\n      \"to_title\": \"自然灾害应急响应\",\n      \"reason\": \"merged_into_parent\"\n    },\n    {\n      \"entry_type\": \"candidate_redirect\",\n      \"from_community_id\": \"kgc:financial:l0:697\",\n      \"to_community_id\": \"kgc:financial:l0:714\",\n      \"to_title\": \"自然灾害应急响应\",\n      \"reason\": \"merged_into_parent\"\n    },\n    {\n      \"entry_type\": \"candidate_redirect\",\n      \"from_community_id\": \"kgc:financial:l0:719\",\n      \"to_community_id\": \"kgc:financial:l0:728\",\n      \"to_title\": \"资管行业产品业绩与理财市场\",\n      \"reason\": \"merged_into_parent\"\n    },\n    {\n      \"entry_type\": \"candidate_redirect\",\n      \"from_community_id\": \"kgc:financial:l0:707\",\n      \"to_community_id\": \"kgc:financial:l0:728\",\n      \"to_title\": \"资管行业产品业绩与理财市场\",\n      \"reason\": \"merged_into_parent\"\n    },\n    {\n      \"entry_type\": \"candidate_redirect\",\n      \"from_community_id\": \"kgc:financial:l0:655\",\n      \"to_community_id\": \"kgc:financial:l0:731\",\n      \"to_title\": \"半导体产业链\",\n      \"reason\": \"merged_into_parent\"\n    },\n    {\n      \"entry_type\": \"candidate_redirect\",\n      \"from_community_id\": \"kgc:financial:l0:687\",\n      \"to_community_id\": \"kgc:financial:l0:731\",\n      \"to_title\": \"半导体产业链\",\n      \"reason\": \"merged_into_parent\"\n    },\n    {\n      \"entry_type\": \"candidate_redirect\",\n      \"from_community_id\": \"kgc:financial:l0:708\",\n      \"to_community_id\": \"kgc:financial:l0:731\",\n      \"to_title\": \"半导体产业链\",\n      \"reason\": \"merged_into_parent\"\n    },\n    {\n      \"entry_type\": \"candidate_base\",\n      \"community_id\": \"kgc:financial:l0:1\",\n      \"title\": \"地缘政治与能源风险\",\n      \"scope\": \"承接地缘冲突、军事安全、外交摩擦、制裁、航运通道、油气供应、能源价格冲击及其对市场风险偏好的影响。\",\n      \"include_rules\": [\n        \"中东、俄乌、红海、霍尔木兹海峡等地缘冲突、军事安全、外交摩擦或通道风险。\",\n        \"制裁、反制裁、供应中断、油气运输受阻、能源价格冲击。\",\n        \"地缘或安全事件对权益、债券、商品、外汇、供应链或风险偏好的传导。\"\n      ],\n      \"exclude_rules\": [\n        \"单纯公司业绩、常规能源项目投产，不归入本主题。\",\n        \"没有地缘、安全或能源供应冲击含义的普通商品价格波动，不归入本主题。\"\n      ],\n      \"canonical_labels\": [\n        \"地缘风险\",\n        \"军事安全\",\n        \"能源安全\",\n        \"油气供应\",\n        \"航运通道风险\",\n        \"制裁影响\"\n      ],\n      \"granularity_note\": \"这是 L0 长期风险主线；具体国家、军事合作、地区安全事件、海峡、制裁轮次和油气品种作为子方向进入。\",\n      \"absorbed_subtopics\": [\n        \"地缘政治\",\n        \"大国关系\",\n        \"乌克兰危机\",\n        \"中东军事合作\",\n        \"防空系统部署\",\n        \"霍尔木兹海峡航运安全\",\n        \"中东地缘政治风险\",\n        \"中东地缘政治冲突\"\n      ],\n      \"maturity\": \"mature_topic\"\n    },\n    {\n      \"entry_type\": \"candidate_base\",\n      \"community_id\": \"kgc:financial:l0:5\",\n      \"title\": \"大宗商品供需冲击\",\n      \"scope\": \"承接铜、油气、工业气体、农产品、贵金属等商品供需、价格、库存、运输和上游约束变化。\",\n      \"include_rules\": [\n        \"商品价格大幅波动、供应短缺、库存变化、运输和生产瓶颈。\",\n        \"上游资源约束对中下游行业成本和盈利的影响。\",\n        \"商品供需变化对通胀、产业链和市场风险偏好的传导。\"\n      ],\n      \"exclude_rules\": [\n        \"没有商品供需含义的普通公司公告，不归入本主题。\",\n        \"纯地缘导致的油气通道风险优先归入地缘政治与能源风险，并可同时归入本主题。\"\n      ],\n      \"canonical_labels\": [\n        \"大宗商品\",\n        \"供需冲击\",\n        \"价格波动\",\n        \"资源约束\",\n        \"库存周期\"\n      ],\n      \"granularity_note\": \"这是 L0 商品主线；具体品种和单次价格变化作为子方向进入。\",\n      \"absorbed_subtopics\": [\n        \"材料国产替代\",\n        \"关键矿物供应链\",\n        \"大宗商品市场\",\n        \"石油供给政策\",\n        \"欧佩克+产量调整\",\n        \"大宗商品周期\",\n        \"农产品供需周期\",\n        \"能源价格\"\n      ],\n      \"maturity\": \"mature_topic\"\n    },\n    {\n      \"entry_type\": \"candidate_base\",\n      \"community_id\": \"kgc:financial:l0:512\",\n      \"title\": \"电影产业票房周期\",\n      \"scope\": \"承接电影票房档期表现、观影需求变化、影片供给质量、电影行业景气度及其对影视公司业绩和市场情绪的影响。包括暑期档、春节档等关键档期票房规模、同比增速、观众人次、票价趋势。不包括单纯影视项目投资或制片公司融资。\",\n      \"canonical_labels\": [\n        \"电影产业票房周期\",\n        \"中国电影市场\",\n        \"电影票房动态\",\n        \"电影行业市场表现\",\n        \"影视行业\",\n        \"文化产业\",\n        \"暑期档票房\",\n        \"新片票房\",\n        \"电影市场表现\",\n        \"暑期档电影票房规模\"\n      ],\n      \"absorbed_subtopics\": [\n        \"电影产业票房周期\",\n        \"中国电影市场\",\n        \"电影票房动态\",\n        \"宏观经济\",\n        \"产业发展\",\n        \"电影行业市场表现\",\n        \"影视行业\",\n        \"文化产业\"\n      ],\n      \"maturity\": \"multi_evidence\"\n    },\n    {\n      \"entry_type\": \"candidate_base\",\n      \"community_id\": \"kgc:financial:l0:525\",\n      \"title\": \"商品基金折溢价风险\",\n      \"scope\": \"承接商品期货ETF/LOF等商品基金的二级市场溢价风险、折价风险、净值偏离、风险提示公告及相应市场影响。不包括商品现货价格波动或商品供需基本面。\",\n      \"canonical_labels\": [\n        \"商品基金折溢价风险\",\n        \"LOF基金风险防控\",\n        \"白银投资风险管理\",\n        \"基金交易风险\",\n        \"商品期货基金风险\",\n        \"白银期货基金\",\n        \"LOF基金交易风险\",\n        \"大宗商品基金风险\",\n        \"商品基金市场风险\",\n        \"交易所交易基金风险\"\n      ],\n      \"absorbed_subtopics\": [\n        \"LOF基金风险防控\",\n        \"商品基金折溢价风险\",\n        \"白银投资风险管理\",\n        \"基金交易风险\",\n        \"商品期货基金风险\",\n        \"白银期货基金\",\n        \"LOF基金交易风险\",\n        \"大宗商品基金风险\"\n      ],\n      \"maturity\": \"multi_evidence\"\n    },\n    {\n      \"entry_type\": \"candidate_base\",\n      \"community_id\": \"kgc:financial:l0:598\",\n      \"title\": \"科技行业就业\",\n      \"scope\": \"承接科技行业招聘趋势、裁员动态、人才需求、薪资变化、劳动力供需等就业相关动态，覆盖全球主要科技市场（美国、中国、欧洲等）。不包括非科技行业的劳动力市场以及科技公司常规经营业绩。\",\n      \"canonical_labels\": [\n        \"科技行业就业\",\n        \"劳动力市场\",\n        \"科技招聘趋势\",\n        \"企业用工调整\",\n        \"科技招聘放缓\",\n        \"疫情影响\",\n        \"高盛称科技招聘放缓主因是疫情期过度扩招\",\n        \"科技行业招聘放缓原因\",\n        \"科技就业调整\"\n      ],\n      \"absorbed_subtopics\": [\n        \"科技行业就业\",\n        \"劳动力市场\",\n        \"科技招聘趋势\",\n        \"企业用工调整\",\n        \"科技招聘放缓\",\n        \"疫情影响\",\n        \"疫情期过度扩招导致正常化\"\n      ],\n      \"maturity\": \"single_evidence\"\n    },\n    {\n      \"entry_type\": \"candidate_base\",\n      \"community_id\": \"kgc:financial:l0:646\",\n      \"title\": \"宏观经济数据发布\",\n      \"scope\": \"承接中国及全球宏观经济数据发布、预测及其对资本市场的影响。包括CPI、PPI、GDP、PMI、贷款、社融等数据发布与市场前瞻。不包括无数据发布含义的宏观政策或公司业绩。\",\n      \"canonical_labels\": [\n        \"宏观经济数据发布\",\n        \"宏观经济\",\n        \"数据发布\",\n        \"产业发展\",\n        \"价格指数\",\n        \"信贷与社融\",\n        \"经济增长\",\n        \"物流快递\",\n        \"制造业\",\n        \"航空货运\"\n      ],\n      \"absorbed_subtopics\": [\n        \"宏观经济\",\n        \"数据发布\",\n        \"产业发展\",\n        \"宏观经济数据监测\",\n        \"宏观经济数据发布日程\",\n        \"资本市场融资与流动性\",\n        \"宏观经济数据\",\n        \"全球科技产业链\"\n      ],\n      \"maturity\": \"mature_topic\"\n    },\n    {\n      \"entry_type\": \"candidate_base\",\n      \"community_id\": \"kgc:financial:l0:657\",\n      \"title\": \"国防与军事建设\",\n      \"scope\": \"承接中国国防政策、军队建设、军事现代化、强军目标、建军百年计划等宏观军事建设动态，包括中央军委指示、全军学习部署、国防改革、军事战略等。不包括具体地缘冲突、外国军事合作、装备研制细分领域。\",\n      \"canonical_labels\": [\n        \"国防与军事建设\",\n        \"国防与军事\",\n        \"国家安全\",\n        \"军魂铸就\",\n        \"建军百年奋斗目标\",\n        \"铸牢听党指挥强军之魂\",\n        \"攻坚建军百年目标\",\n        \"强军建设与建军百年\",\n        \"建军百年计划系列\"\n      ],\n      \"absorbed_subtopics\": [\n        \"国防与军事\",\n        \"国家安全\",\n        \"军魂铸就\",\n        \"建军百年奋斗目标\",\n        \"铸牢听党指挥强军之魂\",\n        \"攻坚建军百年目标\",\n        \"总书记讲话在全军引发热烈反响\"\n      ],\n      \"maturity\": \"single_evidence\"\n    },\n    {\n      \"entry_type\": \"candidate_base\",\n      \"community_id\": \"kgc:financial:l0:658\",\n      \"title\": \"科技公司资本市场活动\",\n      \"scope\": \"承接科技公司在资本市场的关键事件，包括IPO、上市交易、指数成分股纳入、限售股解禁、业绩发布（财报季）等动态，及其对公司估值、市场资金流动和投资者情绪的影响。涵盖美股、港股、A股等市场的科技公司资本运作事件。不包含非科技公司的资本市场事件或科技公司内部经营细节（不含具体技术研发、产能扩张等）。\",\n      \"canonical_labels\": [\n        \"科技公司资本市场活动\",\n        \"科技公司上市与融资\",\n        \"股票市场事件\",\n        \"半导体与AI公司资本活动\",\n        \"IPO与上市\",\n        \"指数成分股调整\",\n        \"解禁与流动性\",\n        \"财报季\",\n        \"ADR上市\",\n        \"纳指100纳入\"\n      ],\n      \"absorbed_subtopics\": [\n        \"科技公司上市与融资\",\n        \"股票市场事件\",\n       ...[truncated]",
+    "system_prompt": "你是金融知识图谱的 Community 归档裁决器。\n\n你会收到 compact topic_intent，以及系统维护的候选 community append log。\n\n你的任务：\n- 在候选 community 中判断是否应该挂入已有主题；\n- 如果候选都不适合，创建新的 L0 community；\n- 如果候选相关但粒度偏细、边界按生命周期/动作阶段拆错，创建更合适的父级 L0 并吸收这些已有候选；\n- 输入里的 candidate_append_log 是唯一候选上下文；\n- candidate_append_log 只追加，不在中间改写既有条目；靠前不代表更相关；\n- entry_type=candidate_base 表示一个 community 第一次进入候选账本时的稳定目录信息；\n- entry_type=candidate_update 表示这个 community 后续新增吸收的子方向，只包含 community_id 和 absorbed；\n- entry_type=candidate_redirect 表示旧 community 已经被物理移除并合并到 to_community_id；from_community_id 已失效，禁止输出它，只能把它作为理解历史上下文的标记。\n- candidate_update 只能辅助理解该目录最近吸收过哪些子方向，不得覆盖 candidate_base 中的 scope、include_rules、exclude_rules、canonical_labels 和 granularity_note；\n- Cognitive Card 的 parent_themes、title_candidate、raw_theme 都只是候选信号，不是最终 community 名称；你必须在本阶段归一化主题边界。\n- 输入候选 community_id 是系统真实 community ID；attach_existing 时必须原样使用候选 community_id，禁止输出标题或自造 ID。\n- 一个 topic_intent 可以归属到一个或多个 community；\n- 不区分 primary / secondary；\n- 每条归属必须输出 weight，表示这个 topic_intent 和 community 的关联强度；\n- 每条归属必须输出 fit_type，用来说明这是既有方向、新增子方向、更宽父主题、相邻上下文，还是全新的父主题；\n- 每条归属必须输出 absorb_community_ids；非 create_parent_and_absorb_existing 时输出空数组 []。\n- assignments 数量不要超过 max_attach 限制；\n- 不要输出 uncertain，不走人工 pending；\n- 低置信也必须在 attach_existing、create_new、create_parent_and_absorb_existing 中选择一个合法 action；\n- action 只能是 attach_existing、create_new、create_parent_and_absorb_existing。\n- action 选择顺序必须是：先判断能否 attach_existing；如果不能直接 attach，但候选中存在同一稳定对象/机制下的窄主题，必须判断 create_parent_and_absorb_existing；只有两者都不成立时才 create_new。\n- create_parent_and_absorb_existing 表示：候选中已有相关 community，但它们只是当前更大父主题下的子方向、生命周期阶段、动作阶段或局部表达；你要创建一个更稳定的父级 L0，并吸收这些已有候选。\n- 当已有候选只是把某个父主题下的局部阶段、动作环节或子方向当成 L0，而当前 intent 能提炼出更合适、更稳定的父级目录时，优先 create_parent_and_absorb_existing，而不是继续 create_new 一个平级主题。\n- create_parent_and_absorb_existing 创建的新父主题必须保留当前 intent 的稳定对象和机制边界，不能为了吸收多个候选而上提到过粗父类。\n- create_new 只适用于候选里没有可被当前新父主题稳定吸收的相关 community；如果你准备创建的新 L0 能自然覆盖某个候选的对象、风险来源或产业链边界，就不能把该候选留在旁边形成平级重复主题。\n- 如果你准备 create_new 的原因是“已有候选只覆盖当前父主题下的局部子方向、生命周期阶段、动作环节、影响环节或风险暴露环节”，这通常不是普通 create_new 的理由，而是 create_parent_and_absorb_existing 的信号：应该创建覆盖完整对象/机制链条的父主题并吸收该窄候选。\n- 判断是否吸收时，优先看稳定对象、风险来源、产业链位置、政策机制、市场机制或经营机制是否相同，而不是看当前新闻描述的是同一事件阶段还是同一动作环节。\n- 只共享过粗上位类、但底层对象或风险来源不同的候选，不应被吸收。\n- 如果候选分别属于不同稳定对象或不同风险来源，只能吸收与新父主题对象边界一致的候选；其他候选继续保留为独立 L0。\n- 如果候选主题的 scope、include_rules、canonical_labels 能承接当前 intent，应优先 attach_existing。\n- 候选主题不是笼子；如果当前 intent 明显不在候选 scope 或命中 exclude_rules，必须 create_new 或挂入更合适的候选 community。\n- 归档判断必须综合 parent_themes、broad_topics、mid_topics、specific_topics、raw_theme、title_candidate、driver、impact_target、risk_type、event_thread、event_action、actors。\n- parent_themes 是 L0 归档主信号。如果 topic_intent.parent_themes 与候选 community 的 title、canonical_labels、summary 或 scope 明显匹配，应优先 attach_existing。\n- broad_topics、mid_topics、specific_topics 都只是候选信号，不是标题指令；你必须判断它们的真实层级是否适合作为 L0。\n- L0 community 是可长期复用的父级主题，应该能承载多条不同来源、不同时间、不同主体的资料，并且未来可以继续拆出 L1/L2。\n- 候选 community 的 scope、include_rules、exclude_rules、canonical_labels、granularity_note 用来判断长期目录边界；candidate_update.absorbed 只用于辅助理解该目录后续新增吸收过哪些子方向。\n- 判断重点不是候选 summary 是否已经写过当前细节，而是候选是否能作为父级目录承接当前细节。\n- 不要因为候选没有直接提到当前 chunk 的细节就判为 related_but_separate；L0 的职责就是吸收同一父主题下的新子方向。\n- 如果当前细节是候选 community 的新增子方向，应 attach_existing，并把 fit_type 写成 new_subtopic；不要因为 summary 里没有当前细节而新建平级 L0。\n- 如果候选 community 比当前 intent 更宽，但能承接当前 intent，应 attach_existing，并把 fit_type 写成 broader_parent。\n- 只有当候选 community 的目录范围无法承接当前 intent 时，才 create_new；create_new 的 fit_type 必须是 new_parent_topic。\n- create_new 时必须在 reason 中说明：为什么现有候选无法承接、这个新主题未来能持续覆盖什么边界、它与最接近候选的区别。\n- 如果现有候选无法直接承接当前 intent，但它与当前 intent 属于同一更高层稳定父主题下的窄方向，不要并列 create_new；必须 create_parent_and_absorb_existing，创建共同父主题并吸收这些窄候选。\n- “候选只覆盖某个子方向，所以无法承接当前 intent”不是直接 create_new 的理由；这通常意味着需要上提共同父主题并吸收候选，除非二者底层对象、机制或风险来源确实不同。\n- 如果现有候选标题比当前准备创建的新标题更窄，但它的 scope、canonical_labels、assigned signals 与新标题共享同一稳定对象或风险来源，应把它作为 absorb_community_ids；不要让两个 L0 分别表达“父主题”和“父主题下的阶段/动作”。\n- create_parent_and_absorb_existing 时，community_id 必须引用 new_communities 中的 client_id；absorb_community_ids 必须列出要吸收的候选 candidate_base community_id。\n- create_parent_and_absorb_existing 只允许吸收 candidate_append_log 中真实存在的 candidate_base community；禁止吸收 seed community，除非 seed 的 scope 明显错误且当前输入直接证明它应被替代。\n- create_parent_and_absorb_existing 不能只吸收最近或最相似的一个候选；你必须扫描全部 candidate_base，把同一父主题下的局部阶段、动作环节或子方向候选一次性列入 absorb_community_ids。\n- 但如果一个候选与当前 intent 只共享过粗上位类，具体对象、机制或风险来源不同，不要吸收；过粗上位类不能作为跨对象合并的唯一依据。\n- 如果你认为某个相近候选不应被吸收，新父主题的 scope 必须清楚排除它；否则应吸收。\n- create_parent_and_absorb_existing 的 reason 必须说明：旧候选为什么是偏细/偏阶段化主题、新父主题如何稳定承接它们、为什么新父主题不会变成泛化桶。\n- 如果 candidate_redirect 显示某个旧主题已经合并到 to_community_id，后续判断应以 to_community_id 对应的 candidate_base 为准；redirect 本身不是可挂载候选。\n- 如果当前 topic_intent 是 mid/specific 层级，不能直接把细主题包装成 L0；必须先寻找已有父级或子级 community 是否可挂入，没有合适候选时再提炼更高一层的父级 L0。\n- 如果创建新 L0，title 必须优先使用 parent_themes 中可长期复用的父级主题；只有 parent_themes 为空或明显不适合时，才从 broad_topics 中提炼父级主题。\n- 如果当前 broad/mid/specific 是已有 parent_theme 的子方向，必须挂入该父主题，不要创建平级 L0。\n- 如果创建新 L0，title 必须是可长期复用的父级主题，不能是新闻标题、公司项目名、单一交易名、单个产品、单次行情、单个技术细节。\n- 上提标题时不能丢掉当前 intent 的稳定对象边界；如果输入已经明确属于某个子领域、子风险来源或子产业链，不要上提到能吞下大量异质内容的过粗父类。\n- create_new 的 title 应像索引目录名，优先短标题；不要输出带有“政策与市场动态”“结构性变化”“投资机会”等摘要式尾巴的长标题，除非这是不可再压缩的稳定主题名。\n- L0 标题不能只描述动作、流程、阶段或组织行为；必须带有稳定对象边界，例如产业链、资产类别、政策机制、风险来源、技术链条、供需机制或经营基本面对象。\n- 如果一个候选标题只表达“转型、孵化、合作、预警、响应、扩张、布局、升级、回暖、异动”等动作或阶段，你必须判断它背后的稳定对象是什么；能挂入已有对象型父主题就 attach_existing，能覆盖多个窄对象且边界清楚才 create_parent_and_absorb_existing，不能直接创建动作型 L0。\n- 政策主题只承接政策或监管机制本身；如果新闻核心是某个产业/技术/资产链条在发展，即使它来自政府报告或地方文件，也应优先归入该产业/技术/资产父主题，政策只能作为低权重相邻上下文。\n- 地缘政治主题不只等于能源风险；军事安全、外交摩擦、地区安全、制裁和通道风险只要会影响市场、供应链、风险偏好或资产定价，都应先考虑地缘风险父主题，而不是把单一国家关系或单一安全动作新建为 L0。\n- L0 不能只是描述市场短期状态或交易表现。合格 L0 必须同时满足：有明确覆盖对象、有稳定驱动机制、有可复用边界、有可解释的排除边界。\n- 如果一个新主题可能吸收大量互不相关的新闻，只因为它们都表现为短期价格、成交、资金、情绪或热度变化，那么它不是合格 L0。\n- 如果当前 intent 描述的是短期市场表现，必须先判断它背后的对象和机制。只有对象和机制边界清楚、未来不会吸收互不相关主题时才允许 create_new。\n- 如果多个线索只有市场表现相似，但底层对象、驱动机制或风险来源不同，应分别挂到各自更有边界的父主题，而不是创建一个统一的表现型 L0。\n- 如果只能说明“市场短期怎么动”，而不能说明“哪个稳定主题为什么被影响”，不要 create_new；应 attach_existing 到最接近的驱动主题，并用较低 weight 表示它只是相邻上下文。\n- 如果无法从当前 intent 提炼出稳定驱动主题，不要创建表现型泛化桶；应挂入最接近的已有父主题并说明弱相关原因。\n- 如果 action=attach_existing，community_id 必须引用 candidate_append_log 中真实存在且未被 redirect 失效的 candidate_base community_id，不能引用 candidate_redirect.from_community_id。\n- 如果 action=create_new，community_id 必须引用 new_communities 中的 client_id，例如 new_1。\n- 如果 action=create_parent_and_absorb_existing，community_id 必须引用 new_communities 中的 client_id，例如 new_1，并且 absorb_community_ids 至少包含 1 个候选 community_id。\n- new_communities 只包含本次新建 community 的 client_id、title、scope。不要输出 level、title_quality、future_coverage、maintenance_hints、rejected_candidates 或 candidate_fit_judgements。\n- 输出必须符合 JSON Schema，不要 Markdown。",
+    "messages": [],
+    "prompt_text_preview": "{\n  \"candidate_append_log\": [\n    {\n      \"entry_type\": \"candidate_base\",\n      \"community_id\": \"kgc:financial:l0:640\",\n      \"title\": \"人工智能产业链\",\n      \"scope\": \"承接人工智能产业的整体发展，包括AI芯片、算力基础设施、大模型研发与应用商业化、企业AI应用与价值兑现，以及相关治理、生态与产业政策。不包括非AI领域的半导体或消费电子。\",\n      \"canonical_labels\": [\n        \"人工智能产业链\",\n        \"AI算力链\",\n        \"人工智能基础设施\",\n        \"AI芯片\",\n        \"光模块\",\n        \"数据中心\",\n        \"算电协同\",\n        \"主题ETF产品\",\n        \"AI产业链投资\",\n        \"算力基础设施\"\n      ],\n      \"absorbed_subtopics\": [\n        \"人工智能产业\",\n        \"大模型商业化\",\n        \"大模型竞争格局\",\n        \"企业AI应用\",\n        \"AI模型商业化\",\n        \"国产大模型发展\",\n        \"AI算力链\",\n        \"人工智能基础设施\"\n      ],\n      \"maturity\": \"mature_topic\"\n    },\n    {\n      \"entry_type\": \"candidate_base\",\n      \"community_id\": \"kgc:financial:l0:648\",\n      \"title\": \"机器人产业\",\n      \"scope\": \"承接机器人产业整体发展，包括人形机器人、工业机器人、服务机器人等整机制造、核心零部件（电机、减速器、传感器等）、AI驱动技术（物理AI、大模型）、规模化量产、场景落地、供应链布局、产业政策及企业动态。不包含非机器人领域的通用人工智能或消费电子。\",\n      \"canonical_labels\": [\n        \"机器人产业\",\n        \"人形机器人产业链\",\n        \"机器人产业链\",\n        \"人形机器人\",\n        \"核心零部件\",\n        \"无框力矩电机\",\n        \"旋转关节模组\",\n        \"空心杯电机\",\n        \"人形机器人核心零部件供应链突破\",\n        \"人形机器人核心零部件国产化\"\n      ],\n      \"absorbed_subtopics\": [\n        \"机器人产业\",\n        \"AI机器人\",\n        \"物理AI\",\n        \"机器人核心整机\",\n        \"机器人供应链\",\n        \"机器人产业链\",\n        \"人形机器人\",\n        \"核心零部件\"\n      ],\n      \"maturity\": \"multi_evidence\"\n    },\n    {\n      \"entry_type\": \"candidate_base\",\n      \"community_id\": \"kgc:financial:l0:679\",\n      \"title\": \"权益市场资金面\",\n      \"scope\": \"承接A股市场资金供需变化，包括股票供给（限售股解禁、新股发行、再融资等）和资金需求（公募基金募集、外资流入、散户入市等）及其对市场流动性和估值的影响。不包括跨境资金流动（归入跨境资金流动）和宏观流动性（归入宏观流动性与汇率利率）。\",\n      \"canonical_labels\": [\n        \"权益市场资金面\",\n        \"A股资金面与股票供给\",\n        \"资本市场资金面\",\n        \"股票供给\",\n        \"限售股解禁\",\n        \"新股发行\",\n        \"解禁市值\",\n        \"新股申购\",\n        \"下周资本市场解禁与新股发行\",\n        \"下周解禁市值及新股发行概览\"\n      ],\n      \"absorbed_subtopics\": [\n        \"权益市场资金面\",\n        \"公募基金募集\",\n        \"基金市场动态\",\n        \"投资者行为\",\n        \"基金新开户\",\n        \"新基金发行规模\",\n        \"资本市场资金面\",\n        \"股票供给\"\n      ],\n      \"maturity\": \"multi_evidence\"\n    },\n    {\n      \"entry_type\": \"candidate_base\",\n      \"community_id\": \"kgc:financial:l0:682\",\n      \"title\": \"中外双边外交合作\",\n      \"scope\": \"承接政府间双边外交活动，包括双边会谈、合作声明、高层互访、外交合作领域拓展（经济、贸易、科技、文化等），以及国际关系中的双边外交动态和外交评价。涵盖贸易协定谈判、外交合作声明等。不包含企业间合作、多边外交、地缘冲突或国内政治。\",\n      \"canonical_labels\": [\n        \"中外双边外交合作\",\n        \"国际关系与外交评价\",\n        \"国际关系\",\n        \"外交评价\",\n        \"国际舆论\",\n        \"中国形象\",\n        \"习近平讲话国际反响\",\n        \"肯定评价\",\n        \"国际人士评价习近平讲话\",\n        \"国际反响与外交评价\"\n      ],\n      \"absorbed_subtopics\": [\n        \"中外双边外交合作\",\n        \"双边外交关系\",\n        \"中芬合作领域\",\n        \"国际关系\",\n        \"外交评价\",\n        \"国际舆论\",\n        \"中国形象\",\n        \"习近平讲话国际反响\"\n      ],\n      \"maturity\": \"multi_evidence\"\n    },\n    {\n      \"entry_type\": \"candidate_base\",\n      \"community_id\": \"kgc:financial:l0:698\",\n      \"title\": \"亚洲新兴市场投资策略调整\",\n      \"scope\": \"承接针对亚洲新兴市场的资金流向、投资策略调整、机构调仓、评级变动等动态，涵盖韩国、印度、东南亚等市场。不包括单一国家股市的日常表现（作为子方向进入），也不包括全球宏观流动性或非亚洲新兴市场。\",\n      \"canonical_labels\": [\n        \"亚洲新兴市场投资策略调整\",\n        \"韩国股市\",\n        \"韩国股市整体表现\",\n        \"KOSPI指数\",\n        \"韩国KOSPI指数上涨\",\n        \"韩国股市表现\",\n        \"新兴市场资金流动\",\n        \"国际投资策略调整\",\n        \"亚洲新兴市场\",\n        \"花旗策略师调仓\"\n      ],\n      \"absorbed_subtopics\": [\n        \"新兴市场资金流动\",\n        \"国际投资策略调整\",\n        \"亚洲新兴市场\",\n        \"韩国股市\",\n        \"花旗策略师调仓\",\n        \"新兴市场评级下调\",\n        \"韩国股市整体表现\",\n        \"KOSPI指数\"\n      ],\n      \"maturity\": \"multi_evidence\"\n    },\n    {\n      \"entry_type\": \"candidate_base\",\n      \"community_id\": \"kgc:financial:l0:700\",\n      \"title\": \"全球资金流向与跨境资本流动\",\n      \"scope\": \"承接全球范围内股票、债券等资产的资金流向变化、投资者情绪驱动的资金流动、跨境资本流动（包括南向、北向、QDII、QFII等）及其对市场资金面和风险偏好的影响。涵盖美国、欧洲、亚洲等主要市场的基金资金流、ETF资金流、外资流入流出等。不包含无资金流动含义的宏观政策或单一公司业绩。\",\n      \"canonical_labels\": [\n        \"全球资金流向与跨境资本流动\",\n        \"跨境资金流动\",\n        \"港股市场资金面\",\n        \"南向资金\",\n        \"港股通\",\n        \"资金增持个股\",\n        \"南向资金增持港股特定个股\",\n        \"南向资金增持港股个股\",\n        \"南向资金持股变动\",\n        \"全球宏观叙事\"\n      ],\n      \"absorbed_subtopics\": [\n        \"全球资金流向\",\n        \"美股市场情绪\",\n        \"基金资金流\",\n        \"股票市场\",\n        \"美国股票基金\",\n        \"资金流出\",\n        \"跨境资金流动\",\n        \"港股市场资金面\"\n      ],\n      \"maturity\": \"multi_evidence\"\n    },\n    {\n      \"entry_type\": \"candidate_base\",\n      \"community_id\": \"kgc:financial:l0:702\",\n      \"title\": \"上市公司资本运作\",\n      \"scope\": \"承接A股上市公司公司层面的融资活动（定增、配股、可转债、借款等）、投资活动（收购、股权投资、项目投资、资产处置、终止项目等）以及股东行为（增减持、股份回购、股权激励等），包括相关方案公告、进展、完成及对股价和资本结构的影响。不包含公司日常经营业绩（归入公司业绩与产业景气）、资本市场制度改革（归入资本市场改革）或非A股上市公司的资本事件。\",\n      \"canonical_labels\": [\n        \"上市公司资本运作\",\n        \"上市公司股东行为与资本运作\",\n        \"股东减持行为\",\n        \"A股市场股东行为\",\n        \"5%以上股东减持\",\n        \"股东减持计划公告\",\n        \"股东减持动态\",\n        \"股东减持事件线\",\n        \"A股股东行为\",\n        \"回购机制\"\n      ],\n      \"absorbed_subtopics\": [\n        \"电子制造\",\n        \"存储芯片\",\n        \"AI服务器\",\n        \"高速光模块\",\n        \"存储测试\",\n        \"宇航级存储\",\n        \"鹏鼎控股定增\",\n        \"联动科技收购\"\n      ],\n      \"maturity\": \"multi_evidence\"\n    },\n    {\n      \"entry_type\": \"candidate_base\",\n      \"community_id\": \"kgc:financial:l0:714\",\n      \"title\": \"自然灾害应急响应\",\n      \"scope\": \"承接各类自然灾害（如洪涝、台风、地震、干旱等）的应急响应启动、预警发布、人员疏散、救援行动、应急物资调运与分配等动态，及其对公共安全、基础设施和经济活动的影响。不包括非自然灾害的应急管理或单一灾害的长期成因分析。\",\n      \"canonical_labels\": [\n        \"自然灾害应急响应\",\n        \"自然灾害预警\",\n        \"城市应急管理\",\n        \"极端天气影响\",\n        \"气象灾害\",\n        \"台风灾害\",\n        \"城市内涝\",\n        \"气象预警\",\n        \"柳州暴雨\",\n        \"红色预警\"\n      ],\n      \"absorbed_subtopics\": [\n        \"自然灾害应急响应\",\n        \"防汛抗旱\",\n        \"气象灾害\",\n        \"应急管理\",\n        \"暴雨预警\",\n        \"应急响应启动\",\n        \"自然灾害预警\",\n        \"城市应急管理\"\n      ],\n      \"maturity\": \"mature_topic\"\n    },\n    {\n      \"entry_type\": \"candidate_base\",\n      \"community_id\": \"kgc:financial:l0:728\",\n      \"title\": \"资管行业产品业绩与理财市场\",\n      \"scope\": \"承接资管行业（包括银行理财、公募基金、私募基金、券商资管等）产品业绩盘点、规模变化、行业趋势、机构动态，以及理财市场（含银行理财、理财子公司）的规模增长、产品发行、投资者行为等。不包括具体资产类别的外部市场波动或宏观流动性本身。\",\n      \"canonical_labels\": [\n        \"资管行业产品业绩与理财市场\",\n        \"私募基金行业\",\n        \"资本市场产品发行\",\n        \"资产管理\",\n        \"私募基金监管\",\n        \"备案数据\",\n        \"产品发行节奏\",\n        \"私募产品备案增长反映行业回暖\",\n        \"私募基金产品发行趋势\",\n        \"私募基金备案数据周期\"\n      ],\n      \"absorbed_subtopics\": [\n        \"资产管理\",\n        \"理财市场\",\n        \"资管产品\",\n        \"理财规模\",\n        \"年中业绩盘点\",\n        \"季度规模增长\",\n        \"私募基金行业\",\n        \"资本市场产品发行\"\n      ],\n      \"maturity\": \"multi_evidence\"\n    },\n    {\n      \"entry_type\": \"candidate_base\",\n      \"community_id\": \"kgc:financial:l0:731\",\n      \"title\": \"半导体产业链\",\n      \"scope\": \"承接半导体全产业链发展，包括芯片设计、晶圆制造、封装测试、半导体设备、半导体材料、存储芯片、逻辑芯片等，以及产业链景气度、供需变化、市场表现及其对下游应用的影响。不包含非半导体领域的电子、AI软件应用、数据中心运营、泛科技产业链或地缘政治风险。\",\n      \"canonical_labels\": [\n        \"半导体产业链\",\n        \"半导体设备与检测\",\n        \"半导体先进封装\",\n        \"AI算力基础设施\",\n        \"检测设备市场\",\n        \"半导体设备与材料\",\n        \"AI硬件产业链\",\n        \"晶圆检测设备\",\n        \"光学检测系统\",\n        \"自动化处理系统\"\n      ],\n      \"absorbed_subtopics\": [\n        \"半导体产业链\",\n        \"A股科技板块\",\n        \"半导体制造\",\n        \"半导体设备\",\n        \"半导体设备与检测\",\n        \"检测设备市场\",\n        \"晶圆检测设备\",\n        \"光学检测系统\"\n      ],\n      \"maturity\": \"mature_topic\"\n    },\n    {\n      \"entry_type\": \"candidate_redirect\",\n      \"from_community_id\": \"kgc:financial:l0:3\",\n      \"to_community_id\": \"kgc:financial:l0:640\",\n      \"to_title\": \"人工智能产业链\",\n      \"reason\": \"merged_into_parent\"\n    },\n    {\n      \"entry_type\": \"candidate_redirect\",\n      \"from_community_id\": \"kgc:financial:l0:638\",\n      \"to_community_id\": \"kgc:financial:l0:648\",\n      \"to_title\": \"机器人产业\",\n      \"reason\": \"merged_into_parent\"\n    },\n    {\n      \"entry_type\": \"candidate_redirect\",\n      \"from_community_id\": \"kgc:financial:l0:653\",\n      \"to_community_id\": \"kgc:financial:l0:679\",\n      \"to_title\": \"权益市场资金面\",\n      \"reason\": \"merged_into_parent\"\n    },\n    {\n      \"entry_type\": \"candidate_redirect\",\n      \"from_community_id\": \"kgc:financial:l0:647\",\n      \"to_community_id\": \"kgc:financial:l0:682\",\n      \"to_title\": \"中外双边外交合作\",\n      \"reason\": \"merged_into_parent\"\n    },\n    {\n      \"entry_type\": \"candidate_redirect\",\n      \"from_community_id\": \"kg...[truncated]",
+    "metadata": {
+      "task": "kg_community_assignment",
+      "raw_candidate_count": 12,
+      "deduped_candidate_count": 12,
+      "prompt_candidate_count": 50,
+      "duplicate_candidate_count": 0,
+      "prompt_candidate_id_sample": [
+        "kgc:financial:l0:640",
+        "kgc:financial:l0:648",
+        "kgc:financial:l0:679",
+        "kgc:financial:l0:682",
+        "kgc:financial:l0:698"
+      ],
+      "candidate_ledger": {
+        "redis_available": true,
+        "appended_base": 1,
+        "appended_update": 0,
+        "checkpointed": false,
+        "checkpoint_skipped_by_overlap": false,
+        "candidate_append_log_entries": 65,
+        "candidate_append_log_base_count": 50,
+        "candidate_append_log_update_count": 0,
+        "candidate_append_log_redirect_count": 15,
+        "checkpoint_meta": {
+          "checkpoint_count": 40,
+          "last_checkpointed": false,
+          "last_checkpoint_skipped_by_overlap": false,
+          "last_base_count": 50,
+          "last_update_count": 0
+        }
+      }
+    },
+    "json_schema": {
+      "type": "object",
+      "properties": {
+        "assignments": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 5,
+          "items": {
+            "type": "object",
+            "properties": {
+              "action": {
+                "type": "string",
+                "enum": [
+                  "attach_existing",
+                  "create_new",
+                  "create_parent_and_absorb_existing"
+                ]
+              },
+              "community_id": {
+                "type": "string"
+              },
+              "absorb_community_ids": {
+                "type": "array",
+                "maxItems": 8,
+                "items": {
+                  "type": "string"
+                }
+              },
+              "weight": {
+                "type": "number",
+                "minimum": 0,
+                "maximum": 1
+              },
+              "confidence": {
+                "type": "number",
+                "minimum": 0,
+                "maximum": 1
+              },
+              "fit_type": {
+                "type": "string",
+                "enum": [
+                  "adjacent_context",
+                  "broader_parent",
+                  "existing_direction",
+                  "new_parent_topic",
+                  "new_subtopic"
+                ]
+              },
+              "reason": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "action",
+              "community_id",
+              "absorb_community_ids",
+              "weight",
+              "confidence",
+              "fit_type",
+              "reason"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "new_communities": {
+          "type": "array",
+          "maxItems": 5,
+          "items": {
+            "type": "object",
+            "properties": {
+              "client_id": {
+                "type": "string"
+              },
+              "title": {
+                "type": "string"
+              },
+              "scope": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "client_id",
+              "title",
+              "scope"
+            ],
+            "additionalProperties": false
+          }
+        }
+      },
+      "required": [
+        "assignments",
+        "new_communities"
+      ],
+      "additionalProperties": false
+    },
+    "response_format": {
+      "type": "json_object"
+    },
+    "use_cache": true
+  },
+  "output": {
+    "text": {
+      "assignments": [
+        {
+          "action": "attach_existing",
+          "community_id": "kgc:financial:l0:731",
+          "absorb_community_ids": [],
+          "weight": 0.9,
+          "confidence": 0.9,
+          "fit_type": "new_subtopic",
+          "reason": "当前intent核心为存储芯片（DRAM/NAND/HBM）供需失衡与产能周期，属于半导体产业链的子方向。半导体产业链的scope明确包含存储芯片，且granularity_note允许子方向进入。野村报告关于存储短缺和韩国产能周期的内容可直接作为该L0的新增子方向。"
+        },
+        {
+          "action": "attach_existing",
+          "community_id": "kgc:financial:l0:640",
+          "absorb_community_ids": [],
+          "weight": 0.3,
+          "confidence": 0.7,
+          "fit_type": "adjacent_context",
+          "reason": "intent涉及AI算力过剩担忧的背景，与人工智能产业链的AI芯片、算力需求间接相关，但存储芯片供需不属于AI产业链的直接scope，因此作为相邻上下文，权重较低。"
+        }
+      ],
+      "new_communities": []
+    },
+    "structured_output": {
+      "assignments": [
+        {
+          "action": "attach_existing",
+          "community_id": "kgc:financial:l0:731",
+          "absorb_community_ids": [],
+          "weight": 0.9,
+          "confidence": 0.9,
+          "fit_type": "new_subtopic",
+          "reason": "当前intent核心为存储芯片（DRAM/NAND/HBM）供需失衡与产能周期，属于半导体产业链的子方向。半导体产业链的scope明确包含存储芯片，且granularity_note允许子方向进入。野村报告关于存储短缺和韩国产能周期的内容可直接作为该L0的新增子方向。"
+        },
+        {
+          "action": "attach_existing",
+          "community_id": "kgc:financial:l0:640",
+          "absorb_community_ids": [],
+          "weight": 0.3,
+          "confidence": 0.7,
+          "fit_type": "adjacent_context",
+          "reason": "intent涉及AI算力过剩担忧的背景，与人工智能产业链的AI芯片、算力需求间接相关，但存储芯片供需不属于AI产业链的直接scope，因此作为相邻上下文，权重较低。"
+        }
+      ],
+      "new_communities": []
+    },
+    "usage": {
+      "input_tokens": 18053,
+      "output_tokens": 1522,
+      "total_tokens": 19575,
+      "prompt_cache_hit_tokens": 15872,
+      "prompt_cache_miss_tokens": 2181,
+      "reasoning_tokens": 1252
+    },
+    "duration_ms": 16926,
+    "cache_hit": false,
+    "proxy": {
+      "provider": "deepseek",
+      "requested_model": "deepseek-v4-flash",
+      "resolved_model": "deepseek-v4-flash",
+      "upstream_model": "deepseek-v4-flash",
+      "route_reason": "model_exact",
+      "retry_count": 0,
+      "upstream_retry_events": [],
+      "upstream_max_retries": 10,
+      "upstream_max_retry_delay_seconds": 60,
+      "json_mode_retry_attempted": false,
+      "json_mode_retry_success": false,
+      "json_mode_retry_error": null,
+      "json_mode_initial_finish_reason": "stop",
+      "json_mode_retry_finish_reason": null,
+      "json_mode_initial_usage": {
+        "input_tokens": 18053,
+        "output_tokens": 1522,
+        "total_tokens": 19575,
+        "prompt_cache_hit_tokens": 15872,
+        "prompt_cache_miss_tokens": 2181,
+        "reasoning_tokens": 1252
+      },
+      "json_mode_retry_usage": null,
+      "json_repair_attempted": false,
+      "json_repair_success": false,
+      "json_repair_error": null,
+      "json_repair_finish_reason": null,
+      "json_repair_usage": null
+    },
+    "provider_diagnostics": {
+      "finish_reason": "stop",
+      "json_mode_initial": {
+        "id": "1576dae0-598b-4a83-b90d-04426bed0e68",
+        "model": "deepseek-v4-flash",
+        "finish_reason": "stop",
+        "usage": {
+          "input_tokens": 18053,
+          "output_tokens": 1522,
+          "total_tokens": 19575,
+          "prompt_cache_hit_tokens": 15872,
+          "prompt_cache_miss_tokens": 2181,
+          "reasoning_tokens": 1252
+        },
+        "content_chars": 724,
+        "reasoning_chars": 2803,
+        "has_tool_calls": false
+      }
+    }
+  },
+  "metadata": {
+    "source_samples": [
+      {
+        "source_type": null,
+        "source_id": null,
+        "title": ""
+      },
+      {
+        "source_type": null,
+        "source_id": null,
+        "title": ""
+      }
+    ],
+    "records": 2,
+    "dry_run": false,
+    "request_id": "kg_news_ingest:ft_news:109006-109007:1783318283",
+    "target": "prod",
+    "adapter_name": "financial",
+    "command": "KnowledgeCompileCommand",
+    "proxy": {
+      "provider": "deepseek",
+      "requested_model": "deepseek-v4-flash",
+      "resolved_model": "deepseek-v4-flash",
+      "upstream_model": "deepseek-v4-flash",
+      "route_reason": "model_exact",
+      "retry_count": 0,
+      "upstream_retry_events": [],
+      "upstream_max_retries": 10,
+      "upstream_max_retry_delay_seconds": 60,
+      "json_mode_retry_attempted": false,
+      "json_mode_retry_success": false,
+      "json_mode_retry_error": null,
+      "json_mode_initial_finish_reason": "stop",
+      "json_mode_retry_finish_reason": null,
+      "json_mode_initial_usage": {
+        "input_tokens": 18053,
+        "output_tokens": 1522,
+        "total_tokens": 19575,
+        "prompt_cache_hit_tokens": 15872,
+        "prompt_cache_miss_tokens": 2181,
+        "reasoning_tokens": 1252
+      },
+      "json_mode_retry_usage": null,
+      "json_repair_attempted": false,
+      "json_repair_success": false,
+      "json_repair_error": null,
+      "json_repair_finish_reason": null,
+      "json_repair_usage": null
+    },
+    "duration_ms": 16926,
+    "cache_hit": false,
+    "cache_store": "miss",
+    "has_tool_choice": false,
+    "tools_count": 0,
+    "prompt_chars": 40337,
+    "has_json_schema": true,
+    "use_cache": true,
+    "backend": "deepseek",
+    "model": "deepseek-v4-flash",
+    "provider": "deepseek",
+    "source_type": "-",
+    "source_id": "-",
+    "task": "kg_community_assignment",
+    "scope.attributes.public_key": "pk-lf-d52cf296-5725-45dc-a0f7-31202673d39f",
+    "scope.version": "4.6.1",
+    "scope.name": "langfuse-sdk",
+    "resourceAttributes.service.name": "unknown_service",
+    "resourceAttributes.telemetry.sdk.version": "1.41.1",
+    "resourceAttributes.telemetry.sdk.name": "opentelemetry",
+    "resourceAttributes.telemetry.sdk.language": "python"
+  }
+}

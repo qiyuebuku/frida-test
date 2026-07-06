@@ -48,6 +48,35 @@ def test_ft_news_projection_maps_trace_metadata_and_mentions() -> None:
     ]
 
 
+def test_ft_news_projection_dedupes_title_summary_content_text() -> None:
+    content = (
+        "【5月乘邮轮访韩外国人首破20万 中国人占近半】财联社7月6日电，"
+        "以5月为准，乘坐邮轮访问韩国的外国人为20.6542万人次。"
+    )
+
+    record = project_ft_news_row(
+        {
+            "id": 108928,
+            "title": "5月乘邮轮访韩外国人首破20万 中国人占近半",
+            "summary": content,
+            "content": content,
+            "source": "cls",
+            "source_name": "财联社电报",
+            "source_reliability": 0.85,
+            "category": "",
+            "url": "",
+            "tags": [],
+            "related_stocks": [],
+            "published_at": datetime(2026, 7, 6, tzinfo=timezone.utc),
+            "fingerprint": "fp",
+            "created_at": datetime(2026, 7, 6, tzinfo=timezone.utc),
+        }
+    )
+
+    assert record is not None
+    assert record["raw_text"] == content
+
+
 def test_ft_market_flow_projection_outputs_derived_signal() -> None:
     record = project_ft_market_flow_row(
         {

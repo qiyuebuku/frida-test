@@ -21,6 +21,8 @@ from src.domain.knowledge.cognitive_index import (
     ASSIGNMENT_SCHEMA,
     ASSIGNMENT_SYSTEM_PROMPT,
     ASSIGNMENT_MAX_TOKENS,
+    ASSIGNMENT_RERANK_MIN_KEEP,
+    ASSIGNMENT_RETRIEVAL_SCORE_FLOOR,
     COGNITIVE_CARD_MAX_TOKENS,
     COGNITIVE_CARD_SCHEMA,
     COGNITIVE_CARD_SYSTEM_PROMPT,
@@ -29,6 +31,8 @@ from src.domain.knowledge.cognitive_index import (
     MAX_ASSIGNMENT_CANDIDATES,
     MAX_SEMANTIC_ASSIGNMENT_CANDIDATES,
     RERANK_MIN_ASSIGNMENT_CANDIDATES,
+    ASSIGNMENT_RERANK_SCORE_FLOOR,
+    ASSIGNMENT_RERANK_TOP_DELTA,
     CognitiveCard,
     CognitiveCommunityBuildResult,
     CommunityAssignment,
@@ -63,17 +67,16 @@ from src.infrastructure.vector_store.milvus_hybrid_store import MilvusHybridDocu
 
 ASSIGNMENT_LEDGER_SCHEMA_VERSION = "candidate_append_log_v1"
 ASSIGNMENT_LEDGER_TTL_SECONDS = 7 * 24 * 60 * 60
-ASSIGNMENT_LEDGER_MAX_BASE_CANDIDATES = 30
+ASSIGNMENT_LEDGER_MAX_BASE_CANDIDATES = 50
 ASSIGNMENT_LEDGER_KEEP_BASE_CANDIDATES = 10
-ASSIGNMENT_LEDGER_MAX_CHARS = 24_000
-ASSIGNMENT_LEDGER_CHECKPOINT_REUSE_OVERLAP = 0.7
+ASSIGNMENT_LEDGER_CHECKPOINT_REUSE_OVERLAP = 0.85
 ASSIGNMENT_BUCKET_SCHEMA_VERSION = "assignment_bucket_planning_v1"
 ASSIGNMENT_BUCKET_TTL_SECONDS = 7 * 24 * 60 * 60
-ASSIGNMENT_BUCKET_MAX_COUNT = 40
+ASSIGNMENT_BUCKET_MAX_COUNT = 80
 ASSIGNMENT_BUCKET_AUTO_MERGE_CANDIDATE_LIMIT = 24
-ASSIGNMENT_BUCKET_AUTO_MERGE_BATCH_SIZE = 4
+ASSIGNMENT_BUCKET_AUTO_MERGE_BATCH_SIZE = 15
 ASSIGNMENT_BUCKET_CONCURRENCY = 20
-ASSIGNMENT_BUCKET_PLANNING_BATCH_SIZE = 8
+ASSIGNMENT_BUCKET_PLANNING_BATCH_SIZE = 20
 ASSIGNMENT_BUCKET_LOCK_TIMEOUT_SECONDS = 900
 ASSIGNMENT_BUCKET_LOCK_BLOCKING_TIMEOUT_SECONDS = 900
 ASSIGNMENT_BUCKET_SEMANTIC_DIRECT_THRESHOLD = 0.60
@@ -336,6 +339,12 @@ class CognitiveCardExtractor:
     async def _extract_one(self, chunk: EvidenceChunk) -> CognitiveCard:
         payload = dict(chunk.payload or {})
         prompt = {
+            "time_grounding_instruction": (
+                "source_published_at 是当前新闻发布时间。"
+                "chunk_text 中出现今年、去年、明年、本月、上月或未带年份的月份时，可结合 source_published_at 理解时间；"
+                "如果无法从 chunk_text 或 source_published_at 推导出年份，不要补年份。"
+            ),
+            "source_published_at": payload.get("published_at") or "",
             "title": payload.get("title") or "",
             "chunk_text": chunk.content,
         }
@@ -510,7 +519,7 @@ class AssignmentCandidateOrderStore:
         ttl_seconds: int = ASSIGNMENT_LEDGER_TTL_SECONDS,
         max_base_candidates: int = ASSIGNMENT_LEDGER_MAX_BASE_CANDIDATES,
         keep_base_candidates: int = ASSIGNMENT_LEDGER_KEEP_BASE_CANDIDATES,
-        max_chars: int = ASSIGNMENT_LEDGER_MAX_CHARS,
+        max_chars: int | None = None,
         checkpoint_reuse_overlap: float = ASSIGNMENT_LEDGER_CHECKPOINT_REUSE_OVERLAP,
     ) -> None:
         self._target = target
@@ -518,7 +527,6 @@ class AssignmentCandidateOrderStore:
         self._ttl_seconds = ttl_seconds
         self._max_base_candidates = max_base_candidates
         self._keep_base_candidates = keep_base_candidates
-        self._max_chars = max_chars
         self._checkpoint_reuse_overlap = checkpoint_reuse_overlap
 
     def prepare_append_log(
@@ -927,38 +935,21 @@ class AssignmentCandidateOrderStore:
         current_candidates: list[dict[str, Any]],
     ) -> tuple[list[dict[str, Any]], dict[str, dict[str, Any]], dict[str, dict[str, Any]], bool, bool]:
         base_count = _candidate_append_log_base_count(append_log)
-        base_entries = [item for item in append_log if item.get("entry_type") == "candidate_base"]
-        base_payload_chars = len(json.dumps(base_entries, ensure_ascii=False, separators=(",", ":")))
-        if (
-            base_count <= self._max_base_candidates
-            and base_payload_chars <= self._max_chars
-        ):
+        if base_count <= self._max_base_candidates:
             return append_log, stats, counters, False, False
         old_base_ids = _candidate_append_log_base_ids_in_order(append_log)
         first_order = {community_id: index for index, community_id in enumerate(old_base_ids)}
-        redirect_sources = {
-            str(item.get("from_community_id") or "")
-            for item in append_log
-            if item.get("entry_type") == "candidate_redirect" and item.get("from_community_id")
-        }
-        redirect_targets = {
-            str(item.get("to_community_id") or "")
-            for item in append_log
-            if item.get("entry_type") == "candidate_redirect" and item.get("to_community_id")
-        }
         current_ids = [str(candidate.get("community_id") or "") for candidate in current_candidates if candidate.get("community_id")]
         ranked_ids = sorted(
             first_order,
             key=lambda community_id: (
-                community_id in redirect_sources,
-                -(1 if community_id in redirect_targets else 0),
                 -int((counters.get(community_id) or {}).get("accepted") or 0),
                 -int((counters.get(community_id) or {}).get("retrieved") or 0),
                 first_order[community_id],
             ),
         )
         selected_ids = _ordered_unique([*ranked_ids[: self._keep_base_candidates], *current_ids])
-        if base_payload_chars <= self._max_chars and _candidate_prefix_overlap_ratio(old_base_ids, selected_ids) >= self._checkpoint_reuse_overlap:
+        if _candidate_prefix_overlap_ratio(old_base_ids, selected_ids) >= self._checkpoint_reuse_overlap:
             return append_log, stats, counters, False, True
         base_by_id = {
             str(item.get("community_id") or ""): item
@@ -971,13 +962,6 @@ class AssignmentCandidateOrderStore:
             for community_id in sorted_selected_ids
             if community_id in base_by_id
         ]
-        selected_id_set = {str(item.get("community_id") or "") for item in rebuilt if item.get("community_id")}
-        rebuilt.extend(
-            dict(item)
-            for item in append_log
-            if item.get("entry_type") == "candidate_redirect"
-            and str(item.get("to_community_id") or "") in selected_id_set
-        )
         selected = {str(item.get("community_id") or "") for item in rebuilt if item.get("community_id")}
         return (
             rebuilt,
@@ -1999,13 +1983,16 @@ def _bucket_auto_merge_candidates(
             score = _bucket_similarity_score(left, right)
             if score <= 0:
                 continue
+            shared_signals = _bucket_shared_signals(left, right)
+            if not shared_signals:
+                continue
             source, target = _bucket_merge_source_target(left, right)
             candidate = {
                 "source_bucket_id": source["bucket_id"],
                 "source_bucket_title": source["bucket_title"],
                 "target_bucket_id": target["bucket_id"],
                 "target_bucket_title": target["bucket_title"],
-                "shared_signals": _bucket_shared_signals(left, right),
+                "shared_signals": shared_signals,
                 "source_scope": str(source.get("scope") or "")[:160],
                 "target_scope": str(target.get("scope") or "")[:160],
             }
@@ -2015,12 +2002,17 @@ def _bucket_auto_merge_candidates(
 
 
 def _bucket_similarity_score(left: dict[str, Any], right: dict[str, Any]) -> float:
-    left_themes = {_theme_cache_key(item) for item in _candidate_list(left.get("canonical_themes")) if _theme_cache_key(item)}
-    right_themes = {_theme_cache_key(item) for item in _candidate_list(right.get("canonical_themes")) if _theme_cache_key(item)}
+    left_themes = {_theme_cache_key(item) for item in _candidate_list(left.get("canonical_themes")) if _has_cjk(str(item or "")) and _theme_cache_key(item)}
+    right_themes = {_theme_cache_key(item) for item in _candidate_list(right.get("canonical_themes")) if _has_cjk(str(item or "")) and _theme_cache_key(item)}
     theme_overlap = len(left_themes & right_themes)
-    title_overlap = _char_ngram_jaccard(str(left.get("bucket_title") or ""), str(right.get("bucket_title") or ""))
-    scope_overlap = _char_ngram_jaccard(str(left.get("scope") or ""), str(right.get("scope") or ""))
-    return theme_overlap * 2.0 + title_overlap + scope_overlap * 0.5
+    left_title_terms = _bucket_semantic_terms([left.get("bucket_title")])
+    right_title_terms = _bucket_semantic_terms([right.get("bucket_title")])
+    left_scope_terms = _bucket_semantic_terms([left.get("scope")])
+    right_scope_terms = _bucket_semantic_terms([right.get("scope")])
+    title_overlap = len(left_title_terms & right_title_terms)
+    scope_overlap = len(left_scope_terms & right_scope_terms)
+    cross_overlap = len((left_title_terms | left_scope_terms | left_themes) & (right_title_terms | right_scope_terms | right_themes))
+    return theme_overlap * 4.0 + title_overlap * 2.0 + scope_overlap * 1.0 + cross_overlap * 0.5
 
 
 def _bucket_merge_source_target(left: dict[str, Any], right: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any]]:
@@ -2039,17 +2031,76 @@ def _bucket_merge_source_target(left: dict[str, Any], right: dict[str, Any]) -> 
 
 def _bucket_shared_signals(left: dict[str, Any], right: dict[str, Any]) -> list[str]:
     result: list[str] = []
-    left_themes = {_theme_cache_key(item): item for item in _candidate_list(left.get("canonical_themes"))}
+    left_themes = {
+        _theme_cache_key(item): item
+        for item in _candidate_list(left.get("canonical_themes"))
+        if _has_cjk(str(item or ""))
+    }
     for item in _candidate_list(right.get("canonical_themes")):
         key = _theme_cache_key(item)
         if key and key in left_themes:
             result.append(str(left_themes[key]))
     if not result:
-        left_title = str(left.get("bucket_title") or "")
-        right_title = str(right.get("bucket_title") or "")
-        common = _common_char_ngrams(left_title, right_title)
-        result.extend(common[:5])
+        left_terms = _bucket_semantic_terms(
+            [
+                left.get("bucket_title"),
+                left.get("scope"),
+                *_candidate_list(left.get("canonical_themes")),
+            ]
+        )
+        right_terms = _bucket_semantic_terms(
+            [
+                right.get("bucket_title"),
+                right.get("scope"),
+                *_candidate_list(right.get("canonical_themes")),
+            ]
+        )
+        result.extend(sorted(left_terms & right_terms)[:5])
     return _ordered_unique(result)[:8]
+
+
+_BUCKET_MERGE_STOP_SIGNALS = {
+    "承接",
+    "可能",
+    "竞争",
+    "行业",
+    "主题",
+    "风险",
+    "事件",
+    "动态",
+    "市场",
+    "相关",
+}
+
+
+def _bucket_semantic_terms(values: list[Any]) -> set[str]:
+    terms: set[str] = set()
+    for value in values:
+        text = str(value or "").strip()
+        if not _has_cjk(text):
+            continue
+        normalized = _theme_cache_key(text)
+        for run in re.findall(r"[\u4e00-\u9fff]+", normalized):
+            if len(run) >= 2 and run not in _BUCKET_MERGE_STOP_SIGNALS:
+                terms.add(run[:16])
+            terms.update(
+                item
+                for item in _char_ngrams(run, n=2)
+                if item not in _BUCKET_MERGE_STOP_SIGNALS
+            )
+            terms.update(
+                item
+                for item in _char_ngrams(run, n=3)
+                if item not in _BUCKET_MERGE_STOP_SIGNALS
+            )
+        for token in re.findall(r"[a-zA-Z][a-zA-Z0-9]{1,8}", normalized):
+            if token.lower() in {"ai", "ipo", "etf", "pmi", "gdp", "cpo", "dram", "nand"}:
+                terms.add(token.lower())
+    return terms
+
+
+def _has_cjk(value: str) -> bool:
+    return bool(re.search(r"[\u4e00-\u9fff]", value))
 
 
 def _char_ngram_jaccard(left: str, right: str, *, n: int = 2) -> float:
@@ -2719,6 +2770,7 @@ class CommunityCardBuilder:
         candidate_order_store: AssignmentCandidateOrderStore | None = None,
         bucket_planner: CommunityBucketPlanner | None = None,
         bucket_concurrency: int = ASSIGNMENT_BUCKET_CONCURRENCY,
+        reranker_concurrency: int = settings.KG_ASSIGNMENT_RERANKER_CONCURRENCY,
         community_id_factory: Callable[[str, int, str], str] | None = None,
     ):
         self._llm = llm or get_llm_gateway_service()
@@ -2730,6 +2782,8 @@ class CommunityCardBuilder:
         self._candidate_order_store = candidate_order_store
         self._bucket_planner = bucket_planner
         self._bucket_concurrency = max(1, int(bucket_concurrency or 1))
+        self._reranker_concurrency = max(1, int(reranker_concurrency or 1))
+        self._reranker_semaphore = asyncio.Semaphore(self._reranker_concurrency)
         self._community_id_factory = community_id_factory
 
     async def build(
@@ -2869,6 +2923,7 @@ class CommunityCardBuilder:
                 "community_builder": "cognitive_card_assignment_bucket_v1" if use_bucket_planner else "cognitive_card_assignment_v1",
                 "bucket_planning": _bucket_plan_diagnostics(bucket_plan),
                 "bucket_concurrency": self._bucket_concurrency if use_bucket_planner else 1,
+                "reranker_concurrency": self._reranker_concurrency,
                 "candidate_ledger": _aggregate_candidate_ledger_diagnostics(candidate_ledger_diagnostics),
             }
             langfuse_update_span(output=diagnostics, status_message="completed")
@@ -2967,12 +3022,14 @@ class CommunityCardBuilder:
                 if community_id and community_id not in seen:
                     seen.add(community_id)
                     candidates.append(candidate)
-        return await self._rerank_candidates(topic_intent, candidates)
+        candidates, retrieval_filter = _filter_assignment_retrieval_candidates(candidates)
+        return await self._rerank_candidates(topic_intent, candidates, retrieval_filter=retrieval_filter)
 
     async def _rerank_candidates(
         self,
         topic_intent: dict[str, Any],
         candidates: list[dict[str, Any]],
+        retrieval_filter: dict[str, Any] | None = None,
     ) -> list[dict[str, Any]]:
         if len(candidates) < RERANK_MIN_ASSIGNMENT_CANDIDATES or self._reranker_client is None:
             return candidates[:MAX_ASSIGNMENT_CANDIDATES]
@@ -2985,13 +3042,16 @@ class CommunityCardBuilder:
                 "candidate_count": len(candidates),
                 "top_n": min(MAX_ASSIGNMENT_CANDIDATES, len(candidates)),
                 "candidate_titles": [candidate.get("title") for candidate in candidates[:20]],
+                "reranker_concurrency": self._reranker_concurrency,
+                "retrieval_filter": retrieval_filter,
             },
         ):
-            response = await self._reranker_client.rerank(
-                query=query,
-                documents=documents,
-                top_n=min(MAX_ASSIGNMENT_CANDIDATES, len(candidates)),
-            )
+            async with self._reranker_semaphore:
+                response = await self._reranker_client.rerank(
+                    query=query,
+                    documents=documents,
+                    top_n=min(MAX_ASSIGNMENT_CANDIDATES, len(candidates)),
+                )
             ranked: list[dict[str, Any]] = []
             seen_indexes: set[int] = set()
             for result in response.results:
@@ -3007,13 +3067,21 @@ class CommunityCardBuilder:
                     for index, candidate in enumerate(candidates)
                     if index not in seen_indexes
                 )
-            selected = ranked[:MAX_ASSIGNMENT_CANDIDATES]
+            selected = _filter_assignment_rerank_candidates(ranked)
             langfuse_update_span(
                 output={
                     "raw_candidates": len(candidates),
                     "reranked_candidates": len(ranked),
                     "selected_candidates": len(selected),
                     "dropped_candidates": max(0, len(candidates) - len(selected)),
+                    "rerank_filter": {
+                        "score_floor": ASSIGNMENT_RERANK_SCORE_FLOOR,
+                        "top_delta": ASSIGNMENT_RERANK_TOP_DELTA,
+                        "min_keep": ASSIGNMENT_RERANK_MIN_KEEP,
+                        "max_keep": MAX_ASSIGNMENT_CANDIDATES,
+                        "top_score": ranked[0].get("rerank_score") if ranked else None,
+                        "lowest_selected_score": selected[-1].get("rerank_score") if selected else None,
+                    },
                     "top_candidates": [
                         {
                             "community_id": candidate.get("community_id"),
@@ -3136,17 +3204,20 @@ async def _call_communities_updated(
     communities: list[GraphIndexCommunity],
     remove_community_ids: list[str],
 ) -> None:
-    parameters = [
+    parameters = list(inspect.signature(callback).parameters.values())
+    if any(parameter.kind == inspect.Parameter.VAR_POSITIONAL for parameter in parameters):
+        await callback(communities, remove_community_ids)
+        return
+    positional_parameters = [
         parameter
-        for parameter in inspect.signature(callback).parameters.values()
+        for parameter in parameters
         if parameter.kind
         in {
             inspect.Parameter.POSITIONAL_ONLY,
             inspect.Parameter.POSITIONAL_OR_KEYWORD,
         }
-        and parameter.default is inspect.Parameter.empty
     ]
-    if len(parameters) <= 1:
+    if len(positional_parameters) <= 1:
         await callback(communities)
     else:
         await callback(communities, remove_community_ids)
@@ -3315,6 +3386,69 @@ def _ordered_unique(values) -> list[str]:
         seen.add(text)
         result.append(text)
     return result
+
+
+def _filter_assignment_rerank_candidates(ranked: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    if not ranked:
+        return []
+    top_score = _optional_float(ranked[0].get("rerank_score"))
+    threshold = None if top_score is None else top_score - ASSIGNMENT_RERANK_TOP_DELTA
+    selected: list[dict[str, Any]] = []
+    for candidate in ranked[:MAX_ASSIGNMENT_CANDIDATES]:
+        score = _optional_float(candidate.get("rerank_score"))
+        if score is None:
+            continue
+        if score < ASSIGNMENT_RERANK_SCORE_FLOOR:
+            continue
+        if threshold is not None and score < threshold:
+            continue
+        selected.append(candidate)
+    if len(selected) < ASSIGNMENT_RERANK_MIN_KEEP:
+        selected_ids = {str(item.get("community_id") or "") for item in selected}
+        for candidate in ranked[:MAX_ASSIGNMENT_CANDIDATES]:
+            community_id = str(candidate.get("community_id") or "")
+            if community_id in selected_ids:
+                continue
+            selected.append(candidate)
+            selected_ids.add(community_id)
+            if len(selected) >= min(ASSIGNMENT_RERANK_MIN_KEEP, MAX_ASSIGNMENT_CANDIDATES, len(ranked)):
+                break
+    return selected[:MAX_ASSIGNMENT_CANDIDATES]
+
+
+def _filter_assignment_retrieval_candidates(candidates: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    diagnostics = {
+        "score_floor": ASSIGNMENT_RETRIEVAL_SCORE_FLOOR,
+        "raw_candidates": len(candidates),
+        "kept_candidates": len(candidates),
+        "dropped_candidates": 0,
+        "fallback_to_raw": False,
+        "lowest_raw_score": None,
+    }
+    if not candidates:
+        return candidates, diagnostics
+    kept: list[dict[str, Any]] = []
+    scores: list[float] = []
+    for candidate in candidates:
+        score = _optional_float(candidate.get("retrieval_score"))
+        if score is not None:
+            scores.append(score)
+        if score is None or score >= ASSIGNMENT_RETRIEVAL_SCORE_FLOOR:
+            kept.append(candidate)
+    if not kept:
+        kept = candidates
+        diagnostics["fallback_to_raw"] = True
+    diagnostics["kept_candidates"] = len(kept)
+    diagnostics["dropped_candidates"] = max(0, len(candidates) - len(kept))
+    diagnostics["lowest_raw_score"] = min(scores) if scores else None
+    return kept, diagnostics
+
+
+def _optional_float(value: Any) -> float | None:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
 
 
 def _candidate_rerank_text(candidate: dict[str, Any]) -> str:

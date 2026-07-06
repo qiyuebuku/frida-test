@@ -14,6 +14,7 @@ from src.domain.knowledge.semantic_index_materials import (
     SEMANTIC_COLLECTION_CHUNK,
     SEMANTIC_COLLECTION_COGNITIVE_CARD,
     SEMANTIC_COLLECTION_COMMUNITY,
+    SEMANTIC_COLLECTION_COMMUNITY_INSIGHT,
     SEMANTIC_COLLECTION_ROLES,
     SemanticVectorDocument,
     build_semantic_vector_documents,
@@ -37,6 +38,7 @@ AGENT_READ_COLLECTION_ROLES = (
     SEMANTIC_COLLECTION_CHUNK,
     SEMANTIC_COLLECTION_COGNITIVE_CARD,
     SEMANTIC_COLLECTION_COMMUNITY,
+    SEMANTIC_COLLECTION_COMMUNITY_INSIGHT,
 )
 
 
@@ -695,7 +697,7 @@ def _retrieval_hit_from_milvus_hit(hit: MilvusHybridHit, *, score: float) -> Ret
             evidence_refs=evidence_refs,
             matched_fields=["milvus.cognitive_card"],
         )
-    if source_type in {"kg_community_report", "kg_finding"} and source_id:
+    if source_type in {"kg_community_report", "kg_community_insight", "kg_finding"} and source_id:
         return RetrievalHit(
             hit_id=hit.chunk_id,
             hit_type="semantic_hybrid",

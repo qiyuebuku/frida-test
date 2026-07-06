@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import asyncio
+import random
 import time
 from dataclasses import dataclass
 from typing import Any
@@ -212,7 +213,8 @@ class RerankerClient:
 
 def _retry_delay(attempt: int) -> float:
     delay = RERANKER_RETRY_BASE_DELAY * (2 ** max(0, attempt - 1))
-    return min(delay, RERANKER_RETRY_MAX_DELAY)
+    capped = min(delay, RERANKER_RETRY_MAX_DELAY)
+    return min(capped + random.uniform(0, capped * 0.2), RERANKER_RETRY_MAX_DELAY)
 
 
 def _parse_rerank_response(data: Any, *, fallback_latency_ms: float) -> RerankResponse:

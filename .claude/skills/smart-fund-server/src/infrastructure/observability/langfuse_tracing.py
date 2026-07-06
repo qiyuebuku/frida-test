@@ -169,7 +169,7 @@ def normalize_langfuse_session_id(value: str | None) -> str | None:
 
 def clip_trace_text(value: Any, *, limit: int | None = None) -> str:
     raw = "" if value is None else str(value)
-    max_chars = limit if limit is not None else int(os.getenv("KG_LANGFUSE_MAX_TEXT_CHARS", "16000"))
+    max_chars = limit if limit is not None else int(os.getenv("KG_LANGFUSE_MAX_TEXT_CHARS", "1000000"))
     if max_chars <= 0 or len(raw) <= max_chars:
         return raw
     return raw[:max_chars] + "...[truncated]"

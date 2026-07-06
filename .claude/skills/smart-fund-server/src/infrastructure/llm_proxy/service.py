@@ -304,7 +304,7 @@ def _llm_provider_diagnostics(raw_payload: dict[str, Any] | None) -> dict[str, A
     return {key: value for key, value in diagnostics.items() if value is not None}
 
 
-def _clip_json_trace(value: Any, *, limit: int = 16000) -> Any:
+def _clip_json_trace(value: Any, *, limit: int = 1_000_000) -> Any:
     if value is None:
         return None
     try:

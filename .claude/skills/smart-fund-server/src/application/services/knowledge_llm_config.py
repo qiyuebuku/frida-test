@@ -45,6 +45,7 @@ def kg_llm_config_summary() -> dict:
             "kg_cognitive_card": resolve_kg_llm_model("kg_cognitive_card"),
             "kg_community_assignment": resolve_kg_llm_model("kg_community_assignment"),
             "kg_community_report": resolve_kg_llm_model("kg_community_report"),
+            "kg_community_insight": resolve_kg_llm_model("kg_community_insight"),
             "kg_delta_finding": resolve_kg_llm_model("kg_delta_finding"),
             "kg_finding_evidence_validate": resolve_kg_llm_model("kg_finding_evidence_validate"),
         },

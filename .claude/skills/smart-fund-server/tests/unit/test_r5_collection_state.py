@@ -111,9 +111,9 @@ def test_r5_compute_checkpoint_backfill_not_reached():
 
 @pytest.mark.unit
 def test_r5_news_source_configs_complete():
-    """NewsAggregator.SOURCE_CONFIGS 包含所有 9 个源"""
+    """NewsAggregator.SOURCE_CONFIGS 包含所有 10 个源"""
     from src.domain.collection.services.news import NewsAggregator
-    expected = {"cls", "gov", "pboc_omo", "pboc_monetary", "em_news",
+    expected = {"cls", "cls_depth", "gov", "pboc_omo", "pboc_monetary", "em_news",
                 "em_reports", "ths", "sina", "xueqiu"}
     assert set(NewsAggregator.SOURCE_CONFIGS.keys()) == expected
 
@@ -156,6 +156,76 @@ def test_r5_extract_item_timestamp():
 
     ts = NewsAggregator._extract_item_timestamp({})
     assert ts == 0.0
+
+
+@pytest.mark.unit
+def test_r5_cls_incremental_checkpoint_keeps_full_timestamp():
+    """财联社增量 checkpoint 必须保留时分秒，避免反复拉当天全量。"""
+    from src.domain.collection.services.news import _iso_to_timestamp
+
+    assert _iso_to_timestamp("2026-07-04T23:52:08+08:00") == 1783180328
+    assert _iso_to_timestamp("2026-07-04") == 1783094400
+
+
+@pytest.mark.unit
+def test_r5_cls_realtime_cache_ttl_is_short():
+    """财联社实时快讯不能使用长 TTL，否则会持续命中旧 raw cache。"""
+    from src.infrastructure.clients.cls import CLSClient
+
+    assert CLSClient.REALTIME_CACHE_TTL_SECONDS <= 60
+
+
+@pytest.mark.unit
+def test_r5_cls_depth_cache_ttl_is_bounded():
+    """财联社深度文章列表不能使用长 TTL，避免头条文章长时间不更新。"""
+    from src.infrastructure.clients.cls import CLSClient
+
+    assert CLSClient.DEPTH_CACHE_TTL_SECONDS <= 600
+
+
+@pytest.mark.unit
+def test_r5_normalize_cls_depth():
+    """财联社深度文章列表规范化为独立 source。"""
+    from src.domain.collection.services.news import normalize_cls_depth
+
+    items = normalize_cls_depth([
+        {
+            "id": 2417256,
+            "ctime": 1783230585,
+            "title": "人造太阳”时间表更新 第一度电瞄准2030年",
+            "brief": "可控核聚变又有重大进展。",
+            "article_tag": [{"name": "原创"}],
+            "source": "央视新闻",
+            "reading_num": 280783,
+        }
+    ])
+
+    assert len(items) == 1
+    item = items[0]
+    assert item["source"] == "cls_depth"
+    assert item["source_name"] == "财联社深度"
+    assert item["title"].startswith("人造太阳")
+    assert item["content"] == "可控核聚变又有重大进展。"
+    assert item["url"] == "https://www.cls.cn/detail/2417256"
+    assert item["tags"] == ["原创"]
+
+
+@pytest.mark.unit
+def test_r5_normalize_cls_telegraph_source_name():
+    """财联社电报和财联社深度必须用不同 source_name 展示。"""
+    from src.domain.collection.services.news import normalize_cls
+
+    items = normalize_cls([
+        {
+            "ctime": 1783230585,
+            "title": "财联社7月5日电，测试快讯。",
+            "brief": "测试快讯。",
+        }
+    ])
+
+    assert len(items) == 1
+    assert items[0]["source"] == "cls"
+    assert items[0]["source_name"] == "财联社电报"
 
 
 @pytest.mark.unit

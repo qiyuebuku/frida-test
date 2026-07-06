@@ -205,6 +205,43 @@ class KnowledgeGraphCommunity(Base):
     change_reason: Mapped[str] = mapped_column(String(64), nullable=False, default="build")
     lineage_id: Mapped[str] = mapped_column(String(180), nullable=False, default="")
     previous_community_ids: Mapped[list] = mapped_column(JSONB, default=list, nullable=False)
+    last_insight_generated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+    updated_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+
+class KnowledgeCommunityInsight(Base):
+    """Current high-level cognitive report for a graph community."""
+
+    __tablename__ = "kg_community_insights"
+    __table_args__ = (
+        UniqueConstraint("community_id", name="uq_kg_community_insights_community"),
+        Index("ix_kg_community_insights_adapter_status", "adapter_name", "status"),
+        Index("ix_kg_community_insights_community", "community_id"),
+        Index("ix_kg_community_insights_updated", "updated_at"),
+    )
+
+    insight_id: Mapped[str] = mapped_column(String(220), primary_key=True)
+    community_id: Mapped[str] = mapped_column(String(180), nullable=False)
+    adapter_name: Mapped[str] = mapped_column(String(64), nullable=False)
+    projection: Mapped[str] = mapped_column(String(64), nullable=False)
+    insight_version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    title: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    insight_full_report: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    report_json: Mapped[dict] = mapped_column(JSONB, default=dict, nullable=False)
+    source_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    cognitive_card_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    assignment_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    evidence_ids: Mapped[list] = mapped_column(JSONB, default=list, nullable=False)
+    chunk_ids: Mapped[list] = mapped_column(JSONB, default=list, nullable=False)
+    cognitive_card_ids: Mapped[list] = mapped_column(JSONB, default=list, nullable=False)
+    status: Mapped[str] = mapped_column(String(32), nullable=False, default="active")
+    error_message: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    payload: Mapped[dict] = mapped_column(JSONB, default=dict, nullable=False)
     created_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )

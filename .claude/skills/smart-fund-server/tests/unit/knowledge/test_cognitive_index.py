@@ -14,8 +14,11 @@ from src.application.services.cognitive_index_service import (
     CognitiveCardExtractor,
     CommunityBucketPlanner,
     CommunityCardBuilder,
+    _call_communities_updated,
+    _bucket_auto_merge_candidates,
     _candidate_append_log_base_count,
     _dedupe_assignment_candidates,
+    _filter_assignment_retrieval_candidates,
 )
 from src.domain.knowledge.cognitive_index import (
     ASSIGNMENT_MAX_TOKENS,
@@ -33,6 +36,32 @@ from src.domain.knowledge.schemas import EvidenceChunk
 from src.infrastructure.config import settings
 from src.infrastructure.llm_proxy.types import LLMProxyResponse
 from src.infrastructure.clients.reranker import RerankResponse, RerankResult
+
+
+@pytest.mark.asyncio
+async def test_call_communities_updated_passes_optional_remove_ids():
+    """callback 第二个参数有默认值时，也必须收到待删除 community ids。"""
+    received = []
+
+    async def callback(communities, remove_community_ids=None):
+        received.append((communities, remove_community_ids))
+
+    await _call_communities_updated(callback, ["parent"], ["child"])
+
+    assert received == [(["parent"], ["child"])]
+
+
+@pytest.mark.asyncio
+async def test_call_communities_updated_keeps_legacy_one_arg_callback():
+    """兼容只接收 communities 的旧 callback。"""
+    received = []
+
+    async def callback(communities):
+        received.append(communities)
+
+    await _call_communities_updated(callback, ["parent"], ["child"])
+
+    assert received == [["parent"]]
 
 
 def _chunk() -> EvidenceChunk:
@@ -428,6 +457,129 @@ class _Reranker:
         )
 
 
+class _ScoreReranker:
+    def __init__(self, scores: list[float]) -> None:
+        self.scores = scores
+        self.calls = []
+
+    async def rerank(self, *, query, documents, top_n=None):
+        self.calls.append({"query": query, "documents": documents, "top_n": top_n})
+        limit = min(top_n or len(documents), len(documents), len(self.scores))
+        return RerankResponse(
+            model="score-reranker",
+            results=[
+                RerankResult(index=index, relevance_score=self.scores[index], document=documents[index])
+                for index in range(limit)
+            ],
+            latency_ms=1,
+            total_documents=len(documents),
+        )
+
+
+class _SlowReranker:
+    def __init__(self) -> None:
+        self.calls = 0
+        self.active = 0
+        self.max_active = 0
+
+    async def rerank(self, *, query, documents, top_n=None):
+        self.calls += 1
+        self.active += 1
+        self.max_active = max(self.max_active, self.active)
+        try:
+            await asyncio.sleep(0.01)
+            limit = min(top_n or len(documents), len(documents))
+            return RerankResponse(
+                model="slow-reranker",
+                results=[
+                    RerankResult(index=index, relevance_score=1.0 - index * 0.01, document=documents[index])
+                    for index in range(limit)
+                ],
+                latency_ms=10,
+                total_documents=len(documents),
+            )
+        finally:
+            self.active -= 1
+
+
+@pytest.mark.asyncio
+async def test_assignment_reranker_calls_are_throttled():
+    reranker = _SlowReranker()
+    builder = CommunityCardBuilder(reranker_client=reranker, reranker_concurrency=2)
+    topic_intent = {
+        "raw_theme": "AI 算力链",
+        "title_candidate": "AI 算力链",
+        "parent_themes": ["AI 算力链"],
+        "summary": "AI 芯片、光模块和数据中心供需变化。",
+    }
+    candidates = [
+        {
+            "community_id": f"kgc:financial:l0:{index}",
+            "title": f"候选主题{index}",
+            "scope": "承接 AI 算力、半导体、数据中心和光模块方向。",
+            "canonical_labels": ["AI算力链", "半导体"],
+            "maturity": "single_evidence",
+            "retrieval_score": 0.5,
+        }
+        for index in range(13)
+    ]
+
+    await asyncio.gather(*(builder._rerank_candidates(topic_intent, candidates) for _ in range(6)))
+
+    assert reranker.calls == 6
+    assert reranker.max_active <= 2
+
+
+@pytest.mark.asyncio
+async def test_assignment_rerank_filters_low_score_tail():
+    reranker = _ScoreReranker([0.3, 0.25, 0.21, 0.1, 0.04, -0.01, -0.06, -0.08, -0.1, -0.12, -0.14, -0.16])
+    builder = CommunityCardBuilder(reranker_client=reranker)
+    candidates = [
+        {
+            "community_id": f"kgc:financial:l0:{index}",
+            "title": f"候选主题{index}",
+            "scope": "候选主题 scope",
+            "canonical_labels": [f"候选主题{index}"],
+        }
+        for index in range(20)
+    ]
+
+    selected = await builder._rerank_candidates({"title_candidate": "测试主题"}, candidates)
+
+    assert [item["community_id"] for item in selected] == [
+        "kgc:financial:l0:0",
+        "kgc:financial:l0:1",
+        "kgc:financial:l0:2",
+        "kgc:financial:l0:3",
+    ]
+    assert reranker.calls[0]["top_n"] == 12
+
+
+@pytest.mark.asyncio
+async def test_assignment_rerank_keeps_minimum_candidates_when_scores_are_weak():
+    reranker = _ScoreReranker([-0.2, -0.21, -0.22, -0.23, -0.24, -0.25, -0.26, -0.27, -0.28, -0.29, -0.3, -0.31])
+    builder = CommunityCardBuilder(reranker_client=reranker)
+    candidates = [
+        {
+            "community_id": f"kgc:financial:l0:{index}",
+            "title": f"候选主题{index}",
+            "scope": "候选主题 scope",
+            "canonical_labels": [f"候选主题{index}"],
+        }
+        for index in range(20)
+    ]
+
+    selected = await builder._rerank_candidates({"title_candidate": "测试主题"}, candidates)
+
+    assert len(selected) == 4
+    assert [item["community_id"] for item in selected] == [
+        "kgc:financial:l0:0",
+        "kgc:financial:l0:1",
+        "kgc:financial:l0:2",
+        "kgc:financial:l0:3",
+    ]
+
+
 class _MemoryRedis:
     def __init__(self) -> None:
         self.data: dict[str, str] = {}
@@ -803,6 +955,61 @@ def test_candidate_ledger_checkpoint_rebuilds_when_hot_prefix_overlap_is_low():
     ledger = json.loads(next(iter(redis.data.values())))
     assert ledger["checkpoint_meta"]["checkpoint_count"] == 1
     assert ledger["checkpoint_meta"]["last_checkpointed"] is True
+
+
+def test_candidate_ledger_checkpoint_drops_redirect_entries():
+    redis = _MemoryRedis()
+    store = AssignmentCandidateOrderStore(
+        target="test",
+        redis_client=redis,
+        max_base_candidates=2,
+        keep_base_candidates=1,
+        max_chars=100_000,
+    )
+
+    store.prepare_append_log(
+        adapter_name="financial",
+        candidates=[
+            _ledger_candidate("kgc:financial:l0:1", "气象灾害预警"),
+            _ledger_candidate("kgc:financial:l0:2", "自然灾害应急响应"),
+        ],
+    )
+    store.record_assignment_decision(
+        adapter_name="financial",
+        decision={
+            "assignments": [
+                {"action": "attach_existing", "community_id": "kgc:financial:l0:2"},
+                {"action": "attach_existing", "community_id": "kgc:financial:l0:2"},
+            ]
+        },
+    )
+    redirect_diag = store.record_community_redirects(
+        adapter_name="financial",
+        redirects=[
+            {
+                "from_community_id": "kgc:financial:l0:1",
+                "to_community_id": "kgc:financial:l0:2",
+            }
+        ],
+        target_candidates=[
+            _ledger_candidate("kgc:financial:l0:2", "自然灾害应急响应"),
+        ],
+    )
+
+    assert redirect_diag["appended_redirect"] == 1
+
+    append_log, diag = store.prepare_append_log(
+        adapter_name="financial",
+        candidates=[_ledger_candidate("kgc:financial:l0:3", "气候风险")],
+    )
+
+    assert diag["checkpointed"] is True
+    assert diag["candidate_append_log_redirect_count"] == 0
+    assert [item["entry_type"] for item in append_log] == ["candidate_base", "candidate_base"]
+    assert [item["community_id"] for item in append_log] == [
+        "kgc:financial:l0:2",
+        "kgc:financial:l0:3",
+    ]
 
 
 def test_candidate_ledger_does_not_create_updates_from_candidate_stat_changes():
@@ -1596,6 +1803,63 @@ async def test_bucket_planner_auto_runs_independent_merge_when_catalog_exceeds_t
     saved = json.loads(redis.get(store._state_key(adapter_name="financial")))
     assert "bucket_ai_chip" not in saved["bucket_catalog"]
     assert saved["theme_bucket_map"]["ai芯片"] == "bucket_ai_compute"
+
+
+def test_bucket_auto_merge_candidates_ignore_english_id_only_overlap():
+    catalog = {
+        "bucket_lithium_industry_performance": {
+            "bucket_id": "bucket_lithium_industry_performance",
+            "bucket_title": "bucket_lithium_industry_performance",
+            "scope": "",
+            "canonical_themes": [],
+        },
+        "bucket_hk_ipo_performance": {
+            "bucket_id": "bucket_hk_ipo_performance",
+            "bucket_title": "bucket_hk_ipo_performance",
+            "scope": "",
+            "canonical_themes": [],
+        },
+        "bucket_commercial_aerospace_investment": {
+            "bucket_id": "bucket_commercial_aerospace_investment",
+            "bucket_title": "bucket_commercial_aerospace_investment",
+            "scope": "",
+            "canonical_themes": [],
+        },
+    }
+
+    assert _bucket_auto_merge_candidates(catalog, max_candidates=8) == []
+
+
+def test_assignment_retrieval_filter_drops_negative_scores_before_rerank():
+    candidates = [
+        {"community_id": "c1", "retrieval_score": 0.2},
+        {"community_id": "c2", "retrieval_score": 0.0},
+        {"community_id": "c3", "retrieval_score": -0.01},
+        {"community_id": "c4", "retrieval_score": None},
+    ]
+
+    kept, diagnostics = _filter_assignment_retrieval_candidates(candidates)
+
+    assert [item["community_id"] for item in kept] == ["c1", "c2", "c4"]
+    assert diagnostics["raw_candidates"] == 4
+    assert diagnostics["kept_candidates"] == 3
+    assert diagnostics["dropped_candidates"] == 1
+    assert diagnostics["fallback_to_raw"] is False
+    assert diagnostics["lowest_raw_score"] == -0.01
+
+
+def test_assignment_retrieval_filter_falls_back_when_all_scores_are_negative():
+    candidates = [
+        {"community_id": "c1", "retrieval_score": -0.2},
+        {"community_id": "c2", "retrieval_score": -0.1},
+    ]
+
+    kept, diagnostics = _filter_assignment_retrieval_candidates(candidates)
+
+    assert kept == candidates
+    assert diagnostics["kept_candidates"] == 2
+    assert diagnostics["dropped_candidates"] == 0
+    assert diagnostics["fallback_to_raw"] is True
 
 
 @pytest.mark.asyncio

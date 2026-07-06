@@ -1,0 +1,822 @@
+{
+  "id": "e1bc2bc402d4956ae16c501628b25d74",
+  "projectId": "cmp9tyu4x01efad08dq5ebuhg",
+  "name": "kg.community_insight.refresh_ids",
+  "timestamp": "2026-07-06T13:31:27.543Z",
+  "environment": "default",
+  "tags": [
+    "agentic-rag",
+    "community_insight",
+    "kg",
+    "openai-agents",
+    "refresh_ids",
+    "smart-fund-server"
+  ],
+  "bookmarked": false,
+  "release": null,
+  "version": null,
+  "userId": null,
+  "sessionId": "community-insight-validation-20260706T133126Z-kgc:financial:l0:731",
+  "public": false,
+  "input": {
+    "community_ids": [
+      "kgc:financial:l0:731"
+    ],
+    "task": "kg_community_insight_refresh_ids",
+    "target": "prod",
+    "requested": 1,
+    "force": true
+  },
+  "output": {
+    "skipped": false,
+    "requested": 1,
+    "selected": 1,
+    "refreshed": 1,
+    "failed": 0,
+    "errors": [],
+    "duration_seconds": 40.102
+  },
+  "metadata": {
+    "task": "kg_community_insight_refresh_ids",
+    "target": "prod",
+    "requested": 1,
+    "force": true,
+    "lock_acquired": true,
+    "resourceAttributes": {
+      "telemetry.sdk.language": "python",
+      "telemetry.sdk.name": "opentelemetry",
+      "telemetry.sdk.version": "1.41.1",
+      "service.name": "unknown_service"
+    },
+    "scope": {
+      "name": "langfuse-sdk",
+      "version": "4.6.1",
+      "attributes": {
+        "public_key": "pk-lf-d52cf296-5725-45dc-a0f7-31202673d39f"
+      }
+    }
+  },
+  "createdAt": "2026-07-06T13:31:32.000Z",
+  "updatedAt": "2026-07-06T13:32:08.055Z",
+  "externalId": null,
+  "scores": [],
+  "latency": 39.792,
+  "observations": [
+    {
+      "id": "398324f08a4d53b4",
+      "traceId": "e1bc2bc402d4956ae16c501628b25d74",
+      "startTime": "2026-07-06T13:31:27.662Z",
+      "endTime": "2026-07-06T13:32:05.340Z",
+      "projectId": "cmp9tyu4x01efad08dq5ebuhg",
+      "parentObservationId": "8618005d543a1721",
+      "type": "GENERATION",
+      "environment": "default",
+      "name": "llm:kg_community_insight",
+      "level": "DEFAULT",
+      "statusMessage": "completed",
+      "version": null,
+      "createdAt": "2026-07-06T13:32:07.942Z",
+      "updatedAt": "2026-07-06T13:32:07.943Z",
+      "input": {
+        "prompt": "请基于以下 community 上下文生成 Community Insight 高级认知报告。\n\n你的任务不是总结单条新闻，也不是罗列 community 成员。\n所有判断只能基于输入材料中明确提供的信息；不得引入输入之外的行情、价格、公司、时间、政策或外部知识。\n\n报告必须回答：这些来源合在一起说明了什么；支撑判断的输入信号类型是什么；关键驱动、传导链条和影响对象是什么；限制条件、不确定性或反转条件是什么；Agent 应如何使用这份报告。\n\n输出对象是检索和决策 Agent，不是普通消费者、投资者或交易员。不要写“消费者应关注”“建议投资者”等表述。\n报告长度由输入材料复杂度自然决定。不要为了凑字数扩写；但如果 community 包含大量来源、多个强主线或多个产业环节，不要压缩成几句短行情评论。\n信息保真优先于短小。凡是对 Agent 后续检索、判断边界、识别强弱信号有帮助的代表性证据、传导链条和限制条件，都应该保留。\n\n写作要求：\n- 输出一份完整高级认知报告，不要逐条复述输入，也不要只输出口号式结论。\n- 先归纳由多条材料共同支撑的主线。主线数量由材料决定：少量材料可以 2-3 条，大型 community 可以 4-8 条。\n- 每条主线需要说明：代表性证据、输入信号类型、驱动因素、传导链条、影响对象、确定性强弱和边界。\n- 对代表性证据要保留可检索细节，例如关键公司、产品、技术路线、价格/订单/产能/资本开支/政策/业绩等输入中已经出现的信息。\n- 输入材料中的 assignment_reason、assignment_fit_type、assignment_weight、assignment_confidence 表示该 intent 为什么被归入当前 community；它们可用于判断归类边界、强弱和相邻上下文，但不是原始事实证据。\n- assignment_action=create_new 或 assignment_relation_type=created_new_topic 表示该 intent 曾触发新主题创建；它通常说明一个新方向的来源和稳定边界，但不必然比后续挂靠材料更重要。\n- assignment_action=attach_existing 或 assignment_relation_type=attached_to_existing_topic 表示该 intent 被挂靠到已有 community；它通常用于识别新增子方向、既有方向或相邻上下文，需结合 assignment_fit_type 和 weight 判断强弱。\n- assignment_action=create_parent_and_absorb_existing 或 assignment_relation_type=created_parent_and_absorbed_existing_topics 表示本次归类发生了父主题上提或合并吸收；它对理解 community 边界、历史窄主题如何被统一承接尤其重要，应在报告中体现边界变化，但不要把合并动作本身当作业务事件。\n- assignment_absorb_community_ids 和 assignment_absorbed_from_community_id 只表示索引治理关系，用于解释主题边界，不代表新闻中的公司、政策或事件。\n- 对强主线、中等主线、弱信号或相邻上下文要分清楚；不要把低权重、单条、缺少机制的材料提升成核心结论。\n- 如果同一 community 横跨多个产业环节，需要说明这些环节之间是否存在传导关系；没有传导关系时要明确只是并列或相邻上下文。\n- 不要把 parent_themes、broad_topics、risk_type 简单拼接成报告。\n- 不要把短期行情、概念股涨跌或单条研报观点写成主结论；除非输入中存在机制、供需、订单、价格或产能等支撑。\n- 如果 community 边界偏宽，报告应说明哪些主线较强、哪些只是相邻上下文，并在 report_json.quality_flags 中标记。\n- 强弱、冲突、噪声是条件触发的判断维度，不是固定输出章节。\n- 只有输入材料支持时，才解释冲突、弱信号或噪声；不要为了格式强行生成这些内容。\n- 如果输入材料显示某些信号只有表面变化描述，缺少驱动、机制、影响路径或证据支撑，应明确降权。\n- 风险和反转条件必须来自输入材料可支持的机制推演，并说明它们会影响哪条主线。\n- 不得创造输入中不存在的时间、数字、公司名、政策名、交易结论或因果关系。不要把输入中的“预期、观点、研报判断”改写成已经发生的事实。\n- 不输出买入、卖出、持仓建议。\n\n请输出 JSON 对象，字段为 insight_full_report 和 report_json。\n\n输入材料：\n{\"community\":{\"community_id\":\"kgc:financial:l0:731\",\"title\":\"半导体产业链\",\"scope\":\"承接半导体全产业链发展，包括芯片设计、晶圆制造、封装测试、半导体设备、半导体材料、存储芯片、逻辑芯片等，以及产业链景气度、供需变化、市场表现及其对下游应用的影响。不包含非半导体领域的电子、AI软件应用、数据中心运营、泛科技产业链或地缘政治风险。\",\"source_count\":56,\"cognitive_card_count\":58,\"assignment_count\":62,\"time_range\":{\"start\":\"2026-07-05T11:14:27+00:00\",\"end\":\"2026-07-06T10:36:52+00:00\"}},\"community_signals\":{\"parent_themes\":[\"半导体设备与检测\",\"半导体先进封装\",\"AI算力基础设施\",\"企业并购重组\",\"A股资本市场\",\"锂电设备行业战略转型\",\"具身智能产业\",\"半导体先进封装设备\",\"半导体技术理论\",\"先进封装技术\",\"EDA工具链发展\",\"半导体设备材料\",\"机构调研动向\",\"半导体产业链\",\"半导体硬件供需\",\"半导体存储市场动态\",\"半导体存储产业供需\",\"半导体产业\",\"存储芯片产业链\",\"半导体行业\",\"半导体行业景气周期\",\"消费电子成本传导\",\"半导体\",\"存储器供需平衡\"],\"topic_tags\":[\"半导体设备与检测\",\"半导体先进封装\",\"AI算力基础设施\",\"企业并购重组\",\"A股资本市场\",\"锂电设备行业战略转型\",\"具身智能产业\",\"半导体先进封装设备\",\"半导体技术理论\",\"先进封装技术\",\"EDA工具链发展\",\"半导体设备材料\",\"机构调研动向\",\"半导体产业链\",\"半导体硬件供需\",\"半导体存储市场动态\",\"半导体存储产业供需\",\"半导体产业\",\"存储芯片产业链\",\"半导体行业\",\"半导体行业景气周期\",\"消费电子成本传导\",\"半导体\",\"存储器供需平衡\",\"半导体定价周期\",\"AI芯片代工产能\",\"半导体代工需求\",\"行业过度集中风险\",\"科技资本支出\",\"存储器产业\",\"DRAM价格周期\",\"存储芯片行业\"],\"event_threads\":[\"半导体设备公司股权投资\",\"先进封装产业进展\",\"A股并购重组事件流\",\"半导体产业并购\",\"锂电设备企业全球化\",\"固态电池产业化\",\"具身智能数据基础设施\",\"玻璃基板封装设备技术\",\"华为技术理论发布\",\"逻辑折叠技术产业链\",\"华为半导体技术路线与产业链影响\",\"科创板机构调研\",\"半导体产业链关注\",\"半导体周期与价格波动\",\"存储芯片价格周期\",\"存储芯片产能紧张\",\"存储芯片周期\",\"股价日常波动\",\"电子元器件涨价周期\",\"存储芯片扩产\",\"存储器价格变动\",\"AI芯片代工竞争\",\"热门行业风险警示\",\"三星电子财报季\"],\"impact_tags\":[\"日联科技\",\"QES Group Berhad\",\"半导体检测设备\",\"先进封装设备商\",\"PCB产业链\",\"半导体制造领域\",\"A股上市公司\",\"联动科技\",\"半导体测试设备行业\",\"存储测试领域\",\"杭可科技\",\"锂电设备行业\",\"固态电池产业链\",\"具身智能产业\",\"半导体封装产业\",\"光芯片互联\",\"先进封装行业\",\"EDA工具链行业\",\"先进封装\",\"封装设备\",\"封装材料\",\"科创板\",\"半导体设备\",\"存储供应链\",\"固态硬盘\",\"内存条\",\"存储行业\",\"聚辰股份\",\"Nor Flash市场\",\"存储芯片\",\"硬盘\",\"美光科技\"],\"risk_tags\":[\"投资风险\",\"技术替代风险\",\"跨境并购风险\",\"整合风险\",\"审批不确定性\",\"地缘风险\",\"需求波动风险\",\"成本上升风险\",\"供应商涨价风险\",\"供应短缺风险\",\"价格波动风险\",\"产能风险\",\"通胀风险\",\"供应链风险\",\"地缘政治风险\",\"成本上涨\",\"产能瓶颈\",\"订单波动\",\"行业集中风险\",\"估值泡沫风险\",\"财报风险\",\"资本支出风险\",\"股价波动风险\",\"业绩预期变化\"],\"future_coverage\":[\"半导体产业链\",\"A股科技板块\",\"半导体制造\",\"半导体设备\",\"半导体设备与检测\",\"检测设备市场\",\"晶圆检测设备\",\"光学检测系统\",\"自动化处理系统\",\"半导体先进封装\",\"AI算力基础设施\",\"半导体设备与材料\",\"AI硬件产业链\",\"板级封装设备\",\"光刻技术延伸应用\",\"企业并购重组\",\"A股资本市场\",\"A股并购市场\",\"上市公司资本运作\",\"并购重组进展公告\",\"行业整合\",\"锂电设备行业战略转型\",\"新能源装备制造\",\"半导体精密检测\",\"固态电池设备\",\"境外业务扩张\",\"双主业格局\",\"具身智能产业\",\"半导体先进封装设备\",\"具身智能\",\"先进封装\",\"机器人多模态数据\"],\"coverage_contract\":\"可承接父主题：半导体产业链、半导体设备与检测、半导体先进封装、AI算力基础设施、企业并购重组、A股资本市场；可吸收子方向：半导体产业链、检测设备市场、半导体设备与材料、AI硬件产业链、A股并购市场、上市公司资本运作、新能源装备制造、半导体精密检测、具身智能、先进封装、逻辑折叠技术、EDA；当前具体线索：日联科技认购QES股份、QES Group Berhad、9.1%持股、CoPoS封装设备订单、PCB与先进封装跨界、联动科技收购Northstar、杰普特、日科化学等17家公司并购、杭可仪器增资控股、2025年境外收入过半、固态电池后端装备营收\",\"maturity_level\":\"mature_topic\",\"topic_diversity_count\":263,\"high_weight_assignment_count\":43,\"medium_weight_assignment_count\":15,\"low_weight_assignment_count\":4},\"materials\":[{\"event_thread\":[\"半导体设备公司股权投资\"],\"intent_id\":\"kg_cognitive_card:31a1800495e1cdf4:intent:1\",\"mid_topics\":[\"晶圆检测设备\",\"光学检测系统\",\"自动化处理系统\"],\"source_published_at\":\"2026-07-05T14:29:56+00:00\",\"cognitive_card_id\":\"kg_cognitive_card:31a1800495e1cdf4\",\"event_action\":[\"认购股份\",\"发布公告\"],\"risk_type\":[\"投资风险\"],\"assignment_weight\":1.0,\"assignment_relation_type\":\"created_new_topic\",\"assignment_absorbed_from_community_id\":\"kgc:financial:l0:655\",\"driver\":[\"公司战略投资\",\"技术协同\"],\"source_id\":\"ft_news:108607\",\"assignment_confidence\":0.9,\"assignment_action\":\"create_new\",\"broad_topics\":[\"半导体产业链\",\"检测设备市场\"],\"summary\":\"日联科技认购QES少数股权，不构成控制，不影响业绩，后者主营半导体检测设备。\",\"assignment_fit_type\":\"new_parent_topic\",\"parent_themes\":[\"半导体设备与检测\"],\"title_candidate\":\"半导体检测设备行业投资\",\"importance\":0.5,\"assignment_resolved_community_id\":\"kgc:financial:l0:731\",\"assignment_reason\":\"当前事件涉及半导体检测设备公司的股权投资，属于'半导体设备与检测'主题。现有候选community中没有覆盖该稳定父级主题的条目，因此创建新的L0 community以承载半导体设备与检测领域的投资、技术及产业链动态。\",\"impact_target\":[\"日联科技\",\"QES Group Berhad\",\"半导体检测设备\"]},{\"event_thread\":[\"先进封装产业进展\"],\"intent_id\":\"kg_cognitive_card:fd9ce5dc4f0774be:intent:1\",\"mid_topics\":[\"板级封装设备\",\"光刻技术延伸应用\"],\"source_published_at\":\"2026-07-05T12:16:38+00:00\",\"cognitive_card_id\":\"kg_cognitive_card:fd9ce5dc4f0774be\",\"event_action\":[\"获得订单\",\"切入新领域\"],\"risk_type\":[\"技术替代风险\"],\"assignment_weight\":0.8,\"assignment_relation_type\":\"attached_to_existing_topic\",\"assignment_absorbed_from_community_id\":\"kgc:financial:l0:655\",\"driver\":[\"AI算力需求\",\"先进封装技术演进\"],\"source_id\":\"ft_news:108624\",\"assignment_confidence\":0.9,\"assignment_action\":\"attach_existing\",\"broad_topics\":[\"半导体设备与材料\",\"AI硬件产业链\"],\"summary\":\"CoPoS板级封装设备订单落地，公司凭借光刻能力切入PCB和先进封装，分析师视为AI算力底层关键供应商。\",\"assignment_fit_type\":\"new_subtopic\",\"parent_themes\":[\"半导体先进封装\",\"AI算力基础设施\"],\"title_candidate\":\"先进封装设备订单落地与AI算力底层机会\",\"importance\":0.6,\"assignment_resolved_community_id\":\"kgc:financial:l0:731\",\"assignment_reason\":\"CoPoS板级封装设备属于先进封装设备，符合l0:655半导体设备与检测的scope中的封装测试设备范围，可挂入作为新增子方向。\",\"impact_target\":[\"先进封装设备商\",\"PCB产业链\",\"半导体制造领域\"]},{\"event_thread\":[\"A股并购重组事件流\",\"半导体产业并购\"],\"intent_id\":\"kg_cognitive_card:635af7ed08554914:intent:1\",\"mid_topics\":[\"并购重组进展公告\",\"行业整合\"],\"source_published_at\":\"2026-07-05T11:14:27+00:00\",\"cognitive_card_id\":\"kg_cognitive_card:635af7ed08554914\",\"event_action\":[\"披露并购进展\",\"拟收购\"],\"risk_type\":[\"跨境并购风险\",\"整合风险\",\"审批不确定性\"],\"assignment_weight\":0.5,\"assignment_relation_type\":\"attached_to_existing_topic\",\"assignment_absorbed_from_community_id\":\"kgc:financial:l0:655\",\"driver\":[\"业务扩张\",\"技术补缺\",\"资本运作\"],\"source_id\":\"ft_news:108631\",\"assignment_confidence\":0.7,\"assignment_action\":\"attach_existing\",\"broad_topics\":[\"A股并购市场\",\"上市公司资本运作\"],\"summary\":\"本周17家A股公司密集披露并购重组进展，联动科技拟收购Northstar以增强存储测试能力，反映市场并购活跃。\",\"assignment_fit_type\":\"new_subtopic\",\"parent_themes\":[\"企业并购重组\",\"A股资本市场\"],\"title_candidate\":\"A股并购重组活跃度提升\",\"importance\":0.8,\"assignment_resolved_community_id\":\"kgc:financial:l0:731\",\"assignment_reason\":\"联动科技拟收购Northstar增强存储测试能力，属于半导体检测设备领域的并购事件，与候选community '半导体设备与检测'的scope（涵盖投资并购）匹配，可作为其新增子方向。\",\"impact_target\":[\"A股上市公司\",\"联动科技\",\"半导体测试设备行业\",\"存储测试领域\"]},{\"event_thread\":[\"锂电设备企业全球化\",\"固态电池产业化\"],\"intent_id\":\"kg_cognitive_card:54d411c738d00f9c:intent:1\",\"mid_topics\":[\"固态电池设备\",\"境外业务扩张\",\"双主业格局\"],\"source_published_at\":\"2026-07-05T12:32:32+00:00\",\"cognitive_card_id\":\"kg_cognitive_card:54d411c738d00f9c\",\"event_action\":[\"增资控股\",\"布局双产业\",\"实现营收\"],\"risk_type\":[\"地缘风险\",\"需求波动风险\"],\"assignment_weight\":0.6,\"assignment_relation_type\":\"attached_to_existing_topic\",\"assignment_absorbed_from_community_id\":\"kgc:financial:l0:655\",\"driver\":[\"锂电设备增长空间\",\"全球化布局需求\",\"技术多元化驱动\"],\"source_id\":\"ft_news:108582\",\"assignment_confidence\":0.85,\"assignment_action\":\"attach_existing\",\"broad_topics\":[\"新能源装备制造\",\"半导体精密检测\"],\"summary\":\"杭可科技推进新能源装备与半导体精密检测双主业，境外收入过半，固态电池设备已产生营收。\",\"assignment_fit_type\":\"new_subtopic\",\"parent_themes\":[\"锂电设备行业战略转型\"],\"title_candidate\":\"锂电设备企业双主业转型与全球化\",\"importance\":0.8,\"assignment_resolved_community_id\":\"kgc:financial:l0:731\",\"assignment_reason\":\"杭可仪器增资控股进军半导体精密检测，与半导体设备与检测主题的scope完全兼容，可作为该主题下新的检测设备子方向。\",\"impact_target\":[\"杭可科技\",\"锂电设备行业\",\"固态电池产业链\",\"半导体检测设备\"]},{\"event_thread\":[\"具身智能数据基础设施\",\"玻璃基板封装设备技术\"],\"intent_id\":\"kg_cognitive_card:123c3eb3c37c3f7e:intent:2\",\"mid_topics\":[\"机器人多模态数据\",\"TGV玻璃基板\",\"微米级打孔\",\"光芯片互联\"],\"source_published_at\":\"2026-07-05T23:39:04+00:00\",\"cognitive_card_id\":\"kg_cognitive_card:123c3eb3c37c3f7e\",\"event_action\":[\"共建数据平台\",\"设备应用于检测\"],\"assignment_weight\":0.8,\"assignment_relation_type\":\"attached_to_existing_topic\",\"assignment_absorbed_from_community_id\":\"kgc:financial:l0:655\",\"driver\":[\"具身智能发展\",\"先进封装需求\"],\"source_id\":\"ft_news:108757\",\"assignment_confidence\":0.9,\"assignment_action\":\"attach_existing\",\"broad_topics\":[\"具身智能\",\"先进封装\"],\"summary\":\"公司致力于共建机器人多模态数据粮仓，设备可用于玻璃基板打孔及半导体检测。\",\"assignment_fit_type\":\"new_subtopic\",\"parent_themes\":[\"具身智能产业\",\"半导体先进封装设备\"],\"title_candidate\":\"具身智能数据基础设施与玻璃基板先进封装设备\",\"importance\":0.5,\"assignment_resolved_community_id\":\"kgc:financial:l0:731\",\"assignment_reason\":\"主题涉及TGV玻璃基板微米级打孔及半导体检测，属于半导体先进封装设备范畴，可归入半导体设备与检测主题下作为新子方向。\",\"impact_target\":[\"具身智能产业\",\"半导体封装产业\",\"光芯片互联\"]},{\"event_thread\":[\"华为技术理论发布\",\"逻辑折叠技术产业链\"],\"intent_id\":\"kg_cognitive_card:2726038e6b1cdf4e:intent:1\",\"mid_topics\":[\"多层级电子系统\",\"时间缩微理论\"],\"source_published_at\":\"2026-07-05T23:45:11+00:00\",\"cognitive_card_id\":\"kg_cognitive_card:2726038e6b1cdf4e\",\"event_action\":[\"发布论文\",\"研报指出机遇\"],\"assignment_weight\":0.5,\"assignment_relation_type\":\"attached_to_existing_topic\",\"assignment_absorbed_from_community_id\":\"kgc:financial:l0:655\",\"driver\":[\"逻辑折叠技术需求\",\"半导体物理理论\"],\"source_id\":\"ft_news:108760\",\"assignment_confidence\":0.7,\"assignment_action\":\"attach_existing\",\"broad_topics\":[\"逻辑折叠技术\",\"先进封装\",\"EDA\"],\"summary\":\"华为发布‘韬定律’V2版论文，交银国际证券认为先进封装和EDA工具链为逻辑折叠带来增量机遇。\",\"assignment_fit_type\":\"new_subtopic\",\"parent_themes\":[\"半导体技术理论\",\"先进封装技术\",\"EDA工具链发展\"],\"title_candidate\":\"韬定律V2与逻辑折叠技术产业链机遇\",\"importance\":0.7,\"assignment_resolved_community_id\":\"kgc:financial:l0:731\",\"assignment_reason\":\"逻辑折叠技术属于先进封装领域的技术研发，l0:655的scope包含技术研发和先进封装，可作为其新增子方向。\",\"impact_target\":[\"先进封装行业\",\"EDA工具链行业\"]},{\"event_thread\":[\"华为半导体技术路线与产业链影响\"],\"intent_id\":\"kg_cognitive_card:57d53754b684e604:intent:2\",\"mid_topics\":[\"堆叠封装\",\"光电融合\"],\"source_published_at\":\"2026-07-06T00:11:45+00:00\",\"cognitive_card_id\":\"kg_cognitive_card:57d53754b684e604\",\"event_action\":[\"发布论文\",\"加速布局\"],\"assignment_weight\":0.8,\"assignment_relation_type\":\"attached_to_existing_topic\",\"assignment_absorbed_from_community_id\":\"kgc:financial:l0:655\",\"driver\":[\"技术论文发布\",\"本土替代逻辑\"],\"source_id\":\"ft_news:108775\",\"assignment_confidence\":0.9,\"assignment_action\":\"attach_existing\",\"broad_topics\":[\"封装技术演进\",\"半导体产业链本土替代\"],\"summary\":\"何庭波发布韬定律V2版论文，分析师看好先进封装受益方向，本土替代逻辑强化，相关公司布局堆叠、光电融合等新兴应用。\",\"assignment_fit_type\":\"new_subtopic\",\"parent_themes\":[\"半导体先进封装\",\"半导体设备材料\"],\"title_candidate\":\"先进封装技术与产业链本土化机遇\",\"importance\":0.7,\"assignment_resolved_community_id\":\"kgc:financial:l0:731\",\"assignment_reason\":\"当前 topic_intent 聚焦华为先进封装技术论文及本土化机遇，属于半导体先进封装子方向，该方向已被 l0:655 吸收为子方向。\",\"impact_target\":[\"先进封装\",\"封装设备\",\"封装材料\"]},{\"event_thread\":[\"科创板机构调研\",\"半导体产业链关注\"],\"intent_id\":\"kg_cognitive_card:2c2a457b101f2bac:intent:1\",\"mid_topics\":[\"机构调研标的\",\"订单景气度\",\"AI技术落地\",\"全球化突围\"],\"source_published_at\":\"2026-07-06T00:51:24+00:00\",\"cognitive_card_id\":\"kg_cognitive_card:2c2a457b101f2bac\",\"event_action\":[\"机构调研\",\"聚焦三大主线\"],\"assignment_weight\":0.5,\"assignment_relation_type\":\"attached_to_existing_topic\",\"assignment_absorbed_from_community_id\":\"kgc:financial:l0:655\",\"driver\":[\"机构调研\",\"订单景气\",\"AI技术\",\"全球化\"],\"source_id\":\"ft_news:108802\",\"assignment_confidence\":0.7,\"assignment_action\":\"attach_existing\",\"broad_topics\":[\"科创板市场\",\"半导体设备\",\"存储供应链\"],\"summary\":\"6月159家科创板公司获机构调研，半导体设备与存储供应链受关注，调研聚焦订单景气、AI技术落地与全球化突围。\",\"assignment_fit_type\":\"adjacent_context\",\"parent_themes\":[\"机构调研动向\",\"半导体产业链\"],\"title_candidate\":\"科创板半导体设备与存储机构调研热度\",\"importance\":0.7,\"assignment_resolved_community_id\":\"kgc:financial:l0:731\",\"assignment_reason\":\"调研聚焦标的包括盛美上海等半导体设备公司，该主题作为半导体设备行业背景的相邻上下文，提供产业基础。\",\"impact_target\":[\"科创板\",\"半导体设备\",\"存储供应链\"]},{\"event_thread\":[\"半导体周期与价格波动\"],\"intent_id\":\"kg_cognitive_card:6577ab67a1d651e6:intent:3\",\"mid_topics\":[\"固态硬盘价格\",\"内存条价格\"],\"source_published_at\":\"2026-07-05T23:00:00+00:00\",\"cognitive_card_id\":\"kg_cognitive_card:6577ab67a1d651e6\",\"event_action\":[\"价格上涨\"],\"risk_type\":[\"成本上升风险\"],\"assignment_weight\":0.9,\"assignment_relation_type\":\"created_new_topic\",\"assignment_absorbed_from_community_id\":\"kgc:financial:l0:687\",\"driver\":[\"供需关系变化\",\"上游成本传导\"],\"source_id\":\"ft_news:108728\",\"assignment_confidence\":0.85,\"assignment_action\":\"create_new\",\"broad_topics\":[\"存储芯片市场\",\"硬件价格趋势\"],\"summary\":\"多款固态硬盘和内存条出现价格上涨。\",\"assignment_fit_type\":\"new_parent_topic\",\"parent_themes\":[\"半导体硬件供需\"],\"title_candidate\":\"存储硬件价格上行\",\"importance\":0.4,\"assignment_resolved_community_id\":\"kgc:financial:l0:731\",\"assignment_reason\":\"现有候选社区均未覆盖半导体硬件供需及价格周期主题。存储芯片（固态硬盘、内存条）价格变化是半导体行业供需关系的直接体现，属于长期可复用的父级主题。该主题未来可承接存储、逻辑等硬件产品的供需关系、价格波动、库存周期、产能变化等事件，边界清晰，不会过度泛化。\",\"impact_target\":[\"固态硬盘\",\"内存条\",\"存储行业\"]},{\"event_thread\":[\"存储芯片价格周期\"],\"intent_id\":\"kg_cognitive_card:ad13f998b20269ab:intent:2\",\"mid_topics\":[\"Nor Flash提价\"],\"source_published_at\":\"2026-07-05T23:45:21+00:00\",\"cognitive_card_id\":\"kg_cognitive_card:ad13f998b20269ab\",\"event_action\":[\"涨价\"],\"risk_type\":[\"供应商涨价风险\"],\"assignment_weight\":0.9,\"assignment_relation_type\":\"attached_to_existing_topic\",\"assignment_absorbed_from_community_id\":\"kgc:financial:l0:687\",\"driver\":[\"原材料成本上升\",\"供需紧张\"],\"source_id\":\"ft_news:108755\",\"assignment_confidence\":0.85,\"assignment_action\":\"attach_existing\",\"broad_topics\":[\"存储芯片价格\"],\"summary\":\"聚辰股份全系列Nor Flash产品价格上调25%，影响存储芯片市场。\",\"assignment_fit_type\":\"new_subtopic\",\"parent_themes\":[\"半导体存储市场动态\"],\"title_candidate\":\"半导体存储产品涨价\",\"importance\":0.6,\"assignment_resolved_community_id\":\"kgc:financial:l0:731\",\"assignment_reason\":\"聚辰股份Nor Flash涨价属于半导体存储芯片的价格调整，符合社区'半导体硬件供需'的scope，该社区覆盖存储芯片价格周期和供需变化，可作为新增子方向纳入。\",\"impact_target\":[\"聚辰股份\",\"Nor Flash市场\"]},{\"event_thread\":[\"存储芯片产能紧张\"],\"intent_id\":\"kg_cognitive_card:60f242995dc930d4:intent:1\",\"mid_topics\":[\"HBM影响通用存储\",\"存储价格波动\"],\"source_published_at\":\"2026-07-05T23:45:06+00:00\",\"cognitive_card_id\":\"kg_cognitive_card:60f242995dc930d4\",\"event_action\":[\"挤压产能\",\"价格上涨\"],\"risk_type\":[\"供应短缺风险\"],\"assignment_weight\":0.9,\"assignment_relation_type\":\"attached_to_existing_topic\",\"assignment_absorbed_from_community_id\":\"kgc:financial:l0:687\",\"driver\":[\"HBM高利润挤压通用产能\",\"存储市场行情回升\"],\"source_id\":\"ft_news:108761\",\"assignment_confidence\":0.9,\"assignment_action\":\"attach_existing\",\"broad_topics\":[\"存储芯片产能结构\"],\"summary\":\"存储市场供应短缺，硬盘价格频繁变动，HBM产能挤压是主因。\",\"assignment_fit_type\":\"existing_direction\",\"parent_themes\":[\"半导体存储产业供需\"],\"title_candidate\":\"存储行业供需失衡\",\"importance\":0.7,\"assignment_resolved_community_id\":\"kgc:financial:l0:731\",\"assignment_reason\":\"存储市场供应短缺直接对应半导体硬件供需社区，该社区scope包含存储芯片供需、价格周期等，且已吸收存储芯片市场子方向，当前intent保持同一方向。\",\"impact_target\":[\"存储芯片\",\"硬盘\",\"内存条\",\"固态硬盘\"]},{\"event_thread\":[\"存储芯片周期\"],\"intent_id\":\"kg_cognitive_card:41532e4165780d54:intent:1\",\"mid_topics\":[\"美光扩建\",\"华强北价格\"],\"source_published_at\":\"2026-07-05T23:56:23+00:00\",\"cognitive_card_id\":\"kg_cognitive_card:41532e4165780d54\",\"event_action\":[\"投资扩建\",\"价格上调\"],\"risk_type\":[\"价格波动风险\",\"产能风险\"],\"assignment_weight\":0.9,\"assignment_relation_type\":\"attached_to_existing_topic\",\"assignment_absorbed_from_community_id\":\"kgc:financial:l0:687\",\"driver\":[\"资本开支\",\"供需关系\"],\"source_id\":\"ft_news:108767\",\"assignment_confidence\":0.95,\"assignment_action\":\"attach_existing\",\"broad_topics\":[\"半导体制造\",\"NAND闪存\",\"DRAM\"],\"summary\":\"美光投资93亿美元扩建存储芯片项目，华强北多款固态硬盘和内存条价格上涨。\",\"assignment_fit_type\":\"new_subtopic\",\"parent_themes\":[\"半导体产业\",\"存储芯片产业链\"],\"title_candidate...[truncated]",
+        "system_prompt": "",
+        "messages": "[]",
+        "prompt_text_preview": "请基于以下 community 上下文生成 Community Insight 高级认知报告。\n\n你的任务不是总结单条新闻，也不是罗列 community 成员。\n所有判断只能基于输入材料中明确提供的信息；不得引入输入之外的行情、价格、公司、时间、政策或外部知识。\n\n报告必须回答：这些来源合在一起说明了什么；支撑判断的输入信号类型是什么；关键驱动、传导链条和影响对象是什么；限制条件、不确定性或反转条件是什么；Agent 应如何使用这份报告。\n\n输出对象是检索和决策 Agent，不是普通消费者、投资者或交易员。不要写“消费者应关注”“建议投资者”等表述。\n报告长度由输入材料复杂度自然决定。不要为了凑字数扩写；但如果 community 包含大量来源、多个强主线或多个产业环节，不要压缩成几句短行情评论。\n信息保真优先于短小。凡是对 Agent 后续检索、判断边界、识别强弱信号有帮助的代表性证据、传导链条和限制条件，都应该保留。\n\n写作要求：\n- 输出一份完整高级认知报告，不要逐条复述输入，也不要只输出口号式结论。\n- 先归纳由多条材料共同支撑的主线。主线数量由材料决定：少量材料可以 2-3 条，大型 community 可以 4-8 条。\n- 每条主线需要说明：代表性证据、输入信号类型、驱动因素、传导链条、影响对象、确定性强弱和边界。\n- 对代表性证据要保留可检索细节，例如关键公司、产品、技术路线、价格/订单/产能/资本开支/政策/业绩等输入中已经出现的信息。\n- 输入材料中的 assignment_reason、assignment_fit_type、assignment_weight、assignment_confidence 表示该 intent 为什么被归入当前 community；它们可用于判断归类边界、强弱和相邻上下文，但不是原始事实证据。\n- assignment_action=create_new 或 assignment_relation_type=created_new_topic 表示该 intent 曾触发新主题创建；它通常说明一个新方向的来源和稳定边界，但不必然比后续挂靠材料更重要。\n- assignment_action=attach_existing 或 assignment_relation_type=attached_to_existing_topic 表示该 intent 被挂靠到已有 community；它通常用于识别新增子方向、既有方向或相邻上下文，需结合 assignment_fit_type 和 weight 判断强弱。\n- assignment_action=create_parent_and_absorb_existing 或 assignment_relation_type=created_parent_and_absorbed_existing_topics 表示本次归类发生了父主题上提或合并吸收；它对理解 community 边界、历史窄主题如何被统一承接尤其重要，应在报告中体现边界变化，但不要把合并动作本身当作业务事件。\n- assignment_absorb_community_ids 和 assignment_absorbed_from_community_id 只表示索引治理关系，用于解释主题边界，不代表新闻中的公司、政策或事件。\n- 对强主线、中等主线、弱信号或相邻上下文要分清楚；不要把低权重、单条、缺少机制的材料提升成核心结论。\n- 如果同一 community 横跨多个产业环节，需要说明这些环节之间是否存在传导关系；没有传导关系时要明确只是并列或相邻上下文。\n- 不要把 parent_themes、broad_topics、risk_type 简单拼接成报告。\n- 不要把短期行情、概念股涨跌或单条研报观点写成主结论；除非输入中存在机制、供需、订单、价格或产能等支撑。\n- 如果 community 边界偏宽，报告应说明哪些主线较强、哪些只是相邻上下文，并在 report_json.quality_flags 中标记。\n- 强弱、冲突、噪声是条件触发的判断维度，不是固定输出章节。\n- 只有输入材料支持时，才解释冲突、弱信号或噪声；不要为了格式强行生成这些内容。\n- 如果输入材料显示某些信号只有表面变化描述，缺少驱动、机制、影响路径或证据支撑，应明确降权。\n- 风险和反转条件必须来自输入材料可支持的机制推演，并说明它们会影响哪条主线。\n- 不得创造输入中不存在的时间、数字、公司名、政策名、交易结论或因果关系。不要把输入中的“预期、观点、研报判断”改写成已经发生的事实。\n- 不输出买入、卖出、持仓建议。\n\n请输出 JSON 对象，字段为 insight_full_report 和 report_json。\n\n输入材料：\n{\"community\":{\"community_id\":\"kgc:financial:l0:731\",\"title\":\"半导体产业链\",\"scope\":\"承接半导体全产业链发展，包括芯片设计、晶圆制造、封装测试、半导体设备、半导体材料、存储芯片、逻辑芯片等，以及产业链景气度、供需变化、市场表现及其对下游应用的影响。不包含非半导体领域的电子、AI软件应用、数据中心运营、泛科技产业链或地缘政治风险。\",\"source_count\":56,\"cognitive_card_count\":58,\"assignment_count\":62,\"time_range\":{\"start\":\"2026-07-05T11:14:27+00:00\",\"end\":\"2026-07-06T10:36:52+00:00\"}},\"community_signals\":{\"parent_themes\":[\"半导体设备与检测\",\"半导体先进封装\",\"AI算力基础设施\",\"企业并购重组\",\"A股资本市场\",\"锂电设备行业战略转型\",\"具身智能产业\",\"半导体先进封装设备\",\"半导体技术理论\",\"先进封装技术\",\"EDA工具链发展\",\"半导体设备材料\",\"机构调研动向\",\"半导体产业链\",\"半导体硬件供需\",\"半导体存储市场动态\",\"半导体存储产业供需\",\"半导体产业\",\"存储芯片产业链\",\"半导体行业\",\"半导体行业景气周期\",\"消费电子成本传导\",\"半导体\",\"存储器供需平衡\"],\"topic_tags\":[\"半导体设备与检测\",\"半导体先进封装\",\"AI算力基础设施\",\"企业并购重组\",\"A股资本市场\",\"锂电设备行业战略转型\",\"具身智能产业\",\"半导体先进封装设备\",\"半导体技术理论\",\"先进封装技术\",\"EDA工具链发展\",\"半导体设备材料\",\"机构调研动向\",\"半导体产业链\",\"半导体硬件供需\",\"半导体存储市场动态\",\"半导体存储产业供需\",\"半导体产业\",\"存储芯片产业链\",\"半导体行业\",\"半导体行业景气周期\",\"消费电子成本传导\",\"半导体\",\"存储器供需平衡\",\"半导体定价周期\",\"AI芯片代工产能\",\"半导体代工需求\",\"行业过度集中风险\",\"科技资本支出\",\"存储器产业\",\"DRAM价格周期\",\"存储芯片行业\"],\"event_threads\":[\"半导体设备公司股权投资\",\"先进封装产业进展\",\"A股并购重组事件流\",\"半导体产业并购\",\"锂电设备企业全球化\",\"固态电池产业化\",\"具身智能数据基础设施\",\"玻璃基板封装设备技术\",\"华为技术理论发布\",\"逻辑折叠技术产业链\",\"华为半导体技术路线与产业链影响\",\"科创板机构调研\",\"半导体产业链关注\",\"半导体周期与价格波动\",\"存储芯片价格周期\",\"存储芯片产能紧张\",\"存储芯片周期\",\"股价日常波动\",\"电子元器件涨价周期\",\"存储芯片扩产\",\"存储器价格变动\",\"AI芯片代工竞争\",\"热门行业风险警示\",\"三星电子财报季\"],\"impact_tags\":[\"日联科技\",\"QES Group Berhad\",\"半导体检测设备\",\"先进封装设备商\",\"PCB产业链\",\"半导体制造领域\",\"A股上市公司\",\"联动科技\",\"半导体测试设备行业\",\"存储测试领域\",\"杭可科技\",\"锂电设备行业\",\"固态电池产业链\",\"具身智能产业\",\"半导体封装产业\",\"光芯片互联\",\"先进封装行业\",\"EDA工具链行业\",\"先进封装\",\"封装设备\",\"封装材料\",\"科创板\",\"半导体设备\",\"存储供应链\",\"固态硬盘\",\"内存条\",\"存储行业\",\"聚辰股份\",\"Nor Flash市场\",\"存储芯片\",\"硬盘\",\"美光科技\"],\"risk_tags\":[\"投资风险\",\"技术替代风险\",\"跨境并购风险\",\"整合风险\",\"审批不确定性\",\"地缘风险\",\"需求波动风险\",\"成本上升风险\",\"供应商涨价风险\",\"供应短缺风险\",\"价格波动风险\",\"产能风险\",\"通胀风险\",\"供应链风险\",\"地缘政治风险\",\"成本上涨\",\"产能瓶颈\",\"订单波动\",\"行业集中风险\",\"估值泡沫风险\",\"财报风险\",\"资本支出风险\",\"股价波动风险\",\"业绩预期变化\"],\"future_coverage\":[\"半导体产业链\",\"A股科技板块\",\"半导体制造\",\"半导体设备\",\"半导体设备与检测\",\"检测设备市场\",\"晶圆检测设备\",\"光学检测系统\",\"自动化处理系统\",\"半导体先进封装\",\"AI算力基础设施\",\"半导体设备与材料\",\"AI硬件产业链\",\"板级封装设备\",\"光刻技术延伸应用\",\"企业并购重组\",\"A股资本市场\",\"A股并购市场\",\"上市公司资本运作\",\"并购重组进展公告\",\"行业整合\",\"锂电设备行业战略转型\",\"新能源装备制造\",\"半导体精密检测\",\"固态电池设备\",\"境外业务扩张\",\"双主业格局\",\"具身智能产业\",\"半导体先进封装设备\",\"具身智能\",\"先进封装\",\"机器人多模态数据\"],\"coverage_contract\":\"可承接父主题：半导体产业链、半导体设备与检测、半导体先进封装、AI算力基础设施、企业并购重组、A股资本市场；可吸收子方向：半导体产业链、检测设备市场、半导体设备与材料、AI硬件产业链、A股并购市场、上市公司资本运作、新能源装备制造、半导体精密检测、具身智能、先进封装、逻辑折叠技术、EDA；当前具体线索：日联科技认购QES股份、QES Group Berhad、9.1%持股、CoPoS封装设备订单、PCB与先进封装跨界、联动科技收购Northstar、杰普特、日科化学等17家公司并购、杭可仪器增资控股、2025年境外收入过半、固态电池后端装备营收\",\"maturity_level\":\"mature_topic\",\"topic_diversity_count\":263,\"high_weight_assignment_count\":43,\"medium_weight_assignment_count\":15,\"low_weight_assignment_count\":4},\"materials\":[{\"event_thread\":[\"半导体设备公司股权投资\"],\"intent_id\":\"kg_cognitive_card:31a1800495e1cdf4:intent:1\",\"mid_topics\":[\"晶圆检测设备\",\"光学检测系统\",\"自动化处理系统\"],\"source_published_at\":\"2026-07-05T14:29:56+00:00\",\"cognitive_card_id\":\"kg_cognitive_card:31a1800495e1cdf4\",\"event_action\":[\"认购股份\",\"发布公告\"],\"risk_type\":[\"投资风险\"],\"assignment_weight\":1.0,\"assignment_relation_type\":\"created_new_topic\",\"assignment_absorbed_from_community_id\":\"kgc:financial:l0:655\",\"driver\":[\"公司战略投资\",\"技术协同\"],\"source_id\":\"ft_news:108607\",\"assignment_confidence\":0.9,\"assignment_action\":\"create_new\",\"broad_topics\":[\"半导体产业链\",\"检测设备市场\"],\"summary\":\"日联科技认购QES少数股权，不构成控制，不影响业绩，后者主营半导体检测设备。\",\"assignment_fit_type\":\"new_parent_topic\",\"parent_themes\":[\"半导体设备与检测\"],\"title_candidate\":\"半导体检测设备行业投资\",\"importance\":0.5,\"assignment_resolved_community_id\":\"kgc:financial:l0:731\",\"assignment_reason\":\"当前事件涉及半导体检测设备公司的股权投资，属于'半导体设备与检测'主题。现有候选community中没有覆盖该稳定父级主题的条目，因此创建新的L0 community以承载半导体设备与检测领域的投资、技术及产业链动态。\",\"impact_target\":[\"日联科技\",\"QES Group Berhad\",\"半导体检测设备\"]},{\"event_thread\":[\"先进封装产业进展\"],\"intent_id\":\"kg_cognitive_card:fd9ce5dc4f0774be:intent:1\",\"mid_topics\":[\"板级封装设备\",\"光刻技术延伸应用\"],\"source_published_at\":\"2026-07-05T12:16:38+00:00\",\"cognitive_card_id\":\"kg_cognitive_card:fd9ce5dc4f0774be\",\"event_action\":[\"获得订单\",\"切入新领域\"],\"risk_type\":[\"技术替代风险\"],\"assignment_weight\":0.8,\"assignment_relation_type\":\"attached_to_existing_topic\",\"assignment_absorbed_from_community_id\":\"kgc:financial:l0:655\",\"driver\":[\"AI算力需求\",\"先进封装技术演进\"],\"source_id\":\"ft_news:108624\",\"assignment_confidence\":0.9,\"assignment_action\":\"attach_existing\",\"broad_topics\":[\"半导体设备与材料\",\"AI硬件产业链\"],\"summary\":\"CoPoS板级封装设备订单落地，公司凭借光刻能力切入PCB和先进封装，分析师视为AI算力底层关键供应商。\",\"assignment_fit_type\":\"new_subtopic\",\"parent_themes\":[\"半导体先进封装\",\"AI算力基础设施\"],\"title_candidate\":\"先进封装设备订单落地与AI算力底层机会\",\"importance\":0.6,\"assignment_resolved_community_id\":\"kgc:financial:l0:731\",\"assignment_reason\":\"CoPoS板级封装设备属于先进封装设备，符合l0:655半导体设备与检测的scope中的封装测试设备范围，可挂入作为新增子方向。\",\"impact_target\":[\"先进封装设备商\",\"PCB产业链\",\"半导体制造领域\"]},{\"event_thread\":[\"A股并购重组事件流\",\"半导体产业并购\"],\"intent_id\":\"kg_cognitive_card:635af7ed08554914:intent:1\",\"mid_topics\":[\"并购重组进展公告\",\"行业整合\"],\"source_published_at\":\"2026-07-05T11:14:27+00:00\",\"cognitive_card_id\":\"kg_cognitive_card:635af7ed08554914\",\"event_action\":[\"披露并购进展\",\"拟收购\"],\"risk_type\":[\"跨境并购风险\",\"整合风险\",\"审批不确定性\"],\"assignment_weight\":0.5,\"assignment_relation_type\":\"attached_to_existing_topic\",\"assignment_absorbed_from_community_id\":\"kgc:financial:l0:655\",\"driver\":[\"业务扩张\",\"技术补缺\",\"资本运作\"],\"source_id\":\"ft_news:108631\",\"assignment_confidence\":0.7,\"assignment_action\":\"attach_existing\",\"broad_topics\":[\"A股并购市场\",\"上市公司资本运作\"],\"summary\":\"本周17家A股公司密集披露并购重组进展，联动科技拟收购Northstar以增强存储测试能力，反映市场并购活跃。\",\"assignment_fit_type\":\"new_subtopic\",\"parent_themes\":[\"企业并购重组\",\"A股资本市场\"],\"title_candidate\":\"A股并购重组活跃度提升\",\"importance\":0.8,\"assignment_resolved_community_id\":\"kgc:financial:l0:731\",\"assignment_reason\":\"联动科技拟收购Northstar增强存储测试能力，属于半导体检测设备领域的并购事件，与候选community '半导体设备与检测'的scope（涵盖投资并购）匹配，可作为其新增子方向。\",\"impact_target\":[\"A股上市公司\",\"联动科技\",\"半导体测试设备行业\",\"存储测试领域\"]},{\"event_thread\":[\"锂电设备企业全球化\",\"固态电池产业化\"],\"intent_id\":\"kg_cognitive_card:54d411c738d00f9c:intent:1\",\"mid_topics\":[\"固态电池设备\",\"境外业务扩张\",\"双主业格局\"],\"source_published_at\":\"2026-07-05T12:32:32+00:00\",\"cognitive_card_id\":\"kg_cognitive_card:54d411c738d00f9c\",\"event_action\":[\"增资控股\",\"布局双产业\",\"实现营收\"],\"risk_type\":[\"地缘风险\",\"需求波动风险\"],\"assignment_weight\":0.6,\"assignment_relation_type\":\"attached_to_existing_topic\",\"assi...[truncated]",
+        "metadata": {
+          "task": "kg_community_insight",
+          "adapter_name": "financial",
+          "projection": "cognitive_topic",
+          "community_id": "kgc:financial:l0:731",
+          "material_count": 60,
+          "retry_reason": ""
+        },
+        "json_schema": "{\"type\": \"object\", \"additionalProperties\": false, \"required\": [\"insight_full_report\", \"report_json\"], \"properties\": {\"insight_full_report\": {\"type\": \"string\", \"minLength\": 120}, \"report_json\": {\"type\": \"object\", \"additionalProperties\": true, \"required\": [\"core_thesis\", \"basis\", \"reversal_conditions\", \"quality_flags\", \"use_boundary\"], \"properties\": {\"core_thesis\": {\"type\": \"string\"}, \"basis\": {\"type\": \"array\", \"items\": {\"type\": \"object\", \"additionalProperties\": true}}, \"weak_signals\": {\"type\": \"array\", \"items\": {\"type\": \"string\"}}, \"conflicts\": {\"type\": \"array\", \"items\": {\"type\": \"string\"}}, \"reversal_conditions\": {\"type\": \"array\", \"items\": {\"type\": \"string\"}}, \"quality_flags\": {\"type\": \"array\", \"items\": {\"type\": \"string\"}}, \"use_boundary\": {\"type\": \"string\"}}}}}",
+        "response_format": {
+          "type": "json_object"
+        },
+        "use_cache": true
+      },
+      "output": {
+        "text": "{\"insight_full_report\": \"基于56条来源、58张认知卡、62次归类的半导体产业链社区（kgc:financial:l0:731）分析，该社区由三个原有子社区（半导体设备与检测、半导体硬件供需、存储芯片产业链）合并吸收而成，形成覆盖全产业链的父级主题。合并动作源于2026年7月6日早盘半导体板块走强事件，表明社区边界已从窄主题上提至产业链整体。\\n\\n## 主线一：存储芯片供需周期进入价格上行区间，AI需求是核心驱动\\n\\n**代表性证据（多条来源）：**\\n- 聚辰股份全系列Nor Flash产品价格上调25%（ft_news:108755）\\n- 三星计划三季度DRAM提价20%（ft_news:108783）\\n- 集邦咨询上修2026年Q1 DRAM和NAND Flash合约价涨幅（ft_news:109052）\\n- 华强北多款固态硬盘和内存条价格上涨（ft_news:108767, 108783）\\n- 美光投资93亿美元扩建存储芯片项目（ft_news:108767）\\n- SK海力士宣布45.5万亿韩元资本支出计划并采购EUV光刻机（ft_news:109268）\\n- 野村证券指出市场对存储需求降温的恐慌过度，实际AI需求引发短缺（ft_news:109005, 109006）\\n\\n**输入信号类型：** 价格变动公告、供需分析报告、企业资本开支计划、观点类研报\\n**驱动因素：** AI算力需求增长（特别是HBM）、数据中心扩产、上游成本推动、芯片厂商产能分配策略（HBM挤压通用DRAM/NAND产能）\\n**传导链条：** AI需求 → HBM高利润 → 晶圆厂优先扩产HBM → 通用存储产能受限 → 供给短缺 → 价格上行（DRAM、NAND、Nor Flash均受波及）→ 存储芯片厂商业绩受益（三星Q2利润飙升、江波龙业绩暴增）→ 进一步激发资本开支（美光、SK海力士）\\n**影响对象：** 存储芯片制造商（三星、SK海力士、美光、聚辰股份）、下游PC/消费电子产业链、存储芯片代理分销商、半导体设备商（EUV光刻机等）\\n**确定性与边界：** 确定性强。价格上调和产能扩张均为已发生或确定性计划，供需短缺由AI需求结构性驱动。但需注意：(1) 野村观点虽支持短缺逻辑，但市场存在分歧（部分资金获利回吐、概念股冲高回落）；(2) 韩国芯片投资短期无法转化为产能（ft_news:109006），供应紧张可能持续； (3) 三星劳资谈判奖金支出可能影响利润（ft_news:108803）。\\n\\n## 主线二：先进封装技术路线实现突破，逻辑折叠与板级封装成为关键方向\\n\\n**代表性证据：**\\n- CoPoS板级封装设备订单落地，公司凭借光刻能力切入PCB和先进封装（ft_news:108624）\\n- 华为发布“韬定律”V2版论文，提出逻辑折叠技术，交银国际认为先进封装和EDA工具链为增量机遇（ft_news:108760, 108775）\\n- 华为Mate90系列计划搭载基于韬定律的新麒麟芯片，率先采用逻辑折叠技术（ft_news:108972, 108991）\\n- 玻璃基板封装产品处于客户设计磨合和送样验证阶段（ft_news:109149, 109154）\\n- 具身智能产业相关设备可用于TGV玻璃基板微米级打孔及半导体检测（ft_news:108757）\\n\\n**输入信号类型：** 订单公告、技术论文/研报、产品规划、验证阶段披露\\n**驱动因素：** AI算力需求对先进封装（Chiplet、3D封装、玻璃基板）的推动、逻辑折叠技术实现芯片性能突破、国产替代逻辑强化\\n**传导链条：** AI算力需求 → 芯片设计复杂度提升 → 先进封装技术演进（CoPoS、玻璃基板、逻辑折叠）→ 封装设备/材料/EDA工具链需求增加 → 相关企业订单/营收增长 → 产业链投资机会\\n**影响对象：** 先进封装设备商、PCB产业链、封装材料供应商（德邦科技）、EDA厂商（华大九天、概伦电子）、华为终端产品\\n**确定性与边界：** 中等确定性。CoPoS订单已落地，华为技术论文已发布，但玻璃基板封装仍处验证阶段，逻辑折叠技术大规模应用需时间。主要风险：技术替代风险、客户验证不确定性。\\n\\n## 主线三：半导体设备行业景气度持续上行，资本开支周期进入执行阶段\\n\\n**代表性证据：**\\n- SEAJ将2026财年日本半导体设备销售额预期上调约两成至65502亿日元，2027财年预期上调至74017亿日元（ft_news:109040, 109058）\\n- SK海力士45.5万亿韩元资本支出计划，其中包括EUV光刻机采购（ft_news:109268）\\n- 高盛认为AI与HPC需求持续远大于供给，台积电将加速产能建设并提升毛利率（ft_news:109232）\\n- 花旗预计台积电在财报电话会可能上调2026年收入预期（ft_news:109238）\\n- AI资本开支仍在扩张，先进制程扩产进入实际采购，利好设备材料厂商（ft_news:109026）\\n\\n**输入信号类型：** 行业组织预测报告、企业资本开支公告、投行研报\\n**驱动因素：** AI服务器先进逻辑芯片投资、HBM DRAM产线投资扩张、新建晶圆厂陆续投产\\n**传导链条：** AI需求 → 芯片巨头扩产（台积电、SK海力士、美光）→ 半导体设备采购加速 → 设备商订单/销售额增长 → 产业链上游受益（日本设备厂、EUV供应商等）\\n**影响对象：** 全球半导体设备厂商（日本设备厂、ASML等）、晶圆代工企业（台积电）、存储芯片制造商、EDA工具商\\n**确定性与边界：** 确定性较高。SEAJ预测基于实际投资趋势，SK海力士资本支出已明确。但需关注：资本支出执行风险、技术迭代风险、下游需求是否持续强劲。\\n\\n## 主线四：半导体产业链并购整合与战略转型活跃，细分领域补强逻辑凸显\\n\\n**代表性证据：**\\n- 日联科技认购QES Group Berhad少数股权，布局半导体检测设备（ft_news:108607）\\n- 联动科技拟收购Northstar增强存储测试能力（ft_news:108631）\\n- 杭可科技增资控股进军半导体精密检测，境外收入过半，固态电池设备已产生营收（ft_news:108582）\\n- 本周17家A股公司密集披露并购重组进展（ft_news:108631）\\n\\n**输入信号类型：** 股权投资公告、并购进展披露、战略转型公告\\n**驱动因素：** 业务扩张需求、技术补缺、资本运作、全球化布局、半导体产业链国产替代\\n**传导链条：** 企业战略 → 并购/投资标的 → 技术/市场整合 → 产业链协同效应 → 新增增长点\\n**影响对象：** 被收购/投资企业（Northstar、QES）、上市公司（联动科技、杭可科技、日联科技）、半导体检测设备领域、存储测试领域\\n**确定性与边界：** 并购交易确定性中等（需审批），但战略方向明确。杭可科技双主业转型已产生营收。风险：跨境并购整合风险、审批不确定性。\\n\\n## 弱信号与相邻上下文\\n\\n- **模拟芯片供需紧张：** 亚德诺部分产品交期延长至六个月，模拟芯片行业出现阶梯调价（ft_news:108985, 109023, 109175）。信号强度中等，可作为存储芯片供需紧张的扩展参考，但材料数量有限。\\n- **EDA工具链机遇：** 逻辑折叠技术带动EDA需求，华大九天等概念股涨停（ft_news:108978, 109054）。事件驱动特征明显，可持续性待观察。\\n- **行业过热风险：** 策略师警告AI和半导体行业过度集中风险（ft_news:108785），作为风险警示信号。\\n- **韩国政策加速：** 韩国政府推进半导体、物理AI、AI数据中心三大项目（ft_news:109001），可能影响全球产能格局，作为政策背景。\\n- **短期市场情绪波动：** 存储芯片概念股冲高回落、港股走强等（ft_news:108895, 108812），反映市场分歧，需结合基本面判断。\\n\\n## 质量标记与使用边界\\n\\n- **quality_flags：** [\\\"信号集中度高，存储芯片主线权重较大\\\", \\\"部分先进封装技术仍处验证阶段\\\", \\\"存在短期市场情绪干扰\\\", \\\"社区边界较宽，需区分主线和相邻上下文\\\", \\\"并购事件确定性中等\\\"]\\n- **use_boundary：** 本报告适用于检索和决策Agent，用于理解当前半导体产业链的核心驱动、传导机制和风险点。应优先使用存储供需周期主线作为行业景气判断依据；先进封装和资本开支线可作为技术演进和投资信号；并购线反映企业补逻辑；弱信号需结合后续更多证据验证。Agent在检索时应区分已发生事件（价格上调、订单落地）与观点/预期类信息，并关注反转条件（如AI需求放缓、产能快速释放）。\", \"report_json\": {\"core_thesis\": \"半导体产业链当前由AI需求驱动存储芯片供需周期进入价格上行阶段，先进封装技术实现突破（逻辑折叠、板级封装），半导体设备景气度随资本开支周期持续提升，同时产业链并购整合活跃，模拟芯片供需亦趋紧。核心主线确定性较高，但需注意技术验证风险及市场情绪波动。\", \"basis\": [{\"evidence\": \"聚辰股份Nor Flash产品价格上调25%，三星计划DRAM提价20%\", \"signal_type\": \"价格变动公告\", \"driver\": \"AI需求导致的供给紧张\", \"impact_target\": \"存储芯片市场\", \"confidence\": 0.9}, {\"evidence\": \"CoPoS板级封装设备订单落地，华为发布韬定律V2论文并计划搭载新麒麟芯片\", \"signal_type\": \"订单/技术研发进展\", \"driver\": \"AI算力需求和逻辑折叠技术\", \"impact_target\": \"先进封装设备与材料\", \"confidence\": 0.8}, {\"evidence\": \"SEAJ大幅上调2026-2027财年半导体设备销售额预期，SK海力士宣布45.5万亿韩元资本支出\", \"signal_type\": \"行业预测/资本开支\", \"driver\": \"AI和HBM投资扩张\", \"impact_target\": \"半导体设备供应商\", \"confidence\": 0.9}, {\"evidence\": \"17家A股公司密集披露并购进展，联动科技拟收购Northstar，杭可科技转型半导体检测\", \"signal_type\": \"并购公告\", \"driver\": \"业务扩张和技术补缺\", \"impact_target\": \"半导体测试设备和检测\", \"confidence\": 0.7}, {\"evidence\": \"亚德诺部分产品交期延长至六个月，模拟芯片阶梯调价\", \"signal_type\": \"供应链动态\", \"driver\": \"需求回升\", \"impact_target\": \"模拟芯片行业\", \"confidence\": 0.8}], \"weak_signals\": [\"玻璃基板封装仍处客户设计磨合阶段，产业化时间不确定\", \"EDA概念受逻辑折叠短期提振，但需观察持续性\", \"存储芯片概念股冲高回落，市场存在分歧\"], \"conflicts\": [\"野村证券认为市场对存储需求降温的恐慌过度，但资金获利回吐表明短期不确定性\", \"分析师看好逻辑折叠，但实际产品落地尚需时间\"], \"reversal_conditions\": [\"AI需求若阶段性放缓，存储芯片供需可能逆转，价格回落\", \"韩国芯片投资若提前转化为产能，供应紧张缓解\", \"并购交易审批失败或整合不及预期\"], \"quality_flags\": [\"信号集中度高，存储芯片主线权重较大\", \"部分先进封装技术仍处验证阶段\", \"存在短期市场情绪干扰\", \"社区边界较宽，需区分主线和相邻上下文\", \"并购事件确定性中等\"], \"use_boundary\": \"本报告适用于检索和决策Agent，用于理解当前半导体产业链的核心驱动、传导机制和风险点。应优先使用存储供需周期主线作为行业景气判断依据；先进封装和资本开支线可作为技术演进和投资信号；并购线反映企业补逻辑；弱信号需结合后续更多证据验证。Agent在检索时应区分已发生事件（价格上调、订单落地）与观点/预期类信息，并关注反转条件（如AI需求放缓、产能快速释放）。\"}}",
+        "structured_output": "{\"insight_full_report\": \"基于56条来源、58张认知卡、62次归类的半导体产业链社区（kgc:financial:l0:731）分析，该社区由三个原有子社区（半导体设备与检测、半导体硬件供需、存储芯片产业链）合并吸收而成，形成覆盖全产业链的父级主题。合并动作源于2026年7月6日早盘半导体板块走强事件，表明社区边界已从窄主题上提至产业链整体。\\n\\n## 主线一：存储芯片供需周期进入价格上行区间，AI需求是核心驱动\\n\\n**代表性证据（多条来源）：**\\n- 聚辰股份全系列Nor Flash产品价格上调25%（ft_news:108755）\\n- 三星计划三季度DRAM提价20%（ft_news:108783）\\n- 集邦咨询上修2026年Q1 DRAM和NAND Flash合约价涨幅（ft_news:109052）\\n- 华强北多款固态硬盘和内存条价格上涨（ft_news:108767, 108783）\\n- 美光投资93亿美元扩建存储芯片项目（ft_news:108767）\\n- SK海力士宣布45.5万亿韩元资本支出计划并采购EUV光刻机（ft_news:109268）\\n- 野村证券指出市场对存储需求降温的恐慌过度，实际AI需求引发短缺（ft_news:109005, 109006）\\n\\n**输入信号类型：** 价格变动公告、供需分析报告、企业资本开支计划、观点类研报\\n**驱动因素：** AI算力需求增长（特别是HBM）、数据中心扩产、上游成本推动、芯片厂商产能分配策略（HBM挤压通用DRAM/NAND产能）\\n**传导链条：** AI需求 → HBM高利润 → 晶圆厂优先扩产HBM → 通用存储产能受限 → 供给短缺 → 价格上行（DRAM、NAND、Nor Flash均受波及）→ 存储芯片厂商业绩受益（三星Q2利润飙升、江波龙业绩暴增）→ 进一步激发资本开支（美光、SK海力士）\\n**影响对象：** 存储芯片制造商（三星、SK海力士、美光、聚辰股份）、下游PC/消费电子产业链、存储芯片代理分销商、半导体设备商（EUV光刻机等）\\n**确定性与边界：** 确定性强。价格上调和产能扩张均为已发生或确定性计划，供需短缺由AI需求结构性驱动。但需注意：(1) 野村观点虽支持短缺逻辑，但市场存在分歧（部分资金获利回吐、概念股冲高回落）；(2) 韩国芯片投资短期无法转化为产能（ft_news:109006），供应紧张可能持续； (3) 三星劳资谈判奖金支出可能影响利润（ft_news:108803）。\\n\\n## 主线二：先进封装技术路线实现突破，逻辑折叠与板级封装成为关键方向\\n\\n**代表性证据：**\\n- CoPoS板级封装设备订单落地，公司凭借光刻能力切入PCB和先进封装（ft_news:108624）\\n- 华为发布“韬定律”V2版论文，提出逻辑折叠技术，交银国际认为先进封装和EDA工具链为增量机遇（ft_news:108760, 108775）\\n- 华为Mate90系列计划搭载基于韬定律的新麒麟芯片，率先采用逻辑折叠技术（ft_news:108972, 108991）\\n- 玻璃基板封装产品处于客户设计磨合和送样验证阶段（ft_news:109149, 109154）\\n- 具身智能产业相关设备可用于TGV玻璃基板微米级打孔及半导体检测（ft_news:108757）\\n\\n**输入信号类型：** 订单公告、技术论文/研报、产品规划、验证阶段披露\\n**驱动因素：** AI算力需求对先进封装（Chiplet、3D封装、玻璃基板）的推动、逻辑折叠技术实现芯片性能突破、国产替代逻辑强化\\n**传导链条：** AI算力需求 → 芯片设计复杂度提升 → 先进封装技术演进（CoPoS、玻璃基板、逻辑折叠）→ 封装设备/材料/EDA工具链需求增加 → 相关企业订单/营收增长 → 产业链投资机会\\n**影响对象：** 先进封装设备商、PCB产业链、封装材料供应商（德邦科技）、EDA厂商（华大九天、概伦电子）、华为终端产品\\n**确定性与边界：** 中等确定性。CoPoS订单已落地，华为技术论文已发布，但玻璃基板封装仍处验证阶段，逻辑折叠技术大规模应用需时间。主要风险：技术替代风险、客户验证不确定性。\\n\\n## 主线三：半导体设备行业景气度持续上行，资本开支周期进入执行阶段\\n\\n**代表性证据：**\\n- SEAJ将2026财年日本半导体设备销售额预期上调约两成至65502亿日元，2027财年预期上调至74017亿日元（ft_news:109040, 109058）\\n- SK海力士45.5万亿韩元资本支出计划，其中包括EUV光刻机采购（ft_news:109268）\\n- 高盛认为AI与HPC需求持续远大于供给，台积电将加速产能建设并提升毛利率（ft_news:109232）\\n- 花旗预计台积电在财报电话会可能上调2026年收入预期（ft_news:109238）\\n- AI资本开支仍在扩张，先进制程扩产进入实际采购，利好设备材料厂商（ft_news:109026）\\n\\n**输入信号类型：** 行业组织预测报告、企业资本开支公告、投行研报\\n**驱动因素：** AI服务器先进逻辑芯片投资、HBM DRAM产线投资扩张、新建晶圆厂陆续投产\\n**传导链条：** AI需求 → 芯片巨头扩产（台积电、SK海力士、美光）→ 半导体设备采购加速 → 设备商订单/销售额增长 → 产业链上游受益（日本设备厂、EUV供应商等）\\n**影响对象：** 全球半导体设备厂商（日本设备厂、ASML等）、晶圆代工企业（台积电）、存储芯片制造商、EDA工具商\\n**确定性与边界：** 确定性较高。SEAJ预测基于实际投资趋势，SK海力士资本支出已明确。但需关注：资本支出执行风险、技术迭代风险、下游需求是否持续强劲。\\n\\n## 主线四：半导体产业链并购整合与战略转型活跃，细分领域补强逻辑凸显\\n\\n**代表性证据：**\\n- 日联科技认购QES Group Berhad少数股权，布局半导体检测设备（ft_news:108607）\\n- 联动科技拟收购Northstar增强存储测试能力（ft_news:108631）\\n- 杭可科技增资控股进军半导体精密检测，境外收入过半，固态电池设备已产生营收（ft_news:108582）\\n- 本周17家A股公司密集披露并购重组进展（ft_news:108631）\\n\\n**输入信号类型：** 股权投资公告、并购进展披露、战略转型公告\\n**驱动因素：** 业务扩张需求、技术补缺、资本运作、全球化布局、半导体产业链国产替代\\n**传导链条：** 企业战略 → 并购/投资标的 → 技术/市场整合 → 产业链协同效应 → 新增增长点\\n**影响对象：** 被收购/投资企业（Northstar、QES）、上市公司（联动科技、杭可科技、日联科技）、半导体检测设备领域、存储测试领域\\n**确定性与边界：** 并购交易确定性中等（需审批），但战略方向明确。杭可科技双主业转型已产生营收。风险：跨境并购整合风险、审批不确定性。\\n\\n## 弱信号与相邻上下文\\n\\n- **模拟芯片供需紧张：** 亚德诺部分产品交期延长至六个月，模拟芯片行业出现阶梯调价（ft_news:108985, 109023, 109175）。信号强度中等，可作为存储芯片供需紧张的扩展参考，但材料数量有限。\\n- **EDA工具链机遇：** 逻辑折叠技术带动EDA需求，华大九天等概念股涨停（ft_news:108978, 109054）。事件驱动特征明显，可持续性待观察。\\n- **行业过热风险：** 策略师警告AI和半导体行业过度集中风险（ft_news:108785），作为风险警示信号。\\n- **韩国政策加速：** 韩国政府推进半导体、物理AI、AI数据中心三大项目（ft_news:109001），可能影响全球产能格局，作为政策背景。\\n- **短期市场情绪波动：** 存储芯片概念股冲高回落、港股走强等（ft_news:108895, 108812），反映市场分歧，需结合基本面判断。\\n\\n## 质量标记与使用边界\\n\\n- **quality_flags：** [\\\"信号集中度高，存储芯片主线权重较大\\\", \\\"部分先进封装技术仍处验证阶段\\\", \\\"存在短期市场情绪干扰\\\", \\\"社区边界较宽，需区分主线和相邻上下文\\\", \\\"并购事件确定性中等\\\"]\\n- **use_boundary：** 本报告适用于检索和决策Agent，用于理解当前半导体产业链的核心驱动、传导机制和风险点。应优先使用存储供需周期主线作为行业景气判断依据；先进封装和资本开支线可作为技术演进和投资信号；并购线反映企业补逻辑；弱信号需结合后续更多证据验证。Agent在检索时应区分已发生事件（价格上调、订单落地）与观点/预期类信息，并关注反转条件（如AI需求放缓、产能快速释放）。\", \"report_json\": {\"core_thesis\": \"半导体产业链当前由AI需求驱动存储芯片供需周期进入价格上行阶段，先进封装技术实现突破（逻辑折叠、板级封装），半导体设备景气度随资本开支周期持续提升，同时产业链并购整合活跃，模拟芯片供需亦趋紧。核心主线确定性较高，但需注意技术验证风险及市场情绪波动。\", \"basis\": [{\"evidence\": \"聚辰股份Nor Flash产品价格上调25%，三星计划DRAM提价20%\", \"signal_type\": \"价格变动公告\", \"driver\": \"AI需求导致的供给紧张\", \"impact_target\": \"存储芯片市场\", \"confidence\": 0.9}, {\"evidence\": \"CoPoS板级封装设备订单落地，华为发布韬定律V2论文并计划搭载新麒麟芯片\", \"signal_type\": \"订单/技术研发进展\", \"driver\": \"AI算力需求和逻辑折叠技术\", \"impact_target\": \"先进封装设备与材料\", \"confidence\": 0.8}, {\"evidence\": \"SEAJ大幅上调2026-2027财年半导体设备销售额预期，SK海力士宣布45.5万亿韩元资本支出\", \"signal_type\": \"行业预测/资本开支\", \"driver\": \"AI和HBM投资扩张\", \"impact_target\": \"半导体设备供应商\", \"confidence\": 0.9}, {\"evidence\": \"17家A股公司密集披露并购进展，联动科技拟收购Northstar，杭可科技转型半导体检测\", \"signal_type\": \"并购公告\", \"driver\": \"业务扩张和技术补缺\", \"impact_target\": \"半导体测试设备和检测\", \"confidence\": 0.7}, {\"evidence\": \"亚德诺部分产品交期延长至六个月，模拟芯片阶梯调价\", \"signal_type\": \"供应链动态\", \"driver\": \"需求回升\", \"impact_target\": \"模拟芯片行业\", \"confidence\": 0.8}], \"weak_signals\": [\"玻璃基板封装仍处客户设计磨合阶段，产业化时间不确定\", \"EDA概念受逻辑折叠短期提振，但需观察持续性\", \"存储芯片概念股冲高回落，市场存在分歧\"], \"conflicts\": [\"野村证券认为市场对存储需求降温的恐慌过度，但资金获利回吐表明短期不确定性\", \"分析师看好逻辑折叠，但实际产品落地尚需时间\"], \"reversal_conditions\": [\"AI需求若阶段性放缓，存储芯片供需可能逆转，价格回落\", \"韩国芯片投资若提前转化为产能，供应紧张缓解\", \"并购交易审批失败或整合不及预期\"], \"quality_flags\": [\"信号集中度高，存储芯片主线权重较大\", \"部分先进封装技术仍处验证阶段\", \"存在短期市场情绪干扰\", \"社区边界较宽，需区分主线和相邻上下文\", \"并购事件确定性中等\"], \"use_boundary\": \"本报告适用于检索和决策Agent，用于理解当前半导体产业链的核心驱动、传导机制和风险点。应优先使用存储供需周期主线作为行业景气判断依据；先进封装和资本开支线可作为技术演进和投资信号；并购线反映企业补逻辑；弱信号需结合后续更多证据验证。Agent在检索时应区分已发生事件（价格上调、订单落地）与观点/预期类信息，并关注反转条件（如AI需求放缓、产能快速释放）。\"}}",
+        "usage": {
+          "input_tokens": 22757,
+          "output_tokens": 3510,
+          "total_tokens": 26267,
+          "prompt_cache_hit_tokens": 256,
+          "prompt_cache_miss_tokens": 22501,
+          "reasoning_tokens": 569
+        },
+        "duration_ms": 42138,
+        "cache_hit": false,
+        "proxy": {
+          "provider": "deepseek",
+          "requested_model": "deepseek-v4-flash",
+          "resolved_model": "deepseek-v4-flash",
+          "upstream_model": "deepseek-v4-flash",
+          "route_reason": "model_exact",
+          "retry_count": 0,
+          "upstream_retry_events": [],
+          "upstream_max_retries": 10,
+          "upstream_max_retry_delay_seconds": 60,
+          "json_mode_retry_attempted": false,
+          "json_mode_retry_success": false,
+          "json_mode_retry_error": null,
+          "json_mode_initial_finish_reason": "stop",
+          "json_mode_retry_finish_reason": null,
+          "json_mode_initial_usage": {
+            "input_tokens": 22757,
+            "output_tokens": 3510,
+            "total_tokens": 26267,
+            "prompt_cache_hit_tokens": 256,
+            "prompt_cache_miss_tokens": 22501,
+            "reasoning_tokens": 569
+          },
+          "json_mode_retry_usage": null,
+          "json_repair_attempted": false,
+          "json_repair_success": false,
+          "json_repair_error": null,
+          "json_repair_finish_reason": null,
+          "json_repair_usage": null
+        },
+        "provider_diagnostics": {
+          "finish_reason": "stop",
+          "json_mode_initial": {
+            "id": "088f4c4b-4357-484f-809d-28e9bd5971c3",
+            "model": "deepseek-v4-flash",
+            "finish_reason": "stop",
+            "usage": {
+              "input_tokens": 22757,
+              "output_tokens": 3510,
+              "total_tokens": 26267,
+              "prompt_cache_hit_tokens": 256,
+              "prompt_cache_miss_tokens": 22501,
+              "reasoning_tokens": 569
+            },
+            "content_chars": 5684,
+            "reasoning_chars": 1073,
+            "has_tool_calls": false
+          }
+        }
+      },
+      "metadata": {
+        "task": "kg_community_insight",
+        "source_id": "-",
+        "source_type": "-",
+        "provider": "deepseek",
+        "model": "deepseek-v4-flash",
+        "backend": "deepseek",
+        "use_cache": true,
+        "has_json_schema": true,
+        "prompt_chars": 60868,
+        "tools_count": 0,
+        "has_tool_choice": false,
+        "cache_store": "miss",
+        "cache_hit": false,
+        "duration_ms": 42138,
+        "proxy": {
+          "provider": "deepseek",
+          "requested_model": "deepseek-v4-flash",
+          "resolved_model": "deepseek-v4-flash",
+          "upstream_model": "deepseek-v4-flash",
+          "route_reason": "model_exact",
+          "retry_count": 0,
+          "upstream_retry_events": [],
+          "upstream_max_retries": 10,
+          "upstream_max_retry_delay_seconds": 60,
+          "json_mode_retry_attempted": false,
+          "json_mode_retry_success": false,
+          "json_mode_retry_error": null,
+          "json_mode_initial_finish_reason": "stop",
+          "json_mode_retry_finish_reason": null,
+          "json_mode_initial_usage": {
+            "input_tokens": 22757,
+            "output_tokens": 3510,
+            "total_tokens": 26267,
+            "prompt_cache_hit_tokens": 256,
+            "prompt_cache_miss_tokens": 22501,
+            "reasoning_tokens": 569
+          },
+          "json_mode_retry_usage": null,
+          "json_repair_attempted": false,
+          "json_repair_success": false,
+          "json_repair_error": null,
+          "json_repair_finish_reason": null,
+          "json_repair_usage": null
+        },
+        "resourceAttributes": {
+          "telemetry.sdk.language": "python",
+          "telemetry.sdk.name": "opentelemetry",
+          "telemetry.sdk.version": "1.41.1",
+          "service.name": "unknown_service"
+        },
+        "scope": {
+          "name": "langfuse-sdk",
+          "version": "4.6.1",
+          "attributes": {
+            "public_key": "pk-lf-d52cf296-5725-45dc-a0f7-31202673d39f"
+          }
+        }
+      },
+      "model": "deepseek-v4-flash",
+      "modelParameters": {
+        "temperature": 0,
+        "max_tokens": 4500,
+        "response_format": "{\"type\":\"json_object\"}",
+        "json_schema": "true"
+      },
+      "completionStartTime": null,
+      "promptId": null,
+      "promptName": null,
+      "promptVersion": null,
+      "latency": 37.678,
+      "timeToFirstToken": null,
+      "usageDetails": {
+        "input_tokens": 22757,
+        "output_tokens": 3510,
+        "total_tokens": 26267,
+        "prompt_cache_hit_tokens": 256,
+        "prompt_cache_miss_tokens": 22501,
+        "total": 75291
+      },
+      "costDetails": {},
+      "usagePricingTierId": null,
+      "usagePricingTierName": null,
+      "inputPrice": 0,
+      "outputPrice": 0,
+      "totalPrice": 0,
+      "calculatedInputCost": null,
+      "calculatedOutputCost": null,
+      "calculatedTotalCost": 0,
+      "unit": "TOKENS",
+      "promptTokens": 22757,
+      "completionTokens": 3510,
+      "totalTokens": 75291,
+      "modelId": null,
+      "usage": {
+        "unit": "TOKENS",
+        "input": 22757,
+        "output": 3510,
+        "total": 75291
+      }
+    },
+    {
+      "id": "02246fab6a431578",
+      "traceId": "e1bc2bc402d4956ae16c501628b25d74",
+      "startTime": "2026-07-06T13:32:05.583Z",
+      "endTime": "2026-07-06T13:32:06.233Z",
+      "projectId": "cmp9tyu4x01efad08dq5ebuhg",
+      "parentObservationId": "1493d3aac1589d58",
+      "type": "SPAN",
+      "environment": "default",
+      "name": "embedding.http_request",
+      "level": "DEFAULT",
+      "statusMessage": null,
+      "version": null,
+      "createdAt": "2026-07-06T13:32:07.942Z",
+      "updatedAt": "2026-07-06T13:32:07.943Z",
+      "input": {
+        "count": 1,
+        "samples": [
+          "Community Insight: 半导体产业链\n\n基于56条来源、58张认知卡、62次归类的半导体产业链社区（kgc:financial:l0:731）分析，该社区由三个原有子社区（半导体设备与检测、半导体硬件供需、存储芯片产业链）合并吸收而成，形成覆盖全产业链的父级主题。合并动作源于2026年7月6日早盘半导体板块走强事件，表明社区边界已从窄主题上提至产业链整体。\n\n## 主线一：存储芯片供需周期进入价格上行区间，AI需求是核心驱动\n\n**代表性证据（多条来源）：**\n- 聚辰股份全系列Nor Flash产品价格上调25%（ft_news:108755）\n- 三星计划三季度DRAM提价20%（ft_news:108783）\n- 集邦咨询上修2026年Q1 DRAM和NAND Flash合约价涨幅（ft_news:109052）\n- 华强北多款固态硬盘和内存条价格上涨（ft_news:108767, 108783）\n- 美光投资93亿美元扩建存储芯片项目（ft_news:108767）\n- SK海力士宣布45.5万亿韩元资本支出计划并采购EUV光刻机（ft_news:109268）\n- 野村证券指出市场对存储需求降温的恐慌过度，实际AI需求引发短缺（ft_news:109005, 109006）\n\n**输入信号类型：** 价格变动公告、供需分析报告、企业资本开支计划、观点类研报\n**驱动因素：** AI算力需求增长（特别是HBM）、数据中心扩产、上游成本推动、芯片厂商产能分配策略（HBM挤压通用DRAM/NAND产能）\n**传导链条：** AI需求 → HBM高利润 → 晶圆厂优先扩产HBM → 通用存储产能受限 → 供给短缺 → 价格上行（DRAM、NAND、Nor Flash均受波及）→ 存储芯片厂商业绩受益（三星Q2利润飙升、江波龙业绩暴增）→ 进一步激发资本开支（美光、SK海力士）\n**影响对象：** 存储芯片制造商（三星、SK海力士、美光、聚辰股份）、下游PC/消费电子产业链、存储芯片代理分销商、半导体设备商（EUV光刻机等）\n**确定性与边界：** 确定性强。价格上调和产能扩张均为已发生或确定性计划，供需短缺由AI需求结构性驱动。但需注意：(1) 野村观点虽支持短缺逻辑，但市场存在分歧（部分资金获利回吐、概念股冲高回落）；(2) 韩国芯片投资短期无法...[truncated]"
+        ]
+      },
+      "output": {
+        "status_code": 200,
+        "latency_s": 0.6487,
+        "attempt": 1,
+        "attempts": [
+          {
+            "attempt": 1,
+            "status_code": 200,
+            "latency_s": 0.6487
+          }
+        ],
+        "retries": 0
+      },
+      "metadata": {
+        "endpoint": "http://119.23.227.187:8901/v1/embeddings",
+        "model": "/models/Qwen3-Embedding-4B",
+        "dim": 2560,
+        "batch_size": 1,
+        "request_dimensions": false,
+        "timeout_s": 180,
+        "max_retries": 5,
+        "retry_base_delay_s": 1,
+        "retry_max_delay_s": 30,
+        "status_code": 200,
+        "latency_s": 0.648674488067627,
+        "attempt": 1,
+        "attempts": [
+          {
+            "attempt": 1,
+            "status_code": 200,
+            "latency_s": 0.6487
+          }
+        ],
+        "retries": 0,
+        "resourceAttributes": {
+          "telemetry.sdk.language": "python",
+          "telemetry.sdk.name": "opentelemetry",
+          "telemetry.sdk.version": "1.41.1",
+          "service.name": "unknown_service"
+        },
+        "scope": {
+          "name": "langfuse-sdk",
+          "version": "4.6.1",
+          "attributes": {
+            "public_key": "pk-lf-d52cf296-5725-45dc-a0f7-31202673d39f"
+          }
+        }
+      },
+      "model": null,
+      "modelParameters": null,
+      "completionStartTime": null,
+      "promptId": null,
+      "promptName": null,
+      "promptVersion": null,
+      "latency": 0.65,
+      "timeToFirstToken": null,
+      "usageDetails": {},
+      "costDetails": {},
+      "usagePricingTierId": null,
+      "usagePricingTierName": null,
+      "inputPrice": 0,
+      "outputPrice": 0,
+      "totalPrice": 0,
+      "calculatedInputCost": null,
+      "calculatedOutputCost": null,
+      "calculatedTotalCost": 0,
+      "unit": "TOKENS",
+      "promptTokens": 0,
+      "completionTokens": 0,
+      "totalTokens": 0,
+      "modelId": null,
+      "usage": {
+        "unit": "TOKENS",
+        "input": 0,
+        "output": 0,
+        "total": 0
+      }
+    },
+    {
+      "id": "1493d3aac1589d58",
+      "traceId": "e1bc2bc402d4956ae16c501628b25d74",
+      "startTime": "2026-07-06T13:32:05.565Z",
+      "endTime": "2026-07-06T13:32:07.333Z",
+      "projectId": "cmp9tyu4x01efad08dq5ebuhg",
+      "parentObservationId": "8618005d543a1721",
+      "type": "SPAN",
+      "environment": "default",
+      "name": "kg.community_insight.milvus.upsert",
+      "level": "DEFAULT",
+      "statusMessage": "completed",
+      "version": null,
+      "createdAt": "2026-07-06T13:32:07.942Z",
+      "updatedAt": "2026-07-06T13:32:07.943Z",
+      "input": {
+        "community_id": "kgc:financial:l0:731",
+        "insight_id": "kgi:kgc:financial:l0:731",
+        "collection_role": "community_insight",
+        "report_chars": 3642
+      },
+      "output": {
+        "documents": 1,
+        "vectors": 1,
+        "retrieval_text_chars": 4362,
+        "embedding_model": "/models/Qwen3-Embedding-4B",
+        "collection_role": "community_insight"
+      },
+      "metadata": {
+        "resourceAttributes": {
+          "telemetry.sdk.language": "python",
+          "telemetry.sdk.name": "opentelemetry",
+          "telemetry.sdk.version": "1.41.1",
+          "service.name": "unknown_service"
+        },
+        "scope": {
+          "name": "langfuse-sdk",
+          "version": "4.6.1",
+          "attributes": {
+            "public_key": "pk-lf-d52cf296-5725-45dc-a0f7-31202673d39f"
+          }
+        }
+      },
+      "model": null,
+      "modelParameters": null,
+      "completionStartTime": null,
+      "promptId": null,
+      "promptName": null,
+      "promptVersion": null,
+      "latency": 1.768,
+      "timeToFirstToken": null,
+      "usageDetails": {},
+      "costDetails": {},
+      "usagePricingTierId": null,
+      "usagePricingTierName": null,
+      "inputPrice": 0,
+      "outputPrice": 0,
+      "totalPrice": 0,
+      "calculatedInputCost": null,
+      "calculatedOutputCost": null,
+      "calculatedTotalCost": 0,
+      "unit": "TOKENS",
+      "promptTokens": 0,
+      "completionTokens": 0,
+      "totalTokens": 0,
+      "modelId": null,
+      "usage": {
+        "unit": "TOKENS",
+        "input": 0,
+        "output": 0,
+        "total": 0
+      }
+    },
+    {
+      "id": "3efa8d659abdfb1f",
+      "traceId": "e1bc2bc402d4956ae16c501628b25d74",
+      "startTime": "2026-07-06T13:32:05.341Z",
+      "endTime": "2026-07-06T13:32:05.564Z",
+      "projectId": "cmp9tyu4x01efad08dq5ebuhg",
+      "parentObservationId": "8618005d543a1721",
+      "type": "SPAN",
+      "environment": "default",
+      "name": "kg.community_insight.pg.save",
+      "level": "DEFAULT",
+      "statusMessage": "completed",
+      "version": null,
+      "createdAt": "2026-07-06T13:32:07.942Z",
+      "updatedAt": "2026-07-06T13:32:07.943Z",
+      "input": {
+        "community_id": "kgc:financial:l0:731",
+        "insight_id": "kgi:kgc:financial:l0:731",
+        "report_chars": 3642
+      },
+      "output": {
+        "created": false,
+        "insight_id": "kgi:kgc:financial:l0:731",
+        "insight_version": 5,
+        "quality_diagnostics": {
+          "warnings": [],
+          "basis_count": 5,
+          "report_chars": 3642,
+          "reversal_condition_count": 3
+        }
+      },
+      "metadata": {
+        "resourceAttributes": {
+          "telemetry.sdk.language": "python",
+          "telemetry.sdk.name": "opentelemetry",
+          "telemetry.sdk.version": "1.41.1",
+          "service.name": "unknown_service"
+        },
+        "scope": {
+          "name": "langfuse-sdk",
+          "version": "4.6.1",
+          "attributes": {
+            "public_key": "pk-lf-d52cf296-5725-45dc-a0f7-31202673d39f"
+          }
+        }
+      },
+      "model": null,
+      "modelParameters": null,
+      "completionStartTime": null,
+      "promptId": null,
+      "promptName": null,
+      "promptVersion": null,
+      "latency": 0.223,
+      "timeToFirstToken": null,
+      "usageDetails": {},
+      "costDetails": {},
+      "usagePricingTierId": null,
+      "usagePricingTierName": null,
+      "inputPrice": 0,
+      "outputPrice": 0,
+      "totalPrice": 0,
+      "calculatedInputCost": null,
+      "calculatedOutputCost": null,
+      "calculatedTotalCost": 0,
+      "unit": "TOKENS",
+      "promptTokens": 0,
+      "completionTokens": 0,
+      "totalTokens": 0,
+      "modelId": null,
+      "usage": {
+        "unit": "TOKENS",
+        "input": 0,
+        "output": 0,
+        "total": 0
+      }
+    },
+    {
+      "id": "8618005d543a1721",
+      "traceId": "e1bc2bc402d4956ae16c501628b25d74",
+      "startTime": "2026-07-06T13:31:27.659Z",
+      "endTime": "2026-07-06T13:32:07.334Z",
+      "projectId": "cmp9tyu4x01efad08dq5ebuhg",
+      "parentObservationId": "befec8dc8f051fb0",
+      "type": "SPAN",
+      "environment": "default",
+      "name": "kg.community_insight.refresh_one",
+      "level": "DEFAULT",
+      "statusMessage": "completed",
+      "version": null,
+      "createdAt": "2026-07-06T13:32:07.942Z",
+      "updatedAt": "2026-07-06T13:32:07.943Z",
+      "input": {
+        "community_id": "kgc:financial:l0:731",
+        "title": "半导体产业链",
+        "source_count": 56,
+        "cognitive_card_count": 58,
+        "assignment_count": 62
+      },
+      "output": {
+        "community_id": "kgc:financial:l0:731",
+        "insight_id": "kgi:kgc:financial:l0:731",
+        "insight_version": 5,
+        "materials": 60,
+        "report_chars": 3642,
+        "cache_hit": false,
+        "retried": false
+      },
+      "metadata": {
+        "community_id": "kgc:financial:l0:731",
+        "title": "半导体产业链",
+        "source_count": 56,
+        "cognitive_card_count": 58,
+        "assignment_count": 62,
+        "resourceAttributes": {
+          "telemetry.sdk.language": "python",
+          "telemetry.sdk.name": "opentelemetry",
+          "telemetry.sdk.version": "1.41.1",
+          "service.name": "unknown_service"
+        },
+        "scope": {
+          "name": "langfuse-sdk",
+          "version": "4.6.1",
+          "attributes": {
+            "public_key": "pk-lf-d52cf296-5725-45dc-a0f7-31202673d39f"
+          }
+        }
+      },
+      "model": null,
+      "modelParameters": null,
+      "completionStartTime": null,
+      "promptId": null,
+      "promptName": null,
+      "promptVersion": null,
+      "latency": 39.675,
+      "timeToFirstToken": null,
+      "usageDetails": {},
+      "costDetails": {},
+      "usagePricingTierId": null,
+      "usagePricingTierName": null,
+      "inputPrice": 0,
+      "outputPrice": 0,
+      "totalPrice": 0,
+      "calculatedInputCost": null,
+      "calculatedOutputCost": null,
+      "calculatedTotalCost": 0,
+      "unit": "TOKENS",
+      "promptTokens": 0,
+      "completionTokens": 0,
+      "totalTokens": 0,
+      "modelId": null,
+      "usage": {
+        "unit": "TOKENS",
+        "input": 0,
+        "output": 0,
+        "total": 0
+      }
+    },
+    {
+      "id": "befec8dc8f051fb0",
+      "traceId": "e1bc2bc402d4956ae16c501628b25d74",
+      "startTime": "2026-07-06T13:31:27.543Z",
+      "endTime": "2026-07-06T13:32:07.335Z",
+      "projectId": "cmp9tyu4x01efad08dq5ebuhg",
+      "parentObservationId": null,
+      "type": "SPAN",
+      "environment": "default",
+      "name": "kg.community_insight.refresh_ids",
+      "level": "DEFAULT",
+      "statusMessage": "completed",
+      "version": null,
+      "createdAt": "2026-07-06T13:32:07.942Z",
+      "updatedAt": "2026-07-06T13:32:07.943Z",
+      "input": {
+        "community_ids": [
+          "kgc:financial:l0:731"
+        ],
+        "task": "kg_community_insight_refresh_ids",
+        "target": "prod",
+        "requested": 1,
+        "force": true
+      },
+      "output": {
+        "skipped": false,
+        "requested": 1,
+        "selected": 1,
+        "refreshed": 1,
+        "failed": 0,
+        "errors": [],
+        "duration_seconds": 40.102
+      },
+      "metadata": {
+        "task": "kg_community_insight_refresh_ids",
+        "target": "prod",
+        "requested": 1,
+        "force": true,
+        "lock_acquired": true,
+        "resourceAttributes": {
+          "telemetry.sdk.language": "python",
+          "telemetry.sdk.name": "opentelemetry",
+          "telemetry.sdk.version": "1.41.1",
+          "service.name": "unknown_service"
+        },
+        "scope": {
+          "name": "langfuse-sdk",
+          "version": "4.6.1",
+          "attributes": {
+            "public_key": "pk-lf-d52cf296-5725-45dc-a0f7-31202673d39f"
+          }
+        }
+      },
+      "model": null,
+      "modelParameters": null,
+      "completionStartTime": null,
+      "promptId": null,
+      "promptName": null,
+      "promptVersion": null,
+      "latency": 39.792,
+      "timeToFirstToken": null,
+      "usageDetails": {},
+      "costDetails": {},
+      "usagePricingTierId": null,
+      "usagePricingTierName": null,
+      "inputPrice": 0,
+      "outputPrice": 0,
+      "totalPrice": 0,
+      "calculatedInputCost": null,
+      "calculatedOutputCost": null,
+      "calculatedTotalCost": 0,
+      "unit": "TOKENS",
+      "promptTokens": 0,
+      "completionTokens": 0,
+      "totalTokens": 0,
+      "modelId": null,
+      "usage": {
+        "unit": "TOKENS",
+        "input": 0,
+        "output": 0,
+        "total": 0
+      }
+    },
+    {
+      "id": "1602ca0643bc98c8",
+      "traceId": "e1bc2bc402d4956ae16c501628b25d74",
+      "startTime": "2026-07-06T13:31:27.659Z",
+      "endTime": "2026-07-06T13:31:27.660Z",
+      "projectId": "cmp9tyu4x01efad08dq5ebuhg",
+      "parentObservationId": "8618005d543a1721",
+      "type": "SPAN",
+      "environment": "default",
+      "name": "kg.community_insight.materials.load",
+      "level": "DEFAULT",
+      "statusMessage": "completed",
+      "version": null,
+      "createdAt": "2026-07-06T13:31:31.286Z",
+      "updatedAt": "2026-07-06T13:31:31.286Z",
+      "input": {
+        "community_id": "kgc:financial:l0:731",
+        "max_materials": 80
+      },
+      "output": {
+        "source": "community.metrics.assigned_intents",
+        "materials": 60,
+        "assignment_contexts": 60
+      },
+      "metadata": {
+        "resourceAttributes": {
+          "telemetry.sdk.language": "python",
+          "telemetry.sdk.name": "opentelemetry",
+          "telemetry.sdk.version": "1.41.1",
+          "service.name": "unknown_service"
+        },
+        "scope": {
+          "name": "langfuse-sdk",
+          "version": "4.6.1",
+          "attributes": {
+            "public_key": "pk-lf-d52cf296-5725-45dc-a0f7-31202673d39f"
+          }
+        }
+      },
+      "model": null,
+      "modelParameters": null,
+      "completionStartTime": null,
+      "promptId": null,
+      "promptName": null,
+      "promptVersion": null,
+      "latency": 0.001,
+      "timeToFirstToken": null,
+      "usageDetails": {},
+      "costDetails": {},
+      "usagePricingTierId": null,
+      "usagePricingTierName": null,
+      "inputPrice": 0,
+      "outputPrice": 0,
+      "totalPrice": 0,
+      "calculatedInputCost": null,
+      "calculatedOutputCost": null,
+      "calculatedTotalCost": 0,
+      "unit": "TOKENS",
+      "promptTokens": 0,
+      "completionTokens": 0,
+      "totalTokens": 0,
+      "modelId": null,
+      "usage": {
+        "unit": "TOKENS",
+        "input": 0,
+        "output": 0,
+        "total": 0
+      }
+    },
+    {
+      "id": "17dd3226a0197f8e",
+      "traceId": "e1bc2bc402d4956ae16c501628b25d74",
+      "startTime": "2026-07-06T13:31:27.548Z",
+      "endTime": "2026-07-06T13:31:27.658Z",
+      "projectId": "cmp9tyu4x01efad08dq5ebuhg",
+      "parentObservationId": "befec8dc8f051fb0",
+      "type": "SPAN",
+      "environment": "default",
+      "name": "kg.community_insight.pg.load_candidates_by_ids",
+      "level": "DEFAULT",
+      "statusMessage": "completed",
+      "version": null,
+      "createdAt": "2026-07-06T13:31:31.286Z",
+      "updatedAt": "2026-07-06T13:31:31.286Z",
+      "input": {
+        "requested": 1,
+        "force": true,
+        "community_ids": [
+          "kgc:financial:l0:731"
+        ]
+      },
+      "output": {
+        "loaded": 1,
+        "existing_insights": 1,
+        "selected": 1,
+        "candidate_ids": [
+          "kgc:financial:l0:731"
+        ]
+      },
+      "metadata": {
+        "resourceAttributes": {
+          "telemetry.sdk.language": "python",
+          "telemetry.sdk.name": "opentelemetry",
+          "telemetry.sdk.version": "1.41.1",
+          "service.name": "unknown_service"
+        },
+        "scope": {
+          "name": "langfuse-sdk",
+          "version": "4.6.1",
+          "attributes": {
+            "public_key": "pk-lf-d52cf296-5725-45dc-a0f7-31202673d39f"
+          }
+        }
+      },
+      "model": null,
+      "modelParameters": null,
+      "completionStartTime": null,
+      "promptId": null,
+      "promptName": null,
+      "promptVersion": null,
+      "latency": 0.11,
+      "timeToFirstToken": null,
+      "usageDetails": {},
+      "costDetails": {},
+      "usagePricingTierId": null,
+      "usagePricingTierName": null,
+      "inputPrice": 0,
+      "outputPrice": 0,
+      "totalPrice": 0,
+      "calculatedInputCost": null,
+      "calculatedOutputCost": null,
+      "calculatedTotalCost": 0,
+      "unit": "TOKENS",
+      "promptTokens": 0,
+      "completionTokens": 0,
+      "totalTokens": 0,
+      "modelId": null,
+      "usage": {
+        "unit": "TOKENS",
+        "input": 0,
+        "output": 0,
+        "total": 0
+      }
+    }
+  ],
+  "htmlPath": "/project/cmp9tyu4x01efad08dq5ebuhg/traces/e1bc2bc402d4956ae16c501628b25d74",
+  "totalCost": 0
+}

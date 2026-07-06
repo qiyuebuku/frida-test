@@ -1,0 +1,803 @@
+{
+  "id": "f6306ebf958e89eaa7d7a1e55ed2e16e",
+  "projectId": "cmp9tyu4x01efad08dq5ebuhg",
+  "name": "kg.community_insight.refresh_ids",
+  "timestamp": "2026-07-06T11:10:11.123Z",
+  "environment": "default",
+  "tags": [
+    "agentic-rag",
+    "community_insight",
+    "kg",
+    "openai-agents",
+    "refresh_ids",
+    "smart-fund-server"
+  ],
+  "bookmarked": false,
+  "release": null,
+  "version": null,
+  "userId": null,
+  "sessionId": null,
+  "public": false,
+  "input": null,
+  "output": null,
+  "metadata": {
+    "task": "kg_community_insight_refresh_ids",
+    "target": "prod",
+    "requested": 1,
+    "force": true,
+    "resourceAttributes": {
+      "telemetry.sdk.language": "python",
+      "telemetry.sdk.name": "opentelemetry",
+      "telemetry.sdk.version": "1.41.1",
+      "service.name": "unknown_service"
+    },
+    "scope": {
+      "name": "langfuse-sdk",
+      "version": "4.6.1",
+      "attributes": {
+        "public_key": "pk-lf-d52cf296-5725-45dc-a0f7-31202673d39f"
+      }
+    }
+  },
+  "createdAt": "2026-07-06T11:10:17.000Z",
+  "updatedAt": "2026-07-06T11:10:16.963Z",
+  "externalId": null,
+  "scores": [],
+  "latency": 18.81,
+  "observations": [
+    {
+      "id": "623c1f4084769571",
+      "traceId": "f6306ebf958e89eaa7d7a1e55ed2e16e",
+      "startTime": "2026-07-06T11:10:11.237Z",
+      "endTime": "2026-07-06T11:10:28.429Z",
+      "projectId": "cmp9tyu4x01efad08dq5ebuhg",
+      "parentObservationId": "7e74765f60688b5b",
+      "type": "GENERATION",
+      "environment": "default",
+      "name": "llm:kg_community_insight",
+      "level": "DEFAULT",
+      "statusMessage": "completed",
+      "version": null,
+      "createdAt": "2026-07-06T11:10:30.398Z",
+      "updatedAt": "2026-07-06T11:10:30.398Z",
+      "input": {
+        "prompt": "请基于以下 community 上下文生成 Community Insight 高级认知报告。\n\n你的任务不是总结单条新闻，也不是罗列 community 成员。\n所有判断只能基于输入材料中明确提供的信息；不得引入输入之外的行情、价格、公司、时间、政策或外部知识。\n\n报告必须回答：这些来源合在一起说明了什么；支撑判断的输入信号类型是什么；关键驱动、传导链条和影响对象是什么；限制条件、不确定性或反转条件是什么；Agent 应如何使用这份报告。\n\n报告长度由输入材料复杂度自然决定。不要为了凑字数扩写，也不要把复杂 community 压缩成短行情评论。\n\n写作要求：\n- 输出一份完整高级认知报告，不要逐条复述输入。\n- 先归纳 3-6 条由多条材料共同支撑的主线，再解释主线之间的传导关系和边界。\n- 每条主线需要说明依据来自哪些输入信号类型，例如供需、价格、订单、产能、技术路线、政策、业绩、资金行为或风险提示。\n- 不要把 parent_themes、broad_topics、risk_type 简单拼接成报告。\n- 不要把短期行情、概念股涨跌或单条研报观点写成主结论；除非输入中存在机制、供需、订单、价格或产能等支撑。\n- 如果 community 边界偏宽，报告应说明哪些主线较强、哪些只是相邻上下文，并在 report_json.quality_flags 中标记。\n- 强弱、冲突、噪声是条件触发的判断维度，不是固定输出章节。\n- 只有输入材料支持时，才解释冲突、弱信号或噪声；不要为了格式强行生成这些内容。\n- 如果输入材料显示某些信号只有表面变化描述，缺少驱动、机制、影响路径或证据支撑，应明确降权。\n- 风险和反转条件必须来自输入材料可支持的机制推演。\n- 不得创造输入中不存在的时间、数字、公司名、政策名、交易结论或因果关系。\n- 不输出买入、卖出、持仓建议。\n\n请输出 JSON 对象，字段为 insight_full_report 和 report_json。\n\n输入材料：\n{\"community\":{\"community_id\":\"kgc:financial:l0:728\",\"title\":\"资管行业产品业绩与理财市场\",\"scope\":\"承接资管行业（包括银行理财、公募基金、私募基金、券商资管等）产品业绩盘点、规模变化、行业趋势、机构动态，以及理财市场（含银行理财、理财子公司）的规模增长、产品发行、投资者行为等。不包括具体资产类别的外部市场波动或宏观流动性本身。\",\"source_count\":6,\"cognitive_card_count\":6,\"assignment_count\":6,\"time_range\":{\"start\":\"2026-07-06T00:42:36+00:00\",\"end\":\"2026-07-06T10:47:59+00:00\"}},\"community_signals\":{\"parent_themes\":[\"私募基金行业\",\"资本市场产品发行\",\"基金业绩\",\"固定收益基金\",\"资产管理\",\"理财市场\",\"ETF市场格局\",\"资金流向与偏好\",\"公募基金行业趋势\",\"基金产品结构演变\",\"银行理财资产配置\",\"REITs市场\"],\"topic_tags\":[\"私募基金行业\",\"资本市场产品发行\",\"基金业绩\",\"固定收益基金\",\"资产管理\",\"理财市场\",\"ETF市场格局\",\"资金流向与偏好\",\"公募基金行业趋势\",\"基金产品结构演变\",\"银行理财资产配置\",\"REITs市场\",\"私募基金监管\",\"纯债基金\",\"上半年业绩\",\"资管产品\",\"理财规模\",\"ETF市场规模竞争\",\"投资者短期行为\",\"公募基金\",\"金融投资\",\"银行理财\",\"REITs投资\",\"备案数据\",\"产品发行节奏\",\"最高回报超40%\",\"年中业绩盘点\",\"季度规模增长\",\"黄金ETF规模超越沪深300ETF\",\"权益类ETF配置价值\",\"基金发行\",\"行业转型\"],\"event_threads\":[\"私募基金备案数据周期\",\"基金业绩披露\",\"资管行业业绩盘点\",\"理财规模增长趋势\",\"ETF市场规模竞争事件线\",\"公募基金行业变革\",\"银行理财REITs配置线\"],\"impact_tags\":[\"私募基金行业\",\"证券产品发行\",\"纯债基金\",\"投资者\",\"资管行业\",\"理财市场\",\"ETF市场\",\"黄金ETF\",\"沪深300ETF\",\"权益类ETF\",\"公募基金行业\",\"基金管理公司\",\"银行理财\",\"REITs市场\"],\"risk_tags\":[\"市场风险\",\"流动性风险\",\"业绩分化\",\"收益风险\",\"市场资金流动风险\",\"行业转型风险\",\"业绩风险\"],\"future_coverage\":[\"资产管理\",\"理财市场\",\"资管产品\",\"理财规模\",\"年中业绩盘点\",\"季度规模增长\",\"私募基金行业\",\"资本市场产品发行\",\"私募基金监管\",\"备案数据\",\"产品发行节奏\",\"基金业绩\",\"固定收益基金\",\"纯债基金\",\"上半年业绩\",\"最高回报超40%\",\"ETF市场格局\",\"资金流向与偏好\",\"ETF市场规模竞争\",\"投资者短期行为\",\"黄金ETF规模超越沪深300ETF\",\"权益类ETF配置价值\",\"公募基金行业趋势\",\"基金产品结构演变\",\"公募基金\",\"金融投资\",\"基金发行\",\"行业转型\",\"银行理财资产配置\",\"REITs市场\",\"银行理财\",\"REITs投资\"],\"coverage_contract\":\"可承接父主题：资管行业产品业绩与理财市场、私募基金行业、资本市场产品发行、基金业绩、固定收益基金、资产管理；可吸收子方向：资产管理、私募基金监管、纯债基金、上半年业绩、资管产品、理财规模、ETF市场规模竞争、投资者短期行为、公募基金、金融投资、银行理财、REITs投资；当前具体线索：2026年6月备案数据、私募证券产品、上半年纯债基回报、理财产品、万亿级增长、华安黄金ETF规模900.98亿元、华泰柏瑞沪深300ETF规模833.24亿元、规模排名阶段性变化、2026年上半年行业洗牌、重回报导向\",\"maturity_level\":\"mature_topic\",\"topic_diversity_count\":51,\"high_weight_assignment_count\":5,\"medium_weight_assignment_count\":1,\"low_weight_assignment_count\":0},\"materials\":[{\"importance\":0.5,\"source_published_at\":\"2026-07-06T01:35:16+00:00\",\"broad_topics\":[\"资产管理\",\"私募基金监管\"],\"event_thread\":[\"私募基金备案数据周期\"],\"risk_type\":[\"市场风险\",\"流动性风险\"],\"intent_id\":\"kg_cognitive_card:a0db2635c35686a9:intent:1\",\"cognitive_card_id\":\"kg_cognitive_card:a0db2635c35686a9\",\"mid_topics\":[\"备案数据\",\"产品发行节奏\"],\"driver\":[\"监管环境\",\"市场信心\"],\"source_id\":\"ft_news:108872\",\"impact_target\":[\"私募基金行业\",\"证券产品发行\"],\"title_candidate\":\"私募基金产品发行趋势\",\"parent_themes\":[\"私募基金行业\",\"资本市场产品发行\"],\"event_action\":[\"备案\",\"增长\"],\"summary\":\"6月私募证券产品备案量环比增长33%，上半年同比增长45.85%，显示行业回暖。\"},{\"importance\":0.5,\"source_published_at\":\"2026-07-06T00:42:36+00:00\",\"broad_topics\":[\"纯债基金\",\"上半年业绩\"],\"event_thread\":[\"基金业绩披露\"],\"risk_type\":[\"业绩分化\",\"收益风险\"],\"intent_id\":\"kg_cognitive_card:3b2e7eead2ece54c:intent:2\",\"cognitive_card_id\":\"kg_cognitive_card:3b2e7eead2ece54c\",\"mid_topics\":[\"最高回报超40%\"],\"driver\":[\"基金业绩\",\"市场表现\"],\"source_id\":\"ft_news:108791\",\"impact_target\":[\"纯债基金\",\"投资者\"],\"title_candidate\":\"纯债基金回报表现\",\"parent_themes\":[\"基金业绩\",\"固定收益基金\"],\"event_action\":[\"获得回报\"],\"summary\":\"纯债基上半年最高回报超40%。\"},{\"importance\":0.6,\"source_published_at\":\"2026-07-06T03:55:59+00:00\",\"broad_topics\":[\"资管产品\",\"理财规模\"],\"event_thread\":[\"资管行业业绩盘点\",\"理财规模增长趋势\"],\"intent_id\":\"kg_cognitive_card:83af6801334eb7bd:intent:1\",\"cognitive_card_id\":\"kg_cognitive_card:83af6801334eb7bd\",\"mid_topics\":[\"年中业绩盘点\",\"季度规模增长\"],\"driver\":[\"行业周期性\",\"市场预期\"],\"source_id\":\"ft_news:108933\",\"impact_target\":[\"资管行业\",\"理财市场\"],\"title_candidate\":\"资管行业产品业绩与理财规模增长\",\"parent_themes\":[\"资产管理\",\"理财市场\"],\"event_action\":[\"盘点\",\"预期增长\"],\"summary\":\"资管行业周报概述多类产品业绩盘点及理财规模增长预期。\"},{\"importance\":0.6,\"source_published_at\":\"2026-07-06T05:54:53+00:00\",\"broad_topics\":[\"ETF市场规模竞争\",\"投资者短期行为\"],\"event_thread\":[\"ETF市场规模竞争事件线\"],\"risk_type\":[\"市场资金流动风险\"],\"intent_id\":\"kg_cognitive_card:0dfec84f1ef5fac4:intent:1\",\"cognitive_card_id\":\"kg_cognitive_card:0dfec84f1ef5fac4\",\"mid_topics\":[\"黄金ETF规模超越沪深300ETF\",\"权益类ETF配置价值\"],\"driver\":[\"短期资金偏好\",\"市场避险情绪\",\"资产配置需求\"],\"source_id\":\"ft_news:109003\",\"impact_target\":[\"ETF市场\",\"黄金ETF\",\"沪深300ETF\",\"权益类ETF\"],\"title_candidate\":\"ETF市场规模格局变化\",\"parent_themes\":[\"ETF市场格局\",\"资金流向与偏好\"],\"event_action\":[\"规模超越\",\"排名变动\"],\"summary\":\"黄金ETF规模阶段性超过沪深300ETF，成为全市场规模第一，但权益类ETF仍具中长期配置价值。\"},{\"importance\":0.8,\"source_published_at\":\"2026-07-06T08:37:17+00:00\",\"broad_topics\":[\"公募基金\",\"金融投资\"],\"event_thread\":[\"公募基金行业变革\"],\"risk_type\":[\"行业转型风险\"],\"intent_id\":\"kg_cognitive_card:d312b6525cf22d45:intent:1\",\"cognitive_card_id\":\"kg_cognitive_card:d312b6525cf22d45\",\"mid_topics\":[\"基金发行\",\"行业转型\"],\"driver\":[\"行业竞争\",\"监管导向\"],\"source_id\":\"ft_news:109138\",\"impact_target\":[\"公募基金行业\",\"基金管理公司\"],\"title_candidate\":\"公募基金发行结构转型方向\",\"parent_themes\":[\"公募基金行业趋势\",\"基金产品结构演变\"],\"event_action\":[\"转型\",\"洗牌\"],\"summary\":\"行业从规模导向转向回报导向，发行结构明显变化。\"},{\"importance\":0.6,\"source_published_at\":\"2026-07-06T10:47:59+00:00\",\"broad_topics\":[\"银行理财\",\"REITs投资\"],\"event_thread\":[\"银行理财REITs配置线\"],\"risk_type\":[\"流动性风险\",\"业绩风险\"],\"intent_id\":\"kg_cognitive_card:94af0c0726f55394:intent:1\",\"cognitive_card_id\":\"kg_cognitive_card:94af0c0726f55394\",\"mid_topics\":[\"流动性管理\",\"业绩分化\",\"固收+策略\"],\"driver\":[\"资产配置需求\",\"流动性压力\"],\"source_id\":\"ft_news:109282\",\"impact_target\":[\"银行理财\",\"REITs市场\"],\"title_candidate\":\"银行理财REITs投资策略\",\"parent_themes\":[\"银行理财资产配置\",\"REITs市场\"],\"event_action\":[\"扩大配置\",\"流动性管理\"],\"summary\":\"银行理财扩大REITs配置，但面临流动性弱于债券和业绩分化挑战，部分产品亏损。\"}]}",
+        "system_prompt": "",
+        "messages": "[]",
+        "prompt_text_preview": "请基于以下 community 上下文生成 Community Insight 高级认知报告。\n\n你的任务不是总结单条新闻，也不是罗列 community 成员。\n所有判断只能基于输入材料中明确提供的信息；不得引入输入之外的行情、价格、公司、时间、政策或外部知识。\n\n报告必须回答：这些来源合在一起说明了什么；支撑判断的输入信号类型是什么；关键驱动、传导链条和影响对象是什么；限制条件、不确定性或反转条件是什么；Agent 应如何使用这份报告。\n\n报告长度由输入材料复杂度自然决定。不要为了凑字数扩写，也不要把复杂 community 压缩成短行情评论。\n\n写作要求：\n- 输出一份完整高级认知报告，不要逐条复述输入。\n- 先归纳 3-6 条由多条材料共同支撑的主线，再解释主线之间的传导关系和边界。\n- 每条主线需要说明依据来自哪些输入信号类型，例如供需、价格、订单、产能、技术路线、政策、业绩、资金行为或风险提示。\n- 不要把 parent_themes、broad_topics、risk_type 简单拼接成报告。\n- 不要把短期行情、概念股涨跌或单条研报观点写成主结论；除非输入中存在机制、供需、订单、价格或产能等支撑。\n- 如果 community 边界偏宽，报告应说明哪些主线较强、哪些只是相邻上下文，并在 report_json.quality_flags 中标记。\n- 强弱、冲突、噪声是条件触发的判断维度，不是固定输出章节。\n- 只有输入材料支持时，才解释冲突、弱信号或噪声；不要为了格式强行生成这些内容。\n- 如果输入材料显示某些信号只有表面变化描述，缺少驱动、机制、影响路径或证据支撑，应明确降权。\n- 风险和反转条件必须来自输入材料可支持的机制推演。\n- 不得创造输入中不存在的时间、数字、公司名、政策名、交易结论或因果关系。\n- 不输出买入、卖出、持仓建议。\n\n请输出 JSON 对象，字段为 insight_full_report 和 report_json。\n\n输入材料：\n{\"community\":{\"community_id\":\"kgc:financial:l0:728\",\"title\":\"资管行业产品业绩与理财市场\",\"scope\":\"承接资管行业（包括银行理财、公募基金、私募基金、券商资管等）产品业绩盘点、规模变化、行业趋势、机构动态，以及理财市场（含银行理财、理财子公司）的规模增长、产品发行、投资者行为等。不包括具体资产类别的外部市场波动或宏观流动性本身。\",\"source_count\":6,\"cognitive_card_count\":6,\"assignment_count\":6,\"time_range\":{\"start\":\"2026-07-06T00:42:36+00:00\",\"end\":\"2026-07-06T10:47:59+00:00\"}},\"community_signals\":{\"parent_themes\":[\"私募基金行业\",\"资本市场产品发行\",\"基金业绩\",\"固定收益基金\",\"资产管理\",\"理财市场\",\"ETF市场格局\",\"资金流向与偏好\",\"公募基金行业趋势\",\"基金产品结构演变\",\"银行理财资产配置\",\"REITs市场\"],\"topic_tags\":[\"私募基金行业\",\"资本市场产品发行\",\"基金业绩\",\"固定收益基金\",\"资产管理\",\"理财市场\",\"ETF市场格局\",\"资金流向与偏好\",\"公募基金行业趋势\",\"基金产品结构演变\",\"银行理财资产配置\",\"REITs市场\",\"私募基金监管\",\"纯债基金\",\"上半年业绩\",\"资管产品\",\"理财规模\",\"ETF市场规模竞争\",\"投资者短期行为\",\"公募基金\",\"金融投资\",\"银行理财\",\"REITs投资\",\"备案数据\",\"产品发行节奏\",\"最高回报超40%\",\"年中业绩盘点\",\"季度规模增长\",\"黄金ETF规模超越沪深300ETF\",\"权益类ETF配置价值\",\"基金发行\",\"行业转型\"],\"event_threads\":[\"私募基金备案数据周期\",\"基金业绩披露\",\"资管行业业绩盘点\",\"理财规模增长趋势\",\"ETF市场规模竞争事件线\",\"公募基金行业变革\",\"银行理财REITs配置线\"],\"impact_tags\":[\"私募基金行业\",\"证券产品发行\",\"纯债基金\",\"投资者\",\"资管行业\",\"理财市场\",\"ETF市场\",\"黄金ETF\",\"沪深300ETF\",\"权益类ETF\",\"公募基金行业\",\"基金管理公司\",\"银行理财\",\"REITs市场\"],\"risk_tags\":[\"市场风险\",\"流动性风险\",\"业绩分化\",\"收益风险\",\"市场资金流动风险\",\"行业转型风险\",\"业绩风险\"],\"future_coverage\":[\"资产管理\",\"理财市场\",\"资管产品\",\"理财规模\",\"年中业绩盘点\",\"季度规模增长\",\"私募基金行业\",\"资本市场产品发行\",\"私募基金监管\",\"备案数据\",\"产品发行节奏\",\"基金业绩\",\"固定收益基金\",\"纯债基金\",\"上半年业绩\",\"最高回报超40%\",\"ETF市场格局\",\"资金流向与偏好\",\"ETF市场规模竞争\",\"投资者短期行为\",\"黄金ETF规模超越沪深300ETF\",\"权益类ETF配置价值\",\"公募基金行业趋势\",\"基金产品结构演变\",\"公募基金\",\"金融投资\",\"基金发行\",\"行业转型\",\"银行理财资产配置\",\"REITs市场\",\"银行理财\",\"REITs投资\"],\"coverage_contract\":\"可承接父主题：资管行业产品业绩与理财市场、私募基金行业、资本市场产品发行、基金业绩、固定收益基金、资产管理；可吸收子方向：资产管理、私募基金监管、纯债基金、上半年业绩、资管产品、理财规模、ETF市场规模竞争、投资者短期行为、公募基金、金融投资、银行理财、REITs投资；当前具体线索：2026年6月备案数据、私募证券产品、上半年纯债基回报、理财产品、万亿级增长、华安黄金ETF规模900.98亿元、华泰柏瑞沪深300ETF规模833.24亿元、规模排名阶段性变化、2026年上半年行业洗牌、重回报导向\",\"maturity_level\":\"mature_topic\",\"topic_diversity_count\":51,\"high_weight_assignment_count\":5,\"medium_weight_assignment_count\":1,\"low_weight_assignment_count\":0},\"materials\":[{\"importance\":0.5,\"source_published_at\":\"2026-07-06T01:35:16+00:00\",\"broad_topics\":[\"资产管理\",\"私募基金监管\"],\"event_thread\":[\"私募基金备案数据周期\"],\"risk_type\":[\"市场风险\",\"流动性风险\"],\"intent_id\":\"kg_cognitive_card:a0db2635c35686a9:intent:1\",\"cognitive_card_id\":\"kg_cognitive_card:a0db2635c35686a9\",\"mid_topics\":[\"备案数据\",\"产品发行节奏\"],\"driver\":[\"监管环境\",\"市场信心\"],\"source_id\":\"ft_news:108872\",\"impact_target\":[\"私募基金行业\",\"证券产品发行\"],\"title_candidate\":\"私募基金产品发行趋势\",\"parent_themes\":[\"私募基金行业\",\"资本市场产品发行\"],\"event_action\":[\"备案\",\"增长\"],\"summary\":\"6月私募证券产品备案量环比增长33%，上半年同比增长45.85%，显示行业回暖。\"},{\"importance\":0.5,\"source_published_at\":\"2026-07-06T00:42:36+00:00\",\"broad_topics\":[\"纯债基金\",\"上半年业绩\"],\"event_thread\":[\"基金业绩披露\"],\"risk_type\":[\"业绩分化\",\"收益风险\"],\"intent_id\":\"kg_cognitive_card:3b2e7eead2ece54c:intent:2\",\"cognitive_card_id\":\"kg_cognitive_card:3b2e7eead2ece54c\",\"mid_topics\":[\"最高回报超40%\"],\"driver\":[\"基金业绩\",\"市场表现\"],\"source_id\":\"ft_news:108791\",\"impact_target\":[\"纯债基金\",\"投资者\"],\"title_candidate\":\"纯债基金回报表现\",\"parent_themes\":[\"基金业绩\",\"固定收益基金\"],\"event_action\":[\"获得回报\"],\"summary\":\"纯债基上半年最高回报超40%。\"},{\"importance\":0.6,\"source_published_at\":\"2026-07-06T03:55:59+00:00\",\"broad_topics\":[\"资管产品\",\"理财规模\"],\"event_thread\":[\"资管行业业绩盘点\",\"理财规模增长趋势\"],\"intent_id\":\"kg_cognitive_card:83af6801334eb7bd:intent:1\",\"cognitive_card_id\":\"kg_cognitive_card:83af6801334eb7bd\",\"mid_topics\":[\"年中业绩盘点\",\"季度规模增长\"],\"driver\":[\"行业周期性\",\"市场预期\"],\"source_id\":\"ft_news:108933\",\"impact_target\":[\"资管行业\",\"理财市场\"],\"title_candidate\":\"资管行业产品业绩与理财规模增长\",\"parent_themes\":[\"资产管理\",\"理财市场\"],\"event_action\":[\"盘点\",\"预期增长\"],\"summary\":\"资管行业周报概述多类产品业绩盘点及理财规模增长预期。\"},{\"importance\":0.6,\"source_published_at\":\"2026-07-06T05:54:53+00:00\",\"broad_topics\":[\"ETF市场规模竞争\",\"投资者短期行为\"],\"event_thread\":[\"ETF市场规模竞争事件线\"],\"risk_type\":[\"市场资金流动风险\"],\"intent_id\":\"kg_cognitive_card:0dfec84f1ef5fac4:intent:1\",\"cognitive_card_id\":\"kg_cognitive_card:0dfec84f1ef5fac4\",\"mid_topics\":[\"黄金ETF规模超越沪深300ETF\",\"权益类ETF配置价值\"],\"driver\":[\"短期资金偏好\",\"市场避险情绪\",\"资产配置需求\"],\"source_id\":\"ft_news:109003\",\"impact_target\":[\"ETF市场\",\"黄金ETF\",\"沪深300ETF\",\"权益类ETF\"],\"title_candidate\":\"ETF市场规模格局变化\",\"parent_themes\":[\"ETF市场格局\",\"资金流向与偏好\"],\"event_action\":[\"规模超越\",\"排名变动\"],\"summary\":\"黄金ETF规模阶段性超过沪深300ETF，成为全市场规模第一，但权益类ETF仍具中长期配置价值。\"},{\"importance\":0.8,\"source_published_at\":\"2026-07-06T08:37:17+00:00\",\"broad_topics\":[\"公募基金\",\"金融投资\"],\"event_thread\":[\"公募基金行业变革\"],\"risk_type\":[\"行业转型风险\"],\"intent_id\":\"kg_cognitive_card:d312b6525cf22d45:intent:1\",\"cognitive_card_id\":\"kg_cognitive_card:d312b6525cf22d45\",\"mid_topics\":[\"基金发行\",\"行业转型\"],\"driver\":[\"行业竞争\",\"监管导向\"],\"source_id\":\"ft_news:109138\",\"impact_target\":[\"公募基金行业\",\"基金管理公司\"],\"title_candidate\":\"公募基金发行结构转型方向\",\"parent_themes\":[\"公募基金行业趋势\",\"基金产品结构演变\"],\"event_action\":[\"转型\",\"洗牌\"],\"summary\":\"行业从规模导向转向回报导向，发行结构明显变化。\"},{\"importance\":0.6,\"source_published_at\":\"2026-07-06T10:47:59+00:00\",\"broad_topics\":[\"银行理财\",\"REITs投资\"],\"event_thread\":[\"银行理财REITs配置线\"],\"risk_type\":[\"流动性风险\",\"业绩风险\"],\"intent_id\":\"kg_cognitive_card:94af0c0726f55394:intent:1\",\"cognitive_card_id\":\"kg_cognitive_card:94af0c0726f55394\",\"mid_topics\":[\"流动性管理\",\"业绩分化\",\"固收+策略\"],\"driver\":[\"资产配置需求\",\"流动性压力\"],\"source_id\":\"ft_news:109282\",\"impact_target\":[\"银行理财\",\"REITs市场\"],\"title_candidate\":\"银行理财REITs投资策略\",\"parent_themes\":[\"银行理财资产配置\",\"REITs市场\"],\"event_action\":[\"扩大配置\",\"流动性管理\"],\"summary\":\"银行理财扩大REITs配置，但面临流动性弱于债券和业绩分化挑战，部分产品亏损。\"}]}",
+        "metadata": {
+          "task": "kg_community_insight",
+          "adapter_name": "financial",
+          "projection": "cognitive_topic",
+          "community_id": "kgc:financial:l0:728",
+          "material_count": 6,
+          "retry_reason": ""
+        },
+        "json_schema": "{\"type\": \"object\", \"additionalProperties\": false, \"required\": [\"insight_full_report\", \"report_json\"], \"properties\": {\"insight_full_report\": {\"type\": \"string\", \"minLength\": 120}, \"report_json\": {\"type\": \"object\", \"additionalProperties\": true, \"required\": [\"core_thesis\", \"basis\", \"reversal_conditions\", \"quality_flags\", \"use_boundary\"], \"properties\": {\"core_thesis\": {\"type\": \"string\"}, \"basis\": {\"type\": \"array\", \"items\": {\"type\": \"object\", \"additionalProperties\": true}}, \"weak_signals\": {\"type\": \"array\", \"items\": {\"type\": \"string\"}}, \"conflicts\": {\"type\": \"array\", \"items\": {\"type\": \"string\"}}, \"reversal_conditions\": {\"type\": \"array\", \"items\": {\"type\": \"string\"}}, \"quality_flags\": {\"type\": \"array\", \"items\": {\"type\": \"string\"}}, \"use_boundary\": {\"type\": \"string\"}}}}}",
+        "response_format": {
+          "type": "json_object"
+        },
+        "use_cache": true
+      },
+      "output": {
+        "text": "{\"insight_full_report\": \"基于6条输入材料，本社区涵盖资管行业产品业绩与理财市场，聚焦于产品发行、资金流向、配置调整三大维度。核心主线如下：\\n\\n1. **私募基金产品发行回暖**：6月私募证券产品备案量环比增长33%，上半年同比增长45.85%，显示行业供给端回暖。驱动因素包括监管环境稳定和市场信心恢复，属于强信号，有明确的备案数据支撑。\\n2. **公募基金发行结构转型**：公募行业从规模导向转向回报导向，发行结构明显变化，行业面临洗牌。该信号来自单条材料，缺乏具体数据，强度中等。\\n3. **理财规模增长预期与银行理财REITs配置**：资管行业周报预期理财规模继续增长，同时银行理财扩大REITs配置，但面临流动性弱于债券和业绩分化挑战，部分产品亏损。理财规模增长属于预期性信号，REITs配置有实际动作但伴随风险。\\n4. **ETF市场规模格局变化**：黄金ETF规模（900.98亿元）阶段性超越沪深300ETF（833.24亿元），成为全市场第一，但权益类ETF仍具中长期配置价值。该信号反映短期资金避险偏好，是阶段性排名变动，非趋势性逆转。\\n5. **纯债基金高回报个案**：纯债基上半年最高回报超40%，但缺乏驱动机制、产品详情，属于弱信号，不宜作为主线。\\n\\n**传导关系**：产品端（私募、公募）回暖/转型→资金端（理财规模增长、黄金ETF资金流入）→配置端（银行理财增配REITs）。但各环节独立性较强，未形成强因果链。\\n\\n**边界与强度**：私募备案增长是强主线（多数据支撑）；公募转型和理财规模增长为中等强度；黄金ETF超越和纯债基高回报为弱信号或相邻上下文。\\n\\n**冲突**：黄金ETF规模超越与权益类ETF配置价值并存，反映短期避险与中长期价值投资的矛盾。\\n\\n**反转条件**：若市场风险偏好回升，黄金ETF规模可能回落；若理财规模增长不及预期或REITs流动性恶化，银行理财配置策略可能调整。\\n\\n**使用边界**：本报告可用于判断资管行业产品供给回暖趋势及资金短期偏好，但不宜用于单一产品选择或短期交易决策。\", \"report_json\": {\"core_thesis\": \"资管行业产品端回暖（私募备案增长）与资金端短期避险偏好（黄金ETF规模超越）并存，公募行业正经历结构转型，银行理财则尝试增配REITs但面临流动性挑战。整体呈现供给回升、资金短期化、配置多元化但风险分化的格局。\", \"basis\": [{\"信号类型\": \"供需数据\", \"来源\": \"私募基金产品发行趋势\", \"内容\": \"6月私募证券产品备案量环比增长33%，上半年同比增长45.85%\", \"支持力度\": \"强\"}, {\"信号类型\": \"行业趋势\", \"来源\": \"公募基金发行结构转型方向\", \"内容\": \"行业从规模导向转向回报导向，发行结构明显变化\", \"支持力度\": \"中\"}, {\"信号类型\": \"资金行为\", \"来源\": \"ETF市场规模格局变化\", \"内容\": \"黄金ETF规模阶段性超越沪深300ETF，成为全市场规模第一\", \"支持力度\": \"中\"}, {\"信号类型\": \"资产配置\", \"来源\": \"银行理财REITs投资策略\", \"内容\": \"银行理财扩大REITs配置，但面临流动性弱于债券和业绩分化挑战\", \"支持力度\": \"中\"}], \"weak_signals\": [\"纯债基上半年最高回报超40%，但缺乏驱动机制和产品细节，属于个案\", \"公募基金转型方向缺乏具体措施和时间表\"], \"conflicts\": [\"黄金ETF规模超越与权益类ETF中长期配置价值并存，反映短期避险与长期价值的矛盾\"], \"reversal_conditions\": [\"若市场风险偏好回升，黄金ETF资金可能回流权益类，规模排名反转\", \"若理财规模增长低于预期，银行理财对REITs的配置可能收缩\", \"若私募备案增速持续放缓，则回暖趋势可能中断\"], \"quality_flags\": [\"私募备案增长有明确数据支撑，为强主线\", \"纯债基高回报仅一条来源且无驱动分析，为弱信号\", \"ETF规模变化为阶段性排名，非趋势性逆转\", \"公募转型和银行理财REITs配置存在细节不足，需后续验证\"], \"use_boundary\": \"本报告适用于跟踪资管行业产品供给和资金短期偏好，不适用于预测具体产品业绩或进行短期交易；需结合后续数据验证各主线的持续性。\"}}",
+        "structured_output": "{\"insight_full_report\": \"基于6条输入材料，本社区涵盖资管行业产品业绩与理财市场，聚焦于产品发行、资金流向、配置调整三大维度。核心主线如下：\\n\\n1. **私募基金产品发行回暖**：6月私募证券产品备案量环比增长33%，上半年同比增长45.85%，显示行业供给端回暖。驱动因素包括监管环境稳定和市场信心恢复，属于强信号，有明确的备案数据支撑。\\n2. **公募基金发行结构转型**：公募行业从规模导向转向回报导向，发行结构明显变化，行业面临洗牌。该信号来自单条材料，缺乏具体数据，强度中等。\\n3. **理财规模增长预期与银行理财REITs配置**：资管行业周报预期理财规模继续增长，同时银行理财扩大REITs配置，但面临流动性弱于债券和业绩分化挑战，部分产品亏损。理财规模增长属于预期性信号，REITs配置有实际动作但伴随风险。\\n4. **ETF市场规模格局变化**：黄金ETF规模（900.98亿元）阶段性超越沪深300ETF（833.24亿元），成为全市场第一，但权益类ETF仍具中长期配置价值。该信号反映短期资金避险偏好，是阶段性排名变动，非趋势性逆转。\\n5. **纯债基金高回报个案**：纯债基上半年最高回报超40%，但缺乏驱动机制、产品详情，属于弱信号，不宜作为主线。\\n\\n**传导关系**：产品端（私募、公募）回暖/转型→资金端（理财规模增长、黄金ETF资金流入）→配置端（银行理财增配REITs）。但各环节独立性较强，未形成强因果链。\\n\\n**边界与强度**：私募备案增长是强主线（多数据支撑）；公募转型和理财规模增长为中等强度；黄金ETF超越和纯债基高回报为弱信号或相邻上下文。\\n\\n**冲突**：黄金ETF规模超越与权益类ETF配置价值并存，反映短期避险与中长期价值投资的矛盾。\\n\\n**反转条件**：若市场风险偏好回升，黄金ETF规模可能回落；若理财规模增长不及预期或REITs流动性恶化，银行理财配置策略可能调整。\\n\\n**使用边界**：本报告可用于判断资管行业产品供给回暖趋势及资金短期偏好，但不宜用于单一产品选择或短期交易决策。\", \"report_json\": {\"core_thesis\": \"资管行业产品端回暖（私募备案增长）与资金端短期避险偏好（黄金ETF规模超越）并存，公募行业正经历结构转型，银行理财则尝试增配REITs但面临流动性挑战。整体呈现供给回升、资金短期化、配置多元化但风险分化的格局。\", \"basis\": [{\"信号类型\": \"供需数据\", \"来源\": \"私募基金产品发行趋势\", \"内容\": \"6月私募证券产品备案量环比增长33%，上半年同比增长45.85%\", \"支持力度\": \"强\"}, {\"信号类型\": \"行业趋势\", \"来源\": \"公募基金发行结构转型方向\", \"内容\": \"行业从规模导向转向回报导向，发行结构明显变化\", \"支持力度\": \"中\"}, {\"信号类型\": \"资金行为\", \"来源\": \"ETF市场规模格局变化\", \"内容\": \"黄金ETF规模阶段性超越沪深300ETF，成为全市场规模第一\", \"支持力度\": \"中\"}, {\"信号类型\": \"资产配置\", \"来源\": \"银行理财REITs投资策略\", \"内容\": \"银行理财扩大REITs配置，但面临流动性弱于债券和业绩分化挑战\", \"支持力度\": \"中\"}], \"weak_signals\": [\"纯债基上半年最高回报超40%，但缺乏驱动机制和产品细节，属于个案\", \"公募基金转型方向缺乏具体措施和时间表\"], \"conflicts\": [\"黄金ETF规模超越与权益类ETF中长期配置价值并存，反映短期避险与长期价值的矛盾\"], \"reversal_conditions\": [\"若市场风险偏好回升，黄金ETF资金可能回流权益类，规模排名反转\", \"若理财规模增长低于预期，银行理财对REITs的配置可能收缩\", \"若私募备案增速持续放缓，则回暖趋势可能中断\"], \"quality_flags\": [\"私募备案增长有明确数据支撑，为强主线\", \"纯债基高回报仅一条来源且无驱动分析，为弱信号\", \"ETF规模变化为阶段性排名，非趋势性逆转\", \"公募转型和银行理财REITs配置存在细节不足，需后续验证\"], \"use_boundary\": \"本报告适用于跟踪资管行业产品供给和资金短期偏好，不适用于预测具体产品业绩或进行短期交易；需结合后续数据验证各主线的持续性。\"}}",
+        "usage": {
+          "input_tokens": 2754,
+          "output_tokens": 1467,
+          "total_tokens": 4221,
+          "prompt_cache_hit_tokens": 1408,
+          "prompt_cache_miss_tokens": 1346,
+          "reasoning_tokens": 376
+        },
+        "duration_ms": 18086,
+        "cache_hit": false,
+        "proxy": {
+          "provider": "deepseek",
+          "requested_model": "deepseek-v4-flash",
+          "resolved_model": "deepseek-v4-flash",
+          "upstream_model": "deepseek-v4-flash",
+          "route_reason": "model_exact",
+          "retry_count": 0,
+          "upstream_retry_events": [],
+          "upstream_max_retries": 10,
+          "upstream_max_retry_delay_seconds": 60,
+          "json_mode_retry_attempted": false,
+          "json_mode_retry_success": false,
+          "json_mode_retry_error": null,
+          "json_mode_initial_finish_reason": "stop",
+          "json_mode_retry_finish_reason": null,
+          "json_mode_initial_usage": {
+            "input_tokens": 2754,
+            "output_tokens": 1467,
+            "total_tokens": 4221,
+            "prompt_cache_hit_tokens": 1408,
+            "prompt_cache_miss_tokens": 1346,
+            "reasoning_tokens": 376
+          },
+          "json_mode_retry_usage": null,
+          "json_repair_attempted": false,
+          "json_repair_success": false,
+          "json_repair_error": null,
+          "json_repair_finish_reason": null,
+          "json_repair_usage": null
+        },
+        "provider_diagnostics": {
+          "finish_reason": "stop",
+          "json_mode_initial": {
+            "id": "89e4ef31-2e90-4695-9cf4-2076ce10dbe9",
+            "model": "deepseek-v4-flash",
+            "finish_reason": "stop",
+            "usage": {
+              "input_tokens": 2754,
+              "output_tokens": 1467,
+              "total_tokens": 4221,
+              "prompt_cache_hit_tokens": 1408,
+              "prompt_cache_miss_tokens": 1346,
+              "reasoning_tokens": 376
+            },
+            "content_chars": 2186,
+            "reasoning_chars": 641,
+            "has_tool_calls": false
+          }
+        }
+      },
+      "metadata": {
+        "task": "kg_community_insight",
+        "source_id": "-",
+        "source_type": "-",
+        "provider": "deepseek",
+        "model": "deepseek-v4-flash",
+        "backend": "deepseek",
+        "use_cache": true,
+        "has_json_schema": true,
+        "prompt_chars": 5984,
+        "tools_count": 0,
+        "has_tool_choice": false,
+        "cache_store": "miss",
+        "cache_hit": false,
+        "duration_ms": 18086,
+        "proxy": {
+          "provider": "deepseek",
+          "requested_model": "deepseek-v4-flash",
+          "resolved_model": "deepseek-v4-flash",
+          "upstream_model": "deepseek-v4-flash",
+          "route_reason": "model_exact",
+          "retry_count": 0,
+          "upstream_retry_events": [],
+          "upstream_max_retries": 10,
+          "upstream_max_retry_delay_seconds": 60,
+          "json_mode_retry_attempted": false,
+          "json_mode_retry_success": false,
+          "json_mode_retry_error": null,
+          "json_mode_initial_finish_reason": "stop",
+          "json_mode_retry_finish_reason": null,
+          "json_mode_initial_usage": {
+            "input_tokens": 2754,
+            "output_tokens": 1467,
+            "total_tokens": 4221,
+            "prompt_cache_hit_tokens": 1408,
+            "prompt_cache_miss_tokens": 1346,
+            "reasoning_tokens": 376
+          },
+          "json_mode_retry_usage": null,
+          "json_repair_attempted": false,
+          "json_repair_success": false,
+          "json_repair_error": null,
+          "json_repair_finish_reason": null,
+          "json_repair_usage": null
+        },
+        "resourceAttributes": {
+          "telemetry.sdk.language": "python",
+          "telemetry.sdk.name": "opentelemetry",
+          "telemetry.sdk.version": "1.41.1",
+          "service.name": "unknown_service"
+        },
+        "scope": {
+          "name": "langfuse-sdk",
+          "version": "4.6.1",
+          "attributes": {
+            "public_key": "pk-lf-d52cf296-5725-45dc-a0f7-31202673d39f"
+          }
+        }
+      },
+      "model": "deepseek-v4-flash",
+      "modelParameters": {
+        "temperature": 0,
+        "max_tokens": 4500,
+        "response_format": "{\"type\":\"json_object\"}",
+        "json_schema": "true"
+      },
+      "completionStartTime": null,
+      "promptId": null,
+      "promptName": null,
+      "promptVersion": null,
+      "latency": 17.192,
+      "timeToFirstToken": null,
+      "usageDetails": {
+        "input_tokens": 2754,
+        "output_tokens": 1467,
+        "total_tokens": 4221,
+        "prompt_cache_hit_tokens": 1408,
+        "prompt_cache_miss_tokens": 1346,
+        "total": 11196
+      },
+      "costDetails": {},
+      "usagePricingTierId": null,
+      "usagePricingTierName": null,
+      "inputPrice": 0,
+      "outputPrice": 0,
+      "totalPrice": 0,
+      "calculatedInputCost": null,
+      "calculatedOutputCost": null,
+      "calculatedTotalCost": 0,
+      "unit": "TOKENS",
+      "promptTokens": 2754,
+      "completionTokens": 1467,
+      "totalTokens": 11196,
+      "modelId": null,
+      "usage": {
+        "unit": "TOKENS",
+        "input": 2754,
+        "output": 1467,
+        "total": 11196
+      }
+    },
+    {
+      "id": "40ae040323ba6401",
+      "traceId": "f6306ebf958e89eaa7d7a1e55ed2e16e",
+      "startTime": "2026-07-06T11:10:11.118Z",
+      "endTime": "2026-07-06T11:10:29.928Z",
+      "projectId": "cmp9tyu4x01efad08dq5ebuhg",
+      "parentObservationId": null,
+      "type": "SPAN",
+      "environment": "default",
+      "name": "kg.community_insight.refresh_ids",
+      "level": "DEFAULT",
+      "statusMessage": "completed",
+      "version": null,
+      "createdAt": "2026-07-06T11:10:30.398Z",
+      "updatedAt": "2026-07-06T11:10:30.399Z",
+      "input": {
+        "community_ids": [
+          "kgc:financial:l0:728"
+        ],
+        "task": "kg_community_insight_refresh_ids",
+        "target": "prod",
+        "requested": 1,
+        "force": true
+      },
+      "output": {
+        "skipped": false,
+        "requested": 1,
+        "selected": 1,
+        "refreshed": 1,
+        "failed": 0,
+        "errors": [],
+        "duration_seconds": 19.127
+      },
+      "metadata": {
+        "task": "kg_community_insight_refresh_ids",
+        "target": "prod",
+        "requested": 1,
+        "force": true,
+        "lock_acquired": true,
+        "resourceAttributes": {
+          "telemetry.sdk.language": "python",
+          "telemetry.sdk.name": "opentelemetry",
+          "telemetry.sdk.version": "1.41.1",
+          "service.name": "unknown_service"
+        },
+        "scope": {
+          "name": "langfuse-sdk",
+          "version": "4.6.1",
+          "attributes": {
+            "public_key": "pk-lf-d52cf296-5725-45dc-a0f7-31202673d39f"
+          }
+        }
+      },
+      "model": null,
+      "modelParameters": null,
+      "completionStartTime": null,
+      "promptId": null,
+      "promptName": null,
+      "promptVersion": null,
+      "latency": 18.81,
+      "timeToFirstToken": null,
+      "usageDetails": {},
+      "costDetails": {},
+      "usagePricingTierId": null,
+      "usagePricingTierName": null,
+      "inputPrice": 0,
+      "outputPrice": 0,
+      "totalPrice": 0,
+      "calculatedInputCost": null,
+      "calculatedOutputCost": null,
+      "calculatedTotalCost": 0,
+      "unit": "TOKENS",
+      "promptTokens": 0,
+      "completionTokens": 0,
+      "totalTokens": 0,
+      "modelId": null,
+      "usage": {
+        "unit": "TOKENS",
+        "input": 0,
+        "output": 0,
+        "total": 0
+      }
+    },
+    {
+      "id": "423c1e1fe957aa39",
+      "traceId": "f6306ebf958e89eaa7d7a1e55ed2e16e",
+      "startTime": "2026-07-06T11:10:28.655Z",
+      "endTime": "2026-07-06T11:10:28.838Z",
+      "projectId": "cmp9tyu4x01efad08dq5ebuhg",
+      "parentObservationId": "5709855cac9685ff",
+      "type": "SPAN",
+      "environment": "default",
+      "name": "embedding.http_request",
+      "level": "DEFAULT",
+      "statusMessage": null,
+      "version": null,
+      "createdAt": "2026-07-06T11:10:30.398Z",
+      "updatedAt": "2026-07-06T11:10:30.399Z",
+      "input": {
+        "count": 1,
+        "samples": [
+          "基于6条输入材料，本社区涵盖资管行业产品业绩与理财市场，聚焦于产品发行、资金流向、配置调整三大维度。核心主线如下：\n\n1. **私募基金产品发行回暖**：6月私募证券产品备案量环比增长33%，上半年同比增长45.85%，显示行业供给端回暖。驱动因素包括监管环境稳定和市场信心恢复，属于强信号，有明确的备案数据支撑。\n2. **公募基金发行结构转型**：公募行业从规模导向转向回报导向，发行结构明显变化，行业面临洗牌。该信号来自单条材料，缺乏具体数据，强度中等。\n3. **理财规模增长预期与银行理财REITs配置**：资管行业周报预期理财规模继续增长，同时银行理财扩大REITs配置，但面临流动性弱于债券和业绩分化挑战，部分产品亏损。理财规模增长属于预期性信号，REITs配置有实际动作但伴随风险。\n4. **ETF市场规模格局变化**：黄金ETF规模（900.98亿元）阶段性超越沪深300ETF（833.24亿元），成为全市场第一，但权益类ETF仍具中长期配置价值。该信号反映短期资金避险偏好，是阶段性排名变动，非趋势性逆转。\n5. **纯债基金高回报个案**：纯债基上半年最高回报超40%，但缺乏驱动机制、产品详情，属于弱信号，不宜作为主线。\n\n**传导关系**：产品端（私募、公募）回暖/转型→资金端（理财规模增长、黄金ETF资金流入）→配置端（银行理财增配REITs）。但各环节独立性较强，未形成强因果链。\n\n**边界与强度**：私募备案增长是强主线（多数据支撑）；公募转型和理财规模增长为中等强度；黄金ETF超越和纯债基高回报为弱信号或相邻上下文。\n\n**冲突**：黄金ETF规模超越与权益类ETF配置价值并存，反映短期避险与中长期价值投资的矛盾。\n\n**反转条件**：若市场风险偏好回升，黄金ETF规模可能回落；若理财规模增长不及预期或REITs流动性恶化，银行理财配置策略可能调整。\n\n**使用边界**：本报告可用于判断资管行业产品供给回暖趋势及资金短期偏好，但不宜用于单一产品选择或短期交易决策。"
+        ]
+      },
+      "output": {
+        "status_code": 200,
+        "latency_s": 0.1816,
+        "attempt": 1,
+        "attempts": [
+          {
+            "attempt": 1,
+            "status_code": 200,
+            "latency_s": 0.1816
+          }
+        ],
+        "retries": 0
+      },
+      "metadata": {
+        "endpoint": "http://119.23.227.187:8901/v1/embeddings",
+        "model": "/models/Qwen3-Embedding-4B",
+        "dim": 2560,
+        "batch_size": 1,
+        "request_dimensions": false,
+        "timeout_s": 180,
+        "max_retries": 5,
+        "retry_base_delay_s": 1,
+        "retry_max_delay_s": 30,
+        "status_code": 200,
+        "latency_s": 0.18160080909729004,
+        "attempt": 1,
+        "attempts": [
+          {
+            "attempt": 1,
+            "status_code": 200,
+            "latency_s": 0.1816
+          }
+        ],
+        "retries": 0,
+        "resourceAttributes": {
+          "telemetry.sdk.language": "python",
+          "telemetry.sdk.name": "opentelemetry",
+          "telemetry.sdk.version": "1.41.1",
+          "service.name": "unknown_service"
+        },
+        "scope": {
+          "name": "langfuse-sdk",
+          "version": "4.6.1",
+          "attributes": {
+            "public_key": "pk-lf-d52cf296-5725-45dc-a0f7-31202673d39f"
+          }
+        }
+      },
+      "model": null,
+      "modelParameters": null,
+      "completionStartTime": null,
+      "promptId": null,
+      "promptName": null,
+      "promptVersion": null,
+      "latency": 0.183,
+      "timeToFirstToken": null,
+      "usageDetails": {},
+      "costDetails": {},
+      "usagePricingTierId": null,
+      "usagePricingTierName": null,
+      "inputPrice": 0,
+      "outputPrice": 0,
+      "totalPrice": 0,
+      "calculatedInputCost": null,
+      "calculatedOutputCost": null,
+      "calculatedTotalCost": 0,
+      "unit": "TOKENS",
+      "promptTokens": 0,
+      "completionTokens": 0,
+      "totalTokens": 0,
+      "modelId": null,
+      "usage": {
+        "unit": "TOKENS",
+        "input": 0,
+        "output": 0,
+        "total": 0
+      }
+    },
+    {
+      "id": "5709855cac9685ff",
+      "traceId": "f6306ebf958e89eaa7d7a1e55ed2e16e",
+      "startTime": "2026-07-06T11:10:28.637Z",
+      "endTime": "2026-07-06T11:10:29.926Z",
+      "projectId": "cmp9tyu4x01efad08dq5ebuhg",
+      "parentObservationId": "7e74765f60688b5b",
+      "type": "SPAN",
+      "environment": "default",
+      "name": "kg.community_insight.milvus.upsert",
+      "level": "DEFAULT",
+      "statusMessage": "completed",
+      "version": null,
+      "createdAt": "2026-07-06T11:10:30.398Z",
+      "updatedAt": "2026-07-06T11:10:30.399Z",
+      "input": {
+        "community_id": "kgc:financial:l0:728",
+        "insight_id": "kgi:kgc:financial:l0:728",
+        "collection_role": "community_insight",
+        "text_chars": 857
+      },
+      "output": {
+        "documents": 1,
+        "vectors": 1,
+        "embedding_model": "/models/Qwen3-Embedding-4B",
+        "collection_role": "community_insight"
+      },
+      "metadata": {
+        "resourceAttributes": {
+          "telemetry.sdk.language": "python",
+          "telemetry.sdk.name": "opentelemetry",
+          "telemetry.sdk.version": "1.41.1",
+          "service.name": "unknown_service"
+        },
+        "scope": {
+          "name": "langfuse-sdk",
+          "version": "4.6.1",
+          "attributes": {
+            "public_key": "pk-lf-d52cf296-5725-45dc-a0f7-31202673d39f"
+          }
+        }
+      },
+      "model": null,
+      "modelParameters": null,
+      "completionStartTime": null,
+      "promptId": null,
+      "promptName": null,
+      "promptVersion": null,
+      "latency": 1.289,
+      "timeToFirstToken": null,
+      "usageDetails": {},
+      "costDetails": {},
+      "usagePricingTierId": null,
+      "usagePricingTierName": null,
+      "inputPrice": 0,
+      "outputPrice": 0,
+      "totalPrice": 0,
+      "calculatedInputCost": null,
+      "calculatedOutputCost": null,
+      "calculatedTotalCost": 0,
+      "unit": "TOKENS",
+      "promptTokens": 0,
+      "completionTokens": 0,
+      "totalTokens": 0,
+      "modelId": null,
+      "usage": {
+        "unit": "TOKENS",
+        "input": 0,
+        "output": 0,
+        "total": 0
+      }
+    },
+    {
+      "id": "65d5452335cd61c4",
+      "traceId": "f6306ebf958e89eaa7d7a1e55ed2e16e",
+      "startTime": "2026-07-06T11:10:28.429Z",
+      "endTime": "2026-07-06T11:10:28.636Z",
+      "projectId": "cmp9tyu4x01efad08dq5ebuhg",
+      "parentObservationId": "7e74765f60688b5b",
+      "type": "SPAN",
+      "environment": "default",
+      "name": "kg.community_insight.pg.save",
+      "level": "DEFAULT",
+      "statusMessage": "completed",
+      "version": null,
+      "createdAt": "2026-07-06T11:10:30.398Z",
+      "updatedAt": "2026-07-06T11:10:30.399Z",
+      "input": {
+        "community_id": "kgc:financial:l0:728",
+        "insight_id": "kgi:kgc:financial:l0:728",
+        "report_chars": 857
+      },
+      "output": {
+        "created": false,
+        "insight_id": "kgi:kgc:financial:l0:728",
+        "insight_version": 3,
+        "quality_diagnostics": {
+          "warnings": [],
+          "basis_count": 4,
+          "report_chars": 857,
+          "reversal_condition_count": 3
+        }
+      },
+      "metadata": {
+        "resourceAttributes": {
+          "telemetry.sdk.language": "python",
+          "telemetry.sdk.name": "opentelemetry",
+          "telemetry.sdk.version": "1.41.1",
+          "service.name": "unknown_service"
+        },
+        "scope": {
+          "name": "langfuse-sdk",
+          "version": "4.6.1",
+          "attributes": {
+            "public_key": "pk-lf-d52cf296-5725-45dc-a0f7-31202673d39f"
+          }
+        }
+      },
+      "model": null,
+      "modelParameters": null,
+      "completionStartTime": null,
+      "promptId": null,
+      "promptName": null,
+      "promptVersion": null,
+      "latency": 0.207,
+      "timeToFirstToken": null,
+      "usageDetails": {},
+      "costDetails": {},
+      "usagePricingTierId": null,
+      "usagePricingTierName": null,
+      "inputPrice": 0,
+      "outputPrice": 0,
+      "totalPrice": 0,
+      "calculatedInputCost": null,
+      "calculatedOutputCost": null,
+      "calculatedTotalCost": 0,
+      "unit": "TOKENS",
+      "promptTokens": 0,
+      "completionTokens": 0,
+      "totalTokens": 0,
+      "modelId": null,
+      "usage": {
+        "unit": "TOKENS",
+        "input": 0,
+        "output": 0,
+        "total": 0
+      }
+    },
+    {
+      "id": "7e74765f60688b5b",
+      "traceId": "f6306ebf958e89eaa7d7a1e55ed2e16e",
+      "startTime": "2026-07-06T11:10:11.236Z",
+      "endTime": "2026-07-06T11:10:29.927Z",
+      "projectId": "cmp9tyu4x01efad08dq5ebuhg",
+      "parentObservationId": "40ae040323ba6401",
+      "type": "SPAN",
+      "environment": "default",
+      "name": "kg.community_insight.refresh_one",
+      "level": "DEFAULT",
+      "statusMessage": "completed",
+      "version": null,
+      "createdAt": "2026-07-06T11:10:30.398Z",
+      "updatedAt": "2026-07-06T11:10:30.399Z",
+      "input": {
+        "community_id": "kgc:financial:l0:728",
+        "title": "资管行业产品业绩与理财市场",
+        "source_count": 6,
+        "cognitive_card_count": 6,
+        "assignment_count": 6
+      },
+      "output": {
+        "community_id": "kgc:financial:l0:728",
+        "insight_id": "kgi:kgc:financial:l0:728",
+        "insight_version": 3,
+        "materials": 6,
+        "report_chars": 857,
+        "cache_hit": false,
+        "retried": false
+      },
+      "metadata": {
+        "community_id": "kgc:financial:l0:728",
+        "title": "资管行业产品业绩与理财市场",
+        "source_count": 6,
+        "cognitive_card_count": 6,
+        "assignment_count": 6,
+        "resourceAttributes": {
+          "telemetry.sdk.language": "python",
+          "telemetry.sdk.name": "opentelemetry",
+          "telemetry.sdk.version": "1.41.1",
+          "service.name": "unknown_service"
+        },
+        "scope": {
+          "name": "langfuse-sdk",
+          "version": "4.6.1",
+          "attributes": {
+            "public_key": "pk-lf-d52cf296-5725-45dc-a0f7-31202673d39f"
+          }
+        }
+      },
+      "model": null,
+      "modelParameters": null,
+      "completionStartTime": null,
+      "promptId": null,
+      "promptName": null,
+      "promptVersion": null,
+      "latency": 18.691,
+      "timeToFirstToken": null,
+      "usageDetails": {},
+      "costDetails": {},
+      "usagePricingTierId": null,
+      "usagePricingTierName": null,
+      "inputPrice": 0,
+      "outputPrice": 0,
+      "totalPrice": 0,
+      "calculatedInputCost": null,
+      "calculatedOutputCost": null,
+      "calculatedTotalCost": 0,
+      "unit": "TOKENS",
+      "promptTokens": 0,
+      "completionTokens": 0,
+      "totalTokens": 0,
+      "modelId": null,
+      "usage": {
+        "unit": "TOKENS",
+        "input": 0,
+        "output": 0,
+        "total": 0
+      }
+    },
+    {
+      "id": "6fcd26cb8b6b5c9d",
+      "traceId": "f6306ebf958e89eaa7d7a1e55ed2e16e",
+      "startTime": "2026-07-06T11:10:11.123Z",
+      "endTime": "2026-07-06T11:10:11.235Z",
+      "projectId": "cmp9tyu4x01efad08dq5ebuhg",
+      "parentObservationId": "40ae040323ba6401",
+      "type": "SPAN",
+      "environment": "default",
+      "name": "kg.community_insight.pg.load_candidates_by_ids",
+      "level": "DEFAULT",
+      "statusMessage": "completed",
+      "version": null,
+      "createdAt": "2026-07-06T11:10:16.772Z",
+      "updatedAt": "2026-07-06T11:10:16.773Z",
+      "input": {
+        "requested": 1,
+        "force": true,
+        "community_ids": [
+          "kgc:financial:l0:728"
+        ]
+      },
+      "output": {
+        "loaded": 1,
+        "existing_insights": 1,
+        "selected": 1,
+        "candidate_ids": [
+          "kgc:financial:l0:728"
+        ]
+      },
+      "metadata": {
+        "resourceAttributes": {
+          "telemetry.sdk.language": "python",
+          "telemetry.sdk.name": "opentelemetry",
+          "telemetry.sdk.version": "1.41.1",
+          "service.name": "unknown_service"
+        },
+        "scope": {
+          "name": "langfuse-sdk",
+          "version": "4.6.1",
+          "attributes": {
+            "public_key": "pk-lf-d52cf296-5725-45dc-a0f7-31202673d39f"
+          }
+        }
+      },
+      "model": null,
+      "modelParameters": null,
+      "completionStartTime": null,
+      "promptId": null,
+      "promptName": null,
+      "promptVersion": null,
+      "latency": 0.112,
+      "timeToFirstToken": null,
+      "usageDetails": {},
+      "costDetails": {},
+      "usagePricingTierId": null,
+      "usagePricingTierName": null,
+      "inputPrice": 0,
+      "outputPrice": 0,
+      "totalPrice": 0,
+      "calculatedInputCost": null,
+      "calculatedOutputCost": null,
+      "calculatedTotalCost": 0,
+      "unit": "TOKENS",
+      "promptTokens": 0,
+      "completionTokens": 0,
+      "totalTokens": 0,
+      "modelId": null,
+      "usage": {
+        "unit": "TOKENS",
+        "input": 0,
+        "output": 0,
+        "total": 0
+      }
+    },
+    {
+      "id": "c81a1fa60c911223",
+      "traceId": "f6306ebf958e89eaa7d7a1e55ed2e16e",
+      "startTime": "2026-07-06T11:10:11.236Z",
+      "endTime": "2026-07-06T11:10:11.236Z",
+      "projectId": "cmp9tyu4x01efad08dq5ebuhg",
+      "parentObservationId": "7e74765f60688b5b",
+      "type": "SPAN",
+      "environment": "default",
+      "name": "kg.community_insight.materials.load",
+      "level": "DEFAULT",
+      "statusMessage": "completed",
+      "version": null,
+      "createdAt": "2026-07-06T11:10:16.772Z",
+      "updatedAt": "2026-07-06T11:10:16.773Z",
+      "input": {
+        "community_id": "kgc:financial:l0:728",
+        "max_materials": 80
+      },
+      "output": {
+        "source": "community.metrics.assigned_intents",
+        "materials": 6
+      },
+      "metadata": {
+        "resourceAttributes": {
+          "telemetry.sdk.language": "python",
+          "telemetry.sdk.name": "opentelemetry",
+          "telemetry.sdk.version": "1.41.1",
+          "service.name": "unknown_service"
+        },
+        "scope": {
+          "name": "langfuse-sdk",
+          "version": "4.6.1",
+          "attributes": {
+            "public_key": "pk-lf-d52cf296-5725-45dc-a0f7-31202673d39f"
+          }
+        }
+      },
+      "model": null,
+      "modelParameters": null,
+      "completionStartTime": null,
+      "promptId": null,
+      "promptName": null,
+      "promptVersion": null,
+      "latency": 0,
+      "timeToFirstToken": null,
+      "usageDetails": {},
+      "costDetails": {},
+      "usagePricingTierId": null,
+      "usagePricingTierName": null,
+      "inputPrice": 0,
+      "outputPrice": 0,
+      "totalPrice": 0,
+      "calculatedInputCost": null,
+      "calculatedOutputCost": null,
+      "calculatedTotalCost": 0,
+      "unit": "TOKENS",
+      "promptTokens": 0,
+      "completionTokens": 0,
+      "totalTokens": 0,
+      "modelId": null,
+      "usage": {
+        "unit": "TOKENS",
+        "input": 0,
+        "output": 0,
+        "total": 0
+      }
+    }
+  ],
+  "htmlPath": "/project/cmp9tyu4x01efad08dq5ebuhg/traces/f6306ebf958e89eaa7d7a1e55ed2e16e",
+  "totalCost": 0
+}

@@ -28,7 +28,10 @@ from src.infrastructure.persistence.models.reflection import (
 )
 from src.infrastructure.persistence.models.knowledge import (
     KnowledgeAssignmentCandidateOrder,
+    KnowledgeCognitiveCard,
     KnowledgeCompilationRun,
+    KnowledgeCommunityAssignment,
+    KnowledgeCommunityInsight,
     KnowledgeEvidenceChunk,
     KnowledgeEvidence,
     KnowledgeGraphCommunity,
@@ -67,6 +70,9 @@ __all__ = [
     "Lesson",
     # knowledge
     "KnowledgeAssignmentCandidateOrder",
+    "KnowledgeCognitiveCard",
+    "KnowledgeCommunityAssignment",
+    "KnowledgeCommunityInsight",
     "KnowledgeNormalizationRule",
     "KnowledgeEvidence",
     "KnowledgeVersion",

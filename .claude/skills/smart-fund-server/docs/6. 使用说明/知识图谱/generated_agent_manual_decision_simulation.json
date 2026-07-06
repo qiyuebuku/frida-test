@@ -1,0 +1,1329 @@
+{
+  "search": {
+    "query": "最近 AI 算力链、AI芯片、光模块和数据中心有哪些主线、机会和风险？请给出可用于交易决策的结论。",
+    "mode": "search",
+    "coverage_summary": {
+      "topics": [
+        "人工智能产业投资",
+        "AI算力链",
+        "人工智能ETF投资工具",
+        "光模块CPO产业链投资",
+        "算力基础设施主题",
+        "算力基础设施",
+        "人工智能ETF",
+        "光模块产业链"
+      ],
+      "risks": [
+        "产品集中度风险"
+      ],
+      "impact_targets": [
+        "创业板人工智能ETF",
+        "光模块行业"
+      ],
+      "actors": [
+        "中际旭创",
+        "华宝基金",
+        "光模块",
+        "人工智能",
+        "ETF"
+      ],
+      "communities": [
+        "AI算力链",
+        "人工智能产业投资"
+      ],
+      "evidence_count": 10,
+      "chunk_count": 14,
+      "cognitive_card_count": 1,
+      "community_count": 2,
+      "time_range": {
+        "min_published_at": "2026-04-20T02:36:04+00:00",
+        "max_published_at": "2026-04-23T05:37:46+00:00"
+      }
+    },
+    "quality_diagnostics": {
+      "relevance": {
+        "top_score": 0.5739,
+        "result_count": 6,
+        "has_results": true
+      },
+      "coverage": {
+        "covered_aspects": [
+          "actor",
+          "impact",
+          "risk",
+          "time",
+          "topic"
+        ],
+        "missing_explicit_focus_aspects": [],
+        "topic_count": 8,
+        "risk_count": 1,
+        "impact_target_count": 2,
+        "actor_count": 5
+      },
+      "evidence_sufficiency": {
+        "evidence_count": 10,
+        "chunk_count": 14,
+        "has_raw_evidence": true,
+        "status": "sufficient"
+      },
+      "diversity": {
+        "layer_counts": {
+          "community": 2,
+          "evidence_chunk": 3,
+          "cognitive_card": 1
+        },
+        "community_count": 2,
+        "source_count": 10,
+        "single_community_ratio": 0.167,
+        "single_source_ratio": 0.667,
+        "status": "mixed"
+      },
+      "information_redundancy": {
+        "status": "acceptable",
+        "reason": ""
+      },
+      "conflict": {
+        "detected": false,
+        "method": "impact_direction signal comparison"
+      },
+      "freshness": {
+        "time_range": {
+          "min_published_at": "2026-04-20T02:36:04+00:00",
+          "max_published_at": "2026-04-23T05:37:46+00:00"
+        },
+        "has_time_signal": true
+      },
+      "expandability": {
+        "expandable_count": 6,
+        "has_expandable_context": true
+      }
+    },
+    "operation_hints": [
+      {
+        "action": "open_result",
+        "reason": "打开最高相关命中，查看完整可读上下文和 refs。",
+        "target_ids": [
+          "kgc:financial:l0:3"
+        ],
+        "suggested_query": null,
+        "aspect": null
+      },
+      {
+        "action": "no_more_retrieval_needed",
+        "reason": "检索层没有明显缺口；是否采用由 Agent 根据任务目标判断。",
+        "target_ids": [],
+        "suggested_query": null,
+        "aspect": null
+      }
+    ],
+    "trace": {
+      "candidate_count": 100,
+      "selected_count": 6,
+      "sort": "evidence_strength",
+      "semantic_diagnostics": {
+        "query": "最近 AI 算力链、AI芯片、光模块和数据中心有哪些主线、机会和风险？请给出可用于交易决策的结论。",
+        "expanded_query": "最近 AI 算力链、AI芯片、光模块和数据中心有哪些主线、机会和风险？请给出可用于交易决策的结论。",
+        "collection_limits": {
+          "chunk": 80,
+          "cognitive_card": 12,
+          "community": 8
+        },
+        "per_collection_raw_hits": {
+          "chunk": 110,
+          "cognitive_card": 36,
+          "community": 24
+        },
+        "per_collection_selected_hits": {
+          "chunk": 80,
+          "cognitive_card": 12,
+          "community": 8
+        },
+        "per_collection_latency_ms": {
+          "chunk": 396.8,
+          "cognitive_card": 421.7,
+          "community": 378.9
+        },
+        "total_raw_hits": 170,
+        "total_selected_hits": 100
+      },
+      "rerank_diagnostics": {
+        "enabled": true,
+        "input_count": 100,
+        "reranked_count": 32,
+        "returned_count": 100,
+        "model": "jina-reranker-v3",
+        "latency_ms": 3618.4
+      },
+      "fusion_diagnostics": {
+        "query_intent": "time_sensitive",
+        "component_weights": {
+          "layer": 0.26,
+          "field": 0.28,
+          "evidence": 0.18,
+          "freshness": 0.28
+        },
+        "layer_weights": {
+          "community": 0.82,
+          "cognitive_card": 0.84,
+          "evidence_chunk": 1.0,
+          "unknown": 0.0
+        },
+        "query_anchor_count": 24,
+        "calibration_budget": 0.08,
+        "unreranked_calibration_budget": 0.025
+      }
+    },
+    "top_results": [
+      {
+        "id": "kgc:financial:l0:3",
+        "layer": "community",
+        "title": "AI算力链",
+        "score": 0.573861,
+        "why": [
+          "命中 community 层语义索引",
+          "匹配字段: milvus.community",
+          "可追溯到 10 条 evidence",
+          "包含 14 个 chunk 引用"
+        ],
+        "evidence_refs": [
+          "kg_ev:financial:news_articles:usage_demo_write_path:ft_news:59604:1862a4a31a74e8e0",
+          "kg_ev:financial:news_articles:usage_demo_write_path:ft_news:74414:5d901cf4621d1ad5",
+          "kg_ev:financial:news_articles:usage_demo_write_path:ft_news:74416:077d9aedd8fdfa40",
+          "kg_ev:financial:news_articles:usage_demo_write_path:ft_news:74425:39d87d257dc7af3a",
+          "kg_ev:financial:news_articles:usage_demo_write_path:ft_news:74421:26b21dffa3b43546",
+          "kg_ev:financial:news_articles:usage_demo_write_path:ft_news:74428:d732842a62535a4e",
+          "kg_ev:financial:news_articles:usage_demo_write_path:ft_news:75461:6c4300ffb997c20b",
+          "kg_ev:financial:news_articles:usage_demo_write_path:ft_news:75813:202d6b5a0416477f",
+          "kg_ev:financial:policy_news:usage_demo_write_path:ft_news:76220:8691d9c84d2ef100",
+          "kg_ev:financial:news_articles:usage_demo_write_path:ft_news:76581:3866d0416f1ae993"
+        ],
+        "chunk_refs": [
+          "kg_chunk:kg_ev:financial:news_articles:usage_demo_write_path:ft_news:59604:1862a4a31a74e8e0:0",
+          "kg_chunk:kg_ev:financial:news_articles:usage_demo_write_path:ft_news:59604:1862a4a31a74e8e0:1",
+          "kg_chunk:kg_ev:financial:news_articles:usage_demo_write_path:ft_news:74414:5d901cf4621d1ad5:0",
+          "kg_chunk:kg_ev:financial:news_articles:usage_demo_write_path:ft_news:74416:077d9aedd8fdfa40:0",
+          "kg_chunk:kg_ev:financial:news_articles:usage_demo_write_path:ft_news:74416:077d9aedd8fdfa40:1",
+          "kg_chunk:kg_ev:financial:news_articles:usage_demo_write_path:ft_news:74416:077d9aedd8fdfa40:2",
+          "kg_chunk:kg_ev:financial:news_articles:usage_demo_write_path:ft_news:74425:39d87d257dc7af3a:0",
+          "kg_chunk:kg_ev:financial:news_articles:usage_demo_write_path:ft_news:74421:26b21dffa3b43546:0",
+          "kg_chunk:kg_ev:financial:news_articles:usage_demo_write_path:ft_news:74428:d732842a62535a4e:0",
+          "kg_chunk:kg_ev:financial:news_articles:usage_demo_write_path:ft_news:74421:26b21dffa3b43546:1",
+          "kg_chunk:kg_ev:financial:news_articles:usage_demo_write_path:ft_news:75461:6c4300ffb997c20b:0",
+          "kg_chunk:kg_ev:financial:news_articles:usage_demo_write_path:ft_news:75813:202d6b5a0416477f:0",
+          "kg_chunk:kg_ev:financial:policy_news:usage_demo_write_path:ft_news:76220:8691d9c84d2ef100:0",
+          "kg_chunk:kg_ev:financial:news_articles:usage_demo_write_path:ft_news:76581:3866d0416f1ae993:0"
+        ],
+        "community_refs": [
+          "kgc:financial:l0:3"
+        ],
+        "snippet": "Document Type: Community Report\nCommunity: AI算力链\nProjection: cognitive_topic\nCommunity Level: 0\nOrigin: seed\nMaturity: mature_topic\nDirectory Scope: 承接 AI 芯片、算力硬件、光模块、服务器、数据中心、算电协同、AI 应用需求对硬件链条的拉动。\nInclude Rules: AI 芯片供需、算力基础设施、服务器、光模块、CPO、",
+        "raw_scores": {
+          "semantic_score": 0.032786883413791656,
+          "reranker": 0.5215325355529785,
+          "agent_fused_score": 0.573861
+        }
+      },
+      {
+        "id": "kg_chunk:kg_ev:financial:news_articles:usage_demo_write_path:ft_news:74416:077d9aedd8fdfa40:2",
+        "layer": "evidence_chunk",
+        "title": "市值突破万亿！中际旭创最近1年飙升超10倍！重仓“易中天”的创业板人工智能ETF华宝（159363）再创新高！",
+        "score": 0.194374,
+        "why": [
+          "命中 evidence_chunk 层语义索引",
+          "可追溯到 1 条 evidence",
+          "包含 1 个 chunk 引用"
+        ],
+        "evidence_refs": [
+          "kg_ev:financial:news_articles:usage_demo_write_path:ft_news:74416:077d9aedd8fdfa40"
+        ],
+        "chunk_refs": [
+          "kg_chunk:kg_ev:financial:news_articles:usage_demo_write_path:ft_news:74416:077d9aedd8fdfa40:2"
+        ],
+        "community_refs": [],
+        "snippet": "Document Type: Evidence Chunk\nTitle: 市值突破万亿！中际旭创最近1年飙升超10倍！重仓“易中天”的创业板人工智能ETF华宝（159363）再创新高！\nSummary: \nEvidence: kg_ev:financial:news_articles:usage_demo_write_path:ft_news:74416:077d9aedd8fdfa40\nSource: news_articles:usage_demo_write_path:",
+        "raw_scores": {
+          "semantic_score": 0.014492753893136978,
+          "reranker": 0.16287775337696075,
+          "agent_fused_score": 0.194374
+        }
+      },
+      {
+        "id": "kg_chunk:kg_ev:financial:news_articles:usage_demo_write_path:ft_news:59604:1862a4a31a74e8e0:1",
+        "layer": "evidence_chunk",
+        "title": "AI应用异动拉升，蓝色光标领涨超10%，创业板人工智能ETF华宝（159363）再创新高，资金净流入持续扩大！",
+        "score": 0.120394,
+        "why": [
+          "命中 evidence_chunk 层语义索引",
+          "可追溯到 1 条 evidence",
+          "包含 1 个 chunk 引用"
+        ],
+        "evidence_refs": [
+          "kg_ev:financial:news_articles:usage_demo_write_path:ft_news:59604:1862a4a31a74e8e0"
+        ],
+        "chunk_refs": [
+          "kg_chunk:kg_ev:financial:news_articles:usage_demo_write_path:ft_news:59604:1862a4a31a74e8e0:1"
+        ],
+        "community_refs": [],
+        "snippet": "Document Type: Evidence Chunk\nTitle: AI应用异动拉升，蓝色光标领涨超10%，创业板人工智能ETF华宝（159363）再创新高，资金净流入持续扩大！\nSummary: \nEvidence: kg_ev:financial:news_articles:usage_demo_write_path:ft_news:59604:1862a4a31a74e8e0\nSource: news_articles:usage_demo_write_path:",
+        "raw_scores": {
+          "semantic_score": 0.01515151560306549,
+          "reranker": 0.0860765278339386,
+          "agent_fused_score": 0.120394
+        }
+      },
+      {
+        "id": "kgc:financial:l0:457",
+        "layer": "community",
+        "title": "人工智能产业投资",
+        "score": 0.085361,
+        "why": [
+          "命中 community 层语义索引",
+          "匹配字段: milvus.community",
+          "可追溯到 3 条 evidence",
+          "包含 3 个 chunk 引用"
+        ],
+        "evidence_refs": [
+          "kg_ev:financial:news_articles:usage_demo_write_path:ft_news:74416:077d9aedd8fdfa40",
+          "kg_ev:financial:news_articles:usage_demo_write_path:ft_news:74425:39d87d257dc7af3a",
+          "kg_ev:financial:news_articles:usage_demo_write_path:ft_news:75813:202d6b5a0416477f"
+        ],
+        "chunk_refs": [
+          "kg_chunk:kg_ev:financial:news_articles:usage_demo_write_path:ft_news:74416:077d9aedd8fdfa40:2",
+          "kg_chunk:kg_ev:financial:news_articles:usage_demo_write_path:ft_news:74425:39d87d257dc7af3a:0",
+          "kg_chunk:kg_ev:financial:news_articles:usage_demo_write_path:ft_news:75813:202d6b5a0416477f:0"
+        ],
+        "community_refs": [
+          "kgc:financial:l0:457"
+        ],
+        "snippet": "Document Type: Community Report\nCommunity: 人工智能产业投资\nProjection: cognitive_topic\nCommunity Level: 0\nOrigin: emergent\nMaturity: multi_evidence\nDirectory Scope: 承接人工智能产业的投资工具（ETF、指数）、资本配置、产业融资、风险投资及AI主题基金动态，涵盖AI应用、算力、芯片等子领域的投资方向。\nCoverage Cont",
+        "raw_scores": {
+          "semantic_score": 0.032258063554763794,
+          "reranker": 0.04318523034453392,
+          "agent_fused_score": 0.085361
+        }
+      },
+      {
+        "id": "kg_chunk:kg_ev:financial:news_articles:usage_demo_write_path:ft_news:74414:5d901cf4621d1ad5:0",
+        "layer": "evidence_chunk",
+        "title": "国民技术早盘涨超10% 发布N32H493主控芯片适配800G/1.6T光模块",
+        "score": 0.080168,
+        "why": [
+          "命中 evidence_chunk 层语义索引",
+          "可追溯到 1 条 evidence",
+          "包含 1 个 chunk 引用"
+        ],
+        "evidence_refs": [
+          "kg_ev:financial:news_articles:usage_demo_write_path:ft_news:74414:5d901cf4621d1ad5"
+        ],
+        "chunk_refs": [
+          "kg_chunk:kg_ev:financial:news_articles:usage_demo_write_path:ft_news:74414:5d901cf4621d1ad5:0"
+        ],
+        "community_refs": [],
+        "snippet": "Document Type: Evidence Chunk\nTitle: 国民技术早盘涨超10% 发布N32H493主控芯片适配800G/1.6T光模块\nSummary: \nEvidence: kg_ev:financial:news_articles:usage_demo_write_path:ft_news:74414:5d901cf4621d1ad5\nSource: news_articles:usage_demo_write_path:ft_news:74414\nSo",
+        "raw_scores": {
+          "semantic_score": 0.014084506779909134,
+          "reranker": 0.043029796332120895,
+          "agent_fused_score": 0.080168
+        }
+      },
+      {
+        "id": "kg_cognitive_card:abbc59c9177178a4",
+        "layer": "cognitive_card",
+        "title": "市值突破万亿！中际旭创最近1年飙升超10倍！重仓“易中天”的创业板人工智能ETF华宝（159363）再创新高！",
+        "score": 0.072238,
+        "why": [
+          "命中 cognitive_card 层语义索引",
+          "匹配字段: milvus.cognitive_card",
+          "可追溯到 1 条 evidence",
+          "包含 1 个 chunk 引用"
+        ],
+        "evidence_refs": [
+          "kg_ev:financial:news_articles:usage_demo_write_path:ft_news:74416:077d9aedd8fdfa40"
+        ],
+        "chunk_refs": [
+          "kg_chunk:kg_ev:financial:news_articles:usage_demo_write_path:ft_news:74416:077d9aedd8fdfa40:2"
+        ],
+        "community_refs": [],
+        "snippet": "Document Type: Cognitive Card\nCognitive Card: kg_cognitive_card:abbc59c9177178a4\nTitle: 市值突破万亿！中际旭创最近1年飙升超10倍！重仓“易中天”的创业板人工智能ETF华宝（159363）再创新高！\nSource: news_articles:usage_demo_write_path:ft_news:74416\nEvidence: kg_ev:financial:news_article",
+        "raw_scores": {
+          "semantic_score": 0.015384615398943424,
+          "reranker": 0.046402089297771454,
+          "agent_fused_score": 0.072238
+        }
+      }
+    ]
+  },
+  "open": {
+    "query": "open",
+    "mode": "open",
+    "coverage_summary": {
+      "topics": [
+        "光模块产业链",
+        "算力基础设施",
+        "半导体行业",
+        "光模块技术迭代周期",
+        "AI应用",
+        "高速光模块主控芯片发布与涨价潮",
+        "国产芯片涨价周期中的光模块机会",
+        "AI算力基础设施驱动芯片需求",
+        "半导体芯片国产替代",
+        "AI算力基础设施",
+        "光通信行业",
+        "AI硬件",
+        "AI算力驱动光模块高景气",
+        "光模块龙头业绩爆发与行业升级",
+        "中际旭创万亿市值背后逻辑",
+        "AI算力产业链"
+      ],
+      "risks": [
+        "地缘风险",
+        "需求风险",
+        "成本风险",
+        "供应风险",
+        "产品集中度风险",
+        "基金费率风险",
+        "原材料供应风险",
+        "芯片价格波动风险",
+        "供应链风险",
+        "芯片涨价传导风险",
+        "上游器件供给紧张",
+        "需求持续性不确定"
+      ],
+      "impact_targets": [
+        "中际旭创",
+        "创业板人工智能ETF",
+        "光模块行业",
+        "伦锡",
+        "沪锡",
+        "AI应用板块",
+        "蓝色光标",
+        "中文在线",
+        "特斯拉",
+        "光模块",
+        "数据中心",
+        "AI服务器"
+      ],
+      "actors": [
+        "中际旭创",
+        "光模块",
+        "中国",
+        "华宝基金",
+        "创业板人工智能ETF华宝",
+        "国民技术",
+        "半导体",
+        "特斯拉",
+        "工业富联",
+        "芯片",
+        "特朗普",
+        "美伊双方"
+      ],
+      "communities": [
+        "AI算力链"
+      ],
+      "evidence_count": 10,
+      "chunk_count": 14,
+      "cognitive_card_count": 8,
+      "community_count": 1,
+      "time_range": {
+        "min_published_at": "2026-04-20T02:36:04+00:00",
+        "max_published_at": "2026-04-23T05:37:46+00:00"
+      }
+    },
+    "quality_diagnostics": {
+      "relevance": {
+        "top_score": 1.0,
+        "result_count": 9,
+        "has_results": true
+      },
+      "coverage": {
+        "covered_aspects": [
+          "actor",
+          "impact",
+          "risk",
+          "time",
+          "topic"
+        ],
+        "missing_explicit_focus_aspects": [],
+        "topic_count": 16,
+        "risk_count": 12,
+        "impact_target_count": 12,
+        "actor_count": 12
+      },
+      "evidence_sufficiency": {
+        "evidence_count": 10,
+        "chunk_count": 14,
+        "has_raw_evidence": true,
+        "status": "sufficient"
+      },
+      "diversity": {
+        "layer_counts": {
+          "cognitive_card": 8,
+          "community": 1
+        },
+        "community_count": 1,
+        "source_count": 10,
+        "single_community_ratio": 0.111,
+        "single_source_ratio": 0.444,
+        "status": "mixed"
+      },
+      "information_redundancy": {
+        "status": "acceptable",
+        "reason": ""
+      },
+      "conflict": {
+        "detected": false,
+        "method": "impact_direction signal comparison"
+      },
+      "freshness": {
+        "time_range": {
+          "min_published_at": "2026-04-20T02:36:04+00:00",
+          "max_published_at": "2026-04-23T05:37:46+00:00"
+        },
+        "has_time_signal": true
+      },
+      "expandability": {
+        "expandable_count": 9,
+        "has_expandable_context": true
+      }
+    },
+    "operation_hints": [
+      {
+        "action": "open_result",
+        "reason": "打开最高相关命中，查看完整可读上下文和 refs。",
+        "target_ids": [
+          "kg_cognitive_card:48d127d3c0a94f3d"
+        ],
+        "suggested_query": null,
+        "aspect": null
+      },
+      {
+        "action": "no_more_retrieval_needed",
+        "reason": "检索层没有明显缺口；是否采用由 Agent 根据任务目标判断。",
+        "target_ids": [],
+        "suggested_query": null,
+        "aspect": null
+      }
+    ],
+    "trace": {
+      "requested_ids": [
+        "kgc:financial:l0:3"
+      ],
+      "opened_count": 9
+    },
+    "top_results": [
+      {
+        "id": "kg_cognitive_card:48d127d3c0a94f3d",
+        "layer": "cognitive_card",
+        "title": "国民技术早盘涨超10% 发布N32H493主控芯片适配800G/1.6T光模块",
+        "score": 1.0,
+        "why": [
+          "命中 cognitive_card 层语义索引",
+          "匹配字段: milvus.cognitive_card",
+          "可追溯到 1 条 evidence",
+          "包含 1 个 chunk 引用"
+        ],
+        "evidence_refs": [
+          "kg_ev:financial:news_articles:usage_demo_write_path:ft_news:74414:5d901cf4621d1ad5"
+        ],
+        "chunk_refs": [
+          "kg_chunk:kg_ev:financial:news_articles:usage_demo_write_path:ft_news:74414:5d901cf4621d1ad5:0"
+        ],
+        "community_refs": [],
+        "snippet": "Document Type: Cognitive Card\nCognitive Card: kg_cognitive_card:48d127d3c0a94f3d\nTitle: 国民技术早盘涨超10% 发布N32H493主控芯片适配800G/1.6T光模块\nSource: news_articles:usage_demo_write_path:ft_news:74414\nEvidence: kg_ev:financial:news_articles:usage_demo_wri",
+        "raw_scores": {}
+      },
+      {
+        "id": "kg_cognitive_card:67f9f5fd5cd7b309",
+        "layer": "cognitive_card",
+        "title": "市值突破万亿！中际旭创最近1年飙升超10倍！重仓“易中天”的创业板人工智能ETF华宝（159363）再创新高！",
+        "score": 1.0,
+        "why": [
+          "命中 cognitive_card 层语义索引",
+          "匹配字段: milvus.cognitive_card",
+          "可追溯到 1 条 evidence",
+          "包含 1 个 chunk 引用"
+        ],
+        "evidence_refs": [
+          "kg_ev:financial:news_articles:usage_demo_write_path:ft_news:74416:077d9aedd8fdfa40"
+        ],
+        "chunk_refs": [
+          "kg_chunk:kg_ev:financial:news_articles:usage_demo_write_path:ft_news:74416:077d9aedd8fdfa40:1"
+        ],
+        "community_refs": [],
+        "snippet": "Document Type: Cognitive Card\nCognitive Card: kg_cognitive_card:67f9f5fd5cd7b309\nTitle: 市值突破万亿！中际旭创最近1年飙升超10倍！重仓“易中天”的创业板人工智能ETF华宝（159363）再创新高！\nSource: news_articles:usage_demo_write_path:ft_news:74416\nEvidence: kg_ev:financial:news_article",
+        "raw_scores": {}
+      },
+      {
+        "id": "kg_cognitive_card:9d53b09cc52257fb",
+        "layer": "cognitive_card",
+        "title": "长江有色：美伊和谈生变及AI 半导体狂欢提振 23日锡价或上涨",
+        "score": 1.0,
+        "why": [
+          "命中 cognitive_card 层语义索引",
+          "匹配字段: milvus.cognitive_card",
+          "可追溯到 1 条 evidence",
+          "包含 1 个 chunk 引用"
+        ],
+        "evidence_refs": [
+          "kg_ev:financial:news_articles:usage_demo_write_path:ft_news:74421:26b21dffa3b43546"
+        ],
+        "chunk_refs": [
+          "kg_chunk:kg_ev:financial:news_articles:usage_demo_write_path:ft_news:74421:26b21dffa3b43546:0"
+        ],
+        "community_refs": [],
+        "snippet": "Document Type: Cognitive Card\nCognitive Card: kg_cognitive_card:9d53b09cc52257fb\nTitle: 长江有色：美伊和谈生变及AI 半导体狂欢提振 23日锡价或上涨\nSource: news_articles:usage_demo_write_path:ft_news:74421\nEvidence: kg_ev:financial:news_articles:usage_demo_write_path:",
+        "raw_scores": {}
+      },
+      {
+        "id": "kg_cognitive_card:abbc59c9177178a4",
+        "layer": "cognitive_card",
+        "title": "市值突破万亿！中际旭创最近1年飙升超10倍！重仓“易中天”的创业板人工智能ETF华宝（159363）再创新高！",
+        "score": 1.0,
+        "why": [
+          "命中 cognitive_card 层语义索引",
+          "匹配字段: milvus.cognitive_card",
+          "可追溯到 1 条 evidence",
+          "包含 1 个 chunk 引用"
+        ],
+        "evidence_refs": [
+          "kg_ev:financial:news_articles:usage_demo_write_path:ft_news:74416:077d9aedd8fdfa40"
+        ],
+        "chunk_refs": [
+          "kg_chunk:kg_ev:financial:news_articles:usage_demo_write_path:ft_news:74416:077d9aedd8fdfa40:2"
+        ],
+        "community_refs": [],
+        "snippet": "Document Type: Cognitive Card\nCognitive Card: kg_cognitive_card:abbc59c9177178a4\nTitle: 市值突破万亿！中际旭创最近1年飙升超10倍！重仓“易中天”的创业板人工智能ETF华宝（159363）再创新高！\nSource: news_articles:usage_demo_write_path:ft_news:74416\nEvidence: kg_ev:financial:news_article",
+        "raw_scores": {}
+      },
+      {
+        "id": "kg_cognitive_card:ada3b41bfe5bccc8",
+        "layer": "cognitive_card",
+        "title": "AI应用异动拉升，蓝色光标领涨超10%，创业板人工智能ETF华宝（159363）再创新高，资金净流入持续扩大！",
+        "score": 1.0,
+        "why": [
+          "命中 cognitive_card 层语义索引",
+          "匹配字段: milvus.cognitive_card",
+          "可追溯到 1 条 evidence",
+          "包含 1 个 chunk 引用"
+        ],
+        "evidence_refs": [
+          "kg_ev:financial:news_articles:usage_demo_write_path:ft_news:59604:1862a4a31a74e8e0"
+        ],
+        "chunk_refs": [
+          "kg_chunk:kg_ev:financial:news_articles:usage_demo_write_path:ft_news:59604:1862a4a31a74e8e0:0"
+        ],
+        "community_refs": [],
+        "snippet": "Document Type: Cognitive Card\nCognitive Card: kg_cognitive_card:ada3b41bfe5bccc8\nTitle: AI应用异动拉升，蓝色光标领涨超10%，创业板人工智能ETF华宝（159363）再创新高，资金净流入持续扩大！\nSource: news_articles:usage_demo_write_path:ft_news:59604\nEvidence: kg_ev:financial:news_article",
+        "raw_scores": {}
+      },
+      {
+        "id": "kg_cognitive_card:b3b1b5a81fe2a344",
+        "layer": "cognitive_card",
+        "title": "AI应用异动拉升，蓝色光标领涨超10%，创业板人工智能ETF华宝（159363）再创新高，资金净流入持续扩大！",
+        "score": 1.0,
+        "why": [
+          "命中 cognitive_card 层语义索引",
+          "匹配字段: milvus.cognitive_card",
+          "可追溯到 1 条 evidence",
+          "包含 1 个 chunk 引用"
+        ],
+        "evidence_refs": [
+          "kg_ev:financial:news_articles:usage_demo_write_path:ft_news:59604:1862a4a31a74e8e0"
+        ],
+        "chunk_refs": [
+          "kg_chunk:kg_ev:financial:news_articles:usage_demo_write_path:ft_news:59604:1862a4a31a74e8e0:1"
+        ],
+        "community_refs": [],
+        "snippet": "Document Type: Cognitive Card\nCognitive Card: kg_cognitive_card:b3b1b5a81fe2a344\nTitle: AI应用异动拉升，蓝色光标领涨超10%，创业板人工智能ETF华宝（159363）再创新高，资金净流入持续扩大！\nSource: news_articles:usage_demo_write_path:ft_news:59604\nEvidence: kg_ev:financial:news_article",
+        "raw_scores": {}
+      }
+    ]
+  },
+  "refine": {
+    "query": "最近 AI 算力链、AI芯片、光模块和数据中心有哪些主线、机会和风险？请给出可用于交易决策的结论。 只补充 AI 算力链中的风险：芯片供需、光模块、数据中心资本开支、供应链和估值风险。",
+    "mode": "refine",
+    "coverage_summary": {
+      "topics": [
+        "人工智能产业投资",
+        "AI应用",
+        "光模块产业链",
+        "AI算力链",
+        "人工智能ETF布局算力与AI应用",
+        "创业板人工智能ETF投资机会",
+        "AI主题ETF基金介绍",
+        "人工智能投资主题",
+        "算力产业链",
+        "ETF基金",
+        "光模块/CPO",
+        "人工智能ETF投资工具",
+        "光模块CPO产业链投资",
+        "算力基础设施主题",
+        "算力基础设施",
+        "人工智能ETF"
+      ],
+      "risks": [
+        "基金费率风险",
+        "产品集中度风险",
+        "行业集中风险",
+        "芯片价格波动风险",
+        "供应链风险",
+        "芯片涨价传导风险"
+      ],
+      "impact_targets": [
+        "创业板人工智能ETF",
+        "人工智能主题基金",
+        "光模块/CPO板块",
+        "AI应用板块",
+        "光模块行业",
+        "光模块",
+        "数据中心",
+        "AI服务器",
+        "智算中心",
+        "国民技术"
+      ],
+      "actors": [
+        "华宝基金",
+        "中际旭创",
+        "国民技术",
+        "创业板人工智能ETF华宝",
+        "投资者",
+        "人工智能",
+        "ETF基金",
+        "光模块",
+        "ETF",
+        "下游光模块厂商",
+        "半导体",
+        "光通信"
+      ],
+      "communities": [
+        "AI算力链",
+        "人工智能产业投资"
+      ],
+      "evidence_count": 10,
+      "chunk_count": 14,
+      "cognitive_card_count": 3,
+      "community_count": 2,
+      "time_range": {
+        "min_published_at": "2026-04-20T02:36:04+00:00",
+        "max_published_at": "2026-04-23T05:37:46+00:00"
+      }
+    },
+    "quality_diagnostics": {
+      "relevance": {
+        "top_score": 0.573,
+        "result_count": 6,
+        "has_results": true
+      },
+      "coverage": {
+        "covered_aspects": [
+          "actor",
+          "impact",
+          "risk",
+          "time",
+          "topic"
+        ],
+        "missing_explicit_focus_aspects": [],
+        "topic_count": 16,
+        "risk_count": 6,
+        "impact_target_count": 10,
+        "actor_count": 12
+      },
+      "evidence_sufficiency": {
+        "evidence_count": 10,
+        "chunk_count": 14,
+        "has_raw_evidence": true,
+        "status": "sufficient"
+      },
+      "diversity": {
+        "layer_counts": {
+          "community": 2,
+          "evidence_chunk": 1,
+          "cognitive_card": 3
+        },
+        "community_count": 2,
+        "source_count": 10,
+        "single_community_ratio": 0.167,
+        "single_source_ratio": 0.667,
+        "status": "mixed"
+      },
+      "information_redundancy": {
+        "status": "acceptable",
+        "reason": ""
+      },
+      "conflict": {
+        "detected": false,
+        "method": "impact_direction signal comparison"
+      },
+      "freshness": {
+        "time_range": {
+          "min_published_at": "2026-04-20T02:36:04+00:00",
+          "max_published_at": "2026-04-23T05:37:46+00:00"
+        },
+        "has_time_signal": true
+      },
+      "expandability": {
+        "expandable_count": 6,
+        "has_expandable_context": true
+      }
+    },
+    "operation_hints": [
+      {
+        "action": "open_result",
+        "reason": "打开最高相关命中，查看完整可读上下文和 refs。",
+        "target_ids": [
+          "kgc:financial:l0:3"
+        ],
+        "suggested_query": null,
+        "aspect": null
+      },
+      {
+        "action": "no_more_retrieval_needed",
+        "reason": "检索层没有明显缺口；是否采用由 Agent 根据任务目标判断。",
+        "target_ids": [],
+        "suggested_query": null,
+        "aspect": null
+      }
+    ],
+    "trace": {
+      "candidate_count": 100,
+      "selected_count": 6,
+      "sort": "evidence_strength",
+      "semantic_diagnostics": {
+        "query": "最近 AI 算力链、AI芯片、光模块和数据中心有哪些主线、机会和风险？请给出可用于交易决策的结论。 只补充 AI 算力链中的风险：芯片供需、光模块、数据中心资本开支、供应链和估值风险。",
+        "expanded_query": "最近 AI 算力链、AI芯片、光模块和数据中心有哪些主线、机会和风险？请给出可用于交易决策的结论。 只补充 AI 算力链中的风险：芯片供需、光模块、数据中心资本开支、供应链和估值风险。",
+        "collection_limits": {
+          "chunk": 80,
+          "cognitive_card": 12,
+          "community": 8
+        },
+        "per_collection_raw_hits": {
+          "chunk": 110,
+          "cognitive_card": 36,
+          "community": 24
+        },
+        "per_collection_selected_hits": {
+          "chunk": 80,
+          "cognitive_card": 12,
+          "community": 8
+        },
+        "per_collection_latency_ms": {
+          "chunk": 17.6,
+          "cognitive_card": 14.5,
+          "community": 16.0
+        },
+        "total_raw_hits": 170,
+        "total_selected_hits": 100
+      },
+      "rerank_diagnostics": {
+        "enabled": true,
+        "input_count": 100,
+        "reranked_count": 32,
+        "returned_count": 100,
+        "model": "jina-reranker-v3",
+        "latency_ms": 3484.5
+      },
+      "fusion_diagnostics": {
+        "query_intent": "time_sensitive",
+        "component_weights": {
+          "layer": 0.26,
+          "field": 0.28,
+          "evidence": 0.18,
+          "freshness": 0.28
+        },
+        "layer_weights": {
+          "community": 0.82,
+          "cognitive_card": 0.84,
+          "evidence_chunk": 1.0,
+          "unknown": 0.0
+        },
+        "query_anchor_count": 32,
+        "calibration_budget": 0.08,
+        "unreranked_calibration_budget": 0.025
+      },
+      "previous_context_refs": [
+        "kgc:financial:l0:3",
+        "kg_chunk:kg_ev:financial:news_articles:usage_demo_write_path:ft_news:74416:077d9aedd8fdfa40:2",
+        "kg_chunk:kg_ev:financial:news_articles:usage_demo_write_path:ft_news:59604:1862a4a31a74e8e0:1",
+        "kgc:financial:l0:457",
+        "kg_chunk:kg_ev:financial:news_articles:usage_demo_write_path:ft_news:74414:5d901cf4621d1ad5:0",
+        "kg_cognitive_card:abbc59c9177178a4"
+      ],
+      "refined_query": "最近 AI 算力链、AI芯片、光模块和数据中心有哪些主线、机会和风险？请给出可用于交易决策的结论。 只补充 AI 算力链中的风险：芯片供需、光模块、数据中心资本开支、供应链和估值风险。"
+    },
+    "top_results": [
+      {
+        "id": "kgc:financial:l0:3",
+        "layer": "community",
+        "title": "AI算力链",
+        "score": 0.573005,
+        "why": [
+          "命中 community 层语义索引",
+          "匹配字段: milvus.community",
+          "可追溯到 10 条 evidence",
+          "包含 14 个 chunk 引用"
+        ],
+        "evidence_refs": [
+          "kg_ev:financial:news_articles:usage_demo_write_path:ft_news:59604:1862a4a31a74e8e0",
+          "kg_ev:financial:news_articles:usage_demo_write_path:ft_news:74414:5d901cf4621d1ad5",
+          "kg_ev:financial:news_articles:usage_demo_write_path:ft_news:74416:077d9aedd8fdfa40",
+          "kg_ev:financial:news_articles:usage_demo_write_path:ft_news:74425:39d87d257dc7af3a",
+          "kg_ev:financial:news_articles:usage_demo_write_path:ft_news:74421:26b21dffa3b43546",
+          "kg_ev:financial:news_articles:usage_demo_write_path:ft_news:74428:d732842a62535a4e",
+          "kg_ev:financial:news_articles:usage_demo_write_path:ft_news:75461:6c4300ffb997c20b",
+          "kg_ev:financial:news_articles:usage_demo_write_path:ft_news:75813:202d6b5a0416477f",
+          "kg_ev:financial:policy_news:usage_demo_write_path:ft_news:76220:8691d9c84d2ef100",
+          "kg_ev:financial:news_articles:usage_demo_write_path:ft_news:76581:3866d0416f1ae993"
+        ],
+        "chunk_refs": [
+          "kg_chunk:kg_ev:financial:news_articles:usage_demo_write_path:ft_news:59604:1862a4a31a74e8e0:0",
+          "kg_chunk:kg_ev:financial:news_articles:usage_demo_write_path:ft_news:59604:1862a4a31a74e8e0:1",
+          "kg_chunk:kg_ev:financial:news_articles:usage_demo_write_path:ft_news:74414:5d901cf4621d1ad5:0",
+          "kg_chunk:kg_ev:financial:news_articles:usage_demo_write_path:ft_news:74416:077d9aedd8fdfa40:0",
+          "kg_chunk:kg_ev:financial:news_articles:usage_demo_write_path:ft_news:74416:077d9aedd8fdfa40:1",
+          "kg_chunk:kg_ev:financial:news_articles:usage_demo_write_path:ft_news:74416:077d9aedd8fdfa40:2",
+          "kg_chunk:kg_ev:financial:news_articles:usage_demo_write_path:ft_news:74425:39d87d257dc7af3a:0",
+          "kg_chunk:kg_ev:financial:news_articles:usage_demo_write_path:ft_news:74421:26b21dffa3b43546:0",
+          "kg_chunk:kg_ev:financial:news_articles:usage_demo_write_path:ft_news:74428:d732842a62535a4e:0",
+          "kg_chunk:kg_ev:financial:news_articles:usage_demo_write_path:ft_news:74421:26b21dffa3b43546:1",
+          "kg_chunk:kg_ev:financial:news_articles:usage_demo_write_path:ft_news:75461:6c4300ffb997c20b:0",
+          "kg_chunk:kg_ev:financial:news_articles:usage_demo_write_path:ft_news:75813:202d6b5a0416477f:0",
+          "kg_chunk:kg_ev:financial:policy_news:usage_demo_write_path:ft_news:76220:8691d9c84d2ef100:0",
+          "kg_chunk:kg_ev:financial:news_articles:usage_demo_write_path:ft_news:76581:3866d0416f1ae993:0"
+        ],
+        "community_refs": [
+          "kgc:financial:l0:3"
+        ],
+        "snippet": "Document Type: Community Report\nCommunity: AI算力链\nProjection: cognitive_topic\nCommunity Level: 0\nOrigin: seed\nMaturity: mature_topic\nDirectory Scope: 承接 AI 芯片、算力硬件、光模块、服务器、数据中心、算电协同、AI 应用需求对硬件链条的拉动。\nInclude Rules: AI 芯片供需、算力基础设施、服务器、光模块、CPO、",
+        "raw_scores": {
+          "semantic_score": 0.032786883413791656,
+          "reranker": 0.5191487073898315,
+          "agent_fused_score": 0.573005
+        }
+      },
+      {
+        "id": "kg_chunk:kg_ev:financial:news_articles:usage_demo_write_path:ft_news:74416:077d9aedd8fdfa40:2",
+        "layer": "evidence_chunk",
+        "title": "市值突破万亿！中际旭创最近1年飙升超10倍！重仓“易中天”的创业板人工智能ETF华宝（159363）再创新高！",
+        "score": 0.113273,
+        "why": [
+          "命中 evidence_chunk 层语义索引",
+          "可追溯到 1 条 evidence",
+          "包含 1 个 chunk 引用"
+        ],
+        "evidence_refs": [
+          "kg_ev:financial:news_articles:usage_demo_write_path:ft_news:74416:077d9aedd8fdfa40"
+        ],
+        "chunk_refs": [
+          "kg_chunk:kg_ev:financial:news_articles:usage_demo_write_path:ft_news:74416:077d9aedd8fdfa40:2"
+        ],
+        "community_refs": [],
+        "snippet": "Document Type: Evidence Chunk\nTitle: 市值突破万亿！中际旭创最近1年飙升超10倍！重仓“易中天”的创业板人工智能ETF华宝（159363）再创新高！\nSummary: \nEvidence: kg_ev:financial:news_articles:usage_demo_write_path:ft_news:74416:077d9aedd8fdfa40\nSource: news_articles:usage_demo_write_path:",
+        "raw_scores": {
+          "semantic_score": 0.030117753893136978,
+          "reranker": 0.08177649974822998,
+          "agent_fused_score": 0.113273
+        }
+      },
+      {
+        "id": "kgc:financial:l0:457",
+        "layer": "community",
+        "title": "人工智能产业投资",
+        "score": 0.097568,
+        "why": [
+          "命中 community 层语义索引",
+          "匹配字段: milvus.community",
+          "可追溯到 3 条 evidence",
+          "包含 3 个 chunk 引用"
+        ],
+        "evidence_refs": [
+          "kg_ev:financial:news_articles:usage_demo_write_path:ft_news:74416:077d9aedd8fdfa40",
+          "kg_ev:financial:news_articles:usage_demo_write_path:ft_news:74425:39d87d257dc7af3a",
+          "kg_ev:financial:news_articles:usage_demo_write_path:ft_news:75813:202d6b5a0416477f"
+        ],
+        "chunk_refs": [
+          "kg_chunk:kg_ev:financial:news_articles:usage_demo_write_path:ft_news:74416:077d9aedd8fdfa40:2",
+          "kg_chunk:kg_ev:financial:news_articles:usage_demo_write_path:ft_news:74425:39d87d257dc7af3a:0",
+          "kg_chunk:kg_ev:financial:news_articles:usage_demo_write_path:ft_news:75813:202d6b5a0416477f:0"
+        ],
+        "community_refs": [
+          "kgc:financial:l0:457"
+        ],
+        "snippet": "Document Type: Community Report\nCommunity: 人工智能产业投资\nProjection: cognitive_topic\nCommunity Level: 0\nOrigin: emergent\nMaturity: multi_evidence\nDirectory Scope: 承接人工智能产业的投资工具（ETF、指数）、资本配置、产业融资、风险投资及AI主题基金动态，涵盖AI应用、算力、芯片等子领域的投资方向。\nCoverage Cont",
+        "raw_scores": {
+          "semantic_score": 0.032258063554763794,
+          "reranker": 0.05091165751218796,
+          "agent_fused_score": 0.097568
+        }
+      },
+      {
+        "id": "kg_cognitive_card:b3b1b5a81fe2a344",
+        "layer": "cognitive_card",
+        "title": "AI应用异动拉升，蓝色光标领涨超10%，创业板人工智能ETF华宝（159363）再创新高，资金净流入持续扩大！",
+        "score": 0.093187,
+        "why": [
+          "命中 cognitive_card 层语义索引",
+          "匹配字段: milvus.cognitive_card",
+          "可追溯到 1 条 evidence",
+          "包含 1 个 chunk 引用"
+        ],
+        "evidence_refs": [
+          "kg_ev:financial:news_articles:usage_demo_write_path:ft_news:59604:1862a4a31a74e8e0"
+        ],
+        "chunk_refs": [
+          "kg_chunk:kg_ev:financial:news_articles:usage_demo_write_path:ft_news:59604:1862a4a31a74e8e0:1"
+        ],
+        "community_refs": [],
+        "snippet": "Document Type: Cognitive Card\nCognitive Card: kg_cognitive_card:b3b1b5a81fe2a344\nTitle: AI应用异动拉升，蓝色光标领涨超10%，创业板人工智能ETF华宝（159363）再创新高，资金净流入持续扩大！\nSource: news_articles:usage_demo_write_path:ft_news:59604\nEvidence: kg_ev:financial:news_article",
+        "raw_scores": {
+          "semantic_score": 0.03057890012860298,
+          "reranker": 0.05991844832897186,
+          "agent_fused_score": 0.093187
+        }
+      },
+      {
+        "id": "kg_cognitive_card:abbc59c9177178a4",
+        "layer": "cognitive_card",
+        "title": "市值突破万亿！中际旭创最近1年飙升超10倍！重仓“易中天”的创业板人工智能ETF华宝（159363）再创新高！",
+        "score": 0.090901,
+        "why": [
+          "命中 cognitive_card 层语义索引",
+          "匹配字段: milvus.cognitive_card",
+          "可追溯到 1 条 evidence",
+          "包含 1 个 chunk 引用"
+        ],
+        "evidence_refs": [
+          "kg_ev:financial:news_articles:usage_demo_write_path:ft_news:74416:077d9aedd8fdfa40"
+        ],
+        "chunk_refs": [
+          "kg_chunk:kg_ev:financial:news_articles:usage_demo_write_path:ft_news:74416:077d9aedd8fdfa40:2"
+        ],
+        "community_refs": [],
+        "snippet": "Document Type: Cognitive Card\nCognitive Card: kg_cognitive_card:abbc59c9177178a4\nTitle: 市值突破万亿！中际旭创最近1年飙升超10倍！重仓“易中天”的创业板人工智能ETF华宝（159363）再创新高！\nSource: news_articles:usage_demo_write_path:ft_news:74416\nEvidence: kg_ev:financial:news_article",
+        "raw_scores": {
+          "semantic_score": 0.03076923079788685,
+          "reranker": 0.06211259216070175,
+          "agent_fused_score": 0.090901
+        }
+      },
+      {
+        "id": "kg_cognitive_card:48d127d3c0a94f3d",
+        "layer": "cognitive_card",
+        "title": "国民技术早盘涨超10% 发布N32H493主控芯片适配800G/1.6T光模块",
+        "score": 0.081055,
+        "why": [
+          "命中 cognitive_card 层语义索引",
+          "匹配字段: milvus.cognitive_card",
+          "可追溯到 1 条 evidence",
+          "包含 1 个 chunk 引用"
+        ],
+        "evidence_refs": [
+          "kg_ev:financial:news_articles:usage_demo_write_path:ft_news:74414:5d901cf4621d1ad5"
+        ],
+        "chunk_refs": [
+          "kg_chunk:kg_ev:financial:news_articles:usage_demo_write_path:ft_news:74414:5d901cf4621d1ad5:0"
+        ],
+        "community_refs": [],
+        "snippet": "Document Type: Cognitive Card\nCognitive Card: kg_cognitive_card:48d127d3c0a94f3d\nTitle: 国民技术早盘涨超10% 发布N32H493主控芯片适配800G/1.6T光模块\nSource: news_articles:usage_demo_write_path:ft_news:74414\nEvidence: kg_ev:financial:news_articles:usage_demo_wri",
+        "raw_scores": {
+          "semantic_score": 0.02941812574863434,
+          "reranker": 0.042492449283599854,
+          "agent_fused_score": 0.081055
+        }
+      }
+    ]
+  },
+  "expand": {
+    "query": "expand",
+    "mode": "expand",
+    "coverage_summary": {
+      "topics": [
+        "光模块产业链",
+        "算力基础设施",
+        "半导体行业",
+        "光模块技术迭代周期",
+        "AI应用",
+        "汽车行业智能化转型",
+        "AI基础设施投资",
+        "锡供需格局与AI需求驱动",
+        "有色金属材料链动态",
+        "AI算力硬件材料需求影响",
+        "有色金属材料供需",
+        "AI算力硬件产业链",
+        "锡金属市场",
+        "AI算力材料需求",
+        "高速光模块主控芯片发布与涨价潮",
+        "国产芯片涨价周期中的光模块机会"
+      ],
+      "risks": [
+        "地缘政治风险",
+        "需求不及预期风险",
+        "地缘风险",
+        "需求风险",
+        "成本风险",
+        "供应风险",
+        "产品集中度风险",
+        "基金费率风险",
+        "原材料供应风险",
+        "芯片价格波动风险",
+        "供应链风险",
+        "芯片涨价传导风险"
+      ],
+      "impact_targets": [
+        "中际旭创",
+        "创业板人工智能ETF",
+        "光模块行业",
+        "沪锡",
+        "特斯拉",
+        "锡",
+        "伦锡",
+        "AI应用板块",
+        "蓝色光标",
+        "中文在线",
+        "无人驾驶出租车",
+        "LME锡"
+      ],
+      "actors": [
+        "中际旭创",
+        "特斯拉",
+        "光模块",
+        "半导体",
+        "中国",
+        "华宝基金",
+        "创业板人工智能ETF华宝",
+        "国民技术",
+        "人工智能",
+        "工业富联",
+        "长江有色金属网",
+        "下游企业"
+      ],
+      "communities": [],
+      "evidence_count": 6,
+      "chunk_count": 10,
+      "cognitive_card_count": 10,
+      "community_count": 0,
+      "time_range": {
+        "min_published_at": "2026-04-20T02:36:04+00:00",
+        "max_published_at": "2026-04-23T02:44:15+00:00"
+      }
+    },
+    "quality_diagnostics": {
+      "relevance": {
+        "top_score": 1.0,
+        "result_count": 10,
+        "has_results": true
+      },
+      "coverage": {
+        "covered_aspects": [
+          "actor",
+          "impact",
+          "risk",
+          "time",
+          "topic"
+        ],
+        "missing_explicit_focus_aspects": [],
+        "topic_count": 16,
+        "risk_count": 12,
+        "impact_target_count": 12,
+        "actor_count": 12
+      },
+      "evidence_sufficiency": {
+        "evidence_count": 6,
+        "chunk_count": 10,
+        "has_raw_evidence": true,
+        "status": "sufficient"
+      },
+      "diversity": {
+        "layer_counts": {
+          "cognitive_card": 10
+        },
+        "community_count": 0,
+        "source_count": 6,
+        "single_community_ratio": 0.0,
+        "single_source_ratio": 0.3,
+        "status": "mixed"
+      },
+      "information_redundancy": {
+        "status": "acceptable",
+        "reason": ""
+      },
+      "conflict": {
+        "detected": false,
+        "method": "impact_direction signal comparison"
+      },
+      "freshness": {
+        "time_range": {
+          "min_published_at": "2026-04-20T02:36:04+00:00",
+          "max_published_at": "2026-04-23T02:44:15+00:00"
+        },
+        "has_time_signal": true
+      },
+      "expandability": {
+        "expandable_count": 10,
+        "has_expandable_context": true
+      }
+    },
+    "operation_hints": [
+      {
+        "action": "open_result",
+        "reason": "打开最高相关命中，查看完整可读上下文和 refs。",
+        "target_ids": [
+          "kg_cognitive_card:100f90fe703ab831"
+        ],
+        "suggested_query": null,
+        "aspect": null
+      },
+      {
+        "action": "no_more_retrieval_needed",
+        "reason": "检索层没有明显缺口；是否采用由 Agent 根据任务目标判断。",
+        "target_ids": [],
+        "suggested_query": null,
+        "aspect": null
+      }
+    ],
+    "trace": {
+      "seed_id": "kgc:financial:l0:3",
+      "direction": "auto",
+      "expanded_ids": [
+        "kg_cognitive_card:ada3b41bfe5bccc8",
+        "kg_cognitive_card:b3b1b5a81fe2a344",
+        "kg_cognitive_card:48d127d3c0a94f3d",
+        "kg_cognitive_card:fbd5e2e3ab816482",
+        "kg_cognitive_card:67f9f5fd5cd7b309",
+        "kg_cognitive_card:abbc59c9177178a4",
+        "kg_cognitive_card:ee7711c5178a18bb",
+        "kg_cognitive_card:9d53b09cc52257fb",
+        "kg_cognitive_card:c60caa26f364cb4a",
+        "kg_cognitive_card:100f90fe703ab831"
+      ],
+      "expanded_count": 10
+    },
+    "top_results": [
+      {
+        "id": "kg_cognitive_card:100f90fe703ab831",
+        "layer": "cognitive_card",
+        "title": "长江有色：美伊和谈生变及AI 半导体狂欢提振 23日锡价或上涨",
+        "score": 1.0,
+        "why": [
+          "命中 cognitive_card 层语义索引",
+          "匹配字段: milvus.cognitive_card",
+          "可追溯到 1 条 evidence",
+          "包含 1 个 chunk 引用"
+        ],
+        "evidence_refs": [
+          "kg_ev:financial:news_articles:usage_demo_write_path:ft_news:74421:26b21dffa3b43546"
+        ],
+        "chunk_refs": [
+          "kg_chunk:kg_ev:financial:news_articles:usage_demo_write_path:ft_news:74421:26b21dffa3b43546:1"
+        ],
+        "community_refs": [],
+        "snippet": "Document Type: Cognitive Card\nCognitive Card: kg_cognitive_card:100f90fe703ab831\nTitle: 长江有色：美伊和谈生变及AI 半导体狂欢提振 23日锡价或上涨\nSource: news_articles:usage_demo_write_path:ft_news:74421\nEvidence: kg_ev:financial:news_articles:usage_demo_write_path:",
+        "raw_scores": {}
+      },
+      {
+        "id": "kg_cognitive_card:48d127d3c0a94f3d",
+        "layer": "cognitive_card",
+        "title": "国民技术早盘涨超10% 发布N32H493主控芯片适配800G/1.6T光模块",
+        "score": 1.0,
+        "why": [
+          "命中 cognitive_card 层语义索引",
+          "匹配字段: milvus.cognitive_card",
+          "可追溯到 1 条 evidence",
+          "包含 1 个 chunk 引用"
+        ],
+        "evidence_refs": [
+          "kg_ev:financial:news_articles:usage_demo_write_path:ft_news:74414:5d901cf4621d1ad5"
+        ],
+        "chunk_refs": [
+          "kg_chunk:kg_ev:financial:news_articles:usage_demo_write_path:ft_news:74414:5d901cf4621d1ad5:0"
+        ],
+        "community_refs": [],
+        "snippet": "Document Type: Cognitive Card\nCognitive Card: kg_cognitive_card:48d127d3c0a94f3d\nTitle: 国民技术早盘涨超10% 发布N32H493主控芯片适配800G/1.6T光模块\nSource: news_articles:usage_demo_write_path:ft_news:74414\nEvidence: kg_ev:financial:news_articles:usage_demo_wri",
+        "raw_scores": {}
+      },
+      {
+        "id": "kg_cognitive_card:67f9f5fd5cd7b309",
+        "layer": "cognitive_card",
+        "title": "市值突破万亿！中际旭创最近1年飙升超10倍！重仓“易中天”的创业板人工智能ETF华宝（159363）再创新高！",
+        "score": 1.0,
+        "why": [
+          "命中 cognitive_card 层语义索引",
+          "匹配字段: milvus.cognitive_card",
+          "可追溯到 1 条 evidence",
+          "包含 1 个 chunk 引用"
+        ],
+        "evidence_refs": [
+          "kg_ev:financial:news_articles:usage_demo_write_path:ft_news:74416:077d9aedd8fdfa40"
+        ],
+        "chunk_refs": [
+          "kg_chunk:kg_ev:financial:news_articles:usage_demo_write_path:ft_news:74416:077d9aedd8fdfa40:1"
+        ],
+        "community_refs": [],
+        "snippet": "Document Type: Cognitive Card\nCognitive Card: kg_cognitive_card:67f9f5fd5cd7b309\nTitle: 市值突破万亿！中际旭创最近1年飙升超10倍！重仓“易中天”的创业板人工智能ETF华宝（159363）再创新高！\nSource: news_articles:usage_demo_write_path:ft_news:74416\nEvidence: kg_ev:financial:news_article",
+        "raw_scores": {}
+      },
+      {
+        "id": "kg_cognitive_card:9d53b09cc52257fb",
+        "layer": "cognitive_card",
+        "title": "长江有色：美伊和谈生变及AI 半导体狂欢提振 23日锡价或上涨",
+        "score": 1.0,
+        "why": [
+          "命中 cognitive_card 层语义索引",
+          "匹配字段: milvus.cognitive_card",
+          "可追溯到 1 条 evidence",
+          "包含 1 个 chunk 引用"
+        ],
+        "evidence_refs": [
+          "kg_ev:financial:news_articles:usage_demo_write_path:ft_news:74421:26b21dffa3b43546"
+        ],
+        "chunk_refs": [
+          "kg_chunk:kg_ev:financial:news_articles:usage_demo_write_path:ft_news:74421:26b21dffa3b43546:0"
+        ],
+        "community_refs": [],
+        "snippet": "Document Type: Cognitive Card\nCognitive Card: kg_cognitive_card:9d53b09cc52257fb\nTitle: 长江有色：美伊和谈生变及AI 半导体狂欢提振 23日锡价或上涨\nSource: news_articles:usage_demo_write_path:ft_news:74421\nEvidence: kg_ev:financial:news_articles:usage_demo_write_path:",
+        "raw_scores": {}
+      },
+      {
+        "id": "kg_cognitive_card:abbc59c9177178a4",
+        "layer": "cognitive_card",
+        "title": "市值突破万亿！中际旭创最近1年飙升超10倍！重仓“易中天”的创业板人工智能ETF华宝（159363）再创新高！",
+        "score": 1.0,
+        "why": [
+          "命中 cognitive_card 层语义索引",
+          "匹配字段: milvus.cognitive_card",
+          "可追溯到 1 条 evidence",
+          "包含 1 个 chunk 引用"
+        ],
+        "evidence_refs": [
+          "kg_ev:financial:news_articles:usage_demo_write_path:ft_news:74416:077d9aedd8fdfa40"
+        ],
+        "chunk_refs": [
+          "kg_chunk:kg_ev:financial:news_articles:usage_demo_write_path:ft_news:74416:077d9aedd8fdfa40:2"
+        ],
+        "community_refs": [],
+        "snippet": "Document Type: Cognitive Card\nCognitive Card: kg_cognitive_card:abbc59c9177178a4\nTitle: 市值突破万亿！中际旭创最近1年飙升超10倍！重仓“易中天”的创业板人工智能ETF华宝（159363）再创新高！\nSource: news_articles:usage_demo_write_path:ft_news:74416\nEvidence: kg_ev:financial:news_article",
+        "raw_scores": {}
+      },
+      {
+        "id": "kg_cognitive_card:ada3b41bfe5bccc8",
+        "layer": "cognitive_card",
+        "title": "AI应用异动拉升，蓝色光标领涨超10%，创业板人工智能ETF华宝（159363）再创新高，资金净流入持续扩大！",
+        "score": 1.0,
+        "why": [
+          "命中 cognitive_card 层语义索引",
+          "匹配字段: milvus.cognitive_card",
+          "可追溯到 1 条 evidence",
+          "包含 1 个 chunk 引用"
+        ],
+        "evidence_refs": [
+          "kg_ev:financial:news_articles:usage_demo_write_path:ft_news:59604:1862a4a31a74e8e0"
+        ],
+        "chunk_refs": [
+          "kg_chunk:kg_ev:financial:news_articles:usage_demo_write_path:ft_news:59604:1862a4a31a74e8e0:0"
+        ],
+        "community_refs": [],
+        "snippet": "Document Type: Cognitive Card\nCognitive Card: kg_cognitive_card:ada3b41bfe5bccc8\nTitle: AI应用异动拉升，蓝色光标领涨超10%，创业板人工智能ETF华宝（159363）再创新高，资金净流入持续扩大！\nSource: news_articles:usage_demo_write_path:ft_news:59604\nEvidence: kg_ev:financial:news_article",
+        "raw_scores": {}
+      }
+    ]
+  }
+}

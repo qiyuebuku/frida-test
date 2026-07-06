@@ -128,7 +128,13 @@ ssh root@10.168.1.3 "curl -sL -H 'User-Agent: clash.meta' 'https://api.icp-verif
 | x-air | `https://api.icp-verify.dynamic.hwsdn.com:666/v2/package/mwS6vQXef8kdTtugXHPh86S54X4weFNj/auto` | ⚠️ UA 决定内容（见下方） | ~78 |
 | eeox | `https://api.eeox.net/api/v1/client/subscribe?token=d707c3c05251a62d769b957e5f2dbb55` | clash YAML | 11 |
 | 魔戒 | `https://msub.xn--m7r52rosihxm.com/api/v1/client/subscribe?token=10bdb377866f4d2c4b76b2577567330a` | clash YAML (vmess + hysteria2) | 32 |
-| Tamaredge | `https://lsg1.tamaredge.host:24114/s/clashMeta/acad4da0683e75a9592d04a011d433cf` | proxy-providers (vless/vmess/trojan) | 5 |
+| Tamaredge (2 号线路) | `https://lsg2.tamaredge.host:15438/s/clashMetaProfiles/654438183f8e9fc27cd878ba5dcf801f` | proxy-providers (vless/vmess/trojan) | 5 |
+
+> **1 号线路 `lsg1.tamaredge.host:24114` 的 ChatGPT 证书报错**（`ERR_CERT_COMMON_NAME_INVALID`）——1 号线路的出口 IP 被 OpenAI 封锁。已切换到 2 号线路。
+> **2 号线路测速结果**（2026-06-23）：
+> - 能访问 ChatGPT：`VLESS_TCP/TLS_Vision` (875ms)、`vless_reality_vision` (1387ms)
+> - 不能访问 ChatGPT：trojan_tcp、VLESS_WS、VMess_WS（TLS 握手失败）
+> - 推荐：**VLESS_TCP/TLS_Vision**（访问 ChatGPT 最快）
 
 **合并规则**：
 - 过滤掉 info/dummy 节点（server: 0.0.0.0、剩余流量、套餐到期等）

@@ -1,0 +1,195 @@
+{
+  "id": "7a49c014dd2b62f0e880eef0e20d051b",
+  "projectId": "cmp9tyu4x01efad08dq5ebuhg",
+  "name": "kg.community_insight.refresh_ids",
+  "timestamp": "2026-07-06T13:57:00.380Z",
+  "environment": "default",
+  "tags": [
+    "agentic-rag",
+    "community_insight",
+    "kg",
+    "openai-agents",
+    "refresh_ids",
+    "smart-fund-server"
+  ],
+  "bookmarked": false,
+  "release": null,
+  "version": null,
+  "userId": null,
+  "sessionId": "community-insight-compact-materials-20260706",
+  "public": false,
+  "input": null,
+  "output": null,
+  "metadata": {
+    "task": "kg_community_insight_refresh_ids",
+    "target": "prod",
+    "requested": 1,
+    "force": true,
+    "resourceAttributes": {
+      "telemetry.sdk.language": "python",
+      "telemetry.sdk.name": "opentelemetry",
+      "telemetry.sdk.version": "1.41.1",
+      "service.name": "unknown_service"
+    },
+    "scope": {
+      "name": "langfuse-sdk",
+      "version": "4.6.1",
+      "attributes": {
+        "public_key": "pk-lf-d52cf296-5725-45dc-a0f7-31202673d39f"
+      }
+    }
+  },
+  "createdAt": "2026-07-06T13:57:05.000Z",
+  "updatedAt": "2026-07-06T13:57:04.921Z",
+  "externalId": null,
+  "scores": [],
+  "latency": 0.117,
+  "observations": [
+    {
+      "id": "a99cd68d09a5ad83",
+      "traceId": "7a49c014dd2b62f0e880eef0e20d051b",
+      "startTime": "2026-07-06T13:57:00.380Z",
+      "endTime": "2026-07-06T13:57:00.495Z",
+      "projectId": "cmp9tyu4x01efad08dq5ebuhg",
+      "parentObservationId": "9c6d5f4488fc0b91",
+      "type": "SPAN",
+      "environment": "default",
+      "name": "kg.community_insight.pg.load_candidates_by_ids",
+      "level": "DEFAULT",
+      "statusMessage": "completed",
+      "version": null,
+      "createdAt": "2026-07-06T13:57:04.805Z",
+      "updatedAt": "2026-07-06T13:57:04.806Z",
+      "input": {
+        "requested": 1,
+        "force": true,
+        "community_ids": [
+          "kgc:financial:l0:731"
+        ]
+      },
+      "output": {
+        "loaded": 1,
+        "existing_insights": 1,
+        "selected": 1,
+        "candidate_ids": [
+          "kgc:financial:l0:731"
+        ]
+      },
+      "metadata": {
+        "resourceAttributes": {
+          "telemetry.sdk.language": "python",
+          "telemetry.sdk.name": "opentelemetry",
+          "telemetry.sdk.version": "1.41.1",
+          "service.name": "unknown_service"
+        },
+        "scope": {
+          "name": "langfuse-sdk",
+          "version": "4.6.1",
+          "attributes": {
+            "public_key": "pk-lf-d52cf296-5725-45dc-a0f7-31202673d39f"
+          }
+        }
+      },
+      "model": null,
+      "modelParameters": null,
+      "completionStartTime": null,
+      "promptId": null,
+      "promptName": null,
+      "promptVersion": null,
+      "latency": 0.115,
+      "timeToFirstToken": null,
+      "usageDetails": {},
+      "costDetails": {},
+      "usagePricingTierId": null,
+      "usagePricingTierName": null,
+      "inputPrice": 0,
+      "outputPrice": 0,
+      "totalPrice": 0,
+      "calculatedInputCost": null,
+      "calculatedOutputCost": null,
+      "calculatedTotalCost": 0,
+      "unit": "TOKENS",
+      "promptTokens": 0,
+      "completionTokens": 0,
+      "totalTokens": 0,
+      "modelId": null,
+      "usage": {
+        "unit": "TOKENS",
+        "input": 0,
+        "output": 0,
+        "total": 0
+      }
+    },
+    {
+      "id": "f614635369406615",
+      "traceId": "7a49c014dd2b62f0e880eef0e20d051b",
+      "startTime": "2026-07-06T13:57:00.496Z",
+      "endTime": "2026-07-06T13:57:00.497Z",
+      "projectId": "cmp9tyu4x01efad08dq5ebuhg",
+      "parentObservationId": "fa4ad64477503c5d",
+      "type": "SPAN",
+      "environment": "default",
+      "name": "kg.community_insight.materials.load",
+      "level": "DEFAULT",
+      "statusMessage": "completed",
+      "version": null,
+      "createdAt": "2026-07-06T13:57:04.805Z",
+      "updatedAt": "2026-07-06T13:57:04.806Z",
+      "input": {
+        "community_id": "kgc:financial:l0:731",
+        "max_materials": 80
+      },
+      "output": {
+        "source": "community.metrics.assigned_intents",
+        "materials": 60,
+        "assignment_contexts": 60
+      },
+      "metadata": {
+        "resourceAttributes": {
+          "telemetry.sdk.language": "python",
+          "telemetry.sdk.name": "opentelemetry",
+          "telemetry.sdk.version": "1.41.1",
+          "service.name": "unknown_service"
+        },
+        "scope": {
+          "name": "langfuse-sdk",
+          "version": "4.6.1",
+          "attributes": {
+            "public_key": "pk-lf-d52cf296-5725-45dc-a0f7-31202673d39f"
+          }
+        }
+      },
+      "model": null,
+      "modelParameters": null,
+      "completionStartTime": null,
+      "promptId": null,
+      "promptName": null,
+      "promptVersion": null,
+      "latency": 0.001,
+      "timeToFirstToken": null,
+      "usageDetails": {},
+      "costDetails": {},
+      "usagePricingTierId": null,
+      "usagePricingTierName": null,
+      "inputPrice": 0,
+      "outputPrice": 0,
+      "totalPrice": 0,
+      "calculatedInputCost": null,
+      "calculatedOutputCost": null,
+      "calculatedTotalCost": 0,
+      "unit": "TOKENS",
+      "promptTokens": 0,
+      "completionTokens": 0,
+      "totalTokens": 0,
+      "modelId": null,
+      "usage": {
+        "unit": "TOKENS",
+        "input": 0,
+        "output": 0,
+        "total": 0
+      }
+    }
+  ],
+  "htmlPath": "/project/cmp9tyu4x01efad08dq5ebuhg/traces/7a49c014dd2b62f0e880eef0e20d051b",
+  "totalCost": 0
+}

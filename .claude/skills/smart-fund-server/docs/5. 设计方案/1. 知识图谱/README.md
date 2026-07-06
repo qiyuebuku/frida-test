@@ -31,6 +31,8 @@
 | `17. Seed Community Topic与归档Prompt优化方案.md` | 说明 Seed Community 如何作为真实 Community 进入系统，并辅助 LLM 稳定 L0 主题粒度。 |
 | `18. Community Assignment候选上下文账本缓存优化实施方案.md` | 说明 Community Assignment 阶段如何使用候选上下文账本稳定 LLM 前缀，减少候选顺序抖动和 cache miss。 |
 | `19. Agent检索与决策上下文设计方案.md` | 说明写入链路跑通后，如何为 Agent 提供 search / open / expand / refine 检索能力，并返回 evidence package、覆盖摘要、质量诊断和下一步搜索建议。 |
+| `20. Community Graph写入性能优化设计方案.md` | 说明 Community Assignment 阶段如何通过 AI bucket 分流、缓存、合并和并发锁控制提升写入吞吐，同时保持 community 归属质量。 |
+| `21. Community Insight高级认知索引设计方案.md` | 说明如何在 community 之上构建异步高级认知报告，让 Agent 可以直接检索和使用跨来源综合认知，而不是只获得主题目录摘要。 |
 
 ## 3. 总体设计结论
 

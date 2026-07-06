@@ -112,6 +112,10 @@ RERANKER_MAX_RETRIES = int(os.getenv("RERANKER_MAX_RETRIES", "3"))
 RERANKER_RETRY_BASE_DELAY = float(os.getenv("RERANKER_RETRY_BASE_DELAY", "1"))
 RERANKER_RETRY_MAX_DELAY = float(os.getenv("RERANKER_RETRY_MAX_DELAY", "8"))
 
+# Community assignment 会按 bucket 并发运行，但外部 reranker 服务吞吐有限。
+# 这里单独限制 assignment 阶段的 reranker 并发，避免 bucket 并发把 reranker 打到超时。
+KG_ASSIGNMENT_RERANKER_CONCURRENCY = int(os.getenv("KG_ASSIGNMENT_RERANKER_CONCURRENCY", "4"))
+
 # ==================== Milvus Hybrid Retrieval ====================
 
 # Milvus hybrid retrieval is a required part of the KG research context path.
@@ -126,6 +130,7 @@ MILVUS_COGNITIVE_CARD_COLLECTION = os.getenv("MILVUS_COGNITIVE_CARD_COLLECTION",
 MILVUS_ENTITY_COLLECTION = os.getenv("MILVUS_ENTITY_COLLECTION", "kg_entity_cards")
 MILVUS_RELATION_COLLECTION = os.getenv("MILVUS_RELATION_COLLECTION", "kg_relation_cards")
 MILVUS_COMMUNITY_COLLECTION = os.getenv("MILVUS_COMMUNITY_COLLECTION", "kg_community_reports")
+MILVUS_COMMUNITY_INSIGHT_COLLECTION = os.getenv("MILVUS_COMMUNITY_INSIGHT_COLLECTION", "kg_community_insights")
 MILVUS_ASSIGNMENT_BUCKET_COLLECTION = os.getenv("MILVUS_ASSIGNMENT_BUCKET_COLLECTION", "kg_assignment_bucket_cache")
 MILVUS_METRIC_TYPE = os.getenv("MILVUS_METRIC_TYPE", "COSINE")
 MILVUS_RRF_K = int(os.getenv("MILVUS_RRF_K", "60"))
@@ -319,6 +324,7 @@ def _load_kg_llm_plans() -> dict[str, dict[str, str]]:
         "query_planning": "deepseek-v4-flash",
         "summarization": "deepseek-v4-flash",
         "kg_community_report": "deepseek-v4-flash",
+        "kg_community_insight": "deepseek-v4-pro",
         "kg_cognitive_card": "deepseek-v4-flash",
         "kg_community_assignment": "deepseek-v4-flash",
         "kg_delta_finding": "deepseek-v4-flash",
@@ -337,6 +343,7 @@ def _load_kg_llm_plans() -> dict[str, dict[str, str]]:
             "query_planning": "deepseek-v4-pro",
             "summarization": "deepseek-v4-pro",
             "kg_community_report": "deepseek-v4-pro",
+            "kg_community_insight": "deepseek-v4-pro",
             "kg_cognitive_card": "deepseek-v4-flash",
             "kg_community_assignment": "deepseek-v4-flash",
             "kg_delta_finding": "deepseek-v4-flash",

@@ -22,6 +22,7 @@ MILVUS_COLLECTION_COGNITIVE_CARD = "cognitive_card"
 MILVUS_COLLECTION_ENTITY = "entity"
 MILVUS_COLLECTION_RELATION = "relation"
 MILVUS_COLLECTION_COMMUNITY = "community"
+MILVUS_COLLECTION_COMMUNITY_INSIGHT = "community_insight"
 MILVUS_COLLECTION_ASSIGNMENT_BUCKET = "assignment_bucket"
 MILVUS_COLLECTION_ROLES = (
     MILVUS_COLLECTION_CHUNK,
@@ -29,6 +30,7 @@ MILVUS_COLLECTION_ROLES = (
     MILVUS_COLLECTION_ENTITY,
     MILVUS_COLLECTION_RELATION,
     MILVUS_COLLECTION_COMMUNITY,
+    MILVUS_COLLECTION_COMMUNITY_INSIGHT,
     MILVUS_COLLECTION_ASSIGNMENT_BUCKET,
 )
 
@@ -40,6 +42,7 @@ class MilvusCollectionRegistry:
     entity: str
     relation: str
     community: str
+    community_insight: str
     assignment_bucket: str
 
     @classmethod
@@ -50,6 +53,7 @@ class MilvusCollectionRegistry:
             entity=settings.MILVUS_ENTITY_COLLECTION,
             relation=settings.MILVUS_RELATION_COLLECTION,
             community=settings.MILVUS_COMMUNITY_COLLECTION,
+            community_insight=settings.MILVUS_COMMUNITY_INSIGHT_COLLECTION,
             assignment_bucket=settings.MILVUS_ASSIGNMENT_BUCKET_COLLECTION,
         )
 
@@ -64,6 +68,8 @@ class MilvusCollectionRegistry:
             return self.relation
         if collection_role == MILVUS_COLLECTION_COMMUNITY:
             return self.community
+        if collection_role == MILVUS_COLLECTION_COMMUNITY_INSIGHT:
+            return self.community_insight
         if collection_role == MILVUS_COLLECTION_ASSIGNMENT_BUCKET:
             return self.assignment_bucket
         raise ValueError(f"unsupported Milvus collection role: {collection_role}")
@@ -910,6 +916,8 @@ class MilvusTypedHybridStore:
     ) -> int:
         total = 0
         for role in MILVUS_COLLECTION_ROLES:
+            if role == MILVUS_COLLECTION_COMMUNITY_INSIGHT and not documents_by_role.get(role):
+                continue
             total += self.store_for(role).replace_documents(
                 adapter_name=adapter_name,
                 target=target,

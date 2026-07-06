@@ -1,7 +1,7 @@
 """新闻事件聚合 (P0)
 
-数据源: 财联社快讯、政府网站、人民银行(OMO+货币政策)、东方财富(资讯+研报)、
-        同花顺资讯、新浪财经、雪球快讯
+数据源: 财联社电报、财联社深度、政府网站、人民银行(OMO+货币政策)、
+        东方财富(资讯+研报)、同花顺资讯、新浪财经、雪球快讯
 目标表: ft_news
 """
 
@@ -103,6 +103,24 @@ def _ts_to_iso(ts: int | float) -> str:
     return datetime.fromtimestamp(ts, tz=TZ_CST).isoformat()
 
 
+def _iso_to_timestamp(value: str) -> int:
+    """ISO 8601 时间 → Unix 秒级时间戳。
+
+    采集 checkpoint 的 newest_time 带有时分秒；增量请求必须保留精确时间，
+    不能只截取日期，否则会反复拉取当天全量数据并被 fingerprint 去重。
+    """
+    if not value:
+        return 0
+    text = str(value).strip()
+    try:
+        dt = datetime.fromisoformat(text.replace("Z", "+00:00"))
+    except ValueError:
+        dt = datetime.strptime(text[:10], "%Y-%m-%d").replace(tzinfo=TZ_CST)
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=TZ_CST)
+    return int(dt.timestamp())
+
+
 def _date_to_iso(date_str: str) -> str:
     """日期字符串 → ISO 8601（保留时分秒）
 
@@ -145,7 +163,7 @@ def _classify_by_keywords(text: str) -> str:
 
 
 def normalize_cls(raw_items: list) -> list[dict]:
-    """财联社快讯 → 统一格式"""
+    """财联社电报快讯 → 统一格式"""
     results = []
     for item in raw_items:
         title = item.get("title") or item.get("brief") or ""
@@ -158,13 +176,13 @@ def normalize_cls(raw_items: list) -> list[dict]:
             if code:
                 stocks.append(code)
         tags = [sub.get("name", "") for sub in (item.get("subjects") or []) if sub.get("name")]
-        # 财联社快讯：content 即是正文，摘要可用 brief 或 title
+        # 财联社电报：content 即是正文，摘要可用 brief 或 title
         results.append({
             "title": title,
             "summary": item.get("brief") or title[:100],
             "content": content,
             "source": "cls",
-            "source_name": "财联社",
+            "source_name": "财联社电报",
             "source_reliability": 0.85,
             "category": _classify_by_keywords(title + content),
             "url": "",
@@ -172,6 +190,55 @@ def normalize_cls(raw_items: list) -> list[dict]:
             "related_stocks": stocks,
             "published_at": _ts_to_iso(item.get("ctime", 0)),
             "fingerprint": _fingerprint(title, "cls"),
+        })
+    return results
+
+
+def normalize_cls_depth(raw_items: list) -> list[dict]:
+    """财联社深度文章列表 → 统一格式"""
+    results = []
+    for item in raw_items:
+        title = item.get("title") or ""
+        if not title:
+            continue
+        item_id = item.get("id") or item.get("article_id") or ""
+        brief = item.get("brief") or ""
+        content = item.get("content") or brief
+
+        tags = []
+        for tag in item.get("article_tag") or []:
+            name = tag.get("name") or ""
+            if name:
+                tags.append(name)
+        for subject in item.get("subjects") or []:
+            name = subject.get("subject_name") or subject.get("name") or ""
+            if name:
+                tags.append(name)
+        subject = item.get("subjectStib") or {}
+        if isinstance(subject, dict) and subject.get("name"):
+            tags.append(subject["name"])
+
+        related_stocks = []
+        stocks = item.get("stocks") or ""
+        if isinstance(stocks, str) and stocks:
+            related_stocks.extend([s.strip() for s in stocks.split(",") if s.strip()])
+
+        external_link = item.get("external_link") or ""
+        url = external_link or (f"https://www.cls.cn/detail/{item_id}" if item_id else "")
+
+        results.append({
+            "title": title,
+            "summary": brief or title[:100],
+            "content": content,
+            "source": "cls_depth",
+            "source_name": "财联社深度",
+            "source_reliability": 0.85,
+            "category": _classify_by_keywords(title + brief + content),
+            "url": url,
+            "tags": list(dict.fromkeys(tags)),
+            "related_stocks": related_stocks,
+            "published_at": _ts_to_iso(item.get("ctime", 0)),
+            "fingerprint": _fingerprint(f"{item_id}:{title}", "cls_depth"),
         })
     return results
 
@@ -423,7 +490,7 @@ def normalize_xueqiu(raw_items) -> list[dict]:
 class NewsAggregator(BaseAggregator):
     """新闻事件聚合 — 时间驱动模型
 
-    9 个数据源，统一采集到 ft_news，用 fingerprint 去重。
+    10 个数据源，统一采集到 ft_news，用 fingerprint 去重。
 
     采集策略（全部以时间为准）:
         backfill 模式: 从最新向历史方向翻页，直到数据时间 <= target_time 或触顶
@@ -436,6 +503,7 @@ class NewsAggregator(BaseAggregator):
     # 源模板配置 — 仅在首次初始化时写入 DB，运行时从 DB 读取
     SOURCE_CONFIGS = {
         "cls":           {"target_days": 1,   "page_size": 50, "interval": 180},    # API 只有几小时数据
+        "cls_depth":     {"target_days": 7,   "page_size": 20, "interval": 600, "depth_id": 1000},  # 财联社深度/头条文章
         "gov":           {"target_days": 90,  "page_size": 20, "interval": 10800},   # 政府网站历史深
         "pboc_omo":      {"target_days": 180, "page_size": 50, "interval": 86400},   # 央行发布频率低
         "pboc_monetary": {"target_days": 180, "page_size": 50, "interval": 86400},
@@ -747,9 +815,28 @@ class NewsAggregator(BaseAggregator):
         else:
             newest = cp.get("newest_time")
             if newest:
-                ctime = int(datetime.strptime(newest[:10], "%Y-%m-%d").replace(tzinfo=TZ_CST).timestamp())
+                ctime = _iso_to_timestamp(newest)
                 return await clients.cls.get_telegraph_since(ctime)
             return await clients.cls.get_telegraph_list(rn=50)
+
+    async def _fetch_cls_depth(self, cp: dict) -> list:
+        from src.infrastructure import clients
+        mode = cp.get("mode", "incremental")
+        config = cp.get("_config") or {}
+        page_size = config.get("page_size", 20)
+        depth_id = config.get("depth_id", 1000)
+
+        if mode == "backfill":
+            async def fetch_page(cursor):
+                items = await clients.cls.get_depth_list(depth_id=depth_id, rn=page_size, last_time=cursor)
+                next_cursor = items[-1].get("ctime") if items else cursor
+                return items, next_cursor
+            return await self._backfill_loop("cls_depth", fetch_page, cp, normalize_fn=normalize_cls_depth)
+        newest = cp.get("newest_time")
+        if newest:
+            ctime = _iso_to_timestamp(newest)
+            return await clients.cls.get_depth_since(ctime, depth_id=depth_id, page_size=page_size)
+        return await clients.cls.get_depth_list(depth_id=depth_id, rn=page_size)
 
     async def _fetch_gov(self, cp: dict) -> list:
         from src.infrastructure import clients
@@ -887,6 +974,7 @@ class NewsAggregator(BaseAggregator):
     def _init_sources(self):
         self.sources = [
             SourceDef("cls", self._fetch_cls, 180, normalize_cls),
+            SourceDef("cls_depth", self._fetch_cls_depth, 600, normalize_cls_depth),
             SourceDef("gov", self._fetch_gov, 10800, normalize_gov),
             SourceDef("pboc_omo", self._fetch_pboc_omo, 86400, normalize_pboc),
             SourceDef("pboc_monetary", self._fetch_pboc_monetary, 86400, normalize_pboc),

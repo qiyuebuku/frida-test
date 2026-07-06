@@ -6,6 +6,7 @@
 当前任务入口只保留数据采集相关 use case:
 - CollectionAppService: 5 个数据采集 use case
 - KnowledgeNewsIngestionService: 新增新闻入知识图谱 use case
+- CommunityInsightService: Community Insight 异步刷新 use case
 """
 
 from __future__ import annotations
@@ -15,6 +16,7 @@ from typing import Any
 
 __all__ = [
     "CollectionAppService",
+    "CommunityInsightService",
     "KnowledgeNewsIngestionService",
 ]
 
@@ -36,4 +38,8 @@ def __getattr__(name: str) -> Any:
         )
 
         return KnowledgeNewsIngestionService
+    if name == "CommunityInsightService":
+        from src.application.services.community_insight_service import CommunityInsightService
+
+        return CommunityInsightService
     raise AttributeError(name)

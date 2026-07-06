@@ -1,0 +1,30 @@
+{
+  "generated_at": "2026-07-06T14:10:57.220324+00:00",
+  "session_id": "community-insight-compact-v2-20260706",
+  "latest_trace_id": "ae962277e16042edfe55c7bd1b08cd19",
+  "trace_count": 1,
+  "fields": "core,io,scores,observations,metrics",
+  "traces": [
+    {
+      "trace_id": "ae962277e16042edfe55c7bd1b08cd19",
+      "name": "kg.community_insight.refresh_ids",
+      "timestamp": "2026-07-06T14:09:51.854Z",
+      "file": "trace-ae962277e16042edfe55c7bd1b08cd19-full.json",
+      "summary": {
+        "name": "kg.community_insight.refresh_ids",
+        "timestamp": "2026-07-06T14:09:51.854Z",
+        "observation_count": 8,
+        "observations_with_io_metadata": 8,
+        "usage": {
+          "input_tokens": 7439,
+          "prompt_cache_hit_tokens": 512,
+          "prompt_cache_miss_tokens": 6927,
+          "output_tokens": 4384,
+          "reasoning_tokens": 0,
+          "total_tokens": 11823,
+          "non_cached_tokens": 11311
+        }
+      }
+    }
+  ]
+}

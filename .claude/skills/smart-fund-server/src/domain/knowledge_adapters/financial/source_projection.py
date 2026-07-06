@@ -336,8 +336,28 @@ def explain_projection_skip(source: str, row: dict[str, Any]) -> dict[str, Any]:
 
 
 def _news_raw_text(row: dict[str, Any]) -> str:
-    parts = [row.get("title"), row.get("summary"), row.get("content")]
-    return "\n".join(str(item).strip() for item in parts if str(item or "").strip())
+    title = _clean_news_text(row.get("title"))
+    summary = _clean_news_text(row.get("summary"))
+    content = _clean_news_text(row.get("content"))
+
+    parts: list[str] = []
+    if content:
+        parts.append(content)
+    if title and not _news_text_contains(content, title):
+        parts.insert(0, title)
+    if summary and not any(_news_text_contains(part, summary) or _news_text_contains(summary, part) for part in parts):
+        parts.append(summary)
+    return "\n".join(parts)
+
+
+def _clean_news_text(value: Any) -> str:
+    return re.sub(r"\s+", " ", str(value or "")).strip()
+
+
+def _news_text_contains(container: str, item: str) -> bool:
+    container_key = re.sub(r"\s+", "", container or "")
+    item_key = re.sub(r"\s+", "", item or "")
+    return bool(container_key and item_key and item_key in container_key)
 
 
 def _target_ref_from_market_data(data: dict[str, Any] | list[Any]) -> str | None:

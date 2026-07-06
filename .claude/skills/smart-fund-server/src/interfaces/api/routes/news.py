@@ -10,9 +10,9 @@ from src.infrastructure.db import fund_db
 router = APIRouter(prefix="/api/news", tags=["新闻采集"])
 
 
-@router.post("/crawl/cls", summary="触发财联社快讯采集")
+@router.post("/crawl/cls", summary="触发财联社电报采集")
 async def crawl_cls(rn: int = Query(20, description="采集条数")):
-    """手动触发一次财联社快讯采集，返回新入库数量"""
+    """手动触发一次财联社电报采集，返回新入库数量"""
     items = await _utils.cls.get_telegraph_list(rn=rn)
 
     news_items = []

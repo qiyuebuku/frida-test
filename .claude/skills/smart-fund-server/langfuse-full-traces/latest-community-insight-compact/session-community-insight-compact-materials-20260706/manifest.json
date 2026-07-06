@@ -1,0 +1,30 @@
+{
+  "generated_at": "2026-07-06T13:58:02.543848+00:00",
+  "session_id": "community-insight-compact-materials-20260706",
+  "latest_trace_id": "7a49c014dd2b62f0e880eef0e20d051b",
+  "trace_count": 1,
+  "fields": "core,io,scores,observations,metrics",
+  "traces": [
+    {
+      "trace_id": "7a49c014dd2b62f0e880eef0e20d051b",
+      "name": "kg.community_insight.refresh_ids",
+      "timestamp": "2026-07-06T13:57:00.380Z",
+      "file": "trace-7a49c014dd2b62f0e880eef0e20d051b-full.json",
+      "summary": {
+        "name": "kg.community_insight.refresh_ids",
+        "timestamp": "2026-07-06T13:57:00.380Z",
+        "observation_count": 2,
+        "observations_with_io_metadata": 2,
+        "usage": {
+          "input_tokens": 0,
+          "prompt_cache_hit_tokens": 0,
+          "prompt_cache_miss_tokens": 0,
+          "output_tokens": 0,
+          "reasoning_tokens": 0,
+          "total_tokens": 0,
+          "non_cached_tokens": 0
+        }
+      }
+    }
+  ]
+}

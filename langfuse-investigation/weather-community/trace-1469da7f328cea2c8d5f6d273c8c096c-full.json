@@ -1,0 +1,2835 @@
+{
+  "id": "1469da7f328cea2c8d5f6d273c8c096c",
+  "projectId": "cmp9tyu4x01efad08dq5ebuhg",
+  "name": "kg.compile:financial",
+  "timestamp": "2026-07-05T00:50:19.427Z",
+  "environment": "default",
+  "tags": [
+    "agentic-rag",
+    "compile",
+    "kg",
+    "openai-agents",
+    "smart-fund-server",
+    "write-path"
+  ],
+  "bookmarked": false,
+  "release": null,
+  "version": null,
+  "userId": null,
+  "sessionId": null,
+  "public": false,
+  "input": {
+    "command": "KnowledgeCompileCommand",
+    "adapter_name": "financial",
+    "target": "prod",
+    "request_id": "kg_news_ingest:ft_news:96177-96177:1783212619",
+    "dry_run": false,
+    "records": 1,
+    "source_samples": [
+      {
+        "source_type": null,
+        "source_id": null,
+        "title": ""
+      }
+    ]
+  },
+  "output": {
+    "run_id": "kg_run:financial:13f9ae38-71a5-4daf-bd97-3bf9ef2d4e40",
+    "nodes": 0,
+    "edges": 0,
+    "evidence": 1,
+    "failed_records": 0,
+    "dry_run": false,
+    "index_refresh": {
+      "mode": "incremental",
+      "graph_adjacency": 0,
+      "evidence_chunks": 1,
+      "hybrid_chunks": 1,
+      "graph_index": {
+        "status": "replaced_by_cognitive_index",
+        "reason": "community_topics_are_built_from_cognitive_cards"
+      },
+      "cognitive_index": {
+        "status": "completed",
+        "changed_chunks": 1,
+        "changed_evidence": 1,
+        "cards": 1,
+        "all_cards": null,
+        "assignments": 1,
+        "assignment_rows": 1,
+        "communities": 1,
+        "documents_written": 1,
+        "cognitive_card_documents_written": 1,
+        "stale_documents_deleted": 0,
+        "orphan_community_documents_deleted": 0,
+        "orphan_cognitive_card_documents_deleted": 0,
+        "card_persistence": {
+          "deleted_cards": 0,
+          "deleted_card_ids": [],
+          "inserted_cards": 1,
+          "evidence_ids": [
+            "kg_ev:financial:news_articles:ft_news:96177:767ce212ba3d769d"
+          ]
+        },
+        "graph_persistence": {
+          "mode": "incremental_stream_commit",
+          "scope_commits": 1,
+          "updated_community_ids": [
+            "kgc:financial:l0:3"
+          ],
+          "scope_results": [
+            {
+              "communities": 1,
+              "findings": 0,
+              "deltas": 0,
+              "unassigned_signals": 0,
+              "promoted_unassigned_signals": 0,
+              "stale_target_ids": [],
+              "removed_community_ids": 0,
+              "removed_finding_ids": 0,
+              "removed_delta_ids": 0
+            }
+          ]
+        },
+        "diagnostics": {
+          "cards": 1,
+          "intents": 1,
+          "assignments": 1,
+          "communities": 53,
+          "assignment_validation_errors": 0,
+          "candidate_recall": "semantic_community",
+          "seed_candidates": 8,
+          "candidate_rerank": "external_reranker",
+          "community_builder": "cognitive_card_assignment_bucket_v1",
+          "bucket_planning": {
+            "enabled": true,
+            "bucket_count": 1,
+            "bucket_sizes": {
+              "bucket_ai_infra": 1
+            },
+            "unknown_intents": 1,
+            "llm_assignments": 1,
+            "new_buckets": 0,
+            "merge_suggestions": 0,
+            "semantic_cache": {
+              "redis_exact_hits": 0,
+              "semantic_requests": 2,
+              "semantic_raw_hits": 10,
+              "semantic_candidate_hits": 10,
+              "semantic_direct_hits": 0,
+              "semantic_direct_exact_theme_hits": 0,
+              "semantic_direct_score_margin_hits": 0,
+              "semantic_skipped_empty_scope": 0,
+              "semantic_upserted": 1,
+              "semantic_scope_has_entries_initial": 1
+            },
+            "merge_result": {
+              "triggered": false,
+              "reason": "under_threshold",
+              "bucket_count": 9,
+              "threshold": 40,
+              "candidate_count": 0,
+              "merged": 0
+            }
+          },
+          "bucket_concurrency": 20,
+          "candidate_ledger": {
+            "calls": 3,
+            "redis_available_count": 3,
+            "redis_unavailable_count": 0,
+            "appended_base_total": 7,
+            "appended_update_total": 0,
+            "checkpointed_count": 0,
+            "checkpoint_skipped_by_overlap_count": 0,
+            "max_append_log_entries": 17,
+            "max_base_count": 17,
+            "max_update_count": 0,
+            "error_types": {}
+          }
+        },
+        "seed_bootstrap": {
+          "status": "completed",
+          "communities": 8,
+          "documents_written": 8,
+          "community_ids": [
+            "kgc:financial:l0:1",
+            "kgc:financial:l0:2",
+            "kgc:financial:l0:3",
+            "kgc:financial:l0:4",
+            "kgc:financial:l0:5",
+            "kgc:financial:l0:6",
+            "kgc:financial:l0:7",
+            "kgc:financial:l0:8"
+          ],
+          "persistence": {
+            "communities": 8,
+            "findings": 0,
+            "deltas": 0,
+            "unassigned_signals": 0,
+            "promoted_unassigned_signals": 0,
+            "stale_target_ids": [],
+            "removed_community_ids": 0,
+            "removed_finding_ids": 0,
+            "removed_delta_ids": 0
+          }
+        }
+      },
+      "node_ids": [],
+      "edge_ids": [],
+      "evidence_ids": [
+        "kg_ev:financial:news_articles:ft_news:96177:767ce212ba3d769d"
+      ],
+      "stale_evidence_cleanup": {
+        "evidence": 0,
+        "edges": 0,
+        "evidence_ids": [],
+        "edge_ids": []
+      },
+      "stale_hybrid_vectors_deleted": 1,
+      "stale_semantic_documents_deleted": 1,
+      "semantic_materials": {
+        "chunks": 1,
+        "nodes": 0,
+        "edges": 0,
+        "stale_chunk_ids": [
+          "kg_chunk:kg_ev:financial:news_articles:ft_news:96177:767ce212ba3d769d:0"
+        ]
+      }
+    }
+  },
+  "metadata": {
+    "command": "KnowledgeCompileCommand",
+    "adapter_name": "financial",
+    "target": "prod",
+    "request_id": "kg_news_ingest:ft_news:96177-96177:1783212619",
+    "dry_run": false,
+    "records": 1,
+    "source_samples": [
+      {
+        "source_type": null,
+        "source_id": null,
+        "title": ""
+      }
+    ],
+    "status": "completed",
+    "resourceAttributes": {
+      "telemetry.sdk.language": "python",
+      "telemetry.sdk.name": "opentelemetry",
+      "telemetry.sdk.version": "1.41.1",
+      "service.name": "unknown_service"
+    },
+    "scope": {
+      "name": "langfuse-sdk",
+      "version": "4.6.1",
+      "attributes": {
+        "public_key": "pk-lf-d52cf296-5725-45dc-a0f7-31202673d39f"
+      }
+    }
+  },
+  "createdAt": "2026-07-05T00:50:25.000Z",
+  "updatedAt": "2026-07-05T00:50:51.807Z",
+  "externalId": null,
+  "scores": [],
+  "latency": 34.576,
+  "observations": [
+    {
+      "id": "8e668ef3ba341868",
+      "traceId": "1469da7f328cea2c8d5f6d273c8c096c",
+      "startTime": "2026-07-05T00:50:26.663Z",
+      "endTime": "2026-07-05T00:50:37.442Z",
+      "projectId": "cmp9tyu4x01efad08dq5ebuhg",
+      "parentObservationId": "492d9222c4997d3d",
+      "type": "GENERATION",
+      "environment": "default",
+      "name": "llm:kg_cognitive_card",
+      "level": "DEFAULT",
+      "statusMessage": "completed",
+      "version": null,
+      "createdAt": "2026-07-05T00:50:36.961Z",
+      "updatedAt": "2026-07-05T00:50:36.962Z",
+      "input": {
+        "prompt": "{\n  \"title\": \"【美光科技93亿美元扩建广岛项目动工 预计2028下半年出货HBM】美光科技当地时间周六（7月4日）正式启动其位于日本西部广岛工厂的扩建工程。这项总投资达1.5\",\n  \"chunk_text\": \"【美光科技93亿美元扩建广岛项目动工 预计2028下半年出货HBM】美光科技当地时间周六（7月4日）正式启动其位于日本西部广岛工厂的扩建工程。这项总投资达1.5\\n【美光科技93亿美元扩建广岛项目动工 预计2028下半年出货HBM】美光科技当地时间周六（7月4日）正式启动其位于日本西部广岛工厂的扩建工程。这项总投资达1.5万亿日元（约合93亿美元）的项目，旨在生产包括高带宽存储器（HBM）在内的先进存储芯片，以满足人工智能（AI）浪潮带来的旺盛需求。HBM是英伟达AI处理器的关键组件，工厂预计将于2028年夏季左右开始出货。为支持该项目的建设，日本经济产业省\\n【美光科技93亿美元扩建广岛项目动工 预计2028下半年出货HBM】美光科技当地时间周六（7月4日）正式启动其位于日本西部广岛工厂的扩建工程。这项总投资达1.5万亿日元（约合93亿美元）的项目，旨在生产包括高带宽存储器（HBM）在内的先进存储芯片，以满足人工智能（AI）浪潮带来的旺盛需求。HBM是英伟达AI处理器的关键组件，工厂预计将于2028年夏季左右开始出货。为支持该项目的建设，日本经济产业省已承诺提供最高5000亿日元的补贴。美光科技首席执行官Sanjay Mehrotra在奠基仪式上表示，“美光首批用于人工智能核心存储技术——HBM的生产晶圆，就是在广岛制造的。”\"\n}",
+        "system_prompt": "你是金融知识图谱的 Cognitive Card 抽取器。\n\n任务：把当前 chunk text 抽成局部认知信号，供 Community、事件流、风险簇、影响链等高阶索引复用。\n\n要求：\n- 只基于当前 chunk text，不添加外部事实，不跨 chunk 推断全局结论。\n- 不要输出 source_id、evidence_id、chunk_id、offset、previous_chunk_id、next_chunk_id、text_hash、chunker_version；这些证据定位字段由系统注入。\n- 必须输出 topic_intents，数量 1-10 个；每个 topic_intent 表示当前 chunk 支撑的一个主题意图。\n- topic_intents 必须是对象数组，禁止输出字符串数组。\n- 每个 topic_intent 对象必须包含 raw_theme、title_candidate、parent_themes、broad_topics、mid_topics、specific_topics、topic_level_hint、driver、impact_target、risk_type、event_thread、event_action、actors、importance、impact_direction、event_stage、timeline_position、event_time、summary、supporting_text。\n- topic_intent 只表示高维主题意图，不表示单个公司动作、单个数字、单个项目、单条审批、单次行情或单个数据点。\n- 细事实应放入 specific_topics、event_action、actors、supporting_text，不要为细事实单独创建 topic_intent。\n- 不要因为出现多个公司、多个数字、多个动作就拆多个 topic_intents；除非它们属于不同父级主题、不同影响对象、不同风险类型或不同事件线。\n- raw_theme 必须是当前 chunk 能支撑的主题表达，不要直接照抄新闻标题。\n- title_candidate 必须是适合作为 community 的候选主题标题。\n- parent_themes 写交易认知层 L0 父主题，是后续 Community 归档最重要的信号；它应该能承载多条不同来源、不同主体、不同时间的资料。\n- parent_themes 不要写公司名、项目名、单一产品、单次交易或单条行情；遇到细方向时必须上提到可复用父主题。\n- parent_themes 应像图书馆一级目录名：短、稳定、可复用；不要写成一句新闻摘要、原因解释或长标题。\n- parent_themes 必须有稳定对象和稳定机制边界：能说明“哪类资产、产业、政策、风险、公司经营或宏观变量为什么被影响”。只描述短期表现、资金行为、交易热度或盘面状态的表达，不应作为 parent_themes。\n- 如果 chunk 主要描述市场短期表现，parent_themes 必须追溯背后的驱动主题、产业链主题、政策主题、风险主题或流动性主题；无法追溯时，把短期表现放入 mid_topics / specific_topics / supporting_text。\n- 如果一个表达只描述某个父主题下的供需变化、风险变化、资金变化、项目进展或单一主体动作，应放入 mid_topics / specific_topics，而不是 parent_themes。\n- broad_topics 写父主题下仍然较宽的行业、政策、市场或风险主题。\n- mid_topics 写父级主题下的子方向，适合未来 L1/L2。\n- specific_topics 写具体项目、公司动作、单笔交易、单个产品、单次行情或单条事件线索；这些不是 L0 标题。\n- impact_target 只写当前 chunk 明确提到的行业、资产、公司、商品、产业链环节。\n- event_thread 用于给后续事件流提供局部线索，应是可跨多条资料复用的政策线、产业线、地缘线、公司事件线或市场事件线名称。\n- timeline_position / event_time 继续抽取并保留给后续事件流；但它们不会传给 Community Assignment LLM。\n- risk_signals 只抽当前 chunk 明确支撑的风险线索；证据不足时保守输出。\n- local_impact_signals 只抽当前 chunk 明确提到的局部影响线索，不要改写成完整影响链。\n- summary、topic_intent.summary、local_impact_mentions 不允许出现“当前chunk”“当前 chunk”“本chunk”“该chunk”“这段chunk”等实现视角词。\n- supporting_text 只写当前 chunk 中支撑判断的关键短句，不要整段复制，不要超过一句。\n- title_candidates 给 3-5 个候选主题标题，优先覆盖 parent_themes，其次覆盖 broad_topics 和 mid_topics。\n- title_candidates 必须是主题名，不要使用新闻标题、单一公司项目名、单一交易名、盘面描述或“动态/事件/项目/公告”这类尾词。\n- 不要输出 primary / secondary 之类主次判断；主题强弱由后续 assignment weight 表达。\n- 输出必须符合 JSON Schema，不要 Markdown。",
+        "messages": "[]",
+        "prompt_text_preview": "{\n  \"title\": \"【美光科技93亿美元扩建广岛项目动工 预计2028下半年出货HBM】美光科技当地时间周六（7月4日）正式启动其位于日本西部广岛工厂的扩建工程。这项总投资达1.5\",\n  \"chunk_text\": \"【美光科技93亿美元扩建广岛项目动工 预计2028下半年出货HBM】美光科技当地时间周六（7月4日）正式启动其位于日本西部广岛工厂的扩建工程。这项总投资达1.5\\n【美光科技93亿美元扩建广岛项目动工 预计2028下半年出货HBM】美光科技当地时间周六（7月4日）正式启动其位于日本西部广岛工厂的扩建工程。这项总投资达1.5万亿日元（约合93亿美元）的项目，旨在生产包括高带宽存储器（HBM）在内的先进存储芯片，以满足人工智能（AI）浪潮带来的旺盛需求。HBM是英伟达AI处理器的关键组件，工厂预计将于2028年夏季左右开始出货。为支持该项目的建设，日本经济产业省\\n【美光科技93亿美元扩建广岛项目动工 预计2028下半年出货HBM】美光科技当地时间周六（7月4日）正式启动其位于日本西部广岛工厂的扩建工程。这项总投资达1.5万亿日元（约合93亿美元）的项目，旨在生产包括高带宽存储器（HBM）在内的先进存储芯片，以满足人工智能（AI）浪潮带来的旺盛需求。HBM是英伟达AI处理器的关键组件，工厂预计将于2028年夏季左右开始出货。为支持该项目的建设，日本经济产业省已承诺提供最高5000亿日元的补贴。美光科技首席执行官Sanjay Mehrotra在奠基仪式上表示，“美光首批用于人工智能核心存储技术——HBM的生产晶圆，就是在广岛制造的。”\"\n}",
+        "metadata": {
+          "task": "kg_cognitive_card",
+          "source_type": "news_articles",
+          "source_id": "ft_news:96177",
+          "chunk_id": "kg_chunk:kg_ev:financial:news_articles:ft_news:96177:767ce212ba3d769d:0"
+        },
+        "json_schema": "{\"type\": \"object\", \"properties\": {\"summary\": {\"type\": \"string\", \"maxLength\": 180}, \"title_candidates\": {\"type\": \"array\", \"maxItems\": 5, \"items\": {\"type\": \"string\", \"maxLength\": 24}}, \"topic_intents\": {\"type\": \"array\", \"minItems\": 1, \"maxItems\": 10, \"items\": {\"type\": \"object\", \"properties\": {\"raw_theme\": {\"type\": \"string\", \"maxLength\": 48}, \"title_candidate\": {\"type\": \"string\", \"maxLength\": 32}, \"parent_themes\": {\"type\": \"array\", \"maxItems\": 4, \"items\": {\"type\": \"string\", \"maxLength\": 24}}, \"broad_topics\": {\"type\": \"array\", \"maxItems\": 4, \"items\": {\"type\": \"string\", \"maxLength\": 24}}, \"mid_topics\": {\"type\": \"array\", \"maxItems\": 5, \"items\": {\"type\": \"string\", \"maxLength\": 28}}, \"specific_topics\": {\"type\": \"array\", \"maxItems\": 5, \"items\": {\"type\": \"string\", \"maxLength\": 36}}, \"topic_level_hint\": {\"type\": \"string\", \"enum\": [\"broad\", \"mid\", \"specific\", \"mixed\", \"uncertain\"]}, \"driver\": {\"type\": \"array\", \"maxItems\": 5, \"items\": {\"type\": \"string\", \"maxLength\": 32}}, \"impact_target\": {\"type\": \"array\", \"maxItems\": 6, \"items\": {\"type\": \"string\", \"maxLength\": 28}}, \"risk_type\": {\"type\": \"array\", \"maxItems\": 4, \"items\": {\"type\": \"string\", \"maxLength\": 28}}, \"event_thread\": {\"type\": \"array\", \"maxItems\": 4, \"items\": {\"type\": \"string\", \"maxLength\": 32}}, \"event_action\": {\"type\": \"array\", \"maxItems\": 4, \"items\": {\"type\": \"string\", \"maxLength\": 32}}, \"actors\": {\"type\": \"array\", \"maxItems\": 6, \"items\": {\"type\": \"string\", \"maxLength\": 28}}, \"importance\": {\"type\": \"number\", \"minimum\": 0, \"maximum\": 1}, \"impact_direction\": {\"type\": \"string\", \"enum\": [\"positive\", \"negative\", \"mixed\", \"uncertain\"]}, \"event_stage\": {\"type\": \"string\", \"maxLength\": 24}, \"timeline_position\": {\"type\": \"string\", \"enum\": [\"trigger\", \"reaction\", \"escalation\", \"deescalation\", \"resolution\", \"follow_up\", \"uncertain\"]}, \"event_time\": {\"type\": \"string\", \"maxLength\": 32}, \"summary\": {\"type\": \"string\", \"maxLength\": 120}, \"supporting_text\": {\"type\": \"string\", \"maxLength\": 120}}, \"required\": [\"raw_theme\", \"title_candidate\", \"parent_themes\", \"broad_topics\", \"mid_topics\", \"specific_topics\", \"topic_level_hint\", \"driver\", \"impact_target\", \"risk_type\", \"event_thread\", \"event_action\", \"actors\", \"importance\", \"impact_direction\", \"event_stage\", \"timeline_position\", \"event_time\", \"summary\", \"supporting_text\"], \"additionalProperties\": false}}, \"risk_signals\": {\"type\": \"array\", \"maxItems\": 6, \"items\": {\"type\": \"object\", \"properties\": {\"risk_type\": {\"type\": \"string\", \"maxLength\": 32}, \"risk_direction\": {\"type\": \"string\", \"enum\": [\"increasing\", \"decreasing\", \"neutral\", \"uncertain\"]}, \"risk_scope\": {\"type\": \"string\", \"maxLength\": 48}, \"risk_severity\": {\"type\": \"number\", \"minimum\": 0, \"maximum\": 1}, \"uncertainty\": {\"type\": \"string\", \"maxLength\": 80}, \"supporting_text\": {\"type\": \"string\", \"maxLength\": 120}, \"confidence\": {\"type\": \"number\", \"minimum\": 0, \"maximum\": 1}, \"importance\": {\"type\": \"number\", \"minimum\": 0, \"maximum\": 1}}, \"required\": [\"risk_type\", \"risk_direction\", \"risk_scope\", \"risk_severity\", \"uncertainty\", \"supporting_text\", \"confidence\", \"importance\"], \"additionalProperties\": false}}, \"local_impact_signals\": {\"type\": \"array\", \"maxItems\": 8, \"items\": {\"type\": \"object\", \"properties\": {\"local_impact_mentions\": {\"type\": \"string\", \"maxLength\": 100}, \"local_impact_target\": {\"type\": \"array\", \"maxItems\": 5, \"items\": {\"type\": \"string\", \"maxLength\": 32}}, \"local_impact_direction\": {\"type\": \"string\", \"enum\": [\"positive\", \"negative\", \"mixed\", \"neutral\", \"uncertain\"]}, \"local_impact_mechanism_text\": {\"type\": \"string\", \"maxLength\": 120}, \"supporting_text\": {\"type\": \"string\", \"maxLength\": 120}, \"confidence\": {\"type\": \"number\", \"minimum\": 0, \"maximum\": 1}, \"importance\": {\"type\": \"number\", \"minimum\": 0, \"maximum\": 1}}, \"required\": [\"local_impact_mentions\", \"local_impact_target\", \"local_impact_direction\", \"local_impact_mechanism_text\", \"supporting_text\", \"confidence\", \"importance\"], \"additionalProperties\": false}}, \"actor_signals\": {\"type\": \"object\", \"properties\": {\"actors\": {\"type\": \"array\", \"maxItems\": 8, \"items\": {\"type\": \"string\", \"maxLength\": 32}}, \"companies\": {\"type\": \"array\", \"maxItems\": 8, \"items\": {\"type\": \"string\", \"maxLength\": 32}}, \"industries\": {\"type\": \"array\", \"maxItems\": 8, \"items\": {\"type\": \"string\", \"maxLength\": 32}}, \"regions\": {\"type\": \"array\", \"maxItems\": 6, \"items\": {\"type\": \"string\", \"maxLength\": 32}}, \"policies\": {\"type\": \"array\", \"maxItems\": 6, \"items\": {\"type\": \"string\", \"maxLength\": 48}}, \"commodities\": {\"type\": \"array\", \"maxItems\": 6, \"items\": {\"type\": \"string\", \"maxLength\": 32}}}, \"required\": [\"actors\", \"companies\", \"industries\", \"regions\", \"policies\", \"commodities\"], \"additionalProperties\": false}, \"supporting_text\": {\"type\": \"array\", \"maxItems\": 5, \"items\": {\"type\": \"string\", \"maxLength\": 120}}}, \"required\": [\"summary\", \"title_candidates\", \"topic_intents\", \"risk_signals\", \"local_impact_signals\", \"actor_signals\", \"supporting_text\"], \"additionalProperties\": false}",
+        "response_format": {
+          "type": "json_object"
+        },
+        "use_cache": true
+      },
+      "output": {
+        "text": "{\"summary\": \"美光科技启动广岛工厂扩建，投资93亿美元生产HBM，预计2028年出货，以满足AI需求。\", \"title_candidates\": [\"美光广岛扩建HBM工厂\", \"美光93亿美元HBM扩产\", \"日本半导体投资再添HBM产能\", \"AI存储芯片产能扩张\"], \"topic_intents\": [{\"raw_theme\": \"美光科技广岛扩建HBM项目动工\", \"title_candidate\": \"美光广岛扩建HBM工厂\", \"parent_themes\": [\"半导体制造\", \"AI芯片需求\"], \"broad_topics\": [\"存储芯片扩产\", \"日本半导体投资\"], \"mid_topics\": [\"HBM产能建设\", \"美光战略扩张\"], \"specific_topics\": [\"广岛工厂扩建\", \"93亿美元投资\", \"2028年出货\"], \"topic_level_hint\": \"specific\", \"driver\": [\"AI需求增长\", \"日本补贴政策\"], \"impact_target\": [\"美光科技\", \"HBM\", \"英伟达\", \"存储芯片行业\"], \"risk_type\": [\"产能建设风险\", \"补贴依赖\"], \"event_thread\": [\"美光产能扩张\"], \"event_action\": [\"启动扩建\", \"获取补贴\"], \"actors\": [\"美光科技\", \"日本经济产业省\", \"Sanjay Mehrotra\"], \"importance\": 0.7, \"impact_direction\": \"positive\", \"event_stage\": \"trigger\", \"timeline_position\": \"trigger\", \"event_time\": \"2025年7月4日\", \"summary\": \"美光科技启动广岛工厂扩建，投资93亿美元生产HBM，预计2028年出货，以满足AI需求。\", \"supporting_text\": \"美光科技当地时间周六正式启动其位于日本西部广岛工厂的扩建工程。\"}], \"risk_signals\": [], \"local_impact_signals\": [{\"local_impact_mentions\": \"美光扩建广岛工厂生产HBM，有助于满足AI芯片需求\", \"local_impact_target\": [\"美光科技\", \"日本半导体产业\", \"英伟达\"], \"local_impact_direction\": \"positive\", \"local_impact_mechanism_text\": \"通过扩大HBM产能，为英伟达AI处理器提供关键组件，增强日本半导体制造能力\", \"supporting_text\": \"HBM是英伟达AI处理器的关键组件\", \"confidence\": 0.8, \"importance\": 0.7}, {\"local_impact_mentions\": \"日本政府提供最高5000亿日元补贴，支持美光广岛项目\", \"local_impact_target\": [\"日本政府\", \"美光科技\"], \"local_impact_direction\": \"positive\", \"local_impact_mechanism_text\": \"补贴降低美光投资成本，吸引更多半导体制造投资进入日本\", \"supporting_text\": \"日本经济产业省已承诺提供最高5000亿日元的补贴\", \"confidence\": 0.9, \"importance\": 0.6}], \"actor_signals\": {\"actors\": [\"美光科技\", \"日本经济产业省\", \"Sanjay Mehrotra\"], \"companies\": [\"美光科技\", \"英伟达\"], \"industries\": [\"半导体制造\", \"存储芯片\", \"AI芯片\"], \"regions\": [\"日本\", \"广岛\"], \"policies\": [\"日本半导体补贴政策\"], \"commodities\": [\"HBM\"]}, \"supporting_text\": [\"美光科技当地时间周六正式启动其位于日本西部广岛工厂的扩建工程。\", \"这项总投资达1.5万亿日元（约合93亿美元）的项目，旨在生产包括高带宽存储器（HBM）在内的先进存储芯片，以满足人工智能（AI）浪潮带来的旺盛需求。\", \"为支持该项目的建设，日本经济产业省已承诺提供最高5000亿日元的补贴。\"]}",
+        "structured_output": "{\"summary\": \"美光科技启动广岛工厂扩建，投资93亿美元生产HBM，预计2028年出货，以满足AI需求。\", \"title_candidates\": [\"美光广岛扩建HBM工厂\", \"美光93亿美元HBM扩产\", \"日本半导体投资再添HBM产能\", \"AI存储芯片产能扩张\"], \"topic_intents\": [{\"raw_theme\": \"美光科技广岛扩建HBM项目动工\", \"title_candidate\": \"美光广岛扩建HBM工厂\", \"parent_themes\": [\"半导体制造\", \"AI芯片需求\"], \"broad_topics\": [\"存储芯片扩产\", \"日本半导体投资\"], \"mid_topics\": [\"HBM产能建设\", \"美光战略扩张\"], \"specific_topics\": [\"广岛工厂扩建\", \"93亿美元投资\", \"2028年出货\"], \"topic_level_hint\": \"specific\", \"driver\": [\"AI需求增长\", \"日本补贴政策\"], \"impact_target\": [\"美光科技\", \"HBM\", \"英伟达\", \"存储芯片行业\"], \"risk_type\": [\"产能建设风险\", \"补贴依赖\"], \"event_thread\": [\"美光产能扩张\"], \"event_action\": [\"启动扩建\", \"获取补贴\"], \"actors\": [\"美光科技\", \"日本经济产业省\", \"Sanjay Mehrotra\"], \"importance\": 0.7, \"impact_direction\": \"positive\", \"event_stage\": \"trigger\", \"timeline_position\": \"trigger\", \"event_time\": \"2025年7月4日\", \"summary\": \"美光科技启动广岛工厂扩建，投资93亿美元生产HBM，预计2028年出货，以满足AI需求。\", \"supporting_text\": \"美光科技当地时间周六正式启动其位于日本西部广岛工厂的扩建工程。\"}], \"risk_signals\": [], \"local_impact_signals\": [{\"local_impact_mentions\": \"美光扩建广岛工厂生产HBM，有助于满足AI芯片需求\", \"local_impact_target\": [\"美光科技\", \"日本半导体产业\", \"英伟达\"], \"local_impact_direction\": \"positive\", \"local_impact_mechanism_text\": \"通过扩大HBM产能，为英伟达AI处理器提供关键组件，增强日本半导体制造能力\", \"supporting_text\": \"HBM是英伟达AI处理器的关键组件\", \"confidence\": 0.8, \"importance\": 0.7}, {\"local_impact_mentions\": \"日本政府提供最高5000亿日元补贴，支持美光广岛项目\", \"local_impact_target\": [\"日本政府\", \"美光科技\"], \"local_impact_direction\": \"positive\", \"local_impact_mechanism_text\": \"补贴降低美光投资成本，吸引更多半导体制造投资进入日本\", \"supporting_text\": \"日本经济产业省已承诺提供最高5000亿日元的补贴\", \"confidence\": 0.9, \"importance\": 0.6}], \"actor_signals\": {\"actors\": [\"美光科技\", \"日本经济产业省\", \"Sanjay Mehrotra\"], \"companies\": [\"美光科技\", \"英伟达\"], \"industries\": [\"半导体制造\", \"存储芯片\", \"AI芯片\"], \"regions\": [\"日本\", \"广岛\"], \"policies\": [\"日本半导体补贴政策\"], \"commodities\": [\"HBM\"]}, \"supporting_text\": [\"美光科技当地时间周六正式启动其位于日本西部广岛工厂的扩建工程。\", \"这项总投资达1.5万亿日元（约合93亿美元）的项目，旨在生产包括高带宽存储器（HBM）在内的先进存储芯片，以满足人工智能（AI）浪潮带来的旺盛需求。\", \"为支持该项目的建设，日本经济产业省已承诺提供最高5000亿日元的补贴。\"]}",
+        "usage": {
+          "input_tokens": 2661,
+          "output_tokens": 1544,
+          "total_tokens": 4205,
+          "prompt_cache_hit_tokens": 2176,
+          "prompt_cache_miss_tokens": 485,
+          "reasoning_tokens": 662
+        },
+        "duration_ms": 13469,
+        "cache_hit": false,
+        "proxy": {
+          "provider": "deepseek",
+          "requested_model": "deepseek-v4-flash",
+          "resolved_model": "deepseek-v4-flash",
+          "upstream_model": "deepseek-v4-flash",
+          "route_reason": "model_exact",
+          "retry_count": 0,
+          "upstream_retry_events": [],
+          "upstream_max_retries": 10,
+          "upstream_max_retry_delay_seconds": 60,
+          "json_mode_retry_attempted": false,
+          "json_mode_retry_success": false,
+          "json_mode_retry_error": null,
+          "json_mode_initial_finish_reason": "stop",
+          "json_mode_retry_finish_reason": null,
+          "json_mode_initial_usage": {
+            "input_tokens": 2661,
+            "output_tokens": 1544,
+            "total_tokens": 4205,
+            "prompt_cache_hit_tokens": 2176,
+            "prompt_cache_miss_tokens": 485,
+            "reasoning_tokens": 662
+          },
+          "json_mode_retry_usage": null,
+          "json_repair_attempted": false,
+          "json_repair_success": false,
+          "json_repair_error": null,
+          "json_repair_finish_reason": null,
+          "json_repair_usage": null
+        },
+        "provider_diagnostics": {
+          "finish_reason": "stop",
+          "json_mode_initial": {
+            "id": "9f30454f-d8de-4447-a263-ac50af87a43f",
+            "model": "deepseek-v4-flash",
+            "finish_reason": "stop",
+            "usage": {
+              "input_tokens": 2661,
+              "output_tokens": 1544,
+              "total_tokens": 4205,
+              "prompt_cache_hit_tokens": 2176,
+              "prompt_cache_miss_tokens": 485,
+              "reasoning_tokens": 662
+            },
+            "content_chars": 2221,
+            "reasoning_chars": 1390,
+            "has_tool_calls": false
+          }
+        }
+      },
+      "metadata": {
+        "task": "kg_cognitive_card",
+        "source_id": "ft_news:96177",
+        "source_type": "news_articles",
+        "provider": "deepseek",
+        "model": "deepseek-v4-flash",
+        "backend": "deepseek",
+        "use_cache": true,
+        "has_json_schema": true,
+        "prompt_chars": 690,
+        "tools_count": 0,
+        "has_tool_choice": false,
+        "cache_store": "miss",
+        "cache_hit": false,
+        "duration_ms": 13469,
+        "proxy": {
+          "provider": "deepseek",
+          "requested_model": "deepseek-v4-flash",
+          "resolved_model": "deepseek-v4-flash",
+          "upstream_model": "deepseek-v4-flash",
+          "route_reason": "model_exact",
+          "retry_count": 0,
+          "upstream_retry_events": [],
+          "upstream_max_retries": 10,
+          "upstream_max_retry_delay_seconds": 60,
+          "json_mode_retry_attempted": false,
+          "json_mode_retry_success": false,
+          "json_mode_retry_error": null,
+          "json_mode_initial_finish_reason": "stop",
+          "json_mode_retry_finish_reason": null,
+          "json_mode_initial_usage": {
+            "input_tokens": 2661,
+            "output_tokens": 1544,
+            "total_tokens": 4205,
+            "prompt_cache_hit_tokens": 2176,
+            "prompt_cache_miss_tokens": 485,
+            "reasoning_tokens": 662
+          },
+          "json_mode_retry_usage": null,
+          "json_repair_attempted": false,
+          "json_repair_success": false,
+          "json_repair_error": null,
+          "json_repair_finish_reason": null,
+          "json_repair_usage": null
+        },
+        "resourceAttributes": {
+          "telemetry.sdk.language": "python",
+          "telemetry.sdk.name": "opentelemetry",
+          "telemetry.sdk.version": "1.41.1",
+          "service.name": "unknown_service"
+        },
+        "scope": {
+          "name": "langfuse-sdk",
+          "version": "4.6.1",
+          "attributes": {
+            "public_key": "pk-lf-d52cf296-5725-45dc-a0f7-31202673d39f"
+          }
+        }
+      },
+      "model": "deepseek-v4-flash",
+      "modelParameters": {
+        "temperature": 0,
+        "max_tokens": 5000,
+        "response_format": "{\"type\":\"json_object\"}",
+        "json_schema": "true"
+      },
+      "completionStartTime": null,
+      "promptId": null,
+      "promptName": null,
+      "promptVersion": null,
+      "latency": 10.779,
+      "timeToFirstToken": null,
+      "usageDetails": {
+        "input_tokens": 2661,
+        "output_tokens": 1544,
+        "total_tokens": 4205,
+        "prompt_cache_hit_tokens": 2176,
+        "prompt_cache_miss_tokens": 485,
+        "total": 11071
+      },
+      "costDetails": {},
+      "usagePricingTierId": null,
+      "usagePricingTierName": null,
+      "inputPrice": 0,
+      "outputPrice": 0,
+      "totalPrice": 0,
+      "calculatedInputCost": null,
+      "calculatedOutputCost": null,
+      "calculatedTotalCost": 0,
+      "unit": "TOKENS",
+      "promptTokens": 2661,
+      "completionTokens": 1544,
+      "totalTokens": 11071,
+      "modelId": null,
+      "usage": {
+        "unit": "TOKENS",
+        "input": 2661,
+        "output": 1544,
+        "total": 11071
+      }
+    },
+    {
+      "id": "94363b26b5a747e1",
+      "traceId": "1469da7f328cea2c8d5f6d273c8c096c",
+      "startTime": "2026-07-05T00:50:39.010Z",
+      "endTime": "2026-07-05T00:50:40.624Z",
+      "projectId": "cmp9tyu4x01efad08dq5ebuhg",
+      "parentObservationId": "a89192e88c3553a7",
+      "type": "GENERATION",
+      "environment": "default",
+      "name": "llm:kg_assignment_bucket_planning",
+      "level": "DEFAULT",
+      "statusMessage": "completed",
+      "version": null,
+      "createdAt": "2026-07-05T00:50:41.820Z",
+      "updatedAt": "2026-07-05T00:50:41.821Z",
+      "input": {
+        "prompt": "{\n  \"existing_bucket_catalog\": [\n    {\n      \"bucket_id\": \"bucket_ai_commercialization\",\n      \"bucket_title\": \"AI商业化进展\",\n      \"scope\": \"AI应用商业化落地、新模型发布、相关公司股价表现等，可能竞争AI商业化 community\"\n    },\n    {\n      \"bucket_id\": \"bucket_ai_infra\",\n      \"bucket_title\": \"bucket_ai_infra\"\n    },\n    {\n      \"bucket_id\": \"bucket_aviation_development\",\n      \"bucket_title\": \"航空装备研制与首飞\",\n      \"scope\": \"国产飞机型号研制、首飞、交付及航空装备技术突破，可能竞争航空装备 community\"\n    },\n    {\n      \"bucket_id\": \"bucket_critical_mineral_strategic_reserve\",\n      \"bucket_title\": \"关键矿产战略储备与地缘供应链\",\n      \"scope\": \"关键矿产（锂、稀土等）的国家战略储备、国防采购、地缘竞争与供应链安全政策，可能竞争关键矿产战略 community\"\n    },\n    {\n      \"bucket_id\": \"bucket_geopolitical_conflict\",\n      \"bucket_title\": \"bucket_geopolitical_conflict\"\n    },\n    {\n      \"bucket_id\": \"bucket_industrial_automation_performance\",\n      \"bucket_title\": \"bucket_industrial_automation_performance\"\n    },\n    {\n      \"bucket_id\": \"bucket_natural_disaster\",\n      \"bucket_title\": \"自然灾害事件\",\n      \"scope\": \"地震、洪水、台风等自然灾害事件及其影响，可能竞争自然灾害相关 community\"\n    },\n    {\n      \"bucket_id\": \"bucket_semiconductor_materials_localization\",\n      \"bucket_title\": \"半导体材料国产替代\",\n      \"scope\": \"半导体材料（如电子级化学品、光刻胶、硅片等）的国产替代进展、技术突破与认证放量，可能竞争半导体材料国产化 community\"\n    },\n    {\n      \"bucket_id\": \"bucket_sports_events\",\n      \"bucket_title\": \"体育赛事进程\",\n      \"scope\": \"重大体育赛事进程、比赛结果、晋级情况等，可能竞争体育赛事 community\"\n    }\n  ],\n  \"topic_intent_signatures\": [\n    {\n      \"parent_themes\": [\n        \"半导体制造\",\n        \"AI芯片需求\"\n      ],\n      \"title_candidate\": \"美光广岛扩建HBM工厂\",\n      \"event_thread\": [\n        \"美光产能扩张\"\n      ],\n      \"routing_signals\": [\n        \"启动扩建\",\n        \"获取补贴\",\n        \"AI需求增长\",\n        \"日本补贴政策\"\n      ],\n      \"context_hint\": \"美光科技启动广岛工厂扩建，投资93亿美元生产HBM，预计2028年出货，以满足AI需求。\",\n      \"semantic_bucket_candidates\": [\n        {\n          \"bucket_id\": \"bucket_semiconductor_materials_localization\",\n          \"bucket_title\": \"半导体材料国产替代\",\n          \"scope\": \"半导体材料（如电子级化学品、光刻胶、硅片等）的国产替代进展、技术突破与认证放量，可能竞争半导体材料国产化 community\",\n          \"canonical_themes\": [\n            \"电子级氢氟酸国产替代\"\n          ],\n          \"semantic_score\": 0.3331,\n          \"semantic_exact_theme_match\": false,\n          \"semantic_cache_source\": \"catalog\"\n        },\n        {\n          \"bucket_id\": \"bucket_overseas_manufacturing_expansion\",\n          \"bucket_title\": \"海外制造业产能扩张\",\n          \"scope\": \"中国企业海外建厂、产能布局、投资合作，可能竞争海外产能扩张 community\",\n          \"canonical_themes\": [\n            \"中国储能企业欧洲建厂\",\n            \"金砖产业合作与出海政策\",\n            \"消费类锂离子电芯产能扩张\",\n            \"汽车零部件企业投资布局\",\n            \"储能电池海外投资\",\n            \"金砖产业合作与出海综合服务港建设\"\n          ],\n          \"semantic_score\": 0.3267,\n          \"semantic_exact_theme_match\": false,\n          \"semantic_cache_source\": \"milvus_metadata\"\n        },\n        {\n          \"bucket_id\": \"bucket_semiconductor_equipment_industry\",\n          \"bucket_title\": \"半导体设备行业格局\",\n          \"scope\": \"全球半导体设备商营收排名、市场份额、技术迭代，可能竞争半导体设备 community\",\n          \"canonical_themes\": [\n            \"全球半导体设备商营收排名\"\n          ],\n          \"semantic_score\": 0.3094,\n          \"semantic_exact_theme_match\": false,\n          \"semantic_cache_source\": \"milvus_metadata\"\n        },\n        {\n          \"bucket_id\": \"bucket_ai_infra\",\n          \"bucket_title\": \"bucket_ai_infra\",\n          \"scope\": \"\",\n          \"canonical_themes\": [\n            \"含氟冷却液在AI液冷中的机遇\"\n          ],\n          \"semantic_score\": 0.2845,\n          \"semantic_exact_theme_match\": false,\n          \"semantic_cache_source\": \"catalog\"\n        },\n        {\n          \"bucket_id\": \"bucket_ai_commercialization\",\n          \"bucket_title\": \"AI商业化进展\",\n          \"scope\": \"AI应用商业化落地、新模型发布、相关公司股价表现等，可能竞争AI商业化 community\",\n          \"canonical_themes\": [\n            \"通信行业联盟\",\n            \"AI应用商业化加速\",\n            \"智能眼镜光学方案合作\",\n            \"Ai-Esim产业协同平台成立\"\n          ],\n          \"semantic_score\": 0.2678,\n          \"semantic_exact_theme_match\": false,\n          \"semantic_cache_source\": \"catalog\"\n        }\n      ]\n    }\n  ],\n  \"planning_context\": {\n    \"batch_index\": 1,\n    \"batch_count\": 1,\n    \"batch_intent_count\": 1,\n    \"planning_goal\": \"中等粒度写冲突域；避免少数大桶吞并互不竞争的 intent。\"\n  },\n  \"target\": \"为每个 intent 选择 bucket，必要时创建新 bucket，并输出 canonical_theme。\"\n}",
+        "system_prompt": "你是金融知识图谱的 Community Assignment 并发分桶规划器。\n\n你的任务不是创建 community，也不是判断最终归档结果。\n你的任务是根据一批 topic intent 的语义关系，快速规划哪些 intent 必须放在同一个串行执行 bucket 中，哪些 intent 可以放到不同 bucket 并发处理。\n\n核心原则：\n- bucket 是执行调度通道，不是业务主题，不是检索对象，不是 community。\n- 同一 bucket 内的 intent 会串行执行，目的是避免相近主题并发创建重复 community。\n- 不同 bucket 之间会并发执行，因此只有相互影响较小的 intent 才能拆开。\n- 如果多个 intent 可能竞争同一批 community，必须放入同一个 bucket。\n- 如果多个 intent 只是同一父主题下的不同子方向，必须放入同一个 bucket。\n- 分桶目标是降低并发写冲突，同时保持中等粒度；不是越粗越安全，也不是越细越好。\n- 允许创建多个可复用 bucket。100 个 intent 通常不应只形成几个大桶；如果大量 intent 被塞进同一 bucket，说明你可能在使用兜底桶。\n- 单个 bucket 不应承接本批过多互不竞争的 intent；除非它们高度同质且会竞争同一批 community，否则应拆成多个更具体、可复用的写冲突域。\n- 可能竞争同一 community 的 intent 必须放入同一 bucket；明显不会竞争同一 community 的 intent 不应为了“略粗”而放入同一 bucket。\n- 如果多个 intent 来自同一 event_thread、同一交易动作或同一政策链条，默认应放入同一个 bucket，除非它们明确属于互不影响的长期主线。\n- 交易/动作属性优先于行业属性。比如“跨界半导体存储并购”既有半导体标签也有并购动作，但它会竞争并购重组 community，应优先进入并购 bucket，而不是单独创建半导体并购 bucket。\n- 风险/政策/融资/并购/供应冲击/业绩这些会改变写入路径的主流程信号，优先用于分桶；行业、公司、产品只是辅助信号，不能单独决定拆桶。\n- 如果一个 intent 同时属于两个方向，应选择更可能与已有 intent 竞争同一 community 的 bucket；不要因为多了一个行业标签就拆出新 bucket。\n- bucket 粒度应大于具体新闻主题，小于全市场大类。\n- bucket 是写冲突域，不是新闻大类、行业大类或兜底分类；只有可能竞争同一批 community 的 intent 才应进入同一 bucket。\n- 禁止创建或复用“宏观/政策/市场/海外/综合/其他”这类兜底桶来承接互不竞争的杂项 intent。\n- “宏观流动性”“产业政策”“市场行情”这类 bucket 只有在当前 intent 确实会竞争同一类 community 时才能使用；普通事故、外交人事、区域数据、单条市场监测、泛政策新闻不应被硬塞进去。\n- 如果一个 intent 与所有已有 bucket 都没有明显写冲突，但未来可稳定承接同类 intent，可以创建新的可复用 bucket；不要为了避免单 intent bucket 而放进不相关的大桶。\n- 如果某个 bucket 同时承接风险、ETF、估值修复、行业经营等不同子方向，bucket_title 和 scope 必须用中性父级表达，不能只用“风险”等窄词。\n- 不要把单家公司、单个项目、单次行情、单个产品、单笔交易创建成 bucket。\n- 不要创建只承接单个 intent 的一次性 bucket；但当它与所有已有 bucket 都没有写冲突风险，且未来可稳定承接同类 intent 时，应创建单 intent 的新可复用 bucket，而不是硬塞进不相关大桶。\n- bucket_id 必须是稳定调度 ID，只能表达长期语义边界；禁止包含日期、时间、批次号、新闻 ID、公司名或一次性事件。\n- bucket_id 使用短英文 snake_case，例如 bucket_ma、bucket_broker_risk、bucket_ai_infra、bucket_macro_liquidity。\n- 如果已有 bucket 能承接新增 theme，应优先复用已有 bucket；但已有 bucket 过宽或只弱相关时，不要为了复用而把不相关 intent 塞进去。\n- 如果新增 theme 与已有 bucket 都不匹配，可以创建新 bucket。\n- 首轮没有已有 bucket 时，也要创建可复用的中等粒度 bucket；不要为单个 intent 创建过细 bucket，也不要创建能吞下大量互不竞争 intent 的大桶。\n- 不要在本任务中判断 bucket 合并；bucket merge 是独立任务，不在 planning 输出中处理。\n- topic_intent_signatures 只包含分桶所需的压缩主题信号，不包含证据 ID、source ID、chunk_index、长 summary 或完整细粒度标签。\n- context_hint 是从 summary/raw_theme 压缩出的短上下文，只用于帮助上提父级 bucket 边界，不能当作新闻全文。\n- semantic_bucket_candidates 是 Milvus 语义缓存召回的中等相似 bucket，只是优先复用参考；如果候选 scope 不匹配，仍应创建新 bucket。\n- existing_bucket_catalog 只包含已有 bucket 的 bucket_id、bucket_title、scope；历史 canonical_themes 只用于系统缓存命中，不传入 LLM。\n- 对相近 theme 必须输出 canonical_theme，后续会缓存 canonical_theme -> bucket_id。\n- canonical_theme 必须是简短中文主题名，优先使用输入里的中文 parent_themes / raw_theme 归一化结果；不要输出英文短码、拼音、snake_case 或内部 ID。\n- 这是执行调度的轻量分类任务，不要展开分析过程，不要输出解释，只做最小必要判断。\n\n输出要求：\n- assignments 必须与输入 topic_intent_signatures 一一对应，并严格保持相同顺序。\n- assignments 每项只输出 canonical_theme、bucket_id 两个字段。\n- 不要给 assignment 输出 intent_id、reason、confidence、action、bucket_title 或其他解释字段。\n- new_buckets 只在确实创建新 bucket 时输出；已有 bucket 不要重复输出。\n- new_buckets 的 scope 必须描述可长期复用的并发调度边界，不能只描述某个细行业、某家公司或某次事件。\n- theme_bucket_updates 只输出额外同义 theme 映射；如果没有额外映射，输出空数组。\n- 不允许输出 merge_suggestions、reason、confidence 或任何解释字段。\n- 输出必须尽量紧凑，禁止冗长解释。\n\n你必须只输出符合 JSON Schema 的 JSON 对象，不要输出 Markdown、解释文字或代码块。",
+        "messages": "[]",
+        "prompt_text_preview": "{\n  \"existing_bucket_catalog\": [\n    {\n      \"bucket_id\": \"bucket_ai_commercialization\",\n      \"bucket_title\": \"AI商业化进展\",\n      \"scope\": \"AI应用商业化落地、新模型发布、相关公司股价表现等，可能竞争AI商业化 community\"\n    },\n    {\n      \"bucket_id\": \"bucket_ai_infra\",\n      \"bucket_title\": \"bucket_ai_infra\"\n    },\n    {\n      \"bucket_id\": \"bucket_aviation_development\",\n      \"bucket_title\": \"航空装备研制与首飞\",\n      \"scope\": \"国产飞机型号研制、首飞、交付及航空装备技术突破，可能竞争航空装备 community\"\n    },\n    {\n      \"bucket_id\": \"bucket_critical_mineral_strategic_reserve\",\n      \"bucket_title\": \"关键矿产战略储备与地缘供应链\",\n      \"scope\": \"关键矿产（锂、稀土等）的国家战略储备、国防采购、地缘竞争与供应链安全政策，可能竞争关键矿产战略 community\"\n    },\n    {\n      \"bucket_id\": \"bucket_geopolitical_conflict\",\n      \"bucket_title\": \"bucket_geopolitical_conflict\"\n    },\n    {\n      \"bucket_id\": \"bucket_industrial_automation_performance\",\n      \"bucket_title\": \"bucket_industrial_automation_performance\"\n    },\n    {\n      \"bucket_id\": \"bucket_natural_disaster\",\n      \"bucket_title\": \"自然灾害事件\",\n      \"scope\": \"地震、洪水、台风等自然灾害事件及其影响，可能竞争自然灾害相关 community\"\n    },\n    {\n      \"bucket_id\": \"bucket_semiconductor_materials_localization\",\n      \"bucket_title\": \"半导体材料国产替代\",\n      \"scope\": \"半导体材料（如电子级化学品、光刻胶、硅片等）的国产替代进展、技术突破与认证放量，可能竞争半导体材料国产化 community\"\n    },\n    {\n      \"bucket_id\": \"bucket_sports_events\",\n      \"bucket_title\": \"体育赛事进程\",\n      \"scope\": \"重大体育赛事进程、比赛结果、晋级情况等，可能竞争体育赛事 community\"\n    }\n  ],\n  \"topic_intent_signatures\": [\n    {\n      \"parent_themes\": [\n        \"半导体制造\",\n        \"AI芯片需求\"\n      ],\n      \"title_candidate\": \"美光广岛扩建HBM工厂\",\n      \"event_thread\": [\n        \"美光产能扩张\"\n      ],\n      \"routing_signals\": [\n        \"启动扩建\",\n        \"获取补贴\",\n        \"AI需求增长\",\n        \"日本补贴政策\"\n      ],\n      \"context_hint\": \"美光科技启动广岛工厂扩建，投资93亿美元生产HBM，预计2028年出货，以满足AI需求。\",\n      \"semantic_bucket_candidates\": [\n        {\n          \"bucket_id\": \"bucket_semiconductor_materials_localization\",\n          \"bucket_title\": \"半导体材料国产替代\",\n          \"scope\": \"半导体材料（如电子级化学品、光刻胶、硅片等）的国产替代进展、技术突破与认证放量，可能竞争半导体材料国产化 community\",\n          \"canonical_themes\": [\n            \"电子级氢氟酸国产替代\"\n          ],\n          \"semantic_score\": 0.3331,\n          \"semantic_exact_theme_match\": false,\n          \"semantic_cache_source\": \"catalog\"\n        },\n        {\n          \"bucket_id\": \"bucket_overseas_manufacturing_expansion\",\n          \"bucket_title\": \"海外制造业产能扩张\",\n          \"scope\": \"中国企业海外建厂、产能布局、投资合作，可能竞争海外产能扩张 community\",\n          \"canonical_themes\": [\n            \"中国储能企业欧洲建厂\",\n            \"金砖产业合作与出海政策\",\n            \"消费类锂离子电芯产能扩张\",\n            \"汽车零部件企业投资布局\",\n            \"储能电池海外投资\",\n            \"金砖产业合作与出海综合服务港建设\"\n          ],\n          \"semantic_score\": 0.3267,\n          \"semantic_exact_theme_match\": false,\n          \"semantic_cache_source\": \"milvus_metadata\"\n        },\n        {\n          \"bucket_id\": \"bucket_semiconductor_equipment_industry\",\n          \"bucket_title\": \"半导体设备行业格局\",\n          \"scope\": \"全球半导体设备商营收排名、市场份额、技术迭代，可能竞争半导体设备 community\",\n          \"canonical_themes\": [\n            \"全球半导体设备商营收排名\"\n          ],\n          \"semantic_score\": 0.3094,\n          \"semantic_exact_theme_match\": false,\n          \"semantic_cache_source\": \"milvus_metadata\"\n        },\n        {\n          \"bucket_id\": \"bucket_ai_infra\",\n          \"bucket_title\": \"bucket_ai_infra\",\n          \"scope\": \"\",\n          \"canonical_themes\": [\n            \"含氟冷却液在AI液冷中的机遇\"\n          ],\n          \"semantic_score\": 0.2845,\n          \"semantic_exact_theme_match\": false,\n          \"semantic_cache_source\": \"catalog\"\n        },\n        {\n          \"bucket_id\": \"bucket_ai_commercialization\",\n          \"bucket_title\": \"AI商业化进展\",\n          \"scope\": \"AI应用商业化落地、新模型发布、相关公司股价表现等，可能竞争AI商业化 community\",\n          \"canonical_themes\": [\n            \"通信行业联盟\",\n            \"AI应用商业化加速\",\n            \"智能眼镜光学方案合作\",\n            \"Ai-Esim产业协同平台成立\"\n          ],\n          \"semantic_score\": 0.2678,\n          \"semantic_exact_theme_match\": false,\n          \"semantic_cache_source\": \"catalog\"\n        }\n      ]\n    }\n  ],\n  \"planning_context\": {\n    \"batch_index\": 1,\n    \"batch_count\": 1,\n    \"batch_intent_count\": 1,\n    \"planning_goal\": \"中等粒度写冲突域；避免少数大桶吞并互不竞争的 intent。\"\n  },\n  \"target\": \"为每个 intent 选择 bucket，必要时创建新 bucket，并输出 canonical_theme。\"\n}",
+        "metadata": {
+          "task": "kg_assignment_bucket_planning",
+          "unknown_intents": 1,
+          "batch_index": 1,
+          "batch_count": 1,
+          "batch_size": 8,
+          "llm_use_cache": true,
+          "thinking_type": "disabled",
+          "merge_decoupled": true
+        },
+        "json_schema": "{\"type\": \"object\", \"properties\": {\"assignments\": {\"type\": \"array\", \"items\": {\"type\": \"object\", \"properties\": {\"canonical_theme\": {\"type\": \"string\"}, \"bucket_id\": {\"type\": \"string\"}}, \"required\": [\"canonical_theme\", \"bucket_id\"], \"additionalProperties\": false}}, \"new_buckets\": {\"type\": \"array\", \"items\": {\"type\": \"object\", \"properties\": {\"bucket_id\": {\"type\": \"string\"}, \"bucket_title\": {\"type\": \"string\"}, \"scope\": {\"type\": \"string\"}, \"canonical_themes\": {\"type\": \"array\", \"items\": {\"type\": \"string\"}}}, \"required\": [\"bucket_id\", \"bucket_title\", \"scope\", \"canonical_themes\"], \"additionalProperties\": false}}, \"theme_bucket_updates\": {\"type\": \"array\", \"items\": {\"type\": \"object\", \"properties\": {\"canonical_theme\": {\"type\": \"string\"}, \"bucket_id\": {\"type\": \"string\"}}, \"required\": [\"canonical_theme\", \"bucket_id\"], \"additionalProperties\": false}}}, \"required\": [\"assignments\", \"new_buckets\", \"theme_bucket_updates\"], \"additionalProperties\": false}",
+        "response_format": {
+          "type": "json_object"
+        },
+        "use_cache": true
+      },
+      "output": {
+        "text": "{\"assignments\": [{\"canonical_theme\": \"美光广岛HBM工厂扩建\", \"bucket_id\": \"bucket_ai_infra\"}], \"new_buckets\": [], \"theme_bucket_updates\": []}",
+        "structured_output": "{\"assignments\": [{\"canonical_theme\": \"美光广岛HBM工厂扩建\", \"bucket_id\": \"bucket_ai_infra\"}], \"new_buckets\": [], \"theme_bucket_updates\": []}",
+        "usage": {
+          "input_tokens": 2981,
+          "output_tokens": 61,
+          "total_tokens": 3042,
+          "prompt_cache_hit_tokens": 1664,
+          "prompt_cache_miss_tokens": 1317,
+          "reasoning_tokens": 0
+        },
+        "duration_ms": 1612,
+        "cache_hit": false,
+        "proxy": {
+          "provider": "deepseek",
+          "requested_model": "deepseek-v4-pro",
+          "resolved_model": "deepseek-v4-pro",
+          "upstream_model": "deepseek-v4-pro",
+          "route_reason": "model_exact",
+          "retry_count": 0,
+          "upstream_retry_events": [],
+          "upstream_max_retries": 10,
+          "upstream_max_retry_delay_seconds": 60,
+          "json_mode_retry_attempted": false,
+          "json_mode_retry_success": false,
+          "json_mode_retry_error": null,
+          "json_mode_initial_finish_reason": "stop",
+          "json_mode_retry_finish_reason": null,
+          "json_mode_initial_usage": {
+            "input_tokens": 2981,
+            "output_tokens": 61,
+            "total_tokens": 3042,
+            "prompt_cache_hit_tokens": 1664,
+            "prompt_cache_miss_tokens": 1317,
+            "reasoning_tokens": 0
+          },
+          "json_mode_retry_usage": null,
+          "json_repair_attempted": false,
+          "json_repair_success": false,
+          "json_repair_error": null,
+          "json_repair_finish_reason": null,
+          "json_repair_usage": null
+        },
+        "provider_diagnostics": {
+          "finish_reason": "stop",
+          "json_mode_initial": {
+            "id": "e80c83b2-a553-49b8-81d5-a0992fa054bc",
+            "model": "deepseek-v4-pro",
+            "finish_reason": "stop",
+            "usage": {
+              "input_tokens": 2981,
+              "output_tokens": 61,
+              "total_tokens": 3042,
+              "prompt_cache_hit_tokens": 1664,
+              "prompt_cache_miss_tokens": 1317,
+              "reasoning_tokens": 0
+            },
+            "content_chars": 166,
+            "reasoning_chars": 0,
+            "has_tool_calls": false
+          }
+        }
+      },
+      "metadata": {
+        "task": "kg_assignment_bucket_planning",
+        "source_id": "-",
+        "source_type": "-",
+        "provider": "deepseek",
+        "model": "deepseek-v4-pro",
+        "backend": "deepseek",
+        "use_cache": true,
+        "has_json_schema": true,
+        "prompt_chars": 4166,
+        "tools_count": 0,
+        "has_tool_choice": false,
+        "cache_store": "miss",
+        "cache_hit": false,
+        "duration_ms": 1612,
+        "proxy": {
+          "provider": "deepseek",
+          "requested_model": "deepseek-v4-pro",
+          "resolved_model": "deepseek-v4-pro",
+          "upstream_model": "deepseek-v4-pro",
+          "route_reason": "model_exact",
+          "retry_count": 0,
+          "upstream_retry_events": [],
+          "upstream_max_retries": 10,
+          "upstream_max_retry_delay_seconds": 60,
+          "json_mode_retry_attempted": false,
+          "json_mode_retry_success": false,
+          "json_mode_retry_error": null,
+          "json_mode_initial_finish_reason": "stop",
+          "json_mode_retry_finish_reason": null,
+          "json_mode_initial_usage": {
+            "input_tokens": 2981,
+            "output_tokens": 61,
+            "total_tokens": 3042,
+            "prompt_cache_hit_tokens": 1664,
+            "prompt_cache_miss_tokens": 1317,
+            "reasoning_tokens": 0
+          },
+          "json_mode_retry_usage": null,
+          "json_repair_attempted": false,
+          "json_repair_success": false,
+          "json_repair_error": null,
+          "json_repair_finish_reason": null,
+          "json_repair_usage": null
+        },
+        "resourceAttributes": {
+          "telemetry.sdk.language": "python",
+          "telemetry.sdk.name": "opentelemetry",
+          "telemetry.sdk.version": "1.41.1",
+          "service.name": "unknown_service"
+        },
+        "scope": {
+          "name": "langfuse-sdk",
+          "version": "4.6.1",
+          "attributes": {
+            "public_key": "pk-lf-d52cf296-5725-45dc-a0f7-31202673d39f"
+          }
+        }
+      },
+      "model": "deepseek-v4-pro",
+      "modelParameters": {
+        "temperature": 0,
+        "max_tokens": 2000,
+        "response_format": "{\"type\":\"json_object\"}",
+        "json_schema": "true"
+      },
+      "completionStartTime": null,
+      "promptId": null,
+      "promptName": null,
+      "promptVersion": null,
+      "latency": 1.614,
+      "timeToFirstToken": null,
+      "usageDetails": {
+        "input_tokens": 2981,
+        "output_tokens": 61,
+        "total_tokens": 3042,
+        "prompt_cache_hit_tokens": 1664,
+        "prompt_cache_miss_tokens": 1317,
+        "total": 9065
+      },
+      "costDetails": {},
+      "usagePricingTierId": null,
+      "usagePricingTierName": null,
+      "inputPrice": 0,
+      "outputPrice": 0,
+      "totalPrice": 0,
+      "calculatedInputCost": null,
+      "calculatedOutputCost": null,
+      "calculatedTotalCost": 0,
+      "unit": "TOKENS",
+      "promptTokens": 2981,
+      "completionTokens": 61,
+      "totalTokens": 9065,
+      "modelId": null,
+      "usage": {
+        "unit": "TOKENS",
+        "input": 2981,
+        "output": 61,
+        "total": 9065
+      }
+    },
+    {
+      "id": "f1ad84762c076e5b",
+      "traceId": "1469da7f328cea2c8d5f6d273c8c096c",
+      "startTime": "2026-07-05T00:50:43.051Z",
+      "endTime": "2026-07-05T00:50:52.748Z",
+      "projectId": "cmp9tyu4x01efad08dq5ebuhg",
+      "parentObservationId": "8bebe4180fc10b5b",
+      "type": "GENERATION",
+      "environment": "default",
+      "name": "llm:kg_community_assignment",
+      "level": "DEFAULT",
+      "statusMessage": "completed",
+      "version": null,
+      "createdAt": "2026-07-05T00:50:51.477Z",
+      "updatedAt": "2026-07-05T00:50:51.477Z",
+      "input": {
+        "prompt": "{\n  \"candidate_append_log\": [\n    {\n      \"entry_type\": \"candidate_base\",\n      \"community_id\": \"kgc:financial:l0:1\",\n      \"title\": \"地缘政治与能源风险\",\n      \"scope\": \"承接地缘冲突、制裁、航运通道、油气供应、能源价格冲击及其对市场风险偏好的影响。\",\n      \"include_rules\": [\n        \"中东、俄乌、红海、霍尔木兹海峡等地缘冲突或通道风险。\",\n        \"制裁、反制裁、供应中断、油气运输受阻、能源价格冲击。\",\n        \"地缘事件对权益、债券、商品、外汇或风险偏好的传导。\"\n      ],\n      \"exclude_rules\": [\n        \"单纯公司业绩、常规能源项目投产，不归入本主题。\",\n        \"没有地缘或能源供应冲击含义的普通商品价格波动，不归入本主题。\"\n      ],\n      \"canonical_labels\": [\n        \"地缘风险\",\n        \"能源安全\",\n        \"油气供应\",\n        \"航运通道风险\",\n        \"制裁影响\"\n      ],\n      \"granularity_note\": \"这是 L0 长期风险主线；具体国家、海峡、制裁轮次和油气品种作为子方向进入。\",\n      \"absorbed_subtopics\": [\n        \"主权信用评级\",\n        \"外部地缘冲击\",\n        \"经济复苏与周期\",\n        \"地缘政治风险\",\n        \"有色金属供应链\",\n        \"地缘政治冲突与制裁\",\n        \"俄乌冲突国际援助\",\n        \"地缘政治\"\n      ],\n      \"maturity\": \"mature_topic\"\n    },\n    {\n      \"entry_type\": \"candidate_base\",\n      \"community_id\": \"kgc:financial:l0:2\",\n      \"title\": \"公司业绩与产业景气\",\n      \"scope\": \"承接上市公司业绩、订单、盈利能力、产能利用率、行业景气度和产业经营趋势。\",\n      \"include_rules\": [\n        \"财报、业绩预告、收入利润变化、订单和产能利用率。\",\n        \"行业景气上行或下行、库存周期、需求恢复或疲弱。\",\n        \"公司经营变化能反映产业趋势或交易认知变化。\"\n      ],\n      \"exclude_rules\": [\n        \"纯融资、上市、并购交易优先归入资本市场改革或并购相关新主题。\",\n        \"纯政策文件且没有经营结果，不归入本主题。\"\n      ],\n      \"canonical_labels\": [\n        \"公司业绩\",\n        \"行业景气\",\n        \"订单变化\",\n        \"盈利能力\",\n        \"经营趋势\"\n      ],\n      \"granularity_note\": \"这是 L0 经营基本面主线；单家公司和单个财报季作为子方向进入。\",\n      \"absorbed_subtopics\": [\n        \"半导体芯片国产替代\",\n        \"光模块产业链\",\n        \"AI算力基础设施\",\n        \"汽车市场销量预期\",\n        \"智能眼镜产业链\",\n        \"光学元件供应合作\",\n        \"券商信用风险\",\n        \"股权质押风险\"\n      ],\n      \"maturity\": \"mature_topic\"\n    },\n    {\n      \"entry_type\": \"candidate_base\",\n      \"community_id\": \"kgc:financial:l0:3\",\n      \"title\": \"AI算力链\",\n      \"scope\": \"承接 AI 芯片、算力硬件、光模块、服务器、数据中心、算电协同、AI 应用需求对硬件链条的拉动。\",\n      \"include_rules\": [\n        \"AI 芯片供需、算力基础设施、服务器、光模块、CPO、数据中心。\",\n        \"AI 应用扩张带来的算力需求、硬件瓶颈、产业链机会。\",\n        \"算电协同、绿电支撑数据中心、AI 基础设施资本开支。\"\n      ],\n      \"exclude_rules\": [\n        \"与算力链无关的泛 AI 软件、影视 IP、营销应用，不强行归入。\",\n        \"普通半导体政策或消费电子事件，只有无 AI 算力链含义时不归入。\"\n      ],\n      \"canonical_labels\": [\n        \"AI算力链\",\n        \"人工智能基础设施\",\n        \"AI芯片\",\n        \"光模块\",\n        \"数据中心\",\n        \"算电协同\"\n      ],\n      \"granularity_note\": \"这是 L0 科技基础设施主线；AI芯片、光模块、数据中心和算电协同作为子方向进入。\",\n      \"absorbed_subtopics\": [\n        \"人工智能产业投资\",\n        \"算力基础设施\",\n        \"企业资本支出战略\",\n        \"汽车行业智能化转型\",\n        \"太空产业链资本支出\",\n        \"GPU产业链需求\",\n        \"光模块技术迭代周期\",\n        \"人工智能投资主题\"\n      ],\n      \"maturity\": \"mature_topic\"\n    },\n    {\n      \"entry_type\": \"candidate_base\",\n      \"community_id\": \"kgc:financial:l0:439\",\n      \"title\": \"国际航空运输恢复\",\n      \"scope\": \"承接国际航线恢复、航班运力调整、民航市场需求变化、国际航空交通连通性、航空公司海外航线布局及其对出行、贸易与旅游的影响。\",\n      \"canonical_labels\": [\n        \"国际航空运输恢复\",\n        \"伊朗-中国交通连通性\",\n        \"航空业\",\n        \"交通出行\",\n        \"国际航线恢复\",\n        \"伊朗民航动态\",\n        \"中国外航恢复\",\n        \"伊朗马汉航空恢复伊朗至中国客运航线\",\n        \"伊朗-中国国际航线逐步恢复\",\n        \"航空公司航线恢复\"\n      ],\n      \"absorbed_subtopics\": [\n        \"国际航空运输恢复\",\n        \"伊朗-中国交通连通性\",\n        \"航空业\",\n        \"交通出行\",\n        \"国际航线恢复\",\n        \"伊朗民航动态\",\n        \"中国外航恢复\",\n        \"马汉航空恢复伊朗-中国客运航班\"\n      ],\n      \"maturity\": \"single_evidence\"\n    },\n    {\n      \"entry_type\": \"candidate_base\",\n      \"community_id\": \"kgc:financial:l0:444\",\n      \"title\": \"宏观经济运行\",\n      \"scope\": \"承接宏观经济总量指标、GDP、工业增加值、消费、投资、就业、价格指数等经济运行数据及其对市场预期、政策导向和资产定价的影响。\",\n      \"canonical_labels\": [\n        \"宏观经济运行\",\n        \"工业数据\",\n        \"GDP贡献\",\n        \"规模以上工业增加值\",\n        \"行业增长面\",\n        \"一季度工业经济稳中有进，全部工业对经济增长贡献近四成\",\n        \"工业经济韧性增长\",\n        \"中国经济复苏跟踪\",\n        \"区域经济发展\",\n        \"宏观经济复苏\"\n      ],\n      \"absorbed_subtopics\": [\n        \"宏观经济运行\",\n        \"区域经济发展\",\n        \"宏观经济复苏\",\n        \"工业数据\",\n        \"GDP贡献\",\n        \"地方经济\",\n        \"中国城市经济\",\n        \"规模以上工业增加值\"\n      ],\n      \"maturity\": \"multi_evidence\"\n    },\n    {\n      \"entry_type\": \"candidate_base\",\n      \"community_id\": \"kgc:financial:l0:451\",\n      \"title\": \"消费电子产业链\",\n      \"scope\": \"承接消费电子产品（手机、电脑、可穿戴、AR/VR等）的供应链投资、产能扩张、技术创新、元器件供需和产业格局变化。\",\n      \"canonical_labels\": [\n        \"消费电子产业链\",\n        \"电池产能投资\",\n        \"锂离子电芯制造\",\n        \"消费电子\",\n        \"新能源电池\",\n        \"产业投资\",\n        \"消费类软包锂离子电芯\",\n        \"电芯生产线建设\",\n        \"电池产能扩张\",\n        \"电池企业投资消费电芯业务\"\n      ],\n      \"absorbed_subtopics\": [\n        \"消费电子产业链\",\n        \"电池产能投资\",\n        \"锂离子电芯制造\",\n        \"消费电子\",\n        \"新能源电池\",\n        \"产业投资\",\n        \"消费类软包锂离子电芯\",\n        \"电芯生产线建设\"\n      ],\n      \"maturity\": \"single_evidence\"\n    },\n    {\n      \"entry_type\": \"candidate_base\",\n      \"community_id\": \"kgc:financial:l0:455\",\n      \"title\": \"证券市场投资工具\",\n      \"scope\": \"承接证券投资工具（ETF、指数基金、LOF、REITs、期权、期货、结构化产品等）的产品介绍、市场推广、投资者教育、产品创新、交易规则、费率结构、发行与审批动态，及其对投资者行为、资产配置和市场结构的影响。\",\n      \"canonical_labels\": [\n        \"证券市场投资工具\",\n        \"ETF基金\",\n        \"券商行业ETF\",\n        \"券商ETF投资工具推广\",\n        \"券商ETF投资工具\",\n        \"人工智能投资主题\",\n        \"算力产业链\",\n        \"AI应用\",\n        \"光模块/CPO\",\n        \"创业板人工智能ETF\"\n      ],\n      \"absorbed_subtopics\": [\n        \"人工智能投资主题\",\n        \"算力产业链\",\n        \"AI应用\",\n        \"证券市场投资工具\",\n        \"ETF基金\",\n        \"光模块/CPO\",\n        \"创业板人工智能ETF\",\n        \"算力龙头\"\n      ],\n      \"maturity\": \"multi_evidence\"\n    },\n    {\n      \"entry_type\": \"candidate_base\",\n      \"community_id\": \"kgc:financial:l0:456\",\n      \"title\": \"美国军事领导层变动\",\n      \"scope\": \"承接美国军事部门（国防部、各军种）高层人事任免、解职、内部冲突、战略分歧及其对国防政策、军事战略和地缘风险的影响。包括部长、副部长、高级将领等人事变动，以及相关国会听证、行政命令等。\",\n      \"canonical_labels\": [\n        \"美国军事领导层变动\",\n        \"五角大楼内部冲突\",\n        \"美国国防政策\",\n        \"特朗普政府军事战略\",\n        \"海军部长人事更迭\",\n        \"造船计划争议\",\n        \"美国海军部长因与五角大楼高层冲突被解职\",\n        \"美国海军部长解职与五角大楼冲突\",\n        \"美国军事人事变动\",\n        \"五角大楼高层更迭\"\n      ],\n      \"absorbed_subtopics\": [\n        \"美国军事领导层变动\",\n        \"五角大楼内部冲突\",\n        \"美国国防政策\",\n        \"特朗普政府军事战略\",\n        \"海军部长人事更迭\",\n        \"造船计划争议\",\n        \"黄金舰队计划\",\n        \"霍尔木兹海峡行动\"\n      ],\n      \"maturity\": \"single_evidence\"\n    },\n    {\n      \"entry_type\": \"candidate_base\",\n      \"community_id\": \"kgc:financial:l0:465\",\n      \"title\": \"汽车市场销量预期\",\n      \"scope\": \"承接主流车企在特定市场的销量目标、预期调整及其对产业链和市场竞争格局的影响。包括传统燃油车和新能源车企业的销量战略调整、市场展望变化。不包含纯公司业绩（归入公司业绩与产业景气）、纯技术进展（归入相应技术主题）或整车出口关税等贸易政策（归入政策监管与产业扶持）。\",\n      \"canonical_labels\": [\n        \"汽车市场销量预期\",\n        \"外资车企在华市场前景\",\n        \"大众中国市场策略调整\",\n        \"大众汽车下调2030年在华销量预期\",\n        \"大众下调2030年在华销量目标\",\n        \"大众汽车动态\"\n      ],\n      \"absorbed_subtopics\": [\n        \"汽车市场销量预期\",\n        \"外资车企在华市场前景\",\n        \"大众中国市场策略调整\"\n      ],\n      \"maturity\": \"single_evidence\"\n    },\n    {\n      \"entry_type\": \"candidate_base\",\n      \"community_id\": \"kgc:financial:l0:476\",\n      \"title\": \"关键矿产战略储备\",\n      \"scope\": \"承接各国关键矿产（锂、钴、稀土等）的战略储备政策、储备采购、清单调整、国防储备扩大等动态，及其对矿产价格、供应链安全、地缘竞争的影响。\",\n      \"canonical_labels\": [\n        \"关键矿产战略储备\",\n        \"锂资源战略政策\",\n        \"美国关键矿产政策\",\n        \"国防供应链安全\",\n        \"锂储备采购\",\n        \"国防储备扩大\",\n        \"美国国防部首次将锂纳入国家国防储备并大规模采购\",\n        \"美国锂战略收储启动\",\n        \"美国国防储备采购\"\n      ],\n      \"absorbed_subtopics\": [\n        \"关键矿产战略储备\",\n        \"锂资源战略政策\",\n        \"美国关键矿产政策\",\n        \"国防供应链安全\",\n        \"锂储备采购\",\n        \"国防储备扩大\",\n        \"DLA五年固定价格合同\",\n        \"3亿美元预算上限\"\n      ],\n      \"maturity\": \"single_evidence\"\n    },\n    {\n      \"community_id\": \"kgc:financial:l0:437\",\n      \"title\": \"法国经济景气度\",\n      \"scope\": \"承接法国及欧元区经济景气调查数据、信心指数、PMI、INSEE 报告，以及经济景气分化对欧元债券、外汇和风险资产的影响。\",\n      \"canonical_labels\": [\n        \"法国经济景气度\",\n        \"宏观经济\",\n        \"欧元区经济\",\n        \"商业信心\",\n        \"制造业信心\",\n        \"法国4月信心指数表现分化\",\n        \"法国经济景气分化\",\n        \"法国经济数据发布\"\n      ],\n      \"absorbed_subtopics\": [\n        \"法国经济景气度\",\n        \"宏观经济\",\n        \"欧元区经济\",\n        \"商业信心\",\n        \"制造业信心\",\n        \"INSEE商业信心指数94\"\n      ],\n      \"maturity\": \"single_evidence\",\n      \"entry_type\": \"candidate_base\"\n    },\n    {\n      \"community_id\": \"kgc:financial:l0:440\",\n      \"title\": \"国际财金合作\",\n      \"scope\": \"承接双边或多边财政金融合作对话、协议、援助、经济外交活动，及对资本市场的影响。\",\n      \"canonical_labels\": [\n        \"国际财金合作\",\n        \"双边外交关系\",\n        \"中非合作\",\n        \"财政金融合作\",\n        \"中非经贸关系\",\n        \"中莫双边财金对话\",\n        \"中国对非财金援助与合作\",\n        \"中莫财金合作会谈\",\n        \"中莫财金合作线\",\n        \"中非财政对话\"\n      ],\n      \"absorbed_subtopics\": [\n        \"国际财金合作\",\n        \"双边外交关系\",\n        \"中非合作\",\n        \"财政金融合作\",\n        \"中非经贸关系\",\n        \"中莫双边财金对话\",\n        \"中国对非财金援助与合作\",\n        \"蓝佛安会见洛韦拉\"\n      ],\n      \"maturity\": \"single_evidence\",\n      \"entry_type\": \"candidate_base\"\n    },\n    {\n      \"community_id\": \"kgc:financial:l0:457\",\n      \"title\": \"人工智能产业投资\",\n      \"scope\": \"承接人工智能产业的投资工具（ETF、指数）、资本配置、产业融资、风险投资及AI主题基金动态，涵盖AI应用、算力、芯片等子领域的投资方向。\",\n      \"canonical_labels\": [\n        \"人工智能产业投资\",\n        \"算力基础设施\",\n        \"芯片供应链\",\n        \"AI基础设施投资\",\n        \"科技巨头垂直整合\",\n        \"太空产业链资本支出\",\n        \"GPU产业链需求\",\n        \"人工智能ETF\",\n        \"光模块产业链\",\n        \"半导体行业\"\n      ],\n      \"absorbed_subtopics\": [\n        \"芯片供应链\",\n        \"AI基础设施投资\",\n        \"科技巨头垂直整合\",\n        \"太空产业链资本支出\",\n        \"GPU产业链需求\",\n        \"人工智能投资主题\",\n        \"算力产业链\",\n        \"AI应用\"\n      ],\n      \"maturity\": \"multi_evidence\",\n      \"entry_type\": \"candidate_base\"\n    },\n    {\n      \"community_id\": \"kgc:financial:l0:470\",\n      \"title\": \"地缘政治冲突与制裁\",\n      \"scope\": \"承接国际地缘冲突背景下的财政援助、多轮制裁、外交与安全战略，以及对相关国家经济与全球地缘政治格局的影响。包括俄乌冲突相关的贷款、制裁方案及国际协调行动。\",\n      \"canonical_labels\": [\n        \"地缘政治冲突与制裁\",\n        \"俄乌冲突国际援助\",\n        \"欧洲安全与防务\",\n        \"对俄制裁政策\",\n        \"欧盟财政援助乌克兰\",\n        \"对俄制裁轮次\",\n        \"欧盟批准对乌克兰贷款与对俄制裁\",\n        \"欧盟对乌克兰援助与对俄制裁\",\n        \"俄乌冲突援助与制裁\",\n        \"地缘政治\"\n      ],\n      \"absorbed_subtopics\": [\n        \"地缘政治冲突与制裁\",\n        \"俄乌冲突国际援助\",\n        \"地缘政治\",\n        \"大国关系\",\n        \"乌克兰危机\",\n        \"欧洲安全与防务\",\n        \"对俄制裁政策\",\n        \"俄美外交\"\n      ],\n      \"maturity\": \"multi_evidence\",\n      \"entry_type\": \"candidate_base\"\n    },\n    {\n      \"community_id\": \"kgc:financial:l0:471\",\n      \"title\": \"汽车行业智能化转型\",\n      \"scope\": \"承接汽车制造商在AI、自动驾驶、机器人、半导体制造等智能化方向的资本支出、技术投资、工厂建设、战略规划等事件，涵盖企业层面的智能化转型投资动态。不包括传统汽车制造、销量预期、纯公司业绩或非智能化相关投资。\",\n      \"canonical_labels\": [\n        \"汽车行业智能化转型\",\n        \"企业资本支出战略\",\n        \"AI基础设施投资\",\n        \"自动驾驶技术\",\n        \"人形机器人\",\n        \"半导体制造\",\n        \"特斯拉资本支出规划\",\n        \"无人驾驶出租车部署\",\n        \"擎天柱项目\",\n        \"汽车制造商大规模投资AI与机器人\"\n      ],\n      \"absorbed_subtopics\": [\n        \"企业资本支出战略\",\n        \"汽车行业智能化转型\",\n        \"AI基础设施投资\",\n        \"自动驾驶技术\",\n        \"人形机器人\",\n        \"半导体制造\",\n        \"特斯拉资本支出规划\",\n        \"无人驾驶出租车部署\"\n      ],\n      \"maturity\": \"single_evidence\",\n      \"entry_type\": \"candidate_base\"\n    },\n    {\n      \"community_id\": \"kgc:financial:l0:472\",\n      \"title\": \"太空产业链资本支出\",\n      \"scope\": \"承接太空企业（如SpaceX、蓝色起源等）的资本开支、投资计划、产能建设、基础设施投资等动态，及其对产业链和市场需求的影响。包括与太空产业相关的半导体或GPU制造投资。\",\n      \"canonical_labels\": [\n        \"太空产业链资本支出\",\n        \"GPU产业链需求\",\n        \"SpaceX资本计划\",\n        \"GPU制造投资\",\n        \"图形处理器制造支出\",\n        \"太空企业资本开支\",\n        \"SpaceX巨额资本支出预警\",\n        \"SpaceX资本开支事件\"\n      ],\n      \"absorbed_subtopics\": [\n        \"太空产业链资本支出\",\n        \"GPU产业链需求\",\n        \"SpaceX资本计划\",\n        \"GPU制造投资\",\n        \"图形处理器制造支出\",\n        \"太空企业资本开支\",\n        \"SpaceX警告资本支出\",\n        \"GPU制造支出\"\n      ],\n      \"maturity\": \"single_evidence\",\n      \"entry_type\": \"candidate_base\"\n    },\n    {\n      \"community_id\": \"kgc:financial:l0:477\",\n      \"title\": \"自然灾害应急响应\",\n      \"scope\": \"承接台风、洪涝、地震、山火等自然灾害的预警、应急响应升级、防灾减灾行动、政府及部门决策、灾后恢复等动态，及其对地方安全、经济活动和保险市场的影响。\",\n      \"canonical_labels\": [\n        \"自然灾害应急响应\",\n        \"台风灾害\",\n        \"应急管理\",\n        \"地方应急响应升级\",\n        \"广西东兴市台风应急响应提升\",\n        \"台风应急响应升级\",\n        \"台风应急响应线\"\n      ],\n      \"absorbed_subtopics\": [\n        \"自然灾害应急响应\",\n        \"台风灾害\",\n        \"应急管理\",\n        \"地方应急响应升级\",\n        \"东兴市防御台风二级应急响应\",\n        \"气象灾害（台风）Ⅱ级应急响应\",\n        \"防汛抗旱指挥部决策\"\n      ],\n      \"maturity\": \"single_evidence\",\n      \"entry_type\": \"candidate_base\"\n    }\n  ],\n  \"topic_intent\": {\n    \"raw_theme\": \"美光科技广岛扩建HBM项目动工\",\n    \"title_candidate\": \"美光广岛扩建HBM工厂\",\n    \"parent_themes\": [\n      \"半导体制造\",\n      \"AI芯片需求\"\n    ],\n    \"broad_topics\": [\n      \"存储芯片扩产\",\n      \"日本半导体投资\"\n    ],\n    \"mid_topics\": [\n      \"HBM产能建设\",\n      \"美光战略扩张\"\n    ],\n    \"specific_topics\": [\n      \"广岛工厂扩建\",\n      \"93亿美元投资\",\n      \"2028年出货\"\n    ],\n    \"topic_level_hint\": \"specific\",\n    \"summary\": \"美光科技启动广岛工厂扩建，投资93亿美元生产HBM，预计2028年出货，以满足AI需求。\",\n    \"driver\": [\n      \"AI需求增长\",\n      \"日本补贴政策\"\n    ],\n    \"impact_target\": [\n      \"美光科技\",\n      \"HBM\",\n      \"英伟达\",\n      \"存储芯片行业\"\n    ],\n    \"event_thread\": [\n      \"美光产能扩张\"\n    ],\n    \"risk_type\": [\n      \"产能建设风险\",\n      \"补贴依赖\"\n    ],\n    \"event_action\": [\n      \"启动扩建\",\n      \"获取补贴\"\n    ],\n    \"actors\": [\n      \"美光科技\",\n      \"日本经济产业省\",\n      \"Sanjay Mehrotra\"\n    ],\n    \"importance\": 0.7,\n    \"impact_direction\": \"positive\",\n    \"max_attach\": 5\n  },\n  \"max_attach\": 5\n}",
+        "system_prompt": "你是金融知识图谱的 Community 归档裁决器。\n\n你会收到 compact topic_intent，以及系统维护的候选 community append log。\n\n你的任务：\n- 在候选 community 中判断是否应该挂入已有主题；\n- 如果候选都不适合，创建新的 L0 community；\n- 输入里的 candidate_append_log 是唯一候选上下文；\n- candidate_append_log 只追加，不在中间改写既有条目；靠前不代表更相关；\n- entry_type=candidate_base 表示一个 community 第一次进入候选账本时的稳定目录信息；\n- entry_type=candidate_update 表示这个 community 后续新增吸收的子方向，只包含 community_id 和 absorbed；\n- candidate_update 只能辅助理解该目录最近吸收过哪些子方向，不得覆盖 candidate_base 中的 scope、include_rules、exclude_rules、canonical_labels 和 granularity_note；\n- Cognitive Card 的 parent_themes、title_candidate、raw_theme 都只是候选信号，不是最终 community 名称；你必须在本阶段归一化主题边界。\n- 输入候选 community_id 是系统真实 community ID；attach_existing 时必须原样使用候选 community_id，禁止输出标题或自造 ID。\n- 一个 topic_intent 可以归属到一个或多个 community；\n- 不区分 primary / secondary；\n- 每条归属必须输出 weight，表示这个 topic_intent 和 community 的关联强度；\n- 每条归属必须输出 fit_type，用来说明这是既有方向、新增子方向、更宽父主题、相邻上下文，还是全新的父主题；\n- assignments 数量不要超过 max_attach 限制；\n- 不要输出 uncertain，不走人工 pending；\n- 低置信也必须在 attach_existing 或 create_new 中二选一；\n- 如果候选主题的 scope、include_rules、canonical_labels 能承接当前 intent，应优先 attach_existing。\n- 候选主题不是笼子；如果当前 intent 明显不在候选 scope 或命中 exclude_rules，必须 create_new 或挂入更合适的候选 community。\n- 归档判断必须综合 parent_themes、broad_topics、mid_topics、specific_topics、raw_theme、title_candidate、driver、impact_target、risk_type、event_thread、event_action、actors。\n- parent_themes 是 L0 归档主信号。如果 topic_intent.parent_themes 与候选 community 的 title、canonical_labels、summary 或 scope 明显匹配，应优先 attach_existing。\n- broad_topics、mid_topics、specific_topics 都只是候选信号，不是标题指令；你必须判断它们的真实层级是否适合作为 L0。\n- L0 community 是可长期复用的父级主题，应该能承载多条不同来源、不同时间、不同主体的资料，并且未来可以继续拆出 L1/L2。\n- 候选 community 的 scope、include_rules、exclude_rules、canonical_labels、granularity_note 用来判断长期目录边界；candidate_update.absorbed 只用于辅助理解该目录后续新增吸收过哪些子方向。\n- 判断重点不是候选 summary 是否已经写过当前细节，而是候选是否能作为父级目录承接当前细节。\n- 不要因为候选没有直接提到当前 chunk 的细节就判为 related_but_separate；L0 的职责就是吸收同一父主题下的新子方向。\n- 如果当前细节是候选 community 的新增子方向，应 attach_existing，并把 fit_type 写成 new_subtopic；不要因为 summary 里没有当前细节而新建平级 L0。\n- 如果候选 community 比当前 intent 更宽，但能承接当前 intent，应 attach_existing，并把 fit_type 写成 broader_parent。\n- 只有当候选 community 的目录范围无法承接当前 intent 时，才 create_new；create_new 的 fit_type 必须是 new_parent_topic。\n- create_new 时必须在 reason 中说明：为什么现有候选无法承接、这个新主题未来能持续覆盖什么边界、它与最接近候选的区别。\n- 如果当前 topic_intent 是 mid/specific 层级，不能直接把细主题包装成 L0；必须先寻找已有父级或子级 community 是否可挂入，没有合适候选时再提炼更高一层的父级 L0。\n- 如果创建新 L0，title 必须优先使用 parent_themes 中可长期复用的父级主题；只有 parent_themes 为空或明显不适合时，才从 broad_topics 中提炼父级主题。\n- 如果当前 broad/mid/specific 是已有 parent_theme 的子方向，必须挂入该父主题，不要创建平级 L0。\n- 如果创建新 L0，title 必须是可长期复用的父级主题，不能是新闻标题、公司项目名、单一交易名、单个产品、单次行情、单个技术细节。\n- create_new 的 title 应像索引目录名，优先短标题；不要输出带有“政策与市场动态”“结构性变化”“投资机会”等摘要式尾巴的长标题，除非这是不可再压缩的稳定主题名。\n- L0 不能只是描述市场短期状态或交易表现。合格 L0 必须同时满足：有明确覆盖对象、有稳定驱动机制、有可复用边界、有可解释的排除边界。\n- 如果一个新主题可能吸收大量互不相关的新闻，只因为它们都表现为短期价格、成交、资金、情绪或热度变化，那么它不是合格 L0。\n- 如果当前 intent 描述的是短期市场表现，必须先判断它背后的对象和机制。只有对象和机制边界清楚、未来不会吸收互不相关主题时才允许 create_new。\n- 如果多个线索只有市场表现相似，但底层对象、驱动机制或风险来源不同，应分别挂到各自更有边界的父主题，而不是创建一个统一的表现型 L0。\n- 如果只能说明“市场短期怎么动”，而不能说明“哪个稳定主题为什么被影响”，不要 create_new；应 attach_existing 到最接近的驱动主题，并用较低 weight 表示它只是相邻上下文。\n- 如果无法从当前 intent 提炼出稳定驱动主题，不要创建表现型泛化桶；应挂入最接近的已有父主题并说明弱相关原因。\n- 如果 action=attach_existing，community_id 必须引用 candidate_append_log 中真实存在的 candidate_base community_id。\n- 如果 action=create_new，community_id 必须引用 new_communities 中的 client_id，例如 new_1。\n- new_communities 只包含本次新建 community 的 client_id、title、scope。不要输出 level、title_quality、future_coverage、maintenance_hints、rejected_candidates 或 candidate_fit_judgements。\n- 输出必须符合 JSON Schema，不要 Markdown。",
+        "messages": "[]",
+        "prompt_text_preview": "{\n  \"candidate_append_log\": [\n    {\n      \"entry_type\": \"candidate_base\",\n      \"community_id\": \"kgc:financial:l0:1\",\n      \"title\": \"地缘政治与能源风险\",\n      \"scope\": \"承接地缘冲突、制裁、航运通道、油气供应、能源价格冲击及其对市场风险偏好的影响。\",\n      \"include_rules\": [\n        \"中东、俄乌、红海、霍尔木兹海峡等地缘冲突或通道风险。\",\n        \"制裁、反制裁、供应中断、油气运输受阻、能源价格冲击。\",\n        \"地缘事件对权益、债券、商品、外汇或风险偏好的传导。\"\n      ],\n      \"exclude_rules\": [\n        \"单纯公司业绩、常规能源项目投产，不归入本主题。\",\n        \"没有地缘或能源供应冲击含义的普通商品价格波动，不归入本主题。\"\n      ],\n      \"canonical_labels\": [\n        \"地缘风险\",\n        \"能源安全\",\n        \"油气供应\",\n        \"航运通道风险\",\n        \"制裁影响\"\n      ],\n      \"granularity_note\": \"这是 L0 长期风险主线；具体国家、海峡、制裁轮次和油气品种作为子方向进入。\",\n      \"absorbed_subtopics\": [\n        \"主权信用评级\",\n        \"外部地缘冲击\",\n        \"经济复苏与周期\",\n        \"地缘政治风险\",\n        \"有色金属供应链\",\n        \"地缘政治冲突与制裁\",\n        \"俄乌冲突国际援助\",\n        \"地缘政治\"\n      ],\n      \"maturity\": \"mature_topic\"\n    },\n    {\n      \"entry_type\": \"candidate_base\",\n      \"community_id\": \"kgc:financial:l0:2\",\n      \"title\": \"公司业绩与产业景气\",\n      \"scope\": \"承接上市公司业绩、订单、盈利能力、产能利用率、行业景气度和产业经营趋势。\",\n      \"include_rules\": [\n        \"财报、业绩预告、收入利润变化、订单和产能利用率。\",\n        \"行业景气上行或下行、库存周期、需求恢复或疲弱。\",\n        \"公司经营变化能反映产业趋势或交易认知变化。\"\n      ],\n      \"exclude_rules\": [\n        \"纯融资、上市、并购交易优先归入资本市场改革或并购相关新主题。\",\n        \"纯政策文件且没有经营结果，不归入本主题。\"\n      ],\n      \"canonical_labels\": [\n        \"公司业绩\",\n        \"行业景气\",\n        \"订单变化\",\n        \"盈利能力\",\n        \"经营趋势\"\n      ],\n      \"granularity_note\": \"这是 L0 经营基本面主线；单家公司和单个财报季作为子方向进入。\",\n      \"absorbed_subtopics\": [\n        \"半导体芯片国产替代\",\n        \"光模块产业链\",\n        \"AI算力基础设施\",\n        \"汽车市场销量预期\",\n        \"智能眼镜产业链\",\n        \"光学元件供应合作\",\n        \"券商信用风险\",\n        \"股权质押风险\"\n      ],\n      \"maturity\": \"mature_topic\"\n    },\n    {\n      \"entry_type\": \"candidate_base\",\n      \"community_id\": \"kgc:financial:l0:3\",\n      \"title\": \"AI算力链\",\n      \"scope\": \"承接 AI 芯片、算力硬件、光模块、服务器、数据中心、算电协同、AI 应用需求对硬件链条的拉动。\",\n      \"include_rules\": [\n        \"AI 芯片供需、算力基础设施、服务器、光模块、CPO、数据中心。\",\n        \"AI 应用扩张带来的算力需求、硬件瓶颈、产业链机会。\",\n        \"算电协同、绿电支撑数据中心、AI 基础设施资本开支。\"\n      ],\n      \"exclude_rules\": [\n        \"与算力链无关的泛 AI 软件、影视 IP、营销应用，不强行归入。\",\n        \"普通半导体政策或消费电子事件，只有无 AI 算力链含义时不归入。\"\n      ],\n      \"canonical_labels\": [\n        \"AI算力链\",\n        \"人工智能基础设施\",\n        \"AI芯片\",\n        \"光模块\",\n        \"数据中心\",\n        \"算电协同\"\n      ],\n      \"granularity_note\": \"这是 L0 科技基础设施主线；AI芯片、光模块、数据中心和算电协同作为子方向进入。\",\n      \"absorbed_subtopics\": [\n        \"人工智能产业投资\",\n        \"算力基础设施\",\n        \"企业资本支出战略\",\n        \"汽车行业智能化转型\",\n        \"太空产业链资本支出\",\n        \"GPU产业链需求\",\n        \"光模块技术迭代周期\",\n        \"人工智能投资主题\"\n      ],\n      \"maturity\": \"mature_topic\"\n    },\n    {\n      \"entry_type\": \"candidate_base\",\n      \"community_id\": \"kgc:financial:l0:439\",\n      \"title\": \"国际航空运输恢复\",\n      \"scope\": \"承接国际航线恢复、航班运力调整、民航市场需求变化、国际航空交通连通性、航空公司海外航线布局及其对出行、贸易与旅游的影响。\",\n      \"canonical_labels\": [\n        \"国际航空运输恢复\",\n        \"伊朗-中国交通连通性\",\n        \"航空业\",\n        \"交通出行\",\n        \"国际航线恢复\",\n        \"伊朗民航动态\",\n        \"中国外航恢复\",\n        \"伊朗马汉航空恢复伊朗至中国客运航线\",\n        \"伊朗-中国国际航线逐步恢复\",\n        \"航空公司航线恢复\"\n      ],\n      \"absorbed_subtopics\": [\n        \"国际航空运输恢复\",\n        \"伊朗-中国交通连通性\",\n        \"航空业\",\n        \"交通出行\",\n        \"国际航线恢复\",\n        \"伊朗民航动态\",\n        \"中国外航恢复\",\n        \"马汉航空恢复伊朗-中国客运航班\"\n      ],\n      \"maturity\": \"single_evidence\"\n    },\n    {\n      \"entry_type\": \"candidate_base\",\n      \"community_id\": \"kgc:financial:l0:444\",\n      \"title\": \"宏观经济运行\",\n      \"scope\": \"承接宏观经济总量指标、GDP、工业增加值、消费、投资、就业、价格指数等经济运行数据及其对市场预期、政策导向和资产定价的影响。\",\n      \"canonical_labels\": [\n        \"宏观经济运行\",\n        \"工业数据\",\n        \"GDP贡献\",\n        \"规模以上工业增加值\",\n        \"行业增长面\",\n        \"一季度工业经济稳中有进，全部工业对经济增长贡献近四成\",\n        \"工业经济韧性增长\",\n        \"中国经济复苏跟踪\",\n        \"区域经济发展\",\n        \"宏观经济复苏\"\n      ],\n      \"absorbed_subtopics\": [\n        \"宏观经济运行\",\n        \"区域经济发展\",\n        \"宏观经济复苏\",\n        \"工业数据\",\n        \"GDP贡献\",\n        \"地方经济\",\n        \"中国城市经济\",\n        \"规模以上工业增加值\"\n      ],\n      \"maturity\": \"multi_evidence\"\n    },\n    {\n      \"entry_type\": \"candidate_base\",\n      \"community_id\": \"kgc:financial:l0:451\",\n      \"title\": \"消费电子产业链\",\n      \"scope\": \"承接消费电子产品（手机、电脑、可穿戴、AR/VR等）的供应链投资、产能扩张、技术创新、元器件供需和产业格局变化。\",\n      \"canonical_labels\": [\n        \"消费电子产业链\",\n        \"电池产能投资\",\n        \"锂离子电芯制造\",\n        \"消费电子\",\n        \"新能源电池\",\n        \"产业投资\",\n        \"消费类软包锂离子电芯\",\n        \"电芯生产线建设\",\n        \"电池产能扩张\",\n        \"电池企业投资消费电芯业务\"\n      ],\n      \"absorbed_subtopics\": [\n        \"消费电子产业链\",\n        \"电池产能投资\",\n        \"锂离子电芯制造\",\n        \"消费电子\",\n        \"新能源电池\",\n        \"产业投资\",\n        \"消费类软包锂离子电芯\",\n        \"电芯生产线建设\"\n      ],\n      \"maturity\": \"single_evidence\"\n    },\n    {\n      \"entry_type\": \"candidate_base\",\n      \"community_id\": \"kgc:financial:l0:455\",\n      \"title\": \"证券市场投资工具\",\n      \"scope\": \"承接证券投资工具（ETF、指数基金、LOF、REITs、期权、期货、结构化产品等）的产品介绍、市场推广、投资者教育、产品创新、交易规则、费率结构、发行与审批动态，及其对投资者行为、资产配置和市场结构的影响。\",\n      \"canonical_labels\": [\n        \"证券市场投资工具\",\n        \"ETF基金\",\n        \"券商行业ETF\",\n        \"券商ETF投资工具推广\",\n        \"券商ETF投资工具\",\n        \"人工智能投资主题\",\n        \"算力产业链\",\n        \"AI应用\",\n        \"光模块/CPO\",\n        \"创业板人工智能ETF\"\n      ],\n      \"absorbed_subtopics\": [\n        \"人工智能投资主题\",\n        \"算力产业链\",\n        \"AI应用\",\n        \"证券市场投资工具\",\n        \"ETF基金\",\n        \"光模块/CPO\",\n        \"创业板人工智能ETF\",\n        \"算力龙头\"\n      ],\n      \"maturity\": \"multi_evidence\"\n    },\n    {\n      \"entry_type\": \"candidate_base\",\n      \"community_id\": \"kgc:financial:l0:456\",\n      \"title\": \"美国军事领导层变动\",\n      \"scope\": \"承接美国军事部门（国防部、各军种）高层人事任免、解职、内部冲突、战略分歧及其对国防政策、军事战略和地缘风险的影响。包括部长、副部长、高级将领等人事变动，以及相关国会听证、行政命令等。\",\n      \"canonical_labels\": [\n        \"美国军事领导层变动\",\n        \"五角大楼内部冲突\",\n        \"美国国防政策\",\n        \"特朗普政府军事战略\",\n        \"海军部长人事更迭\",\n        \"造船计划争议\",\n        \"美国海军部长因与五角大楼高层冲突被解职\",\n        \"美国海军部长解职与五角大楼冲突\",\n        \"美国军事人事变动\",\n        \"五角大楼高层更迭\"\n      ],\n      \"absorbed_subtopics\": [\n        \"美国军事领导层变动\",\n        \"五角大楼内部冲突\",\n        \"美国国防政策\",\n        \"特朗普政府军事战略\",\n        \"海军部长人事更迭\",\n        \"造船计划争议\",\n        \"黄金舰队计划\",\n        \"霍尔木兹海峡行动\"\n      ],\n      \"maturity\": \"single_evidence\"\n    },\n    {\n      \"entry_type\": \"candidate_base\",\n      \"community_id\": \"kgc:financial:l0:465\",\n      \"title\": \"汽车市场销量预期\",\n      \"scope\": \"承接主流车企在特定市场的销量目标、预期调整及其对产业链和市场竞争格局的影响。包括传统燃油车和新能源车企业的销量战略调整、市场展望变化。不包含纯公司业绩（归入公司业绩与产业景气）、纯技术进展（归入相应技术主题）或整车出口关税等贸易政策（归入政策监管与产业扶持）。\",\n      \"canonical_labels\": [\n        \"汽车市场销量预期\",\n        \"外资车企在华市场前景\",\n        \"大众中国市场策略调整\",\n        \"大众汽车下调2030年在华销量预期\",\n        \"大众下调2030年在华销量目标\",\n        \"大众汽车动态\"\n      ],\n      \"absorbed_subtopics\": [\n        \"汽车市场销量预期\",\n        \"外资车企在华市场前景\",\n        \"大众中国市场策略调整\"\n      ],\n      \"maturity\": \"single_evidence\"\n    },\n    {\n      \"entry_type\": \"candidate_base\",\n      \"community_id\": \"kgc:financial:l0:476\",\n      \"title\": \"关键矿产战略储备\",\n      \"scope\": \"承接各国关键矿产（锂、钴、稀土等）的战略储备政策、储备采购、清单调整、国防储备扩大等动态，及其对矿产价格、供应链安全、地缘竞争的影响。\",\n      \"canonical_labels\": [\n        \"关键矿产战略储备\",\n        \"锂资源战略政策\",\n        \"美国关键矿产政策\",\n        \"国防供应链安全\",\n        \"锂储备采购\",\n        \"国防储备扩大\",\n        \"美国国防部首次将锂纳入国家国防储备并大规模采购\",\n        \"美国锂战略收储启动\",\n        \"美国国防储备采购\"\n      ],\n      \"absorbed_subtopics\": [\n        \"关键矿产战略储备\",\n        \"锂资源战略政策\",\n        \"美国关键矿产政策\",\n        \"国防供应链安全\",\n        \"锂储备采购\",\n        \"国防储备扩大\",\n        \"DLA五年固定价格合同\",\n        \"3亿美元预算上限\"\n      ],\n      \"maturity\": \"single_evidence\"\n    },\n    {\n      \"community_id\": \"kgc:financial:l0:437\",\n      \"title\": \"法国经济景气度\",\n      \"scope\": \"承接法国及欧元区经济景气调查数据、信心指数、PMI、INSEE 报告，以及经济景气分化对欧元债券、外汇和风险资产的影响。\",\n      \"canonical_labels\": [\n        \"法国经济景气度\",\n        \"宏观经济\",\n        \"欧元区经济\",\n        \"商业信心\",\n        \"制造业信心\",\n        \"法国4月信心指数表现分化\",\n        \"法国经济景气分化\",\n        \"法国经济数据发布\"\n      ],\n      \"absorbed_subtopics\": [\n        \"法国经济景气度\",\n        \"宏观经济\",\n        \"欧元区经济\",\n        \"商业信心\",\n        \"制造业信心\",\n        \"INSEE商业信心指数94\"\n      ],\n      \"maturity\": \"single_evidence\",\n      \"entry_type\": \"candidate_base\"\n    },\n    {\n      \"community_id\": \"kgc:financial:l0:440\",\n      \"title\": \"国际财金合作\",\n      \"scope\": \"承接双边或多边财政金融合作对话、协议、援助、经济外交活动，及对资本市场的影响。\",\n      \"canonical_labels\": [\n        \"国际财金合作\",\n        \"双边外交关系\",\n   ...[truncated]",
+        "metadata": {
+          "task": "kg_community_assignment",
+          "raw_candidate_count": 12,
+          "deduped_candidate_count": 12,
+          "prompt_candidate_count": 17,
+          "duplicate_candidate_count": 0,
+          "prompt_candidate_id_sample": [
+            "kgc:financial:l0:1",
+            "kgc:financial:l0:2",
+            "kgc:financial:l0:3",
+            "kgc:financial:l0:439",
+            "kgc:financial:l0:444"
+          ],
+          "candidate_ledger": {
+            "redis_available": true,
+            "appended_base": 7,
+            "appended_update": 0,
+            "checkpointed": false,
+            "checkpoint_skipped_by_overlap": false,
+            "candidate_append_log_entries": 17,
+            "candidate_append_log_base_count": 17,
+            "candidate_append_log_update_count": 0,
+            "checkpoint_meta": {
+              "checkpoint_count": 2,
+              "last_checkpointed": false,
+              "last_checkpoint_skipped_by_overlap": false,
+              "last_base_count": 17,
+              "last_update_count": 0
+            }
+          }
+        },
+        "json_schema": "{\"type\": \"object\", \"properties\": {\"assignments\": {\"type\": \"array\", \"minItems\": 1, \"maxItems\": 5, \"items\": {\"type\": \"object\", \"properties\": {\"action\": {\"type\": \"string\", \"enum\": [\"attach_existing\", \"create_new\"]}, \"community_id\": {\"type\": \"string\"}, \"weight\": {\"type\": \"number\", \"minimum\": 0, \"maximum\": 1}, \"confidence\": {\"type\": \"number\", \"minimum\": 0, \"maximum\": 1}, \"fit_type\": {\"type\": \"string\", \"enum\": [\"adjacent_context\", \"broader_parent\", \"existing_direction\", \"new_parent_topic\", \"new_subtopic\"]}, \"reason\": {\"type\": \"string\"}}, \"required\": [\"action\", \"community_id\", \"weight\", \"confidence\", \"fit_type\", \"reason\"], \"additionalProperties\": false}}, \"new_communities\": {\"type\": \"array\", \"maxItems\": 5, \"items\": {\"type\": \"object\", \"properties\": {\"client_id\": {\"type\": \"string\"}, \"title\": {\"type\": \"string\"}, \"scope\": {\"type\": \"string\"}}, \"required\": [\"client_id\", \"title\", \"scope\"], \"additionalProperties\": false}}}, \"required\": [\"assignments\", \"new_communities\"], \"additionalProperties\": false}",
+        "response_format": {
+          "type": "json_object"
+        },
+        "use_cache": true
+      },
+      "output": {
+        "text": "{\"assignments\": [{\"action\": \"attach_existing\", \"community_id\": \"kgc:financial:l0:3\", \"weight\": 0.9, \"confidence\": 0.95, \"fit_type\": \"new_subtopic\", \"reason\": \"美光广岛扩建HBM工厂直指AI算力链核心存储环节，可作为AI算力链下新增子方向'HBM产能建设'。\"}], \"new_communities\": []}",
+        "structured_output": "{\"assignments\": [{\"action\": \"attach_existing\", \"community_id\": \"kgc:financial:l0:3\", \"weight\": 0.9, \"confidence\": 0.95, \"fit_type\": \"new_subtopic\", \"reason\": \"美光广岛扩建HBM工厂直指AI算力链核心存储环节，可作为AI算力链下新增子方向'HBM产能建设'。\"}], \"new_communities\": []}",
+        "usage": {
+          "input_tokens": 6403,
+          "output_tokens": 795,
+          "total_tokens": 7198,
+          "prompt_cache_hit_tokens": 2048,
+          "prompt_cache_miss_tokens": 4355,
+          "reasoning_tokens": 680
+        },
+        "duration_ms": 9692,
+        "cache_hit": false,
+        "proxy": {
+          "provider": "deepseek",
+          "requested_model": "deepseek-v4-flash",
+          "resolved_model": "deepseek-v4-flash",
+          "upstream_model": "deepseek-v4-flash",
+          "route_reason": "model_exact",
+          "retry_count": 0,
+          "upstream_retry_events": [],
+          "upstream_max_retries": 10,
+          "upstream_max_retry_delay_seconds": 60,
+          "json_mode_retry_attempted": false,
+          "json_mode_retry_success": false,
+          "json_mode_retry_error": null,
+          "json_mode_initial_finish_reason": "stop",
+          "json_mode_retry_finish_reason": null,
+          "json_mode_initial_usage": {
+            "input_tokens": 6403,
+            "output_tokens": 795,
+            "total_tokens": 7198,
+            "prompt_cache_hit_tokens": 2048,
+            "prompt_cache_miss_tokens": 4355,
+            "reasoning_tokens": 680
+          },
+          "json_mode_retry_usage": null,
+          "json_repair_attempted": false,
+          "json_repair_success": false,
+          "json_repair_error": null,
+          "json_repair_finish_reason": null,
+          "json_repair_usage": null
+        },
+        "provider_diagnostics": {
+          "finish_reason": "stop",
+          "json_mode_initial": {
+            "id": "466a22b5-9f41-4ab1-9284-00502648a92c",
+            "model": "deepseek-v4-flash",
+            "finish_reason": "stop",
+            "usage": {
+              "input_tokens": 6403,
+              "output_tokens": 795,
+              "total_tokens": 7198,
+              "prompt_cache_hit_tokens": 2048,
+              "prompt_cache_miss_tokens": 4355,
+              "reasoning_tokens": 680
+            },
+            "content_chars": 291,
+            "reasoning_chars": 1282,
+            "has_tool_calls": false
+          }
+        }
+      },
+      "metadata": {
+        "task": "kg_community_assignment",
+        "source_id": "-",
+        "source_type": "-",
+        "provider": "deepseek",
+        "model": "deepseek-v4-flash",
+        "backend": "deepseek",
+        "use_cache": true,
+        "has_json_schema": true,
+        "prompt_chars": 12693,
+        "tools_count": 0,
+        "has_tool_choice": false,
+        "cache_store": "miss",
+        "cache_hit": false,
+        "duration_ms": 9692,
+        "proxy": {
+          "provider": "deepseek",
+          "requested_model": "deepseek-v4-flash",
+          "resolved_model": "deepseek-v4-flash",
+          "upstream_model": "deepseek-v4-flash",
+          "route_reason": "model_exact",
+          "retry_count": 0,
+          "upstream_retry_events": [],
+          "upstream_max_retries": 10,
+          "upstream_max_retry_delay_seconds": 60,
+          "json_mode_retry_attempted": false,
+          "json_mode_retry_success": false,
+          "json_mode_retry_error": null,
+          "json_mode_initial_finish_reason": "stop",
+          "json_mode_retry_finish_reason": null,
+          "json_mode_initial_usage": {
+            "input_tokens": 6403,
+            "output_tokens": 795,
+            "total_tokens": 7198,
+            "prompt_cache_hit_tokens": 2048,
+            "prompt_cache_miss_tokens": 4355,
+            "reasoning_tokens": 680
+          },
+          "json_mode_retry_usage": null,
+          "json_repair_attempted": false,
+          "json_repair_success": false,
+          "json_repair_error": null,
+          "json_repair_finish_reason": null,
+          "json_repair_usage": null
+        },
+        "resourceAttributes": {
+          "telemetry.sdk.language": "python",
+          "telemetry.sdk.name": "opentelemetry",
+          "telemetry.sdk.version": "1.41.1",
+          "service.name": "unknown_service"
+        },
+        "scope": {
+          "name": "langfuse-sdk",
+          "version": "4.6.1",
+          "attributes": {
+            "public_key": "pk-lf-d52cf296-5725-45dc-a0f7-31202673d39f"
+          }
+        }
+      },
+      "model": "deepseek-v4-flash",
+      "modelParameters": {
+        "temperature": 0,
+        "max_tokens": 5000,
+        "response_format": "{\"type\":\"json_object\"}",
+        "json_schema": "true"
+      },
+      "completionStartTime": null,
+      "promptId": null,
+      "promptName": null,
+      "promptVersion": null,
+      "latency": 9.697,
+      "timeToFirstToken": null,
+      "usageDetails": {
+        "input_tokens": 6403,
+        "output_tokens": 795,
+        "total_tokens": 7198,
+        "prompt_cache_hit_tokens": 2048,
+        "prompt_cache_miss_tokens": 4355,
+        "total": 20799
+      },
+      "costDetails": {},
+      "usagePricingTierId": null,
+      "usagePricingTierName": null,
+      "inputPrice": 0,
+      "outputPrice": 0,
+      "totalPrice": 0,
+      "calculatedInputCost": null,
+      "calculatedOutputCost": null,
+      "calculatedTotalCost": 0,
+      "unit": "TOKENS",
+      "promptTokens": 6403,
+      "completionTokens": 795,
+      "totalTokens": 20799,
+      "modelId": null,
+      "usage": {
+        "unit": "TOKENS",
+        "input": 6403,
+        "output": 795,
+        "total": 20799
+      }
+    },
+    {
+      "id": "15c6b57fc8dffc0c",
+      "traceId": "1469da7f328cea2c8d5f6d273c8c096c",
+      "startTime": "2026-07-05T00:50:41.284Z",
+      "endTime": "2026-07-05T00:50:43.037Z",
+      "projectId": "cmp9tyu4x01efad08dq5ebuhg",
+      "parentObservationId": "8bebe4180fc10b5b",
+      "type": "SPAN",
+      "environment": "default",
+      "name": "kg.community_assignment.rerank_candidates",
+      "level": "DEFAULT",
+      "statusMessage": "completed",
+      "version": null,
+      "createdAt": "2026-07-05T00:50:46.753Z",
+      "updatedAt": "2026-07-05T00:50:46.754Z",
+      "input": {
+        "candidate_count": 50,
+        "top_n": 12,
+        "candidate_titles": [
+          "AI算力链",
+          "汽车行业智能化转型",
+          "机器人产业",
+          "人工智能产业投资",
+          "公司业绩与产业景气",
+          "太空产业链资本支出",
+          "消费电子产业链",
+          "外资并购国家安全审查",
+          "新能源出海",
+          "市场情绪与预期",
+          "智能眼镜产业链",
+          "汽车零部件产业链布局",
+          "政策监管与产业扶持",
+          "癌症早筛产业",
+          "证券市场投资工具",
+          "大宗商品供需冲击",
+          "AI产业商业化进展",
+          "关键矿产战略储备",
+          "美国移民政策",
+          "资本市场改革"
+        ]
+      },
+      "output": {
+        "raw_candidates": 50,
+        "reranked_candidates": 12,
+        "selected_candidates": 12,
+        "dropped_candidates": 38,
+        "top_candidates": [
+          {
+            "community_id": "kgc:financial:l0:457",
+            "title": "人工智能产业投资",
+            "origin": "emergent",
+            "retrieval_score": 0.0161,
+            "rerank_score": 0.036875
+          },
+          {
+            "community_id": "kgc:financial:l0:3",
+            "title": "AI算力链",
+            "origin": "seed",
+            "retrieval_score": 0.0323,
+            "rerank_score": 0.013619
+          },
+          {
+            "community_id": "kgc:financial:l0:471",
+            "title": "汽车行业智能化转型",
+            "origin": "emergent",
+            "retrieval_score": 0.0323,
+            "rerank_score": -0.055015
+          },
+          {
+            "community_id": "kgc:financial:l0:444",
+            "title": "宏观经济运行",
+            "origin": "emergent",
+            "retrieval_score": 0.0109,
+            "rerank_score": -0.085095
+          },
+          {
+            "community_id": "kgc:financial:l0:465",
+            "title": "汽车市场销量预期",
+            "origin": "emergent",
+            "retrieval_score": 0.0112,
+            "rerank_score": -0.088426
+          },
+          {
+            "community_id": "kgc:financial:l0:2",
+            "title": "公司业绩与产业景气",
+            "origin": "seed",
+            "retrieval_score": 0.0161,
+            "rerank_score": -0.089724
+          },
+          {
+            "community_id": "kgc:financial:l0:477",
+            "title": "自然灾害应急响应",
+            "origin": "emergent",
+            "retrieval_score": 0.0093,
+            "rerank_score": -0.090044
+          },
+          {
+            "community_id": "kgc:financial:l0:437",
+            "title": "法国经济景气度",
+            "origin": "emergent",
+            "retrieval_score": 0.0111,
+            "rerank_score": -0.094496
+          },
+          {
+            "community_id": "kgc:financial:l0:456",
+            "title": "美国军事领导层变动",
+            "origin": "emergent",
+            "retrieval_score": 0.0101,
+            "rerank_score": -0.108006
+          },
+          {
+            "community_id": "kgc:financial:l0:440",
+            "title": "国际财金合作",
+            "origin": "emergent",
+            "retrieval_score": 0.011,
+            "rerank_score": -0.112266
+          }
+        ]
+      },
+      "metadata": {
+        "resourceAttributes": {
+          "telemetry.sdk.language": "python",
+          "telemetry.sdk.name": "opentelemetry",
+          "telemetry.sdk.version": "1.41.1",
+          "service.name": "unknown_service"
+        },
+        "scope": {
+          "name": "langfuse-sdk",
+          "version": "4.6.1",
+          "attributes": {
+            "public_key": "pk-lf-d52cf296-5725-45dc-a0f7-31202673d39f"
+          }
+        }
+      },
+      "model": null,
+      "modelParameters": null,
+      "completionStartTime": null,
+      "promptId": null,
+      "promptName": null,
+      "promptVersion": null,
+      "latency": 1.753,
+      "timeToFirstToken": null,
+      "usageDetails": {},
+      "costDetails": {},
+      "usagePricingTierId": null,
+      "usagePricingTierName": null,
+      "inputPrice": 0,
+      "outputPrice": 0,
+      "totalPrice": 0,
+      "calculatedInputCost": null,
+      "calculatedOutputCost": null,
+      "calculatedTotalCost": 0,
+      "unit": "TOKENS",
+      "promptTokens": 0,
+      "completionTokens": 0,
+      "totalTokens": 0,
+      "modelId": null,
+      "usage": {
+        "unit": "TOKENS",
+        "input": 0,
+        "output": 0,
+        "total": 0
+      }
+    },
+    {
+      "id": "1f4f590cd12a9851",
+      "traceId": "1469da7f328cea2c8d5f6d273c8c096c",
+      "startTime": "2026-07-05T00:50:37.591Z",
+      "endTime": "2026-07-05T00:50:37.852Z",
+      "projectId": "cmp9tyu4x01efad08dq5ebuhg",
+      "parentObservationId": "989ed825aafff6e5",
+      "type": "SPAN",
+      "environment": "default",
+      "name": "embedding.http_request",
+      "level": "DEFAULT",
+      "statusMessage": null,
+      "version": null,
+      "createdAt": "2026-07-05T00:50:41.820Z",
+      "updatedAt": "2026-07-05T00:50:41.821Z",
+      "input": {
+        "count": 1,
+        "samples": [
+          "Document Type: Cognitive Card\nCognitive Card: kg_cognitive_card:a18d4f62191b7886\nTitle: 【美光科技93亿美元扩建广岛项目动工 预计2028下半年出货HBM】美光科技当地时间周六（7月4日）正式启动其位于日本西部广岛工厂的扩建工程。这项总投资达1.5\nSource: news_articles:ft_news:96177\nEvidence: kg_ev:financial:news_articles:ft_news:96177:767ce212ba3d769d\nPrimary Chunk: kg_chunk:kg_ev:financial:news_articles:ft_news:96177:767ce212ba3d769d:0\nSummary: 美光科技启动广岛工厂扩建，投资93亿美元生产HBM，预计2028年出货，以满足AI需求。\nTitle Candidates: 美光广岛扩建HBM工厂；美光93亿美元HBM扩产；日本半导体投资再添HBM产能；AI存储芯片产能扩张\nTopic Intents: 美光科技广岛扩建HBM项目动工 | parent=半导体制造、AI芯片需求 | broad=存储芯片扩产、日本半导体投资 | mid=HBM产能建设、美光战略扩张 | specific=广岛工厂扩建、93亿美元投资、2028年出货 | driver=AI需求增长、日本补贴政策 | impact=美光科技、HBM、英伟达、存储芯片行业 | risk=产能建设风险、补贴依赖 | event_thread=美光产能扩张 | actors=美光科技、日本经济产业省、Sanjay Mehrotra | 美光科技启动广岛工厂扩建，投资93亿美元生产HBM，预计2028年出货，以满足AI需求。\nImpact Signals: [{\"confidence\": 0.8, \"importance\": 0.7, \"local_impact_direction\": \"positive\", \"local_impact_mechanism_text\": \"通过扩大HBM产能，为英伟达AI处理器提供关键组件，增强日本半导体制造能力\", \"local_impact_mentions\": \"美光扩建广岛工厂生产HBM...[truncated]"
+        ]
+      },
+      "output": {
+        "status_code": 200,
+        "latency_s": 0.26,
+        "attempt": 1,
+        "attempts": [
+          {
+            "attempt": 1,
+            "status_code": 200,
+            "latency_s": 0.26
+          }
+        ],
+        "retries": 0
+      },
+      "metadata": {
+        "endpoint": "http://119.23.227.187:8901/v1/embeddings",
+        "model": "/models/Qwen3-Embedding-4B",
+        "dim": 2560,
+        "batch_size": 1,
+        "request_dimensions": false,
+        "timeout_s": 180,
+        "max_retries": 5,
+        "retry_base_delay_s": 1,
+        "retry_max_delay_s": 30,
+        "status_code": 200,
+        "latency_s": 0.2600233554840088,
+        "attempt": 1,
+        "attempts": [
+          {
+            "attempt": 1,
+            "status_code": 200,
+            "latency_s": 0.26
+          }
+        ],
+        "retries": 0,
+        "resourceAttributes": {
+          "telemetry.sdk.language": "python",
+          "telemetry.sdk.name": "opentelemetry",
+          "telemetry.sdk.version": "1.41.1",
+          "service.name": "unknown_service"
+        },
+        "scope": {
+          "name": "langfuse-sdk",
+          "version": "4.6.1",
+          "attributes": {
+            "public_key": "pk-lf-d52cf296-5725-45dc-a0f7-31202673d39f"
+          }
+        }
+      },
+      "model": null,
+      "modelParameters": null,
+      "completionStartTime": null,
+      "promptId": null,
+      "promptName": null,
+      "promptVersion": null,
+      "latency": 0.261,
+      "timeToFirstToken": null,
+      "usageDetails": {},
+      "costDetails": {},
+      "usagePricingTierId": null,
+      "usagePricingTierName": null,
+      "inputPrice": 0,
+      "outputPrice": 0,
+      "totalPrice": 0,
+      "calculatedInputCost": null,
+      "calculatedOutputCost": null,
+      "calculatedTotalCost": 0,
+      "unit": "TOKENS",
+      "promptTokens": 0,
+      "completionTokens": 0,
+      "totalTokens": 0,
+      "modelId": null,
+      "usage": {
+        "unit": "TOKENS",
+        "input": 0,
+        "output": 0,
+        "total": 0
+      }
+    },
+    {
+      "id": "228983b2f248ae6e",
+      "traceId": "1469da7f328cea2c8d5f6d273c8c096c",
+      "startTime": "2026-07-05T00:50:40.818Z",
+      "endTime": "2026-07-05T00:50:40.979Z",
+      "projectId": "cmp9tyu4x01efad08dq5ebuhg",
+      "parentObservationId": "6fadd17cd3e15f6a",
+      "type": "SPAN",
+      "environment": "default",
+      "name": "embedding.http_request",
+      "level": "DEFAULT",
+      "statusMessage": null,
+      "version": null,
+      "createdAt": "2026-07-05T00:50:41.820Z",
+      "updatedAt": "2026-07-05T00:50:41.821Z",
+      "input": {
+        "count": 5,
+        "samples": [
+          "半导体制造 AI芯片需求 存储芯片扩产 日本半导体投资 美光广岛扩建HBM工厂 美光科技广岛扩建HBM项目动工",
+          "半导体制造 AI芯片需求 HBM产能建设 美光战略扩张 广岛工厂扩建 93亿美元投资 2028年出货 美光科技启动广岛工厂扩建，投资93亿美元生产HBM，预计2028年出货，以满足AI需求。",
+          "美光产能扩张 启动扩建 获取补贴 AI需求增长 日本补贴政策 美光科技 日本经济产业省 Sanjay Mehrotra"
+        ]
+      },
+      "output": {
+        "status_code": 200,
+        "latency_s": 0.1566,
+        "attempt": 1,
+        "attempts": [
+          {
+            "attempt": 1,
+            "status_code": 200,
+            "latency_s": 0.1566
+          }
+        ],
+        "retries": 0
+      },
+      "metadata": {
+        "endpoint": "http://119.23.227.187:8901/v1/embeddings",
+        "model": "/models/Qwen3-Embedding-4B",
+        "dim": 2560,
+        "batch_size": 5,
+        "request_dimensions": false,
+        "timeout_s": 180,
+        "max_retries": 5,
+        "retry_base_delay_s": 1,
+        "retry_max_delay_s": 30,
+        "status_code": 200,
+        "latency_s": 0.15660834312438965,
+        "attempt": 1,
+        "attempts": [
+          {
+            "attempt": 1,
+            "status_code": 200,
+            "latency_s": 0.1566
+          }
+        ],
+        "retries": 0,
+        "resourceAttributes": {
+          "telemetry.sdk.language": "python",
+          "telemetry.sdk.name": "opentelemetry",
+          "telemetry.sdk.version": "1.41.1",
+          "service.name": "unknown_service"
+        },
+        "scope": {
+          "name": "langfuse-sdk",
+          "version": "4.6.1",
+          "attributes": {
+            "public_key": "pk-lf-d52cf296-5725-45dc-a0f7-31202673d39f"
+          }
+        }
+      },
+      "model": null,
+      "modelParameters": null,
+      "completionStartTime": null,
+      "promptId": null,
+      "promptName": null,
+      "promptVersion": null,
+      "latency": 0.161,
+      "timeToFirstToken": null,
+      "usageDetails": {},
+      "costDetails": {},
+      "usagePricingTierId": null,
+      "usagePricingTierName": null,
+      "inputPrice": 0,
+      "outputPrice": 0,
+      "totalPrice": 0,
+      "calculatedInputCost": null,
+      "calculatedOutputCost": null,
+      "calculatedTotalCost": 0,
+      "unit": "TOKENS",
+      "promptTokens": 0,
+      "completionTokens": 0,
+      "totalTokens": 0,
+      "modelId": null,
+      "usage": {
+        "unit": "TOKENS",
+        "input": 0,
+        "output": 0,
+        "total": 0
+      }
+    },
+    {
+      "id": "256495e544702b30",
+      "traceId": "1469da7f328cea2c8d5f6d273c8c096c",
+      "startTime": "2026-07-05T00:50:21.850Z",
+      "endTime": "2026-07-05T00:50:22.018Z",
+      "projectId": "cmp9tyu4x01efad08dq5ebuhg",
+      "parentObservationId": "64f8a270065ee897",
+      "type": "SPAN",
+      "environment": "default",
+      "name": "embedding.http_request",
+      "level": "DEFAULT",
+      "statusMessage": null,
+      "version": null,
+      "createdAt": "2026-07-05T00:50:24.669Z",
+      "updatedAt": "2026-07-05T00:50:24.670Z",
+      "input": {
+        "count": 1,
+        "samples": [
+          "Document Type: Evidence Chunk\nTitle: 【美光科技93亿美元扩建广岛项目动工 预计2028下半年出货HBM】美光科技当地时间周六（7月4日）正式启动其位于日本西部广岛工厂的扩建工程。这项总投资达1.5\nSummary: \nEvidence: kg_ev:financial:news_articles:ft_news:96177:767ce212ba3d769d\nSource: news_articles:ft_news:96177\nSource Name: 雪球\nEvidence Text: 【美光科技93亿美元扩建广岛项目动工 预计2028下半年出货HBM】美光科技当地时间周六（7月4日）正式启动其位于日本西部广岛工厂的扩建工程。这项总投资达1.5\n【美光科技93亿美元扩建广岛项目动工 预计2028下半年出货HBM】美光科技当地时间周六（7月4日）正式启动其位于日本西部广岛工厂的扩建工程。这项总投资达1.5万亿日元（约合93亿美元）的项目，旨在生产包括高带宽存储器（HBM）在内的先进存储芯片，以满足人工智能（AI）浪潮带来的旺盛需求。HBM是英伟达AI处理器的关键组件，工厂预计将于2028年夏季左右开始出货。为支持该项目的建设，日本经济产业省\n【美光科技93亿美元扩建广岛项目动工 预计2028下半年出货HBM】美光科技当地时间周六（7月4日）正式启动其位于日本西部广岛工厂的扩建工程。这项总投资达1.5万亿日元（约合93亿美元）的项目，旨在生产包括高带宽存储器（HBM）在内的先进存储芯片，以满足人工智能（AI）浪潮带来的旺盛需求。HBM是英伟达AI处理器的关键组件，工厂预计将于2028年夏季左右开始出货。为支持该项目的建设，日本经济产业省已承诺提供最高5000亿日元的补贴。美光科技首席执行官Sanjay Mehrotra在奠基仪式上表示，“美光首批用于人工智能核心存储技术——HBM的生产晶圆，就是在广岛制造的。”"
+        ]
+      },
+      "output": {
+        "status_code": 200,
+        "latency_s": 0.166,
+        "attempt": 1,
+        "attempts": [
+          {
+            "attempt": 1,
+            "status_code": 200,
+            "latency_s": 0.166
+          }
+        ],
+        "retries": 0
+      },
+      "metadata": {
+        "endpoint": "http://119.23.227.187:8901/v1/embeddings",
+        "model": "/models/Qwen3-Embedding-4B",
+        "dim": 2560,
+        "batch_size": 1,
+        "request_dimensions": false,
+        "timeout_s": 180,
+        "max_retries": 5,
+        "retry_base_delay_s": 1,
+        "retry_max_delay_s": 30,
+        "status_code": 200,
+        "latency_s": 0.16599798202514648,
+        "attempt": 1,
+        "attempts": [
+          {
+            "attempt": 1,
+            "status_code": 200,
+            "latency_s": 0.166
+          }
+        ],
+        "retries": 0,
+        "resourceAttributes": {
+          "telemetry.sdk.language": "python",
+          "telemetry.sdk.name": "opentelemetry",
+          "telemetry.sdk.version": "1.41.1",
+          "service.name": "unknown_service"
+        },
+        "scope": {
+          "name": "langfuse-sdk",
+          "version": "4.6.1",
+          "attributes": {
+            "public_key": "pk-lf-d52cf296-5725-45dc-a0f7-31202673d39f"
+          }
+        }
+      },
+      "model": null,
+      "modelParameters": null,
+      "completionStartTime": null,
+      "promptId": null,
+      "promptName": null,
+      "promptVersion": null,
+      "latency": 0.168,
+      "timeToFirstToken": null,
+      "usageDetails": {},
+      "costDetails": {},
+      "usagePricingTierId": null,
+      "usagePricingTierName": null,
+      "inputPrice": 0,
+      "outputPrice": 0,
+      "totalPrice": 0,
+      "calculatedInputCost": null,
+      "calculatedOutputCost": null,
+      "calculatedTotalCost": 0,
+      "unit": "TOKENS",
+      "promptTokens": 0,
+      "completionTokens": 0,
+      "totalTokens": 0,
+      "modelId": null,
+      "usage": {
+        "unit": "TOKENS",
+        "input": 0,
+        "output": 0,
+        "total": 0
+      }
+    },
+    {
+      "id": "36dc6454f95fd510",
+      "traceId": "1469da7f328cea2c8d5f6d273c8c096c",
+      "startTime": "2026-07-05T00:50:41.285Z",
+      "endTime": "2026-07-05T00:50:43.035Z",
+      "projectId": "cmp9tyu4x01efad08dq5ebuhg",
+      "parentObservationId": "15c6b57fc8dffc0c",
+      "type": "SPAN",
+      "environment": "default",
+      "name": "reranker.http_request",
+      "level": "DEFAULT",
+      "statusMessage": "completed",
+      "version": null,
+      "createdAt": "2026-07-05T00:50:46.753Z",
+      "updatedAt": "2026-07-05T00:50:46.754Z",
+      "input": {
+        "query": "半导体制造 AI芯片需求 存储芯片扩产 日本半导体投资 美光广岛扩建HBM工厂 美光科技广岛扩建HBM项目动工\n半导体制造 AI芯片需求 HBM产能建设 美光战略扩张 广岛工厂扩建 93亿美元投资 2028年出货 美光科技启动广岛工厂扩建，投资93亿美元生产HBM，预计2028年出货，以满足AI需求。\n美光产能扩张 启动扩建 获取补贴 AI需求增长 日本补贴政策 美光科技 日本经济产业省 Sanjay Mehrotra\n美光科技 HBM 英伟达 存储芯片行业 产能建设风险 补贴依赖 positive 半导体制造 AI芯片需求\n半导体制造 AI芯片需求 存储芯片扩产 日本半导体投资 美光广岛扩建HBM工厂 美光科技广岛扩建HBM项目动工 HBM产能建设 美光战略扩张 广岛工厂扩建 93亿美元投资 2028年出货 美光科技启动广岛工厂扩建，投资93亿美元生产HBM，预计2028年出货，以满足AI需求。 美光产能扩张 启动扩建 获取补贴 AI需求增长 日本补贴政策 美光科技 日本经济产业省 Sanjay Mehrotra HBM 英伟达 存储芯片行业 产能建设风险 补贴依赖 positive",
+        "documents": [
+          "title: AI算力链\norigin: seed\nscope: 承接 AI 芯片、算力硬件、光模块、服务器、数据中心、算电协同、AI 应用需求对硬件链条的拉动。\ncanonical_labels: AI算力链；人工智能基础设施；AI芯片；光模块；数据中心；算电协同；主题ETF产品；AI产业链投资；算力基础设施；人工智能产业；光模块产业链；AI算力基础设施；光通信产业；产业投资；科技金融；AI芯片供应链\ncoverage: 可承接父主题：AI算力链、人工智能产业投资、算力基础设施、企业资本支出战略、汽车行业智能化转型、太空产业链资本支出；可吸收子方向：人工智能ETF、光模块产业链、AI基础设施投资、自动驾驶技术、人形机器人、半导体制造、SpaceX资本计划、GPU制造投资、光通信、算力基础设施、ETF基金、光模块/CPO；当前具体线索：创业板人工智能ETF华宝、易中天光模块龙头、中际旭创、250亿美元资本支出、六座新建扩建工厂、奥斯汀研究级半导体工厂、AI基础设施支持无人驾驶出租车、擎天柱机器人、SpaceX警告资本支出、GPU制造支出\nparent_themes: 人工智能产业投资；算力基础设施；企业资本支出战略；汽车行业智能化转型；太空产业链资本支出；GPU产业链需求；光模块技术迭代周期；人工智能投资主题\nbroad_topics: 人工智能ETF；光模块产业链；AI基础设施投资；自动驾驶技术；人形机器人；半导体制造；SpaceX资本计划；GPU制造投资\nmid_topics: 创业板人工智能指数；光模块CPO；特斯拉资本支出规划；无人驾驶出租车部署；擎天柱项目；图形处理器制造支出；太空企业资本开支；CPO技术；光模块龙头；创业板人工智能ETF\nfuture_coverage: AI算力链；人工智能基础设施；AI芯片；光模块；数据中心；算电协同；光模块/CPO技术迭代；AI算力需求；光模块CPO；AI应用；高速光模块(800G/1.6T)；光模块龙头业绩增长\ninclude_rules: AI 芯片供需、算力基础设施、服务器、光模块、CPO、数据中心。；AI 应用扩张带来的算力需求、硬件瓶颈、产业链机会。；算电协同、绿电支撑数据中心、AI 基础设施资本开支。\nexclude_rules: 与算力链无关的泛 AI 软件、影视 IP、营销应用，不强行归入。；普通半导体政策或消费电子事件，只有无 AI 算力链含义时不归入。\ngranularity_note: 这是 L0 科技基础设施主线；AI芯片、光模块、数据中心和算电协同作为子方向进入。\nrecent_examples: 算电协同；人工智能基础设施；数据中心",
+          "title: 汽车行业智能化转型\norigin: emergent\nscope: 承接汽车制造商在AI、自动驾驶、机器人、半导体制造等智能化方向的资本支出、技术投资、工厂建设、战略规划等事件，涵盖企业层面的智能化转型投资动态。不包括传统汽车制造、销量预期、纯公司业绩或非智能化相关投资。\ncanonical_labels: 汽车行业智能化转型；企业资本支出战略；AI基础设施投资；自动驾驶技术；人形机器人；半导体制造；特斯拉资本支出规划；无人驾驶出租车部署；擎天柱项目；汽车制造商大规模投资AI与机器人；特斯拉AI与机器人投资计划；特斯拉资本支出公告\ncoverage: 可承接父主题：汽车行业智能化转型、企业资本支出战略；可吸收子方向：AI基础设施投资、自动驾驶技术、人形机器人、半导体制造、特斯拉资本支出规划、无人驾驶出租车部署、擎天柱项目、企业资本支出战略、汽车行业智能化转型；当前具体线索：250亿美元资本支出、六座新建扩建工厂、奥斯汀研究级半导体工厂、AI基础设施支持无人驾驶出租车、擎天柱机器人\nparent_themes: 企业资本支出战略；汽车行业智能化转型\nbroad_topics: AI基础设施投资；自动驾驶技术；人形机器人；半导体制造\nmid_topics: 特斯拉资本支出规划；无人驾驶出租车部署；擎天柱项目\nfuture_coverage: 企业资本支出战略；汽车行业智能化转型；AI基础设施投资；自动驾驶技术；人形机器人；半导体制造；特斯拉资本支出规划；无人驾驶出租车部署；擎天柱项目\nrecent_examples: AI基础设施投资",
+          "title: 机器人产业\norigin: emergent\nscope: 承接机器人产业产值、技术进展、区域发展、政策扶持、产业链动态、公司经营及市场认知变化。涵盖工业机器人、服务机器人、特种机器人等子方向。\ncanonical_labels: 机器人产业；区域产业经济；机器人产业化；企业战略扩张；人形机器人产业化；智能机器人发展；企业资本支出战略；汽车行业智能化转型；深圳经济；智能制造；人形机器人；汽车企业跨界；AI基础设施投资；自动驾驶技术；半导体制造；深圳机器人产业\ncoverage: 可承接父主题：机器人产业、企业资本支出战略、汽车行业智能化转型、工业机器人产业、自动化设备需求、智能制造装备；可吸收子方向：AI基础设施投资、自动驾驶技术、人形机器人、半导体制造、自动化系统集成、工业机器人、数控机床、深圳经济、智能制造、汽车企业跨界、机器人产业、中国制造业出口；当前具体线索：250亿美元资本支出、六座新建扩建工厂、奥斯汀研究级半导体工厂、AI基础设施支持无人驾驶出租车、擎天柱机器人、拓斯达2026Q1营收5.38亿元、净利润4808万元同比增1147%、机器人业务增81.2%、数控机床增62.5%、注塑增12.2%\nparent_themes: 企业资本支出战略；汽车行业智能化转型；工业机器人产业；自动化设备需求；智能制造装备；区域产业经济；机器人产业；机器人产业化\nbroad_topics: AI基础设施投资；自动驾驶技术；人形机器人；半导体制造；自动化系统集成；工业机器人；数控机床；深圳经济\nmid_topics: 特斯拉资本支出规划；无人驾驶出租车部署；擎天柱项目；拓斯达财报；工业机器人业务；数控机床业务；注塑业务；深圳机器人产业；小鹏机器人量产；合作伙伴扩张\nfuture_coverage: 区域产业经济；机器人产业；深圳经济；智能制造；深圳机器人产业；机器人产业化；企业战略扩张；人形机器人产业化；智能机器人发展；企业资本支出战略；汽车行业智能化转型；人形机器人\nrecent_examples: 人形机器人；人形机器人；机器人产业",
+          "title: 人工智能产业投资\norigin: emergent\nscope: 承接人工智能产业的投资工具（ETF、指数）、资本配置、产业融资、风险投资及AI主题基金动态，涵盖AI应用、算力、芯片等子领域的投资方向。\ncanonical_labels: 人工智能产业投资；算力基础设施；芯片供应链；AI基础设施投资；科技巨头垂直整合；太空产业链资本支出；GPU产业链需求；人工智能ETF；光模块产业链；半导体行业；AI芯片制造；SpaceX资本计划；GPU制造投资；创业板人工智能指数；光模块CPO；自建芯片工厂\ncoverage: 可承接父主题：人工智能产业投资、芯片供应链、AI基础设施投资、科技巨头垂直整合、太空产业链资本支出、GPU产业链需求；可吸收子方向：半导体行业、AI芯片制造、SpaceX资本计划、GPU制造投资、ETF基金、光模块/CPO、AI应用、人工智能ETF、光模块产业链、自建芯片工厂、芯片产能扩张、图形处理器制造支出；当前具体线索：特斯拉Terafab项目、马斯克预测芯片短缺、逻辑芯片与存储芯片瓶颈、SpaceX警告资本支出、GPU制造支出、创业板人工智能ETF华宝(159363)、场外联接A类023407、场外联接C类023408、创业板人工智能ETF华宝、易中天光模块龙头\nparent_themes: 芯片供应链；AI基础设施投资；科技巨头垂直整合；太空产业链资本支出；GPU产业链需求；人工智能投资主题；算力产业链；AI应用\nbroad_topics: 半导体行业；AI芯片制造；SpaceX资本计划；GPU制造投资；ETF基金；光模块/CPO；AI应用；人工智能ETF\nmid_topics: 自建芯片工厂；芯片产能扩张；图形处理器制造支出；太空企业资本开支；创业板人工智能ETF；算力龙头；创业板人工智能指数；光模块CPO\nfuture_coverage: 人工智能产业投资；算力基础设施；人工智能ETF；光模块产业链；创业板人工智能指数；光模块CPO；芯片供应链；AI基础设施投资；科技巨头垂直整合；太空产业链资本支出；GPU产业链需求；半导体行业\nrecent_examples: SpaceX资本计划；ETF基金；人工智能ETF",
+          "title: 公司业绩与产业景气\norigin: seed\nscope: 承接上市公司业绩、订单、盈利能力、产能利用率、行业景气度和产业经营趋势。\ncanonical_labels: 公司业绩与产业景气；公司业绩；行业景气；订单变化；盈利能力；经营趋势；券商行业业绩；金融机构业务分析；券商风险事件；券商自营业务；券商风险出清；资产减值与业绩修复；新能源上游材料；生物科技财务分析；企业IPO风险审查；研发投入与盈利\ncoverage: 可承接父主题：公司业绩与产业景气、半导体芯片国产替代、光模块产业链、AI算力基础设施、汽车市场销量预期、智能眼镜产业链；可吸收子方向：半导体行业、光通信行业、AI硬件、外资车企在华市场前景、消费电子产业链、增强现实（AR）、券商自营业务、股票质押业务、铜产业链、原材料短缺、新兴需求驱动、全球电信市场；当前具体线索：国民技术N32H493芯片、国民技术产品涨价15%-20%、2030年销量目标从400万辆下调至320万辆、康耐特光学与头部企业合作、核心镜片供应商、AR智能眼镜量产、国海证券股质纠纷23项、金融投资规模四倍差、3月中国对智利硫酸出口降至零、全球铜精矿加工费持续走低\nparent_themes: 半导体芯片国产替代；光模块产业链；AI算力基础设施；汽车市场销量预期；智能眼镜产业链；光学元件供应合作；券商信用风险；股权质押风险\nbroad_topics: 半导体行业；光通信行业；AI硬件；外资车企在华市场前景；消费电子产业链；增强现实（AR）；券商自营业务；股票质押业务\nmid_topics: 高速光模块芯片；芯片价格调整；国产芯片进展；大众中国市场策略调整；AR智能眼镜；镜片供应；国海证券被动缩表；自营业务增速断崖；智利铜矿产量；铜精矿加工费\nfuture_coverage: 公司业绩；行业景气；订单变化；盈利能力；经营趋势；自营规模驱动；中小券商表现；国海证券自营业务下滑原因；股票质押式回购业务暴雷后果；券商资产减值；股质业务诉讼；ROE排名变化\ninclude_rules: 财报、业绩预告、收入利润变化、订单和产能利用率。；行业景气上行或下行、库存周期、需求恢复或疲弱。；公司经营变化能反映产业趋势或交易认知变化。\nexclude_rules: 纯融资、上市、并购交易优先归入资本市场改革或并购相关新主题。；纯政策文件且没有经营结果，不归入本主题。\ngranularity_note: 这是 L0 经营基本面主线；单家公司和单个财报季作为子方向进入。\nrecent_examples: 标普500季度财报；数据中心；半导体材料",
+          "title: 太空产业链资本支出\norigin: emergent\nscope: 承接太空企业（如SpaceX、蓝色起源等）的资本开支、投资计划、产能建设、基础设施投资等动态，及其对产业链和市场需求的影响。包括与太空产业相关的半导体或GPU制造投资。\ncanonical_labels: 太空产业链资本支出；GPU产业链需求；SpaceX资本计划；GPU制造投资；图形处理器制造支出；太空企业资本开支；SpaceX巨额资本支出预警；SpaceX资本开支事件\ncoverage: 可承接父主题：太空产业链资本支出、GPU产业链需求；可吸收子方向：SpaceX资本计划、GPU制造投资、图形处理器制造支出、太空企业资本开支、太空产业链资本支出、GPU产业链需求；当前具体线索：SpaceX警告资本支出、GPU制造支出\nparent_themes: 太空产业链资本支出；GPU产业链需求\nbroad_topics: SpaceX资本计划；GPU制造投资\nmid_topics: 图形处理器制造支出；太空企业资本开支\nfuture_coverage: 太空产业链资本支出；GPU产业链需求；SpaceX资本计划；GPU制造投资；图形处理器制造支出；太空企业资本开支\nrecent_examples: SpaceX资本计划",
+          "title: 消费电子产业链\norigin: emergent\nscope: 承接消费电子产品（手机、电脑、可穿戴、AR/VR等）的供应链投资、产能扩张、技术创新、元器件供需和产业格局变化。\ncanonical_labels: 消费电子产业链；电池产能投资；锂离子电芯制造；消费电子；新能源电池；产业投资；消费类软包锂离子电芯；电芯生产线建设；电池产能扩张；电池企业投资消费电芯业务；消费类锂离子电芯产能扩张；德赛电池产能扩张\ncoverage: 可承接父主题：消费电子产业链、电池产能投资、锂离子电芯制造；可吸收子方向：消费电子、新能源电池、产业投资、消费类软包锂离子电芯、电芯生产线建设、电池产能扩张、消费电子产业链、电池产能投资、锂离子电芯制造；当前具体线索：德赛电池25亿消费电芯项目、年产2亿只软包电芯、第一期6000万只产能、惠州德赛电池\nparent_themes: 消费电子产业链；电池产能投资；锂离子电芯制造\nbroad_topics: 消费电子；新能源电池；产业投资\nmid_topics: 消费类软包锂离子电芯；电芯生产线建设；电池产能扩张\nfuture_coverage: 消费电子产业链；电池产能投资；锂离子电芯制造；消费电子；新能源电池；产业投资；消费类软包锂离子电芯；电芯生产线建设；电池产能扩张\nrecent_examples: 消费电子",
+          "title: 外资并购国家安全审查\norigin: emergent\nscope: 承接各国政府以国家安全为由对外资并购、技术投资、产业收购进行审查、限制或阻止的事件，以及相关产业保护、技术保护政策及其对资本市场和地缘政治的影响。\ncanonical_labels: 外资并购国家安全审查；国家安全与产业保护；日本外资审查政策；高端机床产业；日本对韩投资审查；牧野铣床收购案；日本政府以国家安全为由阻止韩国资本收购本国机床企业；日韩产业投资摩擦\ncoverage: 可承接父主题：外资并购国家安全审查、国家安全与产业保护；可吸收子方向：日本外资审查政策、高端机床产业、日本对韩投资审查、牧野铣床收购案、外资并购国家安全审查、国家安全与产业保护；当前具体线索：日本政府要求MBK Partners取消收购牧野铣床、国家安全担忧为由拒收购\nparent_themes: 外资并购国家安全审查；国家安全与产业保护\nbroad_topics: 日本外资审查政策；高端机床产业\nmid_topics: 日本对韩投资审查；牧野铣床收购案\nfuture_coverage: 外资并购国家安全审查；国家安全与产业保护；日本外资审查政策；高端机床产业；日本对韩投资审查；牧野铣床收购案\nrecent_examples: 日本外资审查政策",
+          "title: 新能源出海\norigin: seed\nscope: 承接新能源企业海外产能、储能、电池、光伏、绿电、海外建厂、贸易壁垒和区域产业合作。\ncanonical_labels: 新能源出海；储能出海；海外产能；光伏出海；电池供应链；中国新能源产业链出海；全球储能产能布局；储能行业；海外投资；储能电池制造出海；欧洲储能市场；中国储能企业海外产能扩张；中国储能产业链国际化进程；中国储能企业海外建厂；储能产业链；中国企业海外投资\ncoverage: 可承接父主题：新能源出海、储能电池海外投资、新能源产业出海；可吸收子方向：储能电池、欧洲市场、西班牙储能项目、合资企业模式、新能源出海、储能出海、海外产能、光伏出海、电池供应链、储能电池制造出海、欧洲储能市场、海辰储能西班牙工厂；当前具体线索：厦门海辰储能、纳瓦拉自治区、4亿欧元投资额、合资公司推进\nparent_themes: 储能电池海外投资；新能源产业出海\nbroad_topics: 储能电池；欧洲市场\nmid_topics: 西班牙储能项目；合资企业模式\nfuture_coverage: 新能源出海；储能出海；海外产能；光伏出海；电池供应链；储能电池制造出海；欧洲储能市场；海辰储能西班牙工厂；首期投资4亿欧元；海外建厂；合资企业；海辰储能\ninclude_rules: 储能、电池、光伏、绿电等新能源产业的海外产能和项目布局。；企业出海、海外建厂、区域合作、贸易壁垒和本地化生产。；新能源海外布局对供应链、订单、成本和政策风险的影响。\nexclude_rules: 国内普通新能源装机数据不一定归入，除非涉及出海或全球供应链。；单纯电力系统政策可归入政策监管与产业扶持。\ngranularity_note: 这是 L0 新能源全球化主线；国家、公司、工厂和产品作为子方向进入。\nrecent_examples: 储能电池",
+          "title: 市场情绪与预期\norigin: emergent\nscope: 承接市场参与者情绪、预期变化、机构观点、资金情绪对板块和个股短期价格的影响；包括板块拉升、情绪指标、风险偏好变化等；不包含公司基本面业绩或产业景气。\ncanonical_labels: 市场情绪与预期；机构投资观点；消费板块估值修复；白酒行业业绩韧性；市场资金面；市场避险情绪；防御性资产配置；算力硬件产业链；AI算力需求；石油天然气产业链；食品饮料行业；消费板块；白酒板块；消费复苏；A股市场；行业轮动\ncoverage: 可承接父主题：市场情绪与预期、算力硬件产业链、AI算力需求、石油天然气产业链、机构投资观点、消费板块估值修复；可吸收子方向：人工智能基础设施、半导体设备、港股能源板块、食品饮料行业、消费板块、白酒板块、消费复苏、A股市场、行业轮动、光模块与光通信、PCB与服务器、油气设备个股；当前具体线索：大族激光涨停、汇绿生态涨停、光迅科技市值破千亿、山东墨龙涨9.77%、百勤油服涨7.11%、中海油田服务涨4.62%、华宝基金食品饮料ETF（515710）、盘中涨幅1.66%、开盘震荡后拉升、迎驾贡酒涨停\nparent_themes: 算力硬件产业链；AI算力需求；石油天然气产业链；机构投资观点；市场情绪与预期；消费板块估值修复；白酒行业业绩韧性；市场资金面\nbroad_topics: 人工智能基础设施；半导体设备；港股能源板块；食品饮料行业；消费板块；白酒板块；消费复苏；A股市场\nmid_topics: 光模块与光通信；PCB与服务器；油气设备个股；白酒板块；食品饮料ETF；区域性白酒；高端白酒；业绩报告期；板块资金流入；成交额变化\nfuture_coverage: 机构投资观点；市场情绪与预期；食品饮料行业；消费板块；白酒板块；食品饮料ETF；消费板块估值修复；白酒行业业绩韧性；市场资金面；市场避险情绪；防御性资产配置；算力硬件产业链\nrecent_examples: 食品饮料行业；A股市场；A股市场"
+        ],
+        "document_count": 50,
+        "top_n": 12
+      },
+      "output": {
+        "model": "jina-reranker-v3",
+        "ranked_count": 12,
+        "top_results": [
+          {
+            "index": 3,
+            "score": 0.03687525540590286,
+            "document": "title: 人工智能产业投资\norigin: emergent\nscope: 承接人工智能产业的投资工具（ETF、指数）、资本配置、产业融资、风险投资及AI主题基金动态，涵盖AI应用、算力、芯片等子领域的投资方向。\ncanonical_labels: 人工智能产业投资；算力基础设施；芯片供应链；AI基础设施投资；科技巨头垂直整合；太空产业链资本支出；GPU产业链需求；人工智能ETF；光模块产业链；半导体行业；AI芯片制造；SpaceX资本计划；GPU制造投资；创业板人工智能指数；光模块CPO；自建芯片工厂\ncoverage: 可承接父主题：人工智能产业投资、芯片供应链、AI基础设施投资、科技巨头垂直整合、太空产业链资本支出、GPU产业链需求；可吸收子方向：半导体行业、AI芯片制造、SpaceX资本计划、GPU制造投资、ETF基金、光模块/CPO、AI应用、人工智能ETF、光模块产业链、自建芯片工厂、芯片产能扩张、图形处理器制造支出；当前具体线索：特斯拉Terafab项目、马斯克预测芯片短缺、逻辑芯片与存储芯片瓶颈、SpaceX警告资本支出、GPU制造支出、创业板人工智能ETF华宝(159363)、场外联接A类023407、场外联接C类023408、创业板人工智能ETF华宝、易中天光模块龙头\nparent_themes: 芯片供应链；AI基础设施投资；科技巨头垂直整合；太空产业链资本支出；GPU产业链需求；人工智能投资主题；算力产业链；AI应用\nbroad_topics: 半导体行业；AI芯片制造；SpaceX资本计划；GPU制造投资；ETF基金；光模块/CPO；AI应用；人工智能ETF\nmid_topics: 自建芯片工厂；芯片产能扩张；图形处理器制造支出；太空企业资本开支；创业板人工智能ETF；算力龙头；创业板人工智能指数；光模块CPO\nfuture_coverage: 人工智能产业投资；算力基础设施；人工智能ETF；光模块产业链；创业板人工智能指数；光模块CPO；芯片供应链；AI基础设施投资；科技巨头垂直整合；太空产业链资本支出；GPU产业链需求；半导体行业\nrecent_examples: SpaceX资本计划；ETF基金；人工智能ETF"
+          },
+          {
+            "index": 0,
+            "score": 0.01361877378076315,
+            "document": "title: AI算力链\norigin: seed\nscope: 承接 AI 芯片、算力硬件、光模块、服务器、数据中心、算电协同、AI 应用需求对硬件链条的拉动。\ncanonical_labels: AI算力链；人工智能基础设施；AI芯片；光模块；数据中心；算电协同；主题ETF产品；AI产业链投资；算力基础设施；人工智能产业；光模块产业链；AI算力基础设施；光通信产业；产业投资；科技金融；AI芯片供应链\ncoverage: 可承接父主题：AI算力链、人工智能产业投资、算力基础设施、企业资本支出战略、汽车行业智能化转型、太空产业链资本支出；可吸收子方向：人工智能ETF、光模块产业链、AI基础设施投资、自动驾驶技术、人形机器人、半导体制造、SpaceX资本计划、GPU制造投资、光通信、算力基础设施、ETF基金、光模块/CPO；当前具体线索：创业板人工智能ETF华宝、易中天光模块龙头、中际旭创、250亿美元资本支出、六座新建扩建工厂、奥斯汀研究级半导体工厂、AI基础设施支持无人驾驶出租车、擎天柱机器人、SpaceX警告资本支出、GPU制造支出\nparent_themes: 人工智能产业投资；算力基础设施；企业资本支出战略；汽车行业智能化转型；太空产业链资本支出；GPU产业链需求；光模块技术迭代周期；人工智能投资主题\nbroad_topics: 人工智能ETF；光模块产业链；AI基础设施投资；自动驾驶技术；人形机器人；半导体制造；SpaceX资本计划；GPU制造投资\nmid_topics: 创业板人工智能指数；光模块CPO；特斯拉资本支出规划；无人驾驶出租车部署；擎天柱项目；图形处理器制造支出；太空企业资本开支；CPO技术；光模块龙头；创业板人工智能ETF\nfuture_coverage: AI算力链；人工智能基础设施；AI芯片；光模块；数据中心；算电协同；光模块/CPO技术迭代；AI算力需求；光模块CPO；AI应用；高速光模块(800G/1.6T)；光模块龙头业绩增长\ninclude_rules: AI 芯片供需、算力基础设施、服务器、光模块、CPO、数据中心。；AI 应用扩张带来的算力需求、硬件瓶颈、产业链机会。；算电协同、绿电支撑数据中心、AI 基础设施资本开支。\nexclude_rules: 与算力链无关的泛 AI 软件、影视 IP、营销应用，不强行归入。；普通半导体政策或消费电子事件，只有无 AI 算力链含义时不归入。\ngranularity_note: 这是 L0 科技基础设施主线；AI芯片、光模块、数据中心和算电协同作为子方向进入。\nrecent_examples: 算电协同；人工智能基础设施；数据中心"
+          },
+          {
+            "index": 1,
+            "score": -0.05501476675271988,
+            "document": "title: 汽车行业智能化转型\norigin: emergent\nscope: 承接汽车制造商在AI、自动驾驶、机器人、半导体制造等智能化方向的资本支出、技术投资、工厂建设、战略规划等事件，涵盖企业层面的智能化转型投资动态。不包括传统汽车制造、销量预期、纯公司业绩或非智能化相关投资。\ncanonical_labels: 汽车行业智能化转型；企业资本支出战略；AI基础设施投资；自动驾驶技术；人形机器人；半导体制造；特斯拉资本支出规划；无人驾驶出租车部署；擎天柱项目；汽车制造商大规模投资AI与机器人；特斯拉AI与机器人投资计划；特斯拉资本支出公告\ncoverage: 可承接父主题：汽车行业智能化转型、企业资本支出战略；可吸收子方向：AI基础设施投资、自动驾驶技术、人形机器人、半导体制造、特斯拉资本支出规划、无人驾驶出租车部署、擎天柱项目、企业资本支出战略、汽车行业智能化转型；当前具体线索：250亿美元资本支出、六座新建扩建工厂、奥斯汀研究级半导体工厂、AI基础设施支持无人驾驶出租车、擎天柱机器人\nparent_themes: 企业资本支出战略；汽车行业智能化转型\nbroad_topics: AI基础设施投资；自动驾驶技术；人形机器人；半导体制造\nmid_topics: 特斯拉资本支出规划；无人驾驶出租车部署；擎天柱项目\nfuture_coverage: 企业资本支出战略；汽车行业智能化转型；AI基础设施投资；自动驾驶技术；人形机器人；半导体制造；特斯拉资本支出规划；无人驾驶出租车部署；擎天柱项目\nrecent_examples: AI基础设施投资"
+          },
+          {
+            "index": 41,
+            "score": -0.08509538322687149,
+            "document": "title: 宏观经济运行\norigin: emergent\nscope: 承接宏观经济总量指标、GDP、工业增加值、消费、投资、就业、价格指数等经济运行数据及其对市场预期、政策导向和资产定价的影响。\ncanonical_labels: 宏观经济运行；工业数据；GDP贡献；规模以上工业增加值；行业增长面；一季度工业经济稳中有进，全部工业对经济增长贡献近四成；工业经济韧性增长；中国经济复苏跟踪；区域经济发展；宏观经济复苏；地方经济；中国城市经济；粤港澳大湾区经济；一线城市经济运行；广州一季度GDP增速提升；广州经济增速回升\ncoverage: 可承接父主题：宏观经济运行、区域经济发展、宏观经济复苏；可吸收子方向：工业数据、GDP贡献、地方经济、中国城市经济、规模以上工业增加值、行业增长面、粤港澳大湾区经济、一线城市经济运行、宏观经济运行、区域经济发展、宏观经济复苏；当前具体线索：一季度工业增加值同比6.1%、31省份正增长、行业增长面超八成、广州一季度GDP数据、第三产业增加值增长\nparent_themes: 宏观经济运行；区域经济发展；宏观经济复苏\nbroad_topics: 工业数据；GDP贡献；地方经济；中国城市经济\nmid_topics: 规模以上工业增加值；行业增长面；粤港澳大湾区经济；一线城市经济运行\nfuture_coverage: 宏观经济运行；工业数据；GDP贡献；规模以上工业增加值；行业增长面；区域经济发展；宏观经济复苏；地方经济；中国城市经济；粤港澳大湾区经济；一线城市经济运行\nrecent_examples: 工业数据；地方经济"
+          },
+          {
+            "index": 36,
+            "score": -0.08842635899782181,
+            "document": "title: 汽车市场销量预期\norigin: emergent\nscope: 承接主流车企在特定市场的销量目标、预期调整及其对产业链和市场竞争格局的影响。包括传统燃油车和新能源车企业的销量战略调整、市场展望变化。不包含纯公司业绩（归入公司业绩与产业景气）、纯技术进展（归入相应技术主题）或整车出口关税等贸易政策（归入政策监管与产业扶持）。\ncanonical_labels: 汽车市场销量预期；外资车企在华市场前景；大众中国市场策略调整；大众汽车下调2030年在华销量预期；大众下调2030年在华销量目标；大众汽车动态\ncoverage: 可承接父主题：汽车市场销量预期；可吸收子方向：外资车企在华市场前景、大众中国市场策略调整、汽车市场销量预期；当前具体线索：2030年销量目标从400万辆下调至320万辆\nparent_themes: 汽车市场销量预期\nbroad_topics: 外资车企在华市场前景\nmid_topics: 大众中国市场策略调整\nfuture_coverage: 汽车市场销量预期；外资车企在华市场前景；大众中国市场策略调整\nrecent_examples: 外资车企在华市场前景"
+          },
+          {
+            "index": 4,
+            "score": -0.0897240862250328,
+            "document": "title: 公司业绩与产业景气\norigin: seed\nscope: 承接上市公司业绩、订单、盈利能力、产能利用率、行业景气度和产业经营趋势。\ncanonical_labels: 公司业绩与产业景气；公司业绩；行业景气；订单变化；盈利能力；经营趋势；券商行业业绩；金融机构业务分析；券商风险事件；券商自营业务；券商风险出清；资产减值与业绩修复；新能源上游材料；生物科技财务分析；企业IPO风险审查；研发投入与盈利\ncoverage: 可承接父主题：公司业绩与产业景气、半导体芯片国产替代、光模块产业链、AI算力基础设施、汽车市场销量预期、智能眼镜产业链；可吸收子方向：半导体行业、光通信行业、AI硬件、外资车企在华市场前景、消费电子产业链、增强现实（AR）、券商自营业务、股票质押业务、铜产业链、原材料短缺、新兴需求驱动、全球电信市场；当前具体线索：国民技术N32H493芯片、国民技术产品涨价15%-20%、2030年销量目标从400万辆下调至320万辆、康耐特光学与头部企业合作、核心镜片供应商、AR智能眼镜量产、国海证券股质纠纷23项、金融投资规模四倍差、3月中国对智利硫酸出口降至零、全球铜精矿加工费持续走低\nparent_themes: 半导体芯片国产替代；光模块产业链；AI算力基础设施；汽车市场销量预期；智能眼镜产业链；光学元件供应合作；券商信用风险；股权质押风险\nbroad_topics: 半导体行业；光通信行业；AI硬件；外资车企在华市场前景；消费电子产业链；增强现实（AR）；券商自营业务；股票质押业务\nmid_topics: 高速光模块芯片；芯片价格调整；国产芯片进展；大众中国市场策略调整；AR智能眼镜；镜片供应；国海证券被动缩表；自营业务增速断崖；智利铜矿产量；铜精矿加工费\nfuture_coverage: 公司业绩；行业景气；订单变化；盈利能力；经营趋势；自营规模驱动；中小券商表现；国海证券自营业务下滑原因；股票质押式回购业务暴雷后果；券商资产减值；股质业务诉讼；ROE排名变化\ninclude_rules: 财报、业绩预告、收入利润变化、订单和产能利用率。；行业景气上行或下行、库存周期、需求恢复或疲弱。；公司经营变化能反映产业趋势或交易认知变化。\nexclude_rules: 纯融资、上市、并购交易优先归入资本市场改革或并购相关新主题。；纯政策文件且没有经营结果，不归入本主题。\ngranularity_note: 这是 L0 经营基本面主线；单家公司和单个财报季作为子方向进入。\nrecent_examples: 标普500季度财报；数据中心；半导体材料"
+          },
+          {
+            "index": 47,
+            "score": -0.0900440663099289,
+            "document": "title: 自然灾害应急响应\norigin: emergent\nscope: 承接台风、洪涝、地震、山火等自然灾害的预警、应急响应升级、防灾减灾行动、政府及部门决策、灾后恢复等动态，及其对地方安全、经济活动和保险市场的影响。\ncanonical_labels: 自然灾害应急响应；台风灾害；应急管理；地方应急响应升级；广西东兴市台风应急响应提升；台风应急响应升级；台风应急响应线\ncoverage: 可承接父主题：自然灾害应急响应；可吸收子方向：台风灾害、应急管理、地方应急响应升级、自然灾害应急响应；当前具体线索：东兴市防御台风二级应急响应、气象灾害（台风）Ⅱ级应急响应、防汛抗旱指挥部决策\nparent_themes: 自然灾害应急响应\nbroad_topics: 台风灾害；应急管理\nmid_topics: 地方应急响应升级\nfuture_coverage: 自然灾害应急响应；台风灾害；应急管理；地方应急响应升级\nrecent_examples: 台风灾害"
+          },
+          {
+            "index": 38,
+            "score": -0.0944962427020073,
+            "document": "title: 法国经济景气度\norigin: emergent\nscope: 承接法国及欧元区经济景气调查数据、信心指数、PMI、INSEE 报告，以及经济景气分化对欧元债券、外汇和风险资产的影响。\ncanonical_labels: 法国经济景气度；宏观经济；欧元区经济；商业信心；制造业信心；法国4月信心指数表现分化；法国经济景气分化；法国经济数据发布\ncoverage: 可承接父主题：法国经济景气度；可吸收子方向：宏观经济、欧元区经济、商业信心、制造业信心、法国经济景气度；当前具体线索：INSEE商业信心指数94、INSEE制造业信心指数100\nparent_themes: 法国经济景气度\nbroad_topics: 宏观经济；欧元区经济\nmid_topics: 商业信心；制造业信心\nfuture_coverage: 法国经济景气度；宏观经济；欧元区经济；商业信心；制造业信心\nrecent_examples: 宏观经济"
+          },
+          {
+            "index": 44,
+            "score": -0.10800556093454361,
+            "document": "title: 美国军事领导层变动\norigin: emergent\nscope: 承接美国军事部门（国防部、各军种）高层人事任免、解职、内部冲突、战略分歧及其对国防政策、军事战略和地缘风险的影响。包括部长、副部长、高级将领等人事变动，以及相关国会听证、行政命令等。\ncanonical_labels: 美国军事领导层变动；五角大楼内部冲突；美国国防政策；特朗普政府军事战略；海军部长人事更迭；造船计划争议；美国海军部长因与五角大楼高层冲突被解职；美国海军部长解职与五角大楼冲突；美国军事人事变动；五角大楼高层更迭\ncoverage: 可承接父主题：美国军事领导层变动、五角大楼内部冲突；可吸收子方向：美国国防政策、特朗普政府军事战略、海军部长人事更迭、造船计划争议、美国军事领导层变动、五角大楼内部冲突；当前具体线索：黄金舰队计划、霍尔木兹海峡行动、费伦与海格塞斯冲突、伊朗战事背景\nparent_themes: 美国军事领导层变动；五角大楼内部冲突\nbroad_topics: 美国国防政策；特朗普政府军事战略\nmid_topics: 海军部长人事更迭；造船计划争议\nfuture_coverage: 美国军事领导层变动；五角大楼内部冲突；美国国防政策；特朗普政府军事战略；海军部长人事更迭；造船计划争议\nrecent_examples: 美国国防政策"
+          },
+          {
+            "index": 39,
+            "score": -0.11226598173379898,
+            "document": "title: 国际财金合作\norigin: emergent\nscope: 承接双边或多边财政金融合作对话、协议、援助、经济外交活动，及对资本市场的影响。\ncanonical_labels: 国际财金合作；双边外交关系；中非合作；财政金融合作；中非经贸关系；中莫双边财金对话；中国对非财金援助与合作；中莫财金合作会谈；中莫财金合作线；中非财政对话\ncoverage: 可承接父主题：国际财金合作、双边外交关系、中非合作；可吸收子方向：财政金融合作、中非经贸关系、中莫双边财金对话、中国对非财金援助与合作、国际财金合作、双边外交关系、中非合作；当前具体线索：蓝佛安会见洛韦拉、中莫财金合作交换意见、财政部与进出口银行参与\nparent_themes: 国际财金合作；双边外交关系；中非合作\nbroad_topics: 财政金融合作；中非经贸关系\nmid_topics: 中莫双边财金对话；中国对非财金援助与合作\nfuture_coverage: 国际财金合作；双边外交关系；中非合作；财政金融合作；中非经贸关系；中莫双边财金对话；中国对非财金援助与合作\nrecent_examples: 财政金融合作"
+          }
+        ],
+        "latency_ms": 1445.8
+      },
+      "metadata": {
+        "endpoint": "http://119.23.227.187:8860/v1/rerank",
+        "max_documents": 100,
+        "timeout": 15,
+        "max_retries": 3,
+        "status_code": 200,
+        "latency_ms": 1749.4898309814744,
+        "attempts": 1,
+        "resourceAttributes": {
+          "telemetry.sdk.language": "python",
+          "telemetry.sdk.name": "opentelemetry",
+          "telemetry.sdk.version": "1.41.1",
+          "service.name": "unknown_service"
+        },
+        "scope": {
+          "name": "langfuse-sdk",
+          "version": "4.6.1",
+          "attributes": {
+            "public_key": "pk-lf-d52cf296-5725-45dc-a0f7-31202673d39f"
+          }
+        }
+      },
+      "model": null,
+      "modelParameters": null,
+      "completionStartTime": null,
+      "promptId": null,
+      "promptName": null,
+      "promptVersion": null,
+      "latency": 1.75,
+      "timeToFirstToken": null,
+      "usageDetails": {},
+      "costDetails": {},
+      "usagePricingTierId": null,
+      "usagePricingTierName": null,
+      "inputPrice": 0,
+      "outputPrice": 0,
+      "totalPrice": 0,
+      "calculatedInputCost": null,
+      "calculatedOutputCost": null,
+      "calculatedTotalCost": 0,
+      "unit": "TOKENS",
+      "promptTokens": 0,
+      "completionTokens": 0,
+      "totalTokens": 0,
+      "modelId": null,
+      "usage": {
+        "unit": "TOKENS",
+        "input": 0,
+        "output": 0,
+        "total": 0
+      }
+    },
+    {
+      "id": "473af5bc661c20ff",
+      "traceId": "1469da7f328cea2c8d5f6d273c8c096c",
+      "startTime": "2026-07-05T00:50:38.813Z",
+      "endTime": "2026-07-05T00:50:53.560Z",
+      "projectId": "cmp9tyu4x01efad08dq5ebuhg",
+      "parentObservationId": "989ed825aafff6e5",
+      "type": "SPAN",
+      "environment": "default",
+      "name": "kg.community_card.build",
+      "level": "DEFAULT",
+      "statusMessage": "completed",
+      "version": null,
+      "createdAt": "2026-07-05T00:50:51.477Z",
+      "updatedAt": "2026-07-05T00:50:51.478Z",
+      "input": {
+        "cards": 1,
+        "existing_communities": 53
+      },
+      "output": {
+        "cards": 1,
+        "intents": 1,
+        "assignments": 1,
+        "communities": 53,
+        "assignment_validation_errors": 0,
+        "candidate_recall": "semantic_community",
+        "seed_candidates": 8,
+        "candidate_rerank": "external_reranker",
+        "community_builder": "cognitive_card_assignment_bucket_v1",
+        "bucket_planning": {
+          "enabled": true,
+          "bucket_count": 1,
+          "bucket_sizes": {
+            "bucket_ai_infra": 1
+          },
+          "unknown_intents": 1,
+          "llm_assignments": 1,
+          "new_buckets": 0,
+          "merge_suggestions": 0,
+          "semantic_cache": {
+            "redis_exact_hits": 0,
+            "semantic_requests": 2,
+            "semantic_raw_hits": 10,
+            "semantic_candidate_hits": 10,
+            "semantic_direct_hits": 0,
+            "semantic_direct_exact_theme_hits": 0,
+            "semantic_direct_score_margin_hits": 0,
+            "semantic_skipped_empty_scope": 0,
+            "semantic_upserted": 1,
+            "semantic_scope_has_entries_initial": 1
+          },
+          "merge_result": {
+            "triggered": false,
+            "reason": "under_threshold",
+            "bucket_count": 9,
+            "threshold": 40,
+            "candidate_count": 0,
+            "merged": 0
+          }
+        },
+        "bucket_concurrency": 20,
+        "candidate_ledger": {
+          "calls": 3,
+          "redis_available_count": 3,
+          "redis_unavailable_count": 0,
+          "appended_base_total": 7,
+          "appended_update_total": 0,
+          "checkpointed_count": 0,
+          "checkpoint_skipped_by_overlap_count": 0,
+          "max_append_log_entries": 17,
+          "max_base_count": 17,
+          "max_update_count": 0,
+          "error_types": {}
+        }
+      },
+      "metadata": {
+        "resourceAttributes": {
+          "telemetry.sdk.language": "python",
+          "telemetry.sdk.name": "opentelemetry",
+          "telemetry.sdk.version": "1.41.1",
+          "service.name": "unknown_service"
+        },
+        "scope": {
+          "name": "langfuse-sdk",
+          "version": "4.6.1",
+          "attributes": {
+            "public_key": "pk-lf-d52cf296-5725-45dc-a0f7-31202673d39f"
+          }
+        }
+      },
+      "model": null,
+      "modelParameters": null,
+      "completionStartTime": null,
+      "promptId": null,
+      "promptName": null,
+      "promptVersion": null,
+      "latency": 14.747,
+      "timeToFirstToken": null,
+      "usageDetails": {},
+      "costDetails": {},
+      "usagePricingTierId": null,
+      "usagePricingTierName": null,
+      "inputPrice": 0,
+      "outputPrice": 0,
+      "totalPrice": 0,
+      "calculatedInputCost": null,
+      "calculatedOutputCost": null,
+      "calculatedTotalCost": 0,
+      "unit": "TOKENS",
+      "promptTokens": 0,
+      "completionTokens": 0,
+      "totalTokens": 0,
+      "modelId": null,
+      "usage": {
+        "unit": "TOKENS",
+        "input": 0,
+        "output": 0,
+        "total": 0
+      }
+    },
+    {
+      "id": "492d9222c4997d3d",
+      "traceId": "1469da7f328cea2c8d5f6d273c8c096c",
+      "startTime": "2026-07-05T00:50:26.661Z",
+      "endTime": "2026-07-05T00:50:37.443Z",
+      "projectId": "cmp9tyu4x01efad08dq5ebuhg",
+      "parentObservationId": "989ed825aafff6e5",
+      "type": "SPAN",
+      "environment": "default",
+      "name": "kg.cognitive_card.extract",
+      "level": "DEFAULT",
+      "statusMessage": "completed",
+      "version": null,
+      "createdAt": "2026-07-05T00:50:36.962Z",
+      "updatedAt": "2026-07-05T00:50:36.962Z",
+      "input": {
+        "chunk_id": "kg_chunk:kg_ev:financial:news_articles:ft_news:96177:767ce212ba3d769d:0",
+        "text_chars": 571
+      },
+      "output": {
+        "cognitive_card_id": "kg_cognitive_card:a18d4f62191b7886",
+        "topic_intents": 1,
+        "risk_signals": 0,
+        "local_impact_signals": 2
+      },
+      "metadata": {
+        "resourceAttributes": {
+          "telemetry.sdk.language": "python",
+          "telemetry.sdk.name": "opentelemetry",
+          "telemetry.sdk.version": "1.41.1",
+          "service.name": "unknown_service"
+        },
+        "scope": {
+          "name": "langfuse-sdk",
+          "version": "4.6.1",
+          "attributes": {
+            "public_key": "pk-lf-d52cf296-5725-45dc-a0f7-31202673d39f"
+          }
+        }
+      },
+      "model": null,
+      "modelParameters": null,
+      "completionStartTime": null,
+      "promptId": null,
+      "promptName": null,
+      "promptVersion": null,
+      "latency": 10.782,
+      "timeToFirstToken": null,
+      "usageDetails": {},
+      "costDetails": {},
+      "usagePricingTierId": null,
+      "usagePricingTierName": null,
+      "inputPrice": 0,
+      "outputPrice": 0,
+      "totalPrice": 0,
+      "calculatedInputCost": null,
+      "calculatedOutputCost": null,
+      "calculatedTotalCost": 0,
+      "unit": "TOKENS",
+      "promptTokens": 0,
+      "completionTokens": 0,
+      "totalTokens": 0,
+      "modelId": null,
+      "usage": {
+        "unit": "TOKENS",
+        "input": 0,
+        "output": 0,
+        "total": 0
+      }
+    },
+    {
+      "id": "522dedcfbd7abab3",
+      "traceId": "1469da7f328cea2c8d5f6d273c8c096c",
+      "startTime": "2026-07-05T00:50:38.993Z",
+      "endTime": "2026-07-05T00:50:38.993Z",
+      "projectId": "cmp9tyu4x01efad08dq5ebuhg",
+      "parentObservationId": "a89192e88c3553a7",
+      "type": "SPAN",
+      "environment": "default",
+      "name": "embedding.embed_texts:cache_hit",
+      "level": "DEFAULT",
+      "statusMessage": null,
+      "version": null,
+      "createdAt": "2026-07-05T00:50:41.820Z",
+      "updatedAt": "2026-07-05T00:50:41.821Z",
+      "input": {
+        "count": 1,
+        "samples": [
+          "半导体制造；AI芯片需求；美光广岛扩建HBM工厂；美光产能扩张；启动扩建；获取补贴；AI需求增长；日本补贴政策；美光科技启动广岛工厂扩建，投资93亿美元生产HBM，预计2028年出货，以满足AI需求。"
+        ]
+      },
+      "output": {
+        "vectors": 1,
+        "cache_hits": 1,
+        "cache_misses": 0
+      },
+      "metadata": {
+        "model": "/models/Qwen3-Embedding-4B",
+        "dim": 2560,
+        "normalize": true,
+        "file_cache": true,
+        "resourceAttributes": {
+          "telemetry.sdk.language": "python",
+          "telemetry.sdk.name": "opentelemetry",
+          "telemetry.sdk.version": "1.41.1",
+          "service.name": "unknown_service"
+        },
+        "scope": {
+          "name": "langfuse-sdk",
+          "version": "4.6.1",
+          "attributes": {
+            "public_key": "pk-lf-d52cf296-5725-45dc-a0f7-31202673d39f"
+          }
+        }
+      },
+      "model": null,
+      "modelParameters": null,
+      "completionStartTime": null,
+      "promptId": null,
+      "promptName": null,
+      "promptVersion": null,
+      "latency": 0,
+      "timeToFirstToken": null,
+      "usageDetails": {},
+      "costDetails": {},
+      "usagePricingTierId": null,
+      "usagePricingTierName": null,
+      "inputPrice": 0,
+      "outputPrice": 0,
+      "totalPrice": 0,
+      "calculatedInputCost": null,
+      "calculatedOutputCost": null,
+      "calculatedTotalCost": 0,
+      "unit": "TOKENS",
+      "promptTokens": 0,
+      "completionTokens": 0,
+      "totalTokens": 0,
+      "modelId": null,
+      "usage": {
+        "unit": "TOKENS",
+        "input": 0,
+        "output": 0,
+        "total": 0
+      }
+    },
+    {
+      "id": "64f8a270065ee897",
+      "traceId": "1469da7f328cea2c8d5f6d273c8c096c",
+      "startTime": "2026-07-05T00:50:21.830Z",
+      "endTime": "2026-07-05T00:50:22.038Z",
+      "projectId": "cmp9tyu4x01efad08dq5ebuhg",
+      "parentObservationId": "989ed825aafff6e5",
+      "type": "SPAN",
+      "environment": "default",
+      "name": "milvus.upsert_index",
+      "level": "DEFAULT",
+      "statusMessage": "completed",
+      "version": null,
+      "createdAt": "2026-07-05T00:50:24.669Z",
+      "updatedAt": "2026-07-05T00:50:24.670Z",
+      "input": {
+        "adapter_name": "financial",
+        "target": "prod",
+        "chunks": 1,
+        "nodes": 0,
+        "edges": 0,
+        "kg_version": "v1"
+      },
+      "output": {
+        "documents_written": 1
+      },
+      "metadata": {
+        "backend": "milvus",
+        "resourceAttributes": {
+          "telemetry.sdk.language": "python",
+          "telemetry.sdk.name": "opentelemetry",
+          "telemetry.sdk.version": "1.41.1",
+          "service.name": "unknown_service"
+        },
+        "scope": {
+          "name": "langfuse-sdk",
+          "version": "4.6.1",
+          "attributes": {
+            "public_key": "pk-lf-d52cf296-5725-45dc-a0f7-31202673d39f"
+          }
+        }
+      },
+      "model": null,
+      "modelParameters": null,
+      "completionStartTime": null,
+      "promptId": null,
+      "promptName": null,
+      "promptVersion": null,
+      "latency": 0.208,
+      "timeToFirstToken": null,
+      "usageDetails": {},
+      "costDetails": {},
+      "usagePricingTierId": null,
+      "usagePricingTierName": null,
+      "inputPrice": 0,
+      "outputPrice": 0,
+      "totalPrice": 0,
+      "calculatedInputCost": null,
+      "calculatedOutputCost": null,
+      "calculatedTotalCost": 0,
+      "unit": "TOKENS",
+      "promptTokens": 0,
+      "completionTokens": 0,
+      "totalTokens": 0,
+      "modelId": null,
+      "usage": {
+        "unit": "TOKENS",
+        "input": 0,
+        "output": 0,
+        "total": 0
+      }
+    },
+    {
+      "id": "6b5a0202d365adbb",
+      "traceId": "1469da7f328cea2c8d5f6d273c8c096c",
+      "startTime": "2026-07-05T00:50:40.653Z",
+      "endTime": "2026-07-05T00:50:40.767Z",
+      "projectId": "cmp9tyu4x01efad08dq5ebuhg",
+      "parentObservationId": "a89192e88c3553a7",
+      "type": "SPAN",
+      "environment": "default",
+      "name": "embedding.http_request",
+      "level": "DEFAULT",
+      "statusMessage": null,
+      "version": null,
+      "createdAt": "2026-07-05T00:50:41.820Z",
+      "updatedAt": "2026-07-05T00:50:41.821Z",
+      "input": {
+        "count": 1,
+        "samples": [
+          "bucket_ai_infra；含氟冷却液在AI液冷中的机遇；美光广岛HBM工厂扩建"
+        ]
+      },
+      "output": {
+        "status_code": 200,
+        "latency_s": 0.1115,
+        "attempt": 1,
+        "attempts": [
+          {
+            "attempt": 1,
+            "status_code": 200,
+            "latency_s": 0.1115
+          }
+        ],
+        "retries": 0
+      },
+      "metadata": {
+        "endpoint": "http://119.23.227.187:8901/v1/embeddings",
+        "model": "/models/Qwen3-Embedding-4B",
+        "dim": 2560,
+        "batch_size": 1,
+        "request_dimensions": false,
+        "timeout_s": 180,
+        "max_retries": 5,
+        "retry_base_delay_s": 1,
+        "retry_max_delay_s": 30,
+        "status_code": 200,
+        "latency_s": 0.11152815818786621,
+        "attempt": 1,
+        "attempts": [
+          {
+            "attempt": 1,
+            "status_code": 200,
+            "latency_s": 0.1115
+          }
+        ],
+        "retries": 0,
+        "resourceAttributes": {
+          "telemetry.sdk.language": "python",
+          "telemetry.sdk.name": "opentelemetry",
+          "telemetry.sdk.version": "1.41.1",
+          "service.name": "unknown_service"
+        },
+        "scope": {
+          "name": "langfuse-sdk",
+          "version": "4.6.1",
+          "attributes": {
+            "public_key": "pk-lf-d52cf296-5725-45dc-a0f7-31202673d39f"
+          }
+        }
+      },
+      "model": null,
+      "modelParameters": null,
+      "completionStartTime": null,
+      "promptId": null,
+      "promptName": null,
+      "promptVersion": null,
+      "latency": 0.114,
+      "timeToFirstToken": null,
+      "usageDetails": {},
+      "costDetails": {},
+      "usagePricingTierId": null,
+      "usagePricingTierName": null,
+      "inputPrice": 0,
+      "outputPrice": 0,
+      "totalPrice": 0,
+      "calculatedInputCost": null,
+      "calculatedOutputCost": null,
+      "calculatedTotalCost": 0,
+      "unit": "TOKENS",
+      "promptTokens": 0,
+      "completionTokens": 0,
+      "totalTokens": 0,
+      "modelId": null,
+      "usage": {
+        "unit": "TOKENS",
+        "input": 0,
+        "output": 0,
+        "total": 0
+      }
+    },
+    {
+      "id": "6c069e474ad06e0c",
+      "traceId": "1469da7f328cea2c8d5f6d273c8c096c",
+      "startTime": "2026-07-05T00:50:24.680Z",
+      "endTime": "2026-07-05T00:50:24.696Z",
+      "projectId": "cmp9tyu4x01efad08dq5ebuhg",
+      "parentObservationId": "989ed825aafff6e5",
+      "type": "SPAN",
+      "environment": "default",
+      "name": "milvus.upsert_index",
+      "level": "DEFAULT",
+      "statusMessage": "completed",
+      "version": null,
+      "createdAt": "2026-07-05T00:50:24.669Z",
+      "updatedAt": "2026-07-05T00:50:24.670Z",
+      "input": {
+        "adapter_name": "financial",
+        "target": "prod",
+        "chunks": 1,
+        "nodes": 0,
+        "edges": 0,
+        "kg_version": "v1"
+      },
+      "output": {
+        "documents_written": 1
+      },
+      "metadata": {
+        "backend": "milvus",
+        "resourceAttributes": {
+          "telemetry.sdk.language": "python",
+          "telemetry.sdk.name": "opentelemetry",
+          "telemetry.sdk.version": "1.41.1",
+          "service.name": "unknown_service"
+        },
+        "scope": {
+          "name": "langfuse-sdk",
+          "version": "4.6.1",
+          "attributes": {
+            "public_key": "pk-lf-d52cf296-5725-45dc-a0f7-31202673d39f"
+          }
+        }
+      },
+      "model": null,
+      "modelParameters": null,
+      "completionStartTime": null,
+      "promptId": null,
+      "promptName": null,
+      "promptVersion": null,
+      "latency": 0.016,
+      "timeToFirstToken": null,
+      "usageDetails": {},
+      "costDetails": {},
+      "usagePricingTierId": null,
+      "usagePricingTierName": null,
+      "inputPrice": 0,
+      "outputPrice": 0,
+      "totalPrice": 0,
+      "calculatedInputCost": null,
+      "calculatedOutputCost": null,
+      "calculatedTotalCost": 0,
+      "unit": "TOKENS",
+      "promptTokens": 0,
+      "completionTokens": 0,
+      "totalTokens": 0,
+      "modelId": null,
+      "usage": {
+        "unit": "TOKENS",
+        "input": 0,
+        "output": 0,
+        "total": 0
+      }
+    },
+    {
+      "id": "6fadd17cd3e15f6a",
+      "traceId": "1469da7f328cea2c8d5f6d273c8c096c",
+      "startTime": "2026-07-05T00:50:40.797Z",
+      "endTime": "2026-07-05T00:50:41.282Z",
+      "projectId": "cmp9tyu4x01efad08dq5ebuhg",
+      "parentObservationId": "8bebe4180fc10b5b",
+      "type": "SPAN",
+      "environment": "default",
+      "name": "kg.community_assignment.semantic_recall",
+      "level": "DEFAULT",
+      "statusMessage": "completed",
+      "version": null,
+      "createdAt": "2026-07-05T00:50:41.820Z",
+      "updatedAt": "2026-07-05T00:50:41.821Z",
+      "input": {
+        "query_lanes": [
+          {
+            "lane": "parent_topic",
+            "query_chars": 55
+          },
+          {
+            "lane": "child_direction",
+            "query_chars": 95
+          },
+          {
+            "lane": "event_driver",
+            "query_chars": 59
+          },
+          {
+            "lane": "impact_risk",
+            "query_chars": 53
+          },
+          {
+            "lane": "merged",
+            "query_chars": 234
+          }
+        ],
+        "adapter_name": "financial",
+        "target": "prod",
+        "limit": 50
+      },
+      "output": {
+        "raw_hits": 250,
+        "per_lane_hits": {
+          "parent_topic": 50,
+          "child_direction": 50,
+          "event_driver": 50,
+          "impact_risk": 50,
+          "merged": 50
+        },
+        "candidates": 50,
+        "candidate_titles": [
+          "AI算力链",
+          "汽车行业智能化转型",
+          "机器人产业",
+          "人工智能产业投资",
+          "公司业绩与产业景气",
+          "太空产业链资本支出",
+          "消费电子产业链",
+          "外资并购国家安全审查"
+        ]
+      },
+      "metadata": {
+        "collection_role": "community",
+        "resourceAttributes": {
+          "telemetry.sdk.language": "python",
+          "telemetry.sdk.name": "opentelemetry",
+          "telemetry.sdk.version": "1.41.1",
+          "service.name": "unknown_service"
+        },
+        "scope": {
+          "name": "langfuse-sdk",
+          "version": "4.6.1",
+          "attributes": {
+            "public_key": "pk-lf-d52cf296-5725-45dc-a0f7-31202673d39f"
+          }
+        }
+      },
+      "model": null,
+      "modelParameters": null,
+      "completionStartTime": null,
+      "promptId": null,
+      "promptName": null,
+      "promptVersion": null,
+      "latency": 0.485,
+      "timeToFirstToken": null,
+      "usageDetails": {},
+      "costDetails": {},
+      "usagePricingTierId": null,
+      "usagePricingTierName": null,
+      "inputPrice": 0,
+      "outputPrice": 0,
+      "totalPrice": 0,
+      "calculatedInputCost": null,
+      "calculatedOutputCost": null,
+      "calculatedTotalCost": 0,
+      "unit": "TOKENS",
+      "promptTokens": 0,
+      "completionTokens": 0,
+      "totalTokens": 0,
+      "modelId": null,
+      "usage": {
+        "unit": "TOKENS",
+        "input": 0,
+        "output": 0,
+        "total": 0
+      }
+    },
+    {
+      "id": "8a2783fed5a2c462",
+      "traceId": "1469da7f328cea2c8d5f6d273c8c096c",
+      "startTime": "2026-07-05T00:50:38.852Z",
+      "endTime": "2026-07-05T00:50:38.976Z",
+      "projectId": "cmp9tyu4x01efad08dq5ebuhg",
+      "parentObservationId": "a89192e88c3553a7",
+      "type": "SPAN",
+      "environment": "default",
+      "name": "embedding.http_request",
+      "level": "DEFAULT",
+      "statusMessage": null,
+      "version": null,
+      "createdAt": "2026-07-05T00:50:41.820Z",
+      "updatedAt": "2026-07-05T00:50:41.821Z",
+      "input": {
+        "count": 1,
+        "samples": [
+          "半导体制造；AI芯片需求；美光广岛扩建HBM工厂；美光产能扩张；启动扩建；获取补贴；AI需求增长；日本补贴政策；美光科技启动广岛工厂扩建，投资93亿美元生产HBM，预计2028年出货，以满足AI需求。"
+        ]
+      },
+      "output": {
+        "status_code": 200,
+        "latency_s": 0.1225,
+        "attempt": 1,
+        "attempts": [
+          {
+            "attempt": 1,
+            "status_code": 200,
+            "latency_s": 0.1225
+          }
+        ],
+        "retries": 0
+      },
+      "metadata": {
+        "endpoint": "http://119.23.227.187:8901/v1/embeddings",
+        "model": "/models/Qwen3-Embedding-4B",
+        "dim": 2560,
+        "batch_size": 1,
+        "request_dimensions": false,
+        "timeout_s": 180,
+        "max_retries": 5,
+        "retry_base_delay_s": 1,
+        "retry_max_delay_s": 30,
+        "status_code": 200,
+        "latency_s": 0.12250494956970215,
+        "attempt": 1,
+        "attempts": [
+          {
+            "attempt": 1,
+            "status_code": 200,
+            "latency_s": 0.1225
+          }
+        ],
+        "retries": 0,
+        "resourceAttributes": {
+          "telemetry.sdk.language": "python",
+          "telemetry.sdk.name": "opentelemetry",
+          "telemetry.sdk.version": "1.41.1",
+          "service.name": "unknown_service"
+        },
+        "scope": {
+          "name": "langfuse-sdk",
+          "version": "4.6.1",
+          "attributes": {
+            "public_key": "pk-lf-d52cf296-5725-45dc-a0f7-31202673d39f"
+          }
+        }
+      },
+      "model": null,
+      "modelParameters": null,
+      "completionStartTime": null,
+      "promptId": null,
+      "promptName": null,
+      "promptVersion": null,
+      "latency": 0.124,
+      "timeToFirstToken": null,
+      "usageDetails": {},
+      "costDetails": {},
+      "usagePricingTierId": null,
+      "usagePricingTierName": null,
+      "inputPrice": 0,
+      "outputPrice": 0,
+      "totalPrice": 0,
+      "calculatedInputCost": null,
+      "calculatedOutputCost": null,
+      "calculatedTotalCost": 0,
+      "unit": "TOKENS",
+      "promptTokens": 0,
+      "completionTokens": 0,
+      "totalTokens": 0,
+      "modelId": null,
+      "usage": {
+        "unit": "TOKENS",
+        "input": 0,
+        "output": 0,
+        "total": 0
+      }
+    },
+    {
+      "id": "8bebe4180fc10b5b",
+      "traceId": "1469da7f328cea2c8d5f6d273c8c096c",
+      "startTime": "2026-07-05T00:50:40.797Z",
+      "endTime": "2026-07-05T00:50:53.520Z",
+      "projectId": "cmp9tyu4x01efad08dq5ebuhg",
+      "parentObservationId": "473af5bc661c20ff",
+      "type": "SPAN",
+      "environment": "default",
+      "name": "kg.community_assignment.bucket",
+      "level": "DEFAULT",
+      "statusMessage": "completed",
+      "version": null,
+      "createdAt": "2026-07-05T00:50:51.477Z",
+      "updatedAt": "2026-07-05T00:50:51.478Z",
+      "input": {
+        "bucket_id": "bucket_ai_infra",
+        "intents": 1
+      },
+      "output": {
+        "assignments": 1
+      },
+      "metadata": {
+        "resourceAttributes": {
+          "telemetry.sdk.language": "python",
+          "telemetry.sdk.name": "opentelemetry",
+          "telemetry.sdk.version": "1.41.1",
+          "service.name": "unknown_service"
+        },
+        "scope": {
+          "name": "langfuse-sdk",
+          "version": "4.6.1",
+          "attributes": {
+            "public_key": "pk-lf-d52cf296-5725-45dc-a0f7-31202673d39f"
+          }
+        }
+      },
+      "model": null,
+      "modelParameters": null,
+      "completionStartTime": null,
+      "promptId": null,
+      "promptName": null,
+      "promptVersion": null,
+      "latency": 12.723,
+      "timeToFirstToken": null,
+      "usageDetails": {},
+      "costDetails": {},
+      "usagePricingTierId": null,
+      "usagePricingTierName": null,
+      "inputPrice": 0,
+      "outputPrice": 0,
+      "totalPrice": 0,
+      "calculatedInputCost": null,
+      "calculatedOutputCost": null,
+      "calculatedTotalCost": 0,
+      "unit": "TOKENS",
+      "promptTokens": 0,
+      "completionTokens": 0,
+      "totalTokens": 0,
+      "modelId": null,
+      "usage": {
+        "unit": "TOKENS",
+        "input": 0,
+        "output": 0,
+        "total": 0
+      }
+    },
+    {
+      "id": "989ed825aafff6e5",
+      "traceId": "1469da7f328cea2c8d5f6d273c8c096c",
+      "startTime": "2026-07-05T00:50:19.427Z",
+      "endTime": "2026-07-05T00:50:54.003Z",
+      "projectId": "cmp9tyu4x01efad08dq5ebuhg",
+      "parentObservationId": null,
+      "type": "SPAN",
+      "environment": "default",
+      "name": "kg.compile_kg",
+      "level": "DEFAULT",
+      "statusMessage": "completed",
+      "version": null,
+      "createdAt": "2026-07-05T00:50:51.720Z",
+      "updatedAt": "2026-07-05T00:50:51.720Z",
+      "input": {
+        "command": "KnowledgeCompileCommand",
+        "adapter_name": "financial",
+        "target": "prod",
+        "request_id": "kg_news_ingest:ft_news:96177-96177:1783212619",
+        "dry_run": false,
+        "records": 1,
+        "source_samples": [
+          {
+            "source_type": null,
+            "source_id": null,
+            "title": ""
+          }
+        ]
+      },
+      "output": {
+        "run_id": "kg_run:financial:13f9ae38-71a5-4daf-bd97-3bf9ef2d4e40",
+        "nodes": 0,
+        "edges": 0,
+        "evidence": 1,
+        "failed_records": 0,
+        "dry_run": false,
+        "index_refresh": {
+          "mode": "incremental",
+          "graph_adjacency": 0,
+          "evidence_chunks": 1,
+          "hybrid_chunks": 1,
+          "graph_index": {
+            "status": "replaced_by_cognitive_index",
+            "reason": "community_topics_are_built_from_cognitive_cards"
+          },
+          "cognitive_index": {
+            "status": "completed",
+            "changed_chunks": 1,
+            "changed_evidence": 1,
+            "cards": 1,
+            "all_cards": null,
+            "assignments": 1,
+            "assignment_rows": 1,
+            "communities": 1,
+            "documents_written": 1,
+            "cognitive_card_documents_written": 1,
+            "stale_documents_deleted": 0,
+            "orphan_community_documents_deleted": 0,
+            "orphan_cognitive_card_documents_deleted": 0,
+            "card_persistence": {
+              "deleted_cards": 0,
+              "deleted_card_ids": [],
+              "inserted_cards": 1,
+              "evidence_ids": [
+                "kg_ev:financial:news_articles:ft_news:96177:767ce212ba3d769d"
+              ]
+            },
+            "graph_persistence": {
+              "mode": "incremental_stream_commit",
+              "scope_commits": 1,
+              "updated_community_ids": [
+                "kgc:financial:l0:3"
+              ],
+              "scope_results": [
+                {
+                  "communities": 1,
+                  "findings": 0,
+                  "deltas": 0,
+                  "unassigned_signals": 0,
+                  "promoted_unassigned_signals": 0,
+                  "stale_target_ids": [],
+                  "removed_community_ids": 0,
+                  "removed_finding_ids": 0,
+                  "removed_delta_ids": 0
+                }
+              ]
+            },
+            "diagnostics": {
+              "cards": 1,
+              "intents": 1,
+              "assignments": 1,
+              "communities": 53,
+              "assignment_validation_errors": 0,
+              "candidate_recall": "semantic_community",
+              "seed_candidates": 8,
+              "candidate_rerank": "external_reranker",
+              "community_builder": "cognitive_card_assignment_bucket_v1",
+              "bucket_planning": {
+                "enabled": true,
+                "bucket_count": 1,
+                "bucket_sizes": {
+                  "bucket_ai_infra": 1
+                },
+                "unknown_intents": 1,
+                "llm_assignments": 1,
+                "new_buckets": 0,
+                "merge_suggestions": 0,
+                "semantic_cache": {
+                  "redis_exact_hits": 0,
+                  "semantic_requests": 2,
+                  "semantic_raw_hits": 10,
+                  "semantic_candidate_hits": 10,
+                  "semantic_direct_hits": 0,
+                  "semantic_direct_exact_theme_hits": 0,
+                  "semantic_direct_score_margin_hits": 0,
+                  "semantic_skipped_empty_scope": 0,
+                  "semantic_upserted": 1,
+                  "semantic_scope_has_entries_initial": 1
+                },
+                "merge_result": {
+                  "triggered": false,
+                  "reason": "under_threshold",
+                  "bucket_count": 9,
+                  "threshold": 40,
+                  "candidate_count": 0,
+                  "merged": 0
+                }
+              },
+              "bucket_concurrency": 20,
+              "candidate_ledger": {
+                "calls": 3,
+                "redis_available_count": 3,
+                "redis_unavailable_count": 0,
+                "appended_base_total": 7,
+                "appended_update_total": 0,
+                "checkpointed_count": 0,
+                "checkpoint_skipped_by_overlap_count": 0,
+                "max_append_log_entries": 17,
+                "max_base_count": 17,
+                "max_update_count": 0,
+                "error_types": {}
+              }
+            },
+            "seed_bootstrap": {
+              "status": "completed",
+              "communities": 8,
+              "documents_written": 8,
+              "community_ids": [
+                "kgc:financial:l0:1",
+                "kgc:financial:l0:2",
+                "kgc:financial:l0:3",
+                "kgc:financial:l0:4",
+                "kgc:financial:l0:5",
+                "kgc:financial:l0:6",
+                "kgc:financial:l0:7",
+                "kgc:financial:l0:8"
+              ],
+              "persistence": {
+                "communities": 8,
+                "findings": 0,
+                "deltas": 0,
+                "unassigned_signals": 0,
+                "promoted_unassigned_signals": 0,
+                "stale_target_ids": [],
+                "removed_community_ids": 0,
+                "removed_finding_ids": 0,
+                "removed_delta_ids": 0
+              }
+            }
+          },
+          "node_ids": [],
+          "edge_ids": [],
+          "evidence_ids": [
+            "kg_ev:financial:news_articles:ft_news:96177:767ce212ba3d769d"
+          ],
+          "stale_evidence_cleanup": {
+            "evidence": 0,
+            "edges": 0,
+            "evidence_ids": [],
+            "edge_ids": []
+          },
+          "stale_hybrid_vectors_deleted": 1,
+          "stale_semantic_documents_deleted": 1,
+          "semantic_materials": {
+            "chunks": 1,
+            "nodes": 0,
+            "edges": 0,
+            "stale_chunk_ids": [
+              "kg_chunk:kg_ev:financial:news_articles:ft_news:96177:767ce212ba3d769d:0"
+            ]
+          }
+        }
+      },
+      "metadata": {
+        "command": "KnowledgeCompileCommand",
+        "adapter_name": "financial",
+        "target": "prod",
+        "request_id": "kg_news_ingest:ft_news:96177-96177:1783212619",
+        "dry_run": false,
+        "records": 1,
+        "source_samples": [
+          {
+            "source_type": null,
+            "source_id": null,
+            "title": ""
+          }
+        ],
+        "status": "completed",
+        "resourceAttributes": {
+          "telemetry.sdk.language": "python",
+          "telemetry.sdk.name": "opentelemetry",
+          "telemetry.sdk.version": "1.41.1",
+          "service.name": "unknown_service"
+        },
+        "scope": {
+          "name": "langfuse-sdk",
+          "version": "4.6.1",
+          "attributes": {
+            "public_key": "pk-lf-d52cf296-5725-45dc-a0f7-31202673d39f"
+          }
+        }
+      },
+      "model": null,
+      "modelParameters": null,
+      "completionStartTime": null,
+      "promptId": null,
+      "promptName": null,
+      "promptVersion": null,
+      "latency": 34.576,
+      "timeToFirstToken": null,
+      "usageDetails": {},
+      "costDetails": {},
+      "usagePricingTierId": null,
+      "usagePricingTierName": null,
+      "inputPrice": 0,
+      "outputPrice": 0,
+      "totalPrice": 0,
+      "calculatedInputCost": null,
+      "calculatedOutputCost": null,
+      "calculatedTotalCost": 0,
+      "unit": "TOKENS",
+      "promptTokens": 0,
+      "completionTokens": 0,
+      "totalTokens": 0,
+      "modelId": null,
+      "usage": {
+        "unit": "TOKENS",
+        "input": 0,
+        "output": 0,
+        "total": 0
+      }
+    },
+    {
+      "id": "a89192e88c3553a7",
+      "traceId": "1469da7f328cea2c8d5f6d273c8c096c",
+      "startTime": "2026-07-05T00:50:38.820Z",
+      "endTime": "2026-07-05T00:50:40.796Z",
+      "projectId": "cmp9tyu4x01efad08dq5ebuhg",
+      "parentObservationId": "473af5bc661c20ff",
+      "type": "SPAN",
+      "environment": "default",
+      "name": "kg.community_assignment.bucket_planning",
+      "level": "DEFAULT",
+      "statusMessage": "completed",
+      "version": null,
+      "createdAt": "2026-07-05T00:50:41.820Z",
+      "updatedAt": "2026-07-05T00:50:41.821Z",
+      "input": {
+        "intents": 1
+      },
+      "output": {
+        "bucket_count": 1,
+        "unknown_intents": 1,
+        "new_buckets": 0,
+        "merge_suggestions": 0,
+        "semantic_cache": {
+          "redis_exact_hits": 0,
+          "semantic_requests": 2,
+          "semantic_raw_hits": 10,
+          "semantic_candidate_hits": 10,
+          "semantic_direct_hits": 0,
+          "semantic_direct_exact_theme_hits": 0,
+          "semantic_direct_score_margin_hits": 0,
+          "semantic_skipped_empty_scope": 0,
+          "semantic_upserted": 1,
+          "semantic_scope_has_entries_initial": 1
+        },
+        "merge_result": {
+          "triggered": false,
+          "reason": "under_threshold",
+          "bucket_count": 9,
+          "threshold": 40,
+          "candidate_count": 0,
+          "merged": 0
+        }
+      },
+      "metadata": {
+        "resourceAttributes": {
+          "telemetry.sdk.language": "python",
+          "telemetry.sdk.name": "opentelemetry",
+          "telemetry.sdk.version": "1.41.1",
+          "service.name": "unknown_service"
+        },
+        "scope": {
+          "name": "langfuse-sdk",
+          "version": "4.6.1",
+          "attributes": {
+            "public_key": "pk-lf-d52cf296-5725-45dc-a0f7-31202673d39f"
+          }
+        }
+      },
+      "model": null,
+      "modelParameters": null,
+      "completionStartTime": null,
+      "promptId": null,
+      "promptName": null,
+      "promptVersion": null,
+      "latency": 1.976,
+      "timeToFirstToken": null,
+      "usageDetails": {},
+      "costDetails": {},
+      "usagePricingTierId": null,
+      "usagePricingTierName": null,
+      "inputPrice": 0,
+      "outputPrice": 0,
+      "totalPrice": 0,
+      "calculatedInputCost": null,
+      "calculatedOutputCost": null,
+      "calculatedTotalCost": 0,
+      "unit": "TOKENS",
+      "promptTokens": 0,
+      "completionTokens": 0,
+      "totalTokens": 0,
+      "modelId": null,
+      "usage": {
+        "unit": "TOKENS",
+        "input": 0,
+        "output": 0,
+        "total": 0
+      }
+    },
+    {
+      "id": "d78a356796f9c1c9",
+      "traceId": "1469da7f328cea2c8d5f6d273c8c096c",
+      "startTime": "2026-07-05T00:50:52.893Z",
+      "endTime": "2026-07-05T00:50:53.484Z",
+      "projectId": "cmp9tyu4x01efad08dq5ebuhg",
+      "parentObservationId": "8bebe4180fc10b5b",
+      "type": "SPAN",
+      "environment": "default",
+      "name": "embedding.http_request",
+      "level": "DEFAULT",
+      "statusMessage": null,
+      "version": null,
+      "createdAt": "2026-07-05T00:50:51.477Z",
+      "updatedAt": "2026-07-05T00:50:51.478Z",
+      "input": {
+        "count": 1,
+        "samples": [
+          "Document Type: Community Report\nCommunity: AI算力链\nProjection: cognitive_topic\nCommunity Level: 0\nOrigin: seed\nMaturity: mature_topic\nDirectory Scope: 承接 AI 芯片、算力硬件、光模块、服务器、数据中心、算电协同、AI 应用需求对硬件链条的拉动。\nInclude Rules: AI 芯片供需、算力基础设施、服务器、光模块、CPO、数据中心。；AI 应用扩张带来的算力需求、硬件瓶颈、产业链机会。；算电协同、绿电支撑数据中心、AI 基础设施资本开支。\nExclude Rules: 与算力链无关的泛 AI 软件、影视 IP、营销应用，不强行归入。；普通半导体政策或消费电子事件，只有无 AI 算力链含义时不归入。\nGranularity Note: 这是 L0 科技基础设施主线；AI芯片、光模块、数据中心和算电协同作为子方向进入。\nCoverage Contract: 可承接父主题：AI算力链、人工智能产业投资、算力基础设施、企业资本支出战略、汽车行业智能化转型、太空产业链资本支出；可吸收子方向：人工智能ETF、光模块产业链、AI基础设施投资、自动驾驶技术、人形机器人、半导体制造、SpaceX资本计划、GPU制造投资、光通信、算力基础设施、ETF基金、光模块/CPO；当前具体线索：创业板人工智能ETF华宝、易中天光模块龙头、中际旭创、250亿美元资本支出、六座新建扩建工厂、奥斯汀研究级半导体工厂、AI基础设施支持无人驾驶出租车、擎天柱机器人、SpaceX警告资本支出、GPU制造支出\nCanonical Labels: AI算力链；人工智能基础设施；AI芯片；光模块；数据中心；算电协同；主题ETF产品；AI产业链投资；算力基础设施；人工智能产业；光模块产业链；AI算力基础设施；光通信产业；产业投资；科技金融；AI芯片供应链；半导体供需格局；企业资本支出计划；人工智能基础设施投资；科技企业上市；绿色电力；节能降碳；数据中心与新能源协同；A股市场热点；AI主题；ETF投资；光模块市场；算力硬件；AI硬件需求；算力需求；人工智能；科技行业；半导体行业；新能源汽车产业；自动驾驶技术；机器人产业；科技企业融资；AI硬件；ODM代工；新能源电...[truncated]"
+        ]
+      },
+      "output": {
+        "status_code": 200,
+        "latency_s": 0.5903,
+        "attempt": 1,
+        "attempts": [
+          {
+            "attempt": 1,
+            "status_code": 200,
+            "latency_s": 0.5903
+          }
+        ],
+        "retries": 0
+      },
+      "metadata": {
+        "endpoint": "http://119.23.227.187:8901/v1/embeddings",
+        "model": "/models/Qwen3-Embedding-4B",
+        "dim": 2560,
+        "batch_size": 1,
+        "request_dimensions": false,
+        "timeout_s": 180,
+        "max_retries": 5,
+        "retry_base_delay_s": 1,
+        "retry_max_delay_s": 30,
+        "status_code": 200,
+        "latency_s": 0.5902528762817383,
+        "attempt": 1,
+        "attempts": [
+          {
+            "attempt": 1,
+            "status_code": 200,
+            "latency_s": 0.5903
+          }
+        ],
+        "retries": 0,
+        "resourceAttributes": {
+          "telemetry.sdk.language": "python",
+          "telemetry.sdk.name": "opentelemetry",
+          "telemetry.sdk.version": "1.41.1",
+          "service.name": "unknown_service"
+        },
+        "scope": {
+          "name": "langfuse-sdk",
+          "version": "4.6.1",
+          "attributes": {
+            "public_key": "pk-lf-d52cf296-5725-45dc-a0f7-31202673d39f"
+          }
+        }
+      },
+      "model": null,
+      "modelParameters": null,
+      "completionStartTime": null,
+      "promptId": null,
+      "promptName": null,
+      "promptVersion": null,
+      "latency": 0.591,
+      "timeToFirstToken": null,
+      "usageDetails": {},
+      "costDetails": {},
+      "usagePricingTierId": null,
+      "usagePricingTierName": null,
+      "inputPrice": 0,
+      "outputPrice": 0,
+      "totalPrice": 0,
+      "calculatedInputCost": null,
+      "calculatedOutputCost": null,
+      "calculatedTotalCost": 0,
+      "unit": "TOKENS",
+      "promptTokens": 0,
+      "completionTokens": 0,
+      "totalTokens": 0,
+      "modelId": null,
+      "usage": {
+        "unit": "TOKENS",
+        "input": 0,
+        "output": 0,
+        "total": 0
+      }
+    },
+    {
+      "id": "d9b56c0149f773a7",
+      "traceId": "1469da7f328cea2c8d5f6d273c8c096c",
+      "startTime": "2026-07-05T00:50:24.681Z",
+      "endTime": "2026-07-05T00:50:24.681Z",
+      "projectId": "cmp9tyu4x01efad08dq5ebuhg",
+      "parentObservationId": "6c069e474ad06e0c",
+      "type": "SPAN",
+      "environment": "default",
+      "name": "embedding.embed_texts:cache_hit",
+      "level": "DEFAULT",
+      "statusMessage": null,
+      "version": null,
+      "createdAt": "2026-07-05T00:50:24.669Z",
+      "updatedAt": "2026-07-05T00:50:24.670Z",
+      "input": {
+        "count": 1,
+        "samples": [
+          "Document Type: Evidence Chunk\nTitle: 【美光科技93亿美元扩建广岛项目动工 预计2028下半年出货HBM】美光科技当地时间周六（7月4日）正式启动其位于日本西部广岛工厂的扩建工程。这项总投资达1.5\nSummary: \nEvidence: kg_ev:financial:news_articles:ft_news:96177:767ce212ba3d769d\nSource: news_articles:ft_news:96177\nSource Name: 雪球\nEvidence Text: 【美光科技93亿美元扩建广岛项目动工 预计2028下半年出货HBM】美光科技当地时间周六（7月4日）正式启动其位于日本西部广岛工厂的扩建工程。这项总投资达1.5\n【美光科技93亿美元扩建广岛项目动工 预计2028下半年出货HBM】美光科技当地时间周六（7月4日）正式启动其位于日本西部广岛工厂的扩建工程。这项总投资达1.5万亿日元（约合93亿美元）的项目，旨在生产包括高带宽存储器（HBM）在内的先进存储芯片，以满足人工智能（AI）浪潮带来的旺盛需求。HBM是英伟达AI处理器的关键组件，工厂预计将于2028年夏季左右开始出货。为支持该项目的建设，日本经济产业省\n【美光科技93亿美元扩建广岛项目动工 预计2028下半年出货HBM】美光科技当地时间周六（7月4日）正式启动其位于日本西部广岛工厂的扩建工程。这项总投资达1.5万亿日元（约合93亿美元）的项目，旨在生产包括高带宽存储器（HBM）在内的先进存储芯片，以满足人工智能（AI）浪潮带来的旺盛需求。HBM是英伟达AI处理器的关键组件，工厂预计将于2028年夏季左右开始出货。为支持该项目的建设，日本经济产业省已承诺提供最高5000亿日元的补贴。美光科技首席执行官Sanjay Mehrotra在奠基仪式上表示，“美光首批用于人工智能核心存储技术——HBM的生产晶圆，就是在广岛制造的。”"
+        ]
+      },
+      "output": {
+        "vectors": 1,
+        "cache_hits": 1,
+        "cache_misses": 0
+      },
+      "metadata": {
+        "model": "/models/Qwen3-Embedding-4B",
+        "dim": 2560,
+        "normalize": true,
+        "file_cache": true,
+        "resourceAttributes": {
+          "telemetry.sdk.language": "python",
+          "telemetry.sdk.name": "opentelemetry",
+          "telemetry.sdk.version": "1.41.1",
+          "service.name": "unknown_service"
+        },
+        "scope": {
+          "name": "langfuse-sdk",
+          "version": "4.6.1",
+          "attributes": {
+            "public_key": "pk-lf-d52cf296-5725-45dc-a0f7-31202673d39f"
+          }
+        }
+      },
+      "model": null,
+      "modelParameters": null,
+      "completionStartTime": null,
+      "promptId": null,
+      "promptName": null,
+      "promptVersion": null,
+      "latency": 0,
+      "timeToFirstToken": null,
+      "usageDetails": {},
+      "costDetails": {},
+      "usagePricingTierId": null,
+      "usagePricingTierName": null,
+      "inputPrice": 0,
+      "outputPrice": 0,
+      "totalPrice": 0,
+      "calculatedInputCost": null,
+      "calculatedOutputCost": null,
+      "calculatedTotalCost": 0,
+      "unit": "TOKENS",
+      "promptTokens": 0,
+      "completionTokens": 0,
+      "totalTokens": 0,
+      "modelId": null,
+      "usage": {
+        "unit": "TOKENS",
+        "input": 0,
+        "output": 0,
+        "total": 0
+      }
+    },
+    {
+      "id": "e6df768b9641e770",
+      "traceId": "1469da7f328cea2c8d5f6d273c8c096c",
+      "startTime": "2026-07-05T00:50:26.599Z",
+      "endTime": "2026-07-05T00:50:26.600Z",
+      "projectId": "cmp9tyu4x01efad08dq5ebuhg",
+      "parentObservationId": "989ed825aafff6e5",
+      "type": "SPAN",
+      "environment": "default",
+      "name": "embedding.embed_texts:cache_hit",
+      "level": "DEFAULT",
+      "statusMessage": null,
+      "version": null,
+      "createdAt": "2026-07-05T00:50:31.962Z",
+      "updatedAt": "2026-07-05T00:50:31.963Z",
+      "input": {
+        "count": 8,
+        "samples": [
+          "Document Type: Community Report\nCommunity: 地缘政治与能源风险\nProjection: cognitive_topic\nCommunity Level: 0\nOrigin: seed\nMaturity: mature_topic\nDirectory Scope: 承接地缘冲突、制裁、航运通道、油气供应、能源价格冲击及其对市场风险偏好的影响。\nInclude Rules: 中东、俄乌、红海、霍尔木兹海峡等地缘冲突或通道风险。；制裁、反制裁、供应中断、油气运输受阻、能源价格冲击。；地缘事件对权益、债券、商品、外汇或风险偏好的传导。\nExclude Rules: 单纯公司业绩、常规能源项目投产，不归入本主题。；没有地缘或能源供应冲击含义的普通商品价格波动，不归入本主题。\nGranularity Note: 这是 L0 长期风险主线；具体国家、海峡、制裁轮次和油气品种作为子方向进入。\nCoverage Contract: 可承接父主题：地缘政治与能源风险、主权信用评级、外部地缘冲击、经济复苏与周期、地缘政治风险、有色金属供应链；可吸收子方向：大洋洲经济、地缘政治风险蔓延、大宗商品、有色金属、欧洲安全与防务、对俄制裁政策、中东局势、AI算力需求、有色金属供应、原油价格、原油期货、油气板块；当前具体线索：穆迪下调新西兰评级展望、惠誉下调新西兰评级展望、财长乐观表态、LME锌库存低位、柴油紧张导致冶炼减产、伦锌创逾三年新高、沪锌主力合约上涨、霍尔木兹海峡局势紧张、900亿欧元贷款、第20轮制裁方案\nCanonical Labels: 地缘政治与能源风险；地缘风险；能源安全；油气供应；航运通道风险；制裁影响；美联储货币政策；大宗商品价格；铜产业链；地缘政治风险；有色金属市场；锌行业；大宗商品价格驱动；能源市场；能源供应安全；欧洲安全局势；国际制裁；欧盟外交政策；主权债务融资；中东地缘政治冲突；国际安全风险；美债收益率动态；降息预期；中东地缘政治影响；美联储主席提名听证；有色金属；铜市场；供应链危机；锌供需；宏观因素；基本金属行情；镍产业链；原油价格波动；油气股表现；中东地缘政治；全球石油市场；俄欧关系；军事演习；中东安全局势；俄乌冲突\nAssigned Intent Count: 15\nSource Count: 14\nAverage As...[truncated]",
+          "Document Type: Community Report\nCommunity: 公司业绩与产业景气\nProjection: cognitive_topic\nCommunity Level: 0\nOrigin: seed\nMaturity: mature_topic\nDirectory Scope: 承接上市公司业绩、订单、盈利能力、产能利用率、行业景气度和产业经营趋势。\nInclude Rules: 财报、业绩预告、收入利润变化、订单和产能利用率。；行业景气上行或下行、库存周期、需求恢复或疲弱。；公司经营变化能反映产业趋势或交易认知变化。\nExclude Rules: 纯融资、上市、并购交易优先归入资本市场改革或并购相关新主题。；纯政策文件且没有经营结果，不归入本主题。\nGranularity Note: 这是 L0 经营基本面主线；单家公司和单个财报季作为子方向进入。\nCoverage Contract: 可承接父主题：公司业绩与产业景气、半导体芯片国产替代、光模块产业链、AI算力基础设施、汽车市场销量预期、智能眼镜产业链；可吸收子方向：半导体行业、光通信行业、AI硬件、外资车企在华市场前景、消费电子产业链、增强现实（AR）、券商自营业务、股票质押业务、铜产业链、原材料短缺、新兴需求驱动、全球电信市场；当前具体线索：国民技术N32H493芯片、国民技术产品涨价15%-20%、2030年销量目标从400万辆下调至320万辆、康耐特光学与头部企业合作、核心镜片供应商、AR智能眼镜量产、国海证券股质纠纷23项、金融投资规模四倍差、3月中国对智利硫酸出口降至零、全球铜精矿加工费持续走低\nCanonical Labels: 公司业绩与产业景气；公司业绩；行业景气；订单变化；盈利能力；经营趋势；券商行业业绩；金融机构业务分析；券商风险事件；券商自营业务；券商风险出清；资产减值与业绩修复；新能源上游材料；生物科技财务分析；企业IPO风险审查；研发投入与盈利；企业IPO风险；生物医药行业风险；生物科技公司财务风险；医疗健康行业IPO；锂电池产业投资；工业机器人行业业绩表现；自动化装备企业财报；产业经济；区域经济；新兴产业；机器人产业；智能制造；A股市场热点；农业板块；企业战略扩张；子公司设立与投资；电信行业发展；移动通信市场；5G产业发展；企业业绩；汽车行业；汽车行业财务业...[truncated]",
+          "Document Type: Community Report\nCommunity: AI算力链\nProjection: cognitive_topic\nCommunity Level: 0\nOrigin: seed\nMaturity: mature_topic\nDirectory Scope: 承接 AI 芯片、算力硬件、光模块、服务器、数据中心、算电协同、AI 应用需求对硬件链条的拉动。\nInclude Rules: AI 芯片供需、算力基础设施、服务器、光模块、CPO、数据中心。；AI 应用扩张带来的算力需求、硬件瓶颈、产业链机会。；算电协同、绿电支撑数据中心、AI 基础设施资本开支。\nExclude Rules: 与算力链无关的泛 AI 软件、影视 IP、营销应用，不强行归入。；普通半导体政策或消费电子事件，只有无 AI 算力链含义时不归入。\nGranularity Note: 这是 L0 科技基础设施主线；AI芯片、光模块、数据中心和算电协同作为子方向进入。\nCoverage Contract: 可承接父主题：AI算力链、人工智能产业投资、算力基础设施、企业资本支出战略、汽车行业智能化转型、太空产业链资本支出；可吸收子方向：人工智能ETF、光模块产业链、AI基础设施投资、自动驾驶技术、人形机器人、半导体制造、SpaceX资本计划、GPU制造投资、光通信、算力基础设施、ETF基金、光模块/CPO；当前具体线索：创业板人工智能ETF华宝、易中天光模块龙头、中际旭创、250亿美元资本支出、六座新建扩建工厂、奥斯汀研究级半导体工厂、AI基础设施支持无人驾驶出租车、擎天柱机器人、SpaceX警告资本支出、GPU制造支出\nCanonical Labels: AI算力链；人工智能基础设施；AI芯片；光模块；数据中心；算电协同；主题ETF产品；AI产业链投资；算力基础设施；人工智能产业；光模块产业链；AI算力基础设施；光通信产业；产业投资；科技金融；AI芯片供应链；半导体供需格局；企业资本支出计划；人工智能基础设施投资；科技企业上市；绿色电力；节能降碳；数据中心与新能源协同；A股市场热点；AI主题；ETF投资；光模块市场；算力硬件；AI硬件需求；算力需求；人工智能；科技行业；半导体行业；新能源汽车产业；自动驾驶技术；机器人产业；科技企业融资；AI硬件；ODM代工；新能源电...[truncated]"
+        ]
+      },
+      "output": {
+        "vectors": 8,
+        "cache_hits": 8,
+        "cache_misses": 0
+      },
+      "metadata": {
+        "model": "/models/Qwen3-Embedding-4B",
+        "dim": 2560,
+        "normalize": true,
+        "file_cache": true,
+        "resourceAttributes": {
+          "telemetry.sdk.language": "python",
+          "telemetry.sdk.name": "opentelemetry",
+          "telemetry.sdk.version": "1.41.1",
+          "service.name": "unknown_service"
+        },
+        "scope": {
+          "name": "langfuse-sdk",
+          "version": "4.6.1",
+          "attributes": {
+            "public_key": "pk-lf-d52cf296-5725-45dc-a0f7-31202673d39f"
+          }
+        }
+      },
+      "model": null,
+      "modelParameters": null,
+      "completionStartTime": null,
+      "promptId": null,
+      "promptName": null,
+      "promptVersion": null,
+      "latency": 0.001,
+      "timeToFirstToken": null,
+      "usageDetails": {},
+      "costDetails": {},
+      "usagePricingTierId": null,
+      "usagePricingTierName": null,
+      "inputPrice": 0,
+      "outputPrice": 0,
+      "totalPrice": 0,
+      "calculatedInputCost": null,
+      "calculatedOutputCost": null,
+      "calculatedTotalCost": 0,
+      "unit": "TOKENS",
+      "promptTokens": 0,
+      "completionTokens": 0,
+      "totalTokens": 0,
+      "modelId": null,
+      "usage": {
+        "unit": "TOKENS",
+        "input": 0,
+        "output": 0,
+        "total": 0
+      }
+    }
+  ],
+  "htmlPath": "/project/cmp9tyu4x01efad08dq5ebuhg/traces/1469da7f328cea2c8d5f6d273c8c096c",
+  "totalCost": 0
+}

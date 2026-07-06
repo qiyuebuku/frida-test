@@ -114,6 +114,7 @@ CREATE TABLE IF NOT EXISTS public.kg_graph_communities (
     change_reason character varying(64) NOT NULL DEFAULT 'build',
     lineage_id character varying(180) NOT NULL DEFAULT '',
     previous_community_ids jsonb NOT NULL DEFAULT '[]'::jsonb,
+    last_insight_generated_at timestamp with time zone,
     created_at timestamp with time zone DEFAULT now(),
     updated_at timestamp with time zone DEFAULT now()
 );
@@ -122,6 +123,31 @@ ALTER TABLE IF EXISTS public.kg_graph_communities
     ADD COLUMN IF NOT EXISTS id bigint;
 ALTER TABLE IF EXISTS public.kg_graph_communities
     ALTER COLUMN id SET DEFAULT nextval('public.kg_graph_community_id_seq'::regclass);
+ALTER TABLE IF EXISTS public.kg_graph_communities
+    ADD COLUMN IF NOT EXISTS last_insight_generated_at timestamp with time zone;
+
+CREATE TABLE IF NOT EXISTS public.kg_community_insights (
+    insight_id character varying(220) PRIMARY KEY,
+    community_id character varying(180) NOT NULL,
+    adapter_name character varying(64) NOT NULL,
+    projection character varying(64) NOT NULL,
+    insight_version integer NOT NULL DEFAULT 1,
+    title text NOT NULL DEFAULT '',
+    insight_full_report text NOT NULL DEFAULT '',
+    report_json jsonb NOT NULL DEFAULT '{}'::jsonb,
+    source_count integer NOT NULL DEFAULT 0,
+    cognitive_card_count integer NOT NULL DEFAULT 0,
+    assignment_count integer NOT NULL DEFAULT 0,
+    evidence_ids jsonb NOT NULL DEFAULT '[]'::jsonb,
+    chunk_ids jsonb NOT NULL DEFAULT '[]'::jsonb,
+    cognitive_card_ids jsonb NOT NULL DEFAULT '[]'::jsonb,
+    status character varying(32) NOT NULL DEFAULT 'active',
+    error_message text NOT NULL DEFAULT '',
+    payload jsonb NOT NULL DEFAULT '{}'::jsonb,
+    created_at timestamp with time zone DEFAULT now(),
+    updated_at timestamp with time zone DEFAULT now(),
+    CONSTRAINT uq_kg_community_insights_community UNIQUE (community_id)
+);
 
 CREATE TABLE IF NOT EXISTS public.kg_cognitive_cards (
     cognitive_card_id character varying(180) PRIMARY KEY,
@@ -322,6 +348,12 @@ CREATE INDEX IF NOT EXISTS ix_kg_graph_communities_parent
     ON public.kg_graph_communities(parent_community_id);
 CREATE INDEX IF NOT EXISTS ix_kg_graph_communities_status
     ON public.kg_graph_communities(status);
+CREATE INDEX IF NOT EXISTS ix_kg_community_insights_adapter_status
+    ON public.kg_community_insights(adapter_name, status);
+CREATE INDEX IF NOT EXISTS ix_kg_community_insights_community
+    ON public.kg_community_insights(community_id);
+CREATE INDEX IF NOT EXISTS ix_kg_community_insights_updated
+    ON public.kg_community_insights(updated_at);
 
 CREATE INDEX IF NOT EXISTS ix_kg_cognitive_cards_adapter_status
     ON public.kg_cognitive_cards(adapter_name, status);
