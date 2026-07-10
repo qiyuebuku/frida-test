@@ -21,6 +21,7 @@ CommunityInsightService 生成高级认知报告，并验证：
     --community-id kgc:financial:l0:509
     --dry-run
     --no-force
+    --skip-refresh
     --timeout 180
     --json
 """
@@ -227,6 +228,7 @@ async def run_validation(args: argparse.Namespace) -> dict[str, Any]:
         "scan_limit": args.scan_limit,
         "force": args.force,
         "dry_run": args.dry_run,
+        "skip_refresh": args.skip_refresh,
         "langfuse": {
             "session_id": os.getenv("KG_LANGFUSE_SESSION_ID") or os.getenv("LANGFUSE_SESSION_ID") or "",
             "trace_name": "kg.community_insight.refresh_ids",
@@ -260,11 +262,14 @@ async def run_validation(args: argparse.Namespace) -> dict[str, Any]:
         return output
 
     service = CommunityInsightService(target=args.target)
-    with _StepTimer("refresh_insights", quiet=args.quiet):
-        output["refresh_result"] = await asyncio.wait_for(
-            service.refresh_community_ids(community_ids, force=args.force),
-            timeout=args.timeout,
-        )
+    if args.skip_refresh:
+        output["refresh_result"] = {"skipped": True, "reason": "skip_refresh"}
+    else:
+        with _StepTimer("refresh_insights", quiet=args.quiet):
+            output["refresh_result"] = await asyncio.wait_for(
+                service.refresh_community_ids(community_ids, force=args.force),
+                timeout=args.timeout,
+            )
 
     with _StepTimer("load_pg_results", quiet=args.quiet):
         output["pg_insights"] = _load_insights(target=args.target, community_ids=community_ids)
@@ -355,6 +360,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--no-force", dest="force", action="store_false", help="只处理 due community，不强制重刷")
     parser.set_defaults(force=True)
     parser.add_argument("--dry-run", action="store_true", help="只选择样本，不调用 LLM / embedding / Milvus 写入")
+    parser.add_argument("--skip-refresh", action="store_true", help="不刷新正式 Insight，只检查已有 PG / Milvus 结果")
     parser.add_argument("--timeout", type=float, default=180.0, help="刷新阶段超时时间")
     parser.add_argument("--output", type=Path, default=OUTPUT_FILE, help="结果 JSON 输出路径")
     parser.add_argument("--langfuse-session-id", default="", help="指定本次验证写入 Langfuse 的 session_id")

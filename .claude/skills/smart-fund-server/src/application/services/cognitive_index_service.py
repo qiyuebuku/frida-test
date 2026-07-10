@@ -6,6 +6,7 @@ import asyncio
 import hashlib
 import inspect
 import json
+import logging
 import re
 import time
 from contextlib import nullcontext
@@ -57,13 +58,15 @@ from src.domain.knowledge.retrieval_profile import profile_span
 from src.infrastructure.clients.reranker import RerankerClient
 from src.domain.knowledge.semantic_index_materials import SEMANTIC_COLLECTION_ASSIGNMENT_BUCKET, SEMANTIC_COLLECTION_COMMUNITY
 from src.infrastructure.clients.embedding import embed_texts
-from src.infrastructure.config.settings import REDIS_URL
+from src.infrastructure.config.settings import JETTASK_PREFIX, REDIS_URL
 from src.infrastructure.llm_proxy.service import get_llm_gateway_service
 from src.infrastructure.llm_proxy.types import LLMProxyRequest
 from src.infrastructure.observability.langfuse_tracing import langfuse_observation, langfuse_update_span
 from src.infrastructure.vector_store.milvus_hybrid_store import MilvusTypedHybridStore
 from src.infrastructure.vector_store.milvus_hybrid_store import MilvusHybridDocument
 
+
+logger = logging.getLogger(__name__)
 
 ASSIGNMENT_LEDGER_SCHEMA_VERSION = "candidate_append_log_v1"
 ASSIGNMENT_LEDGER_TTL_SECONDS = 7 * 24 * 60 * 60
@@ -88,6 +91,9 @@ ASSIGNMENT_BUCKET_SEMANTIC_SOURCE_TYPE = "assignment_bucket_cache"
 BUCKET_PLANNING_MAX_TOKENS = 2000
 BUCKET_MERGE_MAX_TOKENS = 1200
 BUCKET_REPLAY_MAX_TOKENS = 5000
+COGNITIVE_CARD_PREFIX_WARM_MARK_KEY = f"{JETTASK_PREFIX}:kg_cognitive_card:prefix_warmed"
+COGNITIVE_CARD_PREFIX_WARM_LOCK_KEY = f"{JETTASK_PREFIX}:lock:kg_cognitive_card:prefix_warmup"
+COGNITIVE_CARD_PREFIX_WARM_POLL_SECONDS = 0.05
 
 BUCKET_PLANNING_SCHEMA = {
     "type": "object",
@@ -247,8 +253,8 @@ BUCKET_PLANNING_SYSTEM_PROMPT = """你是金融知识图谱的 Community Assignm
 - 如果新增 theme 与已有 bucket 都不匹配，可以创建新 bucket。
 - 首轮没有已有 bucket 时，也要创建可复用的中等粒度 bucket；不要为单个 intent 创建过细 bucket，也不要创建能吞下大量互不竞争 intent 的大桶。
 - 不要在本任务中判断 bucket 合并；bucket merge 是独立任务，不在 planning 输出中处理。
-- topic_intent_signatures 只包含分桶所需的压缩主题信号，不包含证据 ID、source ID、chunk_index、长 summary 或完整细粒度标签。
-- context_hint 是从 summary/raw_theme 压缩出的短上下文，只用于帮助上提父级 bucket 边界，不能当作新闻全文。
+- topic_intent_signatures 只包含分桶所需的压缩主题信号，不包含证据 ID、source ID、chunk_index、长 evidence 或完整细粒度标签。
+- context_hint 是从 raw_theme/title_candidate 选取的短上下文，只用于帮助上提父级 bucket 边界，不能当作新闻全文。
 - semantic_bucket_candidates 是 Milvus 语义缓存召回的中等相似 bucket，只是优先复用参考；如果候选 scope 不匹配，仍应创建新 bucket。
 - existing_bucket_catalog 只包含已有 bucket 的 bucket_id、bucket_title、scope；历史 canonical_themes 只用于系统缓存命中，不传入 LLM。
 - 对相近 theme 必须输出 canonical_theme，后续会缓存 canonical_theme -> bucket_id。
@@ -318,6 +324,7 @@ class CognitiveCardExtractor:
         self._llm = llm or get_llm_gateway_service()
         self._model = model or resolve_kg_llm_model("kg_cognitive_card")
         self._concurrency = max(1, concurrency)
+        self._redis: Any | None = None
 
     async def extract(self, chunks: list[EvidenceChunk]) -> list[CognitiveCard]:
         sem = asyncio.Semaphore(self._concurrency)
@@ -339,11 +346,7 @@ class CognitiveCardExtractor:
     async def _extract_one(self, chunk: EvidenceChunk) -> CognitiveCard:
         payload = dict(chunk.payload or {})
         prompt = {
-            "time_grounding_instruction": (
-                "source_published_at 是当前新闻发布时间。"
-                "chunk_text 中出现今年、去年、明年、本月、上月或未带年份的月份时，可结合 source_published_at 理解时间；"
-                "如果无法从 chunk_text 或 source_published_at 推导出年份，不要补年份。"
-            ),
+            "time_rule": "相对时间只可按 source_published_at 解析；无法推导年份时不要补年份。",
             "source_published_at": payload.get("published_at") or "",
             "title": payload.get("title") or "",
             "chunk_text": chunk.content,
@@ -360,6 +363,7 @@ class CognitiveCardExtractor:
                 "source_type": payload.get("source_type") or "",
                 "source_id": payload.get("source_id") or "",
                 "chunk_id": chunk.chunk_id,
+                "_cache_key_metadata": {"task": "kg_cognitive_card"},
             },
             use_cache=True,
         )
@@ -368,18 +372,93 @@ class CognitiveCardExtractor:
             as_type="span",
             input={"chunk_id": chunk.chunk_id, "text_chars": len(chunk.content)},
         ):
-            response = await self._llm.generate(request)
-            card = await self._card_from_response(chunk, request, response)
-            langfuse_update_span(
-                output={
-                    "cognitive_card_id": card.cognitive_card_id,
-                    "topic_intents": len(card.topic_intents),
-                    "risk_signals": len(card.risk_signals),
-                    "local_impact_signals": len(card.local_impact_signals),
-                },
-                status_message="completed",
+            warmup_lock = await self._claim_prefix_warmup_lock()
+            try:
+                response = await self._llm.generate(request)
+                await self._mark_prefix_warmed(settle=warmup_lock is not None)
+                card = await self._card_from_response(chunk, request, response)
+                langfuse_update_span(
+                    output={
+                        "cognitive_card_id": card.cognitive_card_id,
+                        "topic_intents": len(card.topic_intents),
+                        "risk_signals": len(card.risk_signals),
+                        "local_impact_signals": len(card.local_impact_signals),
+                        "prefix_warmup_owner": warmup_lock is not None,
+                    },
+                    status_message="completed",
+                )
+                return card
+            finally:
+                if warmup_lock is not None:
+                    await self._release_prefix_warmup_lock(warmup_lock)
+
+    async def _claim_prefix_warmup_lock(self) -> Any | None:
+        if settings.KG_COGNITIVE_CARD_PREFIX_WARM_WINDOW_SECONDS <= 0:
+            return None
+        if await self._prefix_recently_warmed():
+            return None
+
+        lock = self._prefix_warmup_lock()
+        acquired = await self._try_acquire_prefix_warmup_lock(lock)
+        if not acquired:
+            await self._wait_for_prefix_warmup()
+            return None
+        if await self._prefix_recently_warmed():
+            await self._release_prefix_warmup_lock(lock)
+            return None
+        return lock
+
+    def _prefix_warmup_lock(self) -> Any:
+        return self._redis_client().lock(
+            COGNITIVE_CARD_PREFIX_WARM_LOCK_KEY,
+            timeout=max(1, settings.KG_COGNITIVE_CARD_PREFIX_WARM_LOCK_TIMEOUT_SECONDS),
+            blocking_timeout=0,
+            sleep=COGNITIVE_CARD_PREFIX_WARM_POLL_SECONDS,
+        )
+
+    async def _try_acquire_prefix_warmup_lock(self, lock: Any) -> bool:
+        try:
+            return bool(await asyncio.to_thread(lambda: lock.acquire(blocking=False)))
+        except Exception as exc:
+            logger.warning("kg_cognitive_card prefix warmup lock unavailable: %s", exc)
+            return False
+
+    async def _wait_for_prefix_warmup(self) -> None:
+        deadline = time.monotonic() + max(1, settings.KG_COGNITIVE_CARD_PREFIX_WARM_BLOCKING_TIMEOUT_SECONDS)
+        while time.monotonic() < deadline:
+            if await self._prefix_recently_warmed():
+                return
+            await asyncio.sleep(COGNITIVE_CARD_PREFIX_WARM_POLL_SECONDS)
+
+    async def _prefix_recently_warmed(self) -> bool:
+        try:
+            return bool(await asyncio.to_thread(self._redis_client().exists, COGNITIVE_CARD_PREFIX_WARM_MARK_KEY))
+        except Exception:
+            return False
+
+    async def _mark_prefix_warmed(self, *, settle: bool = False) -> None:
+        try:
+            if settle and settings.KG_COGNITIVE_CARD_PREFIX_WARM_SETTLE_SECONDS > 0:
+                await asyncio.sleep(settings.KG_COGNITIVE_CARD_PREFIX_WARM_SETTLE_SECONDS)
+            await asyncio.to_thread(
+                self._redis_client().setex,
+                COGNITIVE_CARD_PREFIX_WARM_MARK_KEY,
+                max(1, settings.KG_COGNITIVE_CARD_PREFIX_WARM_WINDOW_SECONDS),
+                str(int(time.time())),
             )
-            return card
+        except Exception:
+            return None
+
+    async def _release_prefix_warmup_lock(self, lock: Any) -> None:
+        try:
+            await asyncio.to_thread(lock.release)
+        except Exception:
+            return None
+
+    def _redis_client(self) -> Any:
+        if self._redis is None:
+            self._redis = redis.from_url(REDIS_URL, decode_responses=True)
+        return self._redis
 
     async def _card_from_response(
         self,
@@ -404,9 +483,12 @@ class CognitiveCardExtractor:
             instruction=(
                 "上一轮 Cognitive Card 输出未通过业务校验。"
                 "只修复 JSON 结构和字段合规性，不要新增外部事实。"
-                "顶层必须是 JSON object，且必须包含 summary、title_candidates、topic_intents、"
-                "risk_signals、local_impact_signals、actor_signals、supporting_text。"
+                "顶层必须是 JSON object，且必须包含 title_candidates、topic_intents、"
+                "risk_signals、local_impact_signals、actor_signals。"
                 "topic_intents 必须是非空对象数组。"
+                "每个 topic_intent 必须拆成 assignment_profile、cognitive_material、event_classification 三块。"
+                "cognitive_material.evidence_span 必须是当前 chunk text 中连续存在的原文，"
+                "不能改写、摘要或拼接多处文本。"
             ),
             retry_reason="cognitive_card_validation_invalid",
         )
@@ -2149,9 +2231,11 @@ def _bucket_theme_candidates(topic_intent: dict[str, Any]) -> list[str]:
 def _bucket_semantic_query_text(topic_intent: dict[str, Any]) -> str:
     signature = _bucket_intent_signature({"intent_id": "-", "topic_intent": topic_intent})
     parts: list[str] = []
-    for key in ("parent_themes", "title_candidate", "event_thread", "routing_signals", "context_hint"):
+    for key in ("parent_themes", "title_candidate", "event_thread", "routing_signals", "event_classification", "context_hint"):
         value = signature.get(key)
-        if isinstance(value, list):
+        if isinstance(value, dict):
+            parts.extend(str(item) for item in value.values() if str(item).strip())
+        elif isinstance(value, list):
             parts.extend(str(item) for item in value if str(item).strip())
         elif str(value or "").strip():
             parts.append(str(value).strip())
@@ -2173,6 +2257,9 @@ def _bucket_semantic_target_id(*, adapter_name: str, bucket_id: str) -> str:
 
 def _bucket_intent_signature(ref: dict[str, Any]) -> dict[str, Any]:
     topic_intent = ref["topic_intent"]
+    event_classification = (
+        topic_intent.get("event_classification") if isinstance(topic_intent.get("event_classification"), dict) else {}
+    )
     routing_signals = _ordered_unique(
         [
             *_candidate_list(topic_intent.get("event_action")),
@@ -2186,12 +2273,17 @@ def _bucket_intent_signature(ref: dict[str, Any]) -> dict[str, Any]:
         "title_candidate": str(topic_intent.get("title_candidate") or "")[:80],
         "event_thread": _candidate_list(topic_intent.get("event_thread"))[:2],
         "routing_signals": routing_signals[:4],
+        "event_classification": {
+            key: str(event_classification.get(key) or "")
+            for key in ("event_domain", "event_scope", "market_relevance")
+            if str(event_classification.get(key) or "").strip()
+        },
         "context_hint": _bucket_context_hint(topic_intent),
     }
 
 
 def _bucket_context_hint(topic_intent: dict[str, Any]) -> str:
-    for key in ("summary", "raw_theme", "title_candidate"):
+    for key in ("raw_theme", "title_candidate"):
         text = re.sub(r"\s+", " ", str(topic_intent.get(key) or "")).strip()
         if text:
             return text[:60]
@@ -3179,6 +3271,11 @@ class CommunityCardBuilder:
                     "并且 absorb_community_ids 必须列出要吸收的 candidate_base community_id。"
                     "每条 assignment 必须包含 fit_type；attach_existing 不能使用 new_parent_topic，"
                     "create_new 和 create_parent_and_absorb_existing 必须使用 new_parent_topic。"
+                    "每条 assignment 必须包含 insight_delta；"
+                    "不要在 assignment 中输出 evidence_span，"
+                    "证据字段已经由 topic_intent 提供。"
+                    "insight_delta 必须说明当前 topic_intent 挂入目标 community 后新增的认知信息。"
+                    "如果只是背景、相邻、弱沾边或泛相关，不能 attach_existing。"
                     "如果新建 L0 community，标题必须具备清晰的对象和机制边界；"
                     "不能只是描述泛市场状态或一次性行情表现。"
                     "当 intent 主要描述成交、资金、板块轮动或风险偏好时，"

@@ -4,8 +4,9 @@
   "scan_limit": 80,
   "force": true,
   "dry_run": false,
+  "skip_refresh": true,
   "langfuse": {
-    "session_id": "community-insight-compact-balanced-20260706",
+    "session_id": "community-insight-validation-20260710T095454Z-kgc:financial:l0:731",
     "trace_name": "kg.community_insight.refresh_ids",
     "llm_observation": "llm:kg_community_insight"
   },
@@ -13,84 +14,66 @@
     {
       "community_id": "kgc:financial:l0:731",
       "title": "半导体产业链",
-      "updated_at": "2026-07-06T14:10:32.225384+00:00",
-      "last_insight_generated_at": "2026-07-06T14:10:34.414956+00:00",
-      "source_count": 56,
-      "cognitive_card_count": 58,
-      "assignment_count": 62,
+      "updated_at": "2026-07-10T05:12:03.963004+00:00",
+      "last_insight_generated_at": "2026-07-10T05:12:05.116182+00:00",
+      "source_count": 64,
+      "cognitive_card_count": 66,
+      "assignment_count": 70,
       "existing_insight": {
         "insight_id": "kgi:kgc:financial:l0:731",
         "status": "active",
-        "insight_version": 9,
-        "report_chars": 3100,
+        "insight_version": 13,
+        "report_chars": 1491,
         "report_json_keys": [
-          "basis",
-          "conflicts",
-          "core_thesis",
-          "quality_flags",
-          "reversal_conditions",
-          "use_boundary",
-          "weak_signals"
+          "findings",
+          "key_entities",
+          "key_relationships",
+          "summary"
         ],
-        "updated_at": "2026-07-06T14:10:34.414956+00:00",
-        "source_count": 56,
-        "cognitive_card_count": 58,
-        "assignment_count": 62
+        "updated_at": "2026-07-10T05:12:05.116182+00:00",
+        "source_count": 53,
+        "cognitive_card_count": 53,
+        "assignment_count": 53
       }
     }
   ],
   "refresh_result": {
-    "skipped": false,
-    "requested": 1,
-    "selected": 1,
-    "refreshed": 1,
-    "failed": 0,
-    "errors": [],
-    "duration_seconds": 39.748
+    "skipped": true,
+    "reason": "skip_refresh"
   },
   "pg_insights": {
     "kgc:financial:l0:731": {
       "insight_id": "kgi:kgc:financial:l0:731",
       "status": "active",
-      "insight_version": 10,
-      "report_chars": 2446,
+      "insight_version": 13,
+      "report_chars": 1491,
       "report_json_keys": [
-        "basis",
-        "conflicts",
-        "core_thesis",
-        "quality_flags",
-        "reversal_conditions",
-        "use_boundary",
-        "weak_signals"
+        "findings",
+        "key_entities",
+        "key_relationships",
+        "summary"
       ],
-      "updated_at": "2026-07-06T15:01:55.376207+00:00",
-      "source_count": 56,
-      "cognitive_card_count": 58,
-      "assignment_count": 62,
+      "updated_at": "2026-07-10T05:12:05.116182+00:00",
+      "source_count": 53,
+      "cognitive_card_count": 53,
+      "assignment_count": 53,
       "title": "半导体产业链",
-      "report_preview": "本报告综合2026年7月5-6日半导体产业链56条来源，归纳四条强主线及一条中等主线。主线一：存储芯片供需失衡与价格上行周期。核心证据：聚辰股份Nor Flash全系列涨价25%（ft_news:108755）、三星计划三季度DRAM提价20%（ft_news:108783）、集邦咨询上修2026年Q1 DRAM和NAND合约价格（ft_news:109052）、美光投资93亿美元扩产（ft_news:108767）、SK海力士ADR募资用于45.5万亿韩元资本支出及EUV采购（ft_news:109268）、HBM高利润挤压通用产能（ft_news:108761）、深圳华强北存储市场价格回升（ft_news:108783）、野村认为AI需求导致实际短缺（ft_news:109005）。驱动因素：AI与数据中心需求拉动HBM和通用存储，供给端HBM挤压产能，存储巨头主动控制提价。传导链条：AI算力投资→HBM需求→通用存储产能受限→DRAM/NAND涨价→存储厂商盈利改善→扩产资本开支→设备需求。影响对象：存储芯片原厂（三星、美光、SK海力士）、存储模组厂（江波龙）、分销商、下游PC/",
-      "core_thesis": "半导体产业链在2026年7月初呈现多主线共振：存储芯片供需失衡推动价格进入上行周期（Nor Flash涨价25%、DRAM提价20%），AI与HBM需求是核心驱动；先进封装与逻辑折叠技术（韬定律V2、CoPoS设备订单）开启国产芯片迭代与EDA机遇；半导体设备景气上行（日本设备销售预期上调、国内并购活跃）；模拟芯片供需紧张（交期延长至6个月）。短期市场存在情绪波动，但产业基本面偏强。",
-      "quality_flags": [
-        "主线一（存储涨价）质量高，多源交叉验证，权重0.9+",
-        "主线二（先进封装/技术）质量中高，技术路线明确但部分环节验证中",
-        "主线三（设备景气）质量高，行业数据与并购事件支撑",
-        "主线四（模拟芯片）质量中高，单家厂商信号需跟踪行业扩散",
-        "市场情绪波动相关信号（股价涨跌）质量低，属于噪声",
-        "社区整体成熟度mature_topic，高权重分配43个，质量可靠"
-      ]
+      "report_preview": "半导体产业链在2026年7月上旬呈现出AI驱动的景气周期加速特征，供需紧张从存储芯片向模拟芯片等多个环节扩散，设备投资强劲，同时华为“韬定律”理论的提出为产业链注入新的技术升级预期。多条材料共同表明，AI服务器需求的持续增长正在重塑整个半导体供需格局，而技术路线的潜在变革可能进一步拉动上游工具链和封装环节的价值提升。\n\n综合来看，AI需求已从逻辑芯片延伸至存储和模拟领域，导致全产业链出现结构性短缺。存储芯片方面，HBM因其高利润吸引原厂优先分配产能，导致通用DRAM和NAND供应受限。集邦咨询大幅上调2026年Q1的DRAM合约价涨幅至90-95%，NAND Flash合约价涨幅至55-60%（ft_news:109052），同时三星、SK海力士等存储巨头业绩预期强劲（ft_news:108803），但市场对供需状况的担忧和杠杆ETF获利回吐导致全球芯片股短暂承压（ft_news:108912）。模拟芯片市场同样感受到需求回升带来的压力，亚德诺半导体（ADI）部分产品交期长达六个月，并为维持供应发出涨价通知（ft_news:108985，ft_news:109023）。这反映出AI需求",
+      "core_thesis": null,
+      "quality_flags": []
     }
   },
   "communities_after": {
     "kgc:financial:l0:731": {
-      "updated_at": "2026-07-06T15:01:53.560438+00:00",
-      "last_insight_generated_at": "2026-07-06T15:01:55.376207+00:00"
+      "updated_at": "2026-07-10T05:12:03.963004+00:00",
+      "last_insight_generated_at": "2026-07-10T05:12:05.116182+00:00"
     }
   },
   "milvus": {
     "kgc:financial:l0:731": {
       "target_id": "kgi:kgc:financial:l0:731",
       "hit": true,
-      "text_chars": 3467,
+      "text_chars": 3170,
       "metadata_keys": [
         "adapter_name",
         "assignment_count",
@@ -122,16 +105,18 @@
         "target_id",
         "target_type"
       ],
-      "text_preview": "Community Insight: 半导体产业链\n\n本报告综合2026年7月5-6日半导体产业链56条来源，归纳四条强主线及一条中等主线。主线一：存储芯片供需失衡与价格上行周期。核心证据：聚辰股份Nor Flash全系列涨价25%（ft_news:108755）、三星计划三季度DRAM提价20%（ft_news:108783）、集邦咨询上修2026年Q1 DRAM和NAND合约价格（ft_news:109052）、美光投资93亿美元扩产（ft_news:108767）、SK"
+      "text_preview": "Community Insight: 半导体产业链\nSummary: 半导体产业链在AI需求驱动下进入景气加速期，存储、模拟芯片供需紧张并出现涨价，设备投资持续上调，华为韬定律论文催生先进封装与EDA工具链增量预期，资本开支计划印证长期需求。\nFinding 1: AI需求导致存储器市场供需严重失衡，HBM产能挤压通用DRAM和NAND供应，推动价格大幅上涨。。集邦咨询大幅上修DRAM合约价季增幅至90-95%、NAND Flash至55-60%（ft_news:109052"
     }
   },
   "quality_summary": {
     "selected_count": 1,
     "pg_active_count": 1,
-    "pg_report_min_chars": 2446,
-    "pg_report_max_chars": 2446,
+    "pg_report_min_chars": 1491,
+    "pg_report_max_chars": 1491,
     "milvus_hit_count": 1,
-    "report_json_missing_core_thesis": []
+    "report_json_missing_core_thesis": [
+      "kgc:financial:l0:731"
+    ]
   },
-  "duration_seconds": 44.437
+  "duration_seconds": 2.164
 }

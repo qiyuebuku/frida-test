@@ -231,6 +231,38 @@ def test_gateway_no_cache_retry_overwrites_original_cache_key(tmp_path):
     assert len(deepseek.calls) == 1
 
 
+def test_gateway_cache_key_metadata_override_ignores_trace_metadata():
+    service, _deepseek, _claude = _service()
+    request_a = LLMProxyRequest(
+        prompt="same prompt",
+        system_prompt="same system",
+        model="deepseek-v4-flash",
+        metadata={
+            "task": "kg_cognitive_card",
+            "source_id": "run-a:ft_news:1",
+            "chunk_id": "run-a:chunk:1",
+            "_cache_key_metadata": {"task": "kg_cognitive_card"},
+        },
+    )
+    request_b = LLMProxyRequest(
+        prompt="same prompt",
+        system_prompt="same system",
+        model="deepseek-v4-flash",
+        metadata={
+            "task": "kg_cognitive_card",
+            "source_id": "run-b:ft_news:1",
+            "chunk_id": "run-b:chunk:1",
+            "_cache_key_metadata": {"task": "kg_cognitive_card"},
+        },
+    )
+
+    assert service._cache_key(request_a, "deepseek", "deepseek-v4-flash") == service._cache_key(
+        request_b,
+        "deepseek",
+        "deepseek-v4-flash",
+    )
+
+
 def test_gateway_repairs_json_schema_invalid_response_and_caches_repaired_result(tmp_path):
     registry = ProviderRegistry()
     deepseek = SequenceProvider(

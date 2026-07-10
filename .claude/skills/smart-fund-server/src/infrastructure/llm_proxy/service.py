@@ -1244,6 +1244,9 @@ class LLMGatewayService:
         cache_prompt = metadata.get("_cache_key_prompt", request.prompt)
         cache_system_prompt = metadata.get("_cache_key_system_prompt", request.system_prompt)
         cache_messages = metadata.get("_cache_key_messages", request.messages)
+        cache_metadata = metadata.get("_cache_key_metadata")
+        if not isinstance(cache_metadata, dict):
+            cache_metadata = _cache_key_metadata(request.metadata)
         payload = {
             "provider": provider,
             "resolved_model": resolved_model,
@@ -1257,7 +1260,7 @@ class LLMGatewayService:
             "tools": request.tools,
             "tool_choice": request.tool_choice,
             "provider_options": request.provider_options,
-            "metadata": _cache_key_metadata(request.metadata),
+            "metadata": cache_metadata,
         }
         raw = json.dumps(payload, sort_keys=True, ensure_ascii=False, separators=(",", ":"))
         return hashlib.sha256(raw.encode("utf-8")).hexdigest()

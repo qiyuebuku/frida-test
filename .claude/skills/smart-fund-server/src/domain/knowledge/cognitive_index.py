@@ -34,14 +34,13 @@ ASSIGNMENT_RERANK_TOP_DELTA = 0.20
 ASSIGNMENT_RERANK_MIN_KEEP = 4
 COGNITIVE_CARD_MAX_TOKENS = 5000
 ASSIGNMENT_MAX_TOKENS = 5000
-COGNITIVE_CARD_SCHEMA_VERSION = "cognitive_card_v1"
-COMMUNITY_ASSIGNMENT_SCHEMA_VERSION = "community_assignment_v2"
+COGNITIVE_CARD_SCHEMA_VERSION = "cognitive_card_v8"
+COMMUNITY_ASSIGNMENT_SCHEMA_VERSION = "community_assignment_v4"
 COMMUNITY_PROJECTION = "cognitive_topic"
 ASSIGNMENT_FIT_TYPES = {
     "existing_direction",
     "new_subtopic",
     "broader_parent",
-    "adjacent_context",
     "new_parent_topic",
 }
 ASSIGNMENT_ACTIONS = {
@@ -175,7 +174,7 @@ class CommunityDraft:
                             or [intent.get("title_candidate") or intent.get("raw_theme") or ""]
                         )[0]
                     ),
-                    "summary": _clip(str(intent.get("summary") or ""), 120),
+                    "evidence_span": _clip(str(intent.get("evidence_span") or ""), 120),
                 }
                 for intent in self.assigned_intents[-3:]
             ],
@@ -328,7 +327,6 @@ class CognitiveCommunityBuildResult:
 COGNITIVE_CARD_SCHEMA: dict[str, Any] = {
     "type": "object",
     "properties": {
-        "summary": {"type": "string", "maxLength": 180},
         "title_candidates": {"type": "array", "maxItems": 5, "items": {"type": "string", "maxLength": 24}},
         "topic_intents": {
             "type": "array",
@@ -337,52 +335,148 @@ COGNITIVE_CARD_SCHEMA: dict[str, Any] = {
             "items": {
                 "type": "object",
                 "properties": {
-                    "raw_theme": {"type": "string", "maxLength": 48},
-                    "title_candidate": {"type": "string", "maxLength": 32},
-                    "parent_themes": {"type": "array", "maxItems": 4, "items": {"type": "string", "maxLength": 24}},
-                    "broad_topics": {"type": "array", "maxItems": 4, "items": {"type": "string", "maxLength": 24}},
-                    "mid_topics": {"type": "array", "maxItems": 5, "items": {"type": "string", "maxLength": 28}},
-                    "specific_topics": {"type": "array", "maxItems": 5, "items": {"type": "string", "maxLength": 36}},
-                    "topic_level_hint": {"type": "string", "enum": ["broad", "mid", "specific", "mixed", "uncertain"]},
-                    "driver": {"type": "array", "maxItems": 5, "items": {"type": "string", "maxLength": 32}},
-                    "impact_target": {"type": "array", "maxItems": 6, "items": {"type": "string", "maxLength": 28}},
-                    "risk_type": {"type": "array", "maxItems": 4, "items": {"type": "string", "maxLength": 28}},
-                    "event_thread": {"type": "array", "maxItems": 4, "items": {"type": "string", "maxLength": 32}},
-                    "event_action": {"type": "array", "maxItems": 4, "items": {"type": "string", "maxLength": 32}},
-                    "actors": {"type": "array", "maxItems": 6, "items": {"type": "string", "maxLength": 28}},
-                    "importance": {"type": "number", "minimum": 0, "maximum": 1},
-                    "impact_direction": {"type": "string", "enum": ["positive", "negative", "mixed", "uncertain"]},
-                    "event_stage": {"type": "string", "maxLength": 24},
-                    "timeline_position": {
-                        "type": "string",
-                        "enum": ["trigger", "reaction", "escalation", "deescalation", "resolution", "follow_up", "uncertain"],
+                    "assignment_profile": {
+                        "type": "object",
+                        "properties": {
+                            "raw_theme": {"type": "string", "maxLength": 48},
+                            "title_candidate": {"type": "string", "maxLength": 32},
+                            "parent_themes": {
+                                "type": "array",
+                                "maxItems": 4,
+                                "items": {"type": "string", "maxLength": 24},
+                            },
+                            "broad_topics": {
+                                "type": "array",
+                                "maxItems": 4,
+                                "items": {"type": "string", "maxLength": 24},
+                            },
+                            "mid_topics": {
+                                "type": "array",
+                                "maxItems": 5,
+                                "items": {"type": "string", "maxLength": 28},
+                            },
+                            "specific_topics": {
+                                "type": "array",
+                                "maxItems": 5,
+                                "items": {"type": "string", "maxLength": 36},
+                            },
+                            "topic_level_hint": {
+                                "type": "string",
+                                "enum": ["broad", "mid", "specific", "mixed", "uncertain"],
+                            },
+                        },
+                        "required": [
+                            "raw_theme",
+                            "title_candidate",
+                            "parent_themes",
+                            "broad_topics",
+                            "mid_topics",
+                            "specific_topics",
+                            "topic_level_hint",
+                        ],
+                        "additionalProperties": False,
                     },
-                    "event_time": {"type": "string", "maxLength": 32},
-                    "summary": {"type": "string", "maxLength": 120},
-                    "supporting_text": {"type": "string", "maxLength": 120},
+                    "cognitive_material": {
+                        "type": "object",
+                        "properties": {
+                            "driver": {"type": "array", "maxItems": 5, "items": {"type": "string", "maxLength": 32}},
+                            "impact_target": {
+                                "type": "array",
+                                "maxItems": 6,
+                                "items": {"type": "string", "maxLength": 28},
+                            },
+                            "risk_type": {"type": "array", "maxItems": 4, "items": {"type": "string", "maxLength": 28}},
+                            "event_thread": {
+                                "type": "array",
+                                "maxItems": 4,
+                                "items": {"type": "string", "maxLength": 32},
+                            },
+                            "event_action": {
+                                "type": "array",
+                                "maxItems": 4,
+                                "items": {"type": "string", "maxLength": 32},
+                            },
+                            "actors": {"type": "array", "maxItems": 6, "items": {"type": "string", "maxLength": 28}},
+                            "impact_direction": {
+                                "type": "string",
+                                "enum": ["positive", "negative", "mixed", "uncertain"],
+                            },
+                            "event_stage": {"type": "string", "maxLength": 24},
+                            "timeline_position": {
+                                "type": "string",
+                                "enum": [
+                                    "trigger",
+                                    "reaction",
+                                    "escalation",
+                                    "deescalation",
+                                    "resolution",
+                                    "follow_up",
+                                    "uncertain",
+                                ],
+                            },
+                            "event_time": {"type": "string", "maxLength": 32},
+                            "evidence_span": {"type": "string", "maxLength": 260},
+                            "evidence_support": {"type": "number", "minimum": 0, "maximum": 1},
+                        },
+                        "required": [
+                            "driver",
+                            "impact_target",
+                            "risk_type",
+                            "event_thread",
+                            "event_action",
+                            "actors",
+                            "impact_direction",
+                            "event_stage",
+                            "timeline_position",
+                            "event_time",
+                            "evidence_span",
+                            "evidence_support",
+                        ],
+                        "additionalProperties": False,
+                    },
+                    "event_classification": {
+                        "type": "object",
+                        "properties": {
+                            "event_domain": {
+                                "type": "string",
+                                "enum": [
+                                    "macro_policy",
+                                    "industry_policy",
+                                    "geopolitics_trade",
+                                    "company_financial",
+                                    "company_operation",
+                                    "market_movement",
+                                    "technology_security",
+                                    "public_safety",
+                                    "social_livelihood",
+                                    "entertainment_sports",
+                                    "other",
+                                ],
+                            },
+                            "event_scope": {
+                                "type": "string",
+                                "enum": [
+                                    "global",
+                                    "national",
+                                    "regional",
+                                    "industry",
+                                    "company",
+                                    "product_or_project",
+                                    "individual",
+                                    "unknown",
+                                ],
+                            },
+                            "market_relevance": {
+                                "type": "string",
+                                "enum": ["high", "medium", "low", "none"],
+                            },
+                            "importance": {"type": "number", "minimum": 0, "maximum": 1},
+                        },
+                        "required": ["event_domain", "event_scope", "market_relevance", "importance"],
+                        "additionalProperties": False,
+                    },
                 },
-                "required": [
-                    "raw_theme",
-                    "title_candidate",
-                    "parent_themes",
-                    "broad_topics",
-                    "mid_topics",
-                    "specific_topics",
-                    "topic_level_hint",
-                    "driver",
-                    "impact_target",
-                    "risk_type",
-                    "event_thread",
-                    "event_action",
-                    "actors",
-                    "importance",
-                    "impact_direction",
-                    "event_stage",
-                    "timeline_position",
-                    "event_time",
-                    "summary",
-                    "supporting_text",
-                ],
+                "required": ["assignment_profile", "cognitive_material", "event_classification"],
                 "additionalProperties": False,
             },
         },
@@ -456,16 +550,13 @@ COGNITIVE_CARD_SCHEMA: dict[str, Any] = {
             "required": ["actors", "companies", "industries", "regions", "policies", "commodities"],
             "additionalProperties": False,
         },
-        "supporting_text": {"type": "array", "maxItems": 5, "items": {"type": "string", "maxLength": 120}},
     },
     "required": [
-        "summary",
         "title_candidates",
         "topic_intents",
         "risk_signals",
         "local_impact_signals",
         "actor_signals",
-        "supporting_text",
     ],
     "additionalProperties": False,
 }
@@ -495,6 +586,7 @@ ASSIGNMENT_SCHEMA: dict[str, Any] = {
                         "enum": sorted(ASSIGNMENT_FIT_TYPES),
                     },
                     "reason": {"type": "string"},
+                    "insight_delta": {"type": "string"},
                 },
                 "required": [
                     "action",
@@ -504,6 +596,7 @@ ASSIGNMENT_SCHEMA: dict[str, Any] = {
                     "confidence",
                     "fit_type",
                     "reason",
+                    "insight_delta",
                 ],
                 "additionalProperties": False,
             },
@@ -537,17 +630,24 @@ COGNITIVE_CARD_SYSTEM_PROMPT = """你是金融知识图谱的 Cognitive Card 抽
 - 不要输出 source_id、evidence_id、chunk_id、offset、previous_chunk_id、next_chunk_id、text_hash、chunker_version；这些证据定位字段由系统注入。
 - 必须输出 topic_intents，数量 1-10 个；每个 topic_intent 表示当前 chunk 支撑的一个主题意图。
 - topic_intents 必须是对象数组，禁止输出字符串数组。
-- 每个 topic_intent 对象必须包含 raw_theme、title_candidate、parent_themes、broad_topics、mid_topics、specific_topics、topic_level_hint、driver、impact_target、risk_type、event_thread、event_action、actors、importance、impact_direction、event_stage、timeline_position、event_time、summary、supporting_text。
+- 每个 topic_intent 对象必须只包含 assignment_profile、cognitive_material、event_classification 三块。
+- assignment_profile 只服务 Community Assignment 归档，必须包含 raw_theme、title_candidate、parent_themes、broad_topics、mid_topics、specific_topics、topic_level_hint。
+- cognitive_material 只服务后续认知报告和证据接地，必须包含 driver、impact_target、risk_type、event_thread、event_action、actors、impact_direction、event_stage、timeline_position、event_time、evidence_span、evidence_support。
+- event_classification 只服务 intent 级分流和优先级，必须包含 event_domain、event_scope、market_relevance、importance。
+- event_domain 只能取 macro_policy、industry_policy、geopolitics_trade、company_financial、company_operation、market_movement、technology_security、public_safety、social_livelihood、entertainment_sports、other。
+- event_scope 只能取 global、national、regional、industry、company、product_or_project、individual、unknown。
+- market_relevance 只能取 high、medium、low、none；判断标准是该 intent 与金融市场、产业链、资产定价或公司经营的直接相关程度。
+- event_classification.importance 是该 intent 的综合重要性，0.85 以上只给国家级/全球级/重大行业级或对市场有强直接影响的事件；0.65-0.85 给重要行业、重要公司、重要政策或明显影响资产定价的事件；0.40-0.65 给普通财经和一般行业信息；低于 0.40 给弱财经相关、民生娱乐或低影响信息。
 - topic_intent 只表示高维主题意图，不表示单个公司动作、单个数字、单个项目、单条审批、单次行情或单个数据点。
-- 细事实应放入 specific_topics、event_action、actors、supporting_text，不要为细事实单独创建 topic_intent。
+- 细事实应放入 specific_topics、event_action、actors、evidence_span，不要为细事实单独创建 topic_intent。
 - 不要因为出现多个公司、多个数字、多个动作就拆多个 topic_intents；除非它们属于不同父级主题、不同影响对象、不同风险类型或不同事件线。
 - raw_theme 必须是当前 chunk 能支撑的主题表达，不要直接照抄新闻标题。
-- title_candidate 必须是适合作为 community 的候选主题标题。
+- title_candidate 必须是适合作为 community 的稳定候选主题标题；如果 raw_theme 只是一次性事件或单一主体动作，title_candidate 必须上提到可复用主题，不能与 raw_theme 相同。
 - parent_themes 写交易认知层 L0 父主题，是后续 Community 归档最重要的信号；它应该能承载多条不同来源、不同主体、不同时间的资料。
 - parent_themes 不要写公司名、项目名、单一产品、单次交易或单条行情；遇到细方向时必须上提到可复用父主题。
 - parent_themes 应像图书馆一级目录名：短、稳定、可复用；不要写成一句新闻摘要、原因解释或长标题。
 - parent_themes 必须有稳定对象和稳定机制边界：能说明“哪类资产、产业、政策、风险、公司经营或宏观变量为什么被影响”。只描述短期表现、资金行为、交易热度或盘面状态的表达，不应作为 parent_themes。
-- 如果 chunk 主要描述市场短期表现，parent_themes 必须追溯背后的驱动主题、产业链主题、政策主题、风险主题或流动性主题；无法追溯时，把短期表现放入 mid_topics / specific_topics / supporting_text。
+- 如果 chunk 主要描述市场短期表现，parent_themes 必须追溯背后的驱动主题、产业链主题、政策主题、风险主题或流动性主题；无法追溯时，把短期表现放入 mid_topics / specific_topics / evidence_span。
 - 如果一个表达只描述某个父主题下的供需变化、风险变化、资金变化、项目进展或单一主体动作，应放入 mid_topics / specific_topics，而不是 parent_themes。
 - broad_topics 写父主题下仍然较宽的行业、政策、市场或风险主题。
 - mid_topics 写父级主题下的子方向，适合未来 L1/L2。
@@ -557,8 +657,13 @@ COGNITIVE_CARD_SYSTEM_PROMPT = """你是金融知识图谱的 Cognitive Card 抽
 - timeline_position / event_time 继续抽取并保留给后续事件流；但它们不会传给 Community Assignment LLM。
 - risk_signals 只抽当前 chunk 明确支撑的风险线索；证据不足时保守输出。
 - local_impact_signals 只抽当前 chunk 明确提到的局部影响线索，不要改写成完整影响链。
-- summary、topic_intent.summary、local_impact_mentions 不允许出现“当前chunk”“当前 chunk”“本chunk”“该chunk”“这段chunk”等实现视角词。
-- supporting_text 只写当前 chunk 中支撑判断的关键短句，不要整段复制，不要超过一句。
+- local_impact_mentions 不允许出现“当前chunk”“当前 chunk”“本chunk”“该chunk”“这段chunk”等实现视角词。
+- 不要输出顶层 summary，也不要在 topic_intent 内输出 summary。
+- 不要在 card 阶段输出跨文档 Insight、报告句、后续推演或“可能预示”类判断；跨文档融合只由 Community Insight 阶段完成。
+- evidence_span 是该 topic_intent 唯一的事实载体，必须是当前 chunk text 中连续存在的最小完整原文片段，不能改写、摘要、补字或拼接多处文本。它可以包含相邻句子，但必须让读者不依赖二次复述就能验证该 topic_intent。
+- evidence_support 表示 evidence_span 对该 topic_intent 的直接支撑强度；只有间接支撑时要降低分数，不要用高分掩盖弱依据。
+- 如果某个候选主题意图找不到直接原文证据，不要输出为 topic_intent。
+- 输出前自行检查每个 topic_intent：evidence_span 是否确实来自原文且足以独立支撑该意图；title_candidate 是否是可复用主题而不是一次性事件。若不满足，直接修正输出，不要展示自检过程。
 - title_candidates 给 3-5 个候选主题标题，优先覆盖 parent_themes，其次覆盖 broad_topics 和 mid_topics。
 - title_candidates 必须是主题名，不要使用新闻标题、单一公司项目名、单一交易名、盘面描述或“动态/事件/项目/公告”这类尾词。
 - 不要输出 primary / secondary 之类主次判断；主题强弱由后续 assignment weight 表达。
@@ -567,7 +672,7 @@ COGNITIVE_CARD_SYSTEM_PROMPT = """你是金融知识图谱的 Cognitive Card 抽
 
 ASSIGNMENT_SYSTEM_PROMPT = """你是金融知识图谱的 Community 归档裁决器。
 
-你会收到 compact topic_intent，以及系统维护的候选 community append log。
+你会收到 compact topic_intent、该 intent 的原文证据绑定，以及系统维护的候选 community append log。
 
 你的任务：
 - 在候选 community 中判断是否应该挂入已有主题；
@@ -584,13 +689,20 @@ ASSIGNMENT_SYSTEM_PROMPT = """你是金融知识图谱的 Community 归档裁决
 - 一个 topic_intent 可以归属到一个或多个 community；
 - 不区分 primary / secondary；
 - 每条归属必须输出 weight，表示这个 topic_intent 和 community 的关联强度；
-- 每条归属必须输出 fit_type，用来说明这是既有方向、新增子方向、更宽父主题、相邻上下文，还是全新的父主题；
+- 每条归属必须输出 fit_type，用来说明这是既有方向、新增子方向、更宽父主题，还是全新的父主题；
 - 每条归属必须输出 absorb_community_ids；非 create_parent_and_absorb_existing 时输出空数组 []。
+- 每条归属必须输出 insight_delta。
+- 原文证据已经由 topic_intent.evidence_span 提供；不要在 assignment 中复述证据。
+- insight_delta 必须说明当前 topic_intent 挂入该 community 后增加了什么认知信息；如果说不出直接增量，说明它不应挂入该 community。
 - assignments 数量不要超过 max_attach 限制；
 - 不要输出 uncertain，不走人工 pending；
 - 低置信也必须在 attach_existing、create_new、create_parent_and_absorb_existing 中选择一个合法 action；
 - action 只能是 attach_existing、create_new、create_parent_and_absorb_existing。
 - action 选择顺序必须是：先判断能否 attach_existing；如果不能直接 attach，但候选中存在同一稳定对象/机制下的窄主题，必须判断 create_parent_and_absorb_existing；只有两者都不成立时才 create_new。
+- attach_existing 只允许核心归属：输入证据必须直接支撑当前 intent，当前 intent 必须落入该 community 的稳定对象和机制边界。
+- 如果当前 intent 对某个 candidate 只是背景、相关、泛上位、弱沾边、概念相邻、行情同向或可作为上下文，禁止 attach_existing 到该 candidate。
+- 如果没有任何候选满足核心归属，应 create_new 或 create_parent_and_absorb_existing，而不是把材料弱挂靠到最接近的旧主题。
+- 一个 topic_intent 可以多挂，但每一次 attach_existing 都必须独立满足核心归属；不能因为它已归属一个强主题，就顺带挂入另一个弱相关主题。
 - create_parent_and_absorb_existing 表示：候选中已有相关 community，但它们只是当前更大父主题下的子方向、生命周期阶段、动作阶段或局部表达；你要创建一个更稳定的父级 L0，并吸收这些已有候选。
 - 当已有候选只是把某个父主题下的局部阶段、动作环节或子方向当成 L0，而当前 intent 能提炼出更合适、更稳定的父级目录时，优先 create_parent_and_absorb_existing，而不是继续 create_new 一个平级主题。
 - create_parent_and_absorb_existing 创建的新父主题必须保留当前 intent 的稳定对象和机制边界，不能为了吸收多个候选而上提到过粗父类。
@@ -630,14 +742,14 @@ ASSIGNMENT_SYSTEM_PROMPT = """你是金融知识图谱的 Community 归档裁决
 - create_new 的 title 应像索引目录名，优先短标题；不要输出带有“政策与市场动态”“结构性变化”“投资机会”等摘要式尾巴的长标题，除非这是不可再压缩的稳定主题名。
 - L0 标题不能只描述动作、流程、阶段或组织行为；必须带有稳定对象边界，例如产业链、资产类别、政策机制、风险来源、技术链条、供需机制或经营基本面对象。
 - 如果一个候选标题只表达“转型、孵化、合作、预警、响应、扩张、布局、升级、回暖、异动”等动作或阶段，你必须判断它背后的稳定对象是什么；能挂入已有对象型父主题就 attach_existing，能覆盖多个窄对象且边界清楚才 create_parent_and_absorb_existing，不能直接创建动作型 L0。
-- 政策主题只承接政策或监管机制本身；如果新闻核心是某个产业/技术/资产链条在发展，即使它来自政府报告或地方文件，也应优先归入该产业/技术/资产父主题，政策只能作为低权重相邻上下文。
+- 政策主题只承接政策或监管机制本身；如果新闻核心是某个产业/技术/资产链条在发展，即使它来自政府报告或地方文件，也应优先归入该产业/技术/资产父主题。不能为了保留背景信息而弱挂入政策主题。
 - 地缘政治主题不只等于能源风险；军事安全、外交摩擦、地区安全、制裁和通道风险只要会影响市场、供应链、风险偏好或资产定价，都应先考虑地缘风险父主题，而不是把单一国家关系或单一安全动作新建为 L0。
 - L0 不能只是描述市场短期状态或交易表现。合格 L0 必须同时满足：有明确覆盖对象、有稳定驱动机制、有可复用边界、有可解释的排除边界。
 - 如果一个新主题可能吸收大量互不相关的新闻，只因为它们都表现为短期价格、成交、资金、情绪或热度变化，那么它不是合格 L0。
 - 如果当前 intent 描述的是短期市场表现，必须先判断它背后的对象和机制。只有对象和机制边界清楚、未来不会吸收互不相关主题时才允许 create_new。
 - 如果多个线索只有市场表现相似，但底层对象、驱动机制或风险来源不同，应分别挂到各自更有边界的父主题，而不是创建一个统一的表现型 L0。
-- 如果只能说明“市场短期怎么动”，而不能说明“哪个稳定主题为什么被影响”，不要 create_new；应 attach_existing 到最接近的驱动主题，并用较低 weight 表示它只是相邻上下文。
-- 如果无法从当前 intent 提炼出稳定驱动主题，不要创建表现型泛化桶；应挂入最接近的已有父主题并说明弱相关原因。
+- 如果只能说明“市场短期怎么动”，而不能说明“哪个稳定主题为什么被影响”，不要 create_new，也不要弱挂靠到最接近的驱动主题；必须从输入证据中提炼可直接支撑的核心对象，或者创建边界清楚的新主题。
+- 如果无法从当前 intent 提炼出稳定驱动主题，不要创建表现型泛化桶，也不要为了完成归档而弱挂靠；应基于证据提炼更窄但可复用的核心主题。
 - 如果 action=attach_existing，community_id 必须引用 candidate_append_log 中真实存在且未被 redirect 失效的 candidate_base community_id，不能引用 candidate_redirect.from_community_id。
 - 如果 action=create_new，community_id 必须引用 new_communities 中的 client_id，例如 new_1。
 - 如果 action=create_parent_and_absorb_existing，community_id 必须引用 new_communities 中的 client_id，例如 new_1，并且 absorb_community_ids 至少包含 1 个候选 community_id。
@@ -672,9 +784,29 @@ def cognitive_card_from_llm(chunk: EvidenceChunk, data: dict[str, Any]) -> Cogni
     intents: list[dict[str, Any]] = []
     for intent in raw_intents:
         if isinstance(intent, dict):
-            intents.append(_clean_intent(intent))
+            clean_intent = _clean_intent(intent)
+            evidence_span = _clean_text((clean_intent.get("cognitive_material") or {}).get("evidence_span"))
+            if not evidence_span or evidence_span not in chunk.content:
+                raise RuntimeError(
+                    "topic_intent.cognitive_material.evidence_span must be an exact contiguous substring "
+                    f"of chunk text: chunk_id={chunk.chunk_id}; evidence_span={evidence_span!r}"
+                )
+            intents.append(clean_intent)
     if not intents:
         raise RuntimeError(f"cognitive card has no valid topic_intents: chunk_id={chunk.chunk_id}")
+    supporting_text = _supporting_text_from_intents(intents)
+    clean_payload = {
+        **{key: value for key, value in data.items() if key != "summary"},
+        "topic_intents": intents,
+        "supporting_text": supporting_text,
+        "title": payload.get("title") or "",
+        "source_name": payload.get("source_name") or "",
+        "source_type": source_type,
+        "source_id": source_id,
+        "published_at": payload.get("published_at") or "",
+        "created_at": payload.get("created_at") or "",
+        "observed_at": payload.get("observed_at") or "",
+    }
     return CognitiveCard(
         cognitive_card_id=card_id,
         adapter_name=chunk.adapter_name,
@@ -684,25 +816,27 @@ def cognitive_card_from_llm(chunk: EvidenceChunk, data: dict[str, Any]) -> Cogni
         primary_chunk_id=chunk.chunk_id,
         chunk_ids=[chunk.chunk_id],
         chunk_index=chunk.chunk_index,
-        summary=_clean_text(data.get("summary")),
+        summary="",
         title_candidates=_dedupe(_as_list(data.get("title_candidates")))[:5],
         topic_intents=intents,
         risk_signals=[item for item in data.get("risk_signals") or [] if isinstance(item, dict)],
         local_impact_signals=[item for item in data.get("local_impact_signals") or [] if isinstance(item, dict)],
         actor_signals=data.get("actor_signals") if isinstance(data.get("actor_signals"), dict) else {},
-        supporting_text=_dedupe(_as_list(data.get("supporting_text")))[:5],
+        supporting_text=supporting_text,
         system_pointers=pointers,
-        payload={
-            **data,
-            "title": payload.get("title") or "",
-            "source_name": payload.get("source_name") or "",
-            "source_type": source_type,
-            "source_id": source_id,
-            "published_at": payload.get("published_at") or "",
-            "created_at": payload.get("created_at") or "",
-            "observed_at": payload.get("observed_at") or "",
-        },
+        payload=clean_payload,
     )
+
+
+def _supporting_text_from_intents(intents: list[dict[str, Any]]) -> list[str]:
+    """从新版 cognitive_material.evidence_span 生成卡片级证据索引辅助字段。"""
+
+    return _dedupe(
+        _clean_text((intent.get("cognitive_material") or {}).get("evidence_span"))
+        for intent in intents
+        if isinstance(intent, dict) and isinstance(intent.get("cognitive_material"), dict)
+        and _clean_text(intent["cognitive_material"].get("evidence_span"))
+    )[:5]
 
 
 def validate_assignment_decision(
@@ -775,6 +909,9 @@ def validate_assignment_decision(
             raise RuntimeError(f"attach_existing fit_type cannot be new_parent_topic; decision={decision}")
         if not _clean_text(assignment.get("reason")):
             raise RuntimeError(f"assignment.reason must be non-empty; decision={decision}")
+        insight_delta = _clean_text(assignment.get("insight_delta"))
+        if not insight_delta:
+            raise RuntimeError(f"assignment.insight_delta must be non-empty; decision={decision}")
 
 
 def _validate_new_communities(
@@ -802,31 +939,44 @@ def _validate_new_communities(
 
 
 def _assignment_topic_intent(card: CognitiveCard, intent_payload: dict[str, Any]) -> dict[str, Any]:
+    assignment_profile = intent_payload.get("assignment_profile")
+    cognitive_material = intent_payload.get("cognitive_material")
+    if not isinstance(assignment_profile, dict) or not isinstance(cognitive_material, dict):
+        raise RuntimeError(
+            f"topic_intent must use latest nested schema with assignment_profile/cognitive_material: {intent_payload}"
+        )
+    evidence_span = _clean_text(cognitive_material.get("evidence_span"))
+    event_classification = _clean_event_classification(intent_payload.get("event_classification"))
     intent = {
-        "raw_theme": _clean_text(intent_payload.get("raw_theme")),
-        "title_candidate": _clean_text(intent_payload.get("title_candidate") or intent_payload.get("raw_theme")),
-        "parent_themes": _dedupe(_as_list(intent_payload.get("parent_themes")))[:5],
-        "broad_topics": _dedupe(_as_list(intent_payload.get("broad_topics")))[:5],
-        "mid_topics": _dedupe(_as_list(intent_payload.get("mid_topics")))[:6],
-        "specific_topics": _dedupe(_as_list(intent_payload.get("specific_topics")))[:6],
-        "topic_level_hint": str(intent_payload.get("topic_level_hint") or "uncertain").strip() or "uncertain",
-        "summary": _clip(str(intent_payload.get("summary") or card.summary or ""), 280),
-        "driver": _dedupe(_as_list(intent_payload.get("driver")))[:6],
-        "impact_target": _dedupe(_as_list(intent_payload.get("impact_target")))[:8],
-        "event_thread": _dedupe(_as_list(intent_payload.get("event_thread")))[:5],
-        "risk_type": _dedupe(_as_list(intent_payload.get("risk_type")))[:5],
-        "event_action": _dedupe(_as_list(intent_payload.get("event_action")))[:6],
-        "actors": _dedupe(_as_list(intent_payload.get("actors")))[:8],
-        "importance": round(float(intent_payload.get("importance") or _infer_importance(intent_payload)), 2),
+        "raw_theme": _clean_text(assignment_profile.get("raw_theme")),
+        "title_candidate": _clean_text(assignment_profile.get("title_candidate") or assignment_profile.get("raw_theme")),
+        "parent_themes": _dedupe(_as_list(assignment_profile.get("parent_themes")))[:5],
+        "broad_topics": _dedupe(_as_list(assignment_profile.get("broad_topics")))[:5],
+        "mid_topics": _dedupe(_as_list(assignment_profile.get("mid_topics")))[:6],
+        "specific_topics": _dedupe(_as_list(assignment_profile.get("specific_topics")))[:6],
+        "topic_level_hint": str(assignment_profile.get("topic_level_hint") or "uncertain").strip() or "uncertain",
+        "driver": _dedupe(_as_list(cognitive_material.get("driver")))[:6],
+        "impact_target": _dedupe(_as_list(cognitive_material.get("impact_target")))[:8],
+        "event_thread": _dedupe(_as_list(cognitive_material.get("event_thread")))[:5],
+        "risk_type": _dedupe(_as_list(cognitive_material.get("risk_type")))[:5],
+        "event_action": _dedupe(_as_list(cognitive_material.get("event_action")))[:6],
+        "actors": _dedupe(_as_list(cognitive_material.get("actors")))[:8],
+        "importance": event_classification["importance"],
+        "evidence_span": _clip(evidence_span, 180),
+        "evidence_support": _clamp01(
+            cognitive_material.get("evidence_support"),
+            default=_infer_evidence_support(cognitive_material),
+        ),
+        "event_classification": event_classification,
         "cognitive_card_id": card.cognitive_card_id,
         "source_id": card.source_id,
         "evidence_id": card.evidence_id,
         "chunk_ids": card.chunk_ids,
         "primary_chunk_id": card.primary_chunk_id,
         "source_published_at": (card.payload or {}).get("published_at") or "",
-        "event_time": _clean_text(intent_payload.get("event_time")),
+        "event_time": _clean_text(cognitive_material.get("event_time")),
     }
-    impact_direction = str(intent_payload.get("impact_direction") or "").strip()
+    impact_direction = str(cognitive_material.get("impact_direction") or "").strip()
     if impact_direction and impact_direction != "uncertain":
         intent["impact_direction"] = impact_direction
     return intent
@@ -841,15 +991,16 @@ def assignment_prompt_topic_intent(intent: dict[str, Any], *, max_attach: int) -
         "mid_topics",
         "specific_topics",
         "topic_level_hint",
-        "summary",
         "driver",
         "impact_target",
         "event_thread",
         "risk_type",
         "event_action",
         "actors",
-        "importance",
         "impact_direction",
+        "evidence_span",
+        "evidence_support",
+        "event_classification",
     )
     return {
         **{key: intent[key] for key in allowed_keys if key in intent},
@@ -945,7 +1096,10 @@ def _apply_assignment(
                 update_mode=_assignment_update_mode(action=action, weight=float(assignment.get("weight") or 0)),
                 reason=_assignment_reason_with_fit_type(assignment),
                 topic_intent=stored_intent,
-                decision=decision,
+                decision={
+                    "assignments": [stored_assignment],
+                    "new_communities": list(decision.get("new_communities") or []),
+                },
             )
         )
     return applied
@@ -1323,26 +1477,27 @@ def cognitive_card_document(card: CognitiveCard) -> GraphIndexVectorDocument:
     actor_signals = getattr(card, "actor_signals", None) or {}
     supporting_text = _as_list(getattr(card, "supporting_text", None))
     title_candidates = _as_list(getattr(card, "title_candidates", None))
-    summary = _clean_text(getattr(card, "summary", ""))
     chunk_ids = _as_list(getattr(card, "chunk_ids", None)) or [_clean_text(getattr(card, "primary_chunk_id", ""))]
     source_type = _clean_text(getattr(card, "source_type", ""))
     source_id = _clean_text(getattr(card, "source_id", ""))
     topic_lines = []
     for intent in topic_intents[:10]:
+        assignment_profile = intent.get("assignment_profile") if isinstance(intent.get("assignment_profile"), dict) else {}
+        cognitive_material = intent.get("cognitive_material") if isinstance(intent.get("cognitive_material"), dict) else {}
         topic_lines.append(
             _join_non_empty(
                 [
-                    _clean_text(intent.get("raw_theme")),
-                    "parent=" + "、".join(_as_list(intent.get("parent_themes"))[:4]),
-                    "broad=" + "、".join(_as_list(intent.get("broad_topics"))[:4]),
-                    "mid=" + "、".join(_as_list(intent.get("mid_topics"))[:5]),
-                    "specific=" + "、".join(_as_list(intent.get("specific_topics"))[:5]),
-                    "driver=" + "、".join(_as_list(intent.get("driver"))[:5]),
-                    "impact=" + "、".join(_as_list(intent.get("impact_target"))[:6]),
-                    "risk=" + "、".join(_as_list(intent.get("risk_type"))[:4]),
-                    "event_thread=" + "、".join(_as_list(intent.get("event_thread"))[:4]),
-                    "actors=" + "、".join(_as_list(intent.get("actors"))[:6]),
-                    _clean_text(intent.get("summary")),
+                    _clean_text(assignment_profile.get("raw_theme")),
+                    "parent=" + "、".join(_as_list(assignment_profile.get("parent_themes"))[:4]),
+                    "broad=" + "、".join(_as_list(assignment_profile.get("broad_topics"))[:4]),
+                    "mid=" + "、".join(_as_list(assignment_profile.get("mid_topics"))[:5]),
+                    "specific=" + "、".join(_as_list(assignment_profile.get("specific_topics"))[:5]),
+                    "driver=" + "、".join(_as_list(cognitive_material.get("driver"))[:5]),
+                    "impact=" + "、".join(_as_list(cognitive_material.get("impact_target"))[:6]),
+                    "risk=" + "、".join(_as_list(cognitive_material.get("risk_type"))[:4]),
+                    "event_thread=" + "、".join(_as_list(cognitive_material.get("event_thread"))[:4]),
+                    "actors=" + "、".join(_as_list(cognitive_material.get("actors"))[:6]),
+                    _clean_text(cognitive_material.get("evidence_span")),
                 ],
                 sep=" | ",
             )
@@ -1356,7 +1511,6 @@ def cognitive_card_document(card: CognitiveCard) -> GraphIndexVectorDocument:
             f"Source: {source_type}:{source_id}",
             f"Evidence: {card.evidence_id}",
             f"Primary Chunk: {card.primary_chunk_id}",
-            f"Summary: {summary}",
             f"Title Candidates: {'；'.join(title_candidates)}",
             f"Topic Intents: {'；'.join(topic_lines)}",
             f"Risk Signals: {_json_text(risk_signals)}",
@@ -1368,9 +1522,10 @@ def cognitive_card_document(card: CognitiveCard) -> GraphIndexVectorDocument:
         if part and not part.endswith(": ")
     )
     event_times = [
-        _clean_text(intent.get("event_time"))
+        _clean_text((intent.get("cognitive_material") or {}).get("event_time"))
         for intent in topic_intents
-        if _clean_text(intent.get("event_time"))
+        if isinstance(intent.get("cognitive_material"), dict)
+        and _clean_text(intent["cognitive_material"].get("event_time"))
     ]
     return GraphIndexVectorDocument(
         document_id=card.cognitive_card_id,
@@ -1424,7 +1579,7 @@ def assignment_query_texts(intent: dict[str, Any]) -> list[str]:
             *_as_list(intent.get("parent_themes")),
             *_as_list(intent.get("mid_topics")),
             *_as_list(intent.get("specific_topics")),
-            intent.get("summary"),
+            intent.get("evidence_span"),
         ],
         [
             *_as_list(intent.get("event_thread")),
@@ -1684,7 +1839,7 @@ def _intent_identity(intent: dict[str, Any]) -> str:
             _clean_text(intent.get("cognitive_card_id")),
             _clean_text(intent.get("raw_theme")),
             _clean_text(intent.get("title_candidate")),
-            _clean_text(intent.get("summary")),
+            _clean_text(intent.get("evidence_span")),
             chunk_ids,
         ]
     )
@@ -1727,16 +1882,127 @@ def maturity_label(source_count: int) -> str:
 
 
 def _clean_intent(intent: dict[str, Any]) -> dict[str, Any]:
-    result = dict(intent)
-    for key in ("raw_theme", "title_candidate", "topic_level_hint", "impact_direction", "event_stage", "timeline_position", "event_time", "summary", "supporting_text"):
-        result[key] = _clean_text(result.get(key))
-    for key in ("parent_themes", "broad_topics", "mid_topics", "specific_topics", "driver", "impact_target", "risk_type", "event_thread", "event_action", "actors"):
-        result[key] = _dedupe(_as_list(result.get(key)))
-    try:
-        result["importance"] = max(0.0, min(1.0, float(result.get("importance") or 0.0)))
-    except Exception:
-        result["importance"] = 0.0
-    return result
+    assignment_profile = intent.get("assignment_profile")
+    cognitive_material = intent.get("cognitive_material")
+    event_classification = intent.get("event_classification")
+    if not isinstance(assignment_profile, dict):
+        raise RuntimeError(f"topic_intent.assignment_profile must be object: {intent}")
+    if not isinstance(cognitive_material, dict):
+        raise RuntimeError(f"topic_intent.cognitive_material must be object: {intent}")
+    if not isinstance(event_classification, dict):
+        raise RuntimeError(f"topic_intent.event_classification must be object: {intent}")
+    required_assignment_keys = (
+        "raw_theme",
+        "title_candidate",
+        "parent_themes",
+        "broad_topics",
+        "mid_topics",
+        "specific_topics",
+        "topic_level_hint",
+    )
+    required_material_keys = (
+        "driver",
+        "impact_target",
+        "risk_type",
+        "event_thread",
+        "event_action",
+        "actors",
+        "impact_direction",
+        "event_stage",
+        "timeline_position",
+        "event_time",
+        "evidence_span",
+        "evidence_support",
+    )
+    required_classification_keys = ("event_domain", "event_scope", "market_relevance", "importance")
+    missing = [
+        f"assignment_profile.{key}"
+        for key in required_assignment_keys
+        if key not in assignment_profile
+    ]
+    missing.extend(
+        f"cognitive_material.{key}"
+        for key in required_material_keys
+        if key not in cognitive_material
+    )
+    missing.extend(
+        f"event_classification.{key}"
+        for key in required_classification_keys
+        if key not in event_classification
+    )
+    if missing:
+        raise RuntimeError(f"topic_intent missing latest schema fields: {missing}; intent={intent}")
+    clean_assignment = dict(assignment_profile)
+    for key in ("raw_theme", "title_candidate", "topic_level_hint"):
+        clean_assignment[key] = _clean_text(clean_assignment.get(key))
+    for key in ("parent_themes", "broad_topics", "mid_topics", "specific_topics"):
+        clean_assignment[key] = _dedupe(_as_list(clean_assignment.get(key)))
+
+    clean_material = dict(cognitive_material)
+    clean_material.pop("evidence_claim", None)
+    for key in (
+        "impact_direction",
+        "event_stage",
+        "timeline_position",
+        "event_time",
+        "evidence_span",
+    ):
+        clean_material[key] = _clean_text(clean_material.get(key))
+    for key in ("driver", "impact_target", "risk_type", "event_thread", "event_action", "actors"):
+        clean_material[key] = _dedupe(_as_list(clean_material.get(key)))
+    clean_material["evidence_support"] = _clamp01(
+        clean_material.get("evidence_support"),
+        default=_infer_evidence_support(clean_material),
+    )
+    clean_classification = _clean_event_classification(
+        event_classification,
+        default_importance=_infer_importance({**clean_assignment, **clean_material}),
+    )
+    return {
+        "assignment_profile": clean_assignment,
+        "cognitive_material": clean_material,
+        "event_classification": clean_classification,
+    }
+
+
+def _clean_event_classification(value: Any, *, default_importance: float = 0.0) -> dict[str, Any]:
+    item = value if isinstance(value, dict) else {}
+    event_domain = _clean_text(item.get("event_domain"))
+    event_scope = _clean_text(item.get("event_scope"))
+    market_relevance = _clean_text(item.get("market_relevance"))
+    if event_domain not in {
+        "macro_policy",
+        "industry_policy",
+        "geopolitics_trade",
+        "company_financial",
+        "company_operation",
+        "market_movement",
+        "technology_security",
+        "public_safety",
+        "social_livelihood",
+        "entertainment_sports",
+        "other",
+    }:
+        event_domain = "other"
+    if event_scope not in {
+        "global",
+        "national",
+        "regional",
+        "industry",
+        "company",
+        "product_or_project",
+        "individual",
+        "unknown",
+    }:
+        event_scope = "unknown"
+    if market_relevance not in {"high", "medium", "low", "none"}:
+        market_relevance = "none"
+    return {
+        "event_domain": event_domain,
+        "event_scope": event_scope,
+        "market_relevance": market_relevance,
+        "importance": _clamp01(item.get("importance"), default=default_importance),
+    }
 
 
 def _community_summary(community: CommunityDraft) -> str:
@@ -1814,6 +2080,39 @@ def _infer_importance(intent: dict[str, Any]) -> float:
     if _as_list(intent.get("risk_type")):
         score += 0.06
     return round(min(0.95, score), 2)
+
+
+def _infer_evidence_support(intent: dict[str, Any]) -> float:
+    if _clean_text(intent.get("evidence_span")):
+        return 0.85
+    return 0.5
+
+
+def _clamp01(value: Any, *, default: float = 0.0) -> float:
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        number = float(default)
+    return round(max(0.0, min(1.0, number)), 2)
+
+
+def _text_overlaps(left: str, right: str) -> bool:
+    left_norm = _normalize_compact_text(left)
+    right_norm = _normalize_compact_text(right)
+    if not left_norm or not right_norm:
+        return False
+    if left_norm in right_norm or right_norm in left_norm:
+        return True
+    min_len = min(len(left_norm), len(right_norm))
+    if min_len < 12:
+        return left_norm == right_norm
+    left_chars = set(left_norm)
+    right_chars = set(right_norm)
+    return len(left_chars & right_chars) / max(1, len(left_chars | right_chars)) >= 0.72
+
+
+def _normalize_compact_text(value: Any) -> str:
+    return re.sub(r"\s+", "", _clean_text(value))
 
 
 def _community_id(adapter_name: str, title: str) -> str:

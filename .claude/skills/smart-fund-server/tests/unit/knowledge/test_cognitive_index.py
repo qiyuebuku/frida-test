@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import asyncio
+import threading
 
 import pytest
 
@@ -24,6 +25,7 @@ from src.domain.knowledge.cognitive_index import (
     ASSIGNMENT_MAX_TOKENS,
     COGNITIVE_CARD_MAX_TOKENS,
     CognitiveCard,
+    _assignment_topic_intent,
     _drafts_from_existing,
     assignment_query_text,
     cognitive_card_from_llm,
@@ -87,30 +89,38 @@ def _chunk() -> EvidenceChunk:
 
 def _card_payload(title: str = "A股并购重组") -> dict:
     return {
-        "summary": "政策推动并购重组服务产业链整合。",
         "title_candidates": [title, "并购重组政策与产业整合"],
         "topic_intents": [
             {
-                "raw_theme": "并购重组政策推动产业链整合",
-                "title_candidate": title,
-                "parent_themes": ["A股并购重组"],
-                "broad_topics": [title],
-                "mid_topics": ["并购重组政策与产业整合"],
-                "specific_topics": ["半导体产业链整合"],
-                "topic_level_hint": "broad",
-                "driver": ["政策支持"],
-                "impact_target": ["半导体", "高端装备制造"],
-                "risk_type": [],
-                "event_thread": ["A股并购重组政策"],
-                "event_action": ["推动产业链整合"],
-                "actors": ["监管层"],
-                "importance": 0.86,
-                "impact_direction": "positive",
-                "event_stage": "follow_up",
-                "timeline_position": "follow_up",
-                "event_time": "",
-                "summary": "并购重组政策推动产业链整合。",
-                "supporting_text": "并购重组政策推动半导体和高端装备制造产业链整合",
+                "assignment_profile": {
+                    "raw_theme": "并购重组政策推动产业链整合",
+                    "title_candidate": title,
+                    "parent_themes": ["A股并购重组"],
+                    "broad_topics": [title],
+                    "mid_topics": ["并购重组政策与产业整合"],
+                    "specific_topics": ["半导体产业链整合"],
+                    "topic_level_hint": "broad",
+                },
+                "cognitive_material": {
+                    "driver": ["政策支持"],
+                    "impact_target": ["半导体", "高端装备制造"],
+                    "risk_type": [],
+                    "event_thread": ["A股并购重组政策"],
+                    "event_action": ["推动产业链整合"],
+                    "actors": ["监管层"],
+                    "impact_direction": "positive",
+                    "event_stage": "follow_up",
+                    "timeline_position": "follow_up",
+                    "event_time": "",
+                    "evidence_span": "并购重组政策推动半导体和高端装备制造产业链整合",
+                    "evidence_support": 0.92,
+                },
+                "event_classification": {
+                    "event_domain": "industry_policy",
+                    "event_scope": "industry",
+                    "market_relevance": "high",
+                    "importance": 0.86,
+                },
             }
         ],
         "risk_signals": [],
@@ -123,11 +133,10 @@ def _card_payload(title: str = "A股并购重组") -> dict:
             "policies": [],
             "commodities": [],
         },
-        "supporting_text": ["并购重组政策推动半导体和高端装备制造产业链整合"],
     }
 
 
-def test_cognitive_card_injects_system_pointers_without_llm_evidence_fields():
+def test_cognitive_card_injects_system_pointers_and_intent_evidence():
     card = cognitive_card_from_llm(_chunk(), _card_payload())
 
     assert card.source_id == "test:1"
@@ -135,14 +144,32 @@ def test_cognitive_card_injects_system_pointers_without_llm_evidence_fields():
     assert card.chunk_ids == [card.primary_chunk_id]
     assert card.system_pointers["evidence_id"] == "kg_ev:financial:news_articles:test:1"
     assert card.system_pointers["previous_chunk_id"] == ""
-    assert card.topic_intents[0]["parent_themes"] == ["A股并购重组"]
-    assert card.topic_intents[0]["broad_topics"] == ["A股并购重组"]
+    assert card.topic_intents[0]["assignment_profile"]["parent_themes"] == ["A股并购重组"]
+    assert card.topic_intents[0]["assignment_profile"]["broad_topics"] == ["A股并购重组"]
+    assert card.topic_intents[0]["assignment_profile"]["title_candidate"] == "A股并购重组"
+    assert card.topic_intents[0]["cognitive_material"]["evidence_span"] == "并购重组政策推动半导体和高端装备制造产业链整合"
+    assert card.topic_intents[0]["event_classification"] == {
+        "event_domain": "industry_policy",
+        "event_scope": "industry",
+        "market_relevance": "high",
+        "importance": 0.86,
+    }
+    assert "supporting_text" not in card.topic_intents[0]
+    assert card.supporting_text == ["并购重组政策推动半导体和高端装备制造产业链整合"]
+
+
+def test_cognitive_card_rejects_rewritten_evidence_span():
+    payload = _card_payload()
+    payload["topic_intents"][0]["cognitive_material"]["evidence_span"] = "政策促进产业链整合。"
+
+    with pytest.raises(RuntimeError, match="exact contiguous substring"):
+        cognitive_card_from_llm(_chunk(), payload)
 
 
 def test_assignment_query_text_includes_parent_themes_before_child_topics():
     card = cognitive_card_from_llm(_chunk(), _card_payload("AI芯片产业"))
 
-    query = assignment_query_text(card.topic_intents[0])
+    query = assignment_query_text(_assignment_topic_intent(card, card.topic_intents[0]))
 
     assert "A股并购重组" in query
     assert query.index("A股并购重组") < query.index("AI芯片产业")
@@ -180,6 +207,7 @@ def test_assignment_validation_does_not_override_llm_market_boundary_decision():
                     "confidence": 0.86,
                     "fit_type": "new_parent_topic",
                     "reason": "模型认为该主题可长期承接市场微观结构变化。",
+                    "insight_delta": "新增市场微观结构变化的核心证据。",
                 }
             ],
             "new_communities": [
@@ -195,6 +223,7 @@ def test_assignment_validation_does_not_override_llm_market_boundary_decision():
             "raw_theme": "成交结构变化影响板块轮动",
             "parent_themes": ["市场微观结构变化"],
             "specific_topics": ["成交额放量"],
+            "evidence_span": "成交结构变化影响板块轮动",
         },
     )
 
@@ -210,6 +239,7 @@ def test_assignment_validation_allows_driver_topic_as_new_l0():
                     "confidence": 0.9,
                     "fit_type": "new_parent_topic",
                     "reason": "现有候选无法承接能源供应风险，创建可长期复用的驱动主题。",
+                    "insight_delta": "新增能源供应安全的核心风险证据。",
                 }
             ],
             "new_communities": [{"client_id": "new_1", "title": "能源供应安全", "scope": "承接油气运输、地缘冲突和能源供需扰动"}],
@@ -220,6 +250,7 @@ def test_assignment_validation_allows_driver_topic_as_new_l0():
             "parent_themes": ["能源供应安全"],
             "driver": ["地缘冲突", "运输中断风险"],
             "impact_target": ["油气", "能源价格"],
+            "evidence_span": "霍尔木兹海峡紧张导致油气供应风险",
         },
     )
 
@@ -399,6 +430,69 @@ class _LLM:
             }
         )
         return await self.generate(request)
+
+
+class _DelayedLLM(_LLM):
+    def __init__(self, outputs: list[dict], *, delay: float = 0.02) -> None:
+        super().__init__(outputs)
+        self.delay = delay
+        self.first_done = asyncio.Event()
+        self.started_after_first_done: list[bool] = []
+        self.active_after_first_done = 0
+        self.max_active_after_first_done = 0
+
+    async def generate(self, request):
+        after_first_done = self.first_done.is_set()
+        self.started_after_first_done.append(after_first_done)
+        if after_first_done:
+            self.active_after_first_done += 1
+            self.max_active_after_first_done = max(self.max_active_after_first_done, self.active_after_first_done)
+        try:
+            await asyncio.sleep(self.delay)
+            response = await super().generate(request)
+            if len(self.requests) == 1:
+                self.first_done.set()
+            return response
+        finally:
+            if after_first_done:
+                self.active_after_first_done -= 1
+
+
+class _FakeRedisLock:
+    def __init__(self, shared_lock: threading.Lock) -> None:
+        self._shared_lock = shared_lock
+        self.locked = False
+
+    def acquire(self, *_, **kwargs) -> bool:
+        blocking = bool(kwargs.get("blocking", True))
+        if blocking:
+            self.locked = self._shared_lock.acquire(timeout=1)
+        else:
+            self.locked = self._shared_lock.acquire(blocking=False)
+        return self.locked
+
+    def release(self) -> None:
+        if self.locked:
+            self.locked = False
+            self._shared_lock.release()
+
+
+class _FakeRedis:
+    def __init__(self) -> None:
+        self.values: dict[str, str] = {}
+        self.shared_lock = threading.Lock()
+        self.setex_calls: list[tuple[str, int, str]] = []
+
+    def exists(self, key: str) -> int:
+        return int(key in self.values)
+
+    def setex(self, key: str, ttl: int, value: str) -> bool:
+        self.values[key] = value
+        self.setex_calls.append((key, ttl, value))
+        return True
+
+    def lock(self, *_args, **_kwargs) -> _FakeRedisLock:
+        return _FakeRedisLock(self.shared_lock)
 
 
 class _ConcurrentAssignmentLLM:
@@ -1101,7 +1195,7 @@ async def test_bucket_planner_uses_llm_then_reuses_theme_cache():
                     "risk_type": ["供应短缺"],
                     "impact_target": ["某公司"],
                     "title_candidate": "AI算力链",
-                    "summary": (
+                    "evidence_span": (
                         "AI芯片供需紧张，算力基础设施资本开支提升，光模块和服务器需求持续增长，"
                         "产业链公司订单和产能利用率同步改善，海外云厂商资本开支继续上修。"
                     ),
@@ -1120,7 +1214,7 @@ async def test_bucket_planner_uses_llm_then_reuses_theme_cache():
                     "parent_themes": ["AI芯片"],
                     "broad_topics": ["人工智能基础设施"],
                     "title_candidate": "AI算力链",
-                    "summary": "AI芯片继续短缺。",
+                    "evidence_span": "AI芯片继续短缺。",
                 },
             }
         ],
@@ -1140,11 +1234,7 @@ async def test_bucket_planner_uses_llm_then_reuses_theme_cache():
     assert "driver" not in prompt_signature
     assert "risk_type" not in prompt_signature
     assert prompt_signature["routing_signals"] == ["扩产", "AI需求增长", "供应短缺"]
-    expected_summary = (
-        "AI芯片供需紧张，算力基础设施资本开支提升，光模块和服务器需求持续增长，"
-        "产业链公司订单和产能利用率同步改善，海外云厂商资本开支继续上修。"
-    )
-    assert prompt_signature["context_hint"] == expected_summary[:60]
+    assert prompt_signature["context_hint"] == "AI算力链"
     assert len(prompt_signature["context_hint"]) <= 60
     assert set(first["buckets"]) == {"ai_infra"}
     assert set(second["buckets"]) == {"ai_infra"}
@@ -1913,7 +2003,9 @@ async def test_community_builder_runs_assignment_buckets_concurrently():
         },
     )
     card_a = cognitive_card_from_llm(chunk_a, _card_payload("A股并购重组"))
-    card_b = cognitive_card_from_llm(chunk_b, _card_payload("AI算力链"))
+    payload_b = _card_payload("AI算力链")
+    payload_b["topic_intents"][0]["cognitive_material"]["evidence_span"] = chunk_b.content
+    card_b = cognitive_card_from_llm(chunk_b, payload_b)
     planning_output = {
         "assignments": [
             {
@@ -1966,15 +2058,20 @@ async def test_community_builder_runs_assignment_buckets_concurrently():
 @pytest.mark.asyncio
 async def test_community_builder_defers_candidate_checkpoint_between_assignment_calls():
     payload = _card_payload("A股并购重组")
+    base_intent = payload["topic_intents"][0]
     payload["topic_intents"].append(
         {
-            **payload["topic_intents"][0],
-            "raw_theme": "AI算力链供需变化",
-            "title_candidate": "AI算力链",
-            "parent_themes": ["AI算力链"],
-            "broad_topics": ["人工智能基础设施"],
-            "mid_topics": ["AI芯片供需"],
-            "specific_topics": ["AI芯片短缺"],
+            "assignment_profile": {
+                **base_intent["assignment_profile"],
+                "raw_theme": "AI算力链供需变化",
+                "title_candidate": "AI算力链",
+                "parent_themes": ["AI算力链"],
+                "broad_topics": ["人工智能基础设施"],
+                "mid_topics": ["AI芯片供需"],
+                "specific_topics": ["AI芯片短缺"],
+            },
+            "cognitive_material": dict(base_intent["cognitive_material"]),
+            "event_classification": dict(base_intent["event_classification"]),
         }
     )
     card = cognitive_card_from_llm(_chunk(), payload)
@@ -2074,11 +2171,46 @@ async def test_cognitive_card_extractor_repairs_non_object_output():
 
     assert len(cards) == 1
     assert cards[0].source_id == "test:1"
-    assert cards[0].topic_intents[0]["raw_theme"] == "并购重组政策推动产业链整合"
+    assert cards[0].topic_intents[0]["assignment_profile"]["raw_theme"] == "并购重组政策推动产业链整合"
     assert llm.requests[0].max_tokens == COGNITIVE_CARD_MAX_TOKENS
     assert len(llm.repairs) == 1
     assert "must be JSON object" in llm.repairs[0]["validation_issues"][0]
     assert llm.repairs[0]["kwargs"]["retry_reason"] == "cognitive_card_validation_invalid"
+
+
+@pytest.mark.asyncio
+async def test_cognitive_card_extractor_single_flights_prefix_warmup(monkeypatch):
+    monkeypatch.setattr(settings, "KG_COGNITIVE_CARD_PREFIX_WARM_WINDOW_SECONDS", 3600)
+    monkeypatch.setattr(settings, "KG_COGNITIVE_CARD_PREFIX_WARM_LOCK_TIMEOUT_SECONDS", 5)
+    monkeypatch.setattr(settings, "KG_COGNITIVE_CARD_PREFIX_WARM_BLOCKING_TIMEOUT_SECONDS", 5)
+    monkeypatch.setattr(settings, "KG_COGNITIVE_CARD_PREFIX_WARM_SETTLE_SECONDS", 0)
+
+    chunks = [
+        _chunk().model_copy(
+            update={
+                "chunk_id": f"kg_chunk:kg_ev:financial:news_articles:test:{index}:0",
+                "evidence_id": f"kg_ev:financial:news_articles:test:{index}",
+                "text_hash": f"h{index}",
+                "payload": {"source_type": "news_articles", "source_id": f"test:{index}"},
+            }
+        )
+        for index in range(3)
+    ]
+    llm = _DelayedLLM([_card_payload(), _card_payload(), _card_payload()])
+    extractor = CognitiveCardExtractor(llm=llm, model="test-model", concurrency=3)
+    extractor._redis = _FakeRedis()
+
+    cards = await extractor.extract(chunks)
+
+    assert len(cards) == 3
+    assert len(llm.requests) == 3
+    assert llm.requests[0].metadata["_cache_key_metadata"] == {"task": "kg_cognitive_card"}
+    assert llm.requests[0].metadata["source_id"] == "test:0"
+    assert llm.requests[0].metadata["chunk_id"] == "kg_chunk:kg_ev:financial:news_articles:test:0:0"
+    assert llm.started_after_first_done[0] is False
+    assert llm.started_after_first_done[1:] == [True, True]
+    assert llm.max_active_after_first_done == 2
+    assert len(extractor._redis.setex_calls) == 3
 
 
 def _create_assignment(title: str) -> dict:
@@ -2091,6 +2223,7 @@ def _create_assignment(title: str) -> dict:
                 "confidence": 0.9,
                 "fit_type": "new_parent_topic",
                 "reason": "新建父级主题",
+                "insight_delta": "新增并购重组政策对产业链整合的核心证据。",
             }
         ],
         "new_communities": [
@@ -2109,6 +2242,7 @@ def _attach_assignment(alias: str = "c1") -> dict:
                 "confidence": 0.91,
                 "fit_type": "new_subtopic",
                 "reason": "补充同一主题材料",
+                "insight_delta": "补充该主题下政策推动产业链整合的核心证据。",
             }
         ],
         "new_communities": [],
@@ -2240,6 +2374,7 @@ async def test_community_builder_creates_then_attaches_existing_l0():
 @pytest.mark.asyncio
 async def test_community_builder_deduplicates_existing_intent_when_rebuilding():
     card = cognitive_card_from_llm(_chunk(), _card_payload("A股并购重组"))
+    topic_intent = _assignment_topic_intent(card, card.topic_intents[0])
     existing_id = "kg_community:cognitive_topic:l0:merger"
     existing = GraphIndexCommunity(
         community_id=existing_id,
@@ -2263,13 +2398,13 @@ async def test_community_builder_deduplicates_existing_intent_when_rebuilding():
                     "source_id": card.source_id,
                     "evidence_id": card.evidence_id,
                     "chunk_ids": card.chunk_ids,
-                    "raw_theme": card.topic_intents[0]["raw_theme"],
-                    "title_candidate": card.topic_intents[0]["title_candidate"],
-                    "summary": card.topic_intents[0]["summary"],
-                    "parent_themes": card.topic_intents[0]["parent_themes"],
-                    "broad_topics": card.topic_intents[0]["broad_topics"],
-                    "mid_topics": card.topic_intents[0]["mid_topics"],
-                    "specific_topics": card.topic_intents[0]["specific_topics"],
+                    "raw_theme": topic_intent["raw_theme"],
+                    "title_candidate": topic_intent["title_candidate"],
+                    "evidence_span": topic_intent["evidence_span"],
+                    "parent_themes": topic_intent["parent_themes"],
+                    "broad_topics": topic_intent["broad_topics"],
+                    "mid_topics": topic_intent["mid_topics"],
+                    "specific_topics": topic_intent["specific_topics"],
                 }
             ],
         },
@@ -2325,7 +2460,7 @@ async def test_materialized_seed_community_candidate_can_be_attached():
         }
     )
     payload = _card_payload("AI算力链")
-    payload["topic_intents"][0].update(
+    payload["topic_intents"][0]["assignment_profile"].update(
         {
             "raw_theme": "AI芯片供给不足推动算力硬件扩产",
             "title_candidate": "AI算力链",
@@ -2333,10 +2468,14 @@ async def test_materialized_seed_community_candidate_can_be_attached():
             "broad_topics": ["人工智能基础设施"],
             "mid_topics": ["AI芯片供应", "算力硬件扩产"],
             "specific_topics": ["AI芯片供给不足"],
+        }
+    )
+    payload["topic_intents"][0]["cognitive_material"].update(
+        {
             "driver": ["AI应用需求"],
             "impact_target": ["AI芯片", "数据中心", "算力硬件"],
             "event_thread": ["AI算力链供需变化"],
-            "summary": "AI芯片供给不足推动算力硬件产业链扩产。",
+            "evidence_span": chunk.content,
         }
     )
     card = cognitive_card_from_llm(chunk, payload)

@@ -10,3 +10,5 @@
 - `/home/yuyang/frida-test/.claude/skills/smart-fund-server/AGENTS.md`
 
 其中 `smart-fund-server/AGENTS.md` 包含 Milvus / PyMilvus 编码约束：统一使用 `MilvusClient`、使用 `DataType` 枚举、优先 `target_id` 作为 Milvus `VARCHAR` 主键、索引刷新使用 `upsert()`、PG 不保存完整 chunk/card text、Milvus 负责语义搜索和按 ID 精准取回。
+
+scripts/fetch_langfuse_traces.py 可以用来拉取 langfuse的trace记录
