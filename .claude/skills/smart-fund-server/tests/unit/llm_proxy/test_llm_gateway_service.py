@@ -3,7 +3,11 @@ import asyncio
 from src.infrastructure.llm_proxy.registry import ProviderRegistry
 from src.infrastructure.llm_proxy.router import ModelRouter, ModelRouterConfig
 from src.infrastructure.llm_proxy.cache import LLMPersistentFileCache
-from src.infrastructure.llm_proxy.service import LLMGatewayService, _json_schema_validation_issues
+from src.infrastructure.llm_proxy.service import (
+    LLMGatewayService,
+    _json_schema_validation_issues,
+    _llm_trace_input,
+)
 from src.infrastructure.llm_proxy.types import LLMProxyRequest, LLMProxyResponse
 
 
@@ -90,6 +94,24 @@ def test_gateway_routes_deepseek_model_to_deepseek_provider():
     assert response.text == "deepseek:deepseek-v4-flash"
     assert len(deepseek.calls) == 1
     assert len(claude.calls) == 0
+
+
+def test_llm_trace_input_exposes_safe_reasoning_options_only():
+    trace_input = _llm_trace_input(
+        LLMProxyRequest(
+            prompt="hello",
+            provider_options={
+                "reasoning_effort": "high",
+                "thinking_type": "enabled",
+                "authorization": "secret",
+            },
+        )
+    )
+
+    assert trace_input["provider_options"] == {
+        "reasoning_effort": "high",
+        "thinking_type": "enabled",
+    }
 
 
 def test_gateway_routes_glm_alias_to_claude_tmux_provider():
@@ -421,6 +443,7 @@ def test_gateway_repairs_with_caller_feedback_and_overwrites_original_cache(tmp_
         prompt='{"topic":"横店影视"}',
         system_prompt="只输出 JSON",
         model="deepseek-v4-flash",
+        provider_options={"reasoning_effort": "high"},
         json_schema={
             "type": "object",
             "properties": {"title": {"type": "string"}},
@@ -451,6 +474,7 @@ def test_gateway_repairs_with_caller_feedback_and_overwrites_original_cache(tmp_
     assert repair_request.use_cache is False
     assert repair_request.metadata["retry_reason"] == "community_assignment_validation_invalid"
     assert repair_request.metadata["validation_issues"] == ["new_community.title is not a valid broad L0 title"]
+    assert repair_request.provider_options == {"reasoning_effort": "high"}
     assert repair_request.messages[0]["role"] == "system"
     assert repair_request.messages[1]["role"] == "user"
     assert repair_request.messages[2]["role"] == "assistant"

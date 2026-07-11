@@ -277,6 +277,11 @@ def _llm_trace_input(request: LLMProxyRequest) -> dict[str, Any]:
         "metadata": metadata,
         "json_schema": _clip_json_trace(request.json_schema),
         "response_format": request.response_format,
+        "provider_options": {
+            key: value
+            for key, value in (request.provider_options or {}).items()
+            if key in {"reasoning_effort", "thinking_type"}
+        },
         "use_cache": request.use_cache,
     }
 
@@ -1342,6 +1347,7 @@ def _schema_repair_request(
         response_format=request.response_format or {"type": "json_object"},
         tools=request.tools,
         tool_choice=request.tool_choice,
+        provider_options=request.provider_options,
         metadata=metadata,
         timeout=request.timeout,
         use_cache=False,
@@ -1421,6 +1427,7 @@ def _feedback_repair_request(
         response_format=request.response_format or ({"type": "json_object"} if request.json_schema else None),
         tools=request.tools,
         tool_choice=request.tool_choice,
+        provider_options=request.provider_options,
         metadata=metadata,
         timeout=request.timeout,
         use_cache=False,

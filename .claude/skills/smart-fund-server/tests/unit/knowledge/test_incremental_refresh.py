@@ -28,7 +28,6 @@ from src.domain.knowledge.graph_index import (
     GraphIndexRefreshPlan,
     GraphIndexUnassignedSignal,
 )
-from src.domain.knowledge.cognitive_index import CognitiveCommunityBuildResult
 from src.domain.knowledge.schemas import CompileResult, CompiledEdge, CompiledNode, EvidenceChunk
 from src.domain.knowledge.toy_adapter import ToyProjectAdapter
 
@@ -146,39 +145,27 @@ async def test_compile_kg_refreshes_changed_indexes_incrementally(monkeypatch) -
     monkeypatch.setattr(service_module, "MilvusSemanticHybridRetriever", lambda: FakeRetriever())
     monkeypatch.setattr(service_module, "GraphIndexLLMReporter", lambda: _FakeGraphIndexReporter())
 
-    class FakeCognitiveExtractor:
+    class FakeAtomicCardStage:
         def __init__(self, **_kwargs):
             pass
 
-        async def extract(self, chunks):
-            return [
-                SimpleNamespace(
-                    cognitive_card_id=f"card:{chunk.chunk_id}",
-                    evidence_id=chunk.evidence_id,
-                    primary_chunk_id=chunk.chunk_id,
-                )
-                for chunk in chunks
+        async def refresh(self, *, changed_chunks, **_kwargs):
+            cards = [
+                SimpleNamespace(cognitive_card_id=f"card:{chunk.chunk_id}")
+                for chunk in changed_chunks
             ]
-
-    class FakeCommunityBuilder:
-        async def build(self, *, adapter_name, cards, existing_communities):
-            del adapter_name, existing_communities
-            return CognitiveCommunityBuildResult(
+            return SimpleNamespace(
+                status="cards_ready",
                 cards=cards,
-                assignments=[],
-                communities=[],
-                documents=[],
                 diagnostics={
+                    "status": "cards_ready",
                     "cards": len(cards),
-                    "intents": 0,
-                    "assignments": 0,
-                    "communities": 0,
-                    "community_builder": "fake",
+                    "assignment_executed": False,
+                    "milvus_documents_written": len(cards),
                 },
             )
 
-    monkeypatch.setattr(service_module, "CognitiveCardExtractor", FakeCognitiveExtractor)
-    monkeypatch.setattr(service_module, "CommunityCardBuilder", lambda **_kwargs: FakeCommunityBuilder())
+    monkeypatch.setattr(service_module, "AtomicCognitiveCardStageService", FakeAtomicCardStage)
 
     result = await KnowledgeService(repository=repository).compile_kg(
         service_module.KnowledgeCompileCommand(
@@ -196,10 +183,10 @@ async def test_compile_kg_refreshes_changed_indexes_incrementally(monkeypatch) -
     assert refresh_call["nodes"] == []
     assert refresh_call["edges"] == []
     assert "graph_index" in result.index_refresh
-    assert result.index_refresh["graph_index"]["status"] == "replaced_by_cognitive_index"
-    assert result.index_refresh["cognitive_index"]["status"] == "completed"
+    assert result.index_refresh["graph_index"]["status"] == "pending_relation_graph_phase"
+    assert result.index_refresh["cognitive_index"]["status"] == "cards_ready"
     assert result.index_refresh["cognitive_index"]["cards"] == 1
-    assert result.index_refresh["cognitive_index"]["all_cards"] == 1
+    assert result.index_refresh["cognitive_index"]["assignment_executed"] is False
     assert hybrid_calls[0]["target"] == "test"
     assert refresh_call["target"] == "test"
     assert hybrid_calls[0]["chunks"]
@@ -212,7 +199,7 @@ async def test_compile_kg_refreshes_changed_indexes_incrementally(monkeypatch) -
     assert not any(call.startswith("upsert_graph_adjacency") for call in repository.calls)
     assert "upsert_evidence_chunks:1" in repository.calls
     assert "mark_graph_index_dirty:compile_changed_refs" not in repository.calls
-    assert any(call.startswith("replace_graph_index") for call in repository.calls)
+    assert not any(call.startswith("replace_graph_index") for call in repository.calls)
 
 
 @pytest.mark.asyncio

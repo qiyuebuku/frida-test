@@ -16,7 +16,8 @@ from sqlalchemy.orm import Session
 
 from src.domain.knowledge.enums import EvidenceStatus, EvidenceType
 from src.domain.knowledge.chunking import build_evidence_chunks, evidence_content_for_chunking
-from src.domain.knowledge.cognitive_index import CognitiveCard, CommunityAssignment
+from src.domain.knowledge.atomic_cognitive_card import AtomicCognitiveCard, CognitiveCardManifest
+from src.domain.knowledge.cognitive_index import CommunityAssignment
 from src.domain.knowledge.graph_index import (
     GraphIndexCommunity,
     GraphIndexDelta,
@@ -374,16 +375,16 @@ class KnowledgeRepositoryImpl(KnowledgeRepository):
                     for chunk, evidence_id, source_type, source_id, evidence_type, payload, version, status in rows
                 ]
 
-    def replace_cognitive_cards_for_evidence(
+    def replace_atomic_cognitive_cards_for_evidence(
         self,
         adapter_name: str,
         *,
         evidence_ids: list[str],
-        cards: list[CognitiveCard],
+        cards: list[AtomicCognitiveCard],
     ) -> dict[str, Any]:
         unique_evidence_ids = _ordered_unique(evidence_ids)
         with profile_span(
-            "kg_repository.replace_cognitive_cards_for_evidence",
+            "kg_repository.replace_atomic_cognitive_cards_for_evidence",
             adapter=adapter_name,
             evidence=len(unique_evidence_ids),
             cards=len(cards),
@@ -400,13 +401,12 @@ class KnowledgeRepositoryImpl(KnowledgeRepository):
                             )
                         ).all()
                     ]
-                if old_card_ids:
-                    session.execute(
-                        delete(KnowledgeCommunityAssignment).where(
-                            KnowledgeCommunityAssignment.adapter_name == adapter_name,
-                            KnowledgeCommunityAssignment.cognitive_card_id.in_(old_card_ids),
-                        )
-                    )
+                new_card_ids = [item.cognitive_card_id for item in cards]
+                old_card_id_set = set(old_card_ids)
+                new_card_id_set = set(new_card_ids)
+                retained_card_ids = sorted(old_card_id_set.intersection(new_card_id_set))
+                added_card_ids = sorted(new_card_id_set.difference(old_card_id_set))
+                stale_card_ids = sorted(old_card_id_set.difference(new_card_id_set))
                 if unique_evidence_ids:
                     session.execute(
                         delete(KnowledgeCognitiveCard).where(
@@ -418,19 +418,28 @@ class KnowledgeRepositoryImpl(KnowledgeRepository):
                 if cards:
                     result = session.execute(
                         pg_insert(KnowledgeCognitiveCard).values(
-                            [_cognitive_card_values(item) for item in cards]
+                            [_atomic_cognitive_card_manifest_values(item) for item in cards]
                         )
                     )
                     card_count = result.rowcount or 0
                 return {
-                    "deleted_cards": len(old_card_ids),
-                    "deleted_card_ids": old_card_ids,
+                    "deleted_cards": len(stale_card_ids),
+                    "deleted_card_ids": stale_card_ids,
                     "inserted_cards": card_count,
+                    "retained_cards": len(retained_card_ids),
+                    "retained_card_ids": retained_card_ids,
+                    "added_cards": len(added_card_ids),
+                    "added_card_ids": added_card_ids,
                     "evidence_ids": unique_evidence_ids,
                 }
 
-    def list_cognitive_cards(self, adapter_name: str, *, status: str = "active") -> list[CognitiveCard]:
-        with profile_span("kg_repository.list_cognitive_cards", adapter=adapter_name, status=status):
+    def list_atomic_cognitive_card_manifests(
+        self,
+        adapter_name: str,
+        *,
+        status: str = "active",
+    ) -> list[CognitiveCardManifest]:
+        with profile_span("kg_repository.list_atomic_card_manifests", adapter=adapter_name, status=status):
             with self._session_scope() as session:
                 query = select(KnowledgeCognitiveCard).where(
                     KnowledgeCognitiveCard.adapter_name == adapter_name
@@ -446,20 +455,20 @@ class KnowledgeRepositoryImpl(KnowledgeRepository):
                         )
                     ).all()
                 )
-                return [_cognitive_card_schema(row) for row in rows]
+                return [_atomic_cognitive_card_manifest_schema(row) for row in rows]
 
-    def list_cognitive_cards_by_ids(
+    def list_atomic_cognitive_card_manifests_by_ids(
         self,
         adapter_name: str,
         *,
         cognitive_card_ids: list[str],
         status: str = "active",
-    ) -> list[CognitiveCard]:
+    ) -> list[CognitiveCardManifest]:
         unique_ids = _ordered_unique(cognitive_card_ids)
         if not unique_ids:
             return []
         with profile_span(
-            "kg_repository.list_cognitive_cards_by_ids",
+            "kg_repository.list_atomic_card_manifests_by_ids",
             adapter=adapter_name,
             cards=len(unique_ids),
             status=status,
@@ -480,22 +489,22 @@ class KnowledgeRepositoryImpl(KnowledgeRepository):
                         )
                     ).all()
                 )
-                return [_cognitive_card_schema(row) for row in rows]
+                return [_atomic_cognitive_card_manifest_schema(row) for row in rows]
 
-    def list_cognitive_cards_by_chunk_refs(
+    def list_atomic_cognitive_card_manifests_by_chunk_refs(
         self,
         adapter_name: str,
         *,
         chunk_ids: list[str],
         evidence_ids: list[str],
         status: str = "active",
-    ) -> list[CognitiveCard]:
+    ) -> list[CognitiveCardManifest]:
         unique_chunk_ids = _ordered_unique(chunk_ids)
         unique_evidence_ids = _ordered_unique(evidence_ids)
         if not unique_chunk_ids and not unique_evidence_ids:
             return []
         with profile_span(
-            "kg_repository.list_cognitive_cards_by_chunk_refs",
+            "kg_repository.list_atomic_card_manifests_by_chunk_refs",
             adapter=adapter_name,
             chunk_ids=len(unique_chunk_ids),
             evidence_ids=len(unique_evidence_ids),
@@ -523,7 +532,7 @@ class KnowledgeRepositoryImpl(KnowledgeRepository):
                         )
                     ).all()
                 )
-                return [_cognitive_card_schema(row) for row in rows]
+                return [_atomic_cognitive_card_manifest_schema(row) for row in rows]
 
     def replace_community_assignments_for_cards(
         self,
@@ -2085,7 +2094,7 @@ def _graph_community_values(item: GraphIndexCommunity) -> dict[str, Any]:
     }
 
 
-def _cognitive_card_values(item: CognitiveCard) -> dict[str, Any]:
+def _atomic_cognitive_card_manifest_values(item: AtomicCognitiveCard) -> dict[str, Any]:
     return {
         "cognitive_card_id": item.cognitive_card_id,
         "adapter_name": item.adapter_name,
@@ -2095,23 +2104,18 @@ def _cognitive_card_values(item: CognitiveCard) -> dict[str, Any]:
         "primary_chunk_id": item.primary_chunk_id,
         "chunk_ids": item.chunk_ids,
         "chunk_index": item.chunk_index,
-        "summary": item.summary,
-        "title_candidates": item.title_candidates,
-        "topic_intents": item.topic_intents,
-        "risk_signals": item.risk_signals,
-        "local_impact_signals": item.local_impact_signals,
-        "actor_signals": item.actor_signals,
-        "supporting_text": item.supporting_text,
-        "system_pointers": item.system_pointers,
-        "payload": item.payload,
+        "focus_evidence_refs": item.focus_evidence_refs,
+        "focus_span_offsets": item.focus_span_offsets,
+        "factual_anchors": item.factual_anchors,
         "schema_version": item.schema_version,
+        "generator_version": item.generator_version,
         "status": item.status,
         "updated_at": datetime.now(timezone.utc),
     }
 
 
-def _cognitive_card_schema(row: KnowledgeCognitiveCard) -> CognitiveCard:
-    return CognitiveCard(
+def _atomic_cognitive_card_manifest_schema(row: KnowledgeCognitiveCard) -> CognitiveCardManifest:
+    return CognitiveCardManifest(
         cognitive_card_id=row.cognitive_card_id,
         adapter_name=row.adapter_name,
         source_type=row.source_type or "",
@@ -2120,16 +2124,11 @@ def _cognitive_card_schema(row: KnowledgeCognitiveCard) -> CognitiveCard:
         primary_chunk_id=row.primary_chunk_id,
         chunk_ids=[str(item) for item in row.chunk_ids or [] if item],
         chunk_index=row.chunk_index,
-        summary=row.summary or "",
-        title_candidates=[str(item) for item in row.title_candidates or [] if item],
-        topic_intents=[item for item in row.topic_intents or [] if isinstance(item, dict)],
-        risk_signals=[item for item in row.risk_signals or [] if isinstance(item, dict)],
-        local_impact_signals=[item for item in row.local_impact_signals or [] if isinstance(item, dict)],
-        actor_signals=dict(row.actor_signals or {}),
-        supporting_text=[str(item) for item in row.supporting_text or [] if item],
-        system_pointers=dict(row.system_pointers or {}),
-        payload=dict(row.payload or {}),
+        focus_evidence_refs=[str(item) for item in row.focus_evidence_refs or [] if item],
+        focus_span_offsets=[item for item in row.focus_span_offsets or [] if isinstance(item, dict)],
+        factual_anchors=dict(row.factual_anchors or {}),
         schema_version=row.schema_version or "",
+        generator_version=row.generator_version or "",
         status=row.status or "active",
     )
 

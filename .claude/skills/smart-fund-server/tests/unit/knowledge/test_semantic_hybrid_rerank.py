@@ -17,10 +17,13 @@ from src.infrastructure.vector_store.semantic_hybrid_retriever import (
     _roles_for_target_ids,
     _strong_query_terms,
 )
-from src.domain.knowledge.cognitive_index import CognitiveCard, cognitive_card_document
+from src.domain.knowledge.atomic_cognitive_card import (
+    AtomicCognitiveCard,
+    RelationProbe,
+    atomic_card_document,
+)
 from src.domain.knowledge.semantic_index_materials import (
     SEMANTIC_COLLECTION_COGNITIVE_CARD,
-    _semantic_document_from_graph_index,
 )
 
 
@@ -391,7 +394,7 @@ async def test_upsert_semantic_documents_writes_cognitive_card_collection(monkey
 
     monkeypatch.setattr(retriever_module, "embed_texts", fake_embed_texts)
     store = _Store()
-    card = CognitiveCard(
+    card = AtomicCognitiveCard(
         cognitive_card_id="kg_cognitive_card:test",
         adapter_name="financial",
         source_type="news_articles",
@@ -401,44 +404,33 @@ async def test_upsert_semantic_documents_writes_cognitive_card_collection(monkey
         chunk_ids=["kg_chunk:kg_ev:financial:news:1:0"],
         chunk_index=0,
         summary="AI芯片供需紧张影响算力链。",
-        title_candidates=["AI算力链"],
-        topic_intents=[
-            {
-                "raw_theme": "AI芯片供需",
-                "title_candidate": "AI算力链",
-                "parent_themes": ["AI算力链"],
-                "broad_topics": ["人工智能基础设施"],
-                "mid_topics": ["AI芯片供需"],
-                "specific_topics": ["芯片供应不足"],
-                "driver": ["AI应用需求"],
-                "impact_target": ["AI芯片"],
-                "risk_type": ["供应瓶颈"],
-                "event_thread": ["AI算力链供需"],
-                "event_action": ["扩产"],
-                "actors": ["特斯拉"],
-                "summary": "AI芯片供需紧张。",
-            }
-        ],
-        risk_signals=[],
-        local_impact_signals=[],
-        actor_signals={"companies": ["特斯拉"]},
-        supporting_text=["预计未来AI芯片将严重不足"],
-        system_pointers={},
-        payload={"title": "AI芯片新闻", "published_at": "2026-04-23T00:00:00+00:00"},
+        focus_evidence_refs=["s0001"],
+        focus_span_offsets=[{"ref": "s0001", "start_offset": 0, "end_offset": 14}],
+        factual_anchors={
+            "actors": ["特斯拉"],
+            "action": "供需紧张",
+            "objects": ["AI芯片"],
+            "event_time": "",
+            "explicit_causes": [],
+            "explicit_effects": [],
+        },
+        relation_probes=[RelationProbe(role="downstream", query="AI芯片供需紧张的后续影响")],
+        source_published_at="2026-04-23T00:00:00+00:00",
+        source_title="AI芯片新闻",
     )
 
     count = await MilvusSemanticHybridRetriever(store=store).upsert_semantic_documents(
         adapter_name="financial",
         target="prod",
-        documents=[_semantic_document_from_graph_index(cognitive_card_document(card))],
+        documents=[atomic_card_document(card)],
     )
 
     assert count == 1
     assert store.calls[-1]["documents_by_role"][SEMANTIC_COLLECTION_COGNITIVE_CARD][0].chunk_id == "kg_cognitive_card:test"
     document = store.calls[-1]["documents_by_role"][SEMANTIC_COLLECTION_COGNITIVE_CARD][0]
     assert document.metadata["source_type"] == "kg_cognitive_card"
-    assert document.metadata["target_type"] == "cognitive_card"
-    assert "Document Type: Cognitive Card" in document.text
+    assert document.metadata["target_type"] == "atomic_cognitive_card"
+    assert "Document Type: Atomic Cognitive Card" in document.text
     assert "AI芯片供需" in document.text
 
 

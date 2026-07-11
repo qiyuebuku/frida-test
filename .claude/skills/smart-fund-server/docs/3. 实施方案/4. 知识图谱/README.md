@@ -28,7 +28,8 @@
 | `14. Graph Index增量构建与多索引分层实施方案.md` | 承接 Graph Index 增量构建设计，说明基础分析图、Projection、层级 Community、Lineage、Dirty Subgraph、Community Change Score、Report、Delta、Finding 和 Milvus 发布的实施方案。 |
 | `18. Community Assignment候选上下文账本缓存优化实施方案.md` | 说明 Community Assignment 阶段如何使用 Redis 候选账本稳定 prompt 前缀、降低候选上下文抖动，并记录当前实现边界。 |
 | `19. Agent检索与决策上下文实施方案.md` | 说明面向 Agent 的 search / open / expand / refine 检索运行时如何基于 Community、Cognitive Card 和 Evidence/Chunk 构建 Retrieval Decision Context。 |
-| `20. Community Insight证据归属与高级认知索引实施方案.md` | 说明 Community Insight 如何从后置全文总结改为基于 intent 级核心归属证据挂靠单元生成高级认知报告，并覆盖 Cognitive Card intent evidence、多挂靠核心归属、异步刷新和质量验证。 |
+| `20. Community Insight证据归属与高级认知索引实施方案.md` | 历史方案：记录基于 topic intent、Community Assignment 和独立 Insight 的旧高级认知链路。 |
+| `21. 原子Cognitive Card与Relation Probe提取实施方案.md` | 关系优先重构第一阶段：将 Chunk 提取为零到多个原子 Card，同次生成 Summary、焦点证据引用、事实锚点和动态 Relation Probes，持久化并发布到 Milvus 后停止，不进入旧 Assignment。 |
 
 ## 3. 实施规则
 

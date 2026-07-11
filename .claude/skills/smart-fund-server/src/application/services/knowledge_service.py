@@ -53,15 +53,7 @@ from src.application.services.llm_agentic_retrieval_strategy import LLMAgenticRe
 from src.application.services.llm_candidate_judge import LLMCandidateJudge
 from src.application.services.graph_index_reporter import GraphIndexLLMReporter
 from src.application.services.graph_index_profiles import FINANCIAL_GRAPH_PROJECTIONS, GRAPH_INDEX_PUBLIC_LENS_ALIASES
-from src.application.services.cognitive_index_service import (
-    AssignmentCandidateOrderStore,
-    AssignmentBucketStore,
-    AssignmentBucketSemanticCache,
-    CognitiveCardExtractor,
-    CommunityCardBuilder,
-    CommunityBucketPlanner,
-    CommunitySemanticCandidateProvider,
-)
+from src.application.services.atomic_cognitive_card_service import AtomicCognitiveCardStageService
 from src.application.services.openai_agents_retrieval_runtime import (
     OpenAIAgentsRetrievalRuntime,
 )
@@ -96,7 +88,7 @@ from src.domain.knowledge.graph_index import (
     resolve_graph_index_lineage,
 )
 from src.domain.knowledge.cognitive_index import _community_document as _cognitive_community_document
-from src.domain.knowledge.cognitive_index import cognitive_card_document, seed_graph_communities
+from src.domain.knowledge.cognitive_index import seed_graph_communities
 from src.domain.knowledge.quality import (
     BadCaseReplay,
     KnowledgeQualityScanner,
@@ -1515,8 +1507,8 @@ class KnowledgeService:
                 changed_chunks=semantic_materials.chunks,
             )
             graph_index = {
-                "status": "replaced_by_cognitive_index",
-                "reason": "community_topics_are_built_from_cognitive_cards",
+                "status": "pending_relation_graph_phase",
+                "reason": "atomic_cards_ready_and_legacy_topic_assignment_disabled",
             }
         summary = {
             "mode": "incremental",
@@ -1612,174 +1604,31 @@ async def _refresh_cognitive_index(
     target: Target,
     changed_chunks: list[EvidenceChunk],
 ) -> dict[str, Any]:
-    changed_evidence_ids = _ordered_unique([item.evidence_id for item in changed_chunks])
-    seed_bootstrap = await _ensure_seed_communities(
+    stage = AtomicCognitiveCardStageService(
         repository=repository,
+        semantic_retriever=_semantic_hybrid_retriever(),
+    )
+    result_stage = await stage.refresh(
         adapter_name=result.adapter_name,
         target=target,
         kg_version=result.version,
+        changed_chunks=changed_chunks,
+        persist=True,
     )
-    if not changed_evidence_ids:
-        return {
-            "status": "skipped",
-            "reason": "no_changed_chunks",
-            "cards": 0,
-            "assignments": 0,
-            "communities": 0,
-            "documents_written": 0,
-            "seed_bootstrap": seed_bootstrap,
-        }
-
-    extractor = CognitiveCardExtractor(
-        concurrency=max(1, min(4, int(getattr(settings, "CLAUDE_PROXY_MAX_CONCURRENCY", 2) or 2)))
-    )
-    with profile_span("kg_cognitive_index.extract_cards", chunks=len(changed_chunks)):
-        cards = await extractor.extract(changed_chunks)
-    with profile_span("kg_cognitive_index.persist_cards", cards=len(cards)):
-        card_persistence = repository.replace_cognitive_cards_for_evidence(
-            result.adapter_name,
-            evidence_ids=changed_evidence_ids,
-            cards=cards,
-        )
-    card_semantic_documents = [
-        _semantic_document_from_graph_index_document(cognitive_card_document(item))
-        for item in cards
-    ]
-    with profile_span("kg_cognitive_index.upsert_cognitive_card_documents", documents=len(card_semantic_documents)):
-        card_documents_written = await _semantic_hybrid_retriever().upsert_semantic_documents(
-            adapter_name=result.adapter_name,
-            target=target,
-            documents=card_semantic_documents,
-            kg_version=result.version,
-        )
-
-    stale_card_ids = [
-        card_id
-        for card_id in (card_persistence.get("deleted_card_ids") or [])
-        if card_id and card_id not in {item.cognitive_card_id for item in cards}
-    ]
-    with profile_span("kg_cognitive_index.delete_stale_cognitive_card_documents", documents=len(stale_card_ids)):
-        stale_cognitive_card_documents = await _delete_hybrid_documents(
-            adapter_name=result.adapter_name,
-            target=target,
-            chunk_ids=stale_card_ids,
-        )
-
-    existing_communities = repository.list_graph_communities(result.adapter_name)
-    semantic_retriever = _semantic_hybrid_retriever()
-    semantic_store = getattr(semantic_retriever, "store", None)
-    stream_graph_persistence: list[dict[str, Any]] = []
-    stream_documents_written = 0
-    stream_committed_community_ids: set[str] = set()
-
-    async def commit_updated_communities(
-        communities: list[GraphIndexCommunity],
-        remove_community_ids: list[str] | None = None,
-    ) -> None:
-        nonlocal stream_documents_written
-        if not communities:
-            return
-        remove_community_ids = list(dict.fromkeys(str(item) for item in remove_community_ids or [] if str(item)))
-        assignment_migration_map = {
-            str(old_id): community.community_id
-            for community in communities
-            for old_id in (community.previous_community_ids or [])
-            if str(old_id) in set(remove_community_ids)
-        }
-        with profile_span("kg_cognitive_index.stream_commit_pg", communities=len(communities)):
-            migrated_assignments = repository.migrate_community_assignments(
-                result.adapter_name,
-                community_id_map=assignment_migration_map,
-            )
-            persistence = repository.replace_graph_index_scope(
-                result.adapter_name,
-                remove_community_ids=remove_community_ids,
-                communities=communities,
-                findings=[],
-                deltas=[],
-                unassigned_signals=[],
-            )
-            persistence["migrated_assignments"] = migrated_assignments
-            stream_graph_persistence.append(persistence)
-            stream_committed_community_ids.update(item.community_id for item in communities)
-        stale_target_ids = [str(item) for item in persistence.get("stale_target_ids") or [] if str(item)]
-        if stale_target_ids:
-            with profile_span("kg_cognitive_index.stream_delete_absorbed_milvus", communities=len(stale_target_ids)):
-                await _delete_hybrid_documents(
-                    adapter_name=result.adapter_name,
-                    target=target,
-                    chunk_ids=stale_target_ids,
-                )
-        semantic_documents = [
-            _semantic_document_from_graph_index_document(_cognitive_community_document(item))
-            for item in communities
-        ]
-        with profile_span("kg_cognitive_index.stream_commit_milvus", communities=len(communities)):
-            stream_documents_written += await _semantic_hybrid_retriever().upsert_semantic_documents(
-                adapter_name=result.adapter_name,
-                target=target,
-                documents=semantic_documents,
-                kg_version=result.version,
-            )
-
-    bucket_store = AssignmentBucketStore(target=target)
-    bucket_semantic_cache = (
-        AssignmentBucketSemanticCache(target=target, store=semantic_store)
-        if semantic_store is not None
-        else None
-    )
-    builder = CommunityCardBuilder(
-        candidate_provider=CommunitySemanticCandidateProvider(store=semantic_store) if semantic_store is not None else None,
-        reranker_client=RerankerClient(),
-        target=target,
-        on_communities_updated=commit_updated_communities,
-        candidate_order_store=AssignmentCandidateOrderStore(target=target),
-        bucket_planner=CommunityBucketPlanner(store=bucket_store, semantic_bucket_cache=bucket_semantic_cache),
-        community_id_factory=lambda adapter_name, level, _title: repository.allocate_graph_community_id(
-            adapter_name,
-            level=level,
-        ),
-    )
-    with profile_span("kg_cognitive_index.build_communities", cards=len(cards), mode="incremental_changed_cards"):
-        build_result = await builder.build(
-            adapter_name=result.adapter_name,
-            cards=cards,
-            existing_communities=existing_communities,
-        )
-
-    changed_card_ids = [item.cognitive_card_id for item in cards]
-    with profile_span("kg_cognitive_index.persist_assignments", assignments=len(build_result.assignments)):
-        assignment_rows = repository.replace_community_assignments_for_cards(
-            result.adapter_name,
-            cognitive_card_ids=changed_card_ids,
-            assignments=build_result.assignments,
-        )
-
-    graph_persistence = {
-        "mode": "incremental_stream_commit",
-        "scope_commits": len(stream_graph_persistence),
-        "updated_community_ids": sorted(stream_committed_community_ids),
-        "scope_results": stream_graph_persistence,
-    }
-
     return {
-        "status": "completed",
+        **result_stage.diagnostics,
+        "status": result_stage.status,
         "changed_chunks": len(changed_chunks),
-        "changed_evidence": len(changed_evidence_ids),
-        "cards": len(cards),
-        "all_cards": None,
-        "assignments": len(build_result.assignments),
-        "assignment_rows": assignment_rows,
-        "communities": len(stream_committed_community_ids),
-        "documents_written": stream_documents_written,
-        "cognitive_card_documents_written": card_documents_written,
-        "stale_documents_deleted": 0,
-        "orphan_community_documents_deleted": 0,
-        "orphan_cognitive_card_documents_deleted": stale_cognitive_card_documents,
-        "card_persistence": card_persistence,
-        "graph_persistence": graph_persistence,
-        "diagnostics": build_result.diagnostics,
-        "seed_bootstrap": seed_bootstrap,
+        "changed_evidence": len({chunk.evidence_id for chunk in changed_chunks}),
+        "card_ids": [card.cognitive_card_id for card in result_stage.cards],
+        "assignments": 0,
+        "communities": 0,
+        "documents_written": 0,
+        "cognitive_card_documents_written": result_stage.diagnostics.get(
+            "milvus_documents_written",
+            0,
+        ),
+        "graph_persistence": {"mode": "disabled_until_relation_graph_phase"},
     }
 
 

@@ -26,13 +26,14 @@
 | `12. Milvus语义检索、PG关系展开与叙事图谱设计方案.md` | 收敛最新检索架构决策：Milvus 负责语义召回和按 ID 取回可读 chunk/card，PG 负责事实、关系、原文和不含 chunk text 的证据指针，叙事图谱负责异步 topic cluster / market narrative。 |
 | `13. GraphRAG数据编译入库与检索机制调研.md` | 调研 GraphRAG 如何以 TextUnit 为证据中枢构建 entity、relationship、community report 和多入口检索，并明确哪些机制可借鉴、哪些不能照搬。 |
 | `14. Graph Index增量构建与多索引分层设计方案.md` | 专门说明 Graph Index 如何分层、如何划分多类索引、如何用 dirty subgraph / delta view / 局部重算降低全局 community 重构成本。 |
-| `15. Graph Index社区化重构设计方案.md` | 记录 Graph Index 社区化重构过程中的设计判断和历史方案，阅读时应以 16/17/18/19 的最新结论为准。 |
-| `16. Community Topic高维信号提取验证方案.md` | 说明当前最新写入主线：原文 / chunk -> Cognitive Card -> Community Card。 |
-| `17. Seed Community Topic与归档Prompt优化方案.md` | 说明 Seed Community 如何作为真实 Community 进入系统，并辅助 LLM 稳定 L0 主题粒度。 |
-| `18. Community Assignment候选上下文账本缓存优化实施方案.md` | 说明 Community Assignment 阶段如何使用候选上下文账本稳定 LLM 前缀，减少候选顺序抖动和 cache miss。 |
+| `15. Graph Index社区化重构设计方案.md` | 历史方案：记录基于主题归档构建 Graph Index Community 的早期设计判断。 |
+| `16. Community Topic高维信号提取验证方案.md` | 历史方案：记录原文 / Chunk -> Cognitive Card -> Community Assignment 的主题归档路线。 |
+| `17. Seed Community Topic与归档Prompt优化方案.md` | 历史方案：记录 Seed Community 和 L0 主题粒度治理。 |
+| `18. Community Assignment候选上下文账本缓存优化实施方案.md` | 历史方案：记录 Community Assignment 候选账本和前缀缓存优化。 |
 | `19. Agent检索与决策上下文设计方案.md` | 说明写入链路跑通后，如何为 Agent 提供 search / open / expand / refine 检索能力，并返回 evidence package、覆盖摘要、质量诊断和下一步搜索建议。 |
-| `20. Community Graph写入性能优化设计方案.md` | 说明 Community Assignment 阶段如何通过 AI bucket 分流、缓存、合并和并发锁控制提升写入吞吐，同时保持 community 归属质量。 |
-| `21. Community Insight高级认知索引设计方案.md` | 说明如何在 community 之上构建异步高级认知报告，让 Agent 可以直接检索和使用跨来源综合认知，而不是只获得主题目录摘要。 |
+| `20. Community Graph写入性能优化设计方案.md` | 历史方案：记录主题 Community Assignment 的 bucket、缓存、合并和并发控制。 |
+| `21. Community Insight高级认知索引设计方案.md` | 历史方案：记录在主题 Community 之上单独生成 Insight 的旧路线。 |
+| `22. 关系优先Graph Community重构设计方案.md` | 当前最新方案：先提取原子 Card，再通过 Relation Probe 按关系角色召回候选，经关系感知 Summary 筛选和双方原文核验建立 Observed / Inferred Edge，最后从关系图中发现 Graph Community，并直接生成高级认知报告和条件性推演。 |
 
 ## 3. 总体设计结论
 
@@ -47,6 +48,8 @@
 2. **领域适配器**
    - 负责把具体领域的数据解释成知识图谱可理解的实体、关系、证据和规则。
    - 当前第一版领域适配器是金融适配器。
+
+知识图谱高级认知链路以第 22 篇为当前设计基线：系统不再维护主题 Community 目录，也不再通过 Community Assignment 把 Card 归档到预先存在的主题中。Cognitive Card 必须先原子化，正式关系必须经过双方原文核验，`kg_graph_communities` 只能从有效关系图中产生。
 
 ## 4. 核心原则
 

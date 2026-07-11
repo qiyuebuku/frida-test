@@ -11,7 +11,8 @@ from src.domain.knowledge.graph_index import (
     GraphIndexFinding,
     GraphIndexUnassignedSignal,
 )
-from src.domain.knowledge.cognitive_index import CognitiveCard, CommunityAssignment
+from src.domain.knowledge.atomic_cognitive_card import AtomicCognitiveCard, CognitiveCardManifest
+from src.domain.knowledge.cognitive_index import CommunityAssignment
 from src.domain.knowledge.quality import ReviewAction, ReviewEntry
 from src.domain.knowledge.retrieval_eval import (
     RetrievalEvalMetric,
@@ -70,44 +71,53 @@ class KnowledgeRepository(ABC):
         ]
 
     @abstractmethod
-    def replace_cognitive_cards_for_evidence(
+    def replace_atomic_cognitive_cards_for_evidence(
         self,
         adapter_name: str,
         *,
         evidence_ids: list[str],
-        cards: list[CognitiveCard],
+        cards: list[AtomicCognitiveCard],
     ) -> dict[str, Any]:
-        """Replace Cognitive Cards for changed evidence ids."""
+        """按 Evidence 替换原子 Card manifest，并返回新旧 ID 差异。"""
 
     @abstractmethod
-    def list_cognitive_cards(self, adapter_name: str, *, status: str = "active") -> list[CognitiveCard]:
-        """Load Cognitive Cards for one adapter."""
+    def list_atomic_cognitive_card_manifests(
+        self,
+        adapter_name: str,
+        *,
+        status: str = "active",
+    ) -> list[CognitiveCardManifest]:
+        """读取原子 Card manifest；可读 Card 内容由 Milvus 提供。"""
 
-    def list_cognitive_cards_by_ids(
+    def list_atomic_cognitive_card_manifests_by_ids(
         self,
         adapter_name: str,
         *,
         cognitive_card_ids: list[str],
         status: str = "active",
-    ) -> list[CognitiveCard]:
-        """Load scoped Cognitive Cards by ID."""
+    ) -> list[CognitiveCardManifest]:
+        """按 ID 读取原子 Card manifest。"""
         ids = set(cognitive_card_ids)
-        return [card for card in self.list_cognitive_cards(adapter_name, status=status) if card.cognitive_card_id in ids]
+        return [
+            card
+            for card in self.list_atomic_cognitive_card_manifests(adapter_name, status=status)
+            if card.cognitive_card_id in ids
+        ]
 
-    def list_cognitive_cards_by_chunk_refs(
+    def list_atomic_cognitive_card_manifests_by_chunk_refs(
         self,
         adapter_name: str,
         *,
         chunk_ids: list[str],
         evidence_ids: list[str],
         status: str = "active",
-    ) -> list[CognitiveCard]:
-        """Load scoped Cognitive Cards by chunk or evidence refs."""
+    ) -> list[CognitiveCardManifest]:
+        """按 Chunk 或 Evidence 指针读取原子 Card manifest。"""
         chunk_set = set(chunk_ids)
         evidence_set = set(evidence_ids)
         return [
             card
-            for card in self.list_cognitive_cards(adapter_name, status=status)
+            for card in self.list_atomic_cognitive_card_manifests(adapter_name, status=status)
             if card.evidence_id in evidence_set
             or card.primary_chunk_id in chunk_set
             or bool(set(card.chunk_ids).intersection(chunk_set))

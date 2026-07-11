@@ -251,7 +251,7 @@ class KnowledgeCommunityInsight(Base):
 
 
 class KnowledgeCognitiveCard(Base):
-    """Chunk-level cognitive signals used by high-level semantic indexes."""
+    """原子 Cognitive Card 的 PG manifest；可读正文保存在 Milvus。"""
 
     __tablename__ = "kg_cognitive_cards"
     __table_args__ = (
@@ -269,16 +269,11 @@ class KnowledgeCognitiveCard(Base):
     primary_chunk_id: Mapped[str] = mapped_column(String(220), nullable=False)
     chunk_ids: Mapped[list] = mapped_column(JSONB, default=list, nullable=False)
     chunk_index: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
-    summary: Mapped[str] = mapped_column(Text, nullable=False, default="")
-    title_candidates: Mapped[list] = mapped_column(JSONB, default=list, nullable=False)
-    topic_intents: Mapped[list] = mapped_column(JSONB, default=list, nullable=False)
-    risk_signals: Mapped[list] = mapped_column(JSONB, default=list, nullable=False)
-    local_impact_signals: Mapped[list] = mapped_column(JSONB, default=list, nullable=False)
-    actor_signals: Mapped[dict] = mapped_column(JSONB, default=dict, nullable=False)
-    supporting_text: Mapped[list] = mapped_column(JSONB, default=list, nullable=False)
-    system_pointers: Mapped[dict] = mapped_column(JSONB, default=dict, nullable=False)
-    payload: Mapped[dict] = mapped_column(JSONB, default=dict, nullable=False)
+    focus_evidence_refs: Mapped[list] = mapped_column(JSONB, default=list, nullable=False)
+    focus_span_offsets: Mapped[list] = mapped_column(JSONB, default=list, nullable=False)
+    factual_anchors: Mapped[dict] = mapped_column(JSONB, default=dict, nullable=False)
     schema_version: Mapped[str] = mapped_column(String(96), nullable=False, default="")
+    generator_version: Mapped[str] = mapped_column(String(96), nullable=False, default="")
     status: Mapped[str] = mapped_column(String(32), nullable=False, default="active")
     created_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
