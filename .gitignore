@@ -51,4 +51,9 @@ scraped_docs/
 
 .claude/skills/smart-fund-server/data
 
+# Langfuse / 调试 trace 运行产物
+langfuse-full-traces/
+langfuse-investigation/
+trace-*.json
+
 18tv/video
