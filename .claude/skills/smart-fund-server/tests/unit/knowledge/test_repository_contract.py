@@ -1,18 +1,16 @@
-"""Unit tests for the generic knowledge repository contract."""
+"""当前知识仓储契约测试。"""
 
 from __future__ import annotations
 
 import ast
 from pathlib import Path
 
+from src.domain.knowledge.enums import EvidenceType
 from src.domain.knowledge.repositories import KnowledgeRepository
-from src.domain.knowledge.schemas import CompiledEdge, CompiledEvidence, CompiledNode
+from src.domain.knowledge.schemas import CompiledEvidence
 from src.infrastructure.persistence.repositories.knowledge_repository_impl import (
-    _edge_values,
     _evidence_values,
-    _node_values,
 )
-from src.domain.knowledge.enums import ConfidenceLabel, EdgeStatus, EvidenceType, NodeStatus
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
@@ -21,24 +19,28 @@ REPO_CONTRACT = (
 )
 
 
-def test_knowledge_repository_contract_methods() -> None:
+def test_knowledge_repository_contract_matches_current_evidence_card_pipeline() -> None:
     assert {
-        "upsert_nodes",
-        "upsert_edges",
         "upsert_evidence",
-        "attach_edge_evidence",
-        "get_node",
-        "get_edge",
         "get_evidence",
-        "get_edge_evidence",
+        "list_evidence",
+        "upsert_evidence_chunks",
+        "replace_atomic_cognitive_cards_for_evidence",
+        "list_atomic_cognitive_card_manifests",
         "create_compilation_run",
         "finish_compilation_run",
     }.issubset(KnowledgeRepository.__abstractmethods__)
+    assert not {
+        "upsert_nodes",
+        "upsert_edges",
+        "attach_edge_evidence",
+        "get_node",
+        "get_edge",
+    }.intersection(KnowledgeRepository.__abstractmethods__)
 
 
 def test_knowledge_repository_contract_does_not_import_persistence_or_drivers() -> None:
     imports = _imports(REPO_CONTRACT)
-
     forbidden = ["src.infrastructure", "sqlalchemy", "psycopg2", "asyncpg"]
     violations = [
         item
@@ -49,59 +51,23 @@ def test_knowledge_repository_contract_does_not_import_persistence_or_drivers() 
     assert not violations
 
 
-def test_repository_node_value_mapping_uses_generic_schema() -> None:
-    node = CompiledNode(
-        node_id="kg:toy:project:alpha",
-        adapter_name="toy",
-        node_type="project",
-        canonical_name="Alpha",
-        aliases=["A"],
-        external_ids={"source": "alpha"},
-        properties={"kind": "demo"},
-        status=NodeStatus.ACTIVE,
-        version="v1",
-    )
-
-    values = _node_values(node)
-
-    assert values["node_id"] == node.node_id
-    assert values["stable_key"] == node.node_id
-    assert values["status"] == "active"
-    assert values["properties"] == {"kind": "demo"}
-
-
-def test_repository_edge_and_evidence_value_mapping_uses_generic_schema() -> None:
-    edge = CompiledEdge(
-        edge_id="kg_edge:toy:owns:abc",
-        adapter_name="toy",
-        source_node_id="kg:toy:person:alice",
-        target_node_id="kg:toy:project:alpha",
-        relation_type="owns",
-        confidence_label=ConfidenceLabel.EXTRACTED,
-        confidence_score=1.0,
-        status=EdgeStatus.ACTIVE,
-        evidence_ids=["kg_ev:toy:note:n1:abc"],
-        version="v1",
-    )
+def test_repository_evidence_value_mapping_uses_current_schema() -> None:
     evidence = CompiledEvidence(
-        evidence_id="kg_ev:toy:note:n1:abc",
-        adapter_name="toy",
+        evidence_id="kg_ev:financial:note:n1:abc",
+        adapter_name="financial",
         evidence_type=EvidenceType.TEXT_SPAN,
         source_type="note",
         source_id="n1",
-        content="Alice owns Alpha.",
+        content="原始证据。",
         version="v1",
     )
 
-    edge_values = _edge_values(edge)
-    evidence_values = _evidence_values(evidence)
+    values = _evidence_values(evidence)
 
-    assert edge_values["confidence_label"] == "EXTRACTED"
-    assert edge_values["status"] == "active"
-    assert evidence_values["evidence_type"] == "text_span"
-    assert evidence_values["status"] == "active"
-    assert evidence_values["superseded_by"] is None
-    assert evidence_values["metadata_"] == {}
+    assert values["evidence_type"] == "text_span"
+    assert values["status"] == "active"
+    assert values["superseded_by"] is None
+    assert values["metadata_"] == {}
 
 
 def _imports(path: Path) -> list[str]:

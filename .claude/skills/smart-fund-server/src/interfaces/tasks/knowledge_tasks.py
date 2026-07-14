@@ -7,7 +7,11 @@ import time
 
 from jettask import TaskRouter
 
-from src.application.services import CommunityInsightService, KnowledgeNewsIngestionService
+from src.application.services import (
+    CommunityInsightService,
+    KnowledgeNewsIngestionService,
+    RelationDiscoveryService,
+)
 from src.infrastructure.observability.langfuse_tracing import (
     langfuse_observation,
     langfuse_propagation_context,
@@ -20,6 +24,7 @@ router = TaskRouter()
 
 _knowledge_ingestion = KnowledgeNewsIngestionService()
 _community_insight = CommunityInsightService()
+_relation_discovery: RelationDiscoveryService | None = None
 
 
 @router.task(
@@ -34,6 +39,25 @@ async def kg_news_ingest(news_ids: list[int] | None = None):
     t0 = time.time()
     result = await _knowledge_ingestion.ingest_ft_news_ids(news_ids or [])
     logger.info("[kg_news_ingest] 完成,耗时 %.1fs %s", time.time() - t0, result)
+    return result
+
+
+@router.task(
+    queue="kg_relation_discovery",
+    max_retries=5,
+    retry_backoff=10.0,
+    retry_backoff_max=120,
+)
+async def kg_relation_discovery(card_ids: list[str] | None = None):
+    """发现并核验 Card 关系，写入正式 Edge 后发布图变化事件。"""
+
+    global _relation_discovery
+    if _relation_discovery is None:
+        _relation_discovery = RelationDiscoveryService()
+    t0 = time.time()
+    result = await _relation_discovery.discover_card_relations(card_ids or [])
+    logger.info("[kg_relation_discovery] 完成,耗时 %.1fs %s", time.time() - t0, result)
+    return result
 
 
 @router.task(

@@ -54,7 +54,6 @@ CREATE TABLE IF NOT EXISTS public.kg_cognitive_cards (
     chunk_index integer NOT NULL DEFAULT 0,
     focus_evidence_refs jsonb NOT NULL DEFAULT '[]'::jsonb,
     focus_span_offsets jsonb NOT NULL DEFAULT '[]'::jsonb,
-    factual_anchors jsonb NOT NULL DEFAULT '{}'::jsonb,
     schema_version character varying(96) NOT NULL DEFAULT '',
     generator_version character varying(96) NOT NULL DEFAULT '',
     status character varying(32) NOT NULL DEFAULT 'active',
@@ -62,10 +61,9 @@ CREATE TABLE IF NOT EXISTS public.kg_cognitive_cards (
     updated_at timestamp with time zone DEFAULT now()
 );
 
-COMMENT ON TABLE public.kg_cognitive_cards IS '原子 Cognitive Card manifest；完整 Summary 和 Relation Probe 由 Milvus 保存';
+COMMENT ON TABLE public.kg_cognitive_cards IS '原子 Cognitive Card manifest；证据引用保存在 PG，完整可读文本保存在 Milvus';
 COMMENT ON COLUMN public.kg_cognitive_cards.focus_evidence_refs IS 'Card 焦点原文 Span Ref 列表';
 COMMENT ON COLUMN public.kg_cognitive_cards.focus_span_offsets IS '焦点 Span 在 primary chunk 中的 offset 指针';
-COMMENT ON COLUMN public.kg_cognitive_cards.factual_anchors IS '由焦点原文明示的紧凑事实锚点';
 
 CREATE TABLE IF NOT EXISTS public.kg_community_assignments (
     assignment_id character varying(180) PRIMARY KEY,

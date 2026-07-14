@@ -19,16 +19,20 @@ _EMPTY_SCOPE_WARNED: set[tuple[str, str, str]] = set()
 
 MILVUS_COLLECTION_CHUNK = "chunk"
 MILVUS_COLLECTION_COGNITIVE_CARD = "cognitive_card"
+MILVUS_COLLECTION_COGNITIVE_CARD_FOCUS = "cognitive_card_focus"
 MILVUS_COLLECTION_ENTITY = "entity"
 MILVUS_COLLECTION_RELATION = "relation"
+MILVUS_COLLECTION_CARD_RELATION = "card_relation"
 MILVUS_COLLECTION_COMMUNITY = "community"
 MILVUS_COLLECTION_COMMUNITY_INSIGHT = "community_insight"
 MILVUS_COLLECTION_ASSIGNMENT_BUCKET = "assignment_bucket"
 MILVUS_COLLECTION_ROLES = (
     MILVUS_COLLECTION_CHUNK,
     MILVUS_COLLECTION_COGNITIVE_CARD,
+    MILVUS_COLLECTION_COGNITIVE_CARD_FOCUS,
     MILVUS_COLLECTION_ENTITY,
     MILVUS_COLLECTION_RELATION,
+    MILVUS_COLLECTION_CARD_RELATION,
     MILVUS_COLLECTION_COMMUNITY,
     MILVUS_COLLECTION_COMMUNITY_INSIGHT,
     MILVUS_COLLECTION_ASSIGNMENT_BUCKET,
@@ -44,6 +48,8 @@ class MilvusCollectionRegistry:
     community: str
     community_insight: str
     assignment_bucket: str
+    cognitive_card_focus: str = ""
+    card_relation: str = ""
 
     @classmethod
     def from_settings(cls) -> "MilvusCollectionRegistry":
@@ -52,9 +58,11 @@ class MilvusCollectionRegistry:
             cognitive_card=settings.MILVUS_COGNITIVE_CARD_COLLECTION,
             entity=settings.MILVUS_ENTITY_COLLECTION,
             relation=settings.MILVUS_RELATION_COLLECTION,
+            card_relation=settings.MILVUS_CARD_RELATION_COLLECTION,
             community=settings.MILVUS_COMMUNITY_COLLECTION,
             community_insight=settings.MILVUS_COMMUNITY_INSIGHT_COLLECTION,
             assignment_bucket=settings.MILVUS_ASSIGNMENT_BUCKET_COLLECTION,
+            cognitive_card_focus=settings.MILVUS_COGNITIVE_CARD_FOCUS_COLLECTION,
         )
 
     def name_for(self, collection_role: str) -> str:
@@ -62,10 +70,14 @@ class MilvusCollectionRegistry:
             return self.chunk
         if collection_role == MILVUS_COLLECTION_COGNITIVE_CARD:
             return self.cognitive_card
+        if collection_role == MILVUS_COLLECTION_COGNITIVE_CARD_FOCUS:
+            return self.cognitive_card_focus or settings.MILVUS_COGNITIVE_CARD_FOCUS_COLLECTION
         if collection_role == MILVUS_COLLECTION_ENTITY:
             return self.entity
         if collection_role == MILVUS_COLLECTION_RELATION:
             return self.relation
+        if collection_role == MILVUS_COLLECTION_CARD_RELATION:
+            return self.card_relation or settings.MILVUS_CARD_RELATION_COLLECTION
         if collection_role == MILVUS_COLLECTION_COMMUNITY:
             return self.community
         if collection_role == MILVUS_COLLECTION_COMMUNITY_INSIGHT:

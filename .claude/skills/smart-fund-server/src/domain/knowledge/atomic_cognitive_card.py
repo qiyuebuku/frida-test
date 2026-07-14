@@ -10,17 +10,27 @@ from datetime import datetime
 from typing import Any
 
 from src.domain.knowledge.schemas import EvidenceChunk
+from src.domain.knowledge.relation_discovery import VerifiedRelationDecision
 from src.domain.knowledge.semantic_index_materials import (
     SEMANTIC_COLLECTION_COGNITIVE_CARD,
+    SEMANTIC_COLLECTION_COGNITIVE_CARD_FOCUS,
     SemanticVectorDocument,
 )
 
 
-ATOMIC_COGNITIVE_CARD_SCHEMA_VERSION = "atomic_cognitive_card_v1"
-ATOMIC_COGNITIVE_CARD_GENERATOR_VERSION = "atomic_card_extractor_v18"
-RELATION_PROBE_ROLES = frozenset(
-    {"same_event", "upstream", "downstream", "confirmation", "contradiction"}
+ATOMIC_COGNITIVE_CARD_SCHEMA_VERSION = "atomic_cognitive_card_v5"
+ATOMIC_COGNITIVE_CARD_GENERATOR_VERSION = "atomic_card_extractor_v38"
+INTRA_CHUNK_RELATION_KINDS = frozenset(
+    {
+        "confirmation",
+        "contradiction",
+        "temporal_progression",
+        "causal_influence",
+        "common_driver",
+        "constraint",
+    }
 )
+_LOCAL_CARD_ID_RE = re.compile(r"(?<![A-Za-z0-9_])c(?:[1-9]|1[0-2])(?![A-Za-z0-9_])", re.IGNORECASE)
 
 
 @dataclass(frozen=True)
@@ -44,17 +54,6 @@ class SpanReference:
 
 
 @dataclass(frozen=True)
-class RelationProbe:
-    """用于后续关系候选发现的搜索假设，不代表正式关系。"""
-
-    role: str
-    query: str
-
-    def as_dict(self) -> dict[str, str]:
-        return {"role": self.role, "query": self.query}
-
-
-@dataclass(frozen=True)
 class AtomicCognitiveCard:
     """一个可由原文直接支撑的原子事件或事实主张。"""
 
@@ -69,8 +68,6 @@ class AtomicCognitiveCard:
     summary: str
     focus_evidence_refs: list[str]
     focus_span_offsets: list[dict[str, Any]]
-    factual_anchors: dict[str, Any]
-    relation_probes: list[RelationProbe]
     source_published_at: str = ""
     source_title: str = ""
     schema_version: str = ATOMIC_COGNITIVE_CARD_SCHEMA_VERSION
@@ -89,7 +86,6 @@ class AtomicCognitiveCard:
             chunk_index=self.chunk_index,
             focus_evidence_refs=list(self.focus_evidence_refs),
             focus_span_offsets=[dict(item) for item in self.focus_span_offsets],
-            factual_anchors=dict(self.factual_anchors),
             schema_version=self.schema_version,
             generator_version=self.generator_version,
             status=self.status,
@@ -98,7 +94,7 @@ class AtomicCognitiveCard:
 
 @dataclass(frozen=True)
 class CognitiveCardManifest:
-    """PostgreSQL 中保存的 Card 身份、指针与紧凑事实结构。"""
+    """PostgreSQL 中保存的 Card 身份与证据指针。"""
 
     cognitive_card_id: str
     adapter_name: str
@@ -110,7 +106,6 @@ class CognitiveCardManifest:
     chunk_index: int
     focus_evidence_refs: list[str]
     focus_span_offsets: list[dict[str, Any]]
-    factual_anchors: dict[str, Any]
     schema_version: str
     generator_version: str
     status: str = "active"
@@ -123,6 +118,7 @@ class AtomicCardExtractionResult:
     chunk_id: str
     spans: list[SpanReference]
     cards: list[AtomicCognitiveCard]
+    relations: list[VerifiedRelationDecision]
     repaired: bool = False
     skip_reason: str = ""
 
@@ -190,22 +186,15 @@ def atomic_card_from_llm_item(
     if unknown_refs:
         raise ValueError(f"card 引用了不存在的 Span Ref: {unknown_refs}")
 
-    anchors = _normalize_factual_anchors(item.get("factual_anchors"))
-    _validate_anchor_grounding(
-        anchors,
-        [span_by_ref[ref].text for ref in focus_refs],
-        source_published_at=_clean_text(payload.get("published_at")),
-    )
     _validate_summary_grounding(
         summary,
         [span_by_ref[ref].text for ref in focus_refs],
         source_published_at=_clean_text(payload.get("published_at")),
     )
-    probes = _normalize_relation_probes(item.get("relation_probes"))
-
     card_id = build_atomic_card_id(
         chunk=chunk,
         focus_evidence_refs=focus_refs,
+        summary=summary,
     )
     return AtomicCognitiveCard(
         cognitive_card_id=card_id,
@@ -219,58 +208,120 @@ def atomic_card_from_llm_item(
         summary=summary,
         focus_evidence_refs=focus_refs,
         focus_span_offsets=[span_by_ref[ref].pointer() for ref in focus_refs],
-        factual_anchors=anchors,
-        relation_probes=probes,
         source_published_at=_clean_text(payload.get("published_at")),
         source_title=_clean_text(payload.get("title")),
     )
 
 
+def intra_chunk_relation_from_llm_item(
+    item: dict[str, Any],
+    *,
+    cards_by_local_id: dict[str, AtomicCognitiveCard],
+) -> VerifiedRelationDecision:
+    """把本次提取中的局部 Card 引用转换为正式关系决定。"""
+
+    required = {
+        "source_card_id",
+        "target_card_id",
+        "decision_class",
+        "relation_kind",
+        "relation_type",
+        "direction",
+        "basis",
+        "source_evidence_refs",
+        "target_evidence_refs",
+        "inference_mechanism",
+        "confidence",
+    }
+    missing = sorted(required.difference(item))
+    extra = sorted(set(item).difference(required))
+    if missing or extra:
+        raise ValueError(f"同 Chunk Relation 字段不符合契约: missing={missing}, extra={extra}")
+
+    source_local_id = _clean_text(item.get("source_card_id"))
+    target_local_id = _clean_text(item.get("target_card_id"))
+    if source_local_id == target_local_id:
+        raise ValueError("同 Chunk Relation 两端不能引用同一个 Card")
+    if source_local_id not in cards_by_local_id or target_local_id not in cards_by_local_id:
+        raise ValueError(
+            "同 Chunk Relation 引用了不存在的局部 Card: "
+            f"source={source_local_id}, target={target_local_id}"
+        )
+
+    decision_class = _clean_text(item.get("decision_class"))
+    if decision_class not in {"observed", "inferred"}:
+        raise ValueError(f"同 Chunk Relation decision_class 非法: {decision_class}")
+    relation_kind = _clean_text(item.get("relation_kind"))
+    if relation_kind not in INTRA_CHUNK_RELATION_KINDS:
+        raise ValueError(f"同 Chunk Relation relation_kind 非法: {relation_kind}")
+
+    source_card = cards_by_local_id[source_local_id]
+    target_card = cards_by_local_id[target_local_id]
+    source_refs = _ordered_unique(item.get("source_evidence_refs") or [])
+    target_refs = _ordered_unique(item.get("target_evidence_refs") or [])
+    if not source_refs or not target_refs:
+        raise ValueError("同 Chunk Relation 必须引用双方最小充分 Focus Evidence")
+    if not set(source_refs).issubset(source_card.focus_evidence_refs):
+        raise ValueError(f"同 Chunk Relation source refs 不属于 {source_local_id}")
+    if not set(target_refs).issubset(target_card.focus_evidence_refs):
+        raise ValueError(f"同 Chunk Relation target refs 不属于 {target_local_id}")
+
+    relation_type = _clean_text(item.get("relation_type"))
+    direction = _clean_text(item.get("direction"))
+    basis = _clean_text(item.get("basis"))
+    mechanism = _clean_text(item.get("inference_mechanism"))
+    if not relation_type or not direction or not basis:
+        raise ValueError("同 Chunk Relation 必须包含关系类型、方向和成立依据")
+    if any(_LOCAL_CARD_ID_RE.search(value) for value in (relation_type, direction, basis, mechanism)):
+        raise ValueError("同 Chunk Relation 的语义说明不能引用临时 local_card_id")
+    if decision_class == "inferred" and not mechanism:
+        raise ValueError("同 Chunk inferred Relation 必须包含 inference_mechanism")
+    try:
+        confidence = float(item.get("confidence"))
+    except (TypeError, ValueError) as exc:
+        raise ValueError("同 Chunk Relation confidence 必须是 0 到 1 的数字") from exc
+    if not 0 <= confidence <= 1:
+        raise ValueError("同 Chunk Relation confidence 必须处于 0 到 1")
+
+    return VerifiedRelationDecision(
+        source_card_id=source_card.cognitive_card_id,
+        target_card_id=target_card.cognitive_card_id,
+        decision_class=decision_class,  # type: ignore[arg-type]
+        relation_kind=relation_kind,
+        relation_type=relation_type,
+        direction=direction,
+        basis=basis,
+        source_evidence_refs=source_refs,
+        target_evidence_refs=target_refs,
+        inference_mechanism=mechanism,
+        confidence=confidence,
+    )
+
+
 def _validate_raw_card_shape(item: dict[str, Any]) -> None:
-    required = {"summary", "focus_evidence_refs", "factual_anchors", "relation_probes"}
+    required = {"summary", "focus_evidence_refs"}
     missing = sorted(required.difference(item))
     extra = sorted(set(item).difference(required))
     if missing or extra:
         raise ValueError(f"Card 字段不符合契约: missing={missing}, extra={extra}")
     if not isinstance(item.get("focus_evidence_refs"), list):
         raise ValueError("focus_evidence_refs 必须是数组")
-    anchors = item.get("factual_anchors")
-    anchor_fields = {
-        "actors",
-        "action",
-        "objects",
-        "event_time",
-        "explicit_causes",
-        "explicit_effects",
-    }
-    if not isinstance(anchors, dict) or set(anchors) != anchor_fields:
-        raise ValueError("factual_anchors 字段不符合契约")
-    for field_name, limit in (
-        ("actors", 8),
-        ("objects", 8),
-        ("explicit_causes", 6),
-        ("explicit_effects", 6),
-    ):
-        value = anchors.get(field_name)
-        if not isinstance(value, list) or len(value) > limit:
-            raise ValueError(f"factual_anchors.{field_name} 必须是最多 {limit} 项的数组")
-    if len(_clean_text(anchors.get("action"))) > 32:
-        raise ValueError("factual_anchors.action 超过 32 字符")
-    probes = item.get("relation_probes")
-    if not isinstance(probes, list) or len(probes) > 12:
-        raise ValueError("relation_probes 必须是最多 12 项的数组")
 
 
 def build_atomic_card_id(
     *,
     chunk: EvidenceChunk,
     focus_evidence_refs: list[str],
+    summary: str,
 ) -> str:
-    """使用 Chunk 内容版本和焦点证据集合生成与模型措辞无关的稳定 ID。"""
+    """使用 Chunk、焦点范围和原子事实摘要生成稳定 Card ID。"""
 
     ordered_refs = sorted(set(focus_evidence_refs))
     signature = {
         "focus_evidence_range": [ordered_refs[0], ordered_refs[-1]],
+        "summary_fingerprint": hashlib.sha256(
+            _normalize_text(summary).encode("utf-8")
+        ).hexdigest()[:16],
     }
     raw = "\n".join(
         [
@@ -285,111 +336,172 @@ def build_atomic_card_id(
     return "kg_cognitive_card:" + hashlib.sha256(raw.encode("utf-8")).hexdigest()[:16]
 
 
-def atomic_card_document(card: AtomicCognitiveCard) -> SemanticVectorDocument:
-    """构建可直接用于检索、rerank 和按 ID 取回的 Milvus Card 文档。"""
+def atomic_card_summary_document(card: AtomicCognitiveCard) -> SemanticVectorDocument:
+    """构建只包含 Summary 的 Milvus 语义视图。"""
 
-    probe_lines = [f"{probe.role}: {probe.query}" for probe in card.relation_probes]
-    text_parts = [
-        "Document Type: Atomic Cognitive Card",
-        f"Summary: {card.summary}",
-    ]
-    if probe_lines:
-        text_parts.append("Relation Probes:\n" + "\n".join(probe_lines))
-    text_parts.append(
-        "Expandable Handles: "
-        f"cognitive_card_id={card.cognitive_card_id} "
-        f"evidence_id={card.evidence_id} chunk_id={card.primary_chunk_id}"
-    )
     return SemanticVectorDocument(
         document_id=card.cognitive_card_id,
-        document_type="atomic_cognitive_card",
+        document_type="atomic_cognitive_card_summary",
         collection_role=SEMANTIC_COLLECTION_COGNITIVE_CARD,
         source_type="kg_cognitive_card",
         source_id=card.cognitive_card_id,
         evidence_id=card.evidence_id,
-        text="\n".join(text_parts),
-        metadata={
-            "target_id": card.cognitive_card_id,
-            "target_type": "atomic_cognitive_card",
-            "cognitive_card_id": card.cognitive_card_id,
-            "original_source_type": card.source_type,
-            "original_source_id": card.source_id,
-            "evidence_id": card.evidence_id,
-            "primary_chunk_id": card.primary_chunk_id,
-            "cited_chunk_ids": list(card.chunk_ids),
-            "cited_evidence_ids": [card.evidence_id],
-            "focus_evidence_refs": list(card.focus_evidence_refs),
-            "focus_span_offsets": [dict(item) for item in card.focus_span_offsets],
-            "factual_anchors": dict(card.factual_anchors),
-            "relation_probes": [probe.as_dict() for probe in card.relation_probes],
-            "summary": card.summary,
-            "title": card.source_title,
-            "source_published_at": card.source_published_at,
-            "published_at": card.source_published_at,
-            "event_time": _clean_text(card.factual_anchors.get("event_time")),
-            "schema_version": card.schema_version,
-            "generator_version": card.generator_version,
-        },
+        text=card.summary,
+        metadata=_atomic_card_milvus_metadata(card, target_type="atomic_cognitive_card_summary"),
     )
 
 
-def _normalize_factual_anchors(value: Any) -> dict[str, Any]:
-    data = value if isinstance(value, dict) else {}
-    return {
-        "actors": _ordered_unique(_clean_text(item) for item in data.get("actors") or []),
-        "action": _clean_text(data.get("action")),
-        "objects": _ordered_unique(_clean_text(item) for item in data.get("objects") or []),
-        "event_time": _clean_text(data.get("event_time")),
-        "explicit_causes": _ordered_unique(_clean_text(item) for item in data.get("explicit_causes") or []),
-        "explicit_effects": _ordered_unique(_clean_text(item) for item in data.get("explicit_effects") or []),
-    }
-
-
-def _normalize_relation_probes(value: Any) -> list[RelationProbe]:
-    result: list[RelationProbe] = []
-    seen: set[tuple[str, str]] = set()
-    for item in value or []:
-        if not isinstance(item, dict):
-            continue
-        role = _clean_text(item.get("role"))
-        query = _clean_text(item.get("query"))
-        if role not in RELATION_PROBE_ROLES:
-            raise ValueError(f"未知 Relation Probe role: {role}")
-        if not query:
-            raise ValueError("Relation Probe query 不能为空")
-        key = (role, _normalize_text(query))
-        if key in seen:
-            raise ValueError(f"同一 Card 内 Relation Probe 重复: role={role}, query={query}")
-        seen.add(key)
-        result.append(RelationProbe(role=role, query=query))
-    return result
-
-
-def _validate_anchor_grounding(
-    anchors: dict[str, Any],
-    focus_texts: list[str],
+def atomic_card_focus_document(
+    card: AtomicCognitiveCard,
     *,
-    source_published_at: str,
-) -> None:
-    """只校验程序能够确定的数字接地，避免用字符启发式冒充语义裁决。"""
+    chunk_content: str,
+) -> SemanticVectorDocument:
+    """按 PG offset 从 Primary Chunk 确定性拼接原始焦点证据。"""
 
-    source = _normalize_text("\n".join(focus_texts))
-    values = [
-        *anchors.get("actors", []),
-        anchors.get("action", ""),
-        *anchors.get("objects", []),
-        anchors.get("event_time", ""),
-        *anchors.get("explicit_causes", []),
-        *anchors.get("explicit_effects", []),
-    ]
-    grounded_years = _grounded_year_tokens(focus_texts, source_published_at)
-    unsupported: list[str] = []
-    for value in values:
-        tokens = re.findall(r"\d{4}年|\d+(?:\.\d+)?%?", str(value or ""))
-        if any(not _numeric_token_is_grounded(token, source, grounded_years) for token in tokens):
-            unsupported.append(str(value))
-    if unsupported:
-        raise ValueError(f"事实锚点包含焦点证据无法支持的数字或年份: {unsupported}")
+    focus_text = materialize_focus_evidence_text(
+        chunk_content,
+        focus_span_offsets=card.focus_span_offsets,
+    )
+    return SemanticVectorDocument(
+        document_id=card.cognitive_card_id,
+        document_type="atomic_cognitive_card_focus_evidence",
+        collection_role=SEMANTIC_COLLECTION_COGNITIVE_CARD_FOCUS,
+        source_type="kg_cognitive_card_focus_evidence",
+        source_id=card.cognitive_card_id,
+        evidence_id=card.evidence_id,
+        text=focus_text,
+        metadata=_atomic_card_milvus_metadata(
+            card,
+            target_type="atomic_cognitive_card_focus_evidence",
+        ),
+    )
+
+
+def materialize_focus_evidence_text(
+    chunk_content: str,
+    *,
+    focus_span_offsets: list[dict[str, Any]],
+) -> str:
+    """从当前 Chunk 提取有序原文片段，不做任何模型改写。"""
+
+    return "\n".join(
+        item["text"]
+        for item in materialize_focus_evidence_items(
+            chunk_content,
+            focus_span_offsets=focus_span_offsets,
+        )
+    )
+
+
+def materialize_focus_evidence_items(
+    chunk_content: str,
+    *,
+    focus_span_offsets: list[dict[str, Any]],
+) -> list[dict[str, str]]:
+    """恢复带稳定 ref 的焦点原文，供关系核验直接引用。"""
+
+    parts: list[dict[str, str]] = []
+    seen: set[tuple[int, int]] = set()
+    ordered = sorted(
+        focus_span_offsets,
+        key=lambda item: (int(item.get("start_offset", -1)), int(item.get("end_offset", -1))),
+    )
+    for pointer in ordered:
+        start = int(pointer.get("start_offset", -1))
+        end = int(pointer.get("end_offset", -1))
+        if start < 0 or end <= start or end > len(chunk_content):
+            raise ValueError(
+                f"Focus Evidence offset 越界: ref={pointer.get('ref')} start={start} end={end} "
+                f"chunk_length={len(chunk_content)}"
+            )
+        key = (start, end)
+        if key in seen:
+            continue
+        seen.add(key)
+        text = chunk_content[start:end]
+        if text.strip():
+            ref = str(pointer.get("ref") or "").strip()
+            if not ref:
+                raise ValueError("Focus Evidence offset 缺少 ref")
+            parts.append({"ref": ref, "text": text})
+    if not parts:
+        raise ValueError("Focus Evidence 无法从 Primary Chunk 拼接出正文")
+    return parts
+
+
+def materialize_focus_evidence_context(
+    chunk_content: str,
+    *,
+    focus_span_offsets: list[dict[str, Any]],
+) -> tuple[list[dict[str, Any]], list[str]]:
+    """把完整原文切成有序片段，焦点片段与稳定 ref 严格一一对应。"""
+
+    spans: list[tuple[int, int, str]] = []
+    for pointer in focus_span_offsets:
+        start = int(pointer.get("start_offset", -1))
+        end = int(pointer.get("end_offset", -1))
+        ref = str(pointer.get("ref") or "").strip()
+        if start < 0 or end <= start or end > len(chunk_content):
+            raise ValueError(
+                f"Focus Evidence offset 越界: ref={ref} start={start} end={end} "
+                f"chunk_length={len(chunk_content)}"
+            )
+        if not ref:
+            raise ValueError("Focus Evidence offset 缺少 ref")
+        spans.append((start, end, ref))
+    if not spans:
+        raise ValueError("Focus Evidence 不能为空")
+
+    spans.sort(key=lambda item: (item[0], item[1], item[2]))
+    rendered: list[dict[str, Any]] = []
+    refs: list[str] = []
+    cursor = 0
+    for start, end, ref in spans:
+        if start < cursor:
+            raise ValueError(
+                f"同一 Card 的 Focus Evidence 区间不能重叠: ref={ref} start={start} cursor={cursor}"
+            )
+        if cursor < start:
+            rendered.append(
+                {"text": chunk_content[cursor:start], "evidence_ref": None}
+            )
+        rendered.append(
+            {"text": chunk_content[start:end], "evidence_ref": ref}
+        )
+        refs.append(ref)
+        cursor = end
+    if cursor < len(chunk_content):
+        rendered.append(
+            {"text": chunk_content[cursor:], "evidence_ref": None}
+        )
+    if not rendered:
+        raise ValueError("Focus Evidence 无法生成核验上下文")
+    return rendered, refs
+
+
+def _atomic_card_milvus_metadata(
+    card: AtomicCognitiveCard,
+    *,
+    target_type: str,
+) -> dict[str, Any]:
+    """Milvus 只保存语义检索和精确取回所需的最小指针。"""
+
+    return {
+        "target_id": card.cognitive_card_id,
+        "target_type": target_type,
+        "cognitive_card_id": card.cognitive_card_id,
+        "original_source_type": card.source_type,
+        "original_source_id": card.source_id,
+        "evidence_id": card.evidence_id,
+        "primary_chunk_id": card.primary_chunk_id,
+        "cited_chunk_ids": list(card.chunk_ids),
+        "cited_evidence_ids": [card.evidence_id],
+        "source_published_at": card.source_published_at,
+        "published_at": card.source_published_at,
+        "schema_version": card.schema_version,
+        "generator_version": card.generator_version,
+        "status": card.status,
+    }
 
 
 def _validate_summary_grounding(

@@ -43,6 +43,8 @@ def kg_llm_config_summary() -> dict:
             "kg_candidate_judge": resolve_kg_llm_model("kg_candidate_judge"),
             "kg_agentic_retrieval": resolve_kg_llm_model("kg_agentic_retrieval"),
             "kg_cognitive_card": resolve_kg_llm_model("kg_cognitive_card"),
+            "kg_relation_candidate_screen": resolve_kg_llm_model("kg_relation_candidate_screen"),
+            "kg_relation_evidence_verify": resolve_kg_llm_model("kg_relation_evidence_verify"),
             "kg_community_assignment": resolve_kg_llm_model("kg_community_assignment"),
             "kg_community_report": resolve_kg_llm_model("kg_community_report"),
             "kg_community_insight": resolve_kg_llm_model("kg_community_insight"),

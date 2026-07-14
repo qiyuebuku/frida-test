@@ -16,7 +16,10 @@ from sqlalchemy.orm import Session
 
 from src.domain.knowledge.enums import EvidenceStatus, EvidenceType
 from src.domain.knowledge.chunking import build_evidence_chunks, evidence_content_for_chunking
-from src.domain.knowledge.atomic_cognitive_card import AtomicCognitiveCard, CognitiveCardManifest
+from src.domain.knowledge.atomic_cognitive_card import (
+    AtomicCognitiveCard,
+    CognitiveCardManifest,
+)
 from src.domain.knowledge.cognitive_index import CommunityAssignment
 from src.domain.knowledge.graph_index import (
     GraphIndexCommunity,
@@ -432,6 +435,44 @@ class KnowledgeRepositoryImpl(KnowledgeRepository):
                     "added_card_ids": added_card_ids,
                     "evidence_ids": unique_evidence_ids,
                 }
+
+    def list_atomic_cognitive_card_ids_for_inactive_evidence(
+        self,
+        adapter_name: str,
+    ) -> list[str]:
+        with self._session_scope() as session:
+            return sorted(
+                str(item)
+                for item in session.scalars(
+                    select(KnowledgeCognitiveCard.cognitive_card_id)
+                    .join(
+                        KnowledgeEvidence,
+                        KnowledgeEvidence.evidence_id == KnowledgeCognitiveCard.evidence_id,
+                    )
+                    .where(
+                        KnowledgeCognitiveCard.adapter_name == adapter_name,
+                        KnowledgeEvidence.status != EvidenceStatus.ACTIVE.value,
+                    )
+                ).all()
+            )
+
+    def delete_atomic_cognitive_cards_by_ids(
+        self,
+        adapter_name: str,
+        *,
+        cognitive_card_ids: list[str],
+    ) -> int:
+        unique_ids = _ordered_unique(cognitive_card_ids)
+        if not unique_ids:
+            return 0
+        with self._session_scope() as session:
+            result = session.execute(
+                delete(KnowledgeCognitiveCard).where(
+                    KnowledgeCognitiveCard.adapter_name == adapter_name,
+                    KnowledgeCognitiveCard.cognitive_card_id.in_(unique_ids),
+                )
+            )
+            return result.rowcount or 0
 
     def list_atomic_cognitive_card_manifests(
         self,
@@ -2106,7 +2147,6 @@ def _atomic_cognitive_card_manifest_values(item: AtomicCognitiveCard) -> dict[st
         "chunk_index": item.chunk_index,
         "focus_evidence_refs": item.focus_evidence_refs,
         "focus_span_offsets": item.focus_span_offsets,
-        "factual_anchors": item.factual_anchors,
         "schema_version": item.schema_version,
         "generator_version": item.generator_version,
         "status": item.status,
@@ -2126,7 +2166,6 @@ def _atomic_cognitive_card_manifest_schema(row: KnowledgeCognitiveCard) -> Cogni
         chunk_index=row.chunk_index,
         focus_evidence_refs=[str(item) for item in row.focus_evidence_refs or [] if item],
         focus_span_offsets=[item for item in row.focus_span_offsets or [] if isinstance(item, dict)],
-        factual_anchors=dict(row.factual_anchors or {}),
         schema_version=row.schema_version or "",
         generator_version=row.generator_version or "",
         status=row.status or "active",

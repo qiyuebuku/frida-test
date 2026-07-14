@@ -112,8 +112,9 @@ def worker(concurrency: int, tasks: tuple[str, ...]):
         "collect_market",
         "collect_macro",
         "collect_sentiment",
-        "kg_news_ingest",
-        "kg_community_insight_refresh",
+        # "kg_news_ingest",
+        # "kg_relation_discovery",
+        # "kg_community_insight_refresh",
     ]
     task_names = list(tasks) if tasks else ALL_TASKS
 
@@ -246,7 +247,13 @@ def _reset_collection_intervals_for_trigger(target_queues: list[str]) -> int:
 @click.argument("queues", nargs=-1)
 @click.option("--list", "list_only", is_flag=True, help="只列出可触发的 queue")
 @click.option("--news-id", "news_ids", multiple=True, type=int, help="触发 kg_news_ingest 时传入的 ft_news.id，可重复")
-def trigger(queues: tuple[str, ...], list_only: bool, news_ids: tuple[int, ...]):
+@click.option("--card-id", "card_ids", multiple=True, type=str, help="触发 kg_relation_discovery 时传入的 Card ID，可重复")
+def trigger(
+    queues: tuple[str, ...],
+    list_only: bool,
+    news_ids: tuple[int, ...],
+    card_ids: tuple[str, ...],
+):
     """手动触发任务(绕过 scheduler)"""
     from jettask import TaskMessage
     from src.interfaces.tasks import app
@@ -283,8 +290,12 @@ def trigger(queues: tuple[str, ...], list_only: bool, news_ids: tuple[int, ...])
     msgs = []
     for q in target:
         kwargs = {"news_ids": list(news_ids)} if q == "kg_news_ingest" and news_ids else {}
+        if q == "kg_relation_discovery" and card_ids:
+            kwargs = {"card_ids": list(card_ids)}
         if q == "kg_news_ingest":
             msgs.append(TaskMessage(queue=q, kwargs=kwargs, max_retries=10, timeout=5000))
+        elif q == "kg_relation_discovery":
+            msgs.append(TaskMessage(queue=q, kwargs=kwargs, max_retries=5, timeout=5000))
         else:
             msgs.append(TaskMessage(queue=q, kwargs=kwargs))
     click.echo(f"🚀 触发 {len(msgs)} 个 task:")

@@ -116,6 +116,16 @@ RERANKER_RETRY_MAX_DELAY = float(os.getenv("RERANKER_RETRY_MAX_DELAY", "8"))
 # 这里单独限制 assignment 阶段的 reranker 并发，避免 bucket 并发把 reranker 打到超时。
 KG_ASSIGNMENT_RERANKER_CONCURRENCY = int(os.getenv("KG_ASSIGNMENT_RERANKER_CONCURRENCY", "4"))
 
+# Relation Probe 关系发现：Milvus 负责双视图召回，reranker/LLM 只读取 Summary。
+KG_RELATION_RECALL_PER_VIEW = int(os.getenv("KG_RELATION_RECALL_PER_VIEW", "50"))
+KG_RELATION_RERANK_TOP_N = int(os.getenv("KG_RELATION_RERANK_TOP_N", "12"))
+KG_RELATION_RERANK_MIN_SCORE = float(os.getenv("KG_RELATION_RERANK_MIN_SCORE", "0"))
+KG_RELATION_MERGED_CANDIDATE_LIMIT = int(os.getenv("KG_RELATION_MERGED_CANDIDATE_LIMIT", "40"))
+KG_RELATION_SCREEN_BATCH_SIZE = int(os.getenv("KG_RELATION_SCREEN_BATCH_SIZE", "20"))
+KG_RELATION_VERIFY_CONCURRENCY = int(os.getenv("KG_RELATION_VERIFY_CONCURRENCY", "3"))
+KG_RELATION_MILVUS_CONCURRENCY = int(os.getenv("KG_RELATION_MILVUS_CONCURRENCY", "4"))
+KG_RELATION_RERANK_CONCURRENCY = int(os.getenv("KG_RELATION_RERANK_CONCURRENCY", "4"))
+
 # ==================== Milvus Hybrid Retrieval ====================
 
 # Milvus hybrid retrieval is a required part of the KG research context path.
@@ -127,8 +137,16 @@ MILVUS_TOKEN = os.getenv("MILVUS_TOKEN", "")
 MILVUS_COLLECTION = os.getenv("MILVUS_COLLECTION", "kg_evidence_chunk_vectors")
 MILVUS_CHUNK_COLLECTION = os.getenv("MILVUS_CHUNK_COLLECTION", "kg_evidence_chunks")
 MILVUS_COGNITIVE_CARD_COLLECTION = os.getenv("MILVUS_COGNITIVE_CARD_COLLECTION", "kg_cognitive_cards")
+MILVUS_COGNITIVE_CARD_FOCUS_COLLECTION = os.getenv(
+    "MILVUS_COGNITIVE_CARD_FOCUS_COLLECTION",
+    "kg_cognitive_card_focus_evidence",
+)
 MILVUS_ENTITY_COLLECTION = os.getenv("MILVUS_ENTITY_COLLECTION", "kg_entity_cards")
 MILVUS_RELATION_COLLECTION = os.getenv("MILVUS_RELATION_COLLECTION", "kg_relation_cards")
+MILVUS_CARD_RELATION_COLLECTION = os.getenv(
+    "MILVUS_CARD_RELATION_COLLECTION",
+    "kg_card_relations",
+)
 MILVUS_COMMUNITY_COLLECTION = os.getenv("MILVUS_COMMUNITY_COLLECTION", "kg_community_reports")
 MILVUS_COMMUNITY_INSIGHT_COLLECTION = os.getenv("MILVUS_COMMUNITY_INSIGHT_COLLECTION", "kg_community_insights")
 MILVUS_ASSIGNMENT_BUCKET_COLLECTION = os.getenv("MILVUS_ASSIGNMENT_BUCKET_COLLECTION", "kg_assignment_bucket_cache")
@@ -340,6 +358,8 @@ def _load_kg_llm_plans() -> dict[str, dict[str, str]]:
         "kg_community_report": "deepseek-v4-flash",
         "kg_community_insight": "deepseek-v4-pro",
         "kg_cognitive_card": "deepseek-v4-flash",
+        "kg_relation_candidate_screen": "deepseek-v4-flash",
+        "kg_relation_evidence_verify": "deepseek-v4-pro",
         "kg_community_assignment": "deepseek-v4-flash",
         "kg_delta_finding": "deepseek-v4-flash",
         "kg_finding_evidence_validate": "deepseek-v4-flash",
@@ -359,6 +379,8 @@ def _load_kg_llm_plans() -> dict[str, dict[str, str]]:
             "kg_community_report": "deepseek-v4-pro",
             "kg_community_insight": "deepseek-v4-pro",
             "kg_cognitive_card": "deepseek-v4-flash",
+            "kg_relation_candidate_screen": "deepseek-v4-flash",
+            "kg_relation_evidence_verify": "deepseek-v4-pro",
             "kg_community_assignment": "deepseek-v4-flash",
             "kg_delta_finding": "deepseek-v4-flash",
             "kg_finding_evidence_validate": "deepseek-v4-flash",

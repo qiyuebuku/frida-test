@@ -26,8 +26,10 @@ from src.infrastructure.persistence.models.reflection import (
     Lesson,
     Review,
 )
+from src.infrastructure.persistence.models.llm import LLMCallLog
 from src.infrastructure.persistence.models.knowledge import (
     KnowledgeAssignmentCandidateOrder,
+    KnowledgeCardRelation,
     KnowledgeCognitiveCard,
     KnowledgeCompilationRun,
     KnowledgeCommunityAssignment,
@@ -68,8 +70,11 @@ __all__ = [
     # reflection
     "Review",
     "Lesson",
+    # llm
+    "LLMCallLog",
     # knowledge
     "KnowledgeAssignmentCandidateOrder",
+    "KnowledgeCardRelation",
     "KnowledgeCognitiveCard",
     "KnowledgeCommunityAssignment",
     "KnowledgeCommunityInsight",

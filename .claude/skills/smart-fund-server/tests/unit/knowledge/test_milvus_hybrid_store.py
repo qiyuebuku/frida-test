@@ -6,6 +6,8 @@ import pytest
 from src.infrastructure.vector_store.milvus_hybrid_store import (
     MILVUS_COLLECTION_ASSIGNMENT_BUCKET,
     MILVUS_COLLECTION_COGNITIVE_CARD,
+    MILVUS_COLLECTION_COGNITIVE_CARD_FOCUS,
+    MILVUS_COLLECTION_CARD_RELATION,
     MILVUS_COLLECTION_CHUNK,
     MILVUS_COLLECTION_ENTITY,
     MILVUS_COLLECTION_RELATION,
@@ -420,13 +422,18 @@ def test_collection_registry_names_are_explicit() -> None:
         entity="kg_entity_cards",
         relation="kg_relation_cards",
         community="kg_community_reports",
+        community_insight="kg_community_insights",
         assignment_bucket="kg_assignment_bucket_cache",
+        cognitive_card_focus="kg_cognitive_card_focus_evidence",
+        card_relation="kg_card_relations",
     )
 
     assert registry.name_for(MILVUS_COLLECTION_CHUNK) == "kg_evidence_chunks"
     assert registry.name_for(MILVUS_COLLECTION_COGNITIVE_CARD) == "kg_cognitive_cards"
+    assert registry.name_for(MILVUS_COLLECTION_COGNITIVE_CARD_FOCUS) == "kg_cognitive_card_focus_evidence"
     assert registry.name_for(MILVUS_COLLECTION_ENTITY) == "kg_entity_cards"
     assert registry.name_for(MILVUS_COLLECTION_RELATION) == "kg_relation_cards"
+    assert registry.name_for(MILVUS_COLLECTION_CARD_RELATION) == "kg_card_relations"
     assert registry.name_for(MILVUS_COLLECTION_ASSIGNMENT_BUCKET) == "kg_assignment_bucket_cache"
 
 
@@ -446,15 +453,20 @@ def test_typed_store_writes_documents_to_role_specific_collections() -> None:
         entity="kg_entity_cards",
         relation="kg_relation_cards",
         community="kg_community_reports",
+        community_insight="kg_community_insights",
         assignment_bucket="kg_assignment_bucket_cache",
+        cognitive_card_focus="kg_cognitive_card_focus_evidence",
     )
     typed = MilvusTypedHybridStore(registry=registry, dim=3)
     typed._stores = {
         MILVUS_COLLECTION_CHUNK: FakeStore("kg_evidence_chunks"),
         MILVUS_COLLECTION_COGNITIVE_CARD: FakeStore("kg_cognitive_cards"),
+        MILVUS_COLLECTION_COGNITIVE_CARD_FOCUS: FakeStore("kg_cognitive_card_focus_evidence"),
         MILVUS_COLLECTION_ENTITY: FakeStore("kg_entity_cards"),
         MILVUS_COLLECTION_RELATION: FakeStore("kg_relation_cards"),
+        MILVUS_COLLECTION_CARD_RELATION: FakeStore("kg_card_relations"),
         "community": FakeStore("kg_community_reports"),
+        "community_insight": FakeStore("kg_community_insights"),
         MILVUS_COLLECTION_ASSIGNMENT_BUCKET: FakeStore("kg_assignment_bucket_cache"),
     }
 
@@ -492,15 +504,20 @@ def test_typed_store_deletes_adapter_target_scope_from_all_role_collections() ->
         entity="kg_entity_cards",
         relation="kg_relation_cards",
         community="kg_community_reports",
+        community_insight="kg_community_insights",
         assignment_bucket="kg_assignment_bucket_cache",
+        cognitive_card_focus="kg_cognitive_card_focus_evidence",
     )
     typed = MilvusTypedHybridStore(registry=registry, dim=3)
     typed._stores = {
         MILVUS_COLLECTION_CHUNK: FakeStore("kg_evidence_chunks"),
         MILVUS_COLLECTION_COGNITIVE_CARD: FakeStore("kg_cognitive_cards"),
+        MILVUS_COLLECTION_COGNITIVE_CARD_FOCUS: FakeStore("kg_cognitive_card_focus_evidence"),
         MILVUS_COLLECTION_ENTITY: FakeStore("kg_entity_cards"),
         MILVUS_COLLECTION_RELATION: FakeStore("kg_relation_cards"),
+        MILVUS_COLLECTION_CARD_RELATION: FakeStore("kg_card_relations"),
         "community": FakeStore("kg_community_reports"),
+        "community_insight": FakeStore("kg_community_insights"),
         MILVUS_COLLECTION_ASSIGNMENT_BUCKET: FakeStore("kg_assignment_bucket_cache"),
     }
 

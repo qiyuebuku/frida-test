@@ -596,3 +596,20 @@ def test_deepseek_unexpected_transport_error_is_wrapped(monkeypatch):
     assert exc.value.error_type == "upstream_unavailable"
     assert "ValueError" in message
     assert "sk-secret" not in message
+
+
+def test_normalized_usage_preserves_provider_cost_fields() -> None:
+    usage = DeepSeekOpenAIProvider._normalized_usage(
+        {
+            "usage": {
+                "prompt_tokens": 10,
+                "completion_tokens": 5,
+                "total_tokens": 15,
+                "total_cost_usd": "0.0015",
+                "currency": "USD",
+            }
+        }
+    )
+
+    assert usage["total_cost_usd"] == "0.0015"
+    assert usage["currency"] == "USD"

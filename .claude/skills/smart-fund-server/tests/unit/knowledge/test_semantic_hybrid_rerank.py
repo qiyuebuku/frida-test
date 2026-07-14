@@ -19,10 +19,10 @@ from src.infrastructure.vector_store.semantic_hybrid_retriever import (
 )
 from src.domain.knowledge.atomic_cognitive_card import (
     AtomicCognitiveCard,
-    RelationProbe,
-    atomic_card_document,
+    atomic_card_summary_document,
 )
 from src.domain.knowledge.semantic_index_materials import (
+    SEMANTIC_COLLECTION_CARD_RELATION,
     SEMANTIC_COLLECTION_COGNITIVE_CARD,
 )
 
@@ -163,7 +163,12 @@ def test_roles_for_target_ids_routes_cognitive_community_ids_to_community_collec
     assert _roles_for_target_ids(["kg_edge:financial:affects:catl"]) == (
         "chunk",
         "cognitive_card",
+        "card_relation",
         "community",
+        "community_insight",
+    )
+    assert _roles_for_target_ids(["kg_card_relation:abc123"]) == (
+        SEMANTIC_COLLECTION_CARD_RELATION,
     )
 
 
@@ -406,15 +411,6 @@ async def test_upsert_semantic_documents_writes_cognitive_card_collection(monkey
         summary="AI芯片供需紧张影响算力链。",
         focus_evidence_refs=["s0001"],
         focus_span_offsets=[{"ref": "s0001", "start_offset": 0, "end_offset": 14}],
-        factual_anchors={
-            "actors": ["特斯拉"],
-            "action": "供需紧张",
-            "objects": ["AI芯片"],
-            "event_time": "",
-            "explicit_causes": [],
-            "explicit_effects": [],
-        },
-        relation_probes=[RelationProbe(role="downstream", query="AI芯片供需紧张的后续影响")],
         source_published_at="2026-04-23T00:00:00+00:00",
         source_title="AI芯片新闻",
     )
@@ -422,16 +418,15 @@ async def test_upsert_semantic_documents_writes_cognitive_card_collection(monkey
     count = await MilvusSemanticHybridRetriever(store=store).upsert_semantic_documents(
         adapter_name="financial",
         target="prod",
-        documents=[atomic_card_document(card)],
+        documents=[atomic_card_summary_document(card)],
     )
 
     assert count == 1
     assert store.calls[-1]["documents_by_role"][SEMANTIC_COLLECTION_COGNITIVE_CARD][0].chunk_id == "kg_cognitive_card:test"
     document = store.calls[-1]["documents_by_role"][SEMANTIC_COLLECTION_COGNITIVE_CARD][0]
     assert document.metadata["source_type"] == "kg_cognitive_card"
-    assert document.metadata["target_type"] == "atomic_cognitive_card"
-    assert "Document Type: Atomic Cognitive Card" in document.text
-    assert "AI芯片供需" in document.text
+    assert document.metadata["target_type"] == "atomic_cognitive_card_summary"
+    assert document.text == "AI芯片供需紧张影响算力链。"
 
 
 @pytest.mark.asyncio
@@ -529,7 +524,7 @@ async def test_get_by_ids_routes_finding_targets_to_community_collection() -> No
 
 
 @pytest.mark.asyncio
-async def test_semantic_hybrid_search_skips_legacy_entity_relation_collections(monkeypatch) -> None:
+async def test_semantic_hybrid_search_skips_legacy_entity_and_relation_collections(monkeypatch) -> None:
     async def fake_embed_texts(_texts):
         return [[0.1, 0.2]]
 
@@ -539,10 +534,8 @@ async def test_semantic_hybrid_search_skips_legacy_entity_relation_collections(m
         def hybrid_search(self, **kwargs):
             self.calls.append(kwargs)
             collection_role = kwargs.get("collection_role")
-            if collection_role == "entity":
-                raise AssertionError("Agent semantic search must not query legacy entity collection")
-            if collection_role == "relation":
-                raise AssertionError("Agent semantic search must not query legacy relation collection")
+            if collection_role in {"entity", "relation"}:
+                raise AssertionError("Agent semantic search must not query legacy collections")
             if collection_role == "chunk":
                 return [
                     MilvusHybridHit(
@@ -569,6 +562,7 @@ async def test_semantic_hybrid_search_skips_legacy_entity_relation_collections(m
     assert {call["collection_role"] for call in store.calls if "collection_role" in call} == {
         "chunk",
         "cognitive_card",
+        "card_relation",
         "community",
     }
 

@@ -17,7 +17,9 @@ from typing import Any
 __all__ = [
     "CollectionAppService",
     "CommunityInsightService",
+    "FtNewsKnowledgeGraphWorkflowService",
     "KnowledgeNewsIngestionService",
+    "RelationDiscoveryService",
 ]
 
 
@@ -38,8 +40,18 @@ def __getattr__(name: str) -> Any:
         )
 
         return KnowledgeNewsIngestionService
+    if name == "FtNewsKnowledgeGraphWorkflowService":
+        from src.application.services.ft_news_knowledge_graph_workflow_service import (
+            FtNewsKnowledgeGraphWorkflowService,
+        )
+
+        return FtNewsKnowledgeGraphWorkflowService
     if name == "CommunityInsightService":
         from src.application.services.community_insight_service import CommunityInsightService
 
         return CommunityInsightService
+    if name == "RelationDiscoveryService":
+        from src.application.services.relation_discovery_service import RelationDiscoveryService
+
+        return RelationDiscoveryService
     raise AttributeError(name)

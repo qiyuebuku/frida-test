@@ -9,12 +9,13 @@ from typing import Any
 
 from sqlalchemy import select
 
-from src.application.dto.knowledge_dto import KnowledgeCompileCommand
+from src.application.dto.knowledge_dto import KnowledgeCompileCommand, Target
 from src.application.services.knowledge_service import KnowledgeService, create_knowledge_service
 from src.domain.knowledge_adapters.financial.source_projection import project_ft_news_row
 from src.infrastructure.connections import get_session
 from src.infrastructure.db import redis_lock
 from src.infrastructure.persistence.models.collection import News
+from src.infrastructure.tasks.jettask_dispatcher import send_kg_relation_discovery
 
 logger = logging.getLogger(__name__)
 
@@ -32,10 +33,27 @@ class KnowledgeNewsIngestionService:
         self,
         *,
         knowledge_service: KnowledgeService | None = None,
+        target: Target = "prod",
     ):
-        self._knowledge_service = knowledge_service or create_knowledge_service(target="prod")
+        self._target = target
+        self._knowledge_service = knowledge_service or create_knowledge_service(target=target)
 
     async def ingest_ft_news_ids(self, news_ids: list[int]) -> dict[str, Any]:
+        """编译新闻并把新增 Card 投递到独立关系发现任务。"""
+
+        return await self._run_ft_news_ids(news_ids, dispatch_relation_tasks=True)
+
+    async def compile_ft_news_ids(self, news_ids: list[int]) -> dict[str, Any]:
+        """同步工作流入口：完成 Card 发布，但不额外投递关系发现消息。"""
+
+        return await self._run_ft_news_ids(news_ids, dispatch_relation_tasks=False)
+
+    async def _run_ft_news_ids(
+        self,
+        news_ids: list[int],
+        *,
+        dispatch_relation_tasks: bool,
+    ) -> dict[str, Any]:
         unique_ids = _ordered_unique_ints(news_ids)
         if not unique_ids:
             return {
@@ -58,26 +76,43 @@ class KnowledgeNewsIngestionService:
             lock_lost = asyncio.Event()
             renew_task = asyncio.create_task(_renew_lock_loop(lock, stop_renew, lock_lost))
             try:
-                result = await self._compile_news_ids(unique_ids, lock_lost)
+                result = await self._compile_news_ids(
+                    unique_ids,
+                    lock_lost,
+                    dispatch_relation_tasks=dispatch_relation_tasks,
+                )
                 result["duration_seconds"] = round(time.time() - t0, 3)
                 return result
             finally:
                 stop_renew.set()
                 await renew_task
 
-    async def _compile_news_ids(self, news_ids: list[int], lock_lost: asyncio.Event) -> dict[str, Any]:
+    async def _compile_news_ids(
+        self,
+        news_ids: list[int],
+        lock_lost: asyncio.Event,
+        *,
+        dispatch_relation_tasks: bool = True,
+    ) -> dict[str, Any]:
         batches = 0
         consumed_ids = 0
         compiled_evidence = 0
         failed_records = 0
         missing_ids: list[int] = []
+        relation_card_ids: list[str] = []
+        relation_event_ids: list[str] = []
+        intra_chunk_changed_edge_ids: list[str] = []
+        intra_chunk_graph_event_ids: list[str] = []
+        intra_chunk_relations = 0
+        intra_chunk_observed = 0
+        intra_chunk_inferred = 0
 
         for start in range(0, len(news_ids), KG_NEWS_INGEST_BATCH_SIZE):
             if lock_lost.is_set():
                 raise RuntimeError("kg_news_ingest 在编译 ft_news 前丢失分布式锁")
 
             batch_ids = news_ids[start:start + KG_NEWS_INGEST_BATCH_SIZE]
-            records, batch_missing = _records_from_ft_news_ids(batch_ids)
+            records, batch_missing = _records_from_ft_news_ids(batch_ids, target=self._target)
             missing_ids.extend(batch_missing)
             if not records:
                 logger.warning("[kg_news_ingest] 未找到可用 ft_news 行: ids=%s", batch_ids)
@@ -88,7 +123,7 @@ class KnowledgeNewsIngestionService:
                 KnowledgeCompileCommand(
                     adapter_name="financial",
                     records=records,
-                    target="prod",
+                    target=self._target,
                     dry_run=False,
                     request_id=request_id,
                     concurrency=KG_NEWS_INGEST_COMPILE_CONCURRENCY,
@@ -98,6 +133,38 @@ class KnowledgeNewsIngestionService:
             consumed_ids += len(batch_ids)
             compiled_evidence += result.evidence
             failed_records += result.failed_records
+            cognitive_index = (result.index_refresh or {}).get("cognitive_index") or {}
+            card_ids = [
+                str(item)
+                for item in (
+                    cognitive_index.get("card_ids") or []
+                )
+                if item
+            ]
+            graph_persistence = cognitive_index.get("graph_persistence") or {}
+            intra_chunk_relations += int(graph_persistence.get("relations") or 0)
+            intra_chunk_observed += int(graph_persistence.get("observed") or 0)
+            intra_chunk_inferred += int(graph_persistence.get("inferred") or 0)
+            intra_chunk_changed_edge_ids.extend(
+                str(item)
+                for item in graph_persistence.get("changed_edge_ids") or []
+                if str(item).strip()
+            )
+            intra_chunk_graph_event_ids.extend(
+                str(item)
+                for item in graph_persistence.get("graph_event_ids") or []
+                if str(item).strip()
+            )
+            if card_ids:
+                relation_card_ids.extend(card_ids)
+                if dispatch_relation_tasks:
+                    event_ids = await send_kg_relation_discovery(card_ids)
+                    relation_event_ids.extend(event_ids)
+                    logger.info(
+                        "[kg_news_ingest] 已投递原子 Card 到 kg_relation_discovery: cards=%s event_ids=%s",
+                        card_ids,
+                        event_ids,
+                    )
             logger.info(
                 "[kg_news_ingest] 批次完成 ids=%s evidence=%s failed_records=%s request_id=%s",
                 batch_ids,
@@ -113,6 +180,18 @@ class KnowledgeNewsIngestionService:
             "compiled_evidence": compiled_evidence,
             "failed_records": failed_records,
             "missing_ids": missing_ids[:20],
+            "relation_card_ids": list(dict.fromkeys(relation_card_ids)),
+            "relation_event_ids": relation_event_ids,
+            "relation_dispatch_skipped": not dispatch_relation_tasks,
+            "intra_chunk_relations": intra_chunk_relations,
+            "intra_chunk_observed": intra_chunk_observed,
+            "intra_chunk_inferred": intra_chunk_inferred,
+            "intra_chunk_changed_edge_ids": list(
+                dict.fromkeys(intra_chunk_changed_edge_ids)
+            ),
+            "intra_chunk_graph_event_ids": list(
+                dict.fromkeys(intra_chunk_graph_event_ids)
+            ),
         }
 
 
@@ -134,11 +213,15 @@ async def _renew_lock_loop(
             return
 
 
-def _records_from_ft_news_ids(news_ids: list[int]) -> tuple[list[dict[str, Any]], list[int]]:
+def _records_from_ft_news_ids(
+    news_ids: list[int],
+    *,
+    target: Target = "prod",
+) -> tuple[list[dict[str, Any]], list[int]]:
     unique_ids = _ordered_unique_ints(news_ids)
     if not unique_ids:
         return [], []
-    with get_session() as session:
+    with get_session(target) as session:
         rows = session.scalars(select(News).where(News.id.in_(unique_ids))).all()
     row_by_id = {int(row.id): row for row in rows}
     records: list[dict[str, Any]] = []

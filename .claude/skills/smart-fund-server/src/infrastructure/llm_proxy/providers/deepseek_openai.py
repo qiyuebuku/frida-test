@@ -552,7 +552,7 @@ class DeepSeekOpenAIProvider:
         }
 
     @staticmethod
-    def _normalized_usage(data: dict[str, Any]) -> dict[str, int]:
+    def _normalized_usage(data: dict[str, Any]) -> dict[str, Any]:
         usage = data.get("usage") or {}
         normalized_usage = {
             "input_tokens": int(usage.get("prompt_tokens", 0) or 0),
@@ -568,11 +568,15 @@ class DeepSeekOpenAIProvider:
             normalized_usage["total_tokens"] = (
                 normalized_usage["input_tokens"] + normalized_usage["output_tokens"]
             )
+        for key, value in usage.items():
+            normalized_key = str(key).lower()
+            if "cost" in normalized_key or normalized_key in {"currency", "cost_currency"}:
+                normalized_usage[str(key)] = value
         return normalized_usage
 
     @staticmethod
-    def _merge_usage(left: dict[str, int], right: dict[str, int]) -> dict[str, int]:
-        return {
+    def _merge_usage(left: dict[str, Any], right: dict[str, Any]) -> dict[str, Any]:
+        merged: dict[str, Any] = {
             "input_tokens": int(left.get("input_tokens", 0)) + int(right.get("input_tokens", 0)),
             "output_tokens": int(left.get("output_tokens", 0)) + int(right.get("output_tokens", 0)),
             "total_tokens": int(left.get("total_tokens", 0)) + int(right.get("total_tokens", 0)),
@@ -582,6 +586,17 @@ class DeepSeekOpenAIProvider:
             + int(right.get("prompt_cache_miss_tokens", 0)),
             "reasoning_tokens": int(left.get("reasoning_tokens", 0)) + int(right.get("reasoning_tokens", 0)),
         }
+        for key in set(left) | set(right):
+            normalized_key = str(key).lower()
+            if "cost" not in normalized_key:
+                if normalized_key in {"currency", "cost_currency"}:
+                    merged[key] = right.get(key) or left.get(key)
+                continue
+            try:
+                merged[key] = float(left.get(key, 0) or 0) + float(right.get(key, 0) or 0)
+            except (TypeError, ValueError):
+                merged[key] = right.get(key) if right.get(key) is not None else left.get(key)
+        return merged
 
     @staticmethod
     def _expects_json(request: LLMProxyRequest) -> bool:

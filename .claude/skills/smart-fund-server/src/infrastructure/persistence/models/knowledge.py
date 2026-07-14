@@ -271,10 +271,50 @@ class KnowledgeCognitiveCard(Base):
     chunk_index: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     focus_evidence_refs: Mapped[list] = mapped_column(JSONB, default=list, nullable=False)
     focus_span_offsets: Mapped[list] = mapped_column(JSONB, default=list, nullable=False)
-    factual_anchors: Mapped[dict] = mapped_column(JSONB, default=dict, nullable=False)
     schema_version: Mapped[str] = mapped_column(String(96), nullable=False, default="")
     generator_version: Mapped[str] = mapped_column(String(96), nullable=False, default="")
     status: Mapped[str] = mapped_column(String(32), nullable=False, default="active")
+    created_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+    updated_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+
+class KnowledgeCardRelation(Base):
+    """原子 Cognitive Card 之间经过原文核验的正式 Edge 当前态。"""
+
+    __tablename__ = "kg_card_relations"
+    __table_args__ = (
+        Index("ix_kg_card_relations_pair_status", "pair_key", "status"),
+        Index("ix_kg_card_relations_source_status", "source_card_id", "status"),
+        Index("ix_kg_card_relations_target_status", "target_card_id", "status"),
+        Index("ix_kg_card_relations_kind_status", "relation_kind", "status"),
+    )
+
+    id: Mapped[str] = mapped_column(String(180), primary_key=True)
+    pair_key: Mapped[str] = mapped_column(String(380), nullable=False)
+    source_card_id: Mapped[str] = mapped_column(String(180), nullable=False)
+    target_card_id: Mapped[str] = mapped_column(String(180), nullable=False)
+    relation_kind: Mapped[str] = mapped_column(String(48), nullable=False)
+    relation_type: Mapped[str] = mapped_column(String(160), nullable=False)
+    direction: Mapped[str] = mapped_column(String(240), nullable=False, default="")
+    decision_class: Mapped[str] = mapped_column(String(16), nullable=False)
+    basis: Mapped[str] = mapped_column(Text, nullable=False)
+    source_evidence_refs: Mapped[list] = mapped_column(JSONB, default=list, nullable=False)
+    target_evidence_refs: Mapped[list] = mapped_column(JSONB, default=list, nullable=False)
+    inference_mechanism: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    confidence: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    pipeline_version: Mapped[str] = mapped_column(String(96), nullable=False)
+    model_name: Mapped[str] = mapped_column(String(128), nullable=False)
+    prompt_version: Mapped[str] = mapped_column(String(96), nullable=False)
+    schema_version: Mapped[str] = mapped_column(String(96), nullable=False)
+    content_version: Mapped[str] = mapped_column(String(64), nullable=False)
+    semantic_synced_version: Mapped[str] = mapped_column(String(64), nullable=False, default="")
+    graph_event_published_version: Mapped[str] = mapped_column(String(64), nullable=False, default="")
+    status: Mapped[str] = mapped_column(String(32), nullable=False, default="active")
+    invalidated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     created_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )

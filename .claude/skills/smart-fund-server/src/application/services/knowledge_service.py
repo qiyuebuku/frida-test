@@ -54,6 +54,7 @@ from src.application.services.llm_candidate_judge import LLMCandidateJudge
 from src.application.services.graph_index_reporter import GraphIndexLLMReporter
 from src.application.services.graph_index_profiles import FINANCIAL_GRAPH_PROJECTIONS, GRAPH_INDEX_PUBLIC_LENS_ALIASES
 from src.application.services.atomic_cognitive_card_service import AtomicCognitiveCardStageService
+from src.application.services.card_relation_write_service import CardRelationWriteService
 from src.application.services.openai_agents_retrieval_runtime import (
     OpenAIAgentsRetrievalRuntime,
 )
@@ -1604,9 +1605,14 @@ async def _refresh_cognitive_index(
     target: Target,
     changed_chunks: list[EvidenceChunk],
 ) -> dict[str, Any]:
+    semantic_retriever = _semantic_hybrid_retriever()
     stage = AtomicCognitiveCardStageService(
         repository=repository,
-        semantic_retriever=_semantic_hybrid_retriever(),
+        semantic_retriever=semantic_retriever,
+        relation_writer=CardRelationWriteService(
+            knowledge_repository=repository,
+            semantic_retriever=semantic_retriever,
+        ),
     )
     result_stage = await stage.refresh(
         adapter_name=result.adapter_name,
@@ -1628,7 +1634,29 @@ async def _refresh_cognitive_index(
             "milvus_documents_written",
             0,
         ),
-        "graph_persistence": {"mode": "disabled_until_relation_graph_phase"},
+        "graph_persistence": {
+            "mode": "intra_chunk_relations",
+            "relations": result_stage.diagnostics.get(
+                "intra_chunk_relations",
+                0,
+            ),
+            "observed": result_stage.diagnostics.get(
+                "intra_chunk_observed",
+                0,
+            ),
+            "inferred": result_stage.diagnostics.get(
+                "intra_chunk_inferred",
+                0,
+            ),
+            "changed_edge_ids": result_stage.diagnostics.get(
+                "intra_chunk_changed_edge_ids",
+                [],
+            ),
+            "graph_event_ids": result_stage.diagnostics.get(
+                "intra_chunk_graph_event_ids",
+                [],
+            ),
+        },
     }
 
 

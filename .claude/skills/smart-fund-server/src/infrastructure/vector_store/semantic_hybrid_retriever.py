@@ -12,9 +12,11 @@ from src.domain.knowledge.schemas import CompiledEdge, CompiledNode, EvidenceChu
 from src.domain.knowledge.graph_index import GraphProjectionProfile
 from src.domain.knowledge.semantic_index_materials import (
     SEMANTIC_COLLECTION_CHUNK,
+    SEMANTIC_COLLECTION_CARD_RELATION,
     SEMANTIC_COLLECTION_COGNITIVE_CARD,
     SEMANTIC_COLLECTION_COMMUNITY,
     SEMANTIC_COLLECTION_COMMUNITY_INSIGHT,
+    SEMANTIC_COLLECTION_RELATION,
     SEMANTIC_COLLECTION_ROLES,
     SemanticVectorDocument,
     build_semantic_vector_documents,
@@ -37,6 +39,7 @@ logger = logging.getLogger(__name__)
 AGENT_READ_COLLECTION_ROLES = (
     SEMANTIC_COLLECTION_CHUNK,
     SEMANTIC_COLLECTION_COGNITIVE_CARD,
+    SEMANTIC_COLLECTION_CARD_RELATION,
     SEMANTIC_COLLECTION_COMMUNITY,
     SEMANTIC_COLLECTION_COMMUNITY_INSIGHT,
 )
@@ -616,6 +619,7 @@ def _typed_search_limits(limit: int) -> dict[str, int]:
     return {
         SEMANTIC_COLLECTION_CHUNK: _configured_role_limit(settings.MILVUS_SEMANTIC_CHUNK_TOPK, fallback=limit, limit=limit),
         SEMANTIC_COLLECTION_COGNITIVE_CARD: _configured_role_limit(settings.MILVUS_SEMANTIC_COGNITIVE_CARD_TOPK, fallback=12, limit=limit),
+        SEMANTIC_COLLECTION_CARD_RELATION: _configured_role_limit(settings.MILVUS_SEMANTIC_RELATION_TOPK, fallback=12, limit=limit),
         SEMANTIC_COLLECTION_COMMUNITY: _configured_role_limit(settings.MILVUS_SEMANTIC_COMMUNITY_TOPK, fallback=8, limit=limit),
     }
 
@@ -627,6 +631,8 @@ def _roles_for_target_ids(target_ids: list[str]) -> tuple[str, ...]:
             roles.add(SEMANTIC_COLLECTION_CHUNK)
         elif target_id.startswith(("kg_cognitive_card:", "kg_card:cognitive:")):
             roles.add(SEMANTIC_COLLECTION_COGNITIVE_CARD)
+        elif target_id.startswith(("kg_card_relation:", "kg_card:edge:")):
+            roles.add(SEMANTIC_COLLECTION_CARD_RELATION)
         elif target_id.startswith(("kgc:", "kg_finding:", "kg_community:")):
             roles.add(SEMANTIC_COLLECTION_COMMUNITY)
         elif not roles:
@@ -673,7 +679,7 @@ def _retrieval_hit_from_milvus_hit(hit: MilvusHybridHit, *, score: float) -> Ret
             node_refs=[source_id],
             evidence_refs=evidence_refs,
         )
-    if source_type in {"kg_edge", "kg_edge_card"} and source_id:
+    if source_type in {"kg_edge", "kg_edge_card", "kg_card_relation"} and source_id:
         return RetrievalHit(
             hit_id=hit.chunk_id,
             hit_type="edge",
@@ -682,6 +688,7 @@ def _retrieval_hit_from_milvus_hit(hit: MilvusHybridHit, *, score: float) -> Ret
             score=score,
             source="semantic_hybrid",
             edge_refs=[source_id],
+            chunk_refs=cited_chunk_ids,
             evidence_refs=evidence_refs,
         )
     if source_type == "kg_cognitive_card" and source_id:

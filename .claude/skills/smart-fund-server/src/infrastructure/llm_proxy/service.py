@@ -27,6 +27,12 @@ from typing import Any
 
 from src.infrastructure.clients.base import ORIGINAL_PROXY_ENV
 from src.infrastructure.config import settings
+from src.infrastructure.llm_proxy.audit import (
+    LLMCallAuditContext,
+    LLMCallAuditRecorder,
+    build_llm_call_log,
+    new_audit_context,
+)
 from src.infrastructure.llm_proxy.cache import LLMPersistentFileCache
 from src.infrastructure.llm_proxy.providers.claude_tmux import ClaudeTmuxProvider
 from src.infrastructure.llm_proxy.providers.deepseek_openai import DeepSeekOpenAIProvider
@@ -48,6 +54,9 @@ from src.infrastructure.observability.langfuse_tracing import (
     clip_trace_text,
     langfuse_observation,
     langfuse_update_generation,
+)
+from src.infrastructure.persistence.repositories.llm_call_log_repository import (
+    LLMCallLogRepository,
 )
 
 logger = logging.getLogger(__name__)
@@ -1018,12 +1027,14 @@ class LLMGatewayService:
         cache_ttl_seconds: int,
         cache_max_size: int,
         file_cache: LLMPersistentFileCache | None = None,
+        audit_recorder: LLMCallAuditRecorder | None = None,
     ):
         self.router = router
         self.registry = registry
         self._cache = _TTLCache(cache_ttl_seconds, cache_max_size)
         self._cache_lock = threading.Lock()
         self._file_cache = file_cache
+        self._audit_recorder = audit_recorder
 
     async def generate(self, request: LLMProxyRequest) -> LLMProxyResponse:
         if request.json_schema and not request.response_format:
@@ -1045,12 +1056,23 @@ class LLMGatewayService:
             backend=provider.name,
         )
         cache_key = self._cache_key(request, route.selected_provider or "", route.resolved_model)
+        audit_context = new_audit_context(cache_key)
         if request.use_cache:
             with self._cache_lock:
                 cached = self._cache.get(cache_key)
             if cached and _is_usable_cached_response(request, cached):
                 cached_response = cached.clone(cache_hit=True)
                 _trace_llm_cache_hit(log_fields, request, cached_response)
+                await self._record_audit(
+                    context=audit_context,
+                    request=request,
+                    provider=provider.name,
+                    resolved_model=route.resolved_model,
+                    route_reason=route.route_reason,
+                    response=cached_response,
+                    cache_hit=True,
+                    cache_store="memory",
+                )
                 return cached_response
             if self._file_cache is not None:
                 cached = self._file_cache.get(cache_key)
@@ -1064,6 +1086,16 @@ class LLMGatewayService:
                         self._cache.set(cache_key, cached.clone(cache_hit=False))
                     cached_response = cached.clone(cache_hit=True)
                     _trace_llm_cache_hit(log_fields, request, cached_response)
+                    await self._record_audit(
+                        context=audit_context,
+                        request=request,
+                        provider=provider.name,
+                        resolved_model=route.resolved_model,
+                        route_reason=route.route_reason,
+                        response=cached_response,
+                        cache_hit=True,
+                        cache_store="file",
+                    )
                     return cached_response
 
         gateway_logs_call = provider.name != "claude_tmux"
@@ -1095,6 +1127,14 @@ class LLMGatewayService:
                         error=exc,
                     )
                     _trace_llm_error(exc)
+                await self._record_audit(
+                    context=audit_context,
+                    request=request,
+                    provider=provider.name,
+                    resolved_model=route.resolved_model,
+                    route_reason=route.route_reason,
+                    error=exc,
+                )
                 raise
             response.proxy.setdefault("provider", provider.name)
             response.proxy.setdefault("requested_model", route.requested_model)
@@ -1120,7 +1160,52 @@ class LLMGatewayService:
                     self._cache.set(cache_key, response.clone())
                 if self._file_cache is not None:
                     self._file_cache.set(cache_key, response.clone())
+            await self._record_audit(
+                context=audit_context,
+                request=request,
+                provider=provider.name,
+                resolved_model=route.resolved_model,
+                route_reason=route.route_reason,
+                response=response,
+            )
             return response
+
+    async def _record_audit(
+        self,
+        *,
+        context: LLMCallAuditContext,
+        request: LLMProxyRequest,
+        provider: str | None,
+        resolved_model: str | None,
+        route_reason: str | None,
+        response: LLMProxyResponse | None = None,
+        error: Exception | None = None,
+        cache_hit: bool = False,
+        cache_store: str | None = None,
+    ) -> None:
+        if self._audit_recorder is None:
+            return
+        row = build_llm_call_log(
+            context=context,
+            request=request,
+            provider=provider,
+            resolved_model=resolved_model,
+            route_reason=route_reason,
+            response=response,
+            error=error,
+            cache_hit=cache_hit,
+            cache_store=cache_store,
+        )
+        try:
+            await asyncio.to_thread(self._audit_recorder.save_batch, [row])
+        except Exception:
+            logger.exception(
+                "[llm_call_audit] 写入失败 id=%s task=%s provider=%s model=%s",
+                context.id,
+                (request.metadata or {}).get("task") or "-",
+                provider or "-",
+                resolved_model or request.model or "-",
+            )
 
     async def repair_with_feedback(
         self,
@@ -1457,6 +1542,21 @@ def _validate_json_schema_value(value: Any, schema: dict[str, Any], *, path: str
         return issues
     if "enum" in schema and value not in (schema.get("enum") or []):
         issues.append(f"{path}:enum_invalid")
+    one_of = schema.get("oneOf")
+    if isinstance(one_of, list):
+        branch_results = [
+            _validate_json_schema_value(value, sub_schema, path=path)
+            for sub_schema in one_of
+            if isinstance(sub_schema, dict)
+        ]
+        matching = [result for result in branch_results if not result]
+        if len(matching) != 1:
+            issues.append(
+                f"{path}:one_of_{'no_match' if not matching else 'multiple_matches'}"
+            )
+            if not matching and branch_results:
+                issues.extend(min(branch_results, key=len))
+        return issues
     all_of = schema.get("allOf")
     if isinstance(all_of, list):
         for index, sub_schema in enumerate(all_of):
@@ -1560,5 +1660,6 @@ def get_llm_gateway_service() -> LLMGatewayService:
                 settings.LLM_PROXY_FILE_CACHE_DIR,
                 enabled=settings.LLM_PROXY_FILE_CACHE_ENABLED,
             ),
+            audit_recorder=LLMCallLogRepository(),
         )
     return _gateway_service

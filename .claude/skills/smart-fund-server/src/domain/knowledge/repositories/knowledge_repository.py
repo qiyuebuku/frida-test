@@ -81,6 +81,22 @@ class KnowledgeRepository(ABC):
         """按 Evidence 替换原子 Card manifest，并返回新旧 ID 差异。"""
 
     @abstractmethod
+    def list_atomic_cognitive_card_ids_for_inactive_evidence(
+        self,
+        adapter_name: str,
+    ) -> list[str]:
+        """列出 Evidence 已失效但 Card manifest 尚未清理的 Card ID。"""
+
+    @abstractmethod
+    def delete_atomic_cognitive_cards_by_ids(
+        self,
+        adapter_name: str,
+        *,
+        cognitive_card_ids: list[str],
+    ) -> int:
+        """按稳定 ID 批量删除已完成外部清理的 Card manifest。"""
+
+    @abstractmethod
     def list_atomic_cognitive_card_manifests(
         self,
         adapter_name: str,

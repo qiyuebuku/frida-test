@@ -59,7 +59,27 @@ class SequenceProvider(EchoProvider):
         )
 
 
-def _service():
+class FailingProvider(EchoProvider):
+    async def generate(self, request, route):
+        self.calls.append((request, route))
+        raise TimeoutError("provider timeout")
+
+
+class AuditRecorder:
+    def __init__(self):
+        self.rows = []
+
+    def save_batch(self, rows):
+        self.rows.extend(rows)
+        return len(rows)
+
+
+class FailingAuditRecorder:
+    def save_batch(self, rows):
+        raise RuntimeError("audit database unavailable")
+
+
+def _service(*, audit_recorder=None):
     registry = ProviderRegistry()
     deepseek = EchoProvider("deepseek")
     claude = EchoProvider("claude_tmux")
@@ -81,7 +101,77 @@ def _service():
         registry=registry,
         cache_ttl_seconds=60,
         cache_max_size=16,
+        audit_recorder=audit_recorder,
     ), deepseek, claude
+
+
+def test_gateway_audits_success_and_memory_cache_hit():
+    audit = AuditRecorder()
+    service, deepseek, _claude = _service(audit_recorder=audit)
+    request = LLMProxyRequest(
+        prompt="hello",
+        model="deepseek-v4-flash",
+        metadata={"task": "audit_case"},
+    )
+
+    asyncio.run(service.generate(request))
+    asyncio.run(service.generate(request))
+
+    assert len(deepseek.calls) == 1
+    assert [row["status"] for row in audit.rows] == ["succeeded", "cache_hit"]
+    assert audit.rows[0]["task"] == "audit_case"
+    assert audit.rows[1]["cache_store"] == "memory"
+    assert audit.rows[1]["total_tokens"] == 0
+
+
+def test_gateway_audits_failed_provider_call():
+    audit = AuditRecorder()
+    registry = ProviderRegistry()
+    provider = FailingProvider("deepseek")
+    registry.register(provider)
+    service = LLMGatewayService(
+        router=ModelRouter(
+            ModelRouterConfig(
+                default_model="deepseek-v4-flash",
+                default_provider="deepseek",
+                model_routes={"deepseek-v4-flash": ["deepseek"]},
+                model_aliases={},
+            )
+        ),
+        registry=registry,
+        cache_ttl_seconds=60,
+        cache_max_size=16,
+        audit_recorder=audit,
+    )
+
+    try:
+        asyncio.run(
+            service.generate(
+                LLMProxyRequest(
+                    prompt="hello",
+                    model="deepseek-v4-flash",
+                    metadata={"task": "failed_audit_case"},
+                )
+            )
+        )
+    except TimeoutError:
+        pass
+    else:
+        raise AssertionError("expected TimeoutError")
+
+    assert len(audit.rows) == 1
+    assert audit.rows[0]["status"] == "failed"
+    assert audit.rows[0]["error_type"] == "TimeoutError"
+
+
+def test_audit_failure_does_not_break_successful_model_call():
+    service, _deepseek, _claude = _service(audit_recorder=FailingAuditRecorder())
+
+    response = asyncio.run(
+        service.generate(LLMProxyRequest(prompt="hello", model="deepseek-v4-flash"))
+    )
+
+    assert response.text == "deepseek:deepseek-v4-flash"
 
 
 def test_gateway_routes_deepseek_model_to_deepseek_provider():
@@ -112,6 +202,29 @@ def test_llm_trace_input_exposes_safe_reasoning_options_only():
         "reasoning_effort": "high",
         "thinking_type": "enabled",
     }
+
+
+def test_json_schema_validator_supports_one_of_contracts():
+    schema = {
+        "oneOf": [
+            {
+                "type": "object",
+                "properties": {"base": {"type": "string"}},
+                "required": ["base"],
+                "additionalProperties": False,
+            },
+            {
+                "type": "object",
+                "properties": {"patch": {"type": "integer"}},
+                "required": ["patch"],
+                "additionalProperties": False,
+            },
+        ]
+    }
+
+    assert _json_schema_validation_issues({"base": "ok"}, schema) == []
+    assert _json_schema_validation_issues({"patch": 1}, schema) == []
+    assert "$:one_of_no_match" in _json_schema_validation_issues({"unknown": True}, schema)
 
 
 def test_gateway_routes_glm_alias_to_claude_tmux_provider():
