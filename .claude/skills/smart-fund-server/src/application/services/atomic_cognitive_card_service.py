@@ -41,7 +41,7 @@ from src.infrastructure.vector_store.semantic_hybrid_retriever import MilvusSema
 
 logger = logging.getLogger(__name__)
 
-ATOMIC_CARD_MAX_TOKENS = 5000
+ATOMIC_CARD_MAX_TOKENS = 7000
 ATOMIC_CARD_PREFIX_WARM_MARK_KEY = (
     f"{JETTASK_PREFIX}:kg_cognitive_card:{ATOMIC_COGNITIVE_CARD_GENERATOR_VERSION}:prefix_warmed"
 )
@@ -143,7 +143,7 @@ ATOMIC_CARD_SCHEMA: dict[str, Any] = {
 
 ATOMIC_CARD_SYSTEM_PROMPT = """你是知识图谱的原子 Cognitive Card 抽取器。
 
-你的输入包含程序按原文顺序切分并编号的 Span；全部 Span 共同构成当前 chunk 的完整正文，是唯一的正文来源。你必须在一次输出中完成事件边界判断、原子 Card 拆分、Summary、焦点证据，以及最终 Card 之间由当前原文直接支持的关系。
+你的输入包含 sentence_blocks。每个 block 是原文中的一个完整标题或句子，内部 parts 按原文顺序连续拼接后构成该 block 的完整文本；part 的 Ref 只是精确证据坐标，不代表独立事件或独立语义。全部 block 共同构成当前 chunk 的完整正文，是唯一的正文来源。你必须先按完整 block 连续理解上下文，再在一次输出中完成事件边界判断、原子 Card 拆分、Summary、焦点证据，以及最终 Card 之间由当前原文直接支持的关系。
 
 在输出 JSON 前，先在内部完成候选事实枚举、重复事实合并、最终 Card 集合确定和关系检查；不要输出草稿、分析过程或被放弃的 Card。JSON 必须先完整输出 cards，再输出 relations。
 
@@ -166,6 +166,8 @@ ATOMIC_CARD_SYSTEM_PROMPT = """你是知识图谱的原子 Cognitive Card 抽取
 
 证据规则：
 - focus_evidence_refs 只能引用输入中存在的 Span Ref，至少一个；应选择能够独立验证当前 Card 的最小证据闭合集合。证据闭合优先于引用数量少。
+- part 是细粒度引用坐标，不是要求你按 part 拆分 Card。同一完整事实跨越一个 block 内多个相邻 parts 时，必须联合引用这些 Ref；不要因为 part 边界而制造残缺 Card。
+- role=title 的 block 只提供标题上下文。正文 parts 已经直接支撑某项事实时，不要重复引用标题；只有事实确实只出现在标题中时，标题 Ref 才能作为事实证据。
 - Summary 中的主体、动作、对象、时间、原因和结果，都必须能从 focus_evidence_refs 指向的 Span 中直接得到；缺少支撑时，必须补充相应 Span Ref 或删除未被支撑的表述。
 - source_published_at 只用于解释相对时间，不是事实证据；不得从 Chunk 标识或其他元数据补充正文 Span 没有的事实。
 - 多个 Card 可以引用同一个 Span，但仅限该 Span 对每个 Card 都是不可缺少的直接证据；不要为了制造互斥边界而强行拆开证据，也不要仅因共享背景或主题而重复引用。
@@ -184,11 +186,14 @@ ATOMIC_CARD_SYSTEM_PROMPT = """你是知识图谱的原子 Cognitive Card 抽取
 - basis 只陈述 source_evidence_refs 和 target_evidence_refs 直接写明的端点事实及连接依据，不得把原文未写明的诉讼触发、决策动机、传导环节或其他中间事件补进 basis。需要组合端点才能成立的最短推理只能写入 inference_mechanism。
 - basis 应使用可读事实语义，不在正文中列举 s0001 等 Ref 标签；证据标签只放在 source_evidence_refs 和 target_evidence_refs。
 - causal_influence 的措辞强度必须服从证据。只有原文明示因果连接时，才能使用“直接导致、触发、引发、促使、影响、支撑、直接原因、重要理由”等确定性措辞；可解释的事实前提、同一主体或时间先后不能写成已经证实的原因、动机或决策依据。
+- causal_influence 表示原文明示的影响或因果贡献，不要求 source 单独构成充分原因。原文明示一组动作、条件或策略共同影响结果，且这些组成部分已经拆成多个独立 Card 时，可以分别建立指向结果的贡献关系；relation_type、direction 和 basis 必须明确它只是组合机制的一部分，不能夸大为单独充分原因，也不能仅因存在其他共同因素就把所有直接贡献关系省略。
+- 关系检查必须解析“这种、上述、该、这些、该等”等回指表达。若结果句用集合性指代明确回指前文一组动作、条件、措施或变化，并直接说明该集合影响某个结果，则每个确实落在回指范围内的独立 Card 到该结果的组合贡献都属于 observed；必须分别输出贡献关系，并说明它是被回指集合的组成部分。不能以“单项不是充分原因”为由删除这些原文明示的贡献 Edge，也不能把没有落在回指范围内的背景 Card 强行加入。
 - observed 关系必须能在 source_evidence_refs 与 target_evidence_refs 指向的原文中定位到直接连接双方的表述；端点事实分别存在但连接语义只出现在模型改写中时，不属于 observed。
 - “A 发生在前、B 发生在后”“B 针对与 A 相同的主体”或“从常识看 A 可以解释 B”都不足以建立 causal_influence。原文没有直接连接双方时不输出关系。
 - 同一公告、裁决、报告或叙述中同时出现两个事实，不代表其中一个是另一个的原因；原文没有给出连接时，应输出无关系，而不是用“隐含因果、合理前提、可能影响”等措辞补足。
 - 如果关系成立必须依赖原文没有形成 Card、也没有被双方最小充分证据直接支持的第三个事件或中间环节，则不要创建该关系。
 - local_card_id 只用于关系端点引用；relation_type、direction、basis 和 inference_mechanism 必须使用事实语义表述，不能把 c1、c2 或“source/target Card”写入永久关系说明。
+- 输出前逐字段检查 relation_type、direction、basis 和 inference_mechanism，将 Card 编号、Card 序号、source/target 端点标签全部改写为对应的事实语义；永久关系文字中不得残留临时引用名称。
 - source_evidence_refs 和 target_evidence_refs 必须分别属于对应 Card 的 focus_evidence_refs，并且只引用证明关系成立的最小充分集合；公共标题和共享背景不能作为主要关系证据。
 - inference_mechanism 必须输出空字符串。confidence 只表示原文对关系的支持强度。
 - 如果某个总述与局部细节之间只能成立“举例、包含、细化”关系，说明两者没有形成独立原子事件，应优先合并 Card，不要创建近义 Edge。
@@ -199,8 +204,10 @@ ATOMIC_CARD_SYSTEM_PROMPT = """你是知识图谱的原子 Cognitive Card 抽取
 - Card 集合：任意两个 Card 都不是同一原子事实的总述与细节、复述或近义改写；如果是，先合并再输出最终 cards。
 - 合并闸门：若两张 Card 共享同一事件身份或观测快照，且差异只来自指标字段或数值表达，必须重新合并并联合引用相应证据；不能以 relations=[] 结束这种拆分。
 - 证据：每项 Summary 都能由 focus_evidence_refs 独立验证。
+- 证据覆盖：逐项定位 Summary 中每个主体、动作、对象、方向、数值、原因、结果和限定语实际出现在哪个 part；凡 Summary 使用了某个 part 才包含的信息，该 part 的 Ref 必须进入 focus_evidence_refs。禁止概括完整 block 的多个 parts，却只引用其中开头或结论 part。
 - Relation：仅在两个不同原子事实之间存在当前原文可证明的具体连接时输出；端点、方向、证据引用和推理机制彼此一致。
 - Relation 措辞：basis 不包含未被引用证据写明的中间事实或 Ref 标签；不把时间先后、同一主体或可能的事实前提夸大成直接原因。
+- 输出清洁：relation_type、direction、basis 和 inference_mechanism 中不得出现任何临时 Card 编号、Card 序号、source/target 标签或 Span Ref；这些标识只能出现在专用 ID 和 evidence_refs 字段中。
 - Relation 精度：逐条尝试从引用 Span 中找到连接表述，并检查推理是否只使用两端 Summary；任一检查失败就删除该关系，不为提高关系数量保留弱连接。
 
 不要输出主题目录、Community、Assignment、未来预测、风险标签或其他旧 Card 字段。只输出符合 JSON Schema 的 cards、relations 和 skip_reason，不要输出 Markdown、解释文字或自检过程。"""
@@ -260,9 +267,14 @@ class AtomicCognitiveCardExtractor:
             as_type="span",
             input={"chunk_id": chunk.chunk_id, "text_chars": len(chunk.content)},
         ):
-            spans = self._segmenter.segment(chunk.content)
+            sentence_blocks = self._segmenter.segment_blocks(chunk.content)
+            spans = [part for block in sentence_blocks for part in block.parts]
             langfuse_update_span(
-                output={"chunk_id": chunk.chunk_id, "span_count": len(spans)},
+                output={
+                    "chunk_id": chunk.chunk_id,
+                    "sentence_block_count": len(sentence_blocks),
+                    "span_count": len(spans),
+                },
                 status_message="completed",
             )
         if not spans:
@@ -277,7 +289,7 @@ class AtomicCognitiveCardExtractor:
         prompt_payload = {
             "source_published_at": payload.get("published_at") or "",
             "chunk_id": chunk.chunk_id,
-            "spans": [span.llm_payload() for span in spans],
+            "sentence_blocks": [block.llm_payload() for block in sentence_blocks],
         }
         request = LLMProxyRequest(
             model=self._model,
@@ -308,6 +320,7 @@ class AtomicCognitiveCardExtractor:
             input={
                 "chunk_id": chunk.chunk_id,
                 "text_chars": len(chunk.content),
+                "sentence_block_count": len(sentence_blocks),
                 "span_count": len(spans),
             },
             metadata={"schema_version": ATOMIC_COGNITIVE_CARD_SCHEMA_VERSION},

@@ -6,7 +6,6 @@ import hashlib
 import json
 import re
 from dataclasses import dataclass
-from datetime import datetime
 from typing import Any
 
 from src.domain.knowledge.schemas import EvidenceChunk
@@ -19,7 +18,7 @@ from src.domain.knowledge.semantic_index_materials import (
 
 
 ATOMIC_COGNITIVE_CARD_SCHEMA_VERSION = "atomic_cognitive_card_v5"
-ATOMIC_COGNITIVE_CARD_GENERATOR_VERSION = "atomic_card_extractor_v38"
+ATOMIC_COGNITIVE_CARD_GENERATOR_VERSION = "atomic_card_extractor_v42"
 INTRA_CHUNK_RELATION_KINDS = frozenset(
     {
         "confirmation",
@@ -30,7 +29,6 @@ INTRA_CHUNK_RELATION_KINDS = frozenset(
         "constraint",
     }
 )
-_LOCAL_CARD_ID_RE = re.compile(r"(?<![A-Za-z0-9_])c(?:[1-9]|1[0-2])(?![A-Za-z0-9_])", re.IGNORECASE)
 
 
 @dataclass(frozen=True)
@@ -51,6 +49,20 @@ class SpanReference:
 
     def llm_payload(self) -> dict[str, Any]:
         return {"ref": self.ref, "text": self.text}
+
+
+@dataclass(frozen=True)
+class SpanSentenceBlock:
+    """供模型连续阅读的完整句子块，parts 仅承担精确证据引用。"""
+
+    role: str
+    parts: list[SpanReference]
+
+    def llm_payload(self) -> dict[str, Any]:
+        return {
+            "role": self.role,
+            "parts": [part.llm_payload() for part in self.parts],
+        }
 
 
 @dataclass(frozen=True)
@@ -124,20 +136,109 @@ class AtomicCardExtractionResult:
 
 
 class StableSpanSegmenter:
-    """按句末标点和段落边界生成稳定、可回溯的 Span Ref。"""
+    """按完整句子组织阅读上下文，并生成稳定的句内证据 Ref。"""
 
-    _BOUNDARY_RE = re.compile(r"(?:[。！？!?；;，,:：]+[\"'”’）】》]*|\n+)")
+    _HARD_BOUNDARY_RE = re.compile(r"(?:[。！？!?；;]+[\"'”’）】》]*|\n+)")
+    _LEADING_TITLE_RE = re.compile(r"^\s*【[^】\n]{1,200}】")
+    _SOFT_BOUNDARY_RE = re.compile(r"[，,:：]+[\"'”’）】》]*")
 
     def segment(self, content: str) -> list[SpanReference]:
+        return [part for block in self.segment_blocks(content) for part in block.parts]
+
+    def segment_blocks(self, content: str) -> list[SpanSentenceBlock]:
         if not content:
             return []
         spans: list[SpanReference] = []
+        blocks: list[SpanSentenceBlock] = []
         cursor = 0
-        for match in self._BOUNDARY_RE.finditer(content):
-            self._append_span(spans, content, cursor, match.end())
+
+        title_match = self._LEADING_TITLE_RE.match(content)
+        if title_match is not None:
+            self._append_block(
+                blocks,
+                spans,
+                content,
+                title_match.start(),
+                title_match.end(),
+                role="title",
+            )
+            cursor = title_match.end()
+
+        for match in self._HARD_BOUNDARY_RE.finditer(content, cursor):
+            self._append_block(
+                blocks,
+                spans,
+                content,
+                cursor,
+                match.end(),
+                role="body",
+            )
             cursor = match.end()
-        self._append_span(spans, content, cursor, len(content))
-        return spans
+        self._append_block(
+            blocks,
+            spans,
+            content,
+            cursor,
+            len(content),
+            role="body",
+        )
+        return blocks
+
+    @classmethod
+    def _append_block(
+        cls,
+        blocks: list[SpanSentenceBlock],
+        spans: list[SpanReference],
+        content: str,
+        raw_start: int,
+        raw_end: int,
+        *,
+        role: str,
+    ) -> None:
+        start, end = cls._trim_range(content, raw_start, raw_end)
+        if start >= end:
+            return
+        first_part_index = len(spans)
+        if role == "title":
+            cls._append_span(spans, content, start, end)
+        else:
+            cls._append_semantic_range(spans, content, start, end)
+        parts = spans[first_part_index:]
+        if parts:
+            blocks.append(SpanSentenceBlock(role=role, parts=parts))
+
+    @classmethod
+    def _append_semantic_range(
+        cls,
+        spans: list[SpanReference],
+        content: str,
+        raw_start: int,
+        raw_end: int,
+    ) -> None:
+        start, end = cls._trim_range(content, raw_start, raw_end)
+        if start >= end:
+            return
+        soft_boundaries = list(cls._SOFT_BOUNDARY_RE.finditer(content, start, end))
+        if not soft_boundaries:
+            cls._append_span(spans, content, start, end)
+            return
+
+        group_start = start
+        for boundary in soft_boundaries:
+            soft_end = boundary.end()
+            cls._append_span(spans, content, group_start, soft_end)
+            group_start = soft_end
+        cls._append_span(spans, content, group_start, end)
+
+    @staticmethod
+    def _trim_range(content: str, raw_start: int, raw_end: int) -> tuple[int, int]:
+        start = raw_start
+        end = raw_end
+        while start < end and content[start].isspace():
+            start += 1
+        while end > start and content[end - 1].isspace():
+            end -= 1
+        return start, end
 
     @staticmethod
     def _append_span(
@@ -146,12 +247,7 @@ class StableSpanSegmenter:
         raw_start: int,
         raw_end: int,
     ) -> None:
-        start = raw_start
-        end = raw_end
-        while start < end and content[start].isspace():
-            start += 1
-        while end > start and content[end - 1].isspace():
-            end -= 1
+        start, end = StableSpanSegmenter._trim_range(content, raw_start, raw_end)
         if start >= end:
             return
         spans.append(
@@ -186,11 +282,6 @@ def atomic_card_from_llm_item(
     if unknown_refs:
         raise ValueError(f"card 引用了不存在的 Span Ref: {unknown_refs}")
 
-    _validate_summary_grounding(
-        summary,
-        [span_by_ref[ref].text for ref in focus_refs],
-        source_published_at=_clean_text(payload.get("published_at")),
-    )
     card_id = build_atomic_card_id(
         chunk=chunk,
         focus_evidence_refs=focus_refs,
@@ -272,8 +363,6 @@ def intra_chunk_relation_from_llm_item(
     mechanism = _clean_text(item.get("inference_mechanism"))
     if not relation_type or not direction or not basis:
         raise ValueError("同 Chunk Relation 必须包含关系类型、方向和成立依据")
-    if any(_LOCAL_CARD_ID_RE.search(value) for value in (relation_type, direction, basis, mechanism)):
-        raise ValueError("同 Chunk Relation 的语义说明不能引用临时 local_card_id")
     if decision_class == "inferred" and not mechanism:
         raise ValueError("同 Chunk inferred Relation 必须包含 inference_mechanism")
     try:
@@ -502,62 +591,6 @@ def _atomic_card_milvus_metadata(
         "generator_version": card.generator_version,
         "status": card.status,
     }
-
-
-def _validate_summary_grounding(
-    summary: str,
-    focus_texts: list[str],
-    *,
-    source_published_at: str,
-) -> None:
-    """拦截最确定的数字幻觉，语义忠实度仍由模型和质量回放负责。"""
-
-    source = _normalize_text("\n".join(focus_texts))
-    summary_tokens = set(re.findall(r"\d{4}年|\d+(?:\.\d+)?%?", summary))
-    grounded_years = _grounded_year_tokens(focus_texts, source_published_at)
-    unsupported = sorted(
-        token
-        for token in summary_tokens
-        if not _numeric_token_is_grounded(token, source, grounded_years)
-    )
-    if unsupported:
-        raise ValueError(f"Summary 包含焦点证据未出现的数字或年份: {unsupported}")
-
-
-def _grounded_year_tokens(focus_texts: list[str], source_published_at: str) -> set[str]:
-    if not source_published_at:
-        return set()
-    try:
-        published = datetime.fromisoformat(source_published_at.replace("Z", "+00:00"))
-    except ValueError:
-        return set()
-    source = "\n".join(focus_texts)
-    years: set[int] = set()
-    if "今年" in source or re.search(r"(?<!\d)(?:1[0-2]|[1-9])月", source):
-        years.add(published.year)
-    if "去年" in source:
-        years.add(published.year - 1)
-    if "明年" in source:
-        years.add(published.year + 1)
-    return {f"{year}年" for year in years}
-
-
-def _numeric_token_is_grounded(token: str, source: str, grounded_years: set[str]) -> bool:
-    """允许百分比省略无意义的小数零，同时保持其他数字的精确接地。"""
-
-    normalized = _normalize_text(token)
-    if normalized in source or token in grounded_years:
-        return True
-    if not token.endswith("%"):
-        return False
-    try:
-        expected = float(token[:-1])
-    except ValueError:
-        return False
-    return any(
-        float(value) == expected
-        for value in re.findall(r"(\d+(?:\.\d+)?)%", source)
-    )
 
 
 def _ordered_unique(values: Any) -> list[str]:

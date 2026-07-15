@@ -12,8 +12,10 @@ import asyncio
 import json
 import logging
 import sys
+import time
 from datetime import datetime
 from pathlib import Path
+from typing import Any
 from uuid import uuid4
 
 from sqlalchemy import delete, select
@@ -25,6 +27,14 @@ if str(PROJECT_ROOT) not in sys.path:
 
 from src.application.services.ft_news_knowledge_graph_workflow_service import (  # noqa: E402
     FtNewsKnowledgeGraphWorkflowService,
+)
+from src.application.services.atomic_cognitive_card_service import (  # noqa: E402
+    AtomicCognitiveCardExtractor,
+)
+from src.domain.knowledge.chunking import build_evidence_chunks  # noqa: E402
+from src.domain.knowledge.schemas import EvidenceChunk  # noqa: E402
+from src.domain.knowledge_adapters.financial.source_projection import (  # noqa: E402
+    project_ft_news_row,
 )
 from src.domain.knowledge.semantic_index_materials import (  # noqa: E402
     SEMANTIC_COLLECTION_CARD_RELATION,
@@ -72,6 +82,24 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--target", choices=["prod", "test"], default="prod")
     parser.add_argument(
+        "--mode",
+        choices=["workflow", "cards"],
+        default="workflow",
+        help="workflow 执行完整写入链路；cards 仅并发验证 Card，不写 PG/Milvus",
+    )
+    parser.add_argument(
+        "--concurrency",
+        type=int,
+        default=5,
+        help="cards 模式的最大并发 Chunk 数，范围 1-20",
+    )
+    parser.add_argument(
+        "--chunk-timeout",
+        type=float,
+        default=120.0,
+        help="cards 模式单个 Chunk 的超时秒数，超时只隔离当前 Chunk",
+    )
+    parser.add_argument(
         "--include-evaluation-details",
         action="store_true",
         help="在结果 JSON 中保留各阶段候选 ID，便于质量评测",
@@ -87,8 +115,8 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def load_news(args: argparse.Namespace) -> list[dict]:
-    """只选择 ft_news 行；知识图谱业务转换由应用服务完成。"""
+def load_news_rows(args: argparse.Namespace) -> list[News]:
+    """按命令行条件读取 ft_news ORM 行。"""
 
     explicit_ids = _ordered_unique_positive_ints(args.news_id)
     with get_session(args.target) as session:
@@ -111,6 +139,12 @@ def load_news(args: argparse.Namespace) -> list[dict]:
                     .limit(limit)
                 ).all()
             )
+    return ordered_rows
+
+
+def load_news(args: argparse.Namespace) -> list[dict]:
+    """只选择 ft_news 行；完整工作流的业务转换仍由应用服务完成。"""
+
     return [
         {
             "id": int(row.id),
@@ -120,7 +154,7 @@ def load_news(args: argparse.Namespace) -> list[dict]:
             "published_at": _iso(row.published_at),
             "created_at": _iso(row.created_at),
         }
-        for row in ordered_rows
+        for row in load_news_rows(args)
     ]
 
 
@@ -152,6 +186,173 @@ async def run(args: argparse.Namespace) -> dict:
         "cleanup": cleanup,
         "workflow": workflow,
     }
+
+
+async def run_card_validation(
+    args: argparse.Namespace,
+    *,
+    session_id: str,
+) -> dict[str, Any]:
+    """并发验证 Card 抽取；单个 Chunk 失败或超时不影响其他结果。"""
+
+    rows = load_news_rows(args)
+    if not rows:
+        raise RuntimeError("没有找到符合条件的 ft_news 数据")
+    chunks, owners = _build_validation_chunks(rows, run_id=session_id)
+    concurrency = max(1, min(20, int(args.concurrency)))
+    chunk_timeout = max(1.0, float(args.chunk_timeout))
+    semaphore = asyncio.Semaphore(concurrency)
+    extractor = AtomicCognitiveCardExtractor(concurrency=1)
+
+    async def process(chunk: EvidenceChunk) -> dict[str, Any]:
+        owner = owners[chunk.chunk_id]
+        started = time.monotonic()
+        try:
+            async with semaphore:
+                result = (
+                    await asyncio.wait_for(
+                        extractor.extract_with_diagnostics([chunk]),
+                        timeout=chunk_timeout,
+                    )
+                )[0]
+            return {
+                **owner,
+                "status": "completed",
+                "duration_seconds": round(time.monotonic() - started, 3),
+                "span_count": len(result.spans),
+                "repaired": result.repaired,
+                "skip_reason": result.skip_reason,
+                "cards": [
+                    {
+                        "summary": card.summary,
+                        "focus_evidence_refs": list(card.focus_evidence_refs),
+                    }
+                    for card in result.cards
+                ],
+                "relations": [relation.as_dict() for relation in result.relations],
+            }
+        except asyncio.TimeoutError:
+            return {
+                **owner,
+                "status": "timeout",
+                "duration_seconds": round(time.monotonic() - started, 3),
+                "error": f"chunk timeout after {chunk_timeout:g}s",
+                "cards": [],
+                "relations": [],
+            }
+        except Exception as exc:
+            logging.getLogger(__name__).exception(
+                "Card 验证失败 news_id=%s chunk_index=%s",
+                owner["news_id"],
+                owner["chunk_index"],
+            )
+            return {
+                **owner,
+                "status": "failed",
+                "duration_seconds": round(time.monotonic() - started, 3),
+                "error": f"{type(exc).__name__}: {exc}",
+                "cards": [],
+                "relations": [],
+            }
+
+    tasks = [asyncio.create_task(process(chunk)) for chunk in chunks]
+    chunk_results: list[dict[str, Any]] = []
+    for completed in asyncio.as_completed(tasks):
+        item = await completed
+        chunk_results.append(item)
+        print(
+            "[cards] "
+            f"news_id={item['news_id']} chunk={item['chunk_index'] + 1}/{item['chunk_count']} "
+            f"status={item['status']} cards={len(item['cards'])} "
+            f"relations={len(item['relations'])} duration={item['duration_seconds']}s",
+            flush=True,
+        )
+
+    chunk_results.sort(key=lambda item: (item["news_order"], item["chunk_index"]))
+    failed_chunks = [item for item in chunk_results if item["status"] != "completed"]
+    completed_news_ids, failed_news_ids = _news_completion(chunk_results)
+    return {
+        "status": "completed" if not failed_chunks else "completed_with_errors",
+        "mode": "cards",
+        "target": args.target,
+        "session_id": session_id,
+        "concurrency": concurrency,
+        "chunk_timeout_seconds": chunk_timeout,
+        "news_count": len(rows),
+        "news_ids": [int(row.id) for row in rows],
+        "chunk_count": len(chunks),
+        "completed_chunks": len(chunk_results) - len(failed_chunks),
+        "failed_chunks": len(failed_chunks),
+        "completed_news_ids": completed_news_ids,
+        "failed_news_ids": failed_news_ids,
+        "card_count": sum(len(item["cards"]) for item in chunk_results),
+        "relation_count": sum(len(item["relations"]) for item in chunk_results),
+        "repair_count": sum(bool(item.get("repaired")) for item in chunk_results),
+        "results": chunk_results,
+    }
+
+
+def _build_validation_chunks(
+    rows: list[News],
+    *,
+    run_id: str,
+) -> tuple[list[EvidenceChunk], dict[str, dict[str, Any]]]:
+    chunks: list[EvidenceChunk] = []
+    owners: dict[str, dict[str, Any]] = {}
+    for news_order, row in enumerate(rows):
+        record = project_ft_news_row(_news_model_row(row))
+        if record is None:
+            continue
+        evidence_id = f"kg_ev:financial:validation:ft_news:{row.id}:{run_id}"
+        news_chunks = build_evidence_chunks(
+            adapter_name="financial",
+            evidence_id=evidence_id,
+            content=record["raw_text"],
+            payload={
+                **record["payload"],
+                "source_type": record["source_type"],
+                "source_id": record["source_id"],
+            },
+        )
+        for chunk in news_chunks:
+            owners[chunk.chunk_id] = {
+                "news_order": news_order,
+                "news_id": int(row.id),
+                "title": row.title,
+                "chunk_index": chunk.chunk_index,
+                "chunk_count": len(news_chunks),
+                "chunk_id": chunk.chunk_id,
+            }
+        chunks.extend(news_chunks)
+    return chunks, owners
+
+
+def _news_model_row(row: News) -> dict[str, Any]:
+    return {
+        "id": row.id,
+        "title": row.title,
+        "content": row.content,
+        "summary": row.summary,
+        "source": row.source,
+        "source_name": row.source_name,
+        "source_reliability": row.source_reliability,
+        "category": row.category,
+        "url": row.url,
+        "tags": row.tags,
+        "related_stocks": row.related_stocks,
+        "published_at": row.published_at,
+        "fingerprint": row.fingerprint,
+        "created_at": row.created_at,
+    }
+
+
+def _news_completion(chunk_results: list[dict[str, Any]]) -> tuple[list[int], list[int]]:
+    statuses: dict[int, list[str]] = {}
+    for item in chunk_results:
+        statuses.setdefault(int(item["news_id"]), []).append(str(item["status"]))
+    completed = [news_id for news_id, values in statuses.items() if all(v == "completed" for v in values)]
+    failed = [news_id for news_id, values in statuses.items() if any(v != "completed" for v in values)]
+    return completed, failed
 
 
 async def cleanup_workflow_state(*, adapter_name: str, target: str) -> dict:
@@ -256,42 +457,58 @@ async def cleanup_workflow_state(*, adapter_name: str, target: str) -> dict:
 
 async def main_async(args: argparse.Namespace) -> None:
     session_id = args.session_id or f"ft-news-card-relation-{uuid4().hex[:12]}"
+    trace_name = (
+        "kg.atomic_card.batch_validation"
+        if args.mode == "cards"
+        else "kg.ft_news_card_relation.workflow"
+    )
     trace_input = {
+        "mode": args.mode,
         "target": args.target,
         "limit": max(1, min(100, int(args.limit))),
         "news_ids": _ordered_unique_positive_ints(args.news_id),
         "include_evaluation_details": args.include_evaluation_details,
-        "clean_before_run": not args.keep_existing_data,
+        "clean_before_run": args.mode == "workflow" and not args.keep_existing_data,
+        "concurrency": max(1, min(20, int(args.concurrency))),
+        "chunk_timeout_seconds": max(1.0, float(args.chunk_timeout)),
         "session_id": session_id,
     }
     with langfuse_propagation_context(
-        trace_name="kg.ft_news_card_relation.workflow",
+        trace_name=trace_name,
         session_id=session_id,
         tags=["kg", "ft-news", "atomic-card", "relation-discovery", "workflow"],
         metadata=trace_input,
     ):
         with langfuse_observation(
-            name="kg.ft_news_card_relation.workflow",
+            name=trace_name,
             as_type="chain",
             input=trace_input,
             metadata=trace_input,
         ):
-            result = await run(args)
+            result = (
+                await run_card_validation(args, session_id=session_id)
+                if args.mode == "cards"
+                else await run(args)
+            )
             output_path = Path(args.output) if args.output else Path(
-                f"/tmp/01_ft_news_card_relation_workflow_{session_id}.json"
+                f"/tmp/01_ft_news_card_relation_{args.mode}_{session_id}.json"
             )
             output_path.parent.mkdir(parents=True, exist_ok=True)
             output_path.write_text(
                 json.dumps(result, ensure_ascii=False, indent=2),
                 encoding="utf-8",
             )
-            summary = _result_summary(result)
+            summary = (
+                _card_result_summary(result)
+                if args.mode == "cards"
+                else _result_summary(result)
+            )
             langfuse_update_span(
                 output={**summary, "output_file": str(output_path)},
                 status_message="completed",
             )
             print(json.dumps(summary, ensure_ascii=False, indent=2))
-            print("\nLangfuse trace: kg.ft_news_card_relation.workflow")
+            print(f"\nLangfuse trace: {trace_name}")
             print(f"Session ID: {session_id}")
             print(f"结果文件: {output_path}")
 
@@ -319,6 +536,28 @@ def _result_summary(result: dict) -> dict:
         "relation_statistics": statistics,
         "changed_edge_ids": list(edge.get("changed_edge_ids") or []),
         "graph_event_ids": list(edge.get("graph_event_ids") or []),
+    }
+
+
+def _card_result_summary(result: dict[str, Any]) -> dict[str, Any]:
+    return {
+        key: result[key]
+        for key in (
+            "status",
+            "mode",
+            "news_count",
+            "news_ids",
+            "chunk_count",
+            "completed_chunks",
+            "failed_chunks",
+            "completed_news_ids",
+            "failed_news_ids",
+            "card_count",
+            "relation_count",
+            "repair_count",
+            "concurrency",
+            "chunk_timeout_seconds",
+        )
     }
 
 

@@ -103,7 +103,13 @@ def test_focus_evidence_context_preserves_context_and_one_to_one_refs() -> None:
 
 
 def test_atomic_card_prompt_uses_core_predicate_boundary() -> None:
-    assert ATOMIC_COGNITIVE_CARD_GENERATOR_VERSION == "atomic_card_extractor_v38"
+    assert ATOMIC_COGNITIVE_CARD_GENERATOR_VERSION == "atomic_card_extractor_v42"
+    assert "sentence_blocks" in ATOMIC_CARD_SYSTEM_PROMPT
+    assert "part 的 Ref 只是精确证据坐标" in ATOMIC_CARD_SYSTEM_PROMPT
+    assert "不要求 source 单独构成充分原因" in ATOMIC_CARD_SYSTEM_PROMPT
+    assert "不能以“单项不是充分原因”为由删除" in ATOMIC_CARD_SYSTEM_PROMPT
+    assert "禁止概括完整 block 的多个 parts" in ATOMIC_CARD_SYSTEM_PROMPT
+    assert "Span Ref；这些标识只能出现在" in ATOMIC_CARD_SYSTEM_PROMPT
     assert "最小但完整" in ATOMIC_CARD_SYSTEM_PROMPT
     assert "不等于句子中的语法动词" in ATOMIC_CARD_SYSTEM_PROMPT
     assert "按核心谓词确定 Card 边界" in ATOMIC_CARD_SYSTEM_PROMPT
@@ -249,15 +255,64 @@ def test_span_segmenter_is_stable_and_preserves_offsets() -> None:
 
     assert first == second
     assert [span.ref for span in first] == ["s0001", "s0002", "s0003"]
-    assert [text[span.start_offset : span.end_offset] for span in first] == [span.text for span in first]
+    assert [text[span.start_offset : span.end_offset] for span in first] == [
+        span.text for span in first
+    ]
+
+
+def test_span_segmenter_keeps_title_and_complete_semantic_sentences() -> None:
+    text = (
+        "【机构：元器件成本持续攀升 智能手机存储配置两极分化加剧】"
+        "财联社7月13日电，据Omdia，随着存储成本持续上涨带来的财务压力不断加大，"
+        "智能手机厂商正进一步缩减入门级产品布局，并将产品组合向利润率更高的中高端机型倾斜。"
+        "与此同时，为满足消费者对高端产品不断提升的性能预期，并支撑零售价格上涨，"
+        "高端及旗舰智能手机仍持续提升存储配置。"
+        "Omdia高级研究经理Jusy Hong表示，这种差异化产品策略将进一步加剧今年智能手机市场的"
+        "存储配置两极分化：高端机型将继续提升存储容量，而入门级机型则面临存储配置下调的趋势。"
+    )
+
+    blocks = StableSpanSegmenter().segment_blocks(text)
+    spans = [part for block in blocks for part in block.parts]
+
+    assert [block.role for block in blocks] == ["title", "body", "body", "body"]
+    assert [[part.ref for part in block.parts] for block in blocks] == [
+        ["s0001"],
+        ["s0002", "s0003", "s0004", "s0005", "s0006"],
+        ["s0007", "s0008", "s0009", "s0010"],
+        ["s0011", "s0012", "s0013", "s0014"],
+    ]
+    assert ["".join(part.text for part in block.parts) for block in blocks] == [
+        "【机构：元器件成本持续攀升 智能手机存储配置两极分化加剧】",
+        "财联社7月13日电，据Omdia，随着存储成本持续上涨带来的财务压力不断加大，"
+        "智能手机厂商正进一步缩减入门级产品布局，并将产品组合向利润率更高的中高端机型倾斜。",
+        "与此同时，为满足消费者对高端产品不断提升的性能预期，并支撑零售价格上涨，"
+        "高端及旗舰智能手机仍持续提升存储配置。",
+        "Omdia高级研究经理Jusy Hong表示，这种差异化产品策略将进一步加剧今年智能手机市场的"
+        "存储配置两极分化：高端机型将继续提升存储容量，而入门级机型则面临存储配置下调的趋势。",
+    ]
+    assert all(span.text == text[span.start_offset : span.end_offset] for span in spans)
+
+
+def test_span_segmenter_keeps_fine_refs_inside_one_long_sentence_block() -> None:
+    clauses = [
+        f"第{index}个分句描述同一项长期事实并补充必要上下文"
+        for index in range(1, 18)
+    ]
+    text = "，".join(clauses) + "。"
+
+    blocks = StableSpanSegmenter().segment_blocks(text)
+    spans = [part for block in blocks for part in block.parts]
+
+    assert len(blocks) == 1
+    assert len(spans) == len(clauses)
+    assert "".join(span.text for span in spans) == text
 
 
 def test_atomic_card_builds_stable_id_independent_of_ref_gaps() -> None:
     chunk = _chunk()
     spans = StableSpanSegmenter().segment(chunk.content)
-    first = _card_item()
-    second = _card_item()
-    second["focus_evidence_refs"] = ["s0001", "s0003"]
+    first = _card_item(refs=["s0001", "s0002", "s0003"])
+    second = _card_item(refs=["s0001", "s0003"])
 
     card_a = atomic_card_from_llm_item(chunk, first, spans=spans)
     card_b = atomic_card_from_llm_item(chunk, second, spans=spans)
@@ -293,12 +348,17 @@ def test_atomic_card_rejects_unknown_span_ref() -> None:
         atomic_card_from_llm_item(chunk, item, spans=StableSpanSegmenter().segment(chunk.content))
 
 
-def test_atomic_card_rejects_summary_number_hallucination() -> None:
+def test_atomic_card_leaves_summary_factual_quality_to_model_evaluation() -> None:
     chunk = _chunk()
     item = _card_item(summary="甲公司拟以100亿元收购乙公司。")
 
-    with pytest.raises(ValueError, match="未出现的数字"):
-        atomic_card_from_llm_item(chunk, item, spans=StableSpanSegmenter().segment(chunk.content))
+    card = atomic_card_from_llm_item(
+        chunk,
+        item,
+        spans=StableSpanSegmenter().segment(chunk.content),
+    )
+
+    assert card.summary == "甲公司拟以100亿元收购乙公司。"
 
 
 def test_atomic_card_accepts_equivalent_percentage_format() -> None:
@@ -359,10 +419,21 @@ async def test_extractor_generates_multiple_cards_in_one_llm_call(monkeypatch) -
     assert "chunk_text" not in prompt_payload
     assert "time_grounding" not in prompt_payload
     assert "source_title" not in prompt_payload
-    assert prompt_payload["spans"] == [
-        {"ref": "s0001", "text": "甲公司发布公告，"},
-        {"ref": "s0002", "text": "拟收购乙公司。"},
-        {"ref": "s0003", "text": "丙公司宣布终止丁项目。"},
+    assert "spans" not in prompt_payload
+    assert prompt_payload["sentence_blocks"] == [
+        {
+            "role": "body",
+            "parts": [
+                {"ref": "s0001", "text": "甲公司发布公告，"},
+                {"ref": "s0002", "text": "拟收购乙公司。"},
+            ],
+        },
+        {
+            "role": "body",
+            "parts": [
+                {"ref": "s0003", "text": "丙公司宣布终止丁项目。"},
+            ],
+        },
     ]
     assert llm.requests[0].system_prompt == ATOMIC_CARD_SYSTEM_PROMPT
     assert "source_published_at" in llm.requests[0].system_prompt
@@ -426,7 +497,7 @@ async def test_intra_chunk_relation_sync_marks_missing_pairs_as_no_relation(monk
     output = _extraction_output(
         [
             _card_item(summary="辽宁出现强降雨。", refs=["s0001"]),
-            _card_item(summary="多地因强降雨停课。", refs=["s0002"]),
+            _card_item(summary="多地因强降雨停课。", refs=["s0002", "s0003"]),
             _card_item(summary="甲公司发布年度报告。", refs=["s0003"]),
         ],
         relations=[
@@ -439,7 +510,7 @@ async def test_intra_chunk_relation_sync_marks_missing_pairs_as_no_relation(monk
                 "direction": "强降雨事实指向停课事实",
                 "basis": "原文明确说明停课由强降雨引起。",
                 "source_evidence_refs": ["s0001"],
-                "target_evidence_refs": ["s0002"],
+                "target_evidence_refs": ["s0002", "s0003"],
                 "inference_mechanism": "",
                 "confidence": 0.98,
             }
@@ -721,7 +792,7 @@ async def test_stage_persists_intra_chunk_relations_after_card_documents(monkeyp
     output = _extraction_output(
         [
             _card_item(summary="辽宁出现强降雨。", refs=["s0001"]),
-            _card_item(summary="多地因强降雨停课。", refs=["s0002", "s0003"]),
+            _card_item(summary="多地因强降雨停课。", refs=["s0002"]),
         ],
         relations=[
             {
@@ -733,7 +804,7 @@ async def test_stage_persists_intra_chunk_relations_after_card_documents(monkeyp
                 "direction": "强降雨事实指向停课事实",
                 "basis": "原文明确说明停课受强降雨影响。",
                 "source_evidence_refs": ["s0001"],
-                "target_evidence_refs": ["s0002", "s0003"],
+                "target_evidence_refs": ["s0002"],
                 "inference_mechanism": "",
                 "confidence": 0.98,
             }

@@ -50,6 +50,18 @@ python scripts/知识图谱/01_ft_news_card_relation_workflow.py \
 
 Langfuse Trace 名称为 `kg.ft_news_card_relation.workflow`，完整结果默认保存到 `/tmp/01_ft_news_card_relation_workflow_<session>.json`。首次使用新表结构前，需要执行当前知识图谱 DDL，确保原子 Card manifest、Relation Probe 字段和 `kg_card_relations` 已存在。
 
+仅从最新新闻并发验证 Card 抽取质量，不清理数据、不写入 PG/Milvus、不执行跨 Chunk 关系发现：
+
+```bash
+python scripts/知识图谱/01_ft_news_card_relation_workflow.py \
+  --mode cards \
+  --limit 20 \
+  --concurrency 5 \
+  --chunk-timeout 120
+```
+
+Card 模式按真实 Chunk 并发执行，每完成一个 Chunk 立即输出进度。单个 Chunk 超时或失败只会记录到当前结果，不会取消其他已成功请求。完整结果默认保存到 `/tmp/01_ft_news_card_relation_cards_<session>.json`，Langfuse Trace 名称为 `kg.atomic_card.batch_validation`。
+
 ## Relation Discovery 批量质量评测
 
 脚本：`relation_discovery_eval.py`
