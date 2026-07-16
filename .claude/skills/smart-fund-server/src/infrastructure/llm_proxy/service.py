@@ -139,6 +139,7 @@ def _append_llm_full_trace(
             "raw_payload": response.raw_payload,
             "proxy": response.proxy,
             "cache_hit": response.cache_hit,
+            "reasoning_content": response.reasoning_content,
         }
     if error is not None:
         payload["error"] = {"type": error.__class__.__name__, "message": str(error)}
@@ -298,6 +299,7 @@ def _llm_trace_input(request: LLMProxyRequest) -> dict[str, Any]:
 def _llm_trace_output(response: LLMProxyResponse) -> dict[str, Any]:
     return {
         "text": clip_trace_text(response.text),
+        "reasoning_content": clip_trace_text(response.reasoning_content),
         "structured_output": _clip_json_trace(response.structured_output),
         "usage": response.usage,
         "duration_ms": response.duration_ms,

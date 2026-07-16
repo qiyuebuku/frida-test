@@ -53,6 +53,10 @@ def _decision(
         target_evidence_refs=["s0001"],
         inference_mechanism="同一具体驱动分别连接两个端点事实。",
         confidence=0.88,
+        relation_evidence_refs=[
+            {"chunk_id": "chunk:1", "refs": ["s0001"]},
+            {"chunk_id": "chunk:2", "refs": ["s0001"]},
+        ],
     )
 
 
@@ -152,6 +156,7 @@ def test_symmetric_relation_identity_is_stable_when_endpoints_swap() -> None:
     assert left.id == right.id
     assert left.source_card_id == right.source_card_id == "card:1"
     assert left.target_card_id == right.target_card_id == "card:2"
+    assert left.relation_evidence_refs == right.relation_evidence_refs
 
 
 @pytest.mark.asyncio

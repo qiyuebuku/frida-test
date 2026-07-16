@@ -5,7 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 from src.domain.knowledge.schemas import EvidenceChunk
@@ -17,8 +17,8 @@ from src.domain.knowledge.semantic_index_materials import (
 )
 
 
-ATOMIC_COGNITIVE_CARD_SCHEMA_VERSION = "atomic_cognitive_card_v5"
-ATOMIC_COGNITIVE_CARD_GENERATOR_VERSION = "atomic_card_extractor_v42"
+ATOMIC_COGNITIVE_CARD_SCHEMA_VERSION = "atomic_cognitive_card_v6"
+ATOMIC_COGNITIVE_CARD_GENERATOR_VERSION = "atomic_card_extractor_v56"
 INTRA_CHUNK_RELATION_KINDS = frozenset(
     {
         "confirmation",
@@ -47,8 +47,10 @@ class SpanReference:
             "end_offset": self.end_offset,
         }
 
-    def llm_payload(self) -> dict[str, Any]:
-        return {"ref": self.ref, "text": self.text}
+    def llm_fragment(self) -> str:
+        """渲染为紧凑且可直接阅读的证据片段。"""
+
+        return f"[{self.ref}]{self.text}"
 
 
 @dataclass(frozen=True)
@@ -58,11 +60,35 @@ class SpanSentenceBlock:
     role: str
     parts: list[SpanReference]
 
-    def llm_payload(self) -> dict[str, Any]:
-        return {
-            "role": self.role,
-            "parts": [part.llm_payload() for part in self.parts],
-        }
+    def llm_line(self) -> str:
+        """保留完整句子边界，并仅为标题增加轻量角色标记。"""
+
+        role_prefix = "<title>" if self.role == "title" else ""
+        return role_prefix + "".join(part.llm_fragment() for part in self.parts)
+
+
+def render_atomic_card_prompt_input(
+    *,
+    source_published_at: Any,
+    source_title: Any = "",
+    sentence_blocks: list[SpanSentenceBlock],
+) -> str:
+    """将动态输入渲染为按句换行的 Ref 文本，避免冗长 JSON 层级。"""
+
+    lines = [f"published_at={str(source_published_at or '').strip()}"]
+    normalized_title = str(source_title or "").strip()
+    for index, block in enumerate(sentence_blocks):
+        line = block.llm_line()
+        block_text = "".join(part.text for part in block.parts).strip()
+        if (
+            index == 0
+            and block.role != "title"
+            and normalized_title
+            and block_text == normalized_title
+        ):
+            line = f"<title>{line}"
+        lines.append(line)
+    return "\n".join(lines)
 
 
 @dataclass(frozen=True)
@@ -132,6 +158,10 @@ class AtomicCardExtractionResult:
     cards: list[AtomicCognitiveCard]
     relations: list[VerifiedRelationDecision]
     repaired: bool = False
+    repair_attempted: bool = False
+    discarded_card_count: int = 0
+    discarded_relation_count: int = 0
+    validation_issues: list[str] = field(default_factory=list)
     skip_reason: str = ""
 
 
@@ -182,7 +212,25 @@ class StableSpanSegmenter:
             len(content),
             role="body",
         )
-        return blocks
+        return self._deduplicate_blocks(blocks)
+
+    @staticmethod
+    def _deduplicate_blocks(blocks: list[SpanSentenceBlock]) -> list[SpanSentenceBlock]:
+        """删除正文中完全重复的句子块，同时保留第一次出现的原始 offset。"""
+
+        result: list[SpanSentenceBlock] = []
+        seen_body: set[str] = set()
+        for block in blocks:
+            if block.role != "body":
+                result.append(block)
+                continue
+            normalized = _normalize_text("".join(part.text for part in block.parts))
+            if normalized and normalized in seen_body:
+                continue
+            if normalized:
+                seen_body.add(normalized)
+            result.append(block)
+        return result
 
     @classmethod
     def _append_block(
@@ -307,6 +355,8 @@ def atomic_card_from_llm_item(
 def intra_chunk_relation_from_llm_item(
     item: dict[str, Any],
     *,
+    chunk: EvidenceChunk,
+    spans: list[SpanReference],
     cards_by_local_id: dict[str, AtomicCognitiveCard],
 ) -> VerifiedRelationDecision:
     """把本次提取中的局部 Card 引用转换为正式关系决定。"""
@@ -314,15 +364,9 @@ def intra_chunk_relation_from_llm_item(
     required = {
         "source_card_id",
         "target_card_id",
-        "decision_class",
         "relation_kind",
-        "relation_type",
-        "direction",
         "basis",
-        "source_evidence_refs",
-        "target_evidence_refs",
-        "inference_mechanism",
-        "confidence",
+        "relation_evidence_refs",
     }
     missing = sorted(required.difference(item))
     extra = sorted(set(item).difference(required))
@@ -339,52 +383,59 @@ def intra_chunk_relation_from_llm_item(
             f"source={source_local_id}, target={target_local_id}"
         )
 
-    decision_class = _clean_text(item.get("decision_class"))
-    if decision_class not in {"observed", "inferred"}:
-        raise ValueError(f"同 Chunk Relation decision_class 非法: {decision_class}")
     relation_kind = _clean_text(item.get("relation_kind"))
     if relation_kind not in INTRA_CHUNK_RELATION_KINDS:
         raise ValueError(f"同 Chunk Relation relation_kind 非法: {relation_kind}")
 
     source_card = cards_by_local_id[source_local_id]
     target_card = cards_by_local_id[target_local_id]
-    source_refs = _ordered_unique(item.get("source_evidence_refs") or [])
-    target_refs = _ordered_unique(item.get("target_evidence_refs") or [])
-    if not source_refs or not target_refs:
-        raise ValueError("同 Chunk Relation 必须引用双方最小充分 Focus Evidence")
-    if not set(source_refs).issubset(source_card.focus_evidence_refs):
-        raise ValueError(f"同 Chunk Relation source refs 不属于 {source_local_id}")
-    if not set(target_refs).issubset(target_card.focus_evidence_refs):
-        raise ValueError(f"同 Chunk Relation target refs 不属于 {target_local_id}")
+    relation_refs = _ordered_unique(item.get("relation_evidence_refs") or [])
+    known_refs = {span.ref for span in spans}
+    if not relation_refs:
+        raise ValueError("同 Chunk Relation 必须引用直接证明连接成立的原文证据")
+    unknown_refs = sorted(set(relation_refs).difference(known_refs))
+    if unknown_refs:
+        raise ValueError(f"同 Chunk Relation 引用了不存在的 Span Ref: {unknown_refs}")
 
-    relation_type = _clean_text(item.get("relation_type"))
-    direction = _clean_text(item.get("direction"))
     basis = _clean_text(item.get("basis"))
-    mechanism = _clean_text(item.get("inference_mechanism"))
-    if not relation_type or not direction or not basis:
-        raise ValueError("同 Chunk Relation 必须包含关系类型、方向和成立依据")
-    if decision_class == "inferred" and not mechanism:
-        raise ValueError("同 Chunk inferred Relation 必须包含 inference_mechanism")
-    try:
-        confidence = float(item.get("confidence"))
-    except (TypeError, ValueError) as exc:
-        raise ValueError("同 Chunk Relation confidence 必须是 0 到 1 的数字") from exc
-    if not 0 <= confidence <= 1:
-        raise ValueError("同 Chunk Relation confidence 必须处于 0 到 1")
+    if not basis:
+        raise ValueError("同 Chunk Relation 必须包含可读的成立依据")
+
+    relation_type, direction = _normalized_intra_chunk_relation_fields(relation_kind)
 
     return VerifiedRelationDecision(
         source_card_id=source_card.cognitive_card_id,
         target_card_id=target_card.cognitive_card_id,
-        decision_class=decision_class,  # type: ignore[arg-type]
+        decision_class="observed",
         relation_kind=relation_kind,
         relation_type=relation_type,
         direction=direction,
         basis=basis,
-        source_evidence_refs=source_refs,
-        target_evidence_refs=target_refs,
-        inference_mechanism=mechanism,
-        confidence=confidence,
+        source_evidence_refs=list(source_card.focus_evidence_refs),
+        target_evidence_refs=list(target_card.focus_evidence_refs),
+        inference_mechanism="",
+        confidence=1.0,
+        relation_evidence_refs=[
+            {"chunk_id": chunk.chunk_id, "refs": relation_refs}
+        ],
     )
+
+
+def _normalized_intra_chunk_relation_fields(relation_kind: str) -> tuple[str, str]:
+    labels = {
+        "confirmation": "原文事实相互印证",
+        "contradiction": "原文事实相互冲突",
+        "temporal_progression": "原文事实构成时间进展",
+        "causal_influence": "原文明确因果影响",
+        "common_driver": "原文明确共同驱动",
+        "constraint": "原文明确约束关系",
+    }
+    direction = (
+        "symmetric"
+        if relation_kind in {"confirmation", "contradiction", "common_driver"}
+        else "source_to_target"
+    )
+    return labels[relation_kind], direction
 
 
 def _validate_raw_card_shape(item: dict[str, Any]) -> None:

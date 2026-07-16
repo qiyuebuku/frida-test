@@ -50,6 +50,7 @@ class LLMPersistentFileCache:
                 raw_payload=dict(response.get("raw_payload") or {}),
                 cache_hit=True,
                 proxy=dict(response.get("proxy") or {}),
+                reasoning_content=str(response.get("reasoning_content") or ""),
             )
         except Exception as exc:
             logger.warning("[llm_proxy_cache] read failed key=%s path=%s error=%s", key, path, exc)
@@ -71,6 +72,7 @@ class LLMPersistentFileCache:
                 "duration_ms": response.duration_ms,
                 "raw_payload": response.raw_payload,
                 "proxy": response.proxy,
+                "reasoning_content": response.reasoning_content,
             },
         }
         try:

@@ -107,6 +107,7 @@ async def chat_completions(request: ChatCompletionRequest):
     if request.stream:
         return _stream_chat_completion(
             content=content,
+            reasoning_content=result.reasoning_content,
             model=result.proxy.get("resolved_model") or request.model or settings.LLM_PROXY_DEFAULT_MODEL,
         )
 
@@ -116,6 +117,8 @@ async def chat_completions(request: ChatCompletionRequest):
     message = {"role": "assistant", "content": content}
     if raw_message.get("tool_calls") is not None:
         message["tool_calls"] = raw_message["tool_calls"]
+    if result.reasoning_content:
+        message["reasoning_content"] = result.reasoning_content
     return {
         "id": f"chatcmpl-{uuid.uuid4().hex}",
         "object": "chat.completion",
@@ -187,7 +190,12 @@ async def embeddings(request: EmbeddingRequest):
     }
 
 
-def _stream_chat_completion(*, content: str, model: str) -> StreamingResponse:
+def _stream_chat_completion(
+    *,
+    content: str,
+    reasoning_content: str = "",
+    model: str,
+) -> StreamingResponse:
     completion_id = f"chatcmpl-{uuid.uuid4().hex}"
     created = int(time.time())
 
@@ -200,6 +208,24 @@ def _stream_chat_completion(*, content: str, model: str) -> StreamingResponse:
             "choices": [{"index": 0, "delta": {"role": "assistant"}, "finish_reason": None}],
         }
         yield f"data: {json.dumps(first, ensure_ascii=False)}\n\n"
+
+        for idx in range(0, len(reasoning_content), 800):
+            reasoning_chunk = {
+                "id": completion_id,
+                "object": "chat.completion.chunk",
+                "created": created,
+                "model": model,
+                "choices": [
+                    {
+                        "index": 0,
+                        "delta": {
+                            "reasoning_content": reasoning_content[idx : idx + 800]
+                        },
+                        "finish_reason": None,
+                    }
+                ],
+            }
+            yield f"data: {json.dumps(reasoning_chunk, ensure_ascii=False)}\n\n"
 
         # This proxy is backed by an interactive TUI, so it cannot stream tokens
         # as they are generated. It returns an OpenAI-compatible SSE stream once

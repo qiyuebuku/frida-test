@@ -304,6 +304,7 @@ class KnowledgeCardRelation(Base):
     basis: Mapped[str] = mapped_column(Text, nullable=False)
     source_evidence_refs: Mapped[list] = mapped_column(JSONB, default=list, nullable=False)
     target_evidence_refs: Mapped[list] = mapped_column(JSONB, default=list, nullable=False)
+    relation_evidence_refs: Mapped[list] = mapped_column(JSONB, default=list, nullable=False)
     inference_mechanism: Mapped[str] = mapped_column(Text, nullable=False, default="")
     confidence: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
     pipeline_version: Mapped[str] = mapped_column(String(96), nullable=False)

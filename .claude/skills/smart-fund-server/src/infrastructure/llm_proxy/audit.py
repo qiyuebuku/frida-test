@@ -91,6 +91,7 @@ def build_llm_call_log(
         "request_hash": context.request_hash,
         "request_payload": _request_payload(request),
         "response_payload": _response_payload(response),
+        "reasoning_content": response.reasoning_content if response is not None else None,
         "usage": usage,
         "input_tokens": _usage_int(billed_usage, "input_tokens"),
         "output_tokens": _usage_int(billed_usage, "output_tokens"),
@@ -151,6 +152,7 @@ def _response_payload(response: LLMProxyResponse | None) -> dict[str, Any]:
         {
             "text": response.text,
             "structured_output": response.structured_output,
+            "reasoning_content": response.reasoning_content,
             "session_id": response.session_id,
             "duration_ms": response.duration_ms,
             "raw_payload": response.raw_payload,

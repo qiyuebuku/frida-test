@@ -45,6 +45,7 @@ def test_card_relation_has_verified_edge_current_state_columns() -> None:
         "basis",
         "source_evidence_refs",
         "target_evidence_refs",
+        "relation_evidence_refs",
         "inference_mechanism",
         "confidence",
         "content_version",

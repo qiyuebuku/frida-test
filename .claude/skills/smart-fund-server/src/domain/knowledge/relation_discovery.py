@@ -101,6 +101,7 @@ class VerifiedRelationDecision:
     target_evidence_refs: list[str]
     inference_mechanism: str = ""
     confidence: float = 0.0
+    relation_evidence_refs: list[dict[str, Any]] = field(default_factory=list)
 
     def as_dict(self) -> dict[str, Any]:
         if self.decision_class == "no_relation":
@@ -115,6 +116,7 @@ class VerifiedRelationDecision:
             "basis": self.basis,
             "source_evidence_refs": list(self.source_evidence_refs),
             "target_evidence_refs": list(self.target_evidence_refs),
+            "relation_evidence_refs": [dict(item) for item in self.relation_evidence_refs],
             "inference_mechanism": self.inference_mechanism,
             "confidence": self.confidence,
         }

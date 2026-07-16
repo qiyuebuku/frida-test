@@ -17,6 +17,7 @@ CREATE TABLE IF NOT EXISTS llm_call_logs (
     request_hash VARCHAR(64),
     request_payload JSONB NOT NULL DEFAULT '{}'::jsonb,
     response_payload JSONB NOT NULL DEFAULT '{}'::jsonb,
+    reasoning_content TEXT,
     usage JSONB NOT NULL DEFAULT '{}'::jsonb,
     input_tokens BIGINT NOT NULL DEFAULT 0,
     output_tokens BIGINT NOT NULL DEFAULT 0,
@@ -56,6 +57,7 @@ CREATE INDEX IF NOT EXISTS ix_llm_call_logs_source
 COMMENT ON TABLE llm_call_logs IS '公共 LLM Gateway 逻辑调用日志，用于质量、训练与成本分析';
 COMMENT ON COLUMN llm_call_logs.request_payload IS '脱敏后的完整模型请求参数';
 COMMENT ON COLUMN llm_call_logs.response_payload IS '完整模型返回、结构化输出和 Provider 诊断';
+COMMENT ON COLUMN llm_call_logs.reasoning_content IS 'Provider 返回的完整模型思考过程；逻辑调用包含多次物理请求时按阶段拼接';
 COMMENT ON COLUMN llm_call_logs.usage IS 'Provider 返回的原始标准化 Usage；本地缓存命中时保留被复用响应的 Usage';
 COMMENT ON COLUMN llm_call_logs.total_cost IS '当前调用实际费用；Provider 未返回费用时为空';
 COMMENT ON COLUMN llm_call_logs.cost_source IS 'provider_reported、local_cache 或 unavailable';

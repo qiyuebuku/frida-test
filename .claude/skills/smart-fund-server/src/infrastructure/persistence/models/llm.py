@@ -40,6 +40,7 @@ class LLMCallLog(Base):
     request_hash: Mapped[str | None] = mapped_column(String(64))
     request_payload: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
     response_payload: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
+    reasoning_content: Mapped[str | None] = mapped_column(Text)
     usage: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
     input_tokens: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
     output_tokens: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)

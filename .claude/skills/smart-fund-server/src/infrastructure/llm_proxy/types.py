@@ -61,6 +61,7 @@ class LLMProxyResponse:
     raw_payload: dict[str, Any]
     cache_hit: bool = False
     proxy: dict[str, Any] = field(default_factory=dict)
+    reasoning_content: str = ""
 
     def clone(self, *, cache_hit: bool | None = None) -> "LLMProxyResponse":
         return LLMProxyResponse(
@@ -72,6 +73,7 @@ class LLMProxyResponse:
             raw_payload=copy.deepcopy(self.raw_payload),
             cache_hit=self.cache_hit if cache_hit is None else cache_hit,
             proxy=copy.deepcopy(self.proxy),
+            reasoning_content=self.reasoning_content,
         )
 
 

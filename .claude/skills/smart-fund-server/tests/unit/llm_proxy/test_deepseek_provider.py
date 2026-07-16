@@ -163,7 +163,15 @@ def test_deepseek_usage_normalized(monkeypatch):
         return {
             "id": "chat-1",
             "model": payload["model"],
-            "choices": [{"message": {"content": '{"ok": true}'}, "finish_reason": "stop"}],
+            "choices": [
+                {
+                    "message": {
+                        "content": '{"ok": true}',
+                        "reasoning_content": "先检查 JSON 约束。",
+                    },
+                    "finish_reason": "stop",
+                }
+            ],
             "usage": {
                 "prompt_tokens": 3,
                 "completion_tokens": 4,
@@ -192,6 +200,10 @@ def test_deepseek_usage_normalized(monkeypatch):
         "reasoning_tokens": 0,
     }
     assert response.structured_output == {"ok": True}
+    assert response.reasoning_content == "先检查 JSON 约束。"
+    assert response.raw_payload["reasoning_stages"] == [
+        {"stage": "initial", "content": "先检查 JSON 约束。"}
+    ]
     assert response.proxy["provider"] == "deepseek"
 
 
@@ -421,6 +433,7 @@ def test_deepseek_retries_empty_json_mode_without_forced_json_then_repairs(monke
     assert response.raw_payload["json_mode_retry"]["content_chars"] == len("ok=true, reason=done")
     assert response.raw_payload["json_mode_retry"]["reasoning_chars"] == len("reasoned")
     assert response.raw_payload["json_repair"]["id"] == "chat-3"
+    assert response.reasoning_content == "reasoned"
 
 
 def test_deepseek_keeps_original_text_when_json_repair_fails(monkeypatch):

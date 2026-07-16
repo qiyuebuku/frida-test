@@ -12,6 +12,7 @@ CREATE TABLE IF NOT EXISTS public.kg_card_relations (
     basis text NOT NULL,
     source_evidence_refs jsonb NOT NULL DEFAULT '[]'::jsonb,
     target_evidence_refs jsonb NOT NULL DEFAULT '[]'::jsonb,
+    relation_evidence_refs jsonb NOT NULL DEFAULT '[]'::jsonb,
     inference_mechanism text NOT NULL DEFAULT '',
     confidence double precision NOT NULL DEFAULT 0,
     pipeline_version varchar(96) NOT NULL,
@@ -31,6 +32,9 @@ CREATE TABLE IF NOT EXISTS public.kg_card_relations (
     CONSTRAINT ck_kg_card_relations_confidence CHECK (confidence >= 0 AND confidence <= 1)
 );
 
+ALTER TABLE public.kg_card_relations
+    ADD COLUMN IF NOT EXISTS relation_evidence_refs jsonb NOT NULL DEFAULT '[]'::jsonb;
+
 CREATE INDEX IF NOT EXISTS ix_kg_card_relations_pair_status
     ON public.kg_card_relations(pair_key, status);
 CREATE INDEX IF NOT EXISTS ix_kg_card_relations_source_status
@@ -44,5 +48,6 @@ COMMENT ON TABLE public.kg_card_relations IS '原子 Cognitive Card 之间经过
 COMMENT ON COLUMN public.kg_card_relations.id IS '由规范化端点和稳定 relation_kind 生成的 Edge ID，同时作为 Milvus target_id';
 COMMENT ON COLUMN public.kg_card_relations.pair_key IS '与方向无关的 Card Pair identity，用于重判和失效处理';
 COMMENT ON COLUMN public.kg_card_relations.relation_kind IS '稳定关系枚举，不从自由文本 relation_type 推断';
+COMMENT ON COLUMN public.kg_card_relations.relation_evidence_refs IS '直接证明关系连接成立的原文坐标，按 chunk_id 与 refs 保存';
 COMMENT ON COLUMN public.kg_card_relations.semantic_synced_version IS '已成功同步到 Milvus 的 content_version';
 COMMENT ON COLUMN public.kg_card_relations.graph_event_published_version IS '已成功投递图变化事件的 content_version';

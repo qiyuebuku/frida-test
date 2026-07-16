@@ -77,12 +77,12 @@ class DeepSeekOpenAIProvider:
                 purpose="initial",
             )
             primary_data = data
+            reasoning_stages = self._reasoning_stages(("initial", primary_data))
 
             choice = (data.get("choices") or [{}])[0]
             message = choice.get("message") or {}
             text = message.get("content") or ""
             tool_calls = message.get("tool_calls")
-            reasoning_content = message.get("reasoning_content")
             structured_output = self._try_parse_json(text, request)
             repair_data: dict[str, Any] | None = None
             repair_error: str | None = None
@@ -103,11 +103,13 @@ class DeepSeekOpenAIProvider:
                         purpose="json_mode_retry",
                     )
                     data = json_mode_retry_data
+                    reasoning_stages.extend(
+                        self._reasoning_stages(("json_mode_retry", json_mode_retry_data))
+                    )
                     choice = (data.get("choices") or [{}])[0]
                     message = choice.get("message") or {}
                     text = message.get("content") or ""
                     tool_calls = message.get("tool_calls")
-                    reasoning_content = message.get("reasoning_content")
                     structured_output = self._try_parse_json(text, request)
                 except LLMProxyError as exc:
                     json_mode_retry_error = f"{exc.error_type}: {str(exc)[:200]}"
@@ -117,6 +119,9 @@ class DeepSeekOpenAIProvider:
                         self._json_repair_payload(request, route, text, original_messages),
                         retry_stats=retry_stats,
                         purpose="json_repair",
+                    )
+                    reasoning_stages.extend(
+                        self._reasoning_stages(("json_repair", repair_data))
                     )
                     repair_text = self._response_text(repair_data)
                     structured_output = self._try_parse_json(repair_text, request)
@@ -131,6 +136,7 @@ class DeepSeekOpenAIProvider:
         choice = (data.get("choices") or [{}])[0]
         if structured_output is not None:
             text = json.dumps(structured_output, ensure_ascii=False)
+        reasoning_content = self._render_reasoning_stages(reasoning_stages)
 
         normalized_usage = self._normalized_usage(primary_data)
         if json_mode_retry_data is not None:
@@ -167,6 +173,7 @@ class DeepSeekOpenAIProvider:
                 },
                 "tool_calls": tool_calls,
                 "reasoning_content": reasoning_content,
+                "reasoning_stages": reasoning_stages,
                 "provider": self.name,
                 "json_repair": (
                     json_repair_diagnostics
@@ -209,6 +216,30 @@ class DeepSeekOpenAIProvider:
                     json_repair_diagnostics or {}
                 ).get("usage"),
             },
+            reasoning_content=reasoning_content,
+        )
+
+    @staticmethod
+    def _reasoning_stages(*items: tuple[str, dict[str, Any] | None]) -> list[dict[str, str]]:
+        """保留一次逻辑调用内每个物理请求返回的完整思考文本。"""
+
+        stages: list[dict[str, str]] = []
+        for stage, data in items:
+            choice = ((data or {}).get("choices") or [{}])[0]
+            message = choice.get("message") or {}
+            content = str(message.get("reasoning_content") or "").strip()
+            if content:
+                stages.append({"stage": stage, "content": content})
+        return stages
+
+    @staticmethod
+    def _render_reasoning_stages(stages: list[dict[str, str]]) -> str:
+        if not stages:
+            return ""
+        if len(stages) == 1:
+            return stages[0]["content"]
+        return "\n\n".join(
+            f"[{item['stage']}]\n{item['content']}" for item in stages
         )
 
     async def _post_with_retries(

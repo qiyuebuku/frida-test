@@ -28,6 +28,7 @@ class FakeGateway:
             session_id="sess",
             duration_ms=10,
             raw_payload={},
+            reasoning_content="reasoning",
             proxy={
                 "provider": "deepseek",
                 "requested_model": request.model,
@@ -65,6 +66,7 @@ def test_chat_completion_response_is_openai_compatible(monkeypatch):
     assert response["object"] == "chat.completion"
     assert response["model"] == "deepseek-v4-flash"
     assert response["choices"][0]["message"]["content"] == "ok"
+    assert response["choices"][0]["message"]["reasoning_content"] == "reasoning"
     assert response["usage"] == {
         "prompt_tokens": 2,
         "completion_tokens": 3,

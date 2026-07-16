@@ -43,6 +43,7 @@ from src.domain.knowledge.semantic_index_materials import (  # noqa: E402
     SEMANTIC_COLLECTION_COGNITIVE_CARD_FOCUS,
 )
 from src.infrastructure.connections import get_session  # noqa: E402
+from src.infrastructure.config import settings  # noqa: E402
 from src.infrastructure.observability.langfuse_tracing import (  # noqa: E402
     langfuse_flush,
     langfuse_observation,
@@ -91,13 +92,16 @@ def parse_args() -> argparse.Namespace:
         "--concurrency",
         type=int,
         default=5,
-        help="cards 模式的最大并发 Chunk 数，范围 1-20",
+        help="cards 模式请求的最大并发 Chunk 数；实际值不超过当前模型供应商并发上限",
     )
     parser.add_argument(
         "--chunk-timeout",
         type=float,
-        default=120.0,
-        help="cards 模式单个 Chunk 的超时秒数，超时只隔离当前 Chunk",
+        default=200.0,
+        help=(
+            "cards 模式单个 Chunk 的外层等待秒数，默认 200 秒，"
+            "应大于 LLM Provider 默认的 180 秒超时；超时只隔离当前 Chunk"
+        ),
     )
     parser.add_argument(
         "--include-evaluation-details",
@@ -199,16 +203,18 @@ async def run_card_validation(
     if not rows:
         raise RuntimeError("没有找到符合条件的 ft_news 数据")
     chunks, owners = _build_validation_chunks(rows, run_id=session_id)
-    concurrency = max(1, min(20, int(args.concurrency)))
+    requested_concurrency = max(1, min(20, int(args.concurrency)))
+    concurrency = min(requested_concurrency, max(1, settings.DEEPSEEK_MAX_CONCURRENCY))
     chunk_timeout = max(1.0, float(args.chunk_timeout))
     semaphore = asyncio.Semaphore(concurrency)
-    extractor = AtomicCognitiveCardExtractor(concurrency=1)
+    extractor = AtomicCognitiveCardExtractor(concurrency=concurrency)
 
     async def process(chunk: EvidenceChunk) -> dict[str, Any]:
         owner = owners[chunk.chunk_id]
-        started = time.monotonic()
+        queued_at = time.monotonic()
         try:
             async with semaphore:
+                started = time.monotonic()
                 result = (
                     await asyncio.wait_for(
                         extractor.extract_with_diagnostics([chunk]),
@@ -218,9 +224,15 @@ async def run_card_validation(
             return {
                 **owner,
                 "status": "completed",
-                "duration_seconds": round(time.monotonic() - started, 3),
+                "queue_seconds": round(started - queued_at, 3),
+                "execution_seconds": round(time.monotonic() - started, 3),
+                "duration_seconds": round(time.monotonic() - queued_at, 3),
                 "span_count": len(result.spans),
                 "repaired": result.repaired,
+                "repair_attempted": result.repair_attempted,
+                "discarded_card_count": result.discarded_card_count,
+                "discarded_relation_count": result.discarded_relation_count,
+                "validation_issues": list(result.validation_issues),
                 "skip_reason": result.skip_reason,
                 "cards": [
                     {
@@ -235,7 +247,7 @@ async def run_card_validation(
             return {
                 **owner,
                 "status": "timeout",
-                "duration_seconds": round(time.monotonic() - started, 3),
+                "duration_seconds": round(time.monotonic() - queued_at, 3),
                 "error": f"chunk timeout after {chunk_timeout:g}s",
                 "cards": [],
                 "relations": [],
@@ -249,7 +261,7 @@ async def run_card_validation(
             return {
                 **owner,
                 "status": "failed",
-                "duration_seconds": round(time.monotonic() - started, 3),
+                "duration_seconds": round(time.monotonic() - queued_at, 3),
                 "error": f"{type(exc).__name__}: {exc}",
                 "cards": [],
                 "relations": [],
@@ -276,7 +288,8 @@ async def run_card_validation(
         "mode": "cards",
         "target": args.target,
         "session_id": session_id,
-        "concurrency": concurrency,
+        "requested_concurrency": requested_concurrency,
+        "effective_concurrency": concurrency,
         "chunk_timeout_seconds": chunk_timeout,
         "news_count": len(rows),
         "news_ids": [int(row.id) for row in rows],
@@ -288,6 +301,15 @@ async def run_card_validation(
         "card_count": sum(len(item["cards"]) for item in chunk_results),
         "relation_count": sum(len(item["relations"]) for item in chunk_results),
         "repair_count": sum(bool(item.get("repaired")) for item in chunk_results),
+        "repair_attempt_count": sum(
+            bool(item.get("repair_attempted")) for item in chunk_results
+        ),
+        "discarded_card_count": sum(
+            int(item.get("discarded_card_count") or 0) for item in chunk_results
+        ),
+        "discarded_relation_count": sum(
+            int(item.get("discarded_relation_count") or 0) for item in chunk_results
+        ),
         "results": chunk_results,
     }
 
@@ -555,7 +577,11 @@ def _card_result_summary(result: dict[str, Any]) -> dict[str, Any]:
             "card_count",
             "relation_count",
             "repair_count",
-            "concurrency",
+            "repair_attempt_count",
+            "discarded_card_count",
+            "discarded_relation_count",
+            "requested_concurrency",
+            "effective_concurrency",
             "chunk_timeout_seconds",
         )
     }

@@ -7,6 +7,7 @@ from src.infrastructure.llm_proxy.service import (
     LLMGatewayService,
     _json_schema_validation_issues,
     _llm_trace_input,
+    _llm_trace_output,
 )
 from src.infrastructure.llm_proxy.types import LLMProxyRequest, LLMProxyResponse
 
@@ -28,6 +29,7 @@ class EchoProvider:
             duration_ms=1,
             raw_payload={},
             proxy={"provider": self.name},
+            reasoning_content=f"reasoning:{self.name}",
         )
 
     def health(self):
@@ -122,6 +124,22 @@ def test_gateway_audits_success_and_memory_cache_hit():
     assert audit.rows[0]["task"] == "audit_case"
     assert audit.rows[1]["cache_store"] == "memory"
     assert audit.rows[1]["total_tokens"] == 0
+
+
+def test_langfuse_output_exposes_reasoning_content() -> None:
+    response = LLMProxyResponse(
+        text="result",
+        structured_output={"ok": True},
+        usage={"reasoning_tokens": 4},
+        session_id=None,
+        duration_ms=10,
+        raw_payload={},
+        reasoning_content="逐项检查关系端点。",
+    )
+
+    output = _llm_trace_output(response)
+
+    assert output["reasoning_content"] == "逐项检查关系端点。"
 
 
 def test_gateway_audits_failed_provider_call():
@@ -264,6 +282,7 @@ def test_gateway_uses_persistent_file_cache(tmp_path):
     assert first.cache_hit is False
     assert second.cache_hit is True
     assert second.text == "deepseek:deepseek-v4-flash"
+    assert second.reasoning_content == "reasoning:deepseek"
     assert second.proxy["cache_store"] == "file"
     assert len(deepseek.calls) == 1
     assert len(restarted_deepseek.calls) == 0

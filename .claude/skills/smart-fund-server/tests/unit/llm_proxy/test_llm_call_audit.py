@@ -27,6 +27,7 @@ def _response(*, cache_hit: bool = False) -> LLMProxyResponse:
         raw_payload={"id": "upstream-1"},
         cache_hit=cache_hit,
         proxy={"provider": "deepseek", "upstream_model": "deepseek-chat"},
+        reasoning_content="先核对证据，再生成结构化结果。",
     )
 
 
@@ -53,6 +54,8 @@ def test_build_llm_call_log_preserves_payload_usage_and_provider_cost() -> None:
     assert row["request_payload"]["prompt"] == "分析输入"
     assert row["request_payload"]["provider_options"]["authorization"] == "[REDACTED]"
     assert row["response_payload"]["structured_output"] == {"result": "ok"}
+    assert row["response_payload"]["reasoning_content"] == "先核对证据，再生成结构化结果。"
+    assert row["reasoning_content"] == "先核对证据，再生成结构化结果。"
     assert row["input_tokens"] == 100
     assert row["reasoning_tokens"] == 5
     assert row["total_cost"] == Decimal("0.003")

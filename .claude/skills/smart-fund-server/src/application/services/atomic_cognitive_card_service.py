@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-import json
 import logging
 import time
 from dataclasses import dataclass
@@ -24,6 +23,7 @@ from src.domain.knowledge.atomic_cognitive_card import (
     atomic_card_summary_document,
     atomic_card_from_llm_item,
     intra_chunk_relation_from_llm_item,
+    render_atomic_card_prompt_input,
 )
 from src.domain.knowledge.repositories.knowledge_repository import KnowledgeRepository
 from src.domain.knowledge.relation_discovery import VerifiedRelationDecision
@@ -94,42 +94,23 @@ ATOMIC_CARD_SCHEMA: dict[str, Any] = {
                         "type": "string",
                         "pattern": "^c([1-9]|1[0-2])$",
                     },
-                    "decision_class": {
-                        "type": "string",
-                        "enum": ["observed"],
-                    },
                     "relation_kind": {
                         "type": "string",
                         "enum": sorted(INTRA_CHUNK_RELATION_KINDS),
                     },
-                    "relation_type": {"type": "string", "minLength": 1, "maxLength": 120},
-                    "direction": {"type": "string", "minLength": 1, "maxLength": 160},
                     "basis": {"type": "string", "minLength": 1, "maxLength": 1000},
-                    "source_evidence_refs": {
+                    "relation_evidence_refs": {
                         "type": "array",
                         "minItems": 1,
                         "items": {"type": "string"},
                     },
-                    "target_evidence_refs": {
-                        "type": "array",
-                        "minItems": 1,
-                        "items": {"type": "string"},
-                    },
-                    "inference_mechanism": {"type": "string", "maxLength": 1000},
-                    "confidence": {"type": "number", "minimum": 0, "maximum": 1},
                 },
                 "required": [
                     "source_card_id",
                     "target_card_id",
-                    "decision_class",
                     "relation_kind",
-                    "relation_type",
-                    "direction",
                     "basis",
-                    "source_evidence_refs",
-                    "target_evidence_refs",
-                    "inference_mechanism",
-                    "confidence",
+                    "relation_evidence_refs",
                 ],
                 "additionalProperties": False,
             },
@@ -143,74 +124,41 @@ ATOMIC_CARD_SCHEMA: dict[str, Any] = {
 
 ATOMIC_CARD_SYSTEM_PROMPT = """你是知识图谱的原子 Cognitive Card 抽取器。
 
-你的输入包含 sentence_blocks。每个 block 是原文中的一个完整标题或句子，内部 parts 按原文顺序连续拼接后构成该 block 的完整文本；part 的 Ref 只是精确证据坐标，不代表独立事件或独立语义。全部 block 共同构成当前 chunk 的完整正文，是唯一的正文来源。你必须先按完整 block 连续理解上下文，再在一次输出中完成事件边界判断、原子 Card 拆分、Summary、焦点证据，以及最终 Card 之间由当前原文直接支持的关系。
+输入首行是新闻发布时间；其后每行是一条完整原文语句，`<title>` 表示标题，`[sNNNN]` 是紧随文本的证据坐标。同一行连续 Ref 的文本按顺序拼接阅读。先识别原文明示的关系及其两侧事实端点，再确定去重后的最终 Cards，最后输出这些 Card 之间的关系；只输出 JSON Schema 要求的字段。
 
-在输出 JSON 前，先在内部完成候选事实枚举、重复事实合并、最终 Card 集合确定和关系检查；不要输出草稿、分析过程或被放弃的 Card。JSON 必须先完整输出 cards，再输出 relations。
+Card：
+- 每张 Card 表达一个可独立参与后续关系判断的事件或事实端点，粒度应“最小但完整”。按核心谓词拆分，不按句子、数字、公司或 Ref 数量机械拆分。
+- 原文明示两个可独立验证的事实端点及其关系时，必须分别形成 Card，连接语义放入 relations；不能把“两端事实 + 连接关系”整体写进一张 Card 后省略关系。如果判断“后者是前者的后果、进展或确认”，这正是拆成两端并建立关系的理由，不是合并理由。
+- 同一主体、对象、时间和核心谓词下的方向、幅度、数值、比例、范围、条件与结果状态属于同一事实，应合并；不同主体或不同核心谓词分别形成 Card。
+- 同一次观测、统计或披露快照中用于共同描述一个现象的总体值、地区明细、指标值、极值与分项数据，应合并为一个 Card；只有某项本身构成独立动作或关系端点时才拆分。
+- 同一来源先给出定性结论、紧接着用数值或分项解释该结论时，应生成一张保留结论和关键明细的完整 Card；不要同时保留一张定性总述 Card 和多张仅用于解释它的明细 Card。只有明细本身参与另一条原文明示关系时才独立拆出。
+- 总述如果没有增加独立事实，且已被具体 Card 完整表达，就不要重复保留；近义改写、重复表达和局部细节必须合并。不能为了充当 Relation 的集合端点，额外创建一张只汇总其他 Cards 的总述 Card。
+- 输出前进行信息包含检查：如果一张 Card 的全部事实只是其他 Card 的改写、并集或概括，二者不能同时保留。
+- 同一句或同一段中的并列事实，如果主体、谓词、对象或可验证结论不同，仍是独立端点；方向相同、服务同一策略或属于同一主题不能作为合并理由。
+- 每个 Summary 必须脱离上下文仍能读懂，明确写出主体和事实，不能输出只能依赖上一张 Card 才成立的残句。
+- Summary 只写原文明确表达的完整事实。必须保留消息来源、声明者、预测者、认定者以及“可能、预计、据称”等归因和不确定性，不得把主张改写成客观事实。
+- 当前 chunk 没有可独立验证的事实时允许 cards=[]，并填写 skip_reason。Card 按最终顺序使用连续且唯一的 c1、c2、c3。
 
-原子 Card 规则：
-- 一个 Card 只能表达一个可以独立理解、信息闭合并可供后续关系发现使用的事件或状态单元。原子化目标是“最小但完整”，不是把正文切成最小语法命题或最小字段。
-- 在生成 Card 前，先在内部识别原文包含的事件、状态和事实主张，再按核心谓词确定 Card 边界；不要输出分析过程。
-- 每张 Card 只保留一个核心谓词，以及识别该事实不可缺少的主体、对象、时间、数值、条件和限定语。
-- 核心谓词表示事件身份、动作或状态变化，不等于句子中的语法动词。用于报告当前水平、数值、比例、幅度、排名、范围或结果状态的表达，如果附着于同一事件身份或同一观测快照，只是核心事实的属性，不形成新的 Card。
-- “可以分别判断真假”不是拆分的充分条件。若多个陈述共享同一主体、同一核心对象、同一目标时间和同一核心谓词，并共同描述该事件或状态的方向、幅度、绝对水平、比例、数量、范围或必要限定，它们属于同一 Card 的互补属性，应合并为一个完整事实。
-- 只有原文包含两个不同的核心谓词，形成能够分别参与后续关系判断的独立动作、状态变化或事实端点时，才拆成不同 Card。原文明确写出的前后、因果、印证、冲突、共同驱动或约束应通过 relations 连接这些独立端点。
-- 同一主体、同一来源、同一句话、相邻出现、同时发生或围绕同一宽泛事件，都不能单独作为合并事实的理由。
-- 用于补全当前核心谓词的指代、对象、数值、条件、结果状态或必要限定，应保留在同一 Card；不要把一个完整观测拆成“变化事实”和“观测值事实”。
-- 核心动作与定义该动作的期限、范围、幅度、最终值、相对基准或调整结果属于同一事实闭包。原文以“原方案/原估计/原要求”对比最终结果时，应合并成一张变化 Card，不能把基准、调整动作和最终结果拆成多张 Card。
-- 不要按句子数、公司数、数字数或字段数机械拆分；拆分依据是是否存在多个语义上独立的核心谓词，而不是信息能否单独摘出来陈述。
-- 当前 chunk 没有可独立验证的事件或事实时允许 cards=[]，并说明 skip_reason；不得强行制造 Card。
-- Summary 必须忠实概括当前 Card，不写主题标签，不添加原文没有的主体、数字、时间、原因、结果或预测。
-- 每张最终 Card 按输出顺序使用 c1、c2、c3 这样的 local_card_id；编号必须连续且唯一，只用于本次 relations 引用。
-- 如果两个候选 Card 只是同一原子事实的总述、局部举例、数字细节、改写或重复表达，应在输出前合并；不得保留两个 Card 后再用 same_event 掩盖重复拆分。
-- 在确定最终 Card 集合后，逐对执行合并检查：如果两张候选 Card 的主体、核心对象和目标时间相同，拆开后只能解释为同一观测的不同指标、不同数值字段、方向与水平、总述与细节，或者只能建立“同一事件/属性属于该事件”的连接，就必须合并。只有它们代表不同事实端点，或彼此确实无关，才允许同时保留。
+Card 证据：
+- focus_evidence_refs 是能够独立验证 Summary 的最小完整证据闭包；主体、动作、对象、时间、数值、因果和限定语都必须直接出现。Ref 不是事件边界，事实跨多个 Ref 时联合引用。
+- 标题属于原文；标题提供正文未重复的主体、因果、结果或范围时，必须纳入对应 Card 或 Relation 证据。
+- published_at 只用于理解相对时间，不能补造正文没有的年份或事实，也不是事实证据。
 
-证据规则：
-- focus_evidence_refs 只能引用输入中存在的 Span Ref，至少一个；应选择能够独立验证当前 Card 的最小证据闭合集合。证据闭合优先于引用数量少。
-- part 是细粒度引用坐标，不是要求你按 part 拆分 Card。同一完整事实跨越一个 block 内多个相邻 parts 时，必须联合引用这些 Ref；不要因为 part 边界而制造残缺 Card。
-- role=title 的 block 只提供标题上下文。正文 parts 已经直接支撑某项事实时，不要重复引用标题；只有事实确实只出现在标题中时，标题 Ref 才能作为事实证据。
-- Summary 中的主体、动作、对象、时间、原因和结果，都必须能从 focus_evidence_refs 指向的 Span 中直接得到；缺少支撑时，必须补充相应 Span Ref 或删除未被支撑的表述。
-- source_published_at 只用于解释相对时间，不是事实证据；不得从 Chunk 标识或其他元数据补充正文 Span 没有的事实。
-- 多个 Card 可以引用同一个 Span，但仅限该 Span 对每个 Card 都是不可缺少的直接证据；不要为了制造互斥边界而强行拆开证据，也不要仅因共享背景或主题而重复引用。
-- 生成每个 Card 时，先确定 Summary，再分别定位支撑其中每一项信息的 Span Ref，最后将这些 Ref 的并集作为 focus_evidence_refs。
-- 同一事实由连续上下文共同表达时，不要跳过承载主体、动作对象、指标名称或指代衔接的中间 Span；“最小”不等于只选择包含数字或关键词的 Span。
-- 输出前仅阅读每个 Card 的 focus_evidence_refs，逐项核对 Summary；如果不能确认某条信息为何属于当前 Card，先补充引用或删除相应内容，再输出结果。不要输出核对过程。
+同 Chunk Relation：
+- 先逐句找出原文明示的连接及准确事实端点，再根据最终 Cards 建立关系。只输出正关系；同篇出现、相邻、同主体、同领域、时间先后或常识上可能相关都不构成关系。
+- 只输出原文直接写明的 confirmation、contradiction、temporal_progression、causal_influence、common_driver、constraint；需要补充中间机制或外部常识的关系省略。
+- temporal_progression 必须有原文明示的前后、后续、更新、演进或同一事实状态变化，并且两端主体、指标、统计口径和时间具有可比性。年度、季度、月度等不同观察窗口，除非原文直接比较并明确认定变化，否则不能由模型自行比较比例、幅度或数值后生成关系。
+- “进一步、继续、再度”等词只说明当前语句存在延续含义，不能据此任意选择前文 Card 作为基线；原文必须在连接语句中明确指向该 Card 所表达的具体前态，否则不输出 temporal_progression。
+- confirmation 必须是针对同一事实命题的独立支持；不同指标、不同统计口径、背景数据或仅方向相近的材料不能互相确认。
+- contradiction 必须针对同一主体、对象、谓词、时间和范围下互不相容的结论；不同机构谈论不同命题不是冲突。
+- causal_influence 只有原文明示因果、影响或贡献时才成立，且原因发生时间不能晚于已发生的结果；不能把先后顺序、背景事实、共同出现或可能动机自行连接成因果。
+- relation_evidence_refs 独立于两端 Card 的 focus_evidence_refs，引用直接证明连接的最小原文集合；标题、承接句或连接词所在 Ref 可以成为关系证据。
+- 关系连接语句中的 source 与 target 必须分别和两端 Card 表达同一个具体事实，主体、谓词、对象、时间和范围不能被更宽或更窄的概念替换。连接语句只提到未展开的宽泛集合时，不得任选集合中的局部指标或个体作为关系端点。
+- 原文用“这些措施、这种策略”等集合指代多个事实时，只有连接语句能够逐项对应的成员才分别建立关系；无法逐项对应时省略关系，不能把集合关系摊派给局部 Card。
+- 连接语句指向整体事件时，应先形成准确表示它的 Card；无法形成时省略关系，不能用局部观测代替。
+- basis 用自然语言准确复述原文写明的连接，不出现 Card ID、Ref 标签或模型推测。每对 Card 最多一条关系。
 
-同 Chunk Relation 规则：
-- 关系质量以精度优先，漏掉一条弱关系好于制造一条伪关系。relations 不需要覆盖所有 Card，存在任何不确定性时直接省略该关系。
-- relations 只能引用本次 cards 中已经完整输出的 local_card_id，且两端必须是不同 Card；只输出有正关系的 Card 对，没有关系的组合不要输出。
-- 每一对 Card 最多输出一条能够完整表达其核心连接的关系。不要因为同篇出现、位置相邻、共享标题、共享主体、共享背景或属于同一宽泛事件就创建关系。
-- relations 必须在全部 cards 之后生成，以最终 Card 集合为准进行整体比较，不按 Card 输出顺序制造单向偏差。
-- 本阶段只输出 observed：当前原文必须直接写明双方是明确前后关系、直接因果、印证、冲突、共同具体驱动或共同具体约束。需要模型补充连接机制的 inferred 关系一律省略，不得为了满足 Schema 把它改标为 observed。
-- relation_kind 只能是 confirmation、contradiction、temporal_progression、causal_influence、common_driver、constraint。同一原子事实不建立 same_event，而应在 Card 阶段合并。
-- relation_type、direction 和 basis 必须描述当前两个原子事实之间的具体连接，不能只说“相关”“同属某主题”或“在同一报道中出现”。
-- basis 只陈述 source_evidence_refs 和 target_evidence_refs 直接写明的端点事实及连接依据，不得把原文未写明的诉讼触发、决策动机、传导环节或其他中间事件补进 basis。需要组合端点才能成立的最短推理只能写入 inference_mechanism。
-- basis 应使用可读事实语义，不在正文中列举 s0001 等 Ref 标签；证据标签只放在 source_evidence_refs 和 target_evidence_refs。
-- causal_influence 的措辞强度必须服从证据。只有原文明示因果连接时，才能使用“直接导致、触发、引发、促使、影响、支撑、直接原因、重要理由”等确定性措辞；可解释的事实前提、同一主体或时间先后不能写成已经证实的原因、动机或决策依据。
-- causal_influence 表示原文明示的影响或因果贡献，不要求 source 单独构成充分原因。原文明示一组动作、条件或策略共同影响结果，且这些组成部分已经拆成多个独立 Card 时，可以分别建立指向结果的贡献关系；relation_type、direction 和 basis 必须明确它只是组合机制的一部分，不能夸大为单独充分原因，也不能仅因存在其他共同因素就把所有直接贡献关系省略。
-- 关系检查必须解析“这种、上述、该、这些、该等”等回指表达。若结果句用集合性指代明确回指前文一组动作、条件、措施或变化，并直接说明该集合影响某个结果，则每个确实落在回指范围内的独立 Card 到该结果的组合贡献都属于 observed；必须分别输出贡献关系，并说明它是被回指集合的组成部分。不能以“单项不是充分原因”为由删除这些原文明示的贡献 Edge，也不能把没有落在回指范围内的背景 Card 强行加入。
-- observed 关系必须能在 source_evidence_refs 与 target_evidence_refs 指向的原文中定位到直接连接双方的表述；端点事实分别存在但连接语义只出现在模型改写中时，不属于 observed。
-- “A 发生在前、B 发生在后”“B 针对与 A 相同的主体”或“从常识看 A 可以解释 B”都不足以建立 causal_influence。原文没有直接连接双方时不输出关系。
-- 同一公告、裁决、报告或叙述中同时出现两个事实，不代表其中一个是另一个的原因；原文没有给出连接时，应输出无关系，而不是用“隐含因果、合理前提、可能影响”等措辞补足。
-- 如果关系成立必须依赖原文没有形成 Card、也没有被双方最小充分证据直接支持的第三个事件或中间环节，则不要创建该关系。
-- local_card_id 只用于关系端点引用；relation_type、direction、basis 和 inference_mechanism 必须使用事实语义表述，不能把 c1、c2 或“source/target Card”写入永久关系说明。
-- 输出前逐字段检查 relation_type、direction、basis 和 inference_mechanism，将 Card 编号、Card 序号、source/target 端点标签全部改写为对应的事实语义；永久关系文字中不得残留临时引用名称。
-- source_evidence_refs 和 target_evidence_refs 必须分别属于对应 Card 的 focus_evidence_refs，并且只引用证明关系成立的最小充分集合；公共标题和共享背景不能作为主要关系证据。
-- inference_mechanism 必须输出空字符串。confidence 只表示原文对关系的支持强度。
-- 如果某个总述与局部细节之间只能成立“举例、包含、细化”关系，说明两者没有形成独立原子事件，应优先合并 Card，不要创建近义 Edge。
-
-输出前最终核对：
-- Card：每张 Card 只有一个核心谓词；围绕同一谓词的方向、幅度、绝对水平和限定信息必须保留为完整事实，不能拆成多张残缺 Card。
-- Card 边界：只有不同核心谓词形成独立事实端点时才拆分，并检查这些端点之间是否需要输出 relation。
-- Card 集合：任意两个 Card 都不是同一原子事实的总述与细节、复述或近义改写；如果是，先合并再输出最终 cards。
-- 合并闸门：若两张 Card 共享同一事件身份或观测快照，且差异只来自指标字段或数值表达，必须重新合并并联合引用相应证据；不能以 relations=[] 结束这种拆分。
-- 证据：每项 Summary 都能由 focus_evidence_refs 独立验证。
-- 证据覆盖：逐项定位 Summary 中每个主体、动作、对象、方向、数值、原因、结果和限定语实际出现在哪个 part；凡 Summary 使用了某个 part 才包含的信息，该 part 的 Ref 必须进入 focus_evidence_refs。禁止概括完整 block 的多个 parts，却只引用其中开头或结论 part。
-- Relation：仅在两个不同原子事实之间存在当前原文可证明的具体连接时输出；端点、方向、证据引用和推理机制彼此一致。
-- Relation 措辞：basis 不包含未被引用证据写明的中间事实或 Ref 标签；不把时间先后、同一主体或可能的事实前提夸大成直接原因。
-- 输出清洁：relation_type、direction、basis 和 inference_mechanism 中不得出现任何临时 Card 编号、Card 序号、source/target 标签或 Span Ref；这些标识只能出现在专用 ID 和 evidence_refs 字段中。
-- Relation 精度：逐条尝试从引用 Span 中找到连接表述，并检查推理是否只使用两端 Summary；任一检查失败就删除该关系，不为提高关系数量保留弱连接。
-
-不要输出主题目录、Community、Assignment、未来预测、风险标签或其他旧 Card 字段。只输出符合 JSON Schema 的 cards、relations 和 skip_reason，不要输出 Markdown、解释文字或自检过程。"""
+输出前核对：每张 Card 均完整且不重复；每项 Summary 都可由自身证据验证；每条 Relation 的连接语义都能由 relation_evidence_refs 直接定位，不依赖模型计算或常识。不要输出分析过程、主题标签、Community、预测或 Markdown。"""
 
 
 @dataclass(frozen=True)
@@ -218,6 +166,16 @@ class AtomicCardStageResult:
     status: str
     cards: list[AtomicCognitiveCard]
     diagnostics: dict[str, Any]
+
+
+@dataclass(frozen=True)
+class _ValidatedAtomicCardResponse:
+    cards: list[AtomicCognitiveCard]
+    relations: list[VerifiedRelationDecision]
+    skip_reason: str
+    discarded_card_count: int = 0
+    discarded_relation_count: int = 0
+    issues: tuple[str, ...] = ()
 
 
 class AtomicCognitiveCardExtractor:
@@ -234,6 +192,7 @@ class AtomicCognitiveCardExtractor:
         self._llm = llm or get_llm_gateway_service()
         self._model = model or resolve_kg_llm_model("kg_cognitive_card")
         self._concurrency = max(1, concurrency)
+        self._semaphore = asyncio.Semaphore(self._concurrency)
         self._segmenter = segmenter or StableSpanSegmenter()
         self._redis: Any | None = None
 
@@ -245,10 +204,8 @@ class AtomicCognitiveCardExtractor:
         self,
         chunks: list[EvidenceChunk],
     ) -> list[AtomicCardExtractionResult]:
-        semaphore = asyncio.Semaphore(self._concurrency)
-
         async def run(chunk: EvidenceChunk) -> AtomicCardExtractionResult:
-            async with semaphore:
+            async with self._semaphore:
                 return await self._extract_one(chunk)
 
         tasks = [asyncio.create_task(run(chunk)) for chunk in chunks]
@@ -286,15 +243,15 @@ class AtomicCognitiveCardExtractor:
             )
 
         payload = dict(chunk.payload or {})
-        prompt_payload = {
-            "source_published_at": payload.get("published_at") or "",
-            "chunk_id": chunk.chunk_id,
-            "sentence_blocks": [block.llm_payload() for block in sentence_blocks],
-        }
+        prompt_input = render_atomic_card_prompt_input(
+            source_published_at=payload.get("published_at") or "",
+            source_title=payload.get("title") or "",
+            sentence_blocks=sentence_blocks,
+        )
         request = LLMProxyRequest(
             model=self._model,
             system_prompt=ATOMIC_CARD_SYSTEM_PROMPT,
-            prompt=json.dumps(prompt_payload, ensure_ascii=False, separators=(",", ":")),
+            prompt=prompt_input,
             temperature=0,
             max_tokens=ATOMIC_CARD_MAX_TOKENS,
             json_schema=ATOMIC_CARD_SCHEMA,
@@ -329,7 +286,7 @@ class AtomicCognitiveCardExtractor:
             try:
                 response = await self._llm.generate(request)
                 await self._mark_prefix_warmed(settle=warmup_lock is not None)
-                cards, relations, repaired, skip_reason = await self._cards_from_response(
+                validated, repaired, repair_attempted = await self._cards_from_response(
                     chunk=chunk,
                     spans=spans,
                     request=request,
@@ -338,16 +295,20 @@ class AtomicCognitiveCardExtractor:
                 langfuse_update_span(
                     output={
                         "chunk_id": chunk.chunk_id,
-                        "card_count": len(cards),
-                        "card_ids": [card.cognitive_card_id for card in cards],
-                        "summary_chars": [len(card.summary) for card in cards],
-                        "focus_ref_counts": [len(card.focus_evidence_refs) for card in cards],
-                        "intra_chunk_relation_count": len(relations),
+                        "card_count": len(validated.cards),
+                        "card_ids": [card.cognitive_card_id for card in validated.cards],
+                        "summary_chars": [len(card.summary) for card in validated.cards],
+                        "focus_ref_counts": [len(card.focus_evidence_refs) for card in validated.cards],
+                        "intra_chunk_relation_count": len(validated.relations),
                         "intra_chunk_relation_kinds": [
-                            relation.relation_kind for relation in relations
+                            relation.relation_kind for relation in validated.relations
                         ],
                         "repaired": repaired,
-                        "skip_reason": skip_reason,
+                        "repair_attempted": repair_attempted,
+                        "discarded_card_count": validated.discarded_card_count,
+                        "discarded_relation_count": validated.discarded_relation_count,
+                        "validation_issues": list(validated.issues),
+                        "skip_reason": validated.skip_reason,
                         "prefix_warmup_owner": warmup_lock is not None,
                     },
                     status_message="completed",
@@ -355,10 +316,14 @@ class AtomicCognitiveCardExtractor:
                 return AtomicCardExtractionResult(
                     chunk_id=chunk.chunk_id,
                     spans=spans,
-                    cards=cards,
-                    relations=relations,
+                    cards=validated.cards,
+                    relations=validated.relations,
                     repaired=repaired,
-                    skip_reason=skip_reason,
+                    repair_attempted=repair_attempted,
+                    discarded_card_count=validated.discarded_card_count,
+                    discarded_relation_count=validated.discarded_relation_count,
+                    validation_issues=list(validated.issues),
+                    skip_reason=validated.skip_reason,
                 )
             finally:
                 if warmup_lock is not None:
@@ -371,7 +336,7 @@ class AtomicCognitiveCardExtractor:
         spans: list[Any],
         request: LLMProxyRequest,
         response: Any,
-    ) -> tuple[list[AtomicCognitiveCard], list[VerifiedRelationDecision], bool, str]:
+    ) -> tuple[_ValidatedAtomicCardResponse, bool, bool]:
         issues: list[str] = []
         with langfuse_observation(
             name="kg.atomic_card.validate",
@@ -379,7 +344,7 @@ class AtomicCognitiveCardExtractor:
             input={"chunk_id": chunk.chunk_id},
         ):
             try:
-                cards, relations, skip_reason = self._validate_response(
+                validated = self._validate_response(
                     chunk,
                     spans,
                     response.structured_output,
@@ -387,12 +352,15 @@ class AtomicCognitiveCardExtractor:
                 langfuse_update_span(
                     output={
                         "valid": True,
-                        "card_count": len(cards),
-                        "relation_count": len(relations),
+                        "card_count": len(validated.cards),
+                        "relation_count": len(validated.relations),
+                        "discarded_card_count": validated.discarded_card_count,
+                        "discarded_relation_count": validated.discarded_relation_count,
+                        "issues": list(validated.issues),
                     },
                     status_message="completed",
                 )
-                return cards, relations, False, skip_reason
+                return validated, False, False
             except Exception as exc:
                 issues.append(str(exc))
                 langfuse_update_span(
@@ -421,12 +389,12 @@ class AtomicCognitiveCardExtractor:
                 retry_reason="atomic_cognitive_card_validation_invalid",
             )
         try:
-            cards, relations, skip_reason = self._validate_response(
+            validated = self._validate_response(
                 chunk,
                 spans,
                 repaired.structured_output,
             )
-            return cards, relations, True, skip_reason
+            return validated, True, True
         except Exception as exc:
             raise RuntimeError(
                 f"原子 Cognitive Card 修复后仍未通过校验: chunk_id={chunk.chunk_id}; "
@@ -438,7 +406,7 @@ class AtomicCognitiveCardExtractor:
         chunk: EvidenceChunk,
         spans: list[Any],
         data: Any,
-    ) -> tuple[list[AtomicCognitiveCard], list[VerifiedRelationDecision], str]:
+    ) -> _ValidatedAtomicCardResponse:
         if not isinstance(data, dict):
             raise ValueError(f"顶层输出必须是 JSON object，实际为 {type(data).__name__}")
         expected_top_level = {"cards", "relations", "skip_reason"}
@@ -451,60 +419,91 @@ class AtomicCognitiveCardExtractor:
         raw_cards = data.get("cards")
         if not isinstance(raw_cards, list):
             raise ValueError("cards 必须是数组")
-        if len(raw_cards) > 12:
-            raise ValueError("cards 不能超过 12 项")
+        issues: list[str] = []
+        discarded_card_count = max(0, len(raw_cards) - 12)
+        if discarded_card_count:
+            issues.append(f"cards 超过 12 项，已丢弃尾部 {discarded_card_count} 项")
         skip_reason = str(data.get("skip_reason") or "").strip()
         if not raw_cards and not skip_reason:
             raise ValueError("cards 为空时必须提供 skip_reason")
         cards: list[AtomicCognitiveCard] = []
         cards_by_local_id: dict[str, AtomicCognitiveCard] = {}
-        for index, item in enumerate(raw_cards, start=1):
-            if not isinstance(item, dict):
-                raise ValueError("cards 中存在非对象元素")
-            local_card_id = str(item.get("local_card_id") or "").strip()
-            expected_local_id = f"c{index}"
-            if local_card_id != expected_local_id:
-                raise ValueError(
-                    f"local_card_id 必须按 cards 顺序连续编号: "
-                    f"expected={expected_local_id}, actual={local_card_id}"
-                )
-            raw_card = {key: value for key, value in item.items() if key != "local_card_id"}
-            card = atomic_card_from_llm_item(chunk, raw_card, spans=spans)
+        card_ids: set[str] = set()
+        for index, item in enumerate(raw_cards[:12], start=1):
+            try:
+                if not isinstance(item, dict):
+                    raise ValueError("元素不是对象")
+                local_card_id = str(item.get("local_card_id") or "").strip()
+                expected_local_id = f"c{index}"
+                if local_card_id != expected_local_id:
+                    raise ValueError(
+                        f"local_card_id 应为 {expected_local_id}，实际为 {local_card_id}"
+                    )
+                raw_card = {key: value for key, value in item.items() if key != "local_card_id"}
+                card = atomic_card_from_llm_item(chunk, raw_card, spans=spans)
+                if card.cognitive_card_id in card_ids:
+                    raise ValueError("与前序 Card 身份重复")
+            except Exception as exc:
+                discarded_card_count += 1
+                issues.append(f"card[{index}] 已丢弃: {exc}")
+                continue
             cards.append(card)
+            card_ids.add(card.cognitive_card_id)
             cards_by_local_id[local_card_id] = card
-        ids = [card.cognitive_card_id for card in cards]
-        if len(ids) != len(set(ids)):
-            raise ValueError("同一 Chunk 输出了身份相同的重复原子 Card")
+        if raw_cards and not cards:
+            raise ValueError("所有 Card 均未通过基础契约校验")
 
         raw_relations = data.get("relations")
         if not isinstance(raw_relations, list):
-            raise ValueError("relations 必须是数组")
+            issues.append("relations 不是数组，已丢弃全部关系")
+            raw_relations = []
+            discarded_relation_count = 1
+        else:
+            discarded_relation_count = max(0, len(raw_relations) - 66)
+            if discarded_relation_count:
+                issues.append(
+                    f"relations 超过 66 项，已丢弃尾部 {discarded_relation_count} 项"
+                )
         if not cards and raw_relations:
-            raise ValueError("cards 为空时不能输出 relations")
-        relations = []
+            discarded_relation_count += len(raw_relations)
+            issues.append("cards 为空，已丢弃全部 relations")
+            raw_relations = []
+        relations: list[VerifiedRelationDecision] = []
         seen_pairs: set[tuple[str, str]] = set()
-        for item in raw_relations:
-            if not isinstance(item, dict):
-                raise ValueError("relations 中存在非对象元素")
-            local_pair = tuple(
-                sorted(
-                    (
-                        str(item.get("source_card_id") or "").strip(),
-                        str(item.get("target_card_id") or "").strip(),
+        for index, item in enumerate(raw_relations[:66], start=1):
+            try:
+                if not isinstance(item, dict):
+                    raise ValueError("元素不是对象")
+                local_pair = tuple(
+                    sorted(
+                        (
+                            str(item.get("source_card_id") or "").strip(),
+                            str(item.get("target_card_id") or "").strip(),
+                        )
                     )
                 )
-            )
-            if local_pair in seen_pairs:
-                raise ValueError(f"同一 Card 对只能输出一条关系: {local_pair}")
+                if local_pair in seen_pairs:
+                    raise ValueError(f"同一 Card 对重复输出: {local_pair}")
+                relation = intra_chunk_relation_from_llm_item(
+                    item,
+                    chunk=chunk,
+                    spans=spans,
+                    cards_by_local_id=cards_by_local_id,
+                )
+            except Exception as exc:
+                discarded_relation_count += 1
+                issues.append(f"relation[{index}] 已丢弃: {exc}")
+                continue
             seen_pairs.add(local_pair)
-            relation = intra_chunk_relation_from_llm_item(
-                item,
-                cards_by_local_id=cards_by_local_id,
-            )
-            if relation.decision_class != "observed":
-                raise ValueError("同 Chunk 快速路径只允许 observed Relation")
             relations.append(relation)
-        return cards, relations, skip_reason
+        return _ValidatedAtomicCardResponse(
+            cards=cards,
+            relations=relations,
+            skip_reason=skip_reason,
+            discarded_card_count=discarded_card_count,
+            discarded_relation_count=discarded_relation_count,
+            issues=tuple(issues),
+        )
 
     async def _claim_prefix_warmup_lock(self) -> Any | None:
         if settings.KG_COGNITIVE_CARD_PREFIX_WARM_WINDOW_SECONDS <= 0:
@@ -891,6 +890,20 @@ class AtomicCognitiveCardStageService:
             "successful_chunks": chunk_count,
             "zero_card_chunks": sum(1 for result in extraction_results if not result.cards),
             "repaired_chunks": sum(1 for result in extraction_results if result.repaired),
+            "repair_attempted_chunks": sum(
+                1 for result in extraction_results if result.repair_attempted
+            ),
+            "discarded_cards": sum(
+                result.discarded_card_count for result in extraction_results
+            ),
+            "discarded_relations": sum(
+                result.discarded_relation_count for result in extraction_results
+            ),
+            "validation_issues": [
+                {"chunk_id": result.chunk_id, "issues": list(result.validation_issues)}
+                for result in extraction_results
+                if result.validation_issues
+            ],
             "zero_card_reasons": [
                 {"chunk_id": result.chunk_id, "reason": result.skip_reason}
                 for result in extraction_results

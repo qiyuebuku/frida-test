@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Literal
 
 from src.domain.knowledge.relation_discovery import VerifiedRelationDecision
@@ -34,7 +34,7 @@ RELATION_KINDS = frozenset(
 SYMMETRIC_RELATION_KINDS = frozenset(
     {"same_event", "confirmation", "contradiction", "common_driver"}
 )
-CARD_RELATION_SCHEMA_VERSION = "card_relation_edge_v1"
+CARD_RELATION_SCHEMA_VERSION = "card_relation_edge_v2"
 
 
 @dataclass(frozen=True)
@@ -57,6 +57,7 @@ class CardRelationEdge:
     prompt_version: str
     schema_version: str
     content_version: str
+    relation_evidence_refs: list[dict] = field(default_factory=list)
     status: str = "active"
 
     def as_dict(self) -> dict:
@@ -72,6 +73,7 @@ class CardRelationEdge:
             "basis": self.basis,
             "source_evidence_refs": list(self.source_evidence_refs),
             "target_evidence_refs": list(self.target_evidence_refs),
+            "relation_evidence_refs": [dict(item) for item in self.relation_evidence_refs],
             "inference_mechanism": self.inference_mechanism,
             "confidence": self.confidence,
             "pipeline_version": self.pipeline_version,
@@ -126,6 +128,7 @@ def build_card_relation_edge(
         "basis": decision.basis,
         "source_evidence_refs": source_refs,
         "target_evidence_refs": target_refs,
+        "relation_evidence_refs": [dict(item) for item in decision.relation_evidence_refs],
         "inference_mechanism": decision.inference_mechanism,
         "confidence": round(float(decision.confidence), 6),
         "pipeline_version": pipeline_version,
@@ -146,6 +149,7 @@ def build_card_relation_edge(
         basis=decision.basis,
         source_evidence_refs=source_refs,
         target_evidence_refs=target_refs,
+        relation_evidence_refs=[dict(item) for item in decision.relation_evidence_refs],
         inference_mechanism=decision.inference_mechanism,
         confidence=round(float(decision.confidence), 6),
         pipeline_version=pipeline_version,
