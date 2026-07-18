@@ -68,8 +68,9 @@ class DeepSeekOpenAIProvider:
             original_messages = list(payload.get("messages") or [])
             started_at = time.perf_counter()
             retry_stats: dict[str, Any] = {"count": 0, "events": []}
-            json_mode_retry_data: dict[str, Any] | None = None
-            json_mode_retry_error: str | None = None
+            prefix_continuation_data: dict[str, Any] | None = None
+            prefix_continuation_error: str | None = None
+            prefix_continuation_parsed = False
 
             data = await self._post_with_retries(
                 payload,
@@ -89,34 +90,55 @@ class DeepSeekOpenAIProvider:
             if (
                 structured_output is None
                 and self._expects_json(request)
-                and not text.strip()
                 and not tool_calls
+                and (
+                    str(choice.get("finish_reason") or "").strip().lower() == "length"
+                    or not text.strip()
+                )
             ):
+                prefix_text = str(text)
+                prefix_reasoning = str(message.get("reasoning_content") or "")
                 try:
-                    json_mode_retry_data = await self._post_with_retries(
-                        self._json_empty_continuation_payload(
+                    prefix_continuation_data = await self._post_with_retries(
+                        self._json_prefix_continuation_payload(
                             request,
                             route,
                             original_messages,
+                            reasoning_content=prefix_reasoning,
+                            content=prefix_text,
                         ),
                         retry_stats=retry_stats,
-                        purpose="json_mode_retry",
+                        purpose="json_prefix_continuation",
+                        endpoint_url=self._prefix_completion_url(),
                     )
-                    data = json_mode_retry_data
+                    data = prefix_continuation_data
                     reasoning_stages.extend(
-                        self._reasoning_stages(("json_mode_retry", json_mode_retry_data))
+                        self._reasoning_stages(
+                            ("json_prefix_continuation", prefix_continuation_data)
+                        )
                     )
                     choice = (data.get("choices") or [{}])[0]
                     message = choice.get("message") or {}
-                    text = message.get("content") or ""
+                    text = self._merge_prefix_completion_content(
+                        prefix_text,
+                        str(message.get("content") or ""),
+                    )
                     tool_calls = message.get("tool_calls")
                     structured_output = self._try_parse_json(text, request)
+                    prefix_continuation_parsed = structured_output is not None
                 except LLMProxyError as exc:
-                    json_mode_retry_error = f"{exc.error_type}: {str(exc)[:200]}"
-            if structured_output is None and self._expects_json(request) and text.strip():
+                    prefix_continuation_error = f"{exc.error_type}: {str(exc)[:200]}"
+
+            final_finish_reason = str(choice.get("finish_reason") or "").strip().lower()
+            if (
+                structured_output is None
+                and self._expects_json(request)
+                and text.strip()
+                and final_finish_reason != "length"
+            ):
                 try:
                     repair_data = await self._post_with_retries(
-                        self._json_repair_payload(request, route, text, original_messages),
+                        self._json_repair_payload(request, route, text),
                         retry_stats=retry_stats,
                         purpose="json_repair",
                     )
@@ -139,16 +161,27 @@ class DeepSeekOpenAIProvider:
         reasoning_content = self._render_reasoning_stages(reasoning_stages)
 
         normalized_usage = self._normalized_usage(primary_data)
-        if json_mode_retry_data is not None:
-            normalized_usage = self._merge_usage(normalized_usage, self._normalized_usage(json_mode_retry_data))
+        if prefix_continuation_data is not None:
+            normalized_usage = self._merge_usage(
+                normalized_usage,
+                self._normalized_usage(prefix_continuation_data),
+            )
         if repair_data is not None:
             normalized_usage = self._merge_usage(normalized_usage, self._normalized_usage(repair_data))
         primary_diagnostics = self._response_diagnostics(primary_data)
-        json_mode_retry_diagnostics = (
-            self._response_diagnostics(json_mode_retry_data)
-            if json_mode_retry_data is not None
+        prefix_continuation_diagnostics = (
+            self._response_diagnostics(prefix_continuation_data)
+            if prefix_continuation_data is not None
             else None
         )
+        if prefix_continuation_diagnostics is not None:
+            prefix_continuation_diagnostics.update(
+                {
+                    "endpoint": self._prefix_completion_url(),
+                    "prefix_content_chars": len(prefix_text),
+                    "prefix_reasoning_chars": len(prefix_reasoning),
+                }
+            )
         json_repair_diagnostics = (
             self._response_diagnostics(repair_data)
             if repair_data is not None
@@ -178,9 +211,7 @@ class DeepSeekOpenAIProvider:
                 "json_repair": (
                     json_repair_diagnostics
                 ),
-                "json_mode_retry": (
-                    json_mode_retry_diagnostics
-                ),
+                "json_prefix_continuation": prefix_continuation_diagnostics,
                 "json_mode_initial": primary_diagnostics,
             },
             cache_hit=False,
@@ -194,17 +225,17 @@ class DeepSeekOpenAIProvider:
                 "upstream_retry_events": retry_stats["events"],
                 "upstream_max_retries": self.max_retries,
                 "upstream_max_retry_delay_seconds": self.max_retry_delay_seconds,
-                "json_mode_retry_attempted": json_mode_retry_data is not None
-                or json_mode_retry_error is not None,
-                "json_mode_retry_success": json_mode_retry_data is not None and bool(text.strip()),
-                "json_mode_retry_error": json_mode_retry_error,
+                "json_prefix_continuation_attempted": prefix_continuation_data is not None
+                or prefix_continuation_error is not None,
+                "json_prefix_continuation_success": prefix_continuation_parsed,
+                "json_prefix_continuation_error": prefix_continuation_error,
                 "json_mode_initial_finish_reason": primary_diagnostics.get("finish_reason"),
-                "json_mode_retry_finish_reason": (
-                    json_mode_retry_diagnostics or {}
+                "json_prefix_continuation_finish_reason": (
+                    prefix_continuation_diagnostics or {}
                 ).get("finish_reason"),
                 "json_mode_initial_usage": primary_diagnostics.get("usage"),
-                "json_mode_retry_usage": (
-                    json_mode_retry_diagnostics or {}
+                "json_prefix_continuation_usage": (
+                    prefix_continuation_diagnostics or {}
                 ).get("usage"),
                 "json_repair_attempted": repair_data is not None or repair_error is not None,
                 "json_repair_success": repair_data is not None and structured_output is not None,
@@ -248,11 +279,14 @@ class DeepSeekOpenAIProvider:
         *,
         retry_stats: dict[str, Any],
         purpose: str,
+        endpoint_url: str | None = None,
     ) -> dict[str, Any]:
         attempt = 0
         while True:
             try:
-                return await self._post(payload)
+                if endpoint_url is None:
+                    return await self._post(payload)
+                return await self._post(payload, endpoint_url=endpoint_url)
             except LLMProxyError as exc:
                 if not self._is_retriable_error(exc) or attempt >= self.max_retries:
                     if exc.error_type == "rate_limited":
@@ -293,11 +327,16 @@ class DeepSeekOpenAIProvider:
             delay = min(delay, self.max_retry_delay_seconds)
         return max(0.0, delay)
 
-    async def _post(self, payload: dict[str, Any]) -> dict[str, Any]:
+    async def _post(
+        self,
+        payload: dict[str, Any],
+        *,
+        endpoint_url: str | None = None,
+    ) -> dict[str, Any]:
         try:
             async with httpx.AsyncClient(timeout=self.timeout, trust_env=True) as client:
                 response = await client.post(
-                    f"{self.base_url}/chat/completions",
+                    endpoint_url or f"{self.base_url}/chat/completions",
                     headers={
                         "Authorization": f"Bearer {self.api_key}",
                         "Content-Type": "application/json",
@@ -445,20 +484,22 @@ class DeepSeekOpenAIProvider:
             return [first, *messages[1:]]
         return [{"role": "system", "content": instruction}, *messages]
 
-    def _json_empty_continuation_payload(
+    def _json_prefix_continuation_payload(
         self,
         request: LLMProxyRequest,
         route: LLMRouteDecision,
         original_messages: list[dict[str, Any]],
+        *,
+        reasoning_content: str,
+        content: str,
     ) -> dict[str, Any]:
         messages = [
             *original_messages,
             {
-                "role": "user",
-                "content": (
-                    "你上一次返回了空内容，导致系统无法解析。请基于同一个输入重新输出合法 JSON 对象。"
-                    "必须严格符合前面给出的 JSON Schema；不要输出 Markdown、解释文字或代码块。"
-                ),
+                "role": "assistant",
+                "reasoning_content": reasoning_content,
+                "content": content,
+                "prefix": True,
             },
         ]
         return self._payload_from_messages(
@@ -473,28 +514,7 @@ class DeepSeekOpenAIProvider:
         request: LLMProxyRequest,
         route: LLMRouteDecision,
         raw_text: str,
-        original_messages: list[dict[str, Any]] | None = None,
     ) -> dict[str, Any]:
-        if original_messages:
-            messages = [
-                *original_messages,
-                {"role": "assistant", "content": raw_text[:12000]},
-                {
-                    "role": "user",
-                    "content": (
-                        "你上一次输出无法被解析为合法 JSON，失败原因是 JSON parser 无法解析该内容。"
-                        "请说明失败原因只在内部判断，最终只重新输出一个合法 JSON 对象。"
-                        "必须严格符合前面给出的 JSON Schema；不要输出 Markdown、解释文字或代码块。"
-                    ),
-                },
-            ]
-            return self._payload_from_messages(
-                request,
-                route,
-                messages,
-                force_response_format=True,
-            )
-
         schema = json.dumps(request.json_schema or {"type": "object"}, ensure_ascii=False, indent=2)
         messages = [
             {
@@ -510,18 +530,37 @@ class DeepSeekOpenAIProvider:
                     [
                         "下面这段模型输出本应是 JSON，但格式不合法。请尽最大可能转成合法 JSON。",
                         f"JSON Schema:\n{schema}",
-                        f"原始输出:\n{raw_text[:12000]}",
+                        f"原始输出:\n{raw_text}",
                         "只输出 JSON。",
                     ]
                 ),
             },
         ]
-        return self._payload_from_messages(
+        payload = self._payload_from_messages(
             request,
             route,
             messages,
             force_response_format=True,
         )
+        payload["thinking"] = {"type": "disabled"}
+        payload.pop("reasoning_effort", None)
+        return payload
+
+    def _prefix_completion_url(self) -> str:
+        base_url = self.base_url.rstrip("/")
+        if base_url.endswith("/v1"):
+            base_url = base_url[:-3]
+        if base_url.endswith("/beta"):
+            return f"{base_url}/chat/completions"
+        return f"{base_url}/beta/chat/completions"
+
+    @staticmethod
+    def _merge_prefix_completion_content(prefix: str, completion: str) -> str:
+        if not prefix:
+            return completion
+        if completion.startswith(prefix):
+            return completion
+        return f"{prefix}{completion}"
 
     def _payload_from_messages(
         self,

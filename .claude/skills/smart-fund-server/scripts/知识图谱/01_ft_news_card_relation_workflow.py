@@ -238,6 +238,9 @@ async def run_card_validation(
                     {
                         "summary": card.summary,
                         "focus_evidence_refs": list(card.focus_evidence_refs),
+                        "relation_probes": [
+                            probe.as_dict() for probe in card.relation_probes
+                        ],
                     }
                     for card in result.cards
                 ],
@@ -562,6 +565,18 @@ def _result_summary(result: dict) -> dict:
 
 
 def _card_result_summary(result: dict[str, Any]) -> dict[str, Any]:
+    relation_probes = [
+        {
+            "news_id": item.get("news_id"),
+            "chunk_index": item.get("chunk_index"),
+            "card_index": card_index,
+            "summary": card.get("summary") or "",
+            "items": list(card.get("relation_probes") or []),
+        }
+        for item in result.get("results") or []
+        for card_index, card in enumerate(item.get("cards") or [], start=1)
+        if card.get("relation_probes")
+    ]
     return {
         key: result[key]
         for key in (
@@ -584,6 +599,11 @@ def _card_result_summary(result: dict[str, Any]) -> dict[str, Any]:
             "effective_concurrency",
             "chunk_timeout_seconds",
         )
+    } | {
+        "relation_probe_count": sum(
+            len(item["items"]) for item in relation_probes
+        ),
+        "relation_probes": relation_probes,
     }
 
 

@@ -28,6 +28,7 @@ from src.domain.knowledge.graph_index import (
     GraphIndexUnassignedSignal,
 )
 from src.domain.knowledge.quality import ReviewAction, ReviewEntry
+from src.domain.knowledge.relation_discovery import RELATION_PROBE_ROLES, RelationProbe
 from src.domain.knowledge.repositories import KnowledgeRepository
 from src.domain.knowledge.retrieval_eval import (
     RetrievalEvalMetric,
@@ -2147,6 +2148,7 @@ def _atomic_cognitive_card_manifest_values(item: AtomicCognitiveCard) -> dict[st
         "chunk_index": item.chunk_index,
         "focus_evidence_refs": item.focus_evidence_refs,
         "focus_span_offsets": item.focus_span_offsets,
+        "relation_probes": [probe.as_dict() for probe in item.relation_probes],
         "schema_version": item.schema_version,
         "generator_version": item.generator_version,
         "status": item.status,
@@ -2168,8 +2170,21 @@ def _atomic_cognitive_card_manifest_schema(row: KnowledgeCognitiveCard) -> Cogni
         focus_span_offsets=[item for item in row.focus_span_offsets or [] if isinstance(item, dict)],
         schema_version=row.schema_version or "",
         generator_version=row.generator_version or "",
+        relation_probes=_relation_probes_from_json(row.relation_probes),
         status=row.status or "active",
     )
+
+
+def _relation_probes_from_json(value: Any) -> list[RelationProbe]:
+    result: list[RelationProbe] = []
+    for item in value or []:
+        if not isinstance(item, dict):
+            continue
+        role = str(item.get("role") or "").strip()
+        query = str(item.get("query") or "").strip()
+        if role in RELATION_PROBE_ROLES and query:
+            result.append(RelationProbe(role=role, query=query))
+    return result
 
 
 def _community_assignment_values(item: CommunityAssignment) -> dict[str, Any]:

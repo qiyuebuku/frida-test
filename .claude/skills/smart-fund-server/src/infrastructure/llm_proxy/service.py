@@ -314,7 +314,7 @@ def _llm_provider_diagnostics(raw_payload: dict[str, Any] | None) -> dict[str, A
     diagnostics = {
         "finish_reason": raw_payload.get("finish_reason"),
         "json_mode_initial": raw_payload.get("json_mode_initial"),
-        "json_mode_retry": raw_payload.get("json_mode_retry"),
+        "json_prefix_continuation": raw_payload.get("json_prefix_continuation"),
         "json_repair": raw_payload.get("json_repair"),
     }
     return {key: value for key, value in diagnostics.items() if value is not None}
@@ -1269,6 +1269,9 @@ class LLMGatewayService:
     ) -> LLMProxyResponse:
         if not request.json_schema:
             return response
+        if _response_cannot_be_safely_restarted(response):
+            response.proxy.setdefault("schema_repair_skipped_reason", "output_truncated")
+            return response
         issues = _json_schema_validation_issues(response.structured_output, request.json_schema)
         if not issues:
             return response
@@ -1376,6 +1379,19 @@ def _is_cacheable_response(request: LLMProxyRequest, response: LLMProxyResponse)
     if request.json_schema and _json_schema_validation_issues(response.structured_output, request.json_schema):
         return False
     return bool(response.text or response.structured_output is not None)
+
+
+def _response_cannot_be_safely_restarted(response: LLMProxyResponse) -> bool:
+    """截断续写已失败时，禁止上层再把同一业务任务从头执行。"""
+
+    raw_payload = response.raw_payload or {}
+    finish_reason = str(raw_payload.get("finish_reason") or "").strip().lower()
+    if finish_reason == "length":
+        return True
+    proxy = response.proxy or {}
+    return bool(proxy.get("json_prefix_continuation_attempted")) and not bool(
+        proxy.get("json_prefix_continuation_success")
+    )
 
 
 def _should_write_cache(request: LLMProxyRequest) -> bool:

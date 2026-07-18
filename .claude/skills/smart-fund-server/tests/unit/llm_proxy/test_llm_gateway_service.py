@@ -56,8 +56,8 @@ class SequenceProvider(EchoProvider):
             usage={"input_tokens": 1, "output_tokens": 1},
             session_id=None,
             duration_ms=1,
-            raw_payload={},
-            proxy={"provider": self.name},
+            raw_payload=output.get("raw_payload", {}),
+            proxy={"provider": self.name, **output.get("proxy", {})},
         )
 
 
@@ -544,6 +544,56 @@ def test_gateway_repeats_json_schema_repair_until_valid(tmp_path):
     assert len(second_repair_request.messages) > len(first_repair_request.messages)
     assert second_repair_request.metadata["retry_reason"] == "json_schema_invalid"
     assert "validation_issues" in second_repair_request.messages[-1]["content"]
+
+
+def test_gateway_does_not_restart_schema_repair_after_truncated_continuation(tmp_path):
+    registry = ProviderRegistry()
+    deepseek = SequenceProvider(
+        "deepseek",
+        [
+            {
+                "text": '{"decision":',
+                "structured_output": None,
+                "raw_payload": {"finish_reason": "length"},
+                "proxy": {
+                    "json_prefix_continuation_attempted": True,
+                    "json_prefix_continuation_success": False,
+                },
+            },
+            {"structured_output": {"decision": "should_not_run"}},
+        ],
+    )
+    registry.register(deepseek)
+    service = LLMGatewayService(
+        router=ModelRouter(
+            ModelRouterConfig(
+                default_model="deepseek-v4-flash",
+                default_provider="deepseek",
+                model_routes={"deepseek-v4-flash": ["deepseek"]},
+                model_aliases={},
+            )
+        ),
+        registry=registry,
+        cache_ttl_seconds=60,
+        cache_max_size=16,
+        file_cache=LLMPersistentFileCache(tmp_path, enabled=True),
+    )
+    request = LLMProxyRequest(
+        prompt="返回 JSON",
+        model="deepseek-v4-flash",
+        json_schema={
+            "type": "object",
+            "properties": {"decision": {"type": "string"}},
+            "required": ["decision"],
+            "additionalProperties": False,
+        },
+    )
+
+    response = asyncio.run(service.generate(request))
+
+    assert len(deepseek.calls) == 1
+    assert response.structured_output is None
+    assert response.proxy["schema_repair_skipped_reason"] == "output_truncated"
 
 
 def test_gateway_repairs_with_caller_feedback_and_overwrites_original_cache(tmp_path):

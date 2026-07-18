@@ -13,14 +13,23 @@ from src.application.services.relation_discovery_service import (
     _verification_schema,
 )
 from src.domain.knowledge.atomic_cognitive_card import CognitiveCardManifest
-from src.domain.knowledge.relation_discovery import PairEvidencePackage, RelationRecallHit
+from src.domain.knowledge.relation_discovery import (
+    PairEvidencePackage,
+    RelationProbe,
+    RelationRecallHit,
+)
 from src.infrastructure.clients.reranker import RerankResponse, RerankResult
 from src.infrastructure.config import settings
 from src.infrastructure.llm_proxy.types import LLMProxyResponse
 from src.infrastructure.vector_store.relation_candidate_store import RelationCardText
 
 
-def _manifest(card_id: str, chunk_id: str) -> CognitiveCardManifest:
+def _manifest(
+    card_id: str,
+    chunk_id: str,
+    *,
+    probes: list[RelationProbe] | None = None,
+) -> CognitiveCardManifest:
     return CognitiveCardManifest(
         cognitive_card_id=card_id,
         adapter_name="financial",
@@ -32,8 +41,9 @@ def _manifest(card_id: str, chunk_id: str) -> CognitiveCardManifest:
         chunk_index=0,
         focus_evidence_refs=["s0001"],
         focus_span_offsets=[{"ref": "s0001", "start_offset": 0, "end_offset": 8}],
-        schema_version="atomic_cognitive_card_v5",
-        generator_version="atomic_card_extractor_v38",
+        schema_version="atomic_cognitive_card_v7",
+        generator_version="atomic_card_extractor_v62",
+        relation_probes=list(probes or []),
         status="active",
     )
 
@@ -63,17 +73,17 @@ class _VectorStore:
             "card:1": RelationCardText(
                 "card:1",
                 "监管部门限制关键原材料出口。",
-                {"source_published_at": "2026-07-10", "schema_version": "atomic_cognitive_card_v5", "status": "active"},
+                {"source_published_at": "2026-07-10", "schema_version": "atomic_cognitive_card_v7", "status": "active"},
             ),
             "card:2": RelationCardText(
                 "card:2",
                 "下游制造企业原材料库存下降。",
-                {"source_published_at": "2026-07-11", "schema_version": "atomic_cognitive_card_v5", "status": "active"},
+                {"source_published_at": "2026-07-11", "schema_version": "atomic_cognitive_card_v7", "status": "active"},
             ),
             "card:3": RelationCardText(
                 "card:3",
                 "另一行业公司发布季度业绩。",
-                {"source_published_at": "2026-07-11", "schema_version": "atomic_cognitive_card_v5", "status": "active"},
+                {"source_published_at": "2026-07-11", "schema_version": "atomic_cognitive_card_v7", "status": "active"},
             ),
         }
         self.chunks = {
@@ -334,6 +344,65 @@ async def test_dual_view_recall_uses_summary_for_rerank_and_full_text_only_for_v
         "screening_basis",
     ):
         assert removed_key not in verify_request.prompt
+
+
+@pytest.mark.asyncio
+async def test_relation_probes_create_independent_recall_and_rerank_routes(monkeypatch) -> None:
+    monkeypatch.setattr(settings, "KG_RELATION_RERANK_TOP_N", 12)
+    source = _manifest(
+        "card:1",
+        "chunk:1",
+        probes=[
+            RelationProbe(
+                role="upstream",
+                query="监管部门出台关键原材料出口限制的前置政策或供应原因。",
+            ),
+            RelationProbe(
+                role="downstream",
+                query="关键原材料供应减少后下游制造企业库存下降或减产。",
+            ),
+        ],
+    )
+    candidate = _manifest("card:2", "chunk:2")
+    unrelated = _manifest("card:3", "chunk:3")
+    vector_store = _VectorStore()
+    reranker = _Reranker()
+
+    result = await RelationDiscoveryService(
+        repository=_Repository([source, candidate, unrelated]),
+        vector_store=vector_store,
+        reranker=reranker,
+        llm=_LLM([]),
+        relation_writer=_RelationWriter(),
+    ).discover_card_relations(
+        ["card:1"],
+        target="test",
+        include_evaluation_details=True,
+    )
+
+    assert [(route.route_type, route.role, route.query) for route in vector_store.routes] == [
+        ("summary", "baseline", "监管部门限制关键原材料出口。"),
+        (
+            "probe",
+            "upstream",
+            "监管部门出台关键原材料出口限制的前置政策或供应原因。",
+        ),
+        (
+            "probe",
+            "downstream",
+            "关键原材料供应减少后下游制造企业库存下降或减产。",
+        ),
+    ]
+    assert [call["query"] for call in reranker.calls] == [
+        route.query for route in vector_store.routes
+    ]
+    details = result["card_diagnostics"][0]["evaluation_details"]
+    assert details["route_count"] == 3
+    assert [item["role"] for item in details["routes"]] == [
+        "baseline",
+        "upstream",
+        "downstream",
+    ]
 
 
 @pytest.mark.asyncio

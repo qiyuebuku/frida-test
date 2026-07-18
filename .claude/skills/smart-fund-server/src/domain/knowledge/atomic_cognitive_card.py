@@ -9,7 +9,11 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from src.domain.knowledge.schemas import EvidenceChunk
-from src.domain.knowledge.relation_discovery import VerifiedRelationDecision
+from src.domain.knowledge.relation_discovery import (
+    RELATION_PROBE_ROLES,
+    RelationProbe,
+    VerifiedRelationDecision,
+)
 from src.domain.knowledge.semantic_index_materials import (
     SEMANTIC_COLLECTION_COGNITIVE_CARD,
     SEMANTIC_COLLECTION_COGNITIVE_CARD_FOCUS,
@@ -17,8 +21,8 @@ from src.domain.knowledge.semantic_index_materials import (
 )
 
 
-ATOMIC_COGNITIVE_CARD_SCHEMA_VERSION = "atomic_cognitive_card_v6"
-ATOMIC_COGNITIVE_CARD_GENERATOR_VERSION = "atomic_card_extractor_v56"
+ATOMIC_COGNITIVE_CARD_SCHEMA_VERSION = "atomic_cognitive_card_v7"
+ATOMIC_COGNITIVE_CARD_GENERATOR_VERSION = "atomic_card_extractor_v67"
 INTRA_CHUNK_RELATION_KINDS = frozenset(
     {
         "confirmation",
@@ -106,6 +110,7 @@ class AtomicCognitiveCard:
     summary: str
     focus_evidence_refs: list[str]
     focus_span_offsets: list[dict[str, Any]]
+    relation_probes: list[RelationProbe] = field(default_factory=list)
     source_published_at: str = ""
     source_title: str = ""
     schema_version: str = ATOMIC_COGNITIVE_CARD_SCHEMA_VERSION
@@ -124,6 +129,7 @@ class AtomicCognitiveCard:
             chunk_index=self.chunk_index,
             focus_evidence_refs=list(self.focus_evidence_refs),
             focus_span_offsets=[dict(item) for item in self.focus_span_offsets],
+            relation_probes=list(self.relation_probes),
             schema_version=self.schema_version,
             generator_version=self.generator_version,
             status=self.status,
@@ -146,6 +152,7 @@ class CognitiveCardManifest:
     focus_span_offsets: list[dict[str, Any]]
     schema_version: str
     generator_version: str
+    relation_probes: list[RelationProbe] = field(default_factory=list)
     status: str = "active"
 
 
@@ -323,13 +330,16 @@ def atomic_card_from_llm_item(
     if not summary:
         raise ValueError("card.summary 不能为空")
 
-    focus_refs = _ordered_unique(_clean_text(value) for value in item.get("focus_evidence_refs") or [])
+    focus_refs = _ordered_unique(
+        _normalize_span_ref(value) for value in item.get("focus_evidence_refs") or []
+    )
     if not focus_refs:
         raise ValueError("card.focus_evidence_refs 至少包含一个 Span Ref")
     unknown_refs = [ref for ref in focus_refs if ref not in span_by_ref]
     if unknown_refs:
         raise ValueError(f"card 引用了不存在的 Span Ref: {unknown_refs}")
 
+    relation_probes = _normalize_relation_probes(item.get("relation_probes"))
     card_id = build_atomic_card_id(
         chunk=chunk,
         focus_evidence_refs=focus_refs,
@@ -347,6 +357,7 @@ def atomic_card_from_llm_item(
         summary=summary,
         focus_evidence_refs=focus_refs,
         focus_span_offsets=[span_by_ref[ref].pointer() for ref in focus_refs],
+        relation_probes=relation_probes,
         source_published_at=_clean_text(payload.get("published_at")),
         source_title=_clean_text(payload.get("title")),
     )
@@ -389,7 +400,10 @@ def intra_chunk_relation_from_llm_item(
 
     source_card = cards_by_local_id[source_local_id]
     target_card = cards_by_local_id[target_local_id]
-    relation_refs = _ordered_unique(item.get("relation_evidence_refs") or [])
+    relation_refs = _ordered_unique(
+        _normalize_span_ref(value)
+        for value in item.get("relation_evidence_refs") or []
+    )
     known_refs = {span.ref for span in spans}
     if not relation_refs:
         raise ValueError("同 Chunk Relation 必须引用直接证明连接成立的原文证据")
@@ -439,13 +453,45 @@ def _normalized_intra_chunk_relation_fields(relation_kind: str) -> tuple[str, st
 
 
 def _validate_raw_card_shape(item: dict[str, Any]) -> None:
-    required = {"summary", "focus_evidence_refs"}
+    required = {"summary", "focus_evidence_refs", "relation_probes"}
     missing = sorted(required.difference(item))
     extra = sorted(set(item).difference(required))
     if missing or extra:
         raise ValueError(f"Card 字段不符合契约: missing={missing}, extra={extra}")
     if not isinstance(item.get("focus_evidence_refs"), list):
         raise ValueError("focus_evidence_refs 必须是数组")
+    if not isinstance(item.get("relation_probes"), list):
+        raise ValueError("relation_probes 必须是数组")
+
+
+def _normalize_relation_probes(value: Any) -> list[RelationProbe]:
+    result: list[RelationProbe] = []
+    seen: set[tuple[str, str]] = set()
+    for item in value or []:
+        if not isinstance(item, dict):
+            raise ValueError("Relation Probe 必须是对象")
+        if set(item) != {"role", "query"}:
+            raise ValueError("Relation Probe 只能包含 role 和 query")
+        role = _clean_text(item.get("role"))
+        query = _clean_text(item.get("query"))
+        if role not in RELATION_PROBE_ROLES:
+            raise ValueError(f"未知 Relation Probe role: {role}")
+        if not query:
+            raise ValueError("Relation Probe query 不能为空")
+        key = (role, _normalize_text(query))
+        if key in seen:
+            raise ValueError(f"同一 Card 内 Relation Probe 重复: role={role}, query={query}")
+        seen.add(key)
+        result.append(RelationProbe(role=role, query=query))
+    return result
+
+
+def _normalize_span_ref(value: Any) -> str:
+    """兼容模型偶尔返回的 `[s0001]`，领域内统一保存为 `s0001`。"""
+
+    ref = _clean_text(value)
+    match = re.fullmatch(r"\[?(s\d{4})\]?", ref)
+    return match.group(1) if match else ref
 
 
 def build_atomic_card_id(

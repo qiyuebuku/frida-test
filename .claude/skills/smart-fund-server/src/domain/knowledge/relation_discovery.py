@@ -5,10 +5,13 @@ from __future__ import annotations
 import hashlib
 import json
 from dataclasses import dataclass, field
-from typing import Any, Literal
+from typing import Any, Iterable, Literal
 
 
-RouteType = Literal["summary"]
+RELATION_PROBE_ROLES = frozenset(
+    {"same_event", "upstream", "downstream", "confirmation", "contradiction"}
+)
+RouteType = Literal["summary", "probe"]
 RecallView = Literal["summary", "focus_evidence"]
 RelationDecisionClass = Literal["observed", "inferred", "no_relation"]
 RelationKind = Literal[
@@ -28,7 +31,18 @@ class RelationRoute:
     source_card_id: str
     route_type: RouteType
     query: str
-    role: str = "same_event"
+    role: str = "baseline"
+
+
+@dataclass(frozen=True)
+class RelationProbe:
+    """用于跨 Chunk 候选发现的搜索假设，不代表正式关系。"""
+
+    role: str
+    query: str
+
+    def as_dict(self) -> dict[str, str]:
+        return {"role": self.role, "query": self.query}
 
 
 @dataclass(frozen=True)
@@ -126,11 +140,17 @@ def build_relation_routes(
     *,
     source_card_id: str,
     summary: str,
+    relation_probes: Iterable[RelationProbe] = (),
     generator_version: str,
 ) -> list[RelationRoute]:
-    """基于 Card Summary 建立跨 Chunk 召回路由。"""
+    """使用 Summary 基线路由和 Relation Probe 建立多路召回计划。"""
 
-    raw_routes: list[tuple[RouteType, str, str]] = [("summary", "same_event", summary)]
+    raw_routes: list[tuple[RouteType, str, str]] = [("summary", "baseline", summary)]
+    raw_routes.extend(
+        ("probe", probe.role, probe.query)
+        for probe in relation_probes
+        if probe.role in RELATION_PROBE_ROLES
+    )
     result: list[RelationRoute] = []
     seen: set[tuple[str, str]] = set()
     for route_type, role, query in raw_routes:

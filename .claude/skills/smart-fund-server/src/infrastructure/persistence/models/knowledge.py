@@ -271,6 +271,7 @@ class KnowledgeCognitiveCard(Base):
     chunk_index: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     focus_evidence_refs: Mapped[list] = mapped_column(JSONB, default=list, nullable=False)
     focus_span_offsets: Mapped[list] = mapped_column(JSONB, default=list, nullable=False)
+    relation_probes: Mapped[list] = mapped_column(JSONB, default=list, nullable=False)
     schema_version: Mapped[str] = mapped_column(String(96), nullable=False, default="")
     generator_version: Mapped[str] = mapped_column(String(96), nullable=False, default="")
     status: Mapped[str] = mapped_column(String(32), nullable=False, default="active")

@@ -1078,9 +1078,12 @@ def _llm_response_diagnostics(metadata: dict[str, Any]) -> list[str]:
         repair = proxy.get("json_repair")
         if isinstance(repair, dict) and repair.get("finish_reason") is not None:
             diagnostics.append(f"llm json_repair_finish_reason={repair.get('finish_reason')}")
-        retry = proxy.get("json_mode_retry")
-        if isinstance(retry, dict) and retry.get("finish_reason") is not None:
-            diagnostics.append(f"llm json_mode_retry_finish_reason={retry.get('finish_reason')}")
+        continuation = proxy.get("json_prefix_continuation")
+        if isinstance(continuation, dict) and continuation.get("finish_reason") is not None:
+            diagnostics.append(
+                "llm json_prefix_continuation_finish_reason="
+                f"{continuation.get('finish_reason')}"
+            )
     return diagnostics
 
 

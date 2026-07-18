@@ -29,8 +29,8 @@
 | `18. Community Assignment候选上下文账本缓存优化实施方案.md` | 说明 Community Assignment 阶段如何使用 Redis 候选账本稳定 prompt 前缀、降低候选上下文抖动，并记录当前实现边界。 |
 | `19. Agent检索与决策上下文实施方案.md` | 说明面向 Agent 的 search / open / expand / refine 检索运行时如何基于 Community、Cognitive Card 和 Evidence/Chunk 构建 Retrieval Decision Context。 |
 | `20. Community Insight证据归属与高级认知索引实施方案.md` | 历史方案：记录基于 topic intent、Community Assignment 和独立 Insight 的旧高级认知链路。 |
-| `21. 原子Cognitive Card与Relation Probe提取实施方案.md` | 关系优先重构第一阶段：将 Chunk 提取为零到多个原子 Card，并在同一次调用中判断同 Chunk Card 关系；PG 保存 manifest 与 Focus 引用，Milvus 发布 Summary 和 Focus Evidence 双视图。 |
-| `22. 跨Chunk Card召回与原文关系核验实施方案.md` | 关系优先重构第二阶段：现有 Relation Discovery 使用新 Card Summary 同时搜索 Summary 与 Focus Evidence 双视图，按 Card 合并后仅用 Summary 精排和 LLM 初筛，最终精确取回双方原文核验关系。 |
+| `21. 原子Cognitive Card与Relation Probe提取实施方案.md` | 关系优先重构第一阶段：将 Chunk 提取为零到多个原子 Card，在同一次调用中生成每张 Card 的 Relation Probe 并判断同 Chunk Card 关系；PG 保存 manifest、Probe 与 Focus 引用，Milvus 发布 Summary 和 Focus Evidence 双视图。 |
+| `22. 跨Chunk Card召回与原文关系核验实施方案.md` | 关系优先重构第二阶段：Relation Discovery 使用 Summary baseline 与 PG Relation Probe 多路搜索 Summary/Focus Evidence 双视图，逐路 Summary 精排后按 Card 合并，经 LLM 初筛再精确取回双方原文核验关系。 |
 | `23. 关系图Graph Community高级认知报告与条件性预测实施方案.md` | 关系优先重构第三阶段：持久化双方证据 Edge，按关系连通子图构建 Graph Community，直接生成完整高级认知报告和隔离的条件性预测，并发布为 Agent 可直接消费的 Milvus Community target。 |
 
 ## 3. 实施规则

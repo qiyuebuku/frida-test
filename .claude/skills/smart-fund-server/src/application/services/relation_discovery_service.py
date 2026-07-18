@@ -225,6 +225,7 @@ class RelationDiscoveryService:
         routes = build_relation_routes(
             source_card_id=manifest.cognitive_card_id,
             summary=source_summary.text,
+            relation_probes=manifest.relation_probes,
             generator_version=RELATION_DISCOVERY_PIPELINE_VERSION,
         )
         with langfuse_observation(

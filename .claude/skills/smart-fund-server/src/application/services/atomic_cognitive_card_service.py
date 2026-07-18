@@ -41,7 +41,7 @@ from src.infrastructure.vector_store.semantic_hybrid_retriever import MilvusSema
 
 logger = logging.getLogger(__name__)
 
-ATOMIC_CARD_MAX_TOKENS = 7000
+ATOMIC_CARD_MAX_TOKENS = 10000
 ATOMIC_CARD_PREFIX_WARM_MARK_KEY = (
     f"{JETTASK_PREFIX}:kg_cognitive_card:{ATOMIC_COGNITIVE_CARD_GENERATOR_VERSION}:prefix_warmed"
 )
@@ -69,13 +69,36 @@ ATOMIC_CARD_SCHEMA: dict[str, Any] = {
                     "focus_evidence_refs": {
                         "type": "array",
                         "minItems": 1,
-                        "items": {"type": "string"},
+                        "items": {"type": "string", "pattern": "^s[0-9]{4}$"},
+                    },
+                    "relation_probes": {
+                        "type": "array",
+                        "maxItems": 12,
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "role": {
+                                    "type": "string",
+                                    "enum": [
+                                        "same_event",
+                                        "upstream",
+                                        "downstream",
+                                        "confirmation",
+                                        "contradiction",
+                                    ],
+                                },
+                                "query": {"type": "string", "minLength": 1, "maxLength": 300},
+                            },
+                            "required": ["role", "query"],
+                            "additionalProperties": False,
+                        },
                     },
                 },
                 "required": [
                     "local_card_id",
                     "summary",
                     "focus_evidence_refs",
+                    "relation_probes",
                 ],
                 "additionalProperties": False,
             },
@@ -102,7 +125,7 @@ ATOMIC_CARD_SCHEMA: dict[str, Any] = {
                     "relation_evidence_refs": {
                         "type": "array",
                         "minItems": 1,
-                        "items": {"type": "string"},
+                        "items": {"type": "string", "pattern": "^s[0-9]{4}$"},
                     },
                 },
                 "required": [
@@ -124,41 +147,65 @@ ATOMIC_CARD_SCHEMA: dict[str, Any] = {
 
 ATOMIC_CARD_SYSTEM_PROMPT = """你是知识图谱的原子 Cognitive Card 抽取器。
 
-输入首行是新闻发布时间；其后每行是一条完整原文语句，`<title>` 表示标题，`[sNNNN]` 是紧随文本的证据坐标。同一行连续 Ref 的文本按顺序拼接阅读。先识别原文明示的关系及其两侧事实端点，再确定去重后的最终 Cards，最后输出这些 Card 之间的关系；只输出 JSON Schema 要求的字段。
+输入首行是新闻发布时间；其后每行是一条完整原文语句，`<title>` 表示标题，`[sNNNN]` 是紧随文本的证据坐标。同一行连续 Ref 的文本按顺序拼接阅读。先完整提取、合并重复表达并输出最终 Cards，按输出顺序分配连续 local_card_id；Cards 一旦输出，后续不得修改、合并、拆分或重新编号。随后只基于已经输出的 Cards 和当前原文查找同 Chunk 正关系，并用已有 Card ID 输出 relations。JSON 必须按 cards、relations、skip_reason 顺序输出；只输出 JSON Schema 要求的字段。
 
 Card：
 - 每张 Card 表达一个可独立参与后续关系判断的事件或事实端点，粒度应“最小但完整”。按核心谓词拆分，不按句子、数字、公司或 Ref 数量机械拆分。
 - 原文明示两个可独立验证的事实端点及其关系时，必须分别形成 Card，连接语义放入 relations；不能把“两端事实 + 连接关系”整体写进一张 Card 后省略关系。如果判断“后者是前者的后果、进展或确认”，这正是拆成两端并建立关系的理由，不是合并理由。
 - 同一主体、对象、时间和核心谓词下的方向、幅度、数值、比例、范围、条件与结果状态属于同一事实，应合并；不同主体或不同核心谓词分别形成 Card。
 - 同一次观测、统计或披露快照中用于共同描述一个现象的总体值、地区明细、指标值、极值与分项数据，应合并为一个 Card；只有某项本身构成独立动作或关系端点时才拆分。
+- 同一主体在不同年度、季度或月度的统计值，如果原文只是把它们共同用于说明一个趋势，应合并为一张保留各期关键数据的 Card，不能把不同报告窗口机械拆成两张 Card 再建立时间关系。
 - 同一来源先给出定性结论、紧接着用数值或分项解释该结论时，应生成一张保留结论和关键明细的完整 Card；不要同时保留一张定性总述 Card 和多张仅用于解释它的明细 Card。只有明细本身参与另一条原文明示关系时才独立拆出。
 - 总述如果没有增加独立事实，且已被具体 Card 完整表达，就不要重复保留；近义改写、重复表达和局部细节必须合并。不能为了充当 Relation 的集合端点，额外创建一张只汇总其他 Cards 的总述 Card。
 - 输出前进行信息包含检查：如果一张 Card 的全部事实只是其他 Card 的改写、并集或概括，二者不能同时保留。
 - 同一句或同一段中的并列事实，如果主体、谓词、对象或可验证结论不同，仍是独立端点；方向相同、服务同一策略或属于同一主题不能作为合并理由。
+- 同一次会议、交易、诉讼、调查、治理争议或其他完整程序中的提议、回应、表决和结果，如果共同描述一个不可分割的事件，应保留为一张 Card；不能为了增加 Relation 数量把程序步骤机械拆成多张 Card。只有某一步本身会被其他文档独立引用或参与另一条关系时才拆分。
 - 每个 Summary 必须脱离上下文仍能读懂，明确写出主体和事实，不能输出只能依赖上一张 Card 才成立的残句。
 - Summary 只写原文明确表达的完整事实。必须保留消息来源、声明者、预测者、认定者以及“可能、预计、据称”等归因和不确定性，不得把主张改写成客观事实。
 - 当前 chunk 没有可独立验证的事实时允许 cards=[]，并填写 skip_reason。Card 按最终顺序使用连续且唯一的 c1、c2、c3。
 
 Card 证据：
-- focus_evidence_refs 是能够独立验证 Summary 的最小完整证据闭包；主体、动作、对象、时间、数值、因果和限定语都必须直接出现。Ref 不是事件边界，事实跨多个 Ref 时联合引用。
+- focus_evidence_refs 是能够独立验证 Summary 的最小完整证据闭包；主体、动作、对象、时间、数值、因果和限定语都必须直接出现。Ref 不是事件边界，事实跨多个 Ref 时联合引用。数组元素只写 `sNNNN`，不要带方括号。
 - 标题属于原文；标题提供正文未重复的主体、因果、结果或范围时，必须纳入对应 Card 或 Relation 证据。
 - published_at 只用于理解相对时间，不能补造正文没有的年份或事实，也不是事实证据。
 
+Relation Probe：
+- relation_probes 是当前 Card 用来搜索其他 Chunk 历史 Card 的候选事件描述，不是已经成立的关系，也不能修改当前 Card 事实。只依据当前 Card 的 Summary 和 focus_evidence_refs 生成，不混入本 Chunk 其他 Card 的事实。
+- 生成某张 Card 的 Probe 时，暂时忽略输入中不属于该 Card focus_evidence_refs 的 Span 和本次其他 Card。若 query 中的具体日期、数字、主体限定或已发生动作只能从兄弟 Card 得到，说明发生了跨 Card 污染，必须删除该 Probe；同 Chunk 关系已经由 relations 处理，不需要 Probe 再次寻找。
+- Summary 本身已经是基础语义召回路由。只是复述当前 Summary、替换近义词或罗列当前事实关键词的 Probe 没有增量价值，必须省略。零 Probe 是正常结果；不要为了让 Card 看起来完整而填充 role。
+- Probe 必须寻找当前 Card 尚未包含的另一个独立事件。先检查候选 query 是否已经能由当前 Card 的 Summary 或 focus_evidence_refs 直接证明；如果能，它只是 Card 内部事实、局部原因或局部结果，不是跨 Chunk 候选，必须省略。role 描述的是候选事件与整张当前 Card 的关系，不能把当前 Card 内部已经合并的原因重新标成 upstream，也不能把其中已经写明的结果重新标成 downstream。
+- Probe 是后续召回使用的关系假设，不是当前原文已经证明的事实。允许描述原文尚未出现、但若历史 Card 存在就能与当前 Card 形成该 role 的候选事件；不能仅因当前原文没有证明候选事件就全部省略，真实性由后续召回和原文核验负责。新增内容只能是建立该关系所必需的事件类型和作用对象，不能编造具体日期、数值、专有主体、已发生结论或中间机制。
+- 根据当前 Card 的事实形态选择少量有价值方向：动作或结果可考虑其前置事件、约束和已发生影响；状态或测量可考虑同口径前态、独立确认和不相容状态；声明、报告或预测可考虑被其引用的事实依据和独立反证。这里只是选择方向，不要求每类 Card 都生成 Probe。
+- 先写出希望召回的“一张历史 Card 会描述什么候选事件”。query 可以是完整事实句，也可以是面向语义召回的简洁事件描述，但必须脱离上下文仍能识别主体或作用对象、动作或状态以及关系方向；不能是检索指令、问题、无主体标题、原因/影响占位符、括号举例或关键词堆砌。
+- Probe 不需要猜中历史 Card 的具体日期、数值或最终结论。缺少这些未知细节时应省略未知值，保留当前 Card 已提供的主体、对象和可观察事件类型，而不是直接放弃整个关系方向。只有连候选主体或作用对象、事件类型都无法从当前 Card 合理约束时才省略。
+- query 不得把“更早、此前、后续”等未知范围擅自改成具体年份、月份或期间，也不能增加当前 Card 没有提供的数值与专有主体。
+- role 只能是 same_event、upstream、downstream、confirmation、contradiction。same_event 只寻找同一主体、对象和目标期间下不同阶段的前序披露、修订、执行状态或最终结果，不能把相邻年度或季度替换成同一事件，也不能重复当前 Summary。
+- upstream 和 downstream 必须描述一个具体可观察事件及其作用对象，不能只写“原因、背景、影响、后续、风险、变化、相关措施”等待补全槽位。缺少足够事实约束、只能依靠模型任意猜测候选事件时省略。
+- confirmation 与 contradiction 必须围绕当前 Summary 的同一事实命题、主体、对象、目标期间和统计口径，分别寻找独立支持或不相容状态；不能转去验证其他 Probe，也不能把不同期间或不同指标当作支持或反证。
+- 对具有明确主体、目标期间和可证伪状态的 Card，如果能够在不引入新主体、新期间或新指标的前提下写出一个具体的不相容状态，可以生成 contradiction；不要因为其他角色不适用而放弃这条有独立召回价值的反证路径。
+- Probe 只搜索在 published_at 时已经可能存在的材料，不是未来订阅条件。当前刚发生的事件通常没有可搜索的后续结果；任何尚未发生的后续状态、处置、反应或影响都必须省略，未来事件入库时会反向发现当前 Card。零 Probe 仍然允许，但只应出现在所有角色都会重复当前 Card、依赖未来事实或无法形成受约束候选事件的情况下；不能因为“候选事件不在当前原文中”而把有明确关系方向的 Card 机械置空。
+- 报告、预测、观点或数据发布首先是信息事件。它所描述的现实状态只能作为 confirmation 或 contradiction 的搜索对象；只有在 published_at 前已经发生、且由信息发布本身触发的反应才可能成为 downstream。
+
 同 Chunk Relation：
-- 先逐句找出原文明示的连接及准确事实端点，再根据最终 Cards 建立关系。只输出正关系；同篇出现、相邻、同主体、同领域、时间先后或常识上可能相关都不构成关系。
+- Cards 输出稳定后，再检查原文明示的连接及其准确事实端点，并根据已有 Card ID 建立关系。不要枚举没有连接证据的 Card 组合。只输出正关系；同篇出现、相邻、同主体、同领域、时间先后或常识上可能相关都不构成关系。
+- 同一个完整程序性事件内部的步骤顺序属于该 Card 的事实结构，不单独输出 temporal_progression；Relation 用于连接能够独立复用的事实端点，不用于复述 Card 内部流程。
 - 只输出原文直接写明的 confirmation、contradiction、temporal_progression、causal_influence、common_driver、constraint；需要补充中间机制或外部常识的关系省略。
 - temporal_progression 必须有原文明示的前后、后续、更新、演进或同一事实状态变化，并且两端主体、指标、统计口径和时间具有可比性。年度、季度、月度等不同观察窗口，除非原文直接比较并明确认定变化，否则不能由模型自行比较比例、幅度或数值后生成关系。
 - “进一步、继续、再度”等词只说明当前语句存在延续含义，不能据此任意选择前文 Card 作为基线；原文必须在连接语句中明确指向该 Card 所表达的具体前态，否则不输出 temporal_progression。
 - confirmation 必须是针对同一事实命题的独立支持；不同指标、不同统计口径、背景数据或仅方向相近的材料不能互相确认。
 - contradiction 必须针对同一主体、对象、谓词、时间和范围下互不相容的结论；不同机构谈论不同命题不是冲突。
 - causal_influence 只有原文明示因果、影响或贡献时才成立，且原因发生时间不能晚于已发生的结果；不能把先后顺序、背景事实、共同出现或可能动机自行连接成因果。
-- relation_evidence_refs 独立于两端 Card 的 focus_evidence_refs，引用直接证明连接的最小原文集合；标题、承接句或连接词所在 Ref 可以成为关系证据。
+- relation_evidence_refs 引用直接证明连接的最小原文集合，可以与两端 Card 的 focus_evidence_refs 重叠；标题、承接句或连接词所在 Ref 也可以成为关系证据。仅把两组互不连接的端点证据拼在一起不构成关系证据。
+- 每条 Relation 在输出前必须通过三项证明门槛：relation_evidence_refs 中有文本能唯一定位 source 端点；有文本能唯一定位 target 端点；还有文本直接写明二者的连接。三项可以位于同一 Ref，也可以位于一个最小连续上下文，但缺少任意一项就删除 Relation。
+- 暂时隐藏两端 Summary，只阅读 relation_evidence_refs 并分别指出上述 source 定位、target 定位和连接；无需输出这三个中间答案。如果无法仅凭所引原文完成，relations 保持为空。叙述顺序、相邻句、两个数值以及程度或延续副词都不能替代明确的端点绑定。
+- temporal_progression 跨年度、季度或月度观察窗口时，关系原文必须明确同时指认前态与后态并直接作出比较或状态迁移判断；仅在后态使用“进一步、继续、再度”等表达仍不满足条件。
+- 年度、季度、月度等不同报告窗口中的同比、环比、金额或比例不是同一状态快照；即使叙述使用“进一步、继续”等趋势词，也应合并为趋势 Card，而不是在这些统计 Card 之间输出 temporal_progression。
 - 关系连接语句中的 source 与 target 必须分别和两端 Card 表达同一个具体事实，主体、谓词、对象、时间和范围不能被更宽或更窄的概念替换。连接语句只提到未展开的宽泛集合时，不得任选集合中的局部指标或个体作为关系端点。
 - 原文用“这些措施、这种策略”等集合指代多个事实时，只有连接语句能够逐项对应的成员才分别建立关系；无法逐项对应时省略关系，不能把集合关系摊派给局部 Card。
 - 连接语句指向整体事件时，应先形成准确表示它的 Card；无法形成时省略关系，不能用局部观测代替。
 - basis 用自然语言准确复述原文写明的连接，不出现 Card ID、Ref 标签或模型推测。每对 Card 最多一条关系。
 
-输出前核对：每张 Card 均完整且不重复；每项 Summary 都可由自身证据验证；每条 Relation 的连接语义都能由 relation_evidence_refs 直接定位，不依赖模型计算或常识。不要输出分析过程、主题标签、Community、预测或 Markdown。"""
+输出前核对：每张 Card 均完整且不重复；每项 Summary 都可由自身证据验证；逐条删除不能直接作为历史 Card Summary 的 Probe；逐条删除需要把独立端点证据拼接后才能成立的 Relation。只要 Probe 依赖占位推测，或 Relation 的连接指代、统计口径、事实端点存在歧义，就省略，不以数量为目标。不要输出分析过程、主题标签、Community、预测或 Markdown。"""
 
 
 @dataclass(frozen=True)
@@ -176,6 +223,16 @@ class _ValidatedAtomicCardResponse:
     discarded_card_count: int = 0
     discarded_relation_count: int = 0
     issues: tuple[str, ...] = ()
+
+
+def _response_cannot_be_safely_repaired(response: Any) -> bool:
+    raw_payload = getattr(response, "raw_payload", None) or {}
+    if str(raw_payload.get("finish_reason") or "").strip().lower() == "length":
+        return True
+    proxy = getattr(response, "proxy", None) or {}
+    return bool(proxy.get("json_prefix_continuation_attempted")) and not bool(
+        proxy.get("json_prefix_continuation_success")
+    )
 
 
 class AtomicCognitiveCardExtractor:
@@ -299,6 +356,24 @@ class AtomicCognitiveCardExtractor:
                         "card_ids": [card.cognitive_card_id for card in validated.cards],
                         "summary_chars": [len(card.summary) for card in validated.cards],
                         "focus_ref_counts": [len(card.focus_evidence_refs) for card in validated.cards],
+                        "relation_probe_counts": [
+                            len(card.relation_probes) for card in validated.cards
+                        ],
+                        "relation_probe_roles": [
+                            [probe.role for probe in card.relation_probes]
+                            for card in validated.cards
+                        ],
+                        "relation_probes": [
+                            {
+                                "cognitive_card_id": card.cognitive_card_id,
+                                "summary": card.summary,
+                                "items": [
+                                    probe.as_dict() for probe in card.relation_probes
+                                ],
+                            }
+                            for card in validated.cards
+                            if card.relation_probes
+                        ],
                         "intra_chunk_relation_count": len(validated.relations),
                         "intra_chunk_relation_kinds": [
                             relation.relation_kind for relation in validated.relations
@@ -337,6 +412,11 @@ class AtomicCognitiveCardExtractor:
         request: LLMProxyRequest,
         response: Any,
     ) -> tuple[_ValidatedAtomicCardResponse, bool, bool]:
+        if _response_cannot_be_safely_repaired(response):
+            raise RuntimeError(
+                "原子 Cognitive Card 输出在 Prefix Completion 后仍未完成，"
+                f"chunk_id={chunk.chunk_id}; 禁止重新执行完整业务请求"
+            )
         issues: list[str] = []
         with langfuse_observation(
             name="kg.atomic_card.validate",
@@ -400,7 +480,6 @@ class AtomicCognitiveCardExtractor:
                 f"原子 Cognitive Card 修复后仍未通过校验: chunk_id={chunk.chunk_id}; "
                 f"first_issues={issues}; repair_issue={exc}"
             ) from exc
-
     @staticmethod
     def _validate_response(
         chunk: EvidenceChunk,
@@ -872,6 +951,11 @@ class AtomicCognitiveCardStageService:
         intra_chunk_relation_count = sum(
             len(result.relations) for result in extraction_results
         )
+        relation_probe_count = sum(
+            len(card.relation_probes)
+            for result in extraction_results
+            for card in result.cards
+        )
         intra_chunk_observed = sum(
             relation.decision_class == "observed"
             for result in extraction_results
@@ -910,6 +994,12 @@ class AtomicCognitiveCardStageService:
                 if not result.cards and result.skip_reason
             ],
             "cards": card_count,
+            "relation_probes": relation_probe_count,
+            "cards_without_relation_probes": sum(
+                not card.relation_probes
+                for result in extraction_results
+                for card in result.cards
+            ),
             "average_cards_per_chunk": round(card_count / chunk_count, 3) if chunk_count else 0.0,
             "pg_inserted_cards": int(persistence.get("inserted_cards") or 0),
             "pg_deleted_cards": int(persistence.get("deleted_cards") or 0),

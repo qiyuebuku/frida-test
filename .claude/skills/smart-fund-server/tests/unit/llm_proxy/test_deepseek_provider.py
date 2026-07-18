@@ -301,9 +301,11 @@ def test_deepseek_repairs_unparseable_json_with_second_llm_call(monkeypatch):
 
     assert len(calls) == 2
     assert calls[1]["response_format"] == {"type": "json_object"}
-    assert calls[1]["messages"][0] == calls[0]["messages"][0]
-    assert calls[1]["messages"][1] == calls[0]["messages"][1]
-    assert calls[1]["messages"][2] == {"role": "assistant", "content": "ok=true, reason=done"}
+    assert calls[1]["messages"][0]["role"] == "system"
+    assert "严格的 JSON 修复器" in calls[1]["messages"][0]["content"]
+    assert "ok=true, reason=done" in calls[1]["messages"][1]["content"]
+    assert calls[1]["thinking"] == {"type": "disabled"}
+    assert "reasoning_effort" not in calls[1]
     assert response.structured_output == {"ok": True, "reason": "done"}
     assert response.usage == {
         "input_tokens": 8,
@@ -318,52 +320,46 @@ def test_deepseek_repairs_unparseable_json_with_second_llm_call(monkeypatch):
     assert response.raw_payload["json_repair"]["id"] == "chat-2"
 
 
-def test_deepseek_retries_empty_json_mode_without_forced_json_then_repairs(monkeypatch):
+def test_deepseek_continues_empty_json_with_previous_reasoning_and_assistant_prefix(monkeypatch):
     provider = _provider()
     calls = []
 
-    async def fake_post(payload):
-        calls.append(payload)
+    async def fake_post(payload, *, endpoint_url=None):
+        calls.append((payload, endpoint_url))
         if len(calls) == 1:
             return {
                 "id": "chat-1",
                 "model": payload["model"],
-                "choices": [{"message": {"content": ""}, "finish_reason": "stop"}],
-                "usage": {
-                    "prompt_tokens": 2,
-                    "completion_tokens": 0,
-                    "total_tokens": 2,
-                    "prompt_cache_hit_tokens": 1,
-                    "prompt_cache_miss_tokens": 1,
-                    "completion_tokens_details": {"reasoning_tokens": 0},
-                },
-            }
-        if len(calls) == 2:
-            return {
-                "id": "chat-2",
-                "model": payload["model"],
                 "choices": [
                     {
                         "message": {
-                            "content": "ok=true, reason=done",
-                            "reasoning_content": "reasoned",
+                            "content": "",
+                            "reasoning_content": "已完成事实边界判断，准备输出 JSON。",
                         },
-                        "finish_reason": "length",
+                        "finish_reason": "stop",
                     }
                 ],
                 "usage": {
-                    "prompt_tokens": 3,
-                    "completion_tokens": 4,
-                    "total_tokens": 7,
-                    "prompt_cache_hit_tokens": 2,
+                    "prompt_tokens": 2,
+                    "completion_tokens": 3,
+                    "total_tokens": 5,
+                    "prompt_cache_hit_tokens": 1,
                     "prompt_cache_miss_tokens": 1,
-                    "completion_tokens_details": {"reasoning_tokens": 2},
+                    "completion_tokens_details": {"reasoning_tokens": 3},
                 },
             }
         return {
-            "id": "chat-3",
+            "id": "chat-2",
             "model": payload["model"],
-            "choices": [{"message": {"content": '{"ok": true, "reason": "done"}'}, "finish_reason": "stop"}],
+            "choices": [
+                {
+                    "message": {
+                        "content": '{"ok": true, "reason": "done"}',
+                        "reasoning_content": "沿用上一轮结论，直接完成输出。",
+                    },
+                    "finish_reason": "stop",
+                }
+            ],
             "usage": {
                 "prompt_tokens": 5,
                 "completion_tokens": 6,
@@ -383,57 +379,145 @@ def test_deepseek_retries_empty_json_mode_without_forced_json_then_repairs(monke
         )
     )
 
-    assert len(calls) == 3
-    assert calls[0]["response_format"] == {"type": "json_object"}
-    assert "response_format" not in calls[1]
-    assert calls[1]["messages"][0] == calls[0]["messages"][0]
-    assert calls[1]["messages"][1] == calls[0]["messages"][1]
-    assert "JSON Schema" in str(calls[1]["messages"])
-    assert calls[2]["response_format"] == {"type": "json_object"}
-    assert calls[2]["messages"][0] == calls[0]["messages"][0]
-    assert calls[2]["messages"][1] == calls[0]["messages"][1]
-    assert calls[2]["messages"][2] == {"role": "assistant", "content": "ok=true, reason=done"}
+    assert len(calls) == 2
+    initial_payload, initial_endpoint = calls[0]
+    continuation_payload, continuation_endpoint = calls[1]
+    assert initial_endpoint is None
+    assert initial_payload["response_format"] == {"type": "json_object"}
+    assert continuation_endpoint == "https://api.deepseek.com/beta/chat/completions"
+    assert "response_format" not in continuation_payload
+    assert continuation_payload["messages"][:-1] == initial_payload["messages"]
+    assert continuation_payload["messages"][-1] == {
+        "role": "assistant",
+        "reasoning_content": "已完成事实边界判断，准备输出 JSON。",
+        "content": "",
+        "prefix": True,
+    }
     assert response.structured_output == {"ok": True, "reason": "done"}
     assert response.usage == {
-        "input_tokens": 10,
-        "output_tokens": 10,
-        "total_tokens": 20,
-        "prompt_cache_hit_tokens": 6,
-        "prompt_cache_miss_tokens": 4,
-        "reasoning_tokens": 3,
+        "input_tokens": 7,
+        "output_tokens": 9,
+        "total_tokens": 16,
+        "prompt_cache_hit_tokens": 4,
+        "prompt_cache_miss_tokens": 3,
+        "reasoning_tokens": 4,
     }
-    assert response.proxy["json_mode_retry_attempted"] is True
-    assert response.proxy["json_mode_retry_success"] is True
-    assert response.proxy["json_repair_attempted"] is True
-    assert response.proxy["json_repair_success"] is True
+    assert response.proxy["json_prefix_continuation_attempted"] is True
+    assert response.proxy["json_prefix_continuation_success"] is True
+    assert response.proxy["json_repair_attempted"] is False
     assert response.proxy["json_mode_initial_finish_reason"] == "stop"
-    assert response.proxy["json_mode_retry_finish_reason"] == "length"
+    assert response.proxy["json_prefix_continuation_finish_reason"] == "stop"
     assert response.proxy["json_mode_initial_usage"] == {
         "input_tokens": 2,
-        "output_tokens": 0,
-        "total_tokens": 2,
+        "output_tokens": 3,
+        "total_tokens": 5,
         "prompt_cache_hit_tokens": 1,
         "prompt_cache_miss_tokens": 1,
-        "reasoning_tokens": 0,
-    }
-    assert response.proxy["json_mode_retry_usage"] == {
-        "input_tokens": 3,
-        "output_tokens": 4,
-        "total_tokens": 7,
-        "prompt_cache_hit_tokens": 2,
-        "prompt_cache_miss_tokens": 1,
-        "reasoning_tokens": 2,
+        "reasoning_tokens": 3,
     }
     assert response.raw_payload["json_mode_initial"]["id"] == "chat-1"
     assert response.raw_payload["json_mode_initial"]["usage"] == response.proxy["json_mode_initial_usage"]
     assert response.raw_payload["json_mode_initial"]["content_chars"] == 0
-    assert response.raw_payload["json_mode_retry"]["id"] == "chat-2"
-    assert response.raw_payload["json_mode_retry"]["finish_reason"] == "length"
-    assert response.raw_payload["json_mode_retry"]["usage"] == response.proxy["json_mode_retry_usage"]
-    assert response.raw_payload["json_mode_retry"]["content_chars"] == len("ok=true, reason=done")
-    assert response.raw_payload["json_mode_retry"]["reasoning_chars"] == len("reasoned")
-    assert response.raw_payload["json_repair"]["id"] == "chat-3"
-    assert response.reasoning_content == "reasoned"
+    continuation = response.raw_payload["json_prefix_continuation"]
+    assert continuation["id"] == "chat-2"
+    assert continuation["prefix_content_chars"] == 0
+    assert continuation["prefix_reasoning_chars"] == len("已完成事实边界判断，准备输出 JSON。")
+    assert "[initial]" in response.reasoning_content
+    assert "[json_prefix_continuation]" in response.reasoning_content
+
+
+def test_deepseek_continues_partial_json_instead_of_restarting(monkeypatch):
+    provider = _provider()
+    calls = []
+
+    async def fake_post(payload, *, endpoint_url=None):
+        calls.append((payload, endpoint_url))
+        if len(calls) == 1:
+            return {
+                "id": "chat-1",
+                "model": payload["model"],
+                "choices": [
+                    {
+                        "message": {
+                            "content": '{"cards":[{"id":1}',
+                            "reasoning_content": "已经确定一张 Card。",
+                        },
+                        "finish_reason": "length",
+                    }
+                ],
+                "usage": {},
+            }
+        return {
+            "id": "chat-2",
+            "model": payload["model"],
+            "choices": [
+                {
+                    "message": {"content": '],"relations":[]}'},
+                    "finish_reason": "stop",
+                }
+            ],
+            "usage": {},
+        }
+
+    monkeypatch.setattr(provider, "_post", fake_post)
+
+    response = asyncio.run(
+        provider.generate(
+            LLMProxyRequest(prompt="返回 JSON", json_schema={"type": "object"}),
+            _route(),
+        )
+    )
+
+    assert len(calls) == 2
+    continuation_payload, continuation_endpoint = calls[1]
+    assert continuation_endpoint == "https://api.deepseek.com/beta/chat/completions"
+    assert continuation_payload["messages"][-1] == {
+        "role": "assistant",
+        "reasoning_content": "已经确定一张 Card。",
+        "content": '{"cards":[{"id":1}',
+        "prefix": True,
+    }
+    assert response.structured_output == {"cards": [{"id": 1}], "relations": []}
+    assert response.proxy["json_prefix_continuation_success"] is True
+    assert response.proxy["json_repair_attempted"] is False
+
+
+def test_deepseek_does_not_repair_when_prefix_continuation_is_still_truncated(monkeypatch):
+    provider = _provider()
+    calls = []
+
+    async def fake_post(payload, *, endpoint_url=None):
+        calls.append((payload, endpoint_url))
+        content = '{"cards":[' if len(calls) == 1 else '{"id":1}'
+        return {
+            "id": f"chat-{len(calls)}",
+            "model": payload["model"],
+            "choices": [
+                {
+                    "message": {
+                        "content": content,
+                        "reasoning_content": "尚未完成",
+                    },
+                    "finish_reason": "length",
+                }
+            ],
+            "usage": {},
+        }
+
+    monkeypatch.setattr(provider, "_post", fake_post)
+
+    response = asyncio.run(
+        provider.generate(
+            LLMProxyRequest(prompt="返回 JSON", json_schema={"type": "object"}),
+            _route(),
+        )
+    )
+
+    assert len(calls) == 2
+    assert response.structured_output is None
+    assert response.text == '{"cards":[{"id":1}'
+    assert response.proxy["json_prefix_continuation_success"] is False
+    assert response.proxy["json_repair_attempted"] is False
 
 
 def test_deepseek_keeps_original_text_when_json_repair_fails(monkeypatch):

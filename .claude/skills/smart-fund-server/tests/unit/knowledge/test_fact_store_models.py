@@ -67,7 +67,7 @@ def test_evidence_card_and_chunk_manifests_do_not_restore_legacy_fact_graph() ->
     assert {"cognitive_card_id", "focus_evidence_refs", "status"}.issubset(
         set(KnowledgeCognitiveCard.__table__.columns.keys())
     )
-    assert "relation_probes" not in KnowledgeCognitiveCard.__table__.columns
+    assert "relation_probes" in KnowledgeCognitiveCard.__table__.columns
     assert not {"kg_nodes", "kg_edges", "kg_graph_adjacency"}.intersection(
         set(Base.metadata.tables)
     )
