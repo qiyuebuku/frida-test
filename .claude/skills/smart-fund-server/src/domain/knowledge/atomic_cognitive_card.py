@@ -22,7 +22,7 @@ from src.domain.knowledge.semantic_index_materials import (
 
 
 ATOMIC_COGNITIVE_CARD_SCHEMA_VERSION = "atomic_cognitive_card_v7"
-ATOMIC_COGNITIVE_CARD_GENERATOR_VERSION = "atomic_card_extractor_v67"
+ATOMIC_COGNITIVE_CARD_GENERATOR_VERSION = "atomic_card_extractor_v68"
 INTRA_CHUNK_RELATION_KINDS = frozenset(
     {
         "confirmation",

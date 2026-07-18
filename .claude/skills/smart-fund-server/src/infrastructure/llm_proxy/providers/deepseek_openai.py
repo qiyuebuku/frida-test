@@ -416,9 +416,14 @@ class DeepSeekOpenAIProvider:
         force_response_format: bool = True,
         force_json_schema_instruction: bool = True,
     ) -> dict[str, Any]:
+        inject_json_schema_instruction = bool(
+            (request.provider_options or {}).get("inject_json_schema_instruction", True)
+        )
         messages = self._messages_for_request(
             request,
-            force_json_schema_instruction=force_json_schema_instruction,
+            force_json_schema_instruction=(
+                force_json_schema_instruction and inject_json_schema_instruction
+            ),
         )
         payload: dict[str, Any] = {
             "model": route.resolved_model or self.default_model,

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import time
 from dataclasses import dataclass
@@ -52,126 +53,141 @@ ATOMIC_CARD_PREFIX_WARM_POLL_SECONDS = 0.05
 ATOMIC_CARD_INTRA_CHUNK_PIPELINE_VERSION = "atomic_card_intra_chunk_relation_v1"
 
 
+ATOMIC_CARD_ITEM_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "properties": {
+        "local_card_id": {
+            "type": "string",
+            "pattern": "^c([1-9]|1[0-2])$",
+        },
+        "summary": {"type": "string", "minLength": 1, "maxLength": 500},
+        "focus_evidence_refs": {
+            "type": "array",
+            "minItems": 1,
+            "items": {"type": "string", "pattern": "^s[0-9]{4}$"},
+        },
+        "relation_probes": {
+            "type": "array",
+            "maxItems": 12,
+            "items": {
+                "type": "object",
+                "properties": {
+                    "role": {
+                        "type": "string",
+                        "enum": [
+                            "same_event",
+                            "upstream",
+                            "downstream",
+                            "confirmation",
+                            "contradiction",
+                        ],
+                    },
+                    "query": {"type": "string", "minLength": 1, "maxLength": 300},
+                },
+                "required": ["role", "query"],
+                "additionalProperties": False,
+            },
+        },
+    },
+    "required": [
+        "local_card_id",
+        "summary",
+        "focus_evidence_refs",
+        "relation_probes",
+    ],
+    "additionalProperties": False,
+}
+
+
+ATOMIC_RELATION_ITEM_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "properties": {
+        "source_card_id": {
+            "type": "string",
+            "pattern": "^c([1-9]|1[0-2])$",
+        },
+        "target_card_id": {
+            "type": "string",
+            "pattern": "^c([1-9]|1[0-2])$",
+        },
+        "relation_kind": {
+            "type": "string",
+            "enum": sorted(INTRA_CHUNK_RELATION_KINDS),
+        },
+        "basis": {"type": "string", "minLength": 1, "maxLength": 1000},
+        "relation_evidence_refs": {
+            "type": "array",
+            "minItems": 1,
+            "items": {"type": "string", "pattern": "^s[0-9]{4}$"},
+        },
+    },
+    "required": [
+        "source_card_id",
+        "target_card_id",
+        "relation_kind",
+        "basis",
+        "relation_evidence_refs",
+    ],
+    "additionalProperties": False,
+}
+
+
 ATOMIC_CARD_SCHEMA: dict[str, Any] = {
     "type": "object",
     "properties": {
         "cards": {
             "type": "array",
             "maxItems": 12,
-            "items": {
-                "type": "object",
-                "properties": {
-                    "local_card_id": {
-                        "type": "string",
-                        "pattern": "^c([1-9]|1[0-2])$",
-                    },
-                    "summary": {"type": "string", "minLength": 1, "maxLength": 500},
-                    "focus_evidence_refs": {
-                        "type": "array",
-                        "minItems": 1,
-                        "items": {"type": "string", "pattern": "^s[0-9]{4}$"},
-                    },
-                    "relation_probes": {
-                        "type": "array",
-                        "maxItems": 12,
-                        "items": {
-                            "type": "object",
-                            "properties": {
-                                "role": {
-                                    "type": "string",
-                                    "enum": [
-                                        "same_event",
-                                        "upstream",
-                                        "downstream",
-                                        "confirmation",
-                                        "contradiction",
-                                    ],
-                                },
-                                "query": {"type": "string", "minLength": 1, "maxLength": 300},
-                            },
-                            "required": ["role", "query"],
-                            "additionalProperties": False,
-                        },
-                    },
-                },
-                "required": [
-                    "local_card_id",
-                    "summary",
-                    "focus_evidence_refs",
-                    "relation_probes",
-                ],
-                "additionalProperties": False,
-            },
-        },
-        "relations": {
-            "type": "array",
-            "maxItems": 66,
-            "items": {
-                "type": "object",
-                "properties": {
-                    "source_card_id": {
-                        "type": "string",
-                        "pattern": "^c([1-9]|1[0-2])$",
-                    },
-                    "target_card_id": {
-                        "type": "string",
-                        "pattern": "^c([1-9]|1[0-2])$",
-                    },
-                    "relation_kind": {
-                        "type": "string",
-                        "enum": sorted(INTRA_CHUNK_RELATION_KINDS),
-                    },
-                    "basis": {"type": "string", "minLength": 1, "maxLength": 1000},
-                    "relation_evidence_refs": {
-                        "type": "array",
-                        "minItems": 1,
-                        "items": {"type": "string", "pattern": "^s[0-9]{4}$"},
-                    },
-                },
-                "required": [
-                    "source_card_id",
-                    "target_card_id",
-                    "relation_kind",
-                    "basis",
-                    "relation_evidence_refs",
-                ],
-                "additionalProperties": False,
-            },
+            "items": ATOMIC_CARD_ITEM_SCHEMA,
         },
         "skip_reason": {"type": "string", "maxLength": 240},
     },
-    "required": ["cards", "relations", "skip_reason"],
+    "required": ["cards", "skip_reason"],
+    "additionalProperties": False,
+}
+
+
+ATOMIC_RELATION_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "properties": {
+        "relations": {
+            "type": "array",
+            "maxItems": 66,
+            "items": ATOMIC_RELATION_ITEM_SCHEMA,
+        },
+    },
+    "required": ["relations"],
     "additionalProperties": False,
 }
 
 
 ATOMIC_CARD_SYSTEM_PROMPT = """你是知识图谱的原子 Cognitive Card 抽取器。
 
-输入首行是新闻发布时间；其后每行是一条完整原文语句，`<title>` 表示标题，`[sNNNN]` 是紧随文本的证据坐标。同一行连续 Ref 的文本按顺序拼接阅读。先完整提取、合并重复表达并输出最终 Cards，按输出顺序分配连续 local_card_id；Cards 一旦输出，后续不得修改、合并、拆分或重新编号。随后只基于已经输出的 Cards 和当前原文查找同 Chunk 正关系，并用已有 Card ID 输出 relations。JSON 必须按 cards、relations、skip_reason 顺序输出；只输出 JSON Schema 要求的字段。
+输入首行是新闻发布时间；其后每行是一条完整原文语句，`<title>` 表示标题，`[sNNNN]` 是紧随文本的证据坐标。同一行连续 Ref 的文本按顺序拼接阅读。当前阶段只负责完整提取、合并重复表达并输出最终 Cards 及其 Relation Probe，按输出顺序分配连续 local_card_id。不要分析或输出 Cards 之间的关系。JSON 必须按 cards、skip_reason 顺序输出；只输出 JSON Schema 要求的字段。
 
 Card：
 - 每张 Card 表达一个可独立参与后续关系判断的事件或事实端点，粒度应“最小但完整”。按核心谓词拆分，不按句子、数字、公司或 Ref 数量机械拆分。
-- 原文明示两个可独立验证的事实端点及其关系时，必须分别形成 Card，连接语义放入 relations；不能把“两端事实 + 连接关系”整体写进一张 Card 后省略关系。如果判断“后者是前者的后果、进展或确认”，这正是拆成两端并建立关系的理由，不是合并理由。
+- 原文明示两个可独立验证的事实端点时，必须分别形成 Card；不能把“两端事实 + 连接语义”整体写进一张 Card。Card 只表达自身事实，不负责解释它与其他 Card 的关系。
 - 同一主体、对象、时间和核心谓词下的方向、幅度、数值、比例、范围、条件与结果状态属于同一事实，应合并；不同主体或不同核心谓词分别形成 Card。
 - 同一次观测、统计或披露快照中用于共同描述一个现象的总体值、地区明细、指标值、极值与分项数据，应合并为一个 Card；只有某项本身构成独立动作或关系端点时才拆分。
-- 同一主体在不同年度、季度或月度的统计值，如果原文只是把它们共同用于说明一个趋势，应合并为一张保留各期关键数据的 Card，不能把不同报告窗口机械拆成两张 Card 再建立时间关系。
-- 同一来源先给出定性结论、紧接着用数值或分项解释该结论时，应生成一张保留结论和关键明细的完整 Card；不要同时保留一张定性总述 Card 和多张仅用于解释它的明细 Card。只有明细本身参与另一条原文明示关系时才独立拆出。
-- 总述如果没有增加独立事实，且已被具体 Card 完整表达，就不要重复保留；近义改写、重复表达和局部细节必须合并。不能为了充当 Relation 的集合端点，额外创建一张只汇总其他 Cards 的总述 Card。
+- 同一主体在不同年度、季度或月度的统计值，如果原文只是把它们共同用于说明一个趋势，应合并为一张保留各期关键数据的 Card，不能把不同报告窗口机械拆成多张 Card。
+- 同一来源先给出定性结论、紧接着用数值或分项解释该结论时，应生成一张保留结论和关键明细的完整 Card；不要同时保留一张定性总述 Card 和多张仅用于解释它的明细 Card。只有明细本身构成可被独立引用的完整事实时才独立拆出。
+- 总述如果没有增加独立事实，且已被具体 Card 完整表达，就不要重复保留；近义改写、重复表达和局部细节必须合并。不能额外创建一张只汇总其他 Cards 的总述 Card。
 - 输出前进行信息包含检查：如果一张 Card 的全部事实只是其他 Card 的改写、并集或概括，二者不能同时保留。
 - 同一句或同一段中的并列事实，如果主体、谓词、对象或可验证结论不同，仍是独立端点；方向相同、服务同一策略或属于同一主题不能作为合并理由。
-- 同一次会议、交易、诉讼、调查、治理争议或其他完整程序中的提议、回应、表决和结果，如果共同描述一个不可分割的事件，应保留为一张 Card；不能为了增加 Relation 数量把程序步骤机械拆成多张 Card。只有某一步本身会被其他文档独立引用或参与另一条关系时才拆分。
+- 同一次会议、交易、诉讼、调查、治理争议或其他完整程序中的提议、回应、表决和结果，如果共同描述一个不可分割的事件，应保留为一张 Card；不能把程序步骤机械拆成多张 Card。只有某一步本身会被其他文档独立引用时才拆分。
 - 每个 Summary 必须脱离上下文仍能读懂，明确写出主体和事实，不能输出只能依赖上一张 Card 才成立的残句。
 - Summary 只写原文明确表达的完整事实。必须保留消息来源、声明者、预测者、认定者以及“可能、预计、据称”等归因和不确定性，不得把主张改写成客观事实。
 - 当前 chunk 没有可独立验证的事实时允许 cards=[]，并填写 skip_reason。Card 按最终顺序使用连续且唯一的 c1、c2、c3。
 
 Card 证据：
 - focus_evidence_refs 是能够独立验证 Summary 的最小完整证据闭包；主体、动作、对象、时间、数值、因果和限定语都必须直接出现。Ref 不是事件边界，事实跨多个 Ref 时联合引用。数组元素只写 `sNNNN`，不要带方括号。
-- 标题属于原文；标题提供正文未重复的主体、因果、结果或范围时，必须纳入对应 Card 或 Relation 证据。
+- 标题属于原文；标题提供正文未重复的主体、因果、结果或范围时，必须纳入对应 Card 证据。
 - published_at 只用于理解相对时间，不能补造正文没有的年份或事实，也不是事实证据。
 
 Relation Probe：
 - relation_probes 是当前 Card 用来搜索其他 Chunk 历史 Card 的候选事件描述，不是已经成立的关系，也不能修改当前 Card 事实。只依据当前 Card 的 Summary 和 focus_evidence_refs 生成，不混入本 Chunk 其他 Card 的事实。
-- 生成某张 Card 的 Probe 时，暂时忽略输入中不属于该 Card focus_evidence_refs 的 Span 和本次其他 Card。若 query 中的具体日期、数字、主体限定或已发生动作只能从兄弟 Card 得到，说明发生了跨 Card 污染，必须删除该 Probe；同 Chunk 关系已经由 relations 处理，不需要 Probe 再次寻找。
+- 生成某张 Card 的 Probe 时，暂时忽略输入中不属于该 Card focus_evidence_refs 的 Span 和本次其他 Card。若 query 中的具体日期、数字、主体限定或已发生动作只能从兄弟 Card 得到，说明发生了跨 Card 污染，必须删除该 Probe；同 Chunk 内部关联不通过 Probe 搜索。
 - Summary 本身已经是基础语义召回路由。只是复述当前 Summary、替换近义词或罗列当前事实关键词的 Probe 没有增量价值，必须省略。零 Probe 是正常结果；不要为了让 Card 看起来完整而填充 role。
 - Probe 必须寻找当前 Card 尚未包含的另一个独立事件。先检查候选 query 是否已经能由当前 Card 的 Summary 或 focus_evidence_refs 直接证明；如果能，它只是 Card 内部事实、局部原因或局部结果，不是跨 Chunk 候选，必须省略。role 描述的是候选事件与整张当前 Card 的关系，不能把当前 Card 内部已经合并的原因重新标成 upstream，也不能把其中已经写明的结果重新标成 downstream。
 - Probe 是后续召回使用的关系假设，不是当前原文已经证明的事实。允许描述原文尚未出现、但若历史 Card 存在就能与当前 Card 形成该 role 的候选事件；不能仅因当前原文没有证明候选事件就全部省略，真实性由后续召回和原文核验负责。新增内容只能是建立该关系所必需的事件类型和作用对象，不能编造具体日期、数值、专有主体、已发生结论或中间机制。
@@ -186,8 +202,12 @@ Relation Probe：
 - Probe 只搜索在 published_at 时已经可能存在的材料，不是未来订阅条件。当前刚发生的事件通常没有可搜索的后续结果；任何尚未发生的后续状态、处置、反应或影响都必须省略，未来事件入库时会反向发现当前 Card。零 Probe 仍然允许，但只应出现在所有角色都会重复当前 Card、依赖未来事实或无法形成受约束候选事件的情况下；不能因为“候选事件不在当前原文中”而把有明确关系方向的 Card 机械置空。
 - 报告、预测、观点或数据发布首先是信息事件。它所描述的现实状态只能作为 confirmation 或 contradiction 的搜索对象；只有在 published_at 前已经发生、且由信息发布本身触发的反应才可能成为 downstream。
 
-同 Chunk Relation：
-- Cards 输出稳定后，再检查原文明示的连接及其准确事实端点，并根据已有 Card ID 建立关系。不要枚举没有连接证据的 Card 组合。只输出正关系；同篇出现、相邻、同主体、同领域、时间先后或常识上可能相关都不构成关系。
+输出前核对：每张 Card 均完整且不重复；每项 Summary 都可由自身证据验证；逐条删除不能直接作为历史 Card Summary 的 Probe。只要 Probe 依赖占位推测就省略，不以数量为目标。不要输出 Relations、分析过程、主题标签、Community、预测或 Markdown。"""
+
+
+ATOMIC_CARD_RELATION_FOLLOWUP_PROMPT = """现在只处理上一轮已经确定的 Cards 之间的同 Chunk 正关系。Cards 已冻结，不得修改、合并、拆分、补充或重新编号。顶层 JSON 对象只包含 `relations` 数组；没有满足证据门槛的关系时该数组为空。
+
+- 检查原文明示的连接及其准确事实端点，并根据上一轮已有 local_card_id 建立关系。不要枚举没有连接证据的 Card 组合。只输出正关系；同篇出现、相邻、同主体、同领域、时间先后或常识上可能相关都不构成关系。
 - 同一个完整程序性事件内部的步骤顺序属于该 Card 的事实结构，不单独输出 temporal_progression；Relation 用于连接能够独立复用的事实端点，不用于复述 Card 内部流程。
 - 只输出原文直接写明的 confirmation、contradiction、temporal_progression、causal_influence、common_driver、constraint；需要补充中间机制或外部常识的关系省略。
 - temporal_progression 必须有原文明示的前后、后续、更新、演进或同一事实状态变化，并且两端主体、指标、统计口径和时间具有可比性。年度、季度、月度等不同观察窗口，除非原文直接比较并明确认定变化，否则不能由模型自行比较比例、幅度或数值后生成关系。
@@ -202,10 +222,10 @@ Relation Probe：
 - 年度、季度、月度等不同报告窗口中的同比、环比、金额或比例不是同一状态快照；即使叙述使用“进一步、继续”等趋势词，也应合并为趋势 Card，而不是在这些统计 Card 之间输出 temporal_progression。
 - 关系连接语句中的 source 与 target 必须分别和两端 Card 表达同一个具体事实，主体、谓词、对象、时间和范围不能被更宽或更窄的概念替换。连接语句只提到未展开的宽泛集合时，不得任选集合中的局部指标或个体作为关系端点。
 - 原文用“这些措施、这种策略”等集合指代多个事实时，只有连接语句能够逐项对应的成员才分别建立关系；无法逐项对应时省略关系，不能把集合关系摊派给局部 Card。
-- 连接语句指向整体事件时，应先形成准确表示它的 Card；无法形成时省略关系，不能用局部观测代替。
+- 连接语句指向整体事件时，只能连接上一轮已有的准确 Card；没有对应 Card 时省略关系，不能用局部观测代替。
 - basis 用自然语言准确复述原文写明的连接，不出现 Card ID、Ref 标签或模型推测。每对 Card 最多一条关系。
 
-输出前核对：每张 Card 均完整且不重复；每项 Summary 都可由自身证据验证；逐条删除不能直接作为历史 Card Summary 的 Probe；逐条删除需要把独立端点证据拼接后才能成立的 Relation。只要 Probe 依赖占位推测，或 Relation 的连接指代、统计口径、事实端点存在歧义，就省略，不以数量为目标。不要输出分析过程、主题标签、Community、预测或 Markdown。"""
+输出前逐条删除需要把独立端点证据拼接后才能成立的 Relation。只要连接指代、统计口径或事实端点存在歧义，就省略，不以数量为目标。不要输出 Cards、Relation Probe、分析过程、主题标签、Community、预测或 Markdown。"""
 
 
 @dataclass(frozen=True)
@@ -218,9 +238,15 @@ class AtomicCardStageResult:
 @dataclass(frozen=True)
 class _ValidatedAtomicCardResponse:
     cards: list[AtomicCognitiveCard]
-    relations: list[VerifiedRelationDecision]
+    cards_by_local_id: dict[str, AtomicCognitiveCard]
     skip_reason: str
     discarded_card_count: int = 0
+    issues: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
+class _ValidatedRelationResponse:
+    relations: list[VerifiedRelationDecision]
     discarded_relation_count: int = 0
     issues: tuple[str, ...] = ()
 
@@ -305,14 +331,20 @@ class AtomicCognitiveCardExtractor:
             source_title=payload.get("title") or "",
             sentence_blocks=sentence_blocks,
         )
+        base_messages = [
+            {"role": "system", "content": ATOMIC_CARD_SYSTEM_PROMPT},
+            {"role": "user", "content": prompt_input},
+        ]
         request = LLMProxyRequest(
             model=self._model,
-            system_prompt=ATOMIC_CARD_SYSTEM_PROMPT,
-            prompt=prompt_input,
+            messages=base_messages,
             temperature=0,
             max_tokens=ATOMIC_CARD_MAX_TOKENS,
             json_schema=ATOMIC_CARD_SCHEMA,
-            provider_options={"reasoning_effort": "medium"},
+            provider_options={
+                "reasoning_effort": "medium",
+                "inject_json_schema_instruction": False,
+            },
             metadata={
                 "task": "kg_cognitive_card",
                 "schema_version": ATOMIC_COGNITIVE_CARD_SCHEMA_VERSION,
@@ -329,7 +361,7 @@ class AtomicCognitiveCardExtractor:
             use_cache=True,
         )
         with langfuse_observation(
-            name="kg.atomic_card.extract",
+            name="kg.atomic_card.extract_cards",
             as_type="span",
             input={
                 "chunk_id": chunk.chunk_id,
@@ -343,11 +375,21 @@ class AtomicCognitiveCardExtractor:
             try:
                 response = await self._llm.generate(request)
                 await self._mark_prefix_warmed(settle=warmup_lock is not None)
-                validated, repaired, repair_attempted = await self._cards_from_response(
+                validated, repaired, repair_attempted, card_response = (
+                    await self._cards_from_response(
+                        chunk=chunk,
+                        spans=spans,
+                        request=request,
+                        response=response,
+                    )
+                )
+                relation_result = await self._extract_relations(
                     chunk=chunk,
                     spans=spans,
-                    request=request,
-                    response=response,
+                    card_request=request,
+                    card_response=card_response,
+                    cards=validated.cards,
+                    cards_by_local_id=validated.cards_by_local_id,
                 )
                 langfuse_update_span(
                     output={
@@ -374,15 +416,18 @@ class AtomicCognitiveCardExtractor:
                             for card in validated.cards
                             if card.relation_probes
                         ],
-                        "intra_chunk_relation_count": len(validated.relations),
+                        "intra_chunk_relation_count": len(relation_result.relations),
                         "intra_chunk_relation_kinds": [
-                            relation.relation_kind for relation in validated.relations
+                            relation.relation_kind for relation in relation_result.relations
                         ],
                         "repaired": repaired,
                         "repair_attempted": repair_attempted,
                         "discarded_card_count": validated.discarded_card_count,
-                        "discarded_relation_count": validated.discarded_relation_count,
-                        "validation_issues": list(validated.issues),
+                        "discarded_relation_count": relation_result.discarded_relation_count,
+                        "validation_issues": [
+                            *validated.issues,
+                            *relation_result.issues,
+                        ],
                         "skip_reason": validated.skip_reason,
                         "prefix_warmup_owner": warmup_lock is not None,
                     },
@@ -392,12 +437,12 @@ class AtomicCognitiveCardExtractor:
                     chunk_id=chunk.chunk_id,
                     spans=spans,
                     cards=validated.cards,
-                    relations=validated.relations,
+                    relations=relation_result.relations,
                     repaired=repaired,
                     repair_attempted=repair_attempted,
                     discarded_card_count=validated.discarded_card_count,
-                    discarded_relation_count=validated.discarded_relation_count,
-                    validation_issues=list(validated.issues),
+                    discarded_relation_count=relation_result.discarded_relation_count,
+                    validation_issues=[*validated.issues, *relation_result.issues],
                     skip_reason=validated.skip_reason,
                 )
             finally:
@@ -411,7 +456,7 @@ class AtomicCognitiveCardExtractor:
         spans: list[Any],
         request: LLMProxyRequest,
         response: Any,
-    ) -> tuple[_ValidatedAtomicCardResponse, bool, bool]:
+    ) -> tuple[_ValidatedAtomicCardResponse, bool, bool, Any]:
         if _response_cannot_be_safely_repaired(response):
             raise RuntimeError(
                 "原子 Cognitive Card 输出在 Prefix Completion 后仍未完成，"
@@ -424,7 +469,7 @@ class AtomicCognitiveCardExtractor:
             input={"chunk_id": chunk.chunk_id},
         ):
             try:
-                validated = self._validate_response(
+                validated = self._validate_card_response(
                     chunk,
                     spans,
                     response.structured_output,
@@ -433,14 +478,12 @@ class AtomicCognitiveCardExtractor:
                     output={
                         "valid": True,
                         "card_count": len(validated.cards),
-                        "relation_count": len(validated.relations),
                         "discarded_card_count": validated.discarded_card_count,
-                        "discarded_relation_count": validated.discarded_relation_count,
                         "issues": list(validated.issues),
                     },
                     status_message="completed",
                 )
-                return validated, False, False
+                return validated, False, False, response
             except Exception as exc:
                 issues.append(str(exc))
                 langfuse_update_span(
@@ -461,7 +504,7 @@ class AtomicCognitiveCardExtractor:
                 instruction=(
                     "上一轮原子 Cognitive Card 输出未通过契约校验。"
                     "只修复事件边界、JSON 结构和 Span Ref 合规性；"
-                    "先确定去重后的最终 cards，再修复只引用这些 Card 的 relations；"
+                    "只修复去重后的最终 cards、relation_probes 和 skip_reason；"
                     "修复后重新检查每个 Card 的焦点证据是否完整支撑 Summary，"
                     "缺少支撑时补充已有 Span Ref 或删除对应表述；"
                     "不得新增外部事实，不得恢复旧 topic_intents 或主题标签字段。"
@@ -469,26 +512,27 @@ class AtomicCognitiveCardExtractor:
                 retry_reason="atomic_cognitive_card_validation_invalid",
             )
         try:
-            validated = self._validate_response(
+            validated = self._validate_card_response(
                 chunk,
                 spans,
                 repaired.structured_output,
             )
-            return validated, True, True
+            return validated, True, True, repaired
         except Exception as exc:
             raise RuntimeError(
                 f"原子 Cognitive Card 修复后仍未通过校验: chunk_id={chunk.chunk_id}; "
                 f"first_issues={issues}; repair_issue={exc}"
             ) from exc
+
     @staticmethod
-    def _validate_response(
+    def _validate_card_response(
         chunk: EvidenceChunk,
         spans: list[Any],
         data: Any,
     ) -> _ValidatedAtomicCardResponse:
         if not isinstance(data, dict):
             raise ValueError(f"顶层输出必须是 JSON object，实际为 {type(data).__name__}")
-        expected_top_level = {"cards", "relations", "skip_reason"}
+        expected_top_level = {"cards", "skip_reason"}
         if set(data) != expected_top_level:
             raise ValueError(
                 "顶层字段不符合契约: "
@@ -532,6 +576,113 @@ class AtomicCognitiveCardExtractor:
         if raw_cards and not cards:
             raise ValueError("所有 Card 均未通过基础契约校验")
 
+        return _ValidatedAtomicCardResponse(
+            cards=cards,
+            cards_by_local_id=cards_by_local_id,
+            skip_reason=skip_reason,
+            discarded_card_count=discarded_card_count,
+            issues=tuple(issues),
+        )
+
+    async def _extract_relations(
+        self,
+        *,
+        chunk: EvidenceChunk,
+        spans: list[Any],
+        card_request: LLMProxyRequest,
+        card_response: Any,
+        cards: list[AtomicCognitiveCard],
+        cards_by_local_id: dict[str, AtomicCognitiveCard],
+    ) -> _ValidatedRelationResponse:
+        if len(cards_by_local_id) <= 1:
+            return _ValidatedRelationResponse(relations=[])
+
+        assistant_content = str(getattr(card_response, "text", "") or "").strip()
+        if not assistant_content:
+            assistant_content = json.dumps(
+                getattr(card_response, "structured_output", None) or {},
+                ensure_ascii=False,
+            )
+        relation_messages = [
+            *card_request.messages,
+            {"role": "assistant", "content": assistant_content},
+            {"role": "user", "content": ATOMIC_CARD_RELATION_FOLLOWUP_PROMPT},
+        ]
+        relation_request = LLMProxyRequest(
+            model=self._model,
+            messages=relation_messages,
+            temperature=0,
+            max_tokens=ATOMIC_CARD_MAX_TOKENS,
+            json_schema=ATOMIC_RELATION_SCHEMA,
+            provider_options={
+                "reasoning_effort": "medium",
+                "inject_json_schema_instruction": False,
+            },
+            metadata={
+                "task": "kg_cognitive_card_relation",
+                "schema_version": ATOMIC_COGNITIVE_CARD_SCHEMA_VERSION,
+                "generator_version": ATOMIC_COGNITIVE_CARD_GENERATOR_VERSION,
+                "chunk_id": chunk.chunk_id,
+                "card_count": len(cards),
+                "_cache_key_metadata": {
+                    "task": "kg_cognitive_card_relation",
+                    "schema_version": ATOMIC_COGNITIVE_CARD_SCHEMA_VERSION,
+                    "generator_version": ATOMIC_COGNITIVE_CARD_GENERATOR_VERSION,
+                },
+            },
+            use_cache=True,
+        )
+        with langfuse_observation(
+            name="kg.atomic_card.extract_relations",
+            as_type="span",
+            input={
+                "chunk_id": chunk.chunk_id,
+                "card_count": len(cards),
+                "continued_message_count": len(relation_messages),
+            },
+        ):
+            response = await self._llm.generate(relation_request)
+            if _response_cannot_be_safely_repaired(response):
+                raise RuntimeError(
+                    "同 Chunk Relation 输出在 Prefix Completion 后仍未完成，"
+                    f"chunk_id={chunk.chunk_id}; 禁止重新执行完整业务请求"
+                )
+            validated = self._validate_relation_response(
+                chunk,
+                spans,
+                cards_by_local_id,
+                response.structured_output,
+            )
+            langfuse_update_span(
+                output={
+                    "chunk_id": chunk.chunk_id,
+                    "relation_count": len(validated.relations),
+                    "relation_kinds": [
+                        relation.relation_kind for relation in validated.relations
+                    ],
+                    "discarded_relation_count": validated.discarded_relation_count,
+                    "issues": list(validated.issues),
+                },
+                status_message="completed",
+            )
+            return validated
+
+    @staticmethod
+    def _validate_relation_response(
+        chunk: EvidenceChunk,
+        spans: list[Any],
+        cards_by_local_id: dict[str, AtomicCognitiveCard],
+        data: Any,
+    ) -> _ValidatedRelationResponse:
+        if not isinstance(data, dict):
+            raise ValueError(f"Relation 顶层输出必须是 JSON object，实际为 {type(data).__name__}")
+        if set(data) != {"relations"}:
+            raise ValueError(
+                "Relation 顶层字段不符合契约: "
+                f"missing={sorted({'relations'}.difference(data))}, "
+                f"extra={sorted(set(data).difference({'relations'}))}"
+            )
+        issues: list[str] = []
         raw_relations = data.get("relations")
         if not isinstance(raw_relations, list):
             issues.append("relations 不是数组，已丢弃全部关系")
@@ -543,10 +694,6 @@ class AtomicCognitiveCardExtractor:
                 issues.append(
                     f"relations 超过 66 项，已丢弃尾部 {discarded_relation_count} 项"
                 )
-        if not cards and raw_relations:
-            discarded_relation_count += len(raw_relations)
-            issues.append("cards 为空，已丢弃全部 relations")
-            raw_relations = []
         relations: list[VerifiedRelationDecision] = []
         seen_pairs: set[tuple[str, str]] = set()
         for index, item in enumerate(raw_relations[:66], start=1):
@@ -575,11 +722,8 @@ class AtomicCognitiveCardExtractor:
                 continue
             seen_pairs.add(local_pair)
             relations.append(relation)
-        return _ValidatedAtomicCardResponse(
-            cards=cards,
+        return _ValidatedRelationResponse(
             relations=relations,
-            skip_reason=skip_reason,
-            discarded_card_count=discarded_card_count,
             discarded_relation_count=discarded_relation_count,
             issues=tuple(issues),
         )

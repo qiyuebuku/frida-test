@@ -118,6 +118,26 @@ def test_deepseek_injects_schema_even_when_prompt_mentions_json_schema():
     assert '"required"' in system_prompt
 
 
+def test_deepseek_can_preserve_messages_without_schema_prompt_injection():
+    provider = _provider()
+    messages = [
+        {"role": "system", "content": "固定系统前缀，只输出 JSON。"},
+        {"role": "user", "content": "第一轮输入"},
+    ]
+
+    payload = provider._request_payload(
+        LLMProxyRequest(
+            messages=messages,
+            json_schema={"type": "object", "required": ["cards"]},
+            provider_options={"inject_json_schema_instruction": False},
+        ),
+        _route(),
+    )
+
+    assert payload["messages"] == messages
+    assert payload["response_format"] == {"type": "json_object"}
+
+
 def test_deepseek_json_object_mode_injects_json_instruction_for_messages():
     provider = _provider()
     payload = provider._request_payload(
