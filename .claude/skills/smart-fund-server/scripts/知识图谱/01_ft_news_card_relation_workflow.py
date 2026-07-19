@@ -83,6 +83,16 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--target", choices=["prod", "test"], default="prod")
     parser.add_argument(
+        "--provider",
+        default="",
+        help="仅 cards 模式：固定 LLM 厂商 Provider；不传时使用网关自动路由",
+    )
+    parser.add_argument(
+        "--model",
+        default="",
+        help="仅 cards 模式：覆盖 kg_cognitive_card 的 canonical model",
+    )
+    parser.add_argument(
         "--mode",
         choices=["workflow", "cards"],
         default="workflow",
@@ -97,9 +107,9 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--chunk-timeout",
         type=float,
-        default=200.0,
+        default=500.0,
         help=(
-            "cards 模式单个 Chunk 的外层等待秒数，默认 200 秒，"
+            "cards 模式单个 Chunk 的外层等待秒数，默认 500 秒，"
             "应大于 LLM Provider 默认的 180 秒超时；超时只隔离当前 Chunk"
         ),
     )
@@ -207,7 +217,11 @@ async def run_card_validation(
     concurrency = min(requested_concurrency, max(1, settings.DEEPSEEK_MAX_CONCURRENCY))
     chunk_timeout = max(1.0, float(args.chunk_timeout))
     semaphore = asyncio.Semaphore(concurrency)
-    extractor = AtomicCognitiveCardExtractor(concurrency=concurrency)
+    extractor = AtomicCognitiveCardExtractor(
+        model=str(args.model or "").strip() or None,
+        provider=str(args.provider or "").strip() or None,
+        concurrency=concurrency,
+    )
 
     async def process(chunk: EvidenceChunk) -> dict[str, Any]:
         owner = owners[chunk.chunk_id]
@@ -290,6 +304,8 @@ async def run_card_validation(
         "status": "completed" if not failed_chunks else "completed_with_errors",
         "mode": "cards",
         "target": args.target,
+        "model": str(args.model or "").strip() or None,
+        "provider": str(args.provider or "").strip() or None,
         "session_id": session_id,
         "requested_concurrency": requested_concurrency,
         "effective_concurrency": concurrency,
@@ -481,6 +497,10 @@ async def cleanup_workflow_state(*, adapter_name: str, target: str) -> dict:
 
 
 async def main_async(args: argparse.Namespace) -> None:
+    if (
+        str(args.provider or "").strip() or str(args.model or "").strip()
+    ) and args.mode != "cards":
+        raise ValueError("--model 和 --provider 当前仅用于 cards 质量验证模式")
     session_id = args.session_id or f"ft-news-card-relation-{uuid4().hex[:12]}"
     trace_name = (
         "kg.atomic_card.batch_validation"
@@ -490,6 +510,8 @@ async def main_async(args: argparse.Namespace) -> None:
     trace_input = {
         "mode": args.mode,
         "target": args.target,
+        "model": str(args.model or "").strip() or None,
+        "provider": str(args.provider or "").strip() or None,
         "limit": max(1, min(100, int(args.limit))),
         "news_ids": _ordered_unique_positive_ints(args.news_id),
         "include_evaluation_details": args.include_evaluation_details,

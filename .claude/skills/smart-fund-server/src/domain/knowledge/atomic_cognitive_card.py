@@ -22,7 +22,7 @@ from src.domain.knowledge.semantic_index_materials import (
 
 
 ATOMIC_COGNITIVE_CARD_SCHEMA_VERSION = "atomic_cognitive_card_v7"
-ATOMIC_COGNITIVE_CARD_GENERATOR_VERSION = "atomic_card_extractor_v68"
+ATOMIC_COGNITIVE_CARD_GENERATOR_VERSION = "atomic_card_extractor_v96"
 INTRA_CHUNK_RELATION_KINDS = frozenset(
     {
         "confirmation",
@@ -339,7 +339,6 @@ def atomic_card_from_llm_item(
     if unknown_refs:
         raise ValueError(f"card 引用了不存在的 Span Ref: {unknown_refs}")
 
-    relation_probes = _normalize_relation_probes(item.get("relation_probes"))
     card_id = build_atomic_card_id(
         chunk=chunk,
         focus_evidence_refs=focus_refs,
@@ -357,7 +356,7 @@ def atomic_card_from_llm_item(
         summary=summary,
         focus_evidence_refs=focus_refs,
         focus_span_offsets=[span_by_ref[ref].pointer() for ref in focus_refs],
-        relation_probes=relation_probes,
+        relation_probes=[],
         source_published_at=_clean_text(payload.get("published_at")),
         source_title=_clean_text(payload.get("title")),
     )
@@ -453,18 +452,18 @@ def _normalized_intra_chunk_relation_fields(relation_kind: str) -> tuple[str, st
 
 
 def _validate_raw_card_shape(item: dict[str, Any]) -> None:
-    required = {"summary", "focus_evidence_refs", "relation_probes"}
+    required = {"summary", "focus_evidence_refs"}
     missing = sorted(required.difference(item))
     extra = sorted(set(item).difference(required))
     if missing or extra:
         raise ValueError(f"Card 字段不符合契约: missing={missing}, extra={extra}")
     if not isinstance(item.get("focus_evidence_refs"), list):
         raise ValueError("focus_evidence_refs 必须是数组")
-    if not isinstance(item.get("relation_probes"), list):
-        raise ValueError("relation_probes 必须是数组")
 
 
-def _normalize_relation_probes(value: Any) -> list[RelationProbe]:
+def relation_probes_from_llm_items(value: Any) -> list[RelationProbe]:
+    """把独立 Probe 规划会话的输出转换为领域对象。"""
+
     result: list[RelationProbe] = []
     seen: set[tuple[str, str]] = set()
     for item in value or []:

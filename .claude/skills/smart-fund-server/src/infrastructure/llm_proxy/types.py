@@ -20,6 +20,7 @@ class LLMProxyRequest:
     prompt: str = ""
     system_prompt: str | None = None
     model: str | None = None
+    provider: str | None = None
     messages: list[dict[str, Any]] = field(default_factory=list)
     temperature: float | None = 0.0
     max_tokens: int | None = None
@@ -85,6 +86,8 @@ class LLMRouteDecision:
     selected_provider: str | None
     route_reason: str
     fallback_allowed: bool = True
+    requested_provider: str | None = None
+    upstream_model: str | None = None
 
 
 ClaudeProxyRequest = LLMProxyRequest

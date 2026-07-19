@@ -36,6 +36,9 @@ from src.infrastructure.llm_proxy.audit import (
 from src.infrastructure.llm_proxy.cache import LLMPersistentFileCache
 from src.infrastructure.llm_proxy.providers.claude_tmux import ClaudeTmuxProvider
 from src.infrastructure.llm_proxy.providers.deepseek_openai import DeepSeekOpenAIProvider
+from src.infrastructure.llm_proxy.providers.openai_compatible import (
+    OpenAICompatibleProvider,
+)
 from src.infrastructure.llm_proxy.registry import ProviderRegistry
 from src.infrastructure.llm_proxy.router import ModelRouter, ModelRouterConfig
 from src.infrastructure.llm_proxy.tmux_backend import (
@@ -287,6 +290,7 @@ def _llm_trace_input(request: LLMProxyRequest) -> dict[str, Any]:
         "metadata": metadata,
         "json_schema": _clip_json_trace(request.json_schema),
         "response_format": request.response_format,
+        "requested_provider": request.provider,
         "provider_options": {
             key: value
             for key, value in (request.provider_options or {}).items()
@@ -1041,15 +1045,20 @@ class LLMGatewayService:
     async def generate(self, request: LLMProxyRequest) -> LLMProxyResponse:
         if request.json_schema and not request.response_format:
             request = replace(request, response_format={"type": "json_object"})
-        route = self.router.resolve(request.model)
-        provider = self.registry.select_first_available(route.provider_candidates)
-        route = type(route)(
-            requested_model=route.requested_model,
-            resolved_model=route.resolved_model,
-            provider_candidates=route.provider_candidates,
+        route = self.router.resolve(request.model, request.provider)
+        provider, upstream_model = self.registry.select_for_model(
+            route.provider_candidates,
+            route.resolved_model,
+        )
+        route = replace(
+            route,
             selected_provider=provider.name,
-            route_reason=route.route_reason if provider.name == route.selected_provider else "fallback",
-            fallback_allowed=route.fallback_allowed,
+            route_reason=(
+                "fallback"
+                if route.selected_provider and provider.name != route.selected_provider
+                else route.route_reason
+            ),
+            upstream_model=upstream_model,
         )
         log_fields = _llm_call_log_fields(
             request,
@@ -1057,7 +1066,12 @@ class LLMGatewayService:
             model=route.resolved_model,
             backend=provider.name,
         )
-        cache_key = self._cache_key(request, route.selected_provider or "", route.resolved_model)
+        cache_key = self._cache_key(
+            request,
+            route.selected_provider or "",
+            route.resolved_model,
+            route.upstream_model or route.resolved_model,
+        )
         audit_context = new_audit_context(cache_key)
         if request.use_cache:
             with self._cache_lock:
@@ -1082,6 +1096,8 @@ class LLMGatewayService:
                     cached.proxy.setdefault("provider", provider.name)
                     cached.proxy.setdefault("requested_model", route.requested_model)
                     cached.proxy.setdefault("resolved_model", route.resolved_model)
+                    cached.proxy.setdefault("requested_provider", route.requested_provider)
+                    cached.proxy.setdefault("upstream_model", route.upstream_model)
                     cached.proxy.setdefault("route_reason", route.route_reason)
                     cached.proxy["cache_store"] = "file"
                     with self._cache_lock:
@@ -1141,6 +1157,8 @@ class LLMGatewayService:
             response.proxy.setdefault("provider", provider.name)
             response.proxy.setdefault("requested_model", route.requested_model)
             response.proxy.setdefault("resolved_model", route.resolved_model)
+            response.proxy.setdefault("requested_provider", route.requested_provider)
+            response.proxy.setdefault("upstream_model", route.upstream_model)
             response.proxy.setdefault("route_reason", route.route_reason)
             response.proxy.setdefault("retry_count", 0)
             if gateway_logs_call:
@@ -1334,7 +1352,12 @@ class LLMGatewayService:
         }
 
     @staticmethod
-    def _cache_key(request: LLMProxyRequest, provider: str, resolved_model: str) -> str:
+    def _cache_key(
+        request: LLMProxyRequest,
+        provider: str,
+        resolved_model: str,
+        upstream_model: str | None = None,
+    ) -> str:
         metadata = request.metadata or {}
         cache_prompt = metadata.get("_cache_key_prompt", request.prompt)
         cache_system_prompt = metadata.get("_cache_key_system_prompt", request.system_prompt)
@@ -1345,6 +1368,7 @@ class LLMGatewayService:
         payload = {
             "provider": provider,
             "resolved_model": resolved_model,
+            "upstream_model": upstream_model or resolved_model,
             "prompt": cache_prompt,
             "system_prompt": cache_system_prompt,
             "messages": cache_messages,
@@ -1430,6 +1454,7 @@ def _schema_repair_request(
         prompt=request.prompt,
         system_prompt=request.system_prompt,
         model=request.model,
+        provider=request.provider,
         messages=[
             *original_messages,
             {"role": "assistant", "content": previous[:12000]},
@@ -1512,6 +1537,7 @@ def _feedback_repair_request(
         prompt=request.prompt,
         system_prompt=request.system_prompt,
         model=request.model,
+        provider=request.provider,
         messages=[
             *original_messages,
             {"role": "assistant", "content": previous[:12000]},
@@ -1648,7 +1674,12 @@ def get_llm_gateway_service() -> LLMGatewayService:
     if _gateway_service is None:
         legacy_service = get_claude_proxy_service()
         registry = ProviderRegistry()
-        registry.register(ClaudeTmuxProvider(legacy_service))
+        registry.register(
+            ClaudeTmuxProvider(
+                legacy_service,
+                model_patterns=(settings.CLAUDE_PROXY_MODEL, "sonnet", "opus", "glm-5.1"),
+            )
+        )
         registry.register(
             DeepSeekOpenAIProvider(
                 base_url=settings.DEEPSEEK_BASE_URL,
@@ -1661,6 +1692,8 @@ def get_llm_gateway_service() -> LLMGatewayService:
                 reasoning_effort=settings.DEEPSEEK_REASONING_EFFORT or None,
             )
         )
+        for provider_config in settings.LLM_PROXY_OPENAI_COMPATIBLE_PROVIDERS:
+            registry.register(OpenAICompatibleProvider(**provider_config))
         router = ModelRouter(
             ModelRouterConfig(
                 default_model=settings.LLM_PROXY_DEFAULT_MODEL,

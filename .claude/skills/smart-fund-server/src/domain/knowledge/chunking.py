@@ -9,8 +9,8 @@ from typing import Any
 
 from src.domain.knowledge.schemas import CompiledEvidence, EvidenceChunk
 
-DEFAULT_CHUNK_MAX_CHARS = 900
-DEFAULT_CHUNKER_VERSION = "recursive_zh_v1"
+DEFAULT_CHUNK_MAX_CHARS = 3000
+DEFAULT_CHUNKER_VERSION = "recursive_zh_v2_3000"
 
 _SEPARATORS = ("\n\n", "\n", "。", "！", "？", "；", "，", " ")
 

@@ -25,7 +25,7 @@ def test_build_evidence_chunks_splits_long_chinese_text_with_manifest_metadata()
     assert chunks[0].next_chunk_id == chunks[1].chunk_id
     assert chunks[1].previous_chunk_id == chunks[0].chunk_id
     assert chunks[0].text_hash
-    assert chunks[0].chunker_version == "recursive_zh_v1"
+    assert chunks[0].chunker_version == "recursive_zh_v2_3000"
     assert all(len(chunk.content) <= 120 for chunk in chunks)
     assert all(chunk.end_offset <= len(text.strip()) for chunk in chunks if chunk.end_offset is not None)
     assert all(
@@ -49,7 +49,7 @@ def test_build_evidence_chunks_keeps_short_text_as_single_chunk() -> None:
 
 
 def test_build_chunks_for_compiled_evidence_offsets_use_raw_evidence_content() -> None:
-    content = "正文第一段。" * 80 + "\n\n" + "正文第二段。" * 80
+    content = "正文第一段。" * 400 + "\n\n" + "正文第二段。" * 400
     evidence = CompiledEvidence(
         evidence_id="kg_ev:financial:news:offset",
         adapter_name="financial",
@@ -68,6 +68,7 @@ def test_build_chunks_for_compiled_evidence_offsets_use_raw_evidence_content() -
     chunks = build_chunks_for_compiled_evidence(evidence)
 
     assert len(chunks) > 1
+    assert all(len(chunk.content) <= 3000 for chunk in chunks)
     assert all(chunk.end_offset <= len(content.strip()) for chunk in chunks if chunk.end_offset is not None)
     assert all(
         _compact(chunk.content) in _compact(content[chunk.start_offset:chunk.end_offset])

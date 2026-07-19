@@ -30,3 +30,9 @@ class LLMProvider(Protocol):
 
     def supports(self, model: str) -> bool:
         ...
+
+    def resolve_model(self, model: str) -> str | None:
+        ...
+
+    def available(self) -> bool:
+        ...

@@ -131,6 +131,7 @@ def _request_payload(request: LLMProxyRequest) -> dict[str, Any]:
             "system_prompt": request.system_prompt,
             "messages": request.messages,
             "model": request.model,
+            "provider": request.provider,
             "temperature": request.temperature,
             "max_tokens": request.max_tokens,
             "json_schema": request.json_schema,

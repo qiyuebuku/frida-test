@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
+import fnmatch
 from dataclasses import dataclass
 
-from src.infrastructure.llm_proxy.types import LLMProxyError, LLMRouteDecision
+from src.infrastructure.llm_proxy.types import LLMRouteDecision
 
 
 @dataclass(frozen=True)
@@ -21,7 +22,11 @@ class ModelRouter:
     def __init__(self, config: ModelRouterConfig):
         self.config = config
 
-    def resolve(self, requested_model: str | None) -> LLMRouteDecision:
+    def resolve(
+        self,
+        requested_model: str | None,
+        requested_provider: str | None = None,
+    ) -> LLMRouteDecision:
         raw_model = (requested_model or "").strip()
         route_reason = "model_exact"
         if not raw_model:
@@ -32,17 +37,20 @@ class ModelRouter:
         if resolved_model != raw_model:
             route_reason = "alias"
 
-        candidates = self.config.model_routes.get(resolved_model)
-        if not candidates:
-            candidates = self._prefix_candidates(resolved_model)
-        if not candidates:
-            if route_reason == "default":
-                candidates = [self.config.default_provider]
-            else:
-                raise LLMProxyError(
-                    f"未配置模型路由: {resolved_model}",
-                    error_type="bad_request",
-                )
+        explicit_provider = str(requested_provider or "").strip()
+        if explicit_provider:
+            candidates = [explicit_provider]
+            route_reason = "provider_explicit"
+        else:
+            candidates = self.config.model_routes.get(resolved_model)
+            if not candidates:
+                candidates = self._glob_candidates(resolved_model)
+                if candidates and route_reason == "model_exact":
+                    route_reason = "model_pattern"
+            if not candidates:
+                candidates = []
+                if route_reason == "model_exact":
+                    route_reason = "provider_catalog"
 
         return LLMRouteDecision(
             requested_model=requested_model,
@@ -51,12 +59,19 @@ class ModelRouter:
             selected_provider=candidates[0] if candidates else None,
             route_reason=route_reason,
             fallback_allowed=len(candidates) > 1,
+            requested_provider=explicit_provider or None,
         )
 
-    def _prefix_candidates(self, model: str) -> list[str]:
+    def _glob_candidates(self, model: str) -> list[str]:
+        matches: list[tuple[int, list[str]]] = []
         lowered = model.lower()
-        if lowered.startswith("deepseek-"):
-            return self.config.model_routes.get("deepseek-*", ["deepseek"])
-        if lowered.startswith(("glm-", "glm")):
-            return self.config.model_routes.get("glm-*", [self.config.default_provider])
-        return []
+        for pattern, candidates in self.config.model_routes.items():
+            if not any(token in pattern for token in ("*", "?", "[")):
+                continue
+            if fnmatch.fnmatchcase(lowered, pattern.lower()):
+                literal_length = len(pattern.replace("*", "").replace("?", ""))
+                matches.append((literal_length, candidates))
+        if not matches:
+            return []
+        matches.sort(key=lambda item: item[0], reverse=True)
+        return list(matches[0][1])

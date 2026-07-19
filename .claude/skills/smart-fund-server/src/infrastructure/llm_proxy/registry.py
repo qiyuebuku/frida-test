@@ -11,6 +11,11 @@ class ProviderRegistry:
         self._providers: dict[str, LLMProvider] = {}
 
     def register(self, provider: LLMProvider) -> None:
+        if provider.name in self._providers:
+            raise LLMProxyError(
+                f"LLM provider 重复注册: {provider.name}",
+                error_type="bad_request",
+            )
         self._providers[provider.name] = provider
 
     def get(self, name: str) -> LLMProvider:
@@ -30,6 +35,35 @@ class ProviderRegistry:
                 errors.append(str(exc))
         raise LLMProxyError(
             f"没有可用 LLM provider: {', '.join(candidates)}; {'; '.join(errors)}",
+            error_type="bad_request",
+        )
+
+    def select_for_model(
+        self,
+        candidates: list[str],
+        model: str,
+    ) -> tuple[LLMProvider, str]:
+        provider_names = candidates or list(self._providers)
+        errors: list[str] = []
+        for name in provider_names:
+            try:
+                provider = self.get(name)
+            except LLMProxyError as exc:
+                errors.append(str(exc))
+                continue
+            availability = getattr(provider, "available", None)
+            if callable(availability) and not availability():
+                errors.append(f"{name} 当前不可用")
+                continue
+            resolver = getattr(provider, "resolve_model", None)
+            upstream_model = resolver(model) if callable(resolver) else None
+            if upstream_model is None and provider.supports(model):
+                upstream_model = model
+            if upstream_model:
+                return provider, str(upstream_model)
+            errors.append(f"{name} 不支持模型 {model}")
+        raise LLMProxyError(
+            f"没有厂商可提供模型 {model}: {'; '.join(errors)}",
             error_type="bad_request",
         )
 

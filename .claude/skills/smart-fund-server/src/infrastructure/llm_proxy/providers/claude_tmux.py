@@ -14,9 +14,16 @@ from src.infrastructure.llm_proxy.types import (
 class ClaudeTmuxProvider:
     name = "claude_tmux"
 
-    def __init__(self, legacy_service: Any, *, enabled: bool = True):
+    def __init__(
+        self,
+        legacy_service: Any,
+        *,
+        enabled: bool = True,
+        model_patterns: tuple[str, ...] = ("glm-5.1", "sonnet", "opus"),
+    ):
         self.legacy_service = legacy_service
         self.enabled = enabled
+        self.model_patterns = tuple(model_patterns)
 
     async def generate(
         self,
@@ -26,7 +33,7 @@ class ClaudeTmuxProvider:
         routed_request = LLMProxyRequest(
             prompt=request.prompt or request.prompt_text(),
             system_prompt=request.system_prompt,
-            model=route.resolved_model,
+            model=route.upstream_model or route.resolved_model,
             messages=request.messages,
             temperature=request.temperature,
             max_tokens=request.max_tokens,
@@ -44,7 +51,8 @@ class ClaudeTmuxProvider:
                 "provider": self.name,
                 "requested_model": route.requested_model,
                 "resolved_model": route.resolved_model,
-                "upstream_model": route.resolved_model,
+                "upstream_model": route.upstream_model or route.resolved_model,
+                "requested_provider": route.requested_provider,
                 "route_reason": route.route_reason,
             }
         )
@@ -64,4 +72,13 @@ class ClaudeTmuxProvider:
         return {}
 
     def supports(self, model: str) -> bool:
-        return bool(model)
+        return self.resolve_model(model) is not None
+
+    def available(self) -> bool:
+        return self.enabled
+
+    def resolve_model(self, model: str) -> str | None:
+        normalized = str(model).strip()
+        if normalized.lower() in {item.lower() for item in self.model_patterns}:
+            return normalized
+        return None

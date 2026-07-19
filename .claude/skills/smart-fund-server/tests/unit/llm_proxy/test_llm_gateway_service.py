@@ -42,6 +42,18 @@ class EchoProvider:
         return True
 
 
+class MappingEchoProvider(EchoProvider):
+    def __init__(self, name, mappings):
+        super().__init__(name)
+        self.mappings = mappings
+
+    def supports(self, model):
+        return model in self.mappings
+
+    def resolve_model(self, model):
+        return self.mappings.get(model)
+
+
 class SequenceProvider(EchoProvider):
     def __init__(self, name, outputs):
         super().__init__(name)
@@ -202,6 +214,52 @@ def test_gateway_routes_deepseek_model_to_deepseek_provider():
     assert response.text == "deepseek:deepseek-v4-flash"
     assert len(deepseek.calls) == 1
     assert len(claude.calls) == 0
+
+
+def test_gateway_explicit_vendor_uses_vendor_owned_model_mapping():
+    registry = ProviderRegistry()
+    official = MappingEchoProvider(
+        "deepseek",
+        {"deepseek-v4-pro": "deepseek-v4-pro"},
+    )
+    aliyun = MappingEchoProvider(
+        "aliyun",
+        {"deepseek-v4-pro": "vanchin/deepseek-v4-pro"},
+    )
+    registry.register(official)
+    registry.register(aliyun)
+    service = LLMGatewayService(
+        router=ModelRouter(
+            ModelRouterConfig(
+                default_model="deepseek-v4-pro",
+                default_provider="deepseek",
+                model_routes={"deepseek-v4-pro": ["deepseek", "aliyun"]},
+                model_aliases={},
+            )
+        ),
+        registry=registry,
+        cache_ttl_seconds=60,
+        cache_max_size=16,
+    )
+
+    response = asyncio.run(
+        service.generate(
+            LLMProxyRequest(
+                prompt="hello",
+                model="deepseek-v4-pro",
+                provider="aliyun",
+                use_cache=False,
+            )
+        )
+    )
+
+    assert len(official.calls) == 0
+    assert len(aliyun.calls) == 1
+    route = aliyun.calls[0][1]
+    assert route.resolved_model == "deepseek-v4-pro"
+    assert route.upstream_model == "vanchin/deepseek-v4-pro"
+    assert route.route_reason == "provider_explicit"
+    assert response.proxy["provider"] == "aliyun"
 
 
 def test_llm_trace_input_exposes_safe_reasoning_options_only():

@@ -58,6 +58,7 @@ def test_chat_completion_response_is_openai_compatible(monkeypatch):
         llm_proxy.chat_completions(
             llm_proxy.ChatCompletionRequest(
                 model="deepseek-v4-flash",
+                provider="aliyun",
                 messages=[llm_proxy.ChatMessage(role="user", content="hello")],
             )
         )
@@ -74,6 +75,7 @@ def test_chat_completion_response_is_openai_compatible(monkeypatch):
     }
     assert response["_proxy"]["provider"] == "deepseek"
     assert gateway.requests[0].model == "deepseek-v4-flash"
+    assert gateway.requests[0].provider == "aliyun"
 
 
 def test_chat_completion_error_maps_to_502(monkeypatch):
@@ -96,3 +98,30 @@ def test_chat_completion_error_maps_to_502(monkeypatch):
         )
 
     assert exc.value.status_code == 502
+
+
+def test_bad_provider_or_model_request_maps_to_400(monkeypatch):
+    from src.infrastructure.llm_proxy.types import LLMProxyError
+
+    class BadRequestGateway(FakeGateway):
+        async def generate(self, request):
+            raise LLMProxyError("provider does not offer model", error_type="bad_request")
+
+    monkeypatch.setattr(
+        llm_proxy,
+        "get_llm_gateway_service",
+        lambda: BadRequestGateway(),
+    )
+
+    with pytest.raises(llm_proxy.HTTPException) as exc:
+        asyncio.run(
+            llm_proxy.chat_completions(
+                llm_proxy.ChatCompletionRequest(
+                    model="deepseek-v4-pro",
+                    provider="missing-vendor",
+                    messages=[llm_proxy.ChatMessage(role="user", content="hello")],
+                )
+            )
+        )
+
+    assert exc.value.status_code == 400

@@ -39,6 +39,7 @@ class ResponseFormatConfig(BaseModel):
 
 class ChatCompletionRequest(BaseModel):
     model: str | None = Field(None)
+    provider: str | None = Field(None)
     messages: list[ChatMessage]
     temperature: float | None = Field(0.0)
     max_tokens: int | None = Field(None)
@@ -47,6 +48,7 @@ class ChatCompletionRequest(BaseModel):
     tools: list[dict[str, Any]] | None = Field(None)
     tool_choice: str | dict[str, Any] | None = Field(None)
     metadata: dict[str, Any] | None = Field(None)
+    provider_options: dict[str, Any] | None = Field(None)
 
     model_config = ConfigDict(extra="allow")
 
@@ -87,6 +89,7 @@ async def chat_completions(request: ChatCompletionRequest):
                 prompt=prompt,
                 system_prompt=system_prompt,
                 model=request.model,
+                provider=request.provider,
                 messages=[message.model_dump(mode="json") for message in request.messages],
                 temperature=request.temperature,
                 max_tokens=request.max_tokens,
@@ -95,10 +98,12 @@ async def chat_completions(request: ChatCompletionRequest):
                 tools=request.tools,
                 tool_choice=request.tool_choice,
                 metadata=request.metadata or {},
+                provider_options=request.provider_options or {},
             )
         )
     except LLMProxyError as exc:
-        raise HTTPException(status_code=502, detail=str(exc)) from exc
+        status_code = 400 if exc.error_type == "bad_request" else 502
+        raise HTTPException(status_code=status_code, detail=str(exc)) from exc
 
     content = result.text
     if result.structured_output is not None:

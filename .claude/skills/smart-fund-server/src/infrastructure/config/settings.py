@@ -278,8 +278,23 @@ def _load_gateway_model_routes() -> dict[str, list[str]]:
         "sonnet": ["claude_tmux"],
         "opus": ["claude_tmux"],
         "glm-5.1": ["claude_tmux", "glm_http"],
-        "deepseek-v4-flash": ["deepseek"],
-        "deepseek-v4-pro": ["deepseek"],
+        "deepseek-v4-flash": ["deepseek", "volcengine"],
+        "deepseek-v4-pro": ["deepseek", "aliyun", "volcengine"],
+        "qwen3.7-plus": ["aliyun"],
+        "qwen3.7-max": ["aliyun"],
+        "qwen-plus*": ["aliyun"],
+        "qwen-max*": ["aliyun"],
+        "qwen-flash*": ["aliyun"],
+        "qwen-turbo*": ["aliyun"],
+        "qwen-long*": ["aliyun"],
+        "qwq*": ["aliyun"],
+        "kimi*": ["aliyun", "volcengine"],
+        "doubao-*": ["volcengine"],
+        "glm-*": ["aliyun"],
+        "zhipu/*": ["aliyun"],
+        "minimax/*": ["aliyun"],
+        "vanchin/*": ["aliyun"],
+        "stepfun/*": ["aliyun"],
     }
     data = _load_json_dict(LLM_PROXY_MODEL_ROUTES_JSON)
     for key, value in data.items():
@@ -321,6 +336,156 @@ DEEPSEEK_RATE_LIMIT_COOLDOWN_SECONDS = float(
 )
 DEEPSEEK_THINKING_TYPE = os.getenv("DEEPSEEK_THINKING_TYPE", "")
 DEEPSEEK_REASONING_EFFORT = os.getenv("DEEPSEEK_REASONING_EFFORT", "")
+
+# OpenAI-compatible providers. Aliyun Model Studio is built in; additional vendors can
+# be registered declaratively through LLM_PROXY_OPENAI_COMPATIBLE_PROVIDERS_JSON.
+ALIYUN_LLM_BASE_URL = os.getenv(
+    "ALIYUN_LLM_BASE_URL",
+    "https://dashscope.aliyuncs.com/compatible-mode/v1",
+)
+ALIYUN_LLM_API_KEY = os.getenv("ALIYUN_LLM_API_KEY", "") or os.getenv(
+    "DASHSCOPE_API_KEY", ""
+)
+ALIYUN_LLM_DEFAULT_MODEL = os.getenv("ALIYUN_LLM_DEFAULT_MODEL", "qwen3.7-plus")
+ALIYUN_LLM_TIMEOUT = float(os.getenv("ALIYUN_LLM_TIMEOUT", "1800"))
+ALIYUN_LLM_MAX_CONCURRENCY = int(os.getenv("ALIYUN_LLM_MAX_CONCURRENCY", "5"))
+ALIYUN_LLM_RATE_LIMIT_COOLDOWN_SECONDS = float(
+    os.getenv("ALIYUN_LLM_RATE_LIMIT_COOLDOWN_SECONDS", "60")
+)
+ALIYUN_LLM_THINKING_TYPE = os.getenv("ALIYUN_LLM_THINKING_TYPE", "")
+VOLCENGINE_LLM_BASE_URL = os.getenv(
+    "VOLCENGINE_LLM_BASE_URL",
+    "https://ark.cn-beijing.volces.com/api/v3",
+)
+VOLCENGINE_LLM_API_KEY = os.getenv("VOLCENGINE_LLM_API_KEY", "") or os.getenv(
+    "VOLCENGINE_ARK_API_KEY", ""
+) or os.getenv("ARK_API_KEY", "")
+VOLCENGINE_LLM_DEFAULT_MODEL = os.getenv(
+    "VOLCENGINE_LLM_DEFAULT_MODEL",
+    "doubao-seed-2.1-pro",
+)
+VOLCENGINE_LLM_TIMEOUT = float(os.getenv("VOLCENGINE_LLM_TIMEOUT", "1800"))
+VOLCENGINE_LLM_MAX_CONCURRENCY = int(os.getenv("VOLCENGINE_LLM_MAX_CONCURRENCY", "5"))
+VOLCENGINE_LLM_RATE_LIMIT_COOLDOWN_SECONDS = float(
+    os.getenv("VOLCENGINE_LLM_RATE_LIMIT_COOLDOWN_SECONDS", "60")
+)
+VOLCENGINE_LLM_THINKING_TYPE = os.getenv("VOLCENGINE_LLM_THINKING_TYPE", "")
+LLM_PROXY_OPENAI_COMPATIBLE_PROVIDERS_JSON = os.getenv(
+    "LLM_PROXY_OPENAI_COMPATIBLE_PROVIDERS_JSON", ""
+)
+
+
+def _load_openai_compatible_provider_configs() -> list[dict]:
+    configs: dict[str, dict] = {
+        "aliyun": {
+            "base_url": ALIYUN_LLM_BASE_URL,
+            "api_key": ALIYUN_LLM_API_KEY,
+            "default_model": ALIYUN_LLM_DEFAULT_MODEL,
+            "timeout": ALIYUN_LLM_TIMEOUT,
+            "max_concurrency": ALIYUN_LLM_MAX_CONCURRENCY,
+            "rate_limit_cooldown_seconds": ALIYUN_LLM_RATE_LIMIT_COOLDOWN_SECONDS,
+            "thinking_type": ALIYUN_LLM_THINKING_TYPE or None,
+            "reasoning_style": "aliyun",
+            "model_patterns": [
+                "qwen3.7-plus",
+                "qwen3.7-max",
+                "qwen-plus*",
+                "qwen-max*",
+                "qwen-flash*",
+                "qwen-turbo*",
+                "qwen-long*",
+                "qwq*",
+                "kimi*",
+                "glm-*",
+                "zhipu/*",
+                "minimax/*",
+                "vanchin/*",
+                "stepfun/*",
+            ],
+            "model_mappings": {
+                "deepseek-v4-pro": "vanchin/deepseek-v4-pro",
+                "kimi-k3": "kimi/kimi-k3",
+            },
+        },
+        "volcengine": {
+            "base_url": VOLCENGINE_LLM_BASE_URL,
+            "api_key": VOLCENGINE_LLM_API_KEY,
+            "default_model": VOLCENGINE_LLM_DEFAULT_MODEL,
+            "timeout": VOLCENGINE_LLM_TIMEOUT,
+            "max_concurrency": VOLCENGINE_LLM_MAX_CONCURRENCY,
+            "rate_limit_cooldown_seconds": VOLCENGINE_LLM_RATE_LIMIT_COOLDOWN_SECONDS,
+            "thinking_type": VOLCENGINE_LLM_THINKING_TYPE or None,
+            "reasoning_style": "volcengine",
+            "model_mappings": {
+                "deepseek-v4-pro": "deepseek-v4-pro-260425",
+                "deepseek-v4-flash": "deepseek-v4-flash-260425",
+                "kimi-k2-thinking": "kimi-k2-thinking-251104",
+                "doubao-seed-2.1-pro": "doubao-seed-2-1-pro-260628",
+                "doubao-seed-2.1-turbo": "doubao-seed-2-1-turbo-260628",
+                "doubao-seed-2.0-pro": "doubao-seed-2-0-pro-260215",
+                "doubao-seed-2.0-lite": "doubao-seed-2-0-lite-260428",
+                "doubao-seed-2.0-mini": "doubao-seed-2-0-mini-260428",
+                "doubao-seed-2.0-code": "doubao-seed-2-0-code-preview-260215",
+            },
+        },
+    }
+    custom = _load_json_dict(LLM_PROXY_OPENAI_COMPATIBLE_PROVIDERS_JSON)
+    for raw_name, raw_config in custom.items():
+        if not isinstance(raw_config, dict):
+            continue
+        name = str(raw_name).strip()
+        if not name:
+            continue
+        merged = dict(configs.get(name, {}))
+        merged.update(raw_config)
+        api_key_env = str(merged.pop("api_key_env", "") or "").strip()
+        if api_key_env and not merged.get("api_key"):
+            merged["api_key"] = os.getenv(api_key_env, "")
+        configs[name] = merged
+
+    normalized: list[dict] = []
+    allowed_fields = {
+        "api_key",
+        "base_url",
+        "default_model",
+        "enabled",
+        "initial_retry_delay_seconds",
+        "json_prefix_completion_enabled",
+        "max_concurrency",
+        "max_retries",
+        "max_retry_delay_seconds",
+        "model_patterns",
+        "model_mappings",
+        "rate_limit_cooldown_seconds",
+        "reasoning_effort",
+        "reasoning_style",
+        "thinking_type",
+        "timeout",
+    }
+    for name, config in configs.items():
+        provider_config = {
+            key: value for key, value in config.items() if key in allowed_fields
+        }
+        provider_config["name"] = name
+        patterns = provider_config.get("model_patterns", ())
+        if isinstance(patterns, str):
+            patterns = (patterns,)
+        provider_config["model_patterns"] = tuple(str(item) for item in patterns if item)
+        mappings = provider_config.get("model_mappings", {})
+        provider_config["model_mappings"] = (
+            {
+                str(canonical): str(upstream)
+                for canonical, upstream in mappings.items()
+                if canonical and upstream
+            }
+            if isinstance(mappings, dict)
+            else {}
+        )
+        normalized.append(provider_config)
+    return normalized
+
+
+LLM_PROXY_OPENAI_COMPATIBLE_PROVIDERS = _load_openai_compatible_provider_configs()
 
 # kg_cognitive_card 使用模型侧前缀缓存；冷启动时先单飞一次，避免并发请求同时打冷缓存。
 KG_COGNITIVE_CARD_PREFIX_WARM_WINDOW_SECONDS = int(

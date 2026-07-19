@@ -57,10 +57,20 @@ python scripts/知识图谱/01_ft_news_card_relation_workflow.py \
   --mode cards \
   --limit 20 \
   --concurrency 5 \
-  --chunk-timeout 120
+  --chunk-timeout 500
 ```
 
 Card 模式按真实 Chunk 并发执行，每完成一个 Chunk 立即输出进度。单个 Chunk 超时或失败只会记录到当前结果，不会取消其他已成功请求。完整结果默认保存到 `/tmp/01_ft_news_card_relation_cards_<session>.json`，Langfuse Trace 名称为 `kg.atomic_card.batch_validation`。
+
+Card 模式可以固定厂商，以同一 canonical model、同一 Prompt 和同一输入横向比较不同 Provider；不传时仍由 LLM Gateway 自动路由：
+
+```bash
+python scripts/知识图谱/01_ft_news_card_relation_workflow.py \
+  --mode cards \
+  --news-id 109553 \
+  --model deepseek-v4-flash \
+  --provider volcengine
+```
 
 ## Relation Discovery 批量质量评测
 
