@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import logging
 import time
@@ -52,7 +53,7 @@ ATOMIC_CARD_PREFIX_WARM_LOCK_KEY = (
 )
 ATOMIC_CARD_PREFIX_WARM_POLL_SECONDS = 0.05
 ATOMIC_CARD_INTRA_CHUNK_PIPELINE_VERSION = "atomic_card_intra_chunk_relation_v1"
-ATOMIC_RELATION_PROBE_GENERATOR_VERSION = "atomic_relation_probe_v11"
+ATOMIC_RELATION_PROBE_GENERATOR_VERSION = "atomic_relation_probe_v14"
 
 
 ATOMIC_CARD_ITEM_SCHEMA: dict[str, Any] = {
@@ -138,7 +139,7 @@ ATOMIC_RELATION_PROBE_ITEM_SCHEMA: dict[str, Any] = {
         },
         "relation_probes": {
             "type": "array",
-            "maxItems": 3,
+            "maxItems": 2,
             "items": {
                 "type": "object",
                 "properties": {
@@ -178,43 +179,41 @@ ATOMIC_RELATION_PROBE_SCHEMA: dict[str, Any] = {
 
 _ATOMIC_CARD_STAGE_SYSTEM_PROMPT = """你是知识图谱的原子 Cognitive Card 与同 Chunk Relation 抽取器。
 
-首次收到新闻原文时只执行本 Card 阶段。输入首行是新闻发布时间；其后每行是一条完整原文语句，`<title>` 表示标题，`[sNNNN]` 是紧随文本的证据坐标。同一行连续 Ref 的文本按顺序拼接阅读。后续用户可能在同一对话中继续追问 Relation Probe；在收到明确的阶段切换指令前，不得思考或规划 Probe。
+当前调用只执行 Card 和同 Chunk Relation。输入首行是新闻发布时间；其后按原文句子换行，`<title>` 表示标题，`[sNNNN]` 是紧随文本的证据坐标。一个 Ref 可能包含多个事实，它只是引用地址，不代表 Card 边界，也不是需要逐项分类的清单。只有后续 user 明确切换阶段时才执行 Relation Probe。
 
-只沿原文顺序扫描一次生成最终 Cards，再扫描最终 Cards 一次生成 Relations。不要在思考中抄写全文、建立多版事实清单、反复重编号或逐对枚举无关系组合。
+Card：
+1. 原文直接支持、能够独立判断真假的每个事实各生成一张 Card。事实由完整主体、一个具体动作/状态/指标、对象、时间与口径组成。
+2. 原子边界是强约束：一张 Card 恰好对应一个事实键 `主体 + 单一谓词或指标 + 对象 + 单一时间口径`。一句话含有几个事实键就生成几张 Card；同一句、同一公告、同一事件或共同描述一种局面都不是合并理由。不同动作、状态、指标、报告期、绝对值、变化率和事件步骤必须拆分；原因、决定、执行、回应、结果分别作为端点。两个分句能够分别为真或为假时必须拆分，边界不确定时也拆分。
+3. 只合并事实键完全相同的重复表述。不得为了减少 Card 数量而概括段落、事件链或数据组，也不得创造上位事实。summary 只陈述一个事实端点、一个核心谓词并写明完整主体。
+4. 保留消息来源、声明者及“涉嫌、可能、预计、据称”等原文强度。广告、署名、重复标题、作者归纳、宽泛评价和没有明确声明者的推演不建卡。
+5. focus_evidence_refs 只保留能够独立证明 summary 的最小 `sNNNN` 集合。标题只补足正文省略内容；published_at 只解释相对时间，不补造年份或事实。
 
-1. 形成最终 Card。沿正文 Ref 顺序识别每个可独立判断真假的事实元组：主体、核心谓词、对象或状态、时间或范围，并直接放入最终 Card 序列。保留原文中的消息来源、声明者、预测者、认定者以及可能、预计、据称等不确定性。纯广告、来源署名、无独立命题的修辞不建卡；定性表达只要明确断言了独立主体、谓词和状态，就不是可被数值自动替代的“总述”。
-2. 确定 Card 边界。每张 Card 只表达一个最小但完整的事实元组，并且脱离其他 Card 仍能读懂。核心谓词必须是原文中可以被单独查询、更新或证伪的具体动作、状态或测量项；不得为了合并而创造一个上位集合谓词。只有主体、核心谓词、对象、时间范围和口径相同，且一项只是另一项的复述或数值限定时，才允许合并或去重。不同核心谓词、不同指标名称或不同事件动作必须分别建卡，即使它们来自同一句、同一张表、同一次公告或共同描述一种局面。删除候选前，必须确认其主体、谓词、对象、时间、范围和数值均能从保留 Card 中完整恢复，否则不构成严格蕴含。若两个命题可以分别为真或为假，就必须拆分；输出长度、Card 数量和叙事完整性不得参与边界判断，边界不确定时优先拆分。
-3. 保留事件链端点。原因、前置条件、执行动作、监管处置、市场反应、结果状态和后续措施只要能独立判断，就分别建卡，再通过 Relation 表达连接；不得把连接语义藏进一张 Summary。原文若在一个句子中表达两个事实之间的因果、依据、回应、约束、确认、冲突或进展，也必须先拆成两张端点 Card，再输出 Relation。Summary 只能陈述一个端点，不能同时陈述该端点及其原因、后果或后续步骤。程序中的提议、回应、表决、执行、撤销、辞任等步骤同理。一张 Summary 如果需要两个完整主谓结构才能成立，就继续拆分。数值、同比或环比只在共同限定同一个指标谓词时保留在一张 Card；不同指标、不同状态、不同动作或不同风险结论不能用集合表达合并。
-4. 绑定证据。Summary 必须写出原文可确定的完整主体和事实，不使用依赖上下文的代词或泛称。focus_evidence_refs 是能够独立验证该 Summary 的最小完整证据闭包，数组元素只写 `sNNNN`。标题只用于补足正文省略的信息；正文已完整表达时不要重复引用标题。published_at 只用于理解相对时间，不能补造原文没有的年份或事实。
-5. 映射同 Chunk Relation。Cards 完整冻结后，只扫描原文中明确表达的因果、依据、回应、约束、确认、冲突和事件进展连接，再把连接两端映射到已有 Card；不要枚举没有连接证据的 Card 组合，也不能为了生成关系修改 Card。
+Relation：
+1. Cards 确定后，只映射原文明确连接的两个事实端点。Relation 必须增加 Card 未给出的连接事实；类型或方向不确定时不输出。
+2. 从原文连接语义出发，不从主题相似度出发。原文必须明确表达原因、影响、触发、执行、回应、进展或限制，且两端是不同事实。文本相邻、单纯先后、共同主题和模型补全的机制都不建边。
+3. 不连接重复表达、并列列举、整体与其表现、概括与具体化、总量与分项、计划与列举项，也不连接事实键相同但详细度不同的 Card。这些是 Card 边界，不是 Relation。
+4. basis 必须使用两端各自的事实谓词，不得替换为概括、组成项或第三个事实。relation_evidence_refs 必须同时证明两端和连接；不补充原文没有的因果、先后或机制。集合结论无法归给一个 pair 时不输出，每对 Card 最多一条 Relation。
 
-Relation 规则：
-- 只允许 confirmation、contradiction、temporal_progression、causal_influence、common_driver、constraint。只输出原文能够直接证明的正关系，不依赖外部常识补充中间机制。
-- temporal_progression 可以表示同一事件、程序或状态的后续、回应、推进、执行或结果；两端主体和动作可以不同，但后项必须明确引用、回应、执行、改变或结束前项所涉及的同一事件对象。仅仅并列列出多个动作或结果，即使位于同一句、文档相邻或时间先后，也不是 progression；“随后”“最终”等词只连接其语法上实际承接的步骤，不能向后扩展到独立句子。对于数值或指标变化，原文必须明确比较或更新同一主体、同一指标和同一口径，不能仅凭两个报告期自行制造趋势。
-- causal_influence 必须由原文表达原因、依据、触发或影响，原因时间不能晚于已经发生的结果。confirmation 针对同一事实命题的独立支持；contradiction 针对同一主体、对象、谓词、时间和范围下互不相容的结论；common_driver 和 constraint 也必须直接指向准确端点。
-- relation_evidence_refs 必须是同时能够定位 source、定位 target 并证明连接的最小原文集合。只拼接两端各自证据、只有时间相邻、并列列举或只有主题相关都不构成关系。basis 不能自行添加原文没有表达的先后、因果、回应或影响语义；如果只有在 basis 中补入这类连接词才能让两端产生关系，就必须删除该 Relation。原文把多个事实共同概括为一个结论时，不能把该集合关系任意归给其中一个成员；当前 pairwise Relation 无法表达这种成组关系时直接不输出。basis 用自然语言复述原文连接，不出现 Card ID、Ref 或模型推测。每对 Card 最多一条关系。
-
-最终只做一次核对：事实清单中的每个独立命题都已进入 Card，或确实是重复/非事实内容；每张 Card 只有一个核心谓词；任意被删除候选都被另一张 Card 严格蕴含；每条 Relation 的证据同时覆盖 source、target 和连接。不要输出核对过程。
-
-Card 阶段 JSON 输出契约：只输出一个 JSON 对象，并严格按 `cards`、`relations`、`skip_reason` 顺序输出。每张 Card 严格且仅包含 `local_card_id`、`summary`、`focus_evidence_refs`；每条 Relation 严格且仅包含 `source_card_id`、`target_card_id`、`relation_kind`、`basis`、`relation_evidence_refs`。先完成全部 Card 的拆分、去重和排序，再废弃内部草稿编号，严格按最终 cards 数组位置重新编号为连续且唯一的 c1、c2、c3；禁止字母后缀、跳号或保留拆分前编号。cards 非空时 skip_reason 必须为字符串空值 `""`；cards 为空时填写具体原因且 relations 必须为空。不要输出 null、额外字段、分析过程、主题标签、Community、预测或 Markdown。"""
+JSON 输出：
+- 顶层严格按 `cards`、`relations`、`skip_reason` 输出，不添加其他字段。
+- Card 严格且仅含 `local_card_id`、`summary`、`focus_evidence_refs`。按原文顺序连续编号为 c1、c2、c3，不得使用字母后缀或跳号。
+- Relation 严格且仅含 `source_card_id`、`target_card_id`、`relation_kind`、`basis`、`relation_evidence_refs`。
+- cards 非空时 skip_reason 为 `""`；cards 为空时写明原因且 relations 为空。
+- 只输出 JSON，不输出分析、标签、Community、预测或 Markdown。"""
 
 
-_ATOMIC_RELATION_PROBE_SYSTEM_SECTION = """Relation Probe 阶段规则：
+_ATOMIC_RELATION_PROBE_SYSTEM_SECTION = """Relation Probe 阶段：
 
-只有后续 user 明确要求“进入 Relation Probe 阶段”时才执行本节。首次收到新闻原文时严禁思考、规划或输出 Probe，本节规则不得影响 Card 边界和同 Chunk Relation。
+仅在后续 user 明确切换到 Relation Probe 阶段后执行。冻结上一轮 Cards 和 Relations，不修改它们。
 
-进入 Probe 阶段后，冻结上一轮 Cards 和 Relations。为每张 Card 判断是否存在能够搜索其他 Chunk 历史 Card、并与当前事实形成一跳直接关系的候选事件方向。不得修改 Card，不得新增同 Chunk Relation，不得把兄弟 Card 的事实混入当前 Card 的 query。
+为 Card 生成可用于搜索其他 Chunk 历史 Card 的一跳关系路由：
+1. 只在另一端能与当前 Card 建立直接 upstream、downstream、confirmation 或 contradiction，并显著补充解释或可信度时生成 Probe。显著变化在当前 Chunk 中没有原因时，可在整体事件 Card 上保留一条 upstream Probe，但不预设原因已成立。
+2. Summary 已承担同义召回。输出前对照上一轮所有 Cards 和 Relations；候选事件已在当前 Chunk 出现时，即使换说法、补细节或改时间粒度也删除。Probe 只指向当前 Chunk 未给出的事件端点。
+3. 只搜索截至 published_at 可能已发生的历史事件。不搜索之后才能出现的验证结果；Card 含预测或计划时，只搜索已发生的原因、约束、支持或反证。
+4. query 是可直接语义检索的候选事件描述，不是问句。保留当前 Card 的关键主体或对象，并描述另一端的动作、状态或指标类型；不使用模板词，不补造具体主体、日期、数值、机制或既成结果。
+5. 普通事实、已闭合解释和低价值明细保持空数组。多个 Card 只是同一整体事件的公司、地区、指标或组成项时，只在整体事件 Card 上生成共享 Probe。零 Probe 正常，每张 Card 最多两条，不按 role 凑数。
 
-按以下门槛一次完成判断：
-1. 当前 Card 的 Summary 已经用于基础语义召回，同一事实、同一事件进展、复述或近义改写不需要 Probe。
-2. Probe 必须指向 Summary 中尚不存在的另一个可观察事件端点，并锚定当前 Card 的已知主体、动作或状态和作用对象。query 可以是简洁的关系型检索问题或候选事件描述，但不能是关键词列表、宽泛研究主题或检索指令。另一端信息未知时直接询问其原因、结果、独立观测或冲突事实，不得补写原文没有提供的候选主体、事件类别、作用机制和既成结果。
-3. 如果 query 与 Summary 仍是相同主体、核心谓词、对象和时间范围，只增加“其他来源确认”“后续情况”“最新进展”等包装，就没有召回增量，必须删除。confirmation 只有在搜索不同观察材料或不同指标、且该材料能够独立支持当前命题时才保留；不能搜索同一数值或同一陈述的再次发布。
-4. upstream 寻找直接原因、前置动作或约束；downstream 寻找截至 published_at 已经可能发生、并由当前事实直接触发的可观察结果；confirmation 和 contradiction 必须针对同一命题形成独立支持或不相容证据。只允许一跳，不补造日期、数值、专有主体、动机、中间机制或未来结论，也不能机械否定当前谓词。query 必须保持原文的事实强度和不确定性，不能把差错、嫌疑、风险或可能性升级成已经成立的违法、造假、处罚或结果。
-5. 先找出当前事实仍缺失的直接原因、前置约束、已发生结果、独立观测或冲突命题，再判断是否值得搜索。只有缺失端点会显著改变当前事实的解释，并且该端点可能作为独立新闻事件存在时才生成 Probe；不能仅因某种后续在现实中可能发生，就把它列为搜索方向。兄弟 Card 或已确认 Relation 只排除与其事实元组相同的那个目标端点，不能据此删除其他尚未出现的端点。当前 Chunk 已经完整给出某个端点时不重复生成。零 Probe 是正常结果，不按 role 凑数；每张 Card 最多保留三条真正不同且增量最高的方向。
-
-输出前只检查四件事：query 单独可识别候选事件；当前 Card 能解释搜索原因；query 与 Summary 的核心谓词不同；二者无需中间事件即可形成一跳关系。任一条件不成立就删除。
-
-JSON 输出契约：只输出一个 JSON 对象，顶层严格且仅包含 `probe_plans`。每个输入 Card 必须按原顺序恰好输出一项，严格且仅包含 `local_card_id`、`relation_probes`；没有有效 Probe 时输出空数组。每条 Probe 严格且仅包含 `role`、`query`，role 只允许 upstream、downstream、confirmation、contradiction。不要输出 same_event、Cards、Relations、分析过程、额外字段或 Markdown。"""
+JSON 输出：顶层严格且仅含 `probe_plans`。每个输入 Card 按原顺序恰好输出一项，严格且仅含 `local_card_id`、`relation_probes`；空结果写 `[]`。每条 Probe 严格且仅含 `role`、`query`，role 只允许 upstream、downstream、confirmation、contradiction。只输出 JSON，不输出 Cards、Relations、分析、额外字段或 Markdown。"""
 
 
 ATOMIC_CARD_SYSTEM_PROMPT = "\n\n".join(
@@ -252,6 +251,12 @@ class _ValidatedProbeResponse:
     issues: tuple[str, ...] = ()
 
 
+@dataclass(frozen=True)
+class _AtomicCardModelRoute:
+    model: str
+    tier: str
+
+
 def _response_cannot_be_safely_repaired(response: Any) -> bool:
     raw_payload = getattr(response, "raw_payload", None) or {}
     if str(raw_payload.get("finish_reason") or "").strip().lower() == "length":
@@ -271,12 +276,58 @@ class AtomicCognitiveCardExtractor:
         *,
         model: str | None = None,
         provider: str | None = None,
+        thinking_type: str | None = None,
+        relation_probe_thinking_type: str | None = None,
+        system_prompt: str | None = None,
+        relation_probe_followup_prompt: str | None = None,
+        prompt_profile: str | None = None,
         concurrency: int = 4,
         segmenter: StableSpanSegmenter | None = None,
     ) -> None:
         self._llm = llm or get_llm_gateway_service()
-        self._model = model or resolve_kg_llm_model("kg_cognitive_card")
+        self._model_override = str(model or "").strip() or None
+        fallback_model = resolve_kg_llm_model("kg_cognitive_card")
+        self._simple_model = str(
+            settings.KG_COGNITIVE_CARD_SIMPLE_MODEL or fallback_model
+        ).strip()
+        self._complex_model = str(
+            settings.KG_COGNITIVE_CARD_COMPLEX_MODEL or fallback_model
+        ).strip()
+        self._simple_max_spans = max(
+            1, int(settings.KG_COGNITIVE_CARD_SIMPLE_MAX_SPANS)
+        )
+        self._simple_max_chars = max(
+            1, int(settings.KG_COGNITIVE_CARD_SIMPLE_MAX_CHARS)
+        )
         self._provider = str(provider or "").strip() or None
+        normalized_thinking_type = str(
+            thinking_type
+            if thinking_type is not None
+            else settings.KG_COGNITIVE_CARD_THINKING_TYPE
+        ).strip().lower()
+        if normalized_thinking_type not in {"", "enabled", "disabled"}:
+            raise ValueError("thinking_type 只允许 enabled、disabled 或空值")
+        normalized_probe_thinking_type = str(
+            relation_probe_thinking_type
+            if relation_probe_thinking_type is not None
+            else settings.KG_RELATION_PROBE_THINKING_TYPE
+        ).strip().lower()
+        if normalized_probe_thinking_type not in {"", "enabled", "disabled"}:
+            raise ValueError(
+                "relation_probe_thinking_type 只允许 enabled、disabled 或空值"
+            )
+        self._card_thinking_type = normalized_thinking_type or None
+        self._probe_thinking_type = (
+            normalized_probe_thinking_type or self._card_thinking_type
+        )
+        self._system_prompt = str(system_prompt or ATOMIC_CARD_SYSTEM_PROMPT).strip()
+        self._relation_probe_followup_prompt = str(
+            relation_probe_followup_prompt or ATOMIC_RELATION_PROBE_FOLLOWUP_PROMPT
+        ).strip()
+        self._prompt_profile = str(prompt_profile or "production").strip()
+        self._prompt_fingerprint = hashlib.sha256(
+            self._system_prompt.encode("utf-8")
+        ).hexdigest()[:16]
         self._concurrency = max(1, concurrency)
         self._semaphore = asyncio.Semaphore(self._concurrency)
         self._segmenter = segmenter or StableSpanSegmenter()
@@ -326,29 +377,31 @@ class AtomicCognitiveCardExtractor:
                 spans=[],
                 cards=[],
                 relations=[],
+                input_text_chars=len(chunk.content),
             )
 
         payload = dict(chunk.payload or {})
+        model_route = self._select_model_route(
+            span_count=len(spans),
+            text_chars=len(chunk.content),
+        )
         prompt_input = render_atomic_card_prompt_input(
             source_published_at=payload.get("published_at") or "",
             source_title=payload.get("title") or "",
             sentence_blocks=sentence_blocks,
         )
         base_messages = [
-            {"role": "system", "content": ATOMIC_CARD_SYSTEM_PROMPT},
+            {"role": "system", "content": self._system_prompt},
             {"role": "user", "content": prompt_input},
         ]
         request = LLMProxyRequest(
-            model=self._model,
+            model=model_route.model,
             provider=self._provider,
             messages=base_messages,
             temperature=0,
             max_tokens=ATOMIC_CARD_MAX_TOKENS,
             json_schema=ATOMIC_CARD_SCHEMA,
-            provider_options={
-                "reasoning_effort": "medium",
-                "inject_json_schema_instruction": False,
-            },
+            provider_options=self._provider_options(self._card_thinking_type),
             metadata={
                 "task": "kg_cognitive_card",
                 "schema_version": ATOMIC_COGNITIVE_CARD_SCHEMA_VERSION,
@@ -356,10 +409,20 @@ class AtomicCognitiveCardExtractor:
                 "source_type": payload.get("source_type") or "",
                 "source_id": payload.get("source_id") or "",
                 "chunk_id": chunk.chunk_id,
+                "model_route": model_route.tier,
+                "span_count": len(spans),
+                "input_text_chars": len(chunk.content),
+                "thinking_type": self._card_thinking_type or "provider_default",
+                "prompt_profile": self._prompt_profile,
+                "prompt_fingerprint": self._prompt_fingerprint,
                 "_cache_key_metadata": {
                     "task": "kg_cognitive_card",
                     "schema_version": ATOMIC_COGNITIVE_CARD_SCHEMA_VERSION,
                     "generator_version": ATOMIC_COGNITIVE_CARD_GENERATOR_VERSION,
+                    "model_route": model_route.tier,
+                    "thinking_type": self._card_thinking_type or "provider_default",
+                    "prompt_profile": self._prompt_profile,
+                    "prompt_fingerprint": self._prompt_fingerprint,
                 },
             },
             use_cache=True,
@@ -372,13 +435,19 @@ class AtomicCognitiveCardExtractor:
                 "text_chars": len(chunk.content),
                 "sentence_block_count": len(sentence_blocks),
                 "span_count": len(spans),
+                "selected_model": model_route.model,
+                "model_route": model_route.tier,
             },
             metadata={"schema_version": ATOMIC_COGNITIVE_CARD_SCHEMA_VERSION},
         ):
-            warmup_lock = await self._claim_prefix_warmup_lock()
+            prefix_scope = self._prefix_warm_scope(model_route.model)
+            warmup_lock = await self._claim_prefix_warmup_lock(prefix_scope)
             try:
                 response = await self._llm.generate(request)
-                await self._mark_prefix_warmed(settle=warmup_lock is not None)
+                await self._mark_prefix_warmed(
+                    prefix_scope,
+                    settle=warmup_lock is not None,
+                )
                 validated, repaired, repair_attempted, accepted_card_response = (
                     await self._cards_from_response(
                         chunk=chunk,
@@ -394,6 +463,7 @@ class AtomicCognitiveCardExtractor:
                         relation_count=len(validated.relations),
                         base_messages=base_messages,
                         card_response=accepted_card_response,
+                        model_route=model_route,
                     )
                 )
                 repaired = repaired or probe_repaired
@@ -435,6 +505,8 @@ class AtomicCognitiveCardExtractor:
                         "validation_issues": all_issues,
                         "skip_reason": validated.skip_reason,
                         "prefix_warmup_owner": warmup_lock is not None,
+                        "selected_model": model_route.model,
+                        "model_route": model_route.tier,
                     },
                     status_message="completed",
                 )
@@ -443,6 +515,9 @@ class AtomicCognitiveCardExtractor:
                     spans=spans,
                     cards=cards_with_probes,
                     relations=validated.relations,
+                    selected_model=model_route.model,
+                    model_route=model_route.tier,
+                    input_text_chars=len(chunk.content),
                     repaired=repaired,
                     repair_attempted=repair_attempted,
                     discarded_card_count=validated.discarded_card_count,
@@ -629,6 +704,7 @@ class AtomicCognitiveCardExtractor:
         relation_count: int,
         base_messages: list[dict[str, Any]],
         card_response: Any,
+        model_route: _AtomicCardModelRoute,
     ) -> tuple[list[AtomicCognitiveCard], bool, bool, tuple[str, ...]]:
         if not cards_by_local_id:
             return [], False, False, ()
@@ -643,19 +719,16 @@ class AtomicCognitiveCardExtractor:
         conversation_messages = [
             *base_messages,
             {"role": "assistant", "content": assistant_content},
-            {"role": "user", "content": ATOMIC_RELATION_PROBE_FOLLOWUP_PROMPT},
+            {"role": "user", "content": self._relation_probe_followup_prompt},
         ]
         request = LLMProxyRequest(
-            model=self._model,
+            model=model_route.model,
             provider=self._provider,
             messages=conversation_messages,
             temperature=0,
             max_tokens=ATOMIC_CARD_MAX_TOKENS,
             json_schema=ATOMIC_RELATION_PROBE_SCHEMA,
-            provider_options={
-                "reasoning_effort": "medium",
-                "inject_json_schema_instruction": False,
-            },
+            provider_options=self._provider_options(self._probe_thinking_type),
             metadata={
                 "task": "kg_relation_probe",
                 "schema_version": ATOMIC_COGNITIVE_CARD_SCHEMA_VERSION,
@@ -666,10 +739,18 @@ class AtomicCognitiveCardExtractor:
                 "source_id": str((chunk.payload or {}).get("source_id") or ""),
                 "card_count": len(cards_by_local_id),
                 "relation_count": relation_count,
+                "model_route": model_route.tier,
+                "thinking_type": self._probe_thinking_type or "provider_default",
+                "prompt_profile": self._prompt_profile,
+                "prompt_fingerprint": self._prompt_fingerprint,
                 "_cache_key_metadata": {
                     "task": "kg_relation_probe",
                     "schema_version": ATOMIC_COGNITIVE_CARD_SCHEMA_VERSION,
                     "generator_version": ATOMIC_RELATION_PROBE_GENERATOR_VERSION,
+                    "model_route": model_route.tier,
+                    "thinking_type": self._probe_thinking_type or "provider_default",
+                    "prompt_profile": self._prompt_profile,
+                    "prompt_fingerprint": self._prompt_fingerprint,
                 },
             },
             use_cache=True,
@@ -683,6 +764,8 @@ class AtomicCognitiveCardExtractor:
                 "relation_count": relation_count,
                 "continuation_mode": "multi_turn_follow_up",
                 "history_message_count": len(base_messages) + 1,
+                "selected_model": model_route.model,
+                "model_route": model_route.tier,
             },
         ):
             response = await self._llm.generate(request)
@@ -715,6 +798,33 @@ class AtomicCognitiveCardExtractor:
                 status_message="completed",
             )
             return cards, repaired, repair_attempted, validated.issues
+
+    @staticmethod
+    def _provider_options(thinking_type: str | None) -> dict[str, Any]:
+        options: dict[str, Any] = {"inject_json_schema_instruction": False}
+        if thinking_type:
+            options["thinking_type"] = thinking_type
+        if thinking_type != "disabled":
+            options["reasoning_effort"] = "medium"
+        return options
+
+    def _select_model_route(
+        self,
+        *,
+        span_count: int,
+        text_chars: int,
+    ) -> _AtomicCardModelRoute:
+        if self._model_override:
+            return _AtomicCardModelRoute(
+                model=self._model_override,
+                tier="explicit_override",
+            )
+        if (
+            span_count <= self._simple_max_spans
+            and text_chars <= self._simple_max_chars
+        ):
+            return _AtomicCardModelRoute(model=self._simple_model, tier="simple")
+        return _AtomicCardModelRoute(model=self._complex_model, tier="complex")
 
     async def _probes_from_response(
         self,
@@ -801,25 +911,25 @@ class AtomicCognitiveCardExtractor:
             )
         return _ValidatedProbeResponse(probes_by_local_id=probes_by_local_id)
 
-    async def _claim_prefix_warmup_lock(self) -> Any | None:
+    async def _claim_prefix_warmup_lock(self, prefix_scope: str) -> Any | None:
         if settings.KG_COGNITIVE_CARD_PREFIX_WARM_WINDOW_SECONDS <= 0:
             return None
-        if await self._prefix_recently_warmed():
+        if await self._prefix_recently_warmed(prefix_scope):
             return None
-        lock = self._prefix_warmup_lock()
+        lock = self._prefix_warmup_lock(prefix_scope)
         acquired = await self._try_acquire_prefix_warmup_lock(lock)
         if acquired is None:
             return None
         if not acquired:
-            return await self._wait_for_prefix_warmup()
-        if await self._prefix_recently_warmed():
+            return await self._wait_for_prefix_warmup(prefix_scope)
+        if await self._prefix_recently_warmed(prefix_scope):
             await self._release_prefix_warmup_lock(lock)
             return None
         return lock
 
-    def _prefix_warmup_lock(self) -> Any:
+    def _prefix_warmup_lock(self, prefix_scope: str) -> Any:
         return self._redis_client().lock(
-            ATOMIC_CARD_PREFIX_WARM_LOCK_KEY,
+            f"{ATOMIC_CARD_PREFIX_WARM_LOCK_KEY}:{prefix_scope}",
             timeout=max(1, settings.KG_COGNITIVE_CARD_PREFIX_WARM_LOCK_TIMEOUT_SECONDS),
             blocking_timeout=0,
             sleep=ATOMIC_CARD_PREFIX_WARM_POLL_SECONDS,
@@ -832,44 +942,65 @@ class AtomicCognitiveCardExtractor:
             logger.warning("原子 Card 前缀预热锁不可用: %s", exc)
             return None
 
-    async def _wait_for_prefix_warmup(self) -> Any | None:
+    async def _wait_for_prefix_warmup(self, prefix_scope: str) -> Any | None:
         deadline = time.monotonic() + max(
             1,
             settings.KG_COGNITIVE_CARD_PREFIX_WARM_BLOCKING_TIMEOUT_SECONDS,
         )
         while time.monotonic() < deadline:
-            if await self._prefix_recently_warmed():
+            if await self._prefix_recently_warmed(prefix_scope):
                 return None
-            lock = self._prefix_warmup_lock()
+            lock = self._prefix_warmup_lock(prefix_scope)
             acquired = await self._try_acquire_prefix_warmup_lock(lock)
             if acquired is None:
                 return None
             if acquired:
-                if await self._prefix_recently_warmed():
+                if await self._prefix_recently_warmed(prefix_scope):
                     await self._release_prefix_warmup_lock(lock)
                     return None
                 return lock
             await asyncio.sleep(ATOMIC_CARD_PREFIX_WARM_POLL_SECONDS)
         return None
 
-    async def _prefix_recently_warmed(self) -> bool:
+    async def _prefix_recently_warmed(self, prefix_scope: str) -> bool:
         try:
-            return bool(await asyncio.to_thread(self._redis_client().exists, ATOMIC_CARD_PREFIX_WARM_MARK_KEY))
+            return bool(
+                await asyncio.to_thread(
+                    self._redis_client().exists,
+                    f"{ATOMIC_CARD_PREFIX_WARM_MARK_KEY}:{prefix_scope}",
+                )
+            )
         except Exception:
             return False
 
-    async def _mark_prefix_warmed(self, *, settle: bool = False) -> None:
+    async def _mark_prefix_warmed(
+        self,
+        prefix_scope: str,
+        *,
+        settle: bool = False,
+    ) -> None:
         try:
             if settle and settings.KG_COGNITIVE_CARD_PREFIX_WARM_SETTLE_SECONDS > 0:
                 await asyncio.sleep(settings.KG_COGNITIVE_CARD_PREFIX_WARM_SETTLE_SECONDS)
             await asyncio.to_thread(
                 self._redis_client().setex,
-                ATOMIC_CARD_PREFIX_WARM_MARK_KEY,
+                f"{ATOMIC_CARD_PREFIX_WARM_MARK_KEY}:{prefix_scope}",
                 max(1, settings.KG_COGNITIVE_CARD_PREFIX_WARM_WINDOW_SECONDS),
                 str(int(time.time())),
             )
         except Exception:
             return
+
+    def _prefix_warm_scope(self, model: str) -> str:
+        raw_scope = ":".join(
+            (
+                self._provider or "auto",
+                model,
+                self._card_thinking_type or "provider_default",
+                self._prompt_fingerprint,
+            )
+        )
+        return hashlib.sha256(raw_scope.encode("utf-8")).hexdigest()[:16]
 
     async def _release_prefix_warmup_lock(self, lock: Any) -> None:
         try:

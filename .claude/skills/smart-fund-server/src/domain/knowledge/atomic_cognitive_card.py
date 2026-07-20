@@ -22,7 +22,7 @@ from src.domain.knowledge.semantic_index_materials import (
 
 
 ATOMIC_COGNITIVE_CARD_SCHEMA_VERSION = "atomic_cognitive_card_v7"
-ATOMIC_COGNITIVE_CARD_GENERATOR_VERSION = "atomic_card_extractor_v96"
+ATOMIC_COGNITIVE_CARD_GENERATOR_VERSION = "atomic_card_extractor_v103"
 INTRA_CHUNK_RELATION_KINDS = frozenset(
     {
         "confirmation",
@@ -164,6 +164,9 @@ class AtomicCardExtractionResult:
     spans: list[SpanReference]
     cards: list[AtomicCognitiveCard]
     relations: list[VerifiedRelationDecision]
+    selected_model: str = ""
+    model_route: str = ""
+    input_text_chars: int = 0
     repaired: bool = False
     repair_attempted: bool = False
     discarded_card_count: int = 0
@@ -173,11 +176,12 @@ class AtomicCardExtractionResult:
 
 
 class StableSpanSegmenter:
-    """按完整句子组织阅读上下文，并生成稳定的句内证据 Ref。"""
+    """按完整句子组织阅读上下文，并生成稳定的证据 Ref。"""
 
     _HARD_BOUNDARY_RE = re.compile(r"(?:[。！？!?；;]+[\"'”’）】》]*|\n+)")
     _LEADING_TITLE_RE = re.compile(r"^\s*【[^】\n]{1,200}】")
     _SOFT_BOUNDARY_RE = re.compile(r"[，,:：]+[\"'”’）】》]*")
+    _MAX_SPAN_CHARS = 80
 
     def segment(self, content: str) -> list[SpanReference]:
         return [part for block in self.segment_blocks(content) for part in block.parts]
@@ -273,16 +277,25 @@ class StableSpanSegmenter:
         start, end = cls._trim_range(content, raw_start, raw_end)
         if start >= end:
             return
+        if end - start <= cls._MAX_SPAN_CHARS:
+            cls._append_span(spans, content, start, end)
+            return
+
         soft_boundaries = list(cls._SOFT_BOUNDARY_RE.finditer(content, start, end))
         if not soft_boundaries:
             cls._append_span(spans, content, start, end)
             return
 
         group_start = start
-        for boundary in soft_boundaries:
-            soft_end = boundary.end()
-            cls._append_span(spans, content, group_start, soft_end)
-            group_start = soft_end
+        current_end = start
+        for part_end in [*(boundary.end() for boundary in soft_boundaries), end]:
+            if (
+                current_end > group_start
+                and part_end - group_start > cls._MAX_SPAN_CHARS
+            ):
+                cls._append_span(spans, content, group_start, current_end)
+                group_start = current_end
+            current_end = part_end
         cls._append_span(spans, content, group_start, end)
 
     @staticmethod

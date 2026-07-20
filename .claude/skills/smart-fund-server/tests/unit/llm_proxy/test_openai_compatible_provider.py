@@ -73,6 +73,22 @@ def test_aliyun_thinking_options_use_dashscope_parameter() -> None:
     assert "thinking" not in payload
 
 
+def test_aliyun_usage_reads_nested_cached_tokens() -> None:
+    usage = OpenAICompatibleProvider._normalized_usage(
+        {
+            "usage": {
+                "prompt_tokens": 3019,
+                "completion_tokens": 104,
+                "total_tokens": 3123,
+                "prompt_tokens_details": {"cached_tokens": 2048},
+            }
+        }
+    )
+
+    assert usage["prompt_cache_hit_tokens"] == 2048
+    assert usage["prompt_cache_miss_tokens"] == 971
+
+
 def test_volcengine_thinking_options_use_ark_parameter() -> None:
     provider = _provider(
         name="volcengine",

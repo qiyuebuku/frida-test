@@ -687,12 +687,30 @@ class OpenAICompatibleProvider:
     @staticmethod
     def _normalized_usage(data: dict[str, Any]) -> dict[str, Any]:
         usage = data.get("usage") or {}
+        prompt_details = usage.get("prompt_tokens_details") or {}
+        nested_cached_tokens = (
+            int(prompt_details.get("cached_tokens", 0) or 0)
+            if isinstance(prompt_details, dict)
+            else 0
+        )
+        input_tokens = int(usage.get("prompt_tokens", 0) or 0)
+        cache_hit_tokens = int(usage.get("prompt_cache_hit_tokens", 0) or 0)
+        if not cache_hit_tokens:
+            cache_hit_tokens = nested_cached_tokens
+        cache_miss_tokens = int(usage.get("prompt_cache_miss_tokens", 0) or 0)
+        if (
+            not cache_miss_tokens
+            and input_tokens
+            and isinstance(prompt_details, dict)
+            and "cached_tokens" in prompt_details
+        ):
+            cache_miss_tokens = max(0, input_tokens - cache_hit_tokens)
         normalized_usage = {
-            "input_tokens": int(usage.get("prompt_tokens", 0) or 0),
+            "input_tokens": input_tokens,
             "output_tokens": int(usage.get("completion_tokens", 0) or 0),
             "total_tokens": int(usage.get("total_tokens", 0) or 0),
-            "prompt_cache_hit_tokens": int(usage.get("prompt_cache_hit_tokens", 0) or 0),
-            "prompt_cache_miss_tokens": int(usage.get("prompt_cache_miss_tokens", 0) or 0),
+            "prompt_cache_hit_tokens": cache_hit_tokens,
+            "prompt_cache_miss_tokens": cache_miss_tokens,
         }
         completion_details = usage.get("completion_tokens_details") or {}
         if isinstance(completion_details, dict):

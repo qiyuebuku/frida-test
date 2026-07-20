@@ -90,7 +90,22 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--model",
         default="",
-        help="仅 cards 模式：覆盖 kg_cognitive_card 的 canonical model",
+        help=(
+            "仅 cards 模式：覆盖 kg_cognitive_card 的 canonical model；"
+            "不传时按 span 数和正文字符数在 Flash/Pro 间动态路由"
+        ),
+    )
+    parser.add_argument(
+        "--thinking-type",
+        choices=["enabled", "disabled"],
+        default="disabled",
+        help="仅 cards 模式：显式开启或关闭 Card 模型思考；默认 disabled",
+    )
+    parser.add_argument(
+        "--probe-thinking-type",
+        choices=["enabled", "disabled"],
+        default="disabled",
+        help="仅 cards 模式：单独控制 Relation Probe 思考；默认 disabled",
     )
     parser.add_argument(
         "--mode",
@@ -220,6 +235,10 @@ async def run_card_validation(
     extractor = AtomicCognitiveCardExtractor(
         model=str(args.model or "").strip() or None,
         provider=str(args.provider or "").strip() or None,
+        thinking_type=str(args.thinking_type or "").strip() or None,
+        relation_probe_thinking_type=(
+            str(args.probe_thinking_type or "").strip() or None
+        ),
         concurrency=concurrency,
     )
 
@@ -242,6 +261,9 @@ async def run_card_validation(
                 "execution_seconds": round(time.monotonic() - started, 3),
                 "duration_seconds": round(time.monotonic() - queued_at, 3),
                 "span_count": len(result.spans),
+                "input_text_chars": result.input_text_chars,
+                "selected_model": result.selected_model,
+                "model_route": result.model_route,
                 "repaired": result.repaired,
                 "repair_attempted": result.repair_attempted,
                 "discarded_card_count": result.discarded_card_count,
@@ -305,7 +327,14 @@ async def run_card_validation(
         "mode": "cards",
         "target": args.target,
         "model": str(args.model or "").strip() or None,
+        "model_routing": (
+            "explicit_override"
+            if str(args.model or "").strip()
+            else "span_and_text_chars"
+        ),
         "provider": str(args.provider or "").strip() or None,
+        "card_thinking_type": str(args.thinking_type or "").strip() or None,
+        "probe_thinking_type": str(args.probe_thinking_type or "").strip() or None,
         "session_id": session_id,
         "requested_concurrency": requested_concurrency,
         "effective_concurrency": concurrency,

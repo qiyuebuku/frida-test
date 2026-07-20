@@ -278,7 +278,7 @@ def _load_gateway_model_routes() -> dict[str, list[str]]:
         "sonnet": ["claude_tmux"],
         "opus": ["claude_tmux"],
         "glm-5.1": ["claude_tmux", "glm_http"],
-        "deepseek-v4-flash": ["deepseek", "volcengine"],
+        "deepseek-v4-flash": ["aliyun", "deepseek", "volcengine"],
         "deepseek-v4-pro": ["deepseek", "aliyun", "volcengine"],
         "qwen3.7-plus": ["aliyun"],
         "qwen3.7-max": ["aliyun"],
@@ -403,7 +403,8 @@ def _load_openai_compatible_provider_configs() -> list[dict]:
                 "stepfun/*",
             ],
             "model_mappings": {
-                "deepseek-v4-pro": "vanchin/deepseek-v4-pro",
+                "deepseek-v4-flash": "deepseek-v4-flash",
+                "deepseek-v4-pro": "deepseek-v4-pro",
                 "kimi-k3": "kimi/kimi-k3",
             },
         },
@@ -499,6 +500,24 @@ KG_COGNITIVE_CARD_PREFIX_WARM_BLOCKING_TIMEOUT_SECONDS = int(
 )
 KG_COGNITIVE_CARD_PREFIX_WARM_SETTLE_SECONDS = float(
     os.getenv("KG_COGNITIVE_CARD_PREFIX_WARM_SETTLE_SECONDS", "2")
+)
+KG_COGNITIVE_CARD_SIMPLE_MODEL = os.getenv(
+    "KG_COGNITIVE_CARD_SIMPLE_MODEL", "deepseek-v4-flash"
+)
+KG_COGNITIVE_CARD_COMPLEX_MODEL = os.getenv(
+    "KG_COGNITIVE_CARD_COMPLEX_MODEL", "deepseek-v4-pro"
+)
+KG_COGNITIVE_CARD_SIMPLE_MAX_SPANS = int(
+    os.getenv("KG_COGNITIVE_CARD_SIMPLE_MAX_SPANS", "8")
+)
+KG_COGNITIVE_CARD_SIMPLE_MAX_CHARS = int(
+    os.getenv("KG_COGNITIVE_CARD_SIMPLE_MAX_CHARS", "2500")
+)
+KG_COGNITIVE_CARD_THINKING_TYPE = os.getenv(
+    "KG_COGNITIVE_CARD_THINKING_TYPE", "disabled"
+)
+KG_RELATION_PROBE_THINKING_TYPE = os.getenv(
+    "KG_RELATION_PROBE_THINKING_TYPE", "disabled"
 )
 
 # 知识图谱 LLM 任务模型方案。这里只选择模型名；模型到供应商的路由由 LLM Proxy 负责。

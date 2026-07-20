@@ -26,8 +26,26 @@ def test_aliyun_openai_compatible_provider_is_configured() -> None:
     assert aliyun["base_url"] == "https://dashscope.aliyuncs.com/compatible-mode/v1"
     assert aliyun["timeout"] == 1800
     assert "qwen3.7-plus" in aliyun["model_patterns"]
-    assert aliyun["model_mappings"]["deepseek-v4-pro"] == "vanchin/deepseek-v4-pro"
+    assert aliyun["model_mappings"]["deepseek-v4-flash"] == "deepseek-v4-flash"
+    assert aliyun["model_mappings"]["deepseek-v4-pro"] == "deepseek-v4-pro"
     assert aliyun["reasoning_style"] == "aliyun"
+
+
+def test_deepseek_flash_prefers_aliyun_provider() -> None:
+    assert settings.LLM_PROXY_MODEL_ROUTES["deepseek-v4-flash"] == [
+        "aliyun",
+        "deepseek",
+        "volcengine",
+    ]
+
+
+def test_atomic_card_dynamic_model_route_defaults() -> None:
+    assert settings.KG_COGNITIVE_CARD_SIMPLE_MODEL == "deepseek-v4-flash"
+    assert settings.KG_COGNITIVE_CARD_COMPLEX_MODEL == "deepseek-v4-pro"
+    assert settings.KG_COGNITIVE_CARD_SIMPLE_MAX_SPANS == 8
+    assert settings.KG_COGNITIVE_CARD_SIMPLE_MAX_CHARS == 2500
+    assert settings.KG_COGNITIVE_CARD_THINKING_TYPE == "disabled"
+    assert settings.KG_RELATION_PROBE_THINKING_TYPE == "disabled"
 
 
 def test_volcengine_openai_compatible_provider_is_configured() -> None:
