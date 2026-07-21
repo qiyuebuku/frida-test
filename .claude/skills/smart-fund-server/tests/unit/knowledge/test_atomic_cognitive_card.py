@@ -870,7 +870,10 @@ async def test_extractor_can_preplan_compact_topology_in_same_conversation(
     assert topology_request.messages[-1]["content"] == ATOMIC_EVIDENCE_TOPOLOGY_REQUEST
     assert topology_request.json_schema == ATOMIC_EVIDENCE_TOPOLOGY_SCHEMA
     assert card_request.messages[:3] == topology_request.messages
-    assert json.loads(card_request.messages[3]["content"]) == topology
+    assert json.loads(card_request.messages[3]["content"]) == {
+        "keep_separate": topology["keep_separate"],
+        "direct_links": topology["direct_links"],
+    }
     assert card_request.messages[4]["content"] == ATOMIC_CARD_FROM_TOPOLOGY_FOLLOWUP_PROMPT
     assert probe_request.messages[:2] == topology_request.messages[:2]
     assert len(probe_request.messages) == 3
@@ -1087,6 +1090,46 @@ def test_probe_validation_requires_complete_ordered_card_coverage() -> None:
             validated.cards_by_local_id,
             _probe_output(1),
         )
+
+
+def test_probe_review_discards_pairs_not_present_in_relation_candidates() -> None:
+    chunk = _chunk("甲公司发布公告。乙公司发布公告。丙公司发布公告。")
+    validated_cards = AtomicCognitiveCardExtractor._validate_card_response(
+        chunk,
+        StableSpanSegmenter().segment(chunk.content),
+        _extraction_output(
+            [
+                _card_item(summary="甲公司发布公告。", refs=["s0001"]),
+                _card_item(summary="乙公司发布公告。", refs=["s0002"]),
+                _card_item(summary="丙公司发布公告。", refs=["s0003"]),
+            ]
+        ),
+    )
+    probe_output = _probe_output(3)
+    probe_output["accepted_relation_pairs"] = [
+        {"source_card_id": "c1", "target_card_id": "c2"},
+        {"source_card_id": "c2", "target_card_id": "c3"},
+    ]
+
+    validated_probes = AtomicCognitiveCardExtractor._validate_probe_response(
+        validated_cards.cards_by_local_id,
+        probe_output,
+        review_relations=True,
+        allowed_local_relation_pairs=frozenset({("c1", "c2")}),
+    )
+
+    assert validated_probes.accepted_relation_pairs == frozenset(
+        {
+            tuple(
+                sorted(
+                    (
+                        validated_cards.cards_by_local_id["c1"].cognitive_card_id,
+                        validated_cards.cards_by_local_id["c2"].cognitive_card_id,
+                    )
+                )
+            )
+        }
+    )
 
 
 @pytest.mark.asyncio

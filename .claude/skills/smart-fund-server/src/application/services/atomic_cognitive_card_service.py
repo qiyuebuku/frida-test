@@ -54,8 +54,8 @@ ATOMIC_CARD_PREFIX_WARM_LOCK_KEY = (
 )
 ATOMIC_CARD_PREFIX_WARM_POLL_SECONDS = 0.05
 ATOMIC_CARD_INTRA_CHUNK_PIPELINE_VERSION = "atomic_card_intra_chunk_relation_v1"
-ATOMIC_RELATION_PROBE_GENERATOR_VERSION = "atomic_relation_probe_v17"
-ATOMIC_EVIDENCE_TOPOLOGY_GENERATOR_VERSION = "atomic_evidence_topology_v13"
+ATOMIC_RELATION_PROBE_GENERATOR_VERSION = "atomic_relation_probe_v18"
+ATOMIC_EVIDENCE_TOPOLOGY_GENERATOR_VERSION = "atomic_evidence_topology_v14"
 
 
 ATOMIC_CARD_ITEM_SCHEMA: dict[str, Any] = {
@@ -403,16 +403,16 @@ _ATOMIC_EVIDENCE_TOPOLOGY_SYSTEM_SECTION = """Evidence Topology 预处理阶段�
 4. open_slots 只记录当前 Chunk 尚未出现、截至 published_at 可能已经发生、且从历史材料找到后会显著补充原因、影响、可信度或反证的一跳事件端点。端点必须能独立生成 Card；带有“可能、预计、计划”等未发生强度的命题不得搜索其 downstream，且不得搜索尚未发生的后续灾情、处置、验证结果或预测兑现。普通明细、历史比较、泛化背景、已有完整解释和“查找某数值原因”不生成。每条只描述一种关系角色和一个端点约束，不使用“或”拼接多个搜索目标；endpoint_constraint 不写问句，不猜测具体事实。
 5. 除 direct_links.link_statement 必须原样引用外，禁止摘抄或改写原文；禁止输出摘要、事实台账、逐 Ref 解释、分析过程和候选方案。只输出最终导航；内容少是正常结果。
 
-后续 Card/Relation 阶段参考 event_groups 阅读，每个 event_group 至少由一张 Card 覆盖。keep_separate 是硬边界：任一 Card 的 focus_evidence_refs 不得同时命中其左右两侧。direct_links 是需要依据原文再次核验的候选连接，不是强制关系。后续 Probe 阶段只使用 open_slots，不再逐张 Card 重新寻找搜索方向。"""
+event_groups、keep_separate、direct_links 和 open_slots 都只是下一阶段可纠正的阅读导航，不是事实结论、完整清单或输出配额。后续阶段必须重新依据原文判断，可以忽略、拆分、合并或补充导航中的项目；不得为了覆盖 event_group 而建 Card，不得仅因 keep_separate 而机械拆卡，不得仅因 direct_link 而建边，也不得把 open_slots 当作 Probe 白名单。"""
 
 
 ATOMIC_EVIDENCE_TOPOLOGY_REQUEST = """现在进入 Evidence Topology 预处理阶段。只输出 event_groups、keep_separate、direct_links、open_slots JSON。"""
 
 
-ATOMIC_CARD_FROM_TOPOLOGY_FOLLOWUP_PROMPT = """现在进入 Card/Relation 阶段。使用上一轮导航减少重复分析：每个 event_group 至少由一张 Card 覆盖；keep_separate 是硬边界，任何 Card 的 focus_evidence_refs 都不得同时命中其左右两侧。direct_links 是高置信候选但不是完整清单；其 source_mention、relation_cue、target_mention 和 link_statement 共同明确证明两端及方向时生成 Relation。原文中另有明确关系句时也可生成，但 relation_evidence_refs 必须覆盖同时证明两端与连接的最小原文范围。不要把标题并列、报道顺序、过渡语或常识推断补成关系。不要复述导航或原文，只输出 cards、relations、skip_reason JSON。"""
+ATOMIC_CARD_FROM_TOPOLOGY_FOLLOWUP_PROMPT = """现在进入 Card/Relation 阶段。上一轮只提供可能的命题边界和候选直连，不具有约束力，也可能遗漏或判断错误。重新阅读原文并独立决定 Card 边界：keep_separate 只有在两侧确实是可分别成立的命题时才拆分，否则忽略；未被提示的事实仍按 Card 规则处理。direct_links 只提示可能存在连接，只有 source_mention、relation_cue、target_mention 和 link_statement 与最终两张 Card 的核心事实及方向一致时才生成 Relation；原文另有明确关系句时也可生成。relation_evidence_refs 必须覆盖同时证明两端与连接的最小原文范围。不要把标题并列、报道顺序、过渡语或常识推断补成关系。不要复述、解释或评价导航，只输出 cards、relations、skip_reason JSON。"""
 
 
-ATOMIC_RELATION_PROBE_FROM_TOPOLOGY_FOLLOWUP_PROMPT = """现在进入 Relation 审查与 Probe 阶段。冻结上一轮 Cards，不新增或改写 Relation。逐条回到原文复核上一轮 Relations：source Card 与 target Card 必须是两个不同事实，relation_evidence_refs 必须同时证明两端和连接语义，basis 不得加入原文没有的“导致、引发、验证、回应”等机制。若 Relation 对应清洗后的 direct_links，还要确认 source_mention 与 target_mention 分别对应两张 Card 的核心谓词；不在 direct_links 中不代表必然无效，但必须由原文中的明确关系句独立证明。任一端只对应泛称因素、第三个事实、宽泛支撑、标题并列、报道顺序、过渡语或常识推断时，不保留。只有全部成立时才把该 source_card_id、target_card_id 放入 accepted_relation_pairs。再核对 open_slots：只映射截至 published_at 可能已发生、当前 Chunk 尚未给出且能与对应 Card 建立直接关系的端点；预测或计划 Card 不映射 downstream。每个 Card 仍须在 probe_plans 中恰好出现一次。只输出 accepted_relation_pairs、probe_plans JSON。"""
+ATOMIC_RELATION_PROBE_FROM_TOPOLOGY_FOLLOWUP_PROMPT = """现在进入 Relation 审查与 Probe 阶段。冻结上一轮 Cards，不新增或改写 Relation。逐条回到原文复核上一轮 Relations：source Card 与 target Card 必须是两个不同事实，relation_evidence_refs 必须同时证明两端和连接语义，basis 不得加入原文没有的“导致、引发、验证、回应”等机制。若 Relation 对应清洗后的 direct_links，还要确认 source_mention 与 target_mention 分别对应两张 Card 的核心谓词；不在 direct_links 中不代表必然无效，但必须由原文中的明确关系句独立证明。任一端只对应泛称因素、第三个事实、宽泛支撑、标题并列、报道顺序、过渡语或常识推断时，不保留。accepted_relation_pairs 只能从输入的 relation_candidates 逐字复制 Card ID pair；不确定就省略，绝不添加其他 pair。open_slots 只是候选搜索方向，不是完整清单：结合最终 Cards 和原文独立判断是否采用、改写、忽略或补充。新增 Probe 仍须满足 System Prompt 的直接关系、历史可发生性和显著价值要求；预测或计划 Card 不映射 downstream。每个 Card 仍须在 probe_plans 中恰好出现一次。只输出 accepted_relation_pairs、probe_plans JSON。"""
 
 
 _ATOMIC_CARD_TOPOLOGY_STAGE_SYSTEM_PROMPT = _ATOMIC_CARD_STAGE_SYSTEM_PROMPT.replace(
@@ -422,8 +422,9 @@ _ATOMIC_CARD_TOPOLOGY_STAGE_SYSTEM_PROMPT = _ATOMIC_CARD_STAGE_SYSTEM_PROMPT.rep
 3. 只合并事实键完全相同的重复表述。不得为了减少 Card 数量而概括段落、事件链或数据组，也不得创造上位事实。summary 只陈述一个事实端点、一个核心谓词并写明完整主体。""",
     """Card：
 1. 原文直接支持、对后续关系发现有独立意义的每个事实命题生成一张 Card。Card 应保留完整主体、核心动作或状态、对象、时间和必要口径。
-2. 同一主体、同一时间、同一状态或市场表现的一组数值属性应保留在一张 Card 中；单个价格、幅度、市值、同比或环比若离开共同状态没有独立解释价值，不拆成多张。监管决定与其直接涉嫌事项、同一发言者的一次完整回应也不按措辞机械拆分。
-3. 不同事件动作、不同主体或立场、不同时间阶段，或需要作为因果、进展、冲突、约束两端的命题必须拆分。同一公告内的监管事实和公司经营表态仍是不同命题。复合分析或预测中的多个驱动因素及其结果，在原文明确连接时应分别成为关系端点。不得生成总述 Card 再重复生成其全部明细 Card；summary 只表达一个可用于关系判断的命题。""",
+2. Card 边界按命题能否独立成立判断，而不是按句子、段落或叙事主题判断。删除其中一个动作、状态、原因、结果或判断后，其余内容仍可独立为真或为假，就必须拆成不同 Card；多个原因共同指向一个结果、一个原因产生多个结果时，各个可独立核验的端点也分别建卡，不能把整条传导链写进一张 summary。
+3. 同一主体、同一时间、同一核心状态的一组数值属性只有在共同描述同一个谓词、离开该状态没有独立解释价值时才保留在一张 Card 中。不同动作、状态、主体或立场、时间阶段、关系角色必须拆分。同一公告内的监管事实和公司经营表态仍是不同命题；预测中的条件、方向、约束和结果也按可独立核验的命题拆分。
+Relation 的两个端点不能被预先藏进同一张 Card。不得生成总述 Card 再重复生成其全部明细 Card，也不得用一个概括性 Card 替代原文明示的多个关系端点；summary 只表达一个可用于关系判断的命题。""",
 ).replace(
     "当前调用只执行 Card 和同 Chunk Relation。",
     "按 user 明确指定的阶段执行 Evidence Topology、Card/Relation 或 Relation Probe。",
@@ -677,12 +678,20 @@ class AtomicCognitiveCardExtractor:
                     stage_usage["evidence_topology"] = _response_usage_diagnostics(
                         topology_result.response
                     )
+                    card_navigation = {
+                        "keep_separate": list(
+                            topology_result.data.get("keep_separate") or []
+                        ),
+                        "direct_links": list(
+                            topology_result.data.get("direct_links") or []
+                        ),
+                    }
                     card_messages = [
                         *topology_result.messages,
                         {
                             "role": "assistant",
                             "content": json.dumps(
-                                topology_result.data,
+                                card_navigation,
                                 ensure_ascii=False,
                                 separators=(",", ":"),
                             ),
@@ -1686,17 +1695,21 @@ class AtomicCognitiveCardExtractor:
                     or target_local_id not in cards_by_local_id
                     or source_local_id == target_local_id
                 ):
-                    raise ValueError(
-                        f"accepted_relation_pair[{index}] 引用了非法 Card pair"
+                    logger.warning(
+                        "丢弃 Relation 审查额外输出的非法 Card pair: index=%s pair=%s",
+                        index,
+                        local_pair,
                     )
+                    continue
                 if local_pair not in allowed_local_relation_pairs:
-                    raise ValueError(
-                        f"accepted_relation_pair[{index}] 不是上一轮已有 Relation"
+                    logger.warning(
+                        "丢弃 Relation 审查新增的非候选 pair: index=%s pair=%s",
+                        index,
+                        local_pair,
                     )
+                    continue
                 if local_pair in seen_local_pairs:
-                    raise ValueError(
-                        f"accepted_relation_pair[{index}] 重复输出 Card pair"
-                    )
+                    continue
                 seen_local_pairs.add(local_pair)
                 accepted_global_pairs.add(
                     tuple(
