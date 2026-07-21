@@ -45,6 +45,7 @@ from src.infrastructure.vector_store.semantic_hybrid_retriever import MilvusSema
 logger = logging.getLogger(__name__)
 
 ATOMIC_CARD_MAX_TOKENS = 20000
+ATOMIC_EVIDENCE_TOPOLOGY_MAX_TOKENS = 6000
 ATOMIC_CARD_PREFIX_WARM_MARK_KEY = (
     f"{JETTASK_PREFIX}:kg_cognitive_card:{ATOMIC_COGNITIVE_CARD_GENERATOR_VERSION}:prefix_warmed"
 )
@@ -53,7 +54,8 @@ ATOMIC_CARD_PREFIX_WARM_LOCK_KEY = (
 )
 ATOMIC_CARD_PREFIX_WARM_POLL_SECONDS = 0.05
 ATOMIC_CARD_INTRA_CHUNK_PIPELINE_VERSION = "atomic_card_intra_chunk_relation_v1"
-ATOMIC_RELATION_PROBE_GENERATOR_VERSION = "atomic_relation_probe_v14"
+ATOMIC_RELATION_PROBE_GENERATOR_VERSION = "atomic_relation_probe_v17"
+ATOMIC_EVIDENCE_TOPOLOGY_GENERATOR_VERSION = "atomic_evidence_topology_v13"
 
 
 ATOMIC_CARD_ITEM_SCHEMA: dict[str, Any] = {
@@ -177,6 +179,171 @@ ATOMIC_RELATION_PROBE_SCHEMA: dict[str, Any] = {
 }
 
 
+ATOMIC_TOPOLOGY_RELATION_PROBE_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "properties": {
+        "accepted_relation_pairs": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "source_card_id": {"type": "string", "pattern": "^c[1-9][0-9]*$"},
+                    "target_card_id": {"type": "string", "pattern": "^c[1-9][0-9]*$"},
+                },
+                "required": ["source_card_id", "target_card_id"],
+                "additionalProperties": False,
+            },
+        },
+        "probe_plans": {
+            "type": "array",
+            "items": ATOMIC_RELATION_PROBE_SCHEMA["properties"]["probe_plans"][
+                "items"
+            ],
+        },
+    },
+    "required": ["accepted_relation_pairs", "probe_plans"],
+    "additionalProperties": False,
+}
+
+
+ATOMIC_EVIDENCE_TOPOLOGY_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "properties": {
+        "event_groups": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "group_id": {"type": "string", "pattern": "^g[1-9][0-9]*$"},
+                    "evidence_refs": {
+                        "type": "array",
+                        "minItems": 1,
+                        "items": {"type": "string", "pattern": "^s[0-9]{4}$"},
+                    },
+                    "focus": {"type": "string", "minLength": 1, "maxLength": 80},
+                },
+                "required": ["group_id", "evidence_refs", "focus"],
+                "additionalProperties": False,
+            },
+        },
+        "keep_separate": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "left_evidence_refs": {
+                        "type": "array",
+                        "minItems": 1,
+                        "items": {"type": "string", "pattern": "^s[0-9]{4}$"},
+                    },
+                    "right_evidence_refs": {
+                        "type": "array",
+                        "minItems": 1,
+                        "items": {"type": "string", "pattern": "^s[0-9]{4}$"},
+                    },
+                },
+                "required": ["left_evidence_refs", "right_evidence_refs"],
+                "additionalProperties": False,
+            },
+        },
+        "direct_links": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "source_evidence_refs": {
+                        "type": "array",
+                        "minItems": 1,
+                        "items": {"type": "string", "pattern": "^s[0-9]{4}$"},
+                    },
+                    "target_evidence_refs": {
+                        "type": "array",
+                        "minItems": 1,
+                        "items": {"type": "string", "pattern": "^s[0-9]{4}$"},
+                    },
+                    "link_evidence_refs": {
+                        "type": "array",
+                        "minItems": 1,
+                        "items": {"type": "string", "pattern": "^s[0-9]{4}$"},
+                    },
+                    "link_statement": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 240,
+                    },
+                    "source_mention": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 60,
+                    },
+                    "relation_cue": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 60,
+                    },
+                    "target_mention": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 60,
+                    },
+                    "relation_kind": {
+                        "type": "string",
+                        "enum": sorted(INTRA_CHUNK_RELATION_KINDS),
+                    },
+                },
+                "required": [
+                    "source_evidence_refs",
+                    "target_evidence_refs",
+                    "link_evidence_refs",
+                    "link_statement",
+                    "source_mention",
+                    "relation_cue",
+                    "target_mention",
+                    "relation_kind",
+                ],
+                "additionalProperties": False,
+            },
+        },
+        "open_slots": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "evidence_refs": {
+                        "type": "array",
+                        "minItems": 1,
+                        "items": {"type": "string", "pattern": "^s[0-9]{4}$"},
+                    },
+                    "role": {
+                        "type": "string",
+                        "enum": [
+                            "upstream",
+                            "downstream",
+                            "confirmation",
+                            "contradiction",
+                        ],
+                    },
+                    "endpoint_constraint": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 180,
+                    },
+                },
+                "required": ["evidence_refs", "role", "endpoint_constraint"],
+                "additionalProperties": False,
+            },
+        },
+    },
+    "required": [
+        "event_groups",
+        "keep_separate",
+        "direct_links",
+        "open_slots",
+    ],
+    "additionalProperties": False,
+}
+
+
 _ATOMIC_CARD_STAGE_SYSTEM_PROMPT = """你是知识图谱的原子 Cognitive Card 与同 Chunk Relation 抽取器。
 
 当前调用只执行 Card 和同 Chunk Relation。输入首行是新闻发布时间；其后按原文句子换行，`<title>` 表示标题，`[sNNNN]` 是紧随文本的证据坐标。一个 Ref 可能包含多个事实，它只是引用地址，不代表 Card 边界，也不是需要逐项分类的清单。只有后续 user 明确切换阶段时才执行 Relation Probe。
@@ -227,6 +394,51 @@ ATOMIC_CARD_SYSTEM_PROMPT = "\n\n".join(
 ATOMIC_RELATION_PROBE_FOLLOWUP_PROMPT = """现在进入 Relation Probe 阶段。严格使用 System Prompt 中的 Relation Probe 阶段规则，冻结上一轮 Cards 和 Relations，只输出 probe_plans JSON。"""
 
 
+_ATOMIC_EVIDENCE_TOPOLOGY_SYSTEM_SECTION = """Evidence Topology 预处理阶段：
+
+仅在 user 明确要求 Evidence Topology 时执行。此阶段只生成后续抽取的导航，不生成 Card 清单或 Card 文案。
+1. event_groups 只划分少量具有共同主体、时间范围和叙事目标的主要事件组或传导链。它不是 Card 边界，不得把每个指标、句子或 Ref 单独列成一组；focus 只写短语。
+2. keep_separate 只标记最容易被错误合并的命题边界，不得穷举所有事实，也不写解释。不同主体或立场的声明必须拆开；同一公告内的监管事实与公司经营表态必须拆开；复合分析或预测中的多个驱动因素及多个结果，只要能分别作为关系端点就必须拆开。此阶段不输出强制合并决定，避免把误判固化为 Card 边界。
+3. direct_links 只记录对理解正文有价值、且原文明示的事件间关系。source_evidence_refs 和 target_evidence_refs 分别定位两个单一命题端点；一个端点混有两个可分别成立的影响或结果时，必须拆成多条 link。link_evidence_refs 必须定位原文中明确表达连接语义的文本；link_statement 必须从这些 Ref 原样复制最短的完整连续关系陈述。source_mention、relation_cue、target_mention 分别从 link_statement 原样复制 source 指代、关系措辞和 target 指代，三者缺一不可；target_mention 不能用日期、段落引导语或 source 的组成部分冒充。只有端点动作、章节引导语、普通顺承语或脱离上下文无法识别两端的片段都不合格。找不到这样的原文陈述就不输出。标题并列、报道顺序、时间先后或常识机制不能替代连接证据；不得把致电与回答、发布与被发布内容、公告与公告内容、数值属性之间建立为因果边。
+4. open_slots 只记录当前 Chunk 尚未出现、截至 published_at 可能已经发生、且从历史材料找到后会显著补充原因、影响、可信度或反证的一跳事件端点。端点必须能独立生成 Card；带有“可能、预计、计划”等未发生强度的命题不得搜索其 downstream，且不得搜索尚未发生的后续灾情、处置、验证结果或预测兑现。普通明细、历史比较、泛化背景、已有完整解释和“查找某数值原因”不生成。每条只描述一种关系角色和一个端点约束，不使用“或”拼接多个搜索目标；endpoint_constraint 不写问句，不猜测具体事实。
+5. 除 direct_links.link_statement 必须原样引用外，禁止摘抄或改写原文；禁止输出摘要、事实台账、逐 Ref 解释、分析过程和候选方案。只输出最终导航；内容少是正常结果。
+
+后续 Card/Relation 阶段参考 event_groups 阅读，每个 event_group 至少由一张 Card 覆盖。keep_separate 是硬边界：任一 Card 的 focus_evidence_refs 不得同时命中其左右两侧。direct_links 是需要依据原文再次核验的候选连接，不是强制关系。后续 Probe 阶段只使用 open_slots，不再逐张 Card 重新寻找搜索方向。"""
+
+
+ATOMIC_EVIDENCE_TOPOLOGY_REQUEST = """现在进入 Evidence Topology 预处理阶段。只输出 event_groups、keep_separate、direct_links、open_slots JSON。"""
+
+
+ATOMIC_CARD_FROM_TOPOLOGY_FOLLOWUP_PROMPT = """现在进入 Card/Relation 阶段。使用上一轮导航减少重复分析：每个 event_group 至少由一张 Card 覆盖；keep_separate 是硬边界，任何 Card 的 focus_evidence_refs 都不得同时命中其左右两侧。direct_links 是高置信候选但不是完整清单；其 source_mention、relation_cue、target_mention 和 link_statement 共同明确证明两端及方向时生成 Relation。原文中另有明确关系句时也可生成，但 relation_evidence_refs 必须覆盖同时证明两端与连接的最小原文范围。不要把标题并列、报道顺序、过渡语或常识推断补成关系。不要复述导航或原文，只输出 cards、relations、skip_reason JSON。"""
+
+
+ATOMIC_RELATION_PROBE_FROM_TOPOLOGY_FOLLOWUP_PROMPT = """现在进入 Relation 审查与 Probe 阶段。冻结上一轮 Cards，不新增或改写 Relation。逐条回到原文复核上一轮 Relations：source Card 与 target Card 必须是两个不同事实，relation_evidence_refs 必须同时证明两端和连接语义，basis 不得加入原文没有的“导致、引发、验证、回应”等机制。若 Relation 对应清洗后的 direct_links，还要确认 source_mention 与 target_mention 分别对应两张 Card 的核心谓词；不在 direct_links 中不代表必然无效，但必须由原文中的明确关系句独立证明。任一端只对应泛称因素、第三个事实、宽泛支撑、标题并列、报道顺序、过渡语或常识推断时，不保留。只有全部成立时才把该 source_card_id、target_card_id 放入 accepted_relation_pairs。再核对 open_slots：只映射截至 published_at 可能已发生、当前 Chunk 尚未给出且能与对应 Card 建立直接关系的端点；预测或计划 Card 不映射 downstream。每个 Card 仍须在 probe_plans 中恰好出现一次。只输出 accepted_relation_pairs、probe_plans JSON。"""
+
+
+_ATOMIC_CARD_TOPOLOGY_STAGE_SYSTEM_PROMPT = _ATOMIC_CARD_STAGE_SYSTEM_PROMPT.replace(
+    """Card：
+1. 原文直接支持、能够独立判断真假的每个事实各生成一张 Card。事实由完整主体、一个具体动作/状态/指标、对象、时间与口径组成。
+2. 原子边界是强约束：一张 Card 恰好对应一个事实键 `主体 + 单一谓词或指标 + 对象 + 单一时间口径`。一句话含有几个事实键就生成几张 Card；同一句、同一公告、同一事件或共同描述一种局面都不是合并理由。不同动作、状态、指标、报告期、绝对值、变化率和事件步骤必须拆分；原因、决定、执行、回应、结果分别作为端点。两个分句能够分别为真或为假时必须拆分，边界不确定时也拆分。
+3. 只合并事实键完全相同的重复表述。不得为了减少 Card 数量而概括段落、事件链或数据组，也不得创造上位事实。summary 只陈述一个事实端点、一个核心谓词并写明完整主体。""",
+    """Card：
+1. 原文直接支持、对后续关系发现有独立意义的每个事实命题生成一张 Card。Card 应保留完整主体、核心动作或状态、对象、时间和必要口径。
+2. 同一主体、同一时间、同一状态或市场表现的一组数值属性应保留在一张 Card 中；单个价格、幅度、市值、同比或环比若离开共同状态没有独立解释价值，不拆成多张。监管决定与其直接涉嫌事项、同一发言者的一次完整回应也不按措辞机械拆分。
+3. 不同事件动作、不同主体或立场、不同时间阶段，或需要作为因果、进展、冲突、约束两端的命题必须拆分。同一公告内的监管事实和公司经营表态仍是不同命题。复合分析或预测中的多个驱动因素及其结果，在原文明确连接时应分别成为关系端点。不得生成总述 Card 再重复生成其全部明细 Card；summary 只表达一个可用于关系判断的命题。""",
+).replace(
+    "当前调用只执行 Card 和同 Chunk Relation。",
+    "按 user 明确指定的阶段执行 Evidence Topology、Card/Relation 或 Relation Probe。",
+)
+
+
+ATOMIC_CARD_TOPOLOGY_SYSTEM_PROMPT = "\n\n".join(
+    [
+        _ATOMIC_CARD_TOPOLOGY_STAGE_SYSTEM_PROMPT,
+        _ATOMIC_EVIDENCE_TOPOLOGY_SYSTEM_SECTION,
+        _ATOMIC_RELATION_PROBE_SYSTEM_SECTION,
+    ]
+)
+
+
 @dataclass(frozen=True)
 class AtomicCardStageResult:
     status: str
@@ -248,7 +460,15 @@ class _ValidatedAtomicCardResponse:
 @dataclass(frozen=True)
 class _ValidatedProbeResponse:
     probes_by_local_id: dict[str, list[RelationProbe]]
+    accepted_relation_pairs: frozenset[tuple[str, str]] | None = None
     issues: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
+class _EvidenceTopologyResult:
+    data: dict[str, Any]
+    response: Any
+    messages: list[dict[str, Any]]
 
 
 @dataclass(frozen=True)
@@ -267,6 +487,32 @@ def _response_cannot_be_safely_repaired(response: Any) -> bool:
     )
 
 
+def _response_message_content(response: Any) -> str:
+    content = str(getattr(response, "text", "") or "").strip()
+    if content:
+        return content
+    return json.dumps(
+        getattr(response, "structured_output", None),
+        ensure_ascii=False,
+        separators=(",", ":"),
+    )
+
+
+def _response_usage_diagnostics(response: Any) -> dict[str, Any]:
+    usage = dict(getattr(response, "usage", None) or {})
+    return {
+        "input_tokens": int(usage.get("input_tokens") or 0),
+        "output_tokens": int(usage.get("output_tokens") or 0),
+        "total_tokens": int(usage.get("total_tokens") or 0),
+        "prompt_cache_hit_tokens": int(usage.get("prompt_cache_hit_tokens") or 0),
+        "prompt_cache_miss_tokens": int(usage.get("prompt_cache_miss_tokens") or 0),
+        "reasoning_tokens": int(usage.get("reasoning_tokens") or 0),
+        "reasoning_chars": len(str(getattr(response, "reasoning_content", "") or "")),
+        "duration_ms": int(getattr(response, "duration_ms", 0) or 0),
+        "cache_hit": bool(getattr(response, "cache_hit", False)),
+    }
+
+
 class AtomicCognitiveCardExtractor:
     """先提取 Card 与同 Chunk 关系，再在同一对话中续问跨 Chunk Probe。"""
 
@@ -281,6 +527,7 @@ class AtomicCognitiveCardExtractor:
         system_prompt: str | None = None,
         relation_probe_followup_prompt: str | None = None,
         prompt_profile: str | None = None,
+        evidence_topology_preplan: bool = False,
         concurrency: int = 4,
         segmenter: StableSpanSegmenter | None = None,
     ) -> None:
@@ -320,7 +567,13 @@ class AtomicCognitiveCardExtractor:
         self._probe_thinking_type = (
             normalized_probe_thinking_type or self._card_thinking_type
         )
-        self._system_prompt = str(system_prompt or ATOMIC_CARD_SYSTEM_PROMPT).strip()
+        self._evidence_topology_preplan = bool(evidence_topology_preplan)
+        default_system_prompt = (
+            ATOMIC_CARD_TOPOLOGY_SYSTEM_PROMPT
+            if self._evidence_topology_preplan
+            else ATOMIC_CARD_SYSTEM_PROMPT
+        )
+        self._system_prompt = str(system_prompt or default_system_prompt).strip()
         self._relation_probe_followup_prompt = str(
             relation_probe_followup_prompt or ATOMIC_RELATION_PROBE_FOLLOWUP_PROMPT
         ).strip()
@@ -390,43 +643,10 @@ class AtomicCognitiveCardExtractor:
             source_title=payload.get("title") or "",
             sentence_blocks=sentence_blocks,
         )
-        base_messages = [
+        source_messages = [
             {"role": "system", "content": self._system_prompt},
             {"role": "user", "content": prompt_input},
         ]
-        request = LLMProxyRequest(
-            model=model_route.model,
-            provider=self._provider,
-            messages=base_messages,
-            temperature=0,
-            max_tokens=ATOMIC_CARD_MAX_TOKENS,
-            json_schema=ATOMIC_CARD_SCHEMA,
-            provider_options=self._provider_options(self._card_thinking_type),
-            metadata={
-                "task": "kg_cognitive_card",
-                "schema_version": ATOMIC_COGNITIVE_CARD_SCHEMA_VERSION,
-                "generator_version": ATOMIC_COGNITIVE_CARD_GENERATOR_VERSION,
-                "source_type": payload.get("source_type") or "",
-                "source_id": payload.get("source_id") or "",
-                "chunk_id": chunk.chunk_id,
-                "model_route": model_route.tier,
-                "span_count": len(spans),
-                "input_text_chars": len(chunk.content),
-                "thinking_type": self._card_thinking_type or "provider_default",
-                "prompt_profile": self._prompt_profile,
-                "prompt_fingerprint": self._prompt_fingerprint,
-                "_cache_key_metadata": {
-                    "task": "kg_cognitive_card",
-                    "schema_version": ATOMIC_COGNITIVE_CARD_SCHEMA_VERSION,
-                    "generator_version": ATOMIC_COGNITIVE_CARD_GENERATOR_VERSION,
-                    "model_route": model_route.tier,
-                    "thinking_type": self._card_thinking_type or "provider_default",
-                    "prompt_profile": self._prompt_profile,
-                    "prompt_fingerprint": self._prompt_fingerprint,
-                },
-            },
-            use_cache=True,
-        )
         with langfuse_observation(
             name="kg.atomic_card.extract_cards_and_relations",
             as_type="span",
@@ -443,11 +663,53 @@ class AtomicCognitiveCardExtractor:
             prefix_scope = self._prefix_warm_scope(model_route.model)
             warmup_lock = await self._claim_prefix_warmup_lock(prefix_scope)
             try:
-                response = await self._llm.generate(request)
-                await self._mark_prefix_warmed(
-                    prefix_scope,
-                    settle=warmup_lock is not None,
+                evidence_topology: dict[str, Any] = {}
+                stage_usage: dict[str, dict[str, Any]] = {}
+                card_messages = source_messages
+                if self._evidence_topology_preplan:
+                    topology_result = await self._preplan_evidence_topology(
+                        chunk=chunk,
+                        spans=spans,
+                        source_messages=source_messages,
+                        model_route=model_route,
+                    )
+                    evidence_topology = topology_result.data
+                    stage_usage["evidence_topology"] = _response_usage_diagnostics(
+                        topology_result.response
+                    )
+                    card_messages = [
+                        *topology_result.messages,
+                        {
+                            "role": "assistant",
+                            "content": json.dumps(
+                                topology_result.data,
+                                ensure_ascii=False,
+                                separators=(",", ":"),
+                            ),
+                        },
+                        {
+                            "role": "user",
+                            "content": ATOMIC_CARD_FROM_TOPOLOGY_FOLLOWUP_PROMPT,
+                        },
+                    ]
+                    await self._mark_prefix_warmed(
+                        prefix_scope,
+                        settle=warmup_lock is not None,
+                    )
+                request = self._card_request(
+                    chunk=chunk,
+                    payload=payload,
+                    messages=card_messages,
+                    model_route=model_route,
+                    span_count=len(spans),
                 )
+                response = await self._llm.generate(request)
+                stage_usage["cards_and_relations"] = _response_usage_diagnostics(response)
+                if not self._evidence_topology_preplan:
+                    await self._mark_prefix_warmed(
+                        prefix_scope,
+                        settle=warmup_lock is not None,
+                    )
                 validated, repaired, repair_attempted, accepted_card_response = (
                     await self._cards_from_response(
                         chunk=chunk,
@@ -456,16 +718,58 @@ class AtomicCognitiveCardExtractor:
                         response=response,
                     )
                 )
-                cards_with_probes, probe_repaired, probe_repair_attempted, probe_issues = (
+                stage_usage["cards_and_relations"] = _response_usage_diagnostics(
+                    accepted_card_response
+                )
+                (
+                    cards_with_probes,
+                    probe_repaired,
+                    probe_repair_attempted,
+                    probe_issues,
+                    probe_usage,
+                    accepted_relation_pairs,
+                ) = (
                     await self._plan_relation_probes(
                         chunk=chunk,
                         cards_by_local_id=validated.cards_by_local_id,
                         relation_count=len(validated.relations),
-                        base_messages=base_messages,
+                        base_messages=card_messages,
                         card_response=accepted_card_response,
                         model_route=model_route,
+                        evidence_topology=evidence_topology,
                     )
                 )
+                if accepted_relation_pairs is not None:
+                    accepted_relations = [
+                        relation
+                        for relation in validated.relations
+                        if tuple(
+                            sorted(
+                                (
+                                    relation.source_card_id,
+                                    relation.target_card_id,
+                                )
+                            )
+                        )
+                        in accepted_relation_pairs
+                    ]
+                    discarded_by_review = len(validated.relations) - len(
+                        accepted_relations
+                    )
+                    if discarded_by_review:
+                        validated = replace(
+                            validated,
+                            relations=accepted_relations,
+                            discarded_relation_count=(
+                                validated.discarded_relation_count
+                                + discarded_by_review
+                            ),
+                            issues=(
+                                *validated.issues,
+                                f"Relation 审查丢弃 {discarded_by_review} 条未获原文支持的关系",
+                            ),
+                        )
+                stage_usage["relation_probes"] = probe_usage
                 repaired = repaired or probe_repaired
                 repair_attempted = repair_attempted or probe_repair_attempted
                 all_issues = [*validated.issues, *probe_issues]
@@ -507,6 +811,9 @@ class AtomicCognitiveCardExtractor:
                         "prefix_warmup_owner": warmup_lock is not None,
                         "selected_model": model_route.model,
                         "model_route": model_route.tier,
+                        "evidence_topology_preplan": self._evidence_topology_preplan,
+                        "evidence_topology": evidence_topology,
+                        "llm_stage_usage": stage_usage,
                     },
                     status_message="completed",
                 )
@@ -524,10 +831,335 @@ class AtomicCognitiveCardExtractor:
                     discarded_relation_count=validated.discarded_relation_count,
                     validation_issues=all_issues,
                     skip_reason=validated.skip_reason,
+                    evidence_topology=evidence_topology,
+                    llm_stage_usage=stage_usage,
                 )
             finally:
                 if warmup_lock is not None:
                     await self._release_prefix_warmup_lock(warmup_lock)
+
+    def _card_request(
+        self,
+        *,
+        chunk: EvidenceChunk,
+        payload: dict[str, Any],
+        messages: list[dict[str, Any]],
+        model_route: _AtomicCardModelRoute,
+        span_count: int,
+    ) -> LLMProxyRequest:
+        return LLMProxyRequest(
+            model=model_route.model,
+            provider=self._provider,
+            messages=messages,
+            temperature=0,
+            max_tokens=ATOMIC_CARD_MAX_TOKENS,
+            json_schema=ATOMIC_CARD_SCHEMA,
+            provider_options=self._provider_options(self._card_thinking_type),
+            metadata={
+                "task": "kg_cognitive_card",
+                "schema_version": ATOMIC_COGNITIVE_CARD_SCHEMA_VERSION,
+                "generator_version": ATOMIC_COGNITIVE_CARD_GENERATOR_VERSION,
+                "source_type": payload.get("source_type") or "",
+                "source_id": payload.get("source_id") or "",
+                "chunk_id": chunk.chunk_id,
+                "model_route": model_route.tier,
+                "span_count": span_count,
+                "input_text_chars": len(chunk.content),
+                "thinking_type": self._card_thinking_type or "provider_default",
+                "prompt_profile": self._prompt_profile,
+                "prompt_fingerprint": self._prompt_fingerprint,
+                "evidence_topology_preplan": self._evidence_topology_preplan,
+                "_cache_key_metadata": {
+                    "task": "kg_cognitive_card",
+                    "schema_version": ATOMIC_COGNITIVE_CARD_SCHEMA_VERSION,
+                    "generator_version": ATOMIC_COGNITIVE_CARD_GENERATOR_VERSION,
+                    "model_route": model_route.tier,
+                    "thinking_type": self._card_thinking_type or "provider_default",
+                    "prompt_profile": self._prompt_profile,
+                    "prompt_fingerprint": self._prompt_fingerprint,
+                    "evidence_topology_preplan": self._evidence_topology_preplan,
+                },
+            },
+            use_cache=True,
+        )
+
+    async def _preplan_evidence_topology(
+        self,
+        *,
+        chunk: EvidenceChunk,
+        spans: list[Any],
+        source_messages: list[dict[str, Any]],
+        model_route: _AtomicCardModelRoute,
+    ) -> _EvidenceTopologyResult:
+        messages = [
+            *source_messages,
+            {"role": "user", "content": ATOMIC_EVIDENCE_TOPOLOGY_REQUEST},
+        ]
+        payload = dict(chunk.payload or {})
+        request = LLMProxyRequest(
+            model=model_route.model,
+            provider=self._provider,
+            messages=messages,
+            temperature=0,
+            max_tokens=ATOMIC_EVIDENCE_TOPOLOGY_MAX_TOKENS,
+            json_schema=ATOMIC_EVIDENCE_TOPOLOGY_SCHEMA,
+            provider_options=self._provider_options(self._card_thinking_type),
+            metadata={
+                "task": "kg_atomic_evidence_topology",
+                "schema_version": ATOMIC_COGNITIVE_CARD_SCHEMA_VERSION,
+                "generator_version": ATOMIC_EVIDENCE_TOPOLOGY_GENERATOR_VERSION,
+                "source_type": payload.get("source_type") or "",
+                "source_id": payload.get("source_id") or "",
+                "chunk_id": chunk.chunk_id,
+                "model_route": model_route.tier,
+                "span_count": len(spans),
+                "input_text_chars": len(chunk.content),
+                "thinking_type": self._card_thinking_type or "provider_default",
+                "prompt_profile": self._prompt_profile,
+                "prompt_fingerprint": self._prompt_fingerprint,
+                "_cache_key_metadata": {
+                    "task": "kg_atomic_evidence_topology",
+                    "schema_version": ATOMIC_COGNITIVE_CARD_SCHEMA_VERSION,
+                    "generator_version": ATOMIC_EVIDENCE_TOPOLOGY_GENERATOR_VERSION,
+                    "model_route": model_route.tier,
+                    "thinking_type": self._card_thinking_type or "provider_default",
+                    "prompt_profile": self._prompt_profile,
+                    "prompt_fingerprint": self._prompt_fingerprint,
+                },
+            },
+            use_cache=True,
+        )
+        with langfuse_observation(
+            name="kg.atomic_card.preplan_evidence_topology",
+            as_type="span",
+            input={
+                "chunk_id": chunk.chunk_id,
+                "span_count": len(spans),
+                "selected_model": model_route.model,
+                "model_route": model_route.tier,
+            },
+        ):
+            response = await self._llm.generate(request)
+            if _response_cannot_be_safely_repaired(response):
+                raise RuntimeError(
+                    "Evidence Topology 输出在 Prefix Completion 后仍未完成，"
+                    f"chunk_id={chunk.chunk_id}; 禁止重新执行完整业务请求"
+                )
+            topology = self._validate_evidence_topology(
+                response.structured_output,
+                evidence_text_by_ref={span.ref: span.text for span in spans},
+            )
+            raw_link_count = len(
+                (response.structured_output or {}).get("direct_links") or []
+            )
+            raw_separate_count = len(
+                (response.structured_output or {}).get("keep_separate") or []
+            )
+            raw_slot_count = len(
+                (response.structured_output or {}).get("open_slots") or []
+            )
+            langfuse_update_span(
+                output={
+                    "chunk_id": chunk.chunk_id,
+                    "event_group_count": len(topology["event_groups"]),
+                    "keep_separate_count": len(topology["keep_separate"]),
+                    "discarded_keep_separate_count": max(
+                        0,
+                        raw_separate_count - len(topology["keep_separate"]),
+                    ),
+                    "direct_link_count": len(topology["direct_links"]),
+                    "discarded_direct_link_count": max(
+                        0,
+                        raw_link_count - len(topology["direct_links"]),
+                    ),
+                    "open_slot_count": len(topology["open_slots"]),
+                    "discarded_open_slot_count": max(
+                        0,
+                        raw_slot_count - len(topology["open_slots"]),
+                    ),
+                    "topology": topology,
+                    "usage": _response_usage_diagnostics(response),
+                },
+                status_message="completed",
+            )
+        return _EvidenceTopologyResult(
+            data=topology,
+            response=response,
+            messages=messages,
+        )
+
+    @staticmethod
+    def _validate_evidence_topology(
+        data: Any,
+        *,
+        evidence_text_by_ref: dict[str, str],
+    ) -> dict[str, Any]:
+        valid_refs = set(evidence_text_by_ref)
+        if not isinstance(data, dict):
+            raise ValueError("Evidence Topology 顶层输出必须是 JSON object")
+        expected = {
+            "event_groups",
+            "keep_separate",
+            "direct_links",
+            "open_slots",
+        }
+        if set(data) != expected:
+            raise ValueError(
+                "Evidence Topology 顶层字段不符合契约: "
+                f"missing={sorted(expected.difference(data))}, "
+                f"extra={sorted(set(data).difference(expected))}"
+            )
+        event_groups = data.get("event_groups")
+        keep_separate = data.get("keep_separate")
+        direct_links = data.get("direct_links")
+        open_slots = data.get("open_slots")
+        if not isinstance(event_groups, list):
+            raise ValueError("event_groups 必须是数组")
+        if not isinstance(keep_separate, list):
+            raise ValueError("keep_separate 必须是数组")
+        if not isinstance(direct_links, list):
+            raise ValueError("direct_links 必须是数组")
+        if not isinstance(open_slots, list):
+            raise ValueError("open_slots 必须是数组")
+
+        def validate_refs(refs: Any, *, location: str) -> tuple[str, ...]:
+            if not isinstance(refs, list) or not refs:
+                raise ValueError(f"{location} 必须是非空数组")
+            normalized = tuple(str(ref).strip() for ref in refs)
+            unknown_refs = sorted(set(normalized).difference(valid_refs))
+            if unknown_refs:
+                raise ValueError(f"{location} 引用了未知 evidence_refs: {unknown_refs}")
+            return normalized
+
+        for index, item in enumerate(event_groups, start=1):
+            if not isinstance(item, dict):
+                raise ValueError(f"event_group[{index}] 必须是对象")
+            group_id = str(item.get("group_id") or "").strip()
+            expected_id = f"g{index}"
+            if group_id != expected_id:
+                raise ValueError(
+                    f"event_group[{index}].group_id 应为 {expected_id}，实际为 {group_id}"
+                )
+            validate_refs(
+                item.get("evidence_refs"),
+                location=f"event_group[{index}].evidence_refs",
+            )
+        seen_separate: set[tuple[tuple[str, ...], tuple[str, ...]]] = set()
+        useful_separate: list[dict[str, Any]] = []
+        for index, item in enumerate(keep_separate, start=1):
+            if not isinstance(item, dict):
+                raise ValueError(f"keep_separate[{index}] 必须是对象")
+            left_refs = validate_refs(
+                item.get("left_evidence_refs"),
+                location=f"keep_separate[{index}].left_evidence_refs",
+            )
+            right_refs = validate_refs(
+                item.get("right_evidence_refs"),
+                location=f"keep_separate[{index}].right_evidence_refs",
+            )
+            if left_refs == right_refs:
+                logger.warning(
+                    "丢弃两端相同的 Evidence Topology keep_separate: index=%s",
+                    index,
+                )
+                continue
+            pair = tuple(sorted((left_refs, right_refs)))
+            if pair in seen_separate:
+                logger.warning(
+                    "丢弃重复的 Evidence Topology keep_separate: index=%s",
+                    index,
+                )
+                continue
+            seen_separate.add(pair)
+            useful_separate.append(item)
+        seen_links: set[tuple[tuple[str, ...], tuple[str, ...]]] = set()
+        grounded_links: list[dict[str, Any]] = []
+        for index, item in enumerate(direct_links, start=1):
+            if not isinstance(item, dict):
+                raise ValueError(f"direct_link[{index}] 必须是对象")
+            source_refs = validate_refs(
+                item.get("source_evidence_refs"),
+                location=f"direct_link[{index}].source_evidence_refs",
+            )
+            target_refs = validate_refs(
+                item.get("target_evidence_refs"),
+                location=f"direct_link[{index}].target_evidence_refs",
+            )
+            link_refs = validate_refs(
+                item.get("link_evidence_refs"),
+                location=f"direct_link[{index}].link_evidence_refs",
+            )
+            link_statement = "".join(
+                str(item.get("link_statement") or "").split()
+            )
+            link_text = "".join(
+                "".join(str(evidence_text_by_ref[ref]).split()) for ref in link_refs
+            )
+            if not link_statement or link_statement not in link_text:
+                logger.warning(
+                    "丢弃未接地的 Evidence Topology direct_link: "
+                    "index=%s link_statement=%r",
+                    index,
+                    item.get("link_statement"),
+                )
+                continue
+            proof_parts = {
+                field: "".join(str(item.get(field) or "").split())
+                for field in ("source_mention", "relation_cue", "target_mention")
+            }
+            invalid_parts = [
+                field
+                for field, value in proof_parts.items()
+                if not value or value not in link_statement
+            ]
+            if invalid_parts:
+                logger.warning(
+                    "丢弃关系证明字段未接地的 Evidence Topology direct_link: "
+                    "index=%s fields=%s",
+                    index,
+                    invalid_parts,
+                )
+                continue
+            if source_refs == target_refs:
+                logger.warning(
+                    "丢弃两端相同的 Evidence Topology direct_link: index=%s",
+                    index,
+                )
+                continue
+            pair = tuple(sorted((source_refs, target_refs)))
+            if pair in seen_links:
+                logger.warning(
+                    "丢弃重复的 Evidence Topology direct_link: index=%s",
+                    index,
+                )
+                continue
+            seen_links.add(pair)
+            grounded_links.append(item)
+        seen_slots: set[tuple[tuple[str, ...], str]] = set()
+        useful_slots: list[dict[str, Any]] = []
+        for index, item in enumerate(open_slots, start=1):
+            if not isinstance(item, dict):
+                raise ValueError(f"open_slot[{index}] 必须是对象")
+            refs = validate_refs(
+                item.get("evidence_refs"),
+                location=f"open_slot[{index}].evidence_refs",
+            )
+            role = str(item.get("role") or "").strip()
+            key = (refs, role)
+            if key in seen_slots:
+                logger.warning(
+                    "丢弃重复的 Evidence Topology open_slot: index=%s",
+                    index,
+                )
+                continue
+            seen_slots.add(key)
+            useful_slots.append(item)
+        return {
+            **data,
+            "keep_separate": useful_separate,
+            "direct_links": grounded_links,
+            "open_slots": useful_slots,
+        }
 
     async def _cards_from_response(
         self,
@@ -705,29 +1337,106 @@ class AtomicCognitiveCardExtractor:
         base_messages: list[dict[str, Any]],
         card_response: Any,
         model_route: _AtomicCardModelRoute,
-    ) -> tuple[list[AtomicCognitiveCard], bool, bool, tuple[str, ...]]:
+        evidence_topology: dict[str, Any] | None = None,
+    ) -> tuple[
+        list[AtomicCognitiveCard],
+        bool,
+        bool,
+        tuple[str, ...],
+        dict[str, Any],
+        frozenset[tuple[str, str]] | None,
+    ]:
         if not cards_by_local_id:
-            return [], False, False, ()
+            return [], False, False, (), {}, None
 
-        assistant_content = str(getattr(card_response, "text", "") or "").strip()
-        if not assistant_content:
-            assistant_content = json.dumps(
-                getattr(card_response, "structured_output", None),
-                ensure_ascii=False,
-                separators=(",", ":"),
+        assistant_content = _response_message_content(card_response)
+        review_relations = bool(evidence_topology)
+        card_output = getattr(card_response, "structured_output", None) or {}
+        raw_relation_items = list(card_output.get("relations") or [])
+        allowed_local_relation_pairs = frozenset(
+            tuple(
+                sorted(
+                    (
+                        str(item.get("source_card_id") or "").strip(),
+                        str(item.get("target_card_id") or "").strip(),
+                    )
+                )
             )
-        conversation_messages = [
-            *base_messages,
-            {"role": "assistant", "content": assistant_content},
-            {"role": "user", "content": self._relation_probe_followup_prompt},
-        ]
+            for item in raw_relation_items
+            if isinstance(item, dict)
+        )
+        followup_prompt = (
+            ATOMIC_RELATION_PROBE_FROM_TOPOLOGY_FOLLOWUP_PROMPT
+            if evidence_topology
+            else self._relation_probe_followup_prompt
+        )
+        if review_relations:
+            review_payload = {
+                "cards": [
+                    {
+                        key: item.get(key)
+                        for key in (
+                            "local_card_id",
+                            "summary",
+                            "focus_evidence_refs",
+                        )
+                    }
+                    for item in (card_output.get("cards") or [])
+                    if isinstance(item, dict)
+                ],
+                "relation_candidates": [
+                    {
+                        key: item.get(key)
+                        for key in (
+                            "source_card_id",
+                            "target_card_id",
+                            "relation_kind",
+                            "relation_evidence_refs",
+                        )
+                    }
+                    for item in raw_relation_items
+                    if isinstance(item, dict)
+                ],
+                "direct_links": list(
+                    (evidence_topology or {}).get("direct_links") or []
+                ),
+                "open_slots": list(
+                    (evidence_topology or {}).get("open_slots") or []
+                ),
+            }
+            review_content = "\n".join(
+                [
+                    followup_prompt,
+                    "以下是待独立审查的数据；relation_candidates 已故意移除 basis，"
+                    "不得复用上一轮结论，只能根据本消息前面的新闻原文判断：",
+                    json.dumps(
+                        review_payload,
+                        ensure_ascii=False,
+                        separators=(",", ":"),
+                    ),
+                ]
+            )
+            conversation_messages = [
+                *base_messages[:2],
+                {"role": "user", "content": review_content},
+            ]
+        else:
+            conversation_messages = [
+                *base_messages,
+                {"role": "assistant", "content": assistant_content},
+                {"role": "user", "content": followup_prompt},
+            ]
         request = LLMProxyRequest(
             model=model_route.model,
             provider=self._provider,
             messages=conversation_messages,
             temperature=0,
             max_tokens=ATOMIC_CARD_MAX_TOKENS,
-            json_schema=ATOMIC_RELATION_PROBE_SCHEMA,
+            json_schema=(
+                ATOMIC_TOPOLOGY_RELATION_PROBE_SCHEMA
+                if review_relations
+                else ATOMIC_RELATION_PROBE_SCHEMA
+            ),
             provider_options=self._provider_options(self._probe_thinking_type),
             metadata={
                 "task": "kg_relation_probe",
@@ -743,6 +1452,7 @@ class AtomicCognitiveCardExtractor:
                 "thinking_type": self._probe_thinking_type or "provider_default",
                 "prompt_profile": self._prompt_profile,
                 "prompt_fingerprint": self._prompt_fingerprint,
+                "evidence_topology_preplan": bool(evidence_topology),
                 "_cache_key_metadata": {
                     "task": "kg_relation_probe",
                     "schema_version": ATOMIC_COGNITIVE_CARD_SCHEMA_VERSION,
@@ -751,6 +1461,7 @@ class AtomicCognitiveCardExtractor:
                     "thinking_type": self._probe_thinking_type or "provider_default",
                     "prompt_profile": self._prompt_profile,
                     "prompt_fingerprint": self._prompt_fingerprint,
+                    "evidence_topology_preplan": bool(evidence_topology),
                 },
             },
             use_cache=True,
@@ -763,9 +1474,11 @@ class AtomicCognitiveCardExtractor:
                 "card_count": len(cards_by_local_id),
                 "relation_count": relation_count,
                 "continuation_mode": "multi_turn_follow_up",
-                "history_message_count": len(base_messages) + 1,
+                "history_message_count": len(conversation_messages),
                 "selected_model": model_route.model,
                 "model_route": model_route.tier,
+                "evidence_topology_preplan": bool(evidence_topology),
+                "open_slot_count": len((evidence_topology or {}).get("open_slots") or []),
             },
         ):
             response = await self._llm.generate(request)
@@ -774,6 +1487,8 @@ class AtomicCognitiveCardExtractor:
                 cards_by_local_id=cards_by_local_id,
                 request=request,
                 response=response,
+                review_relations=review_relations,
+                allowed_local_relation_pairs=allowed_local_relation_pairs,
             )
             cards = [
                 replace(
@@ -794,10 +1509,23 @@ class AtomicCognitiveCardExtractor:
                     "repaired": repaired,
                     "repair_attempted": repair_attempted,
                     "issues": list(validated.issues),
+                    "accepted_relation_count": (
+                        len(validated.accepted_relation_pairs)
+                        if validated.accepted_relation_pairs is not None
+                        else None
+                    ),
+                    "usage": _response_usage_diagnostics(response),
                 },
                 status_message="completed",
             )
-            return cards, repaired, repair_attempted, validated.issues
+            return (
+                cards,
+                repaired,
+                repair_attempted,
+                validated.issues,
+                _response_usage_diagnostics(response),
+                validated.accepted_relation_pairs,
+            )
 
     @staticmethod
     def _provider_options(thinking_type: str | None) -> dict[str, Any]:
@@ -833,6 +1561,8 @@ class AtomicCognitiveCardExtractor:
         cards_by_local_id: dict[str, AtomicCognitiveCard],
         request: LLMProxyRequest,
         response: Any,
+        review_relations: bool,
+        allowed_local_relation_pairs: frozenset[tuple[str, str]],
     ) -> tuple[_ValidatedProbeResponse, bool, bool]:
         if _response_cannot_be_safely_repaired(response):
             raise RuntimeError(
@@ -841,7 +1571,12 @@ class AtomicCognitiveCardExtractor:
             )
         try:
             return (
-                self._validate_probe_response(cards_by_local_id, response.structured_output),
+                self._validate_probe_response(
+                    cards_by_local_id,
+                    response.structured_output,
+                    review_relations=review_relations,
+                    allowed_local_relation_pairs=allowed_local_relation_pairs,
+                ),
                 False,
                 False,
             )
@@ -854,7 +1589,13 @@ class AtomicCognitiveCardExtractor:
             issues,
             instruction=(
                 "上一轮 Relation Probe 输出未通过契约校验。"
-                "只修复 probe_plans 的 JSON 结构、Card 覆盖和 Probe 字段；"
+                + (
+                    "只修复 accepted_relation_pairs、probe_plans 的 JSON 结构、"
+                    if review_relations
+                    else "只修复 probe_plans 的 JSON 结构、"
+                )
+                +
+                "Card 覆盖和 Probe 字段；"
                 "必须按输入顺序为每个 local_card_id 恰好输出一项，"
                 "不得修改 Card，不得新增事实或同 Chunk Relation。"
             ),
@@ -862,7 +1603,12 @@ class AtomicCognitiveCardExtractor:
         )
         try:
             return (
-                self._validate_probe_response(cards_by_local_id, repaired.structured_output),
+                self._validate_probe_response(
+                    cards_by_local_id,
+                    repaired.structured_output,
+                    review_relations=review_relations,
+                    allowed_local_relation_pairs=allowed_local_relation_pairs,
+                ),
                 True,
                 True,
             )
@@ -876,16 +1622,24 @@ class AtomicCognitiveCardExtractor:
     def _validate_probe_response(
         cards_by_local_id: dict[str, AtomicCognitiveCard],
         data: Any,
+        *,
+        review_relations: bool = False,
+        allowed_local_relation_pairs: frozenset[tuple[str, str]] = frozenset(),
     ) -> _ValidatedProbeResponse:
         if not isinstance(data, dict):
             raise ValueError(
                 f"Relation Probe 顶层输出必须是 JSON object，实际为 {type(data).__name__}"
             )
-        if set(data) != {"probe_plans"}:
+        expected_fields = (
+            {"accepted_relation_pairs", "probe_plans"}
+            if review_relations
+            else {"probe_plans"}
+        )
+        if set(data) != expected_fields:
             raise ValueError(
                 "Relation Probe 顶层字段不符合契约: "
-                f"missing={sorted({'probe_plans'}.difference(data))}, "
-                f"extra={sorted(set(data).difference({'probe_plans'}))}"
+                f"missing={sorted(expected_fields.difference(data))}, "
+                f"extra={sorted(set(data).difference(expected_fields))}"
             )
         raw_plans = data.get("probe_plans")
         if not isinstance(raw_plans, list):
@@ -909,7 +1663,56 @@ class AtomicCognitiveCardExtractor:
                 "probe_plans 必须按输入顺序完整覆盖 Cards: "
                 f"expected={expected_ids}, actual={actual_ids}"
             )
-        return _ValidatedProbeResponse(probes_by_local_id=probes_by_local_id)
+        accepted_relation_pairs: frozenset[tuple[str, str]] | None = None
+        if review_relations:
+            raw_pairs = data.get("accepted_relation_pairs")
+            if not isinstance(raw_pairs, list):
+                raise ValueError("accepted_relation_pairs 必须是数组")
+            accepted_global_pairs: set[tuple[str, str]] = set()
+            seen_local_pairs: set[tuple[str, str]] = set()
+            for index, item in enumerate(raw_pairs, start=1):
+                if not isinstance(item, dict) or set(item) != {
+                    "source_card_id",
+                    "target_card_id",
+                }:
+                    raise ValueError(
+                        f"accepted_relation_pair[{index}] 字段不符合契约"
+                    )
+                source_local_id = str(item.get("source_card_id") or "").strip()
+                target_local_id = str(item.get("target_card_id") or "").strip()
+                local_pair = tuple(sorted((source_local_id, target_local_id)))
+                if (
+                    source_local_id not in cards_by_local_id
+                    or target_local_id not in cards_by_local_id
+                    or source_local_id == target_local_id
+                ):
+                    raise ValueError(
+                        f"accepted_relation_pair[{index}] 引用了非法 Card pair"
+                    )
+                if local_pair not in allowed_local_relation_pairs:
+                    raise ValueError(
+                        f"accepted_relation_pair[{index}] 不是上一轮已有 Relation"
+                    )
+                if local_pair in seen_local_pairs:
+                    raise ValueError(
+                        f"accepted_relation_pair[{index}] 重复输出 Card pair"
+                    )
+                seen_local_pairs.add(local_pair)
+                accepted_global_pairs.add(
+                    tuple(
+                        sorted(
+                            (
+                                cards_by_local_id[source_local_id].cognitive_card_id,
+                                cards_by_local_id[target_local_id].cognitive_card_id,
+                            )
+                        )
+                    )
+                )
+            accepted_relation_pairs = frozenset(accepted_global_pairs)
+        return _ValidatedProbeResponse(
+            probes_by_local_id=probes_by_local_id,
+            accepted_relation_pairs=accepted_relation_pairs,
+        )
 
     async def _claim_prefix_warmup_lock(self, prefix_scope: str) -> Any | None:
         if settings.KG_COGNITIVE_CARD_PREFIX_WARM_WINDOW_SECONDS <= 0:
@@ -998,6 +1801,7 @@ class AtomicCognitiveCardExtractor:
                 model,
                 self._card_thinking_type or "provider_default",
                 self._prompt_fingerprint,
+                "topology" if self._evidence_topology_preplan else "direct",
             )
         )
         return hashlib.sha256(raw_scope.encode("utf-8")).hexdigest()[:16]

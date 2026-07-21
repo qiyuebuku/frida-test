@@ -173,6 +173,8 @@ class AtomicCardExtractionResult:
     discarded_relation_count: int = 0
     validation_issues: list[str] = field(default_factory=list)
     skip_reason: str = ""
+    evidence_topology: dict[str, Any] = field(default_factory=dict)
+    llm_stage_usage: dict[str, dict[str, Any]] = field(default_factory=dict)
 
 
 class StableSpanSegmenter:

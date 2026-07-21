@@ -14,8 +14,14 @@ import pytest
 from src.application.services.atomic_cognitive_card_service import (
     ATOMIC_CARD_SCHEMA,
     ATOMIC_CARD_SYSTEM_PROMPT,
+    ATOMIC_CARD_FROM_TOPOLOGY_FOLLOWUP_PROMPT,
+    ATOMIC_CARD_TOPOLOGY_SYSTEM_PROMPT,
+    ATOMIC_EVIDENCE_TOPOLOGY_REQUEST,
+    ATOMIC_EVIDENCE_TOPOLOGY_SCHEMA,
     ATOMIC_RELATION_PROBE_FOLLOWUP_PROMPT,
+    ATOMIC_RELATION_PROBE_FROM_TOPOLOGY_FOLLOWUP_PROMPT,
     ATOMIC_RELATION_PROBE_SCHEMA,
+    ATOMIC_TOPOLOGY_RELATION_PROBE_SCHEMA,
     AtomicCognitiveCardExtractor,
     AtomicCognitiveCardStageService,
     _intra_chunk_relation_sync_decisions,
@@ -103,6 +109,58 @@ def _probe_output(
     }
 
 
+def _topology_output() -> dict:
+    return {
+        "event_groups": [
+            {
+                "group_id": "g1",
+                "evidence_refs": ["s0001", "s0002"],
+                "focus": "收购计划与监管条件",
+            },
+        ],
+        "keep_separate": [
+            {
+                "left_evidence_refs": ["s0001"],
+                "right_evidence_refs": ["s0002"],
+            }
+        ],
+        "direct_links": [
+            {
+                "source_evidence_refs": ["s0002"],
+                "target_evidence_refs": ["s0001"],
+                "link_evidence_refs": ["s0001", "s0002"],
+                "link_statement": "甲公司发布公告，拟收购乙公司。该交易尚需监管机构批准",
+                "source_mention": "监管机构批准",
+                "relation_cue": "尚需",
+                "target_mention": "拟收购乙公司",
+                "relation_kind": "constraint",
+            }
+        ],
+        "open_slots": [
+            {
+                "evidence_refs": ["s0001"],
+                "role": "upstream",
+                "endpoint_constraint": "甲公司决定收购乙公司的已发生直接原因",
+            }
+        ],
+    }
+
+
+def test_topology_discards_link_statement_not_found_in_link_evidence() -> None:
+    topology = _topology_output()
+    topology["direct_links"][0]["link_statement"] = "导致股价上涨"
+
+    validated = AtomicCognitiveCardExtractor._validate_evidence_topology(
+        topology,
+        evidence_text_by_ref={
+            "s0001": "甲公司发布公告，拟收购乙公司。",
+            "s0002": "该交易尚需监管机构批准。",
+        },
+    )
+
+    assert validated["direct_links"] == []
+
+
 def test_focus_evidence_context_preserves_context_and_one_to_one_refs() -> None:
     context, refs = materialize_focus_evidence_context(
         "abcdefghij",
@@ -178,6 +236,26 @@ def test_atomic_card_prompt_uses_core_predicate_boundary() -> None:
     assert "same_event" not in probe_plan_schema["properties"]["relation_probes"]["items"][
         "properties"
     ]["role"]["enum"]
+    assert set(ATOMIC_EVIDENCE_TOPOLOGY_SCHEMA["properties"]) == {
+        "event_groups",
+        "keep_separate",
+        "direct_links",
+        "open_slots",
+    }
+    topology_unit_schema = ATOMIC_EVIDENCE_TOPOLOGY_SCHEMA["properties"]["event_groups"][
+        "items"
+    ]
+    assert set(topology_unit_schema["properties"]) == {
+        "group_id",
+        "evidence_refs",
+        "focus",
+    }
+    assert "summary" not in json.dumps(
+        ATOMIC_EVIDENCE_TOPOLOGY_SCHEMA,
+        ensure_ascii=False,
+    )
+    assert "禁止摘抄或改写原文" in ATOMIC_CARD_TOPOLOGY_SYSTEM_PROMPT
+    assert "不生成 Card 清单或 Card 文案" in ATOMIC_CARD_TOPOLOGY_SYSTEM_PROMPT
 
 
 def test_extractor_can_configure_card_and_probe_thinking_independently() -> None:
@@ -286,14 +364,18 @@ class _LLM:
         outputs: list[object],
         *,
         probe_outputs: list[object] | None = None,
+        topology_outputs: list[object] | None = None,
     ):
         self.outputs = list(outputs)
         self.probe_outputs = list(probe_outputs or [])
+        self.topology_outputs = list(topology_outputs or [])
         self.requests = []
         self.repairs = []
 
     async def generate(self, request):
         self.requests.append(request)
+        if request.metadata.get("task") == "kg_atomic_evidence_topology":
+            return self._response(self.topology_outputs.pop(0))
         if request.metadata.get("task") == "kg_relation_probe":
             if self.probe_outputs:
                 return self._response(self.probe_outputs.pop(0))
@@ -724,6 +806,152 @@ async def test_extractor_generates_cards_and_relations_then_probes_as_follow_up(
     assert probe_request.json_schema == ATOMIC_RELATION_PROBE_SCHEMA
     assert [probe.role for probe in cards[0].relation_probes] == ["upstream"]
     assert cards[1].relation_probes == []
+
+
+@pytest.mark.asyncio
+async def test_extractor_can_preplan_compact_topology_in_same_conversation(
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr(settings, "KG_COGNITIVE_CARD_PREFIX_WARM_WINDOW_SECONDS", 0)
+    chunk = _chunk()
+    topology = _topology_output()
+    card_output = _extraction_output(
+        [
+            _card_item(summary="甲公司拟收购乙公司。", refs=["s0001"]),
+            _card_item(summary="该交易尚需监管机构批准。", refs=["s0002"]),
+        ],
+        relations=[
+            {
+                "source_card_id": "c2",
+                "target_card_id": "c1",
+                "relation_kind": "constraint",
+                "basis": "监管批准是甲公司收购乙公司的前置约束。",
+                "relation_evidence_refs": ["s0001", "s0002"],
+            }
+        ],
+    )
+    probe_output = _probe_output(
+        2,
+        {
+            "c1": [
+                {
+                    "role": "upstream",
+                    "query": "甲公司决定收购乙公司的已发生直接原因",
+                }
+            ]
+        },
+    )
+    probe_output["accepted_relation_pairs"] = [
+        {"source_card_id": "c2", "target_card_id": "c1"}
+    ]
+    llm = _LLM(
+        [card_output],
+        topology_outputs=[topology],
+        probe_outputs=[probe_output],
+    )
+
+    result = (
+        await AtomicCognitiveCardExtractor(
+            llm=llm,
+            model="test",
+            thinking_type="disabled",
+            relation_probe_thinking_type="disabled",
+            evidence_topology_preplan=True,
+        ).extract_with_diagnostics([chunk])
+    )[0]
+
+    assert [request.metadata["task"] for request in llm.requests] == [
+        "kg_atomic_evidence_topology",
+        "kg_cognitive_card",
+        "kg_relation_probe",
+    ]
+    topology_request, card_request, probe_request = llm.requests
+    assert topology_request.messages[0]["content"] == ATOMIC_CARD_TOPOLOGY_SYSTEM_PROMPT
+    assert topology_request.messages[-1]["content"] == ATOMIC_EVIDENCE_TOPOLOGY_REQUEST
+    assert topology_request.json_schema == ATOMIC_EVIDENCE_TOPOLOGY_SCHEMA
+    assert card_request.messages[:3] == topology_request.messages
+    assert json.loads(card_request.messages[3]["content"]) == topology
+    assert card_request.messages[4]["content"] == ATOMIC_CARD_FROM_TOPOLOGY_FOLLOWUP_PROMPT
+    assert probe_request.messages[:2] == topology_request.messages[:2]
+    assert len(probe_request.messages) == 3
+    assert probe_request.messages[2]["role"] == "user"
+    assert probe_request.messages[2]["content"].startswith(
+        ATOMIC_RELATION_PROBE_FROM_TOPOLOGY_FOLLOWUP_PROMPT
+    )
+    review_payload = json.loads(probe_request.messages[2]["content"].splitlines()[-1])
+    assert review_payload["cards"] == card_output["cards"]
+    assert review_payload["relation_candidates"] == [
+        {
+            "source_card_id": "c2",
+            "target_card_id": "c1",
+            "relation_kind": "constraint",
+            "relation_evidence_refs": ["s0001", "s0002"],
+        }
+    ]
+    assert all(
+        "basis" not in item for item in review_payload["relation_candidates"]
+    )
+    assert review_payload["direct_links"] == topology["direct_links"]
+    assert review_payload["open_slots"] == topology["open_slots"]
+    assert probe_request.json_schema == ATOMIC_TOPOLOGY_RELATION_PROBE_SCHEMA
+    assert result.evidence_topology == topology
+    assert set(result.llm_stage_usage) == {
+        "evidence_topology",
+        "cards_and_relations",
+        "relation_probes",
+    }
+    assert len(result.cards) == 2
+    assert len(result.relations) == 1
+    assert [probe.role for probe in result.cards[0].relation_probes] == ["upstream"]
+
+
+@pytest.mark.asyncio
+async def test_preplan_only_passes_validated_topology_to_followup(
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr(settings, "KG_COGNITIVE_CARD_PREFIX_WARM_WINDOW_SECONDS", 0)
+    chunk = _chunk()
+    topology = _topology_output()
+    topology["direct_links"] = [
+        {
+            "source_evidence_refs": ["s0001"],
+            "target_evidence_refs": ["s0002"],
+            "link_evidence_refs": ["s0001"],
+            "link_statement": "甲公司拟收购乙公司。",
+            "source_mention": "甲公司拟收购乙公司",
+            "relation_cue": "导致",
+            "target_mention": "监管机构批准",
+            "relation_kind": "causal_influence",
+        }
+    ]
+    card_output = _extraction_output(
+        [
+            _card_item(summary="甲公司拟收购乙公司。", refs=["s0001"]),
+            _card_item(summary="该交易尚需监管机构批准。", refs=["s0002"]),
+        ]
+    )
+    probe_output = _probe_output(2)
+    probe_output["accepted_relation_pairs"] = []
+    llm = _LLM(
+        [card_output],
+        topology_outputs=[topology],
+        probe_outputs=[probe_output],
+    )
+
+    result = (
+        await AtomicCognitiveCardExtractor(
+            llm=llm,
+            model="test",
+            thinking_type="disabled",
+            relation_probe_thinking_type="disabled",
+            evidence_topology_preplan=True,
+        ).extract_with_diagnostics([chunk])
+    )[0]
+
+    card_topology = json.loads(llm.requests[1].messages[3]["content"])
+    assert topology["direct_links"]
+    assert card_topology["direct_links"] == []
+    assert result.evidence_topology["direct_links"] == []
 
 
 @pytest.mark.asyncio

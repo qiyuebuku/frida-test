@@ -108,6 +108,22 @@ def parse_args() -> argparse.Namespace:
         help="仅 cards 模式：单独控制 Relation Probe 思考；默认 disabled",
     )
     parser.add_argument(
+        "--evidence-topology-preplan",
+        action="store_true",
+        help=(
+            "仅 cards 模式：先生成紧凑 Evidence Topology，再在同一会话中生成 "
+            "Card/Relation 和 Probe；默认关闭，用于与当前生产链路做 A/B"
+        ),
+    )
+    parser.add_argument(
+        "--prompt-profile",
+        default="production",
+        help=(
+            "仅 cards 模式：隔离本地精确缓存和实验观测的 profile；"
+            "该值不进入 Prompt 正文"
+        ),
+    )
+    parser.add_argument(
         "--mode",
         choices=["workflow", "cards"],
         default="workflow",
@@ -239,6 +255,8 @@ async def run_card_validation(
         relation_probe_thinking_type=(
             str(args.probe_thinking_type or "").strip() or None
         ),
+        evidence_topology_preplan=bool(args.evidence_topology_preplan),
+        prompt_profile=str(args.prompt_profile or "production").strip(),
         concurrency=concurrency,
     )
 
@@ -270,6 +288,8 @@ async def run_card_validation(
                 "discarded_relation_count": result.discarded_relation_count,
                 "validation_issues": list(result.validation_issues),
                 "skip_reason": result.skip_reason,
+                "evidence_topology": result.evidence_topology,
+                "llm_stage_usage": result.llm_stage_usage,
                 "cards": [
                     {
                         "summary": card.summary,
@@ -335,6 +355,8 @@ async def run_card_validation(
         "provider": str(args.provider or "").strip() or None,
         "card_thinking_type": str(args.thinking_type or "").strip() or None,
         "probe_thinking_type": str(args.probe_thinking_type or "").strip() or None,
+        "evidence_topology_preplan": bool(args.evidence_topology_preplan),
+        "prompt_profile": str(args.prompt_profile or "production").strip(),
         "session_id": session_id,
         "requested_concurrency": requested_concurrency,
         "effective_concurrency": concurrency,
@@ -528,8 +550,13 @@ async def cleanup_workflow_state(*, adapter_name: str, target: str) -> dict:
 async def main_async(args: argparse.Namespace) -> None:
     if (
         str(args.provider or "").strip() or str(args.model or "").strip()
+        or bool(args.evidence_topology_preplan)
+        or str(args.prompt_profile or "production").strip() != "production"
     ) and args.mode != "cards":
-        raise ValueError("--model 和 --provider 当前仅用于 cards 质量验证模式")
+        raise ValueError(
+            "--model、--provider、--evidence-topology-preplan 和自定义 --prompt-profile "
+            "当前仅用于 cards 质量验证模式"
+        )
     session_id = args.session_id or f"ft-news-card-relation-{uuid4().hex[:12]}"
     trace_name = (
         "kg.atomic_card.batch_validation"
@@ -547,6 +574,8 @@ async def main_async(args: argparse.Namespace) -> None:
         "clean_before_run": args.mode == "workflow" and not args.keep_existing_data,
         "concurrency": max(1, min(20, int(args.concurrency))),
         "chunk_timeout_seconds": max(1.0, float(args.chunk_timeout)),
+        "evidence_topology_preplan": bool(args.evidence_topology_preplan),
+        "prompt_profile": str(args.prompt_profile or "production").strip(),
         "session_id": session_id,
     }
     with langfuse_propagation_context(
