@@ -22,7 +22,7 @@ from src.domain.knowledge.semantic_index_materials import (
 
 
 ATOMIC_COGNITIVE_CARD_SCHEMA_VERSION = "atomic_cognitive_card_v7"
-ATOMIC_COGNITIVE_CARD_GENERATOR_VERSION = "atomic_card_extractor_v103"
+ATOMIC_COGNITIVE_CARD_GENERATOR_VERSION = "atomic_card_extractor_v109"
 INTRA_CHUNK_RELATION_KINDS = frozenset(
     {
         "confirmation",
@@ -390,7 +390,6 @@ def intra_chunk_relation_from_llm_item(
         "source_card_id",
         "target_card_id",
         "relation_kind",
-        "basis",
         "relation_evidence_refs",
     }
     missing = sorted(required.difference(item))
@@ -425,9 +424,13 @@ def intra_chunk_relation_from_llm_item(
     if unknown_refs:
         raise ValueError(f"同 Chunk Relation 引用了不存在的 Span Ref: {unknown_refs}")
 
-    basis = _clean_text(item.get("basis"))
+    relation_ref_set = set(relation_refs)
+    relation_text = "".join(
+        span.text for span in spans if span.ref in relation_ref_set
+    )
+    basis = _clean_text(relation_text)
     if not basis:
-        raise ValueError("同 Chunk Relation 必须包含可读的成立依据")
+        raise ValueError("同 Chunk Relation 关系证据没有可读原文")
 
     relation_type, direction = _normalized_intra_chunk_relation_fields(relation_kind)
 
