@@ -54,7 +54,7 @@ ATOMIC_CARD_PREFIX_WARM_LOCK_KEY = (
 )
 ATOMIC_CARD_PREFIX_WARM_POLL_SECONDS = 0.05
 ATOMIC_CARD_INTRA_CHUNK_PIPELINE_VERSION = "atomic_card_intra_chunk_relation_v1"
-ATOMIC_RELATION_PROBE_GENERATOR_VERSION = "atomic_relation_probe_v18"
+ATOMIC_RELATION_PROBE_GENERATOR_VERSION = "atomic_relation_probe_v19"
 ATOMIC_EVIDENCE_TOPOLOGY_GENERATOR_VERSION = "atomic_evidence_topology_v14"
 
 
@@ -141,6 +141,7 @@ ATOMIC_RELATION_PROBE_ITEM_SCHEMA: dict[str, Any] = {
         },
         "relation_probes": {
             "type": "array",
+            "minItems": 1,
             "maxItems": 2,
             "items": {
                 "type": "object",
@@ -378,9 +379,9 @@ _ATOMIC_RELATION_PROBE_SYSTEM_SECTION = """Relation Probe 阶段：
 2. Summary 已承担同义召回。输出前对照上一轮所有 Cards 和 Relations；候选事件已在当前 Chunk 出现时，即使换说法、补细节或改时间粒度也删除。Probe 只指向当前 Chunk 未给出的事件端点。
 3. 只搜索截至 published_at 可能已发生的历史事件。不搜索之后才能出现的验证结果；Card 含预测或计划时，只搜索已发生的原因、约束、支持或反证。
 4. query 是可直接语义检索的候选事件描述，不是问句。保留当前 Card 的关键主体或对象，并描述另一端的动作、状态或指标类型；不使用模板词，不补造具体主体、日期、数值、机制或既成结果。
-5. 普通事实、已闭合解释和低价值明细保持空数组。多个 Card 只是同一整体事件的公司、地区、指标或组成项时，只在整体事件 Card 上生成共享 Probe。零 Probe 正常，每张 Card 最多两条，不按 role 凑数。
+5. 普通事实、已闭合解释和低价值明细不输出 probe_plan。多个 Card 只是同一整体事件的公司、地区、指标或组成项时，只为整体事件 Card 输出共享 Probe。零 Probe 正常，每张 Card 最多两条，不按 role 凑数。
 
-JSON 输出：顶层严格且仅含 `probe_plans`。每个输入 Card 按原顺序恰好输出一项，严格且仅含 `local_card_id`、`relation_probes`；空结果写 `[]`。每条 Probe 严格且仅含 `role`、`query`，role 只允许 upstream、downstream、confirmation、contradiction。只输出 JSON，不输出 Cards、Relations、分析、额外字段或 Markdown。"""
+JSON 输出：顶层严格且仅含 `probe_plans`。只输出 `relation_probes` 非空的 Card，并保持这些 Card 在输入中的相对顺序；没有任何 Probe 时写 `[]`。每项严格且仅含 `local_card_id`、`relation_probes`，每条 Probe 严格且仅含 `role`、`query`，role 只允许 upstream、downstream、confirmation、contradiction。只输出 JSON，不输出 Cards、Relations、分析、额外字段或 Markdown。"""
 
 
 ATOMIC_CARD_SYSTEM_PROMPT = "\n\n".join(
@@ -412,7 +413,7 @@ ATOMIC_EVIDENCE_TOPOLOGY_REQUEST = """现在进入 Evidence Topology 预处理�
 ATOMIC_CARD_FROM_TOPOLOGY_FOLLOWUP_PROMPT = """现在进入 Card/Relation 阶段。上一轮只提供可能的命题边界和候选直连，不具有约束力，也可能遗漏或判断错误。重新阅读原文并独立决定 Card 边界：keep_separate 只有在两侧确实是可分别成立的命题时才拆分，否则忽略；未被提示的事实仍按 Card 规则处理。direct_links 只提示可能存在连接，只有 source_mention、relation_cue、target_mention 和 link_statement 与最终两张 Card 的核心事实及方向一致时才生成 Relation；原文另有明确关系句时也可生成。relation_evidence_refs 必须覆盖同时证明两端与连接的最小原文范围。不要把标题并列、报道顺序、过渡语或常识推断补成关系。不要复述、解释或评价导航，只输出 cards、relations、skip_reason JSON。"""
 
 
-ATOMIC_RELATION_PROBE_FROM_TOPOLOGY_FOLLOWUP_PROMPT = """现在进入 Relation 审查与 Probe 阶段。冻结上一轮 Cards，不新增或改写 Relation。逐条回到原文复核上一轮 Relations：source Card 与 target Card 必须是两个不同事实，relation_evidence_refs 必须同时证明两端和连接语义，basis 不得加入原文没有的“导致、引发、验证、回应”等机制。若 Relation 对应清洗后的 direct_links，还要确认 source_mention 与 target_mention 分别对应两张 Card 的核心谓词；不在 direct_links 中不代表必然无效，但必须由原文中的明确关系句独立证明。任一端只对应泛称因素、第三个事实、宽泛支撑、标题并列、报道顺序、过渡语或常识推断时，不保留。accepted_relation_pairs 只能从输入的 relation_candidates 逐字复制 Card ID pair；不确定就省略，绝不添加其他 pair。open_slots 只是候选搜索方向，不是完整清单：结合最终 Cards 和原文独立判断是否采用、改写、忽略或补充。新增 Probe 仍须满足 System Prompt 的直接关系、历史可发生性和显著价值要求；预测或计划 Card 不映射 downstream。每个 Card 仍须在 probe_plans 中恰好出现一次。只输出 accepted_relation_pairs、probe_plans JSON。"""
+ATOMIC_RELATION_PROBE_FROM_TOPOLOGY_FOLLOWUP_PROMPT = """现在进入 Relation 审查与 Probe 阶段。冻结上一轮 Cards，不新增或改写 Relation。逐条回到原文复核上一轮 Relations：source Card 与 target Card 必须是两个不同事实，relation_evidence_refs 必须同时证明两端和连接语义，basis 不得加入原文没有的“导致、引发、验证、回应”等机制。若 Relation 对应清洗后的 direct_links，还要确认 source_mention 与 target_mention 分别对应两张 Card 的核心谓词；不在 direct_links 中不代表必然无效，但必须由原文中的明确关系句独立证明。任一端只对应泛称因素、第三个事实、宽泛支撑、标题并列、报道顺序、过渡语或常识推断时，不保留。accepted_relation_pairs 只能从输入的 relation_candidates 逐字复制 Card ID pair；不确定就省略，绝不添加其他 pair。open_slots 只是候选搜索方向，不是完整清单：结合最终 Cards 和原文独立判断是否采用、改写、忽略或补充。新增 Probe 仍须满足 System Prompt 的直接关系、历史可发生性和显著价值要求；预测或计划 Card 不映射 downstream。probe_plans 只输出 Probe 非空的 Card，并保持相对顺序；无 Probe 的 Card 直接省略。只输出 accepted_relation_pairs、probe_plans JSON。"""
 
 
 _ATOMIC_CARD_TOPOLOGY_STAGE_SYSTEM_PROMPT = _ATOMIC_CARD_STAGE_SYSTEM_PROMPT.replace(
@@ -1604,8 +1605,8 @@ class AtomicCognitiveCardExtractor:
                     else "只修复 probe_plans 的 JSON 结构、"
                 )
                 +
-                "Card 覆盖和 Probe 字段；"
-                "必须按输入顺序为每个 local_card_id 恰好输出一项，"
+                "Card ID 和 Probe 字段；"
+                "只保留 relation_probes 非空的 Card，并保持它们在输入中的相对顺序，"
                 "不得修改 Card，不得新增事实或同 Chunk Relation。"
             ),
             retry_reason="atomic_relation_probe_validation_invalid",
@@ -1656,21 +1657,41 @@ class AtomicCognitiveCardExtractor:
 
         expected_ids = list(cards_by_local_id)
         actual_ids: list[str] = []
-        probes_by_local_id: dict[str, list[RelationProbe]] = {}
+        probes_by_local_id: dict[str, list[RelationProbe]] = {
+            local_card_id: [] for local_card_id in expected_ids
+        }
         for index, item in enumerate(raw_plans, start=1):
             if not isinstance(item, dict):
                 raise ValueError(f"probe_plan[{index}] 必须是对象")
             if set(item) != {"local_card_id", "relation_probes"}:
                 raise ValueError(f"probe_plan[{index}] 字段不符合契约")
             local_card_id = str(item.get("local_card_id") or "").strip()
+            if local_card_id not in cards_by_local_id:
+                raise ValueError(
+                    f"probe_plan[{index}] 引用了未知 Card: {local_card_id}"
+                )
+            if local_card_id in actual_ids:
+                raise ValueError(
+                    f"probe_plan[{index}] 重复输出 Card: {local_card_id}"
+                )
             actual_ids.append(local_card_id)
-            probes_by_local_id[local_card_id] = relation_probes_from_llm_items(
+            probes = relation_probes_from_llm_items(
                 item.get("relation_probes")
             )
-        if actual_ids != expected_ids:
+            if not probes:
+                raise ValueError(
+                    f"probe_plan[{index}] relation_probes 为空，应省略该 Card"
+                )
+            probes_by_local_id[local_card_id] = probes
+        expected_sparse_order = [
+            local_card_id
+            for local_card_id in expected_ids
+            if local_card_id in actual_ids
+        ]
+        if actual_ids != expected_sparse_order:
             raise ValueError(
-                "probe_plans 必须按输入顺序完整覆盖 Cards: "
-                f"expected={expected_ids}, actual={actual_ids}"
+                "probe_plans 必须保持 Cards 的相对顺序: "
+                f"expected={expected_sparse_order}, actual={actual_ids}"
             )
         accepted_relation_pairs: frozenset[tuple[str, str]] | None = None
         if review_relations:

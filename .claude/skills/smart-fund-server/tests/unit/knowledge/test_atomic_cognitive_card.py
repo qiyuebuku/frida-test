@@ -102,9 +102,10 @@ def _probe_output(
         "probe_plans": [
             {
                 "local_card_id": f"c{index}",
-                "relation_probes": list(probes_by_card.get(f"c{index}") or []),
+                "relation_probes": list(probes_by_card[f"c{index}"]),
             }
             for index in range(1, card_count + 1)
+            if probes_by_card.get(f"c{index}")
         ]
     }
 
@@ -232,6 +233,7 @@ def test_atomic_card_prompt_uses_core_predicate_boundary() -> None:
         "relation_evidence_refs",
     }
     probe_plan_schema = ATOMIC_RELATION_PROBE_SCHEMA["properties"]["probe_plans"]["items"]
+    assert probe_plan_schema["properties"]["relation_probes"]["minItems"] == 1
     assert probe_plan_schema["properties"]["relation_probes"]["maxItems"] == 2
     assert "same_event" not in probe_plan_schema["properties"]["relation_probes"]["items"][
         "properties"
@@ -1072,7 +1074,7 @@ async def test_extractor_maps_intra_chunk_relations_to_final_card_ids(monkeypatc
     assert probe_messages[3]["content"] == ATOMIC_RELATION_PROBE_FOLLOWUP_PROMPT
 
 
-def test_probe_validation_requires_complete_ordered_card_coverage() -> None:
+def test_probe_validation_accepts_sparse_card_output_and_fills_missing_cards() -> None:
     chunk = _chunk("甲公司发布公告。乙公司发布公告。")
     validated = AtomicCognitiveCardExtractor._validate_card_response(
         chunk,
@@ -1085,10 +1087,59 @@ def test_probe_validation_requires_complete_ordered_card_coverage() -> None:
         ),
     )
 
-    with pytest.raises(ValueError, match="完整覆盖 Cards"):
+    probe_output = _probe_output(
+        2,
+        {
+            "c2": [
+                {
+                    "role": "confirmation",
+                    "query": "乙公司公告事项的独立确认",
+                }
+            ]
+        },
+    )
+    result = AtomicCognitiveCardExtractor._validate_probe_response(
+        validated.cards_by_local_id,
+        probe_output,
+    )
+
+    assert result.probes_by_local_id["c1"] == []
+    assert [probe.role for probe in result.probes_by_local_id["c2"]] == [
+        "confirmation"
+    ]
+
+
+def test_probe_validation_rejects_sparse_output_in_wrong_order() -> None:
+    chunk = _chunk("甲公司发布公告。乙公司发布公告。")
+    validated = AtomicCognitiveCardExtractor._validate_card_response(
+        chunk,
+        StableSpanSegmenter().segment(chunk.content),
+        _extraction_output(
+            [
+                _card_item(summary="甲公司发布公告。", refs=["s0001"]),
+                _card_item(summary="乙公司发布公告。", refs=["s0002"]),
+            ]
+        ),
+    )
+    probe_output = {
+        "probe_plans": [
+            {
+                "local_card_id": local_card_id,
+                "relation_probes": [
+                    {
+                        "role": "confirmation",
+                        "query": f"{local_card_id} 对应事实的独立确认",
+                    }
+                ],
+            }
+            for local_card_id in ("c2", "c1")
+        ]
+    }
+
+    with pytest.raises(ValueError, match="相对顺序"):
         AtomicCognitiveCardExtractor._validate_probe_response(
             validated.cards_by_local_id,
-            _probe_output(1),
+            probe_output,
         )
 
 
