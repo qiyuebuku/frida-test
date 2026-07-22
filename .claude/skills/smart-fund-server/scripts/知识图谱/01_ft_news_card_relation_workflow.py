@@ -111,8 +111,8 @@ def parse_args() -> argparse.Namespace:
         "--evidence-topology-preplan",
         action="store_true",
         help=(
-            "仅 cards 模式：先生成紧凑 Evidence Topology，再在同一会话中生成 "
-            "Card/Relation 和 Probe；默认关闭，用于与当前生产链路做 A/B"
+            "仅 cards 模式：强制所有 Chunk 先生成紧凑 Evidence Topology；"
+            "未指定时，复杂 Chunk 会按现有 Flash/Pro 路由阈值自动开启"
         ),
     )
     parser.add_argument(

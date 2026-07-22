@@ -342,14 +342,14 @@ _ATOMIC_RELATION_PROBE_SYSTEM_SECTION = """Relation Probe 阶段：
 
 仅在后续 user 明确切换到 Relation Probe 阶段后执行。冻结上一轮 Cards 和 Relations，不修改它们。
 
-为 Card 生成可用于搜索其他 Chunk 历史 Card 的一跳关系路由：
-1. 只在另一端能与当前 Card 建立直接 upstream、downstream、confirmation 或 contradiction，并显著补充解释或可信度时生成 Probe。显著变化在当前 Chunk 中没有原因时，可在整体事件 Card 上保留一条 upstream Probe，但不预设原因已成立。
-2. Summary 已承担同义召回。输出前对照上一轮所有 Cards 和 Relations；候选事件已在当前 Chunk 出现时，即使换说法、补细节或改时间粒度也删除。Probe 只指向当前 Chunk 未给出的事件端点。
-3. 只搜索截至 published_at 可能已发生的历史事件。不搜索之后才能出现的验证结果；Card 含预测或计划时，只搜索已发生的原因、约束、支持或反证。
-4. query 是可直接语义检索的候选事件描述，不是问句。保留当前 Card 的关键主体或对象，并描述另一端的动作、状态或指标类型；不使用模板词，不补造具体主体、日期、数值、机制或既成结果。
-5. 普通事实、已闭合解释和低价值明细不输出 probe_plan。多个 Card 只是同一整体事件的公司、地区、指标或组成项时，只为整体事件 Card 输出共享 Probe。零 Probe 正常，每张 Card 最多两条，不按 role 凑数。
+Probe 只为跨 Chunk 检索寻找当前材料未完整回答、但其他 Chunk 历史 Card 可能补充的一跳关系。完整陈述的事实不重复；只被提及、概括或缺少独立支撑的端点可以检索。每条都应补上事件链缺口，并显著补充解释或可信度；否则不生成。
+1. Summary 已承担同义召回。任何 Probe 的核心事件若已出现在当前任一 Card summary 中，不得再次检索。upstream 应指向独立前置事实；仅在前置事件未出现、当前只留下关系缺口时检索。downstream 应指向未完整陈述的后置事实；计划或预期只检索实际执行或结果。confirmation 必须寻找独立来源。
+2. 候选事件已在当前 Chunk 出现时必须删除，包括历史数据、原因、影响、后续安排、公司明细、分项指标和同一事件其他阶段；换近义词、主体或时间粒度也不能绕过此限制。文章已写出的计划、预计影响、待验证结果也不得再次生成 Probe。
+3. confirmation 只找独立来源对当前事实的真实陈述确认；contradiction 只找可能否定当前事实的真实陈述，不生成“未发生/没有/是否不存在”的反事实查询。downstream 只找 published_at 前已可能发生、且当前材料尚未出现的后果，不找未来预测或兑现结果。
+4. 事件只保留一个 Probe，不按公司、地区、指标或分项重复，普通波动、公司明细和孤立指标通常不生成。
+5. query 是可直接语义检索的事件描述，不是问句；保留主体或对象及另一端的动作、状态或指标类型。不使用空泛模板词，不补造具体主体、日期、数值、机制或既成结果。无法写出具体、独立、可检索的另一端事件时不生成。
 
-JSON 输出：顶层仅含 `probe_plans`。只输出 `relation_probes` 非空的 Card，按输入顺序；没有 Probe 时写 `[]`。每项仅含 `local_card_id`、`relation_probes`，每条 Probe 仅含 `role`、`query`，role 只允许 upstream、downstream、confirmation、contradiction。只输出 JSON，不输出 Cards、Relations、分析、额外字段或 Markdown。"""
+JSON 输出：顶层为 `probe_plans`。`relation_probes` 非空的 Card；没有 Probe 时写 `[]`。每项含 `local_card_id`、`relation_probes`，每条含 `role`、`query`，role 为 upstream、downstream、confirmation 或 contradiction。输出 JSON。"""
 
 
 ATOMIC_CARD_SYSTEM_PROMPT = "\n\n".join(
@@ -536,12 +536,15 @@ class AtomicCognitiveCardExtractor:
             normalized_probe_thinking_type or self._card_thinking_type
         )
         self._evidence_topology_preplan = bool(evidence_topology_preplan)
-        default_system_prompt = (
-            ATOMIC_CARD_TOPOLOGY_SYSTEM_PROMPT
-            if self._evidence_topology_preplan
-            else ATOMIC_CARD_SYSTEM_PROMPT
+        self._custom_system_prompt = str(system_prompt or "").strip() or None
+        self._system_prompt = (
+            self._custom_system_prompt
+            or (
+                ATOMIC_CARD_TOPOLOGY_SYSTEM_PROMPT
+                if self._evidence_topology_preplan
+                else ATOMIC_CARD_SYSTEM_PROMPT
+            )
         )
-        self._system_prompt = str(system_prompt or default_system_prompt).strip()
         self._relation_probe_followup_prompt = str(
             relation_probe_followup_prompt or ATOMIC_RELATION_PROBE_FOLLOWUP_PROMPT
         ).strip()
@@ -606,13 +609,25 @@ class AtomicCognitiveCardExtractor:
             span_count=len(spans),
             text_chars=len(chunk.content),
         )
+        is_complex_chunk = not (
+            len(spans) <= self._simple_max_spans
+            and len(chunk.content) <= self._simple_max_chars
+        )
+        use_topology_preplan = bool(
+            self._evidence_topology_preplan or is_complex_chunk
+        )
+        system_prompt = self._custom_system_prompt or (
+            ATOMIC_CARD_TOPOLOGY_SYSTEM_PROMPT
+            if use_topology_preplan
+            else ATOMIC_CARD_SYSTEM_PROMPT
+        )
         prompt_input = render_atomic_card_prompt_input(
             source_published_at=payload.get("published_at") or "",
             source_title=payload.get("title") or "",
             sentence_blocks=sentence_blocks,
         )
         source_messages = [
-            {"role": "system", "content": self._system_prompt},
+            {"role": "system", "content": system_prompt},
             {"role": "user", "content": prompt_input},
         ]
         with langfuse_observation(
@@ -634,7 +649,7 @@ class AtomicCognitiveCardExtractor:
                 evidence_topology: dict[str, Any] = {}
                 stage_usage: dict[str, dict[str, Any]] = {}
                 card_messages = source_messages
-                if self._evidence_topology_preplan:
+                if use_topology_preplan:
                     topology_result = await self._preplan_evidence_topology(
                         chunk=chunk,
                         spans=spans,
@@ -673,7 +688,7 @@ class AtomicCognitiveCardExtractor:
                 )
                 response = await self._llm.generate(request)
                 stage_usage["cards_and_relations"] = _response_usage_diagnostics(response)
-                if not self._evidence_topology_preplan:
+                if not use_topology_preplan:
                     await self._mark_prefix_warmed(
                         prefix_scope,
                         settle=warmup_lock is not None,
@@ -748,7 +763,12 @@ class AtomicCognitiveCardExtractor:
                         "prefix_warmup_owner": warmup_lock is not None,
                         "selected_model": model_route.model,
                         "model_route": model_route.tier,
-                        "evidence_topology_preplan": self._evidence_topology_preplan,
+                        "evidence_topology_preplan": use_topology_preplan,
+                        "preplan_reason": (
+                            "forced"
+                            if self._evidence_topology_preplan
+                            else ("complex_chunk" if use_topology_preplan else "disabled")
+                        ),
                         "evidence_topology": evidence_topology,
                         "llm_stage_usage": stage_usage,
                     },

@@ -1000,7 +1000,8 @@ async def test_dynamic_route_is_selected_once_and_shared_by_card_and_probe(
         [
             _extraction_output([_card_item()]),
             _extraction_output([_card_item()]),
-        ]
+        ],
+        topology_outputs=[_topology_output()],
     )
     extractor = AtomicCognitiveCardExtractor(llm=llm, concurrency=1)
 
@@ -1009,6 +1010,7 @@ async def test_dynamic_route_is_selected_once_and_shared_by_card_and_probe(
     assert [request.model for request in llm.requests] == [
         "flash-test",
         "flash-test",
+        "pro-test",
         "pro-test",
         "pro-test",
     ]
