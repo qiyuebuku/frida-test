@@ -68,13 +68,13 @@ _SCREEN_SYSTEM_PROMPT = """你是知识图谱关系候选初筛器。
 
 _VERIFY_SYSTEM_PROMPT = """你是知识图谱原子事件关系核验器。
 
-一次只核验 source_card 和 candidate_card 这一对原子 Card。evidence_context 是按原文顺序排列的片段数组，每项包含 text 和 evidence_ref；所有 text 顺序拼接后等于完整 Primary Chunk。evidence_ref 非空的片段是当前原子 Card 的焦点事实和可引用证据，null 片段只用于理解否定、条件、指代和时间背景。一个 evidence_ref 只对应一个原文片段。
+一次只核验 source_card 和 candidate_card 这一对原子 Card。chunk_summary 只用于理解整个 Chunk 的背景，不得单独作为关系证据。evidence 只包含当前 Card 的焦点原文片段，每项只有 text，并按原文顺序排列。关系只能基于这些焦点片段判断。
 
 裁决步骤：
-1. 分别从双方 focus 片段确认两个原子事实，只把未标记上下文用于消歧，不把上下文本身升级为当前 Card 的事实主张。
+1. 分别从双方 focus 片段确认两个原子事实，不补充输入之外的上下文事实。
 2. 找出双方证据共同支持的最短连接桥梁，并判断它是对称关系还是有向关系。
 3. 选择证据能够支持的最低强度关系，再区分 observed、inferred 和 no_relation。
-4. 检查 basis、relation_type、direction 和 inference_mechanism 中的每个实质判断是否都能回到双方 focus refs；删除无法接地的中间环节。
+4. 检查 basis、relation_type、direction 和 inference_mechanism 中的每个实质判断是否都能回到双方焦点文本；删除无法接地的中间环节。
 
 证据强度规则：
 - observed：双方焦点原文直接证明同一事件、明确前后关系、直接因果、印证或冲突。
@@ -83,14 +83,14 @@ _VERIFY_SYSTEM_PROMPT = """你是知识图谱原子事件关系核验器。
 - temporal_progression：必须存在先后发生的实际观察、披露、执行、修订或状态更新，后一个事实对前一个事实形成明确后续进展。材料同时发布但分别描述不同目标期间、预测区间或并列指标，不构成时间进展。
 - 如果两项事实只是同一公告、报告或事件中的并列组成部分，应根据原文选择 same_event、共同具体驱动或 no_relation；不得仅因目标期间相邻、数值形成序列或叙述顺序靠后而输出 temporal_progression。
 - inferred：双方焦点原文分别证明两个端点，并共同支持一个不需要新增事实的连接机制。原文不必逐字写出关系名称，但推理只能组合已给事实。
-- 用作共同驱动、共同约束或有向桥梁的关键事实必须分别出现在双方 evidence_ref 非空的焦点片段中；只出现在某一侧未标记上下文中的信息不能参与建立关系，也不能借用该侧其他 ref 冒充接地。
+- 用作共同驱动、共同约束或有向桥梁的关键事实必须分别出现在双方提供的焦点文本中；不得补充输入之外的事实。
 - no_relation：只有主题、行业、主体或关键词相似，或者关系必须依靠输入之外的事实才能成立。
 - 如果主体、核心对象或目标时间无法对齐，不能仅凭数值接近、方向相同或共同市场背景判定 same_event。
 - 可成立的关系包括同一事件、后续进展、前因与后果、共同具体驱动、共同具体约束、跨层传导、跨市场或跨来源印证、冲突与反向约束；关系名称必须服从证据，而不是反过来寻找材料填充某个关系名称。
 - 形式上，X→A 且 X→B 只能证明共同驱动，不能推出 A→B。只有双方焦点证据还支持 A 是 B 的中间原因时，才能输出 A→B 的有向传导。
 - 不得用“通常会”“一般而言”“行业逻辑上”等外部常识补充中间事件；不得自行补出盈利改善、扩产、采购、需求传递等输入未证明的环节。
 - 双方位于不同市场层级、产业环节或时间阶段不是拒绝理由，但也不能自动证明跨层传导；缺少有向桥梁时应停留在共同驱动、共同约束或相互印证。
-- 引用双方能够支持结论的最小充分 ref 集合，不要因为某个 ref 属于当前 Card 就全部引用。
+- 只使用双方提供的焦点文本，不要把输入之外的事实写入结论。
 - source_card_id/target_card_id 表示事实语义方向，不按新旧输入顺序机械填写；对称关系的 direction 应描述共同因素如何分别作用于双方，不虚构 A→B。
 - 不得引用输入之外的 ref，不得把材料发布时间直接当成事件发生时间。
 - 如果裁决为 no_relation，只输出 decision_class，不输出 Card ID、关系说明、basis、证据引用或推理过程。
@@ -499,7 +499,6 @@ class RelationDiscoveryService:
                 item
                 for item in recall_by_card
                 if item in summaries
-                and str(summaries[item].metadata.get("schema_version") or "") == source_schema_version
                 and str(summaries[item].metadata.get("status") or "active") == "active"
             ]
             if not candidate_ids:
@@ -626,7 +625,7 @@ class RelationDiscoveryService:
                     payload=payload,
                     schema=_screen_schema([item.candidate_card_id for item in batch]),
                     max_tokens=1000,
-                    reasoning_effort="medium",
+                    reasoning_effort="disabled",
                 )
                 expected_ids = [item.candidate_card_id for item in batch]
                 repaired_output = False
@@ -646,7 +645,7 @@ class RelationDiscoveryService:
                         },
                         schema=_screen_schema(expected_ids),
                         max_tokens=1000,
-                        reasoning_effort="medium",
+                        reasoning_effort="disabled",
                         use_cache=False,
                     )
                     related_ids = _parse_screening_candidate_ids(repaired, expected_ids=expected_ids)
@@ -702,15 +701,25 @@ class RelationDiscoveryService:
                 candidate_text,
                 focus_span_offsets=candidate_manifest.focus_span_offsets,
             )
+            # 关系核验只需要 Card 的最小证据窗口；未命中 focus span 的句子
+            # 会把完整 chunk 带入 LLM，增加 token 却不能作为该 Card 的证据。
+            source_context = [
+                item for item in source_context if item.get("evidence_ref")
+            ]
+            candidate_context = [
+                item for item in candidate_context if item.get("evidence_ref")
+            ]
             package = PairEvidencePackage(
                 source_card_id=source_manifest.cognitive_card_id,
                 source_evidence_context=source_context,
                 source_focus_refs=source_refs,
                 source_published_at=str(source_summary.metadata.get("source_published_at") or ""),
+                source_chunk_summary=str(source_summary.metadata.get("chunk_summary") or ""),
                 candidate_card_id=candidate_manifest.cognitive_card_id,
                 candidate_evidence_context=candidate_context,
                 candidate_focus_refs=candidate_refs,
                 candidate_published_at=str(candidate_summary.metadata.get("source_published_at") or ""),
+                candidate_chunk_summary=str(candidate_summary.metadata.get("chunk_summary") or ""),
             )
             langfuse_update_span(
                 output={
@@ -741,8 +750,8 @@ class RelationDiscoveryService:
                         system_prompt=_VERIFY_SYSTEM_PROMPT,
                         payload=_verification_payload(package),
                         schema=_verification_schema(package),
-                        max_tokens=2500,
-                        reasoning_effort="high",
+                        max_tokens=5000,
+                        reasoning_effort="disabled",
                     )
                     try:
                         decision = _parse_verified_decision(data, package)
@@ -759,8 +768,8 @@ class RelationDiscoveryService:
                                 },
                             },
                             schema=_verification_schema(package),
-                            max_tokens=2500,
-                            reasoning_effort="high",
+                            max_tokens=5000,
+                            reasoning_effort="disabled",
                             use_cache=False,
                         )
                         decision = _parse_verified_decision(repaired, package)
@@ -788,7 +797,10 @@ class RelationDiscoveryService:
             temperature=0,
             max_tokens=max_tokens,
             json_schema=schema,
-            provider_options={"reasoning_effort": reasoning_effort},
+            provider_options={
+                "reasoning_effort": reasoning_effort,
+                "thinking_type": "disabled" if reasoning_effort == "disabled" else "",
+            },
             metadata={
                 "task": task,
                 "pipeline_version": RELATION_DISCOVERY_PIPELINE_VERSION,
@@ -802,7 +814,16 @@ class RelationDiscoveryService:
         response = await self._llm.generate(request)
         if isinstance(response.structured_output, dict):
             return response.structured_output
-        raise ValueError(f"{task} 顶层输出必须是 JSON object")
+        if (
+            isinstance(response.structured_output, list)
+            and len(response.structured_output) == 1
+            and isinstance(response.structured_output[0], dict)
+        ):
+            return response.structured_output[0]
+        shape = type(response.structured_output).__name__
+        if isinstance(response.structured_output, list):
+            shape += f"[len={len(response.structured_output)}]"
+        raise ValueError(f"{task} 顶层输出必须是 JSON object, actual={shape}")
 
     @staticmethod
     def _screen_candidate_payload(item: MergedRelationCandidate) -> dict[str, Any]:
@@ -876,52 +897,23 @@ def _parse_screening_candidate_ids(
 def _verification_schema(package: PairEvidencePackage) -> dict[str, Any]:
     card_ids = [package.source_card_id, package.candidate_card_id]
     return {
-        "oneOf": [
-            {
-                "type": "object",
-                "properties": {
-                    "decision_class": {"const": "no_relation"},
-                },
-                "required": ["decision_class"],
-                "additionalProperties": False,
+        "type": "object",
+        "properties": {
+            "source_card_id": {"type": "string", "enum": card_ids},
+            "target_card_id": {"type": "string", "enum": card_ids},
+            "decision_class": {
+                "type": "string",
+                "enum": ["observed", "inferred", "no_relation"],
             },
-            {
-                "type": "object",
-                "properties": {
-                    "source_card_id": {"type": "string", "enum": card_ids},
-                    "target_card_id": {"type": "string", "enum": card_ids},
-                    "decision_class": {
-                        "type": "string",
-                        "enum": ["observed", "inferred"],
-                    },
-                    "relation_kind": {
-                        "type": "string",
-                        "enum": sorted(RELATION_KINDS),
-                    },
-                    "relation_type": {"type": "string", "maxLength": 120},
-                    "direction": {"type": "string", "maxLength": 120},
-                    "basis": {"type": "string", "minLength": 1, "maxLength": 1000},
-                    "source_evidence_refs": {"type": "array", "items": {"type": "string"}},
-                    "target_evidence_refs": {"type": "array", "items": {"type": "string"}},
-                    "inference_mechanism": {"type": "string", "maxLength": 1000},
-                    "confidence": {"type": "number", "minimum": 0, "maximum": 1},
-                },
-                "required": [
-                    "source_card_id",
-                    "target_card_id",
-                    "decision_class",
-                    "relation_kind",
-                    "relation_type",
-                    "direction",
-                    "basis",
-                    "source_evidence_refs",
-                    "target_evidence_refs",
-                    "inference_mechanism",
-                    "confidence",
-                ],
-                "additionalProperties": False,
-            },
-        ],
+            "relation_kind": {"type": "string", "enum": sorted(RELATION_KINDS)},
+            "relation_type": {"type": "string", "maxLength": 120},
+            "direction": {"type": "string", "maxLength": 120},
+            "basis": {"type": "string", "maxLength": 1000},
+            "inference_mechanism": {"type": "string", "maxLength": 1000},
+            "confidence": {"type": "number", "minimum": 0, "maximum": 1},
+        },
+        "required": ["decision_class"],
+        "additionalProperties": False,
     }
 
 
@@ -954,16 +946,12 @@ def _parse_verified_decision(
     expected_ids = {package.source_card_id, package.candidate_card_id}
     if source_id == target_id or {source_id, target_id} != expected_ids:
         raise ValueError(f"关系核验端点错误: source={source_id}, target={target_id}")
-    source_refs = [str(item) for item in data.get("source_evidence_refs") or [] if item]
-    target_refs = [str(item) for item in data.get("target_evidence_refs") or [] if item]
     refs_by_card = {
-        package.source_card_id: set(package.source_focus_refs),
-        package.candidate_card_id: set(package.candidate_focus_refs),
+        package.source_card_id: list(package.source_focus_refs),
+        package.candidate_card_id: list(package.candidate_focus_refs),
     }
-    if not set(source_refs).issubset(refs_by_card[source_id]):
-        raise ValueError("关系核验 source_evidence_refs 包含未提供引用")
-    if not set(target_refs).issubset(refs_by_card[target_id]):
-        raise ValueError("关系核验 target_evidence_refs 包含未提供引用")
+    source_refs = list(refs_by_card[source_id])
+    target_refs = list(refs_by_card[target_id])
     mechanism = str(data.get("inference_mechanism") or "").strip()
     relation_kind = str(data.get("relation_kind") or "").strip()
     relation_type = str(data.get("relation_type") or "").strip()
@@ -1005,12 +993,22 @@ def _verification_payload(package: PairEvidencePackage) -> dict[str, Any]:
         "source_card": {
             "card_id": package.source_card_id,
             "source_published_at": package.source_published_at,
-            "evidence_context": package.source_evidence_context,
+            "chunk_summary": package.source_chunk_summary,
+        "evidence": [
+            {"text": item["text"]}
+            for item in package.source_evidence_context
+            if item.get("text")
+        ],
         },
         "candidate_card": {
             "card_id": package.candidate_card_id,
             "source_published_at": package.candidate_published_at,
-            "evidence_context": package.candidate_evidence_context,
+            "chunk_summary": package.candidate_chunk_summary,
+        "evidence": [
+            {"text": item["text"]}
+            for item in package.candidate_evidence_context
+            if item.get("text")
+        ],
         },
     }
 

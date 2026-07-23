@@ -100,6 +100,8 @@ class PairEvidencePackage:
     candidate_evidence_context: list[dict[str, Any]]
     candidate_focus_refs: list[str]
     candidate_published_at: str
+    source_chunk_summary: str = ""
+    candidate_chunk_summary: str = ""
 
 
 @dataclass(frozen=True)

@@ -83,6 +83,7 @@ def _extraction_output(
     skip_reason: str = "",
 ) -> dict:
     return {
+        "chunk_summary": "当前 Chunk 描述相关业务事件及其影响。",
         "cards": [
             {"local_card_id": f"c{index}", **card}
             for index, card in enumerate(cards, start=1)
@@ -214,32 +215,32 @@ def test_focus_evidence_context_preserves_context_and_one_to_one_refs() -> None:
 
 
 def test_atomic_card_prompt_uses_core_predicate_boundary() -> None:
-    assert ATOMIC_COGNITIVE_CARD_GENERATOR_VERSION == "atomic_card_extractor_v109"
+    assert ATOMIC_COGNITIVE_CARD_GENERATOR_VERSION == "atomic_card_extractor_v117"
     assert list(ATOMIC_CARD_SCHEMA["properties"]) == [
         "cards",
         "relations",
         "skip_reason",
+        "chunk_summary",
     ]
     assert ATOMIC_CARD_SCHEMA["required"] == [
         "cards",
         "relations",
         "skip_reason",
+        "chunk_summary",
     ]
     assert "<title>" in ATOMIC_CARD_SYSTEM_PROMPT
     assert "[sNNNN]" in ATOMIC_CARD_SYSTEM_PROMPT
     assert "一个 Ref 可能包含多个事实" in ATOMIC_CARD_SYSTEM_PROMPT
     assert "不是需要逐项分类的清单" in ATOMIC_CARD_SYSTEM_PROMPT
-    assert "一张 Card 恰好对应一个事实键" in ATOMIC_CARD_SYSTEM_PROMPT
-    assert "同一句、同一公告或同一事件都不是合并理由" in ATOMIC_CARD_SYSTEM_PROMPT
-    assert "两个分句能分别判断真假时必须拆分" in ATOMIC_CARD_SYSTEM_PROMPT
-    assert "原因、决定、执行、回应、结果分别作为端点" in ATOMIC_CARD_SYSTEM_PROMPT
-    assert "只合并事实键完全相同的重复表述" in ATOMIC_CARD_SYSTEM_PROMPT
-    assert "summary 只陈述一个事实端点、一个核心谓词" in ATOMIC_CARD_SYSTEM_PROMPT
-    assert "作者归纳、宽泛评价和没有明确声明者的推演不建卡" in ATOMIC_CARD_SYSTEM_PROMPT
-    assert "这些 Ref 拼接后脱离 Cards 单独阅读时" in (
-        ATOMIC_CARD_SYSTEM_PROMPT
-    )
-    assert "不得把时间顺序或后一个事实默认写成 causal_influence" in (
+    assert "一张 Card 只含一个事实端点" in ATOMIC_CARD_SYSTEM_PROMPT
+    assert "剩余部分仍能独立判断真假，则必须拆卡" in ATOMIC_CARD_SYSTEM_PROMPT
+    assert "先覆盖核心具体事实" in ATOMIC_CARD_SYSTEM_PROMPT
+    assert "一张 Card 只含一个事实端点和一个核心谓词" in ATOMIC_CARD_SYSTEM_PROMPT
+    assert "按“现实中的同一事件或指标变化”去重" in ATOMIC_CARD_SYSTEM_PROMPT
+    assert "不得反向用概括 Card 吞并多个具体事实" in ATOMIC_CARD_SYSTEM_PROMPT
+    assert "原文明示的计划、预测、风险或条件判断" in ATOMIC_CARD_SYSTEM_PROMPT
+    assert "每条 Relation 先选 relation_evidence_refs" in ATOMIC_CARD_SYSTEM_PROMPT
+    assert "不得把时间顺序、并列状态或后一个事实默认写成因果或进展" in (
         ATOMIC_CARD_SYSTEM_PROMPT
     )
     assert "source_card_id 与 target_card_id 不得相同" in ATOMIC_CARD_SYSTEM_PROMPT
@@ -250,7 +251,7 @@ def test_atomic_card_prompt_uses_core_predicate_boundary() -> None:
     assert "候选事件已在当前 Chunk 出现时" in ATOMIC_CARD_SYSTEM_PROMPT
     assert "不补造具体主体" in ATOMIC_CARD_SYSTEM_PROMPT
     assert "显著补充解释或可信度" in ATOMIC_CARD_SYSTEM_PROMPT
-    assert len(ATOMIC_CARD_SYSTEM_PROMPT) < 2500
+    assert len(ATOMIC_CARD_SYSTEM_PROMPT) < 3300
     card_schema = ATOMIC_CARD_SCHEMA["properties"]["cards"]["items"]
     assert "relation_probes" not in card_schema["properties"]
     assert "maxItems" not in ATOMIC_CARD_SCHEMA["properties"]["cards"]
@@ -264,8 +265,12 @@ def test_atomic_card_prompt_uses_core_predicate_boundary() -> None:
     assert set(relation_schema["properties"]) == {
         "source_card_id",
         "target_card_id",
+        "decision_class",
         "relation_kind",
         "relation_evidence_refs",
+        "source_mention",
+        "relation_cue",
+        "target_mention",
     }
     probe_plan_schema = ATOMIC_RELATION_PROBE_SCHEMA["properties"]["probe_plans"]["items"]
     assert probe_plan_schema["properties"]["relation_probes"]["minItems"] == 1
@@ -285,6 +290,9 @@ def test_atomic_card_prompt_uses_core_predicate_boundary() -> None:
     assert "禁止摘抄或改写原文" in ATOMIC_CARD_TOPOLOGY_SYSTEM_PROMPT
     assert "不生成 Card 清单或 Card 文案" in ATOMIC_CARD_TOPOLOGY_SYSTEM_PROMPT
     assert "直接按 System Prompt 的 Relation 规则输出最终关系" in (
+        ATOMIC_CARD_FROM_TOPOLOGY_FOLLOWUP_PROMPT
+    )
+    assert "cards、relations、skip_reason、chunk_summary" in (
         ATOMIC_CARD_FROM_TOPOLOGY_FOLLOWUP_PROMPT
     )
     assert "禁止新增、删除、审查或改写" in (
@@ -858,8 +866,12 @@ async def test_extractor_can_preplan_compact_topology_in_same_conversation(
             {
                 "source_card_id": "c2",
                 "target_card_id": "c1",
+                "decision_class": "observed",
                 "relation_kind": "constraint",
                 "relation_evidence_refs": ["s0002"],
+                "source_mention": "监管机构批准",
+                "relation_cue": "尚需",
+                "target_mention": "该交易",
             },
         ],
     )
@@ -1046,6 +1058,19 @@ def test_prefix_warm_scope_is_isolated_by_model_provider_and_thinking() -> None:
 
 
 @pytest.mark.asyncio
+async def test_mark_prefix_warmed_skips_redis_when_window_disabled(monkeypatch) -> None:
+    monkeypatch.setattr(settings, "KG_COGNITIVE_CARD_PREFIX_WARM_WINDOW_SECONDS", 0)
+    extractor = AtomicCognitiveCardExtractor(llm=object())
+
+    def fail_if_called():
+        raise AssertionError("预热窗口关闭时不应访问 Redis")
+
+    monkeypatch.setattr(extractor, "_redis_client", fail_if_called)
+
+    await extractor._mark_prefix_warmed("test-scope", settle=True)
+
+
+@pytest.mark.asyncio
 async def test_extractor_maps_intra_chunk_relations_to_final_card_ids(monkeypatch) -> None:
     monkeypatch.setattr(settings, "KG_COGNITIVE_CARD_PREFIX_WARM_WINDOW_SECONDS", 0)
     chunk = _chunk("辽宁出现强降雨。受强降雨影响，多地停课。")
@@ -1058,8 +1083,12 @@ async def test_extractor_maps_intra_chunk_relations_to_final_card_ids(monkeypatc
             {
                 "source_card_id": "c1",
                 "target_card_id": "c2",
+                "decision_class": "observed",
                 "relation_kind": "causal_influence",
                 "relation_evidence_refs": ["[s0001]", "[s0002]"],
+                "source_mention": "辽宁出现强降雨",
+                "relation_cue": "受强降雨影响",
+                "target_mention": "多地停课",
             }
         ],
     )
@@ -1175,8 +1204,12 @@ def test_card_relation_keeps_endpoint_and_connector_evidence_separate() -> None:
                 {
                     "source_card_id": "c1",
                     "target_card_id": "c2",
+                    "decision_class": "observed",
                     "relation_kind": "temporal_progression",
                     "relation_evidence_refs": ["s0002"],
+                    "source_mention": "甲公司的公告",
+                    "relation_cue": "随后回应",
+                    "target_mention": "乙公司",
                 }
             ],
         ),
@@ -1188,6 +1221,36 @@ def test_card_relation_keeps_endpoint_and_connector_evidence_separate() -> None:
     assert relation.relation_evidence_refs == [
         {"chunk_id": chunk.chunk_id, "refs": ["s0002"]}
     ]
+
+
+def test_card_relation_discards_proof_fragment_not_present_in_cited_text() -> None:
+    chunk = _chunk("辽宁出现强降雨。受强降雨影响，多地停课。")
+    validated = AtomicCognitiveCardExtractor._validate_card_response(
+        chunk,
+        StableSpanSegmenter().segment(chunk.content),
+        _extraction_output(
+            [
+                _card_item(summary="辽宁出现强降雨。", refs=["s0001"]),
+                _card_item(summary="多地因强降雨停课。", refs=["s0002"]),
+            ],
+            relations=[
+                {
+                    "source_card_id": "c1",
+                    "target_card_id": "c2",
+                    "decision_class": "observed",
+                    "relation_kind": "causal_influence",
+                    "relation_evidence_refs": ["s0001", "s0002"],
+                    "source_mention": "辽宁出现强降雨",
+                    "relation_cue": "气象部门因此决定",
+                    "target_mention": "多地停课",
+                }
+            ],
+        ),
+    )
+
+    assert validated.relations == []
+    assert validated.discarded_relation_count == 1
+    assert "relation_cue 不是关系证据中的原文片段" in validated.issues[0]
 
 
 @pytest.mark.asyncio
@@ -1204,8 +1267,12 @@ async def test_intra_chunk_relation_sync_marks_missing_pairs_as_no_relation(monk
             {
                 "source_card_id": "c1",
                 "target_card_id": "c2",
+                "decision_class": "observed",
                 "relation_kind": "causal_influence",
                 "relation_evidence_refs": ["s0001", "s0002"],
+                "source_mention": "辽宁出现强降雨",
+                "relation_cue": "因强降雨",
+                "target_mention": "多地因强降雨停课",
             }
         ],
     )
@@ -1238,8 +1305,12 @@ def test_intra_chunk_relation_discards_same_event_without_losing_cards() -> None
             {
                 "source_card_id": "c1",
                 "target_card_id": "c2",
+                "decision_class": "observed",
                 "relation_kind": "same_event",
                 "relation_evidence_refs": ["s0001", "s0002"],
+                "source_mention": "辽宁出现强降雨",
+                "relation_cue": "出现",
+                "target_mention": "沈阳出现特大暴雨",
             }
         ],
     )
@@ -1292,7 +1363,7 @@ def test_card_validation_rejects_non_contiguous_local_ids_without_partial_result
         AtomicCognitiveCardExtractor._validate_card_response(chunk, spans, output)
 
 
-def test_intra_chunk_fast_path_discards_inferred_contract_without_losing_cards() -> None:
+def test_intra_chunk_fast_path_keeps_grounded_inferred_relation() -> None:
     chunk = _chunk("员工离开甲公司。员工随后加入乙公司。")
     card_output = _extraction_output(
         [
@@ -1306,6 +1377,9 @@ def test_intra_chunk_fast_path_discards_inferred_contract_without_losing_cards()
                 "decision_class": "inferred",
                 "relation_kind": "temporal_progression",
                 "relation_evidence_refs": ["s0001", "s0002"],
+                "source_mention": "员工离开甲公司",
+                "relation_cue": "随后",
+                "target_mention": "员工随后加入乙公司",
             }
         ],
     )
@@ -1316,8 +1390,9 @@ def test_intra_chunk_fast_path_discards_inferred_contract_without_losing_cards()
         card_output,
     )
 
-    assert validated.relations == []
-    assert validated.discarded_relation_count == 1
+    assert len(validated.relations) == 1
+    assert validated.relations[0].decision_class == "inferred"
+    assert validated.discarded_relation_count == 0
 
 
 @pytest.mark.asyncio
@@ -1332,8 +1407,12 @@ async def test_invalid_relation_does_not_trigger_repair_or_discard_cards(monkeyp
             {
                 "source_card_id": "c1",
                 "target_card_id": "c2",
+                "decision_class": "observed",
                 "relation_kind": "same_event",
                 "relation_evidence_refs": ["s0001", "s0002"],
+                "source_mention": "辽宁出现强降雨",
+                "relation_cue": "出现",
+                "target_mention": "沈阳出现特大暴雨",
             }
         ],
     )
@@ -1610,8 +1689,12 @@ async def test_stage_persists_intra_chunk_relations_after_card_documents(monkeyp
             {
                 "source_card_id": "c1",
                 "target_card_id": "c2",
+                "decision_class": "observed",
                 "relation_kind": "causal_influence",
                 "relation_evidence_refs": ["s0001", "s0002"],
+                "source_mention": "辽宁出现强降雨",
+                "relation_cue": "受强降雨影响",
+                "target_mention": "多地停课",
             }
         ],
     )
@@ -1660,7 +1743,7 @@ async def test_stage_persists_intra_chunk_relations_after_card_documents(monkeyp
     relation_call = calls[2]
     assert len(relation_call[1]) == 1
     assert relation_call[1][0].relation_kind == "causal_influence"
-    assert relation_call[2]["pipeline_version"] == "atomic_card_intra_chunk_relation_v6"
+    assert relation_call[2]["pipeline_version"] == "atomic_card_intra_chunk_relation_v7"
     assert result.diagnostics["intra_chunk_relations"] == 1
     assert result.diagnostics["intra_chunk_observed"] == 1
     assert result.diagnostics["intra_chunk_inferred"] == 0

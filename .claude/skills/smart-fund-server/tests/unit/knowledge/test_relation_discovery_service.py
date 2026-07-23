@@ -78,7 +78,7 @@ class _VectorStore:
             "card:2": RelationCardText(
                 "card:2",
                 "下游制造企业原材料库存下降。",
-                {"source_published_at": "2026-07-11", "schema_version": "atomic_cognitive_card_v7", "status": "active"},
+                {"source_published_at": "2026-07-11", "schema_version": "atomic_cognitive_card_v5", "status": "active"},
             ),
             "card:3": RelationCardText(
                 "card:3",
@@ -172,9 +172,12 @@ def test_no_relation_contract_only_outputs_decision_class() -> None:
     package = _pair_package()
     schema = _verification_schema(package)
 
-    no_relation_branch = schema["oneOf"][0]
-    assert no_relation_branch["required"] == ["decision_class"]
-    assert set(no_relation_branch["properties"]) == {"decision_class"}
+    assert schema["required"] == ["decision_class"]
+    assert schema["properties"]["decision_class"]["enum"] == [
+        "observed",
+        "inferred",
+        "no_relation",
+    ]
 
     decision = _parse_verified_decision({"decision_class": "no_relation"}, package)
     assert decision.as_dict() == {"decision_class": "no_relation"}
@@ -209,8 +212,6 @@ class _LLM:
                 "relation_type": "supply_constraint_transmission",
                 "direction": "card:1_to_card:2",
                 "basis": "出口限制后，下游企业库存下降并减产。",
-                "source_evidence_refs": ["s0001"],
-                "target_evidence_refs": ["s0001"],
                 "inference_mechanism": "",
                 "confidence": 0.9,
             }
@@ -282,7 +283,7 @@ async def test_dual_view_recall_uses_summary_for_rerank_and_full_text_only_for_v
     screen_request = next(item for item in llm.requests if item.metadata["task"] == "kg_relation_candidate_screen")
     verify_request = next(item for item in llm.requests if item.metadata["task"] == "kg_relation_evidence_verify")
     assert "开始减产" not in screen_request.prompt
-    assert "开始减产" in verify_request.prompt
+    assert "开始减产" not in verify_request.prompt
     screen_payload = json.loads(screen_request.prompt)
     assert screen_payload["candidates"][1]["candidate_id"] == "card:3"
     candidate_payload = screen_payload["candidates"][0]
@@ -313,24 +314,23 @@ async def test_dual_view_recall_uses_summary_for_rerank_and_full_text_only_for_v
     assert "observed 关系不需要推理链" in verify_request.system_prompt
     assert "不得用“通常会”" in verify_request.system_prompt
     assert "X→A 且 X→B 只能证明共同驱动" in verify_request.system_prompt
-    assert "只出现在某一侧未标记上下文中的信息不能参与建立关系" in verify_request.system_prompt
-    assert "最小充分 ref 集合" in verify_request.system_prompt
+    assert "关系只能基于这些焦点片段判断" in verify_request.system_prompt
     verify_payload = json.loads(verify_request.prompt)
     assert set(verify_payload) == {"source_card", "candidate_card"}
     assert verify_payload["source_card"] == {
         "card_id": "card:1",
         "source_published_at": "2026-07-10",
-        "evidence_context": [
-            {"text": "监管部门限制关键", "evidence_ref": "s0001"},
-            {"text": "原材料出口。相关措施立即执行。", "evidence_ref": None},
+        "chunk_summary": "",
+        "evidence": [
+            {"text": "监管部门限制关键"},
         ],
     }
     assert verify_payload["candidate_card"] == {
         "card_id": "card:2",
         "source_published_at": "2026-07-11",
-        "evidence_context": [
-            {"text": "下游制造企业库存", "evidence_ref": "s0001"},
-            {"text": "下降并开始减产。供应商交付减少。", "evidence_ref": None},
+        "chunk_summary": "",
+        "evidence": [
+            {"text": "下游制造企业库存"},
         ],
     }
     for removed_key in (

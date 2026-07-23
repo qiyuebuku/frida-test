@@ -22,7 +22,7 @@ from src.domain.knowledge.semantic_index_materials import (
 
 
 ATOMIC_COGNITIVE_CARD_SCHEMA_VERSION = "atomic_cognitive_card_v7"
-ATOMIC_COGNITIVE_CARD_GENERATOR_VERSION = "atomic_card_extractor_v109"
+ATOMIC_COGNITIVE_CARD_GENERATOR_VERSION = "atomic_card_extractor_v117"
 INTRA_CHUNK_RELATION_KINDS = frozenset(
     {
         "confirmation",
@@ -113,6 +113,7 @@ class AtomicCognitiveCard:
     relation_probes: list[RelationProbe] = field(default_factory=list)
     source_published_at: str = ""
     source_title: str = ""
+    chunk_summary: str = ""
     schema_version: str = ATOMIC_COGNITIVE_CARD_SCHEMA_VERSION
     generator_version: str = ATOMIC_COGNITIVE_CARD_GENERATOR_VERSION
     status: str = "active"
@@ -164,6 +165,7 @@ class AtomicCardExtractionResult:
     spans: list[SpanReference]
     cards: list[AtomicCognitiveCard]
     relations: list[VerifiedRelationDecision]
+    chunk_summary: str = ""
     selected_model: str = ""
     model_route: str = ""
     input_text_chars: int = 0
@@ -335,6 +337,7 @@ def atomic_card_from_llm_item(
     item: dict[str, Any],
     *,
     spans: list[SpanReference],
+    chunk_summary: str = "",
 ) -> AtomicCognitiveCard:
     """把一个已通过 JSON Schema 的 LLM Card 转成受证据约束的领域对象。"""
 
@@ -369,6 +372,7 @@ def atomic_card_from_llm_item(
         chunk_ids=[chunk.chunk_id],
         chunk_index=chunk.chunk_index,
         summary=summary,
+        chunk_summary=_clean_text(chunk_summary),
         focus_evidence_refs=focus_refs,
         focus_span_offsets=[span_by_ref[ref].pointer() for ref in focus_refs],
         relation_probes=[],
@@ -389,8 +393,12 @@ def intra_chunk_relation_from_llm_item(
     required = {
         "source_card_id",
         "target_card_id",
+        "decision_class",
         "relation_kind",
         "relation_evidence_refs",
+        "source_mention",
+        "relation_cue",
+        "target_mention",
     }
     missing = sorted(required.difference(item))
     extra = sorted(set(item).difference(required))
@@ -410,6 +418,10 @@ def intra_chunk_relation_from_llm_item(
     relation_kind = _clean_text(item.get("relation_kind"))
     if relation_kind not in INTRA_CHUNK_RELATION_KINDS:
         raise ValueError(f"同 Chunk Relation relation_kind 非法: {relation_kind}")
+
+    decision_class = _clean_text(item.get("decision_class"))
+    if decision_class not in {"observed", "inferred"}:
+        raise ValueError(f"同 Chunk Relation decision_class 非法: {decision_class}")
 
     source_card = cards_by_local_id[source_local_id]
     target_card = cards_by_local_id[target_local_id]
@@ -432,12 +444,21 @@ def intra_chunk_relation_from_llm_item(
     if not basis:
         raise ValueError("同 Chunk Relation 关系证据没有可读原文")
 
+    for field_name in ("source_mention", "relation_cue", "target_mention"):
+        fragment = _clean_text(item.get(field_name))
+        if not fragment:
+            raise ValueError(f"同 Chunk Relation {field_name} 不能为空")
+        if fragment not in relation_text:
+            raise ValueError(
+                f"同 Chunk Relation {field_name} 不是关系证据中的原文片段: {fragment}"
+            )
+
     relation_type, direction = _normalized_intra_chunk_relation_fields(relation_kind)
 
     return VerifiedRelationDecision(
         source_card_id=source_card.cognitive_card_id,
         target_card_id=target_card.cognitive_card_id,
-        decision_class="observed",
+        decision_class=decision_class,
         relation_kind=relation_kind,
         relation_type=relation_type,
         direction=direction,
@@ -445,7 +466,7 @@ def intra_chunk_relation_from_llm_item(
         source_evidence_refs=list(source_card.focus_evidence_refs),
         target_evidence_refs=list(target_card.focus_evidence_refs),
         inference_mechanism="",
-        confidence=1.0,
+        confidence=1.0 if decision_class == "observed" else 0.85,
         relation_evidence_refs=[
             {"chunk_id": chunk.chunk_id, "refs": relation_refs}
         ],
@@ -701,6 +722,7 @@ def _atomic_card_milvus_metadata(
         "cited_evidence_ids": [card.evidence_id],
         "source_published_at": card.source_published_at,
         "published_at": card.source_published_at,
+        "chunk_summary": card.chunk_summary,
         "schema_version": card.schema_version,
         "generator_version": card.generator_version,
         "status": card.status,
