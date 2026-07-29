@@ -15,6 +15,7 @@ RELATION_EVALUATION_STAGES = (
     "final_positive",
 )
 RELATION_EVALUATION_KINDS = {
+    "same_fact",
     "same_event",
     "temporal_progression",
     "causal_influence",

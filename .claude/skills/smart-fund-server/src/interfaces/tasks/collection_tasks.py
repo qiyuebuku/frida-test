@@ -65,7 +65,7 @@ def _register_task(
 
 @_register_task(queue="collect_news", max_retries=2)
 async def collect_news():
-    """新闻采集 — 10 源串行,每源独立间隔"""
+    """新闻采集 — 11 源串行,每源独立间隔"""
     logger.info("[collect_news] 开始执行")
     t0 = time.time()
     result = await _collection.run_news_collection()

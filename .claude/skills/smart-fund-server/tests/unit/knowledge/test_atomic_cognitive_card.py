@@ -14,12 +14,7 @@ import pytest
 from src.application.services.atomic_cognitive_card_service import (
     ATOMIC_CARD_SCHEMA,
     ATOMIC_CARD_SYSTEM_PROMPT,
-    ATOMIC_CARD_FROM_TOPOLOGY_FOLLOWUP_PROMPT,
-    ATOMIC_CARD_TOPOLOGY_SYSTEM_PROMPT,
-    ATOMIC_EVIDENCE_TOPOLOGY_REQUEST,
-    ATOMIC_EVIDENCE_TOPOLOGY_SCHEMA,
     ATOMIC_RELATION_PROBE_FOLLOWUP_PROMPT,
-    ATOMIC_RELATION_PROBE_FROM_TOPOLOGY_FOLLOWUP_PROMPT,
     ATOMIC_RELATION_PROBE_SCHEMA,
     AtomicCognitiveCardExtractor,
     AtomicCognitiveCardStageService,
@@ -82,8 +77,7 @@ def _extraction_output(
     relations: list[dict] | None = None,
     skip_reason: str = "",
 ) -> dict:
-    return {
-        "chunk_summary": "当前 Chunk 描述相关业务事件及其影响。",
+    result = {
         "cards": [
             {"local_card_id": f"c{index}", **card}
             for index, card in enumerate(cards, start=1)
@@ -91,6 +85,9 @@ def _extraction_output(
         "relations": list(relations or []),
         "skip_reason": skip_reason,
     }
+    if len(cards) >= 2:
+        result["chunk_summary"] = "当前 Chunk 描述相关业务事件及其影响。"
+    return result
 
 
 def _probe_output(
@@ -108,89 +105,6 @@ def _probe_output(
             if probes_by_card.get(f"c{index}")
         ]
     }
-
-
-def _topology_output() -> dict:
-    return {
-        "keep_separate": [
-            {
-                "left_evidence_refs": ["s0001"],
-                "left_proposition": "甲公司拟收购乙公司。",
-                "right_evidence_refs": ["s0002"],
-                "right_proposition": "交易尚需监管机构批准。",
-            }
-        ],
-        "direct_links": [
-            {
-                "source_evidence_refs": ["s0002"],
-                "target_evidence_refs": ["s0001"],
-                "link_evidence_refs": ["s0001", "s0002"],
-                "link_statement": "甲公司发布公告，拟收购乙公司。该交易尚需监管机构批准",
-                "source_mention": "监管机构批准",
-                "relation_cue": "尚需",
-                "target_mention": "拟收购乙公司",
-                "relation_kind": "constraint",
-            }
-        ],
-        "open_slots": [
-            {
-                "evidence_refs": ["s0001"],
-                "role": "upstream",
-                "endpoint_constraint": "甲公司决定收购乙公司的已发生直接原因",
-            }
-        ],
-    }
-
-
-def test_topology_discards_link_statement_not_found_in_link_evidence() -> None:
-    topology = _topology_output()
-    topology["direct_links"][0]["link_statement"] = "导致股价上涨"
-
-    validated = AtomicCognitiveCardExtractor._validate_evidence_topology(
-        topology,
-        evidence_text_by_ref={
-            "s0001": "甲公司发布公告，拟收购乙公司。",
-            "s0002": "该交易尚需监管机构批准。",
-        },
-    )
-
-    assert validated["direct_links"] == []
-
-
-def test_topology_keeps_distinct_propositions_from_the_same_ref() -> None:
-    topology = _topology_output()
-    topology["keep_separate"] = [
-        {
-            "left_evidence_refs": ["s0001"],
-            "left_proposition": "甲公司收到罚单。",
-            "right_evidence_refs": ["s0001"],
-            "right_proposition": "甲公司被责令整改。",
-        }
-    ]
-    topology["direct_links"] = []
-    topology["open_slots"] = []
-
-    validated = AtomicCognitiveCardExtractor._validate_evidence_topology(
-        topology,
-        evidence_text_by_ref={"s0001": "甲公司收到罚单并被责令整改。"},
-    )
-
-    assert validated["keep_separate"] == topology["keep_separate"]
-
-
-def test_topology_discards_link_with_endpoint_mention_outside_endpoint_refs() -> None:
-    topology = _topology_output()
-    topology["direct_links"][0]["source_evidence_refs"] = ["s0001"]
-
-    validated = AtomicCognitiveCardExtractor._validate_evidence_topology(
-        topology,
-        evidence_text_by_ref={
-            "s0001": "甲公司发布公告，拟收购乙公司。",
-            "s0002": "该交易尚需监管机构批准。",
-        },
-    )
-
-    assert validated["direct_links"] == []
 
 
 def test_focus_evidence_context_preserves_context_and_one_to_one_refs() -> None:
@@ -215,7 +129,10 @@ def test_focus_evidence_context_preserves_context_and_one_to_one_refs() -> None:
 
 
 def test_atomic_card_prompt_uses_core_predicate_boundary() -> None:
-    assert ATOMIC_COGNITIVE_CARD_GENERATOR_VERSION == "atomic_card_extractor_v117"
+    assert (
+        ATOMIC_COGNITIVE_CARD_GENERATOR_VERSION
+        == "atomic_card_extractor_v134_coreference_resolution"
+    )
     assert list(ATOMIC_CARD_SCHEMA["properties"]) == [
         "cards",
         "relations",
@@ -226,21 +143,91 @@ def test_atomic_card_prompt_uses_core_predicate_boundary() -> None:
         "cards",
         "relations",
         "skip_reason",
-        "chunk_summary",
     ]
     assert "<title>" in ATOMIC_CARD_SYSTEM_PROMPT
     assert "[sNNNN]" in ATOMIC_CARD_SYSTEM_PROMPT
     assert "一个 Ref 可能包含多个事实" in ATOMIC_CARD_SYSTEM_PROMPT
     assert "不是需要逐项分类的清单" in ATOMIC_CARD_SYSTEM_PROMPT
-    assert "一张 Card 只含一个事实端点" in ATOMIC_CARD_SYSTEM_PROMPT
-    assert "剩余部分仍能独立判断真假，则必须拆卡" in ATOMIC_CARD_SYSTEM_PROMPT
-    assert "先覆盖核心具体事实" in ATOMIC_CARD_SYSTEM_PROMPT
-    assert "一张 Card 只含一个事实端点和一个核心谓词" in ATOMIC_CARD_SYSTEM_PROMPT
-    assert "按“现实中的同一事件或指标变化”去重" in ATOMIC_CARD_SYSTEM_PROMPT
-    assert "不得反向用概括 Card 吞并多个具体事实" in ATOMIC_CARD_SYSTEM_PROMPT
-    assert "原文明示的计划、预测、风险或条件判断" in ATOMIC_CARD_SYSTEM_PROMPT
-    assert "每条 Relation 先选 relation_evidence_refs" in ATOMIC_CARD_SYSTEM_PROMPT
+    assert "Card 边界按现实事件划分" in ATOMIC_CARD_SYSTEM_PROMPT
+    assert "不按主体数量或列举项机械拆分" in ATOMIC_CARD_SYSTEM_PROMPT
+    assert "先消解指代再写 summary" in ATOMIC_CARD_SYSTEM_PROMPT
+    assert "focus_evidence_refs 同时引用前件和当前更新" in (
+        ATOMIC_CARD_SYSTEM_PROMPT
+    )
+    assert "模拟跨 Chunk 判断器" in ATOMIC_CARD_SYSTEM_PROMPT
+    assert "泛化事件名称或其他回指" in (
+        ATOMIC_CARD_SCHEMA["properties"]["cards"]["items"]["properties"]["summary"][
+            "description"
+        ]
+    )
+    assert "只生成一张集合 Card" in ATOMIC_CARD_SYSTEM_PROMPT
+    assert "即使可分别核验也不拆卡" in ATOMIC_CARD_SYSTEM_PROMPT
+    assert "集合规则只适用于共同描述同一观测状态的成员清单" in (
+        ATOMIC_CARD_SYSTEM_PROMPT
+    )
+    assert "不适用于原因、条件、措施、预测或传导链" in ATOMIC_CARD_SYSTEM_PROMPT
+    assert "不得同时生成整体 Card 和成员 Card" in ATOMIC_CARD_SYSTEM_PROMPT
+    assert "零张或一张 Card 时不得输出该字段" in ATOMIC_CARD_SYSTEM_PROMPT
+
+
+def test_single_card_omits_redundant_chunk_summary() -> None:
+    chunk = _chunk("甲公司发布年度业绩预告。")
+    spans = StableSpanSegmenter().segment(chunk.content)
+
+    validated = AtomicCognitiveCardExtractor._validate_card_response(
+        chunk,
+        spans,
+        _extraction_output(
+            [_card_item(summary="甲公司发布年度业绩预告。", refs=["s0001"])]
+        ),
+    )
+
+    assert len(validated.cards) == 1
+    assert validated.chunk_summary == ""
+    assert validated.cards[0].chunk_summary == ""
+
+
+def test_single_card_rejects_redundant_chunk_summary() -> None:
+    chunk = _chunk("甲公司发布年度业绩预告。")
+    spans = StableSpanSegmenter().segment(chunk.content)
+    output = _extraction_output(
+        [_card_item(summary="甲公司发布年度业绩预告。", refs=["s0001"])]
+    )
+    output["chunk_summary"] = "甲公司发布年度业绩预告。"
+
+    with pytest.raises(ValueError, match="不得输出 chunk_summary"):
+        AtomicCognitiveCardExtractor._validate_card_response(chunk, spans, output)
+
+
+def test_multiple_cards_require_chunk_summary() -> None:
+    chunk = _chunk("甲公司发布公告。乙公司启动回购。")
+    spans = StableSpanSegmenter().segment(chunk.content)
+    output = _extraction_output(
+        [
+            _card_item(summary="甲公司发布公告。", refs=["s0001"]),
+            _card_item(summary="乙公司启动回购。", refs=["s0002"]),
+        ]
+    )
+    output.pop("chunk_summary")
+
+    with pytest.raises(ValueError, match="两张及以上 Card"):
+        AtomicCognitiveCardExtractor._validate_card_response(chunk, spans, output)
+
+
+def test_atomic_card_prompt_preserves_relation_and_probe_contracts() -> None:
+    assert "原文明示的计划、预测、风险或条件判断" in (
+        ATOMIC_CARD_SYSTEM_PROMPT
+    )
+    assert "relation_evidence_refs 只引用原文中直接陈述两端连接" in (
+        ATOMIC_CARD_SYSTEM_PROMPT
+    )
     assert "不得把时间顺序、并列状态或后一个事实默认写成因果或进展" in (
+        ATOMIC_CARD_SYSTEM_PROMPT
+    )
+    assert "Relations 不承担把所有 Cards 连成图的任务" in (
+        ATOMIC_CARD_SYSTEM_PROMPT
+    )
+    assert "宽泛叙事或段落总结不能复制成多条 pair 关系" in (
         ATOMIC_CARD_SYSTEM_PROMPT
     )
     assert "source_card_id 与 target_card_id 不得相同" in ATOMIC_CARD_SYSTEM_PROMPT
@@ -249,9 +236,13 @@ def test_atomic_card_prompt_uses_core_predicate_boundary() -> None:
     assert "其他 Chunk 历史 Card" in ATOMIC_CARD_SYSTEM_PROMPT
     assert "Summary 已承担同义召回" in ATOMIC_CARD_SYSTEM_PROMPT
     assert "候选事件已在当前 Chunk 出现时" in ATOMIC_CARD_SYSTEM_PROMPT
-    assert "不补造具体主体" in ATOMIC_CARD_SYSTEM_PROMPT
-    assert "显著补充解释或可信度" in ATOMIC_CARD_SYSTEM_PROMPT
-    assert len(ATOMIC_CARD_SYSTEM_PROMPT) < 3300
+    assert "无法在不补造事实的前提下写出具体端点时不生成" in (
+        ATOMIC_CARD_SYSTEM_PROMPT
+    )
+    assert "补全关键原因、阶段、影响、独立印证或反证" in (
+        ATOMIC_CARD_SYSTEM_PROMPT
+    )
+    assert len(ATOMIC_CARD_SYSTEM_PROMPT) < 5000
     card_schema = ATOMIC_CARD_SCHEMA["properties"]["cards"]["items"]
     assert "relation_probes" not in card_schema["properties"]
     assert "maxItems" not in ATOMIC_CARD_SCHEMA["properties"]["cards"]
@@ -268,9 +259,6 @@ def test_atomic_card_prompt_uses_core_predicate_boundary() -> None:
         "decision_class",
         "relation_kind",
         "relation_evidence_refs",
-        "source_mention",
-        "relation_cue",
-        "target_mention",
     }
     probe_plan_schema = ATOMIC_RELATION_PROBE_SCHEMA["properties"]["probe_plans"]["items"]
     assert probe_plan_schema["properties"]["relation_probes"]["minItems"] == 1
@@ -278,26 +266,8 @@ def test_atomic_card_prompt_uses_core_predicate_boundary() -> None:
     assert "same_event" not in probe_plan_schema["properties"]["relation_probes"]["items"][
         "properties"
     ]["role"]["enum"]
-    assert set(ATOMIC_EVIDENCE_TOPOLOGY_SCHEMA["properties"]) == {
-        "keep_separate",
-        "direct_links",
-        "open_slots",
-    }
-    assert "summary" not in json.dumps(
-        ATOMIC_EVIDENCE_TOPOLOGY_SCHEMA,
-        ensure_ascii=False,
-    )
-    assert "禁止摘抄或改写原文" in ATOMIC_CARD_TOPOLOGY_SYSTEM_PROMPT
-    assert "不生成 Card 清单或 Card 文案" in ATOMIC_CARD_TOPOLOGY_SYSTEM_PROMPT
-    assert "直接按 System Prompt 的 Relation 规则输出最终关系" in (
-        ATOMIC_CARD_FROM_TOPOLOGY_FOLLOWUP_PROMPT
-    )
-    assert "cards、relations、skip_reason、chunk_summary" in (
-        ATOMIC_CARD_FROM_TOPOLOGY_FOLLOWUP_PROMPT
-    )
-    assert "禁止新增、删除、审查或改写" in (
-        ATOMIC_RELATION_PROBE_FROM_TOPOLOGY_FOLLOWUP_PROMPT
-    )
+    assert "Evidence Topology" not in ATOMIC_CARD_SYSTEM_PROMPT
+    assert "open_slots" not in ATOMIC_CARD_SYSTEM_PROMPT
 
 
 def test_extractor_can_configure_card_and_probe_thinking_independently() -> None:
@@ -358,18 +328,32 @@ def test_extractor_can_isolate_prompt_experiment_profiles() -> None:
 def test_extractor_routes_simple_and_complex_inputs_without_llm_classifier(
     monkeypatch,
 ) -> None:
+    monkeypatch.setattr(settings, "KG_LLM_FORCE_MODEL", "")
     monkeypatch.setattr(settings, "KG_COGNITIVE_CARD_SIMPLE_MODEL", "flash-test")
     monkeypatch.setattr(settings, "KG_COGNITIVE_CARD_COMPLEX_MODEL", "pro-test")
-    monkeypatch.setattr(settings, "KG_COGNITIVE_CARD_SIMPLE_MAX_SPANS", 8)
+    monkeypatch.setattr(
+        settings,
+        "KG_COGNITIVE_CARD_SIMPLE_MAX_SENTENCE_BLOCKS",
+        6,
+    )
     monkeypatch.setattr(settings, "KG_COGNITIVE_CARD_SIMPLE_MAX_CHARS", 2500)
     extractor = AtomicCognitiveCardExtractor(llm=object())
 
-    simple = extractor._select_model_route(span_count=8, text_chars=2500)
-    complex_by_spans = extractor._select_model_route(span_count=9, text_chars=100)
-    complex_by_chars = extractor._select_model_route(span_count=2, text_chars=2501)
+    simple = extractor._select_model_route(
+        sentence_block_count=6,
+        text_chars=2500,
+    )
+    complex_by_blocks = extractor._select_model_route(
+        sentence_block_count=7,
+        text_chars=100,
+    )
+    complex_by_chars = extractor._select_model_route(
+        sentence_block_count=2,
+        text_chars=2501,
+    )
 
     assert (simple.model, simple.tier) == ("flash-test", "simple")
-    assert (complex_by_spans.model, complex_by_spans.tier) == (
+    assert (complex_by_blocks.model, complex_by_blocks.tier) == (
         "pro-test",
         "complex",
     )
@@ -380,13 +364,31 @@ def test_extractor_routes_simple_and_complex_inputs_without_llm_classifier(
 
 
 def test_extractor_explicit_model_disables_dynamic_routing(monkeypatch) -> None:
+    monkeypatch.setattr(settings, "KG_LLM_FORCE_MODEL", "forced-test")
     monkeypatch.setattr(settings, "KG_COGNITIVE_CARD_SIMPLE_MODEL", "flash-test")
     monkeypatch.setattr(settings, "KG_COGNITIVE_CARD_COMPLEX_MODEL", "pro-test")
     extractor = AtomicCognitiveCardExtractor(llm=object(), model="manual-test")
 
-    route = extractor._select_model_route(span_count=100, text_chars=10000)
+    route = extractor._select_model_route(
+        sentence_block_count=100,
+        text_chars=10000,
+    )
 
     assert (route.model, route.tier) == ("manual-test", "explicit_override")
+
+
+def test_extractor_global_force_disables_dynamic_routing(monkeypatch) -> None:
+    monkeypatch.setattr(settings, "KG_LLM_FORCE_MODEL", "glm-5.2")
+    monkeypatch.setattr(settings, "KG_COGNITIVE_CARD_SIMPLE_MODEL", "flash-test")
+    monkeypatch.setattr(settings, "KG_COGNITIVE_CARD_COMPLEX_MODEL", "pro-test")
+    extractor = AtomicCognitiveCardExtractor(llm=object())
+
+    route = extractor._select_model_route(
+        sentence_block_count=100,
+        text_chars=10000,
+    )
+
+    assert (route.model, route.tier) == ("glm-5.2", "global_force")
 
 
 def test_focus_evidence_context_rejects_overlapping_refs() -> None:
@@ -406,18 +408,14 @@ class _LLM:
         outputs: list[object],
         *,
         probe_outputs: list[object] | None = None,
-        topology_outputs: list[object] | None = None,
     ):
         self.outputs = list(outputs)
         self.probe_outputs = list(probe_outputs or [])
-        self.topology_outputs = list(topology_outputs or [])
         self.requests = []
         self.repairs = []
 
     async def generate(self, request):
         self.requests.append(request)
-        if request.metadata.get("task") == "kg_atomic_evidence_topology":
-            return self._response(self.topology_outputs.pop(0))
         if request.metadata.get("task") == "kg_relation_probe":
             if self.probe_outputs:
                 return self._response(self.probe_outputs.pop(0))
@@ -584,7 +582,7 @@ def test_span_segmenter_keeps_title_and_complete_semantic_sentences() -> None:
     spans = [part for block in blocks for part in block.parts]
 
     assert [block.role for block in blocks] == ["title", "body", "body", "body"]
-    assert [len(block.parts) for block in blocks] == [1, 1, 1, 2]
+    assert [len(block.parts) for block in blocks] == [1, 1, 1, 1]
     assert ["".join(part.text for part in block.parts) for block in blocks] == [
         "【机构：元器件成本持续攀升 智能手机存储配置两极分化加剧】",
         "财联社7月13日电，据Omdia，随着存储成本持续上涨带来的财务压力不断加大，"
@@ -638,6 +636,19 @@ def test_span_segmenter_only_splits_oversized_sentences() -> None:
     assert len(spans) > 1
     assert all(len(span.text) <= StableSpanSegmenter._MAX_SPAN_CHARS for span in spans)
     assert "".join(span.text for span in spans) == text
+
+
+def test_span_segmenter_keeps_short_collective_event_in_one_span() -> None:
+    text = (
+        "培育钻石（885937）板块持续下挫，黄河旋风（600172）触及跌停，"
+        "惠丰钻石跌超11%，博云新材（002297）、四方达（300179）、"
+        "沃尔德（688028）、力量钻石（301071）跟跌。"
+    )
+
+    spans = StableSpanSegmenter().segment(text)
+
+    assert len(text) < StableSpanSegmenter._MAX_SPAN_CHARS
+    assert [span.text for span in spans] == [text]
 
 
 def test_atomic_card_builds_stable_id_independent_of_ref_gaps() -> None:
@@ -813,7 +824,7 @@ async def test_extractor_generates_cards_and_relations_then_probes_as_follow_up(
     assert "source_title" not in prompt_input
     assert llm.requests[0].messages[0]["content"] == ATOMIC_CARD_SYSTEM_PROMPT
     assert "published_at" in llm.requests[0].messages[0]["content"]
-    assert "后续 user 明确切换到 Relation Probe 阶段" in llm.requests[0].messages[0]["content"]
+    assert "仅在 user 明确切换阶段后执行" in llm.requests[0].messages[0]["content"]
     assert "同 Chunk Relation" in llm.requests[0].messages[0]["content"]
     card_schema = llm.requests[0].json_schema["properties"]["cards"]["items"]
     assert "relation_probes" not in card_schema["properties"]
@@ -821,7 +832,6 @@ async def test_extractor_generates_cards_and_relations_then_probes_as_follow_up(
     assert "2026-07-11T09:00:00+08:00" not in llm.requests[0].messages[0]["content"]
     assert llm.requests[0].metadata["chunk_id"] == chunk.chunk_id
     assert llm.requests[0].provider_options == {
-        "thinking_type": "disabled",
         "inject_json_schema_instruction": False,
     }
     assert llm.requests[0].provider == "aliyun"
@@ -851,149 +861,18 @@ async def test_extractor_generates_cards_and_relations_then_probes_as_follow_up(
 
 
 @pytest.mark.asyncio
-async def test_extractor_can_preplan_compact_topology_in_same_conversation(
-    monkeypatch,
-) -> None:
-    monkeypatch.setattr(settings, "KG_COGNITIVE_CARD_PREFIX_WARM_WINDOW_SECONDS", 0)
-    chunk = _chunk()
-    topology = _topology_output()
-    card_output = _extraction_output(
-        [
-            _card_item(summary="甲公司拟收购乙公司。", refs=["s0001"]),
-            _card_item(summary="该交易尚需监管机构批准。", refs=["s0002"]),
-        ],
-        relations=[
-            {
-                "source_card_id": "c2",
-                "target_card_id": "c1",
-                "decision_class": "observed",
-                "relation_kind": "constraint",
-                "relation_evidence_refs": ["s0002"],
-                "source_mention": "监管机构批准",
-                "relation_cue": "尚需",
-                "target_mention": "该交易",
-            },
-        ],
-    )
-    probe_output = _probe_output(
-        2,
-        {
-            "c1": [
-                {
-                    "role": "upstream",
-                    "query": "甲公司决定收购乙公司的已发生直接原因",
-                }
-            ]
-        },
-    )
-    llm = _LLM(
-        [card_output],
-        topology_outputs=[topology],
-        probe_outputs=[probe_output],
-    )
-
-    result = (
-        await AtomicCognitiveCardExtractor(
-            llm=llm,
-            model="test",
-            thinking_type="disabled",
-            relation_probe_thinking_type="disabled",
-            evidence_topology_preplan=True,
-        ).extract_with_diagnostics([chunk])
-    )[0]
-
-    assert [request.metadata["task"] for request in llm.requests] == [
-        "kg_atomic_evidence_topology",
-        "kg_cognitive_card",
-        "kg_relation_probe",
-    ]
-    topology_request, card_request, probe_request = llm.requests
-    assert topology_request.messages[0]["content"] == ATOMIC_CARD_TOPOLOGY_SYSTEM_PROMPT
-    assert topology_request.messages[-1]["content"] == ATOMIC_EVIDENCE_TOPOLOGY_REQUEST
-    assert topology_request.json_schema == ATOMIC_EVIDENCE_TOPOLOGY_SCHEMA
-    assert card_request.messages[:3] == topology_request.messages
-    assert json.loads(card_request.messages[3]["content"]) == topology
-    assert card_request.messages[4]["content"] == ATOMIC_CARD_FROM_TOPOLOGY_FOLLOWUP_PROMPT
-    assert probe_request.messages[:5] == card_request.messages
-    assert len(probe_request.messages) == 7
-    assert json.loads(probe_request.messages[5]["content"]) == card_output
-    assert probe_request.messages[6] == {
-        "role": "user",
-        "content": ATOMIC_RELATION_PROBE_FROM_TOPOLOGY_FOLLOWUP_PROMPT,
-    }
-    assert probe_request.json_schema == ATOMIC_RELATION_PROBE_SCHEMA
-    assert card_request.json_schema == ATOMIC_CARD_SCHEMA
-    assert result.evidence_topology == topology
-    assert set(result.llm_stage_usage) == {
-        "evidence_topology",
-        "cards_and_relations",
-        "relation_probes",
-    }
-    assert len(result.cards) == 2
-    assert len(result.relations) == 1
-    assert result.discarded_relation_count == 0
-    assert result.relations[0].source_card_id == result.cards[1].cognitive_card_id
-    assert result.relations[0].target_card_id == result.cards[0].cognitive_card_id
-    assert result.relations[0].relation_kind == "constraint"
-    assert [probe.role for probe in result.cards[0].relation_probes] == ["upstream"]
-
-
-@pytest.mark.asyncio
-async def test_preplan_only_passes_validated_topology_to_followup(
-    monkeypatch,
-) -> None:
-    monkeypatch.setattr(settings, "KG_COGNITIVE_CARD_PREFIX_WARM_WINDOW_SECONDS", 0)
-    chunk = _chunk()
-    topology = _topology_output()
-    topology["direct_links"] = [
-        {
-            "source_evidence_refs": ["s0001"],
-            "target_evidence_refs": ["s0002"],
-            "link_evidence_refs": ["s0001"],
-            "link_statement": "甲公司拟收购乙公司。",
-            "source_mention": "甲公司拟收购乙公司",
-            "relation_cue": "导致",
-            "target_mention": "监管机构批准",
-            "relation_kind": "causal_influence",
-        }
-    ]
-    card_output = _extraction_output(
-        [
-            _card_item(summary="甲公司拟收购乙公司。", refs=["s0001"]),
-            _card_item(summary="该交易尚需监管机构批准。", refs=["s0002"]),
-        ]
-    )
-    probe_output = _probe_output(2)
-    llm = _LLM(
-        [card_output],
-        topology_outputs=[topology],
-        probe_outputs=[probe_output],
-    )
-
-    result = (
-        await AtomicCognitiveCardExtractor(
-            llm=llm,
-            model="test",
-            thinking_type="disabled",
-            relation_probe_thinking_type="disabled",
-            evidence_topology_preplan=True,
-        ).extract_with_diagnostics([chunk])
-    )[0]
-
-    card_topology = json.loads(llm.requests[1].messages[3]["content"])
-    assert topology["direct_links"]
-    assert card_topology["direct_links"] == []
-    assert result.evidence_topology["direct_links"] == []
-
-
-@pytest.mark.asyncio
 async def test_dynamic_route_is_selected_once_and_shared_by_card_and_probe(
     monkeypatch,
 ) -> None:
+    monkeypatch.setattr(settings, "KG_LLM_FORCE_MODEL", "")
     monkeypatch.setattr(settings, "KG_COGNITIVE_CARD_PREFIX_WARM_WINDOW_SECONDS", 0)
     monkeypatch.setattr(settings, "KG_COGNITIVE_CARD_SIMPLE_MODEL", "flash-test")
     monkeypatch.setattr(settings, "KG_COGNITIVE_CARD_COMPLEX_MODEL", "pro-test")
-    monkeypatch.setattr(settings, "KG_COGNITIVE_CARD_SIMPLE_MAX_SPANS", 8)
+    monkeypatch.setattr(
+        settings,
+        "KG_COGNITIVE_CARD_SIMPLE_MAX_SENTENCE_BLOCKS",
+        6,
+    )
     monkeypatch.setattr(settings, "KG_COGNITIVE_CARD_SIMPLE_MAX_CHARS", 2500)
     simple_chunk = _chunk("简单事实甲。简单事实乙。")
     complex_content = "".join(f"第{index}个完整事实。" for index in range(1, 10))
@@ -1013,7 +892,6 @@ async def test_dynamic_route_is_selected_once_and_shared_by_card_and_probe(
             _extraction_output([_card_item()]),
             _extraction_output([_card_item()]),
         ],
-        topology_outputs=[_topology_output()],
     )
     extractor = AtomicCognitiveCardExtractor(llm=llm, concurrency=1)
 
@@ -1022,7 +900,6 @@ async def test_dynamic_route_is_selected_once_and_shared_by_card_and_probe(
     assert [request.model for request in llm.requests] == [
         "flash-test",
         "flash-test",
-        "pro-test",
         "pro-test",
         "pro-test",
     ]
@@ -1086,9 +963,6 @@ async def test_extractor_maps_intra_chunk_relations_to_final_card_ids(monkeypatc
                 "decision_class": "observed",
                 "relation_kind": "causal_influence",
                 "relation_evidence_refs": ["[s0001]", "[s0002]"],
-                "source_mention": "辽宁出现强降雨",
-                "relation_cue": "受强降雨影响",
-                "target_mention": "多地停课",
             }
         ],
     )
@@ -1189,6 +1063,33 @@ def test_probe_validation_rejects_sparse_output_in_wrong_order() -> None:
         )
 
 
+def test_probe_validation_rejects_more_than_two_probes_for_one_card() -> None:
+    chunk = _chunk("甲公司发布公告。")
+    validated = AtomicCognitiveCardExtractor._validate_card_response(
+        chunk,
+        StableSpanSegmenter().segment(chunk.content),
+        _extraction_output(
+            [_card_item(summary="甲公司发布公告。", refs=["s0001"])]
+        ),
+    )
+    probe_output = _probe_output(
+        1,
+        {
+            "c1": [
+                {"role": "upstream", "query": "甲公司发布公告的前置决策"},
+                {"role": "confirmation", "query": "独立来源确认甲公司公告"},
+                {"role": "contradiction", "query": "独立来源否定甲公司公告"},
+            ]
+        },
+    )
+
+    with pytest.raises(ValueError, match="最多允许两个"):
+        AtomicCognitiveCardExtractor._validate_probe_response(
+            validated.cards_by_local_id,
+            probe_output,
+        )
+
+
 def test_card_relation_keeps_endpoint_and_connector_evidence_separate() -> None:
     chunk = _chunk("甲公司发布公告。乙公司随后回应甲公司的公告。")
     spans = StableSpanSegmenter().segment(chunk.content)
@@ -1207,9 +1108,6 @@ def test_card_relation_keeps_endpoint_and_connector_evidence_separate() -> None:
                     "decision_class": "observed",
                     "relation_kind": "temporal_progression",
                     "relation_evidence_refs": ["s0002"],
-                    "source_mention": "甲公司的公告",
-                    "relation_cue": "随后回应",
-                    "target_mention": "乙公司",
                 }
             ],
         ),
@@ -1221,36 +1119,6 @@ def test_card_relation_keeps_endpoint_and_connector_evidence_separate() -> None:
     assert relation.relation_evidence_refs == [
         {"chunk_id": chunk.chunk_id, "refs": ["s0002"]}
     ]
-
-
-def test_card_relation_discards_proof_fragment_not_present_in_cited_text() -> None:
-    chunk = _chunk("辽宁出现强降雨。受强降雨影响，多地停课。")
-    validated = AtomicCognitiveCardExtractor._validate_card_response(
-        chunk,
-        StableSpanSegmenter().segment(chunk.content),
-        _extraction_output(
-            [
-                _card_item(summary="辽宁出现强降雨。", refs=["s0001"]),
-                _card_item(summary="多地因强降雨停课。", refs=["s0002"]),
-            ],
-            relations=[
-                {
-                    "source_card_id": "c1",
-                    "target_card_id": "c2",
-                    "decision_class": "observed",
-                    "relation_kind": "causal_influence",
-                    "relation_evidence_refs": ["s0001", "s0002"],
-                    "source_mention": "辽宁出现强降雨",
-                    "relation_cue": "气象部门因此决定",
-                    "target_mention": "多地停课",
-                }
-            ],
-        ),
-    )
-
-    assert validated.relations == []
-    assert validated.discarded_relation_count == 1
-    assert "relation_cue 不是关系证据中的原文片段" in validated.issues[0]
 
 
 @pytest.mark.asyncio
@@ -1270,9 +1138,6 @@ async def test_intra_chunk_relation_sync_marks_missing_pairs_as_no_relation(monk
                 "decision_class": "observed",
                 "relation_kind": "causal_influence",
                 "relation_evidence_refs": ["s0001", "s0002"],
-                "source_mention": "辽宁出现强降雨",
-                "relation_cue": "因强降雨",
-                "target_mention": "多地因强降雨停课",
             }
         ],
     )
@@ -1308,9 +1173,6 @@ def test_intra_chunk_relation_discards_same_event_without_losing_cards() -> None
                 "decision_class": "observed",
                 "relation_kind": "same_event",
                 "relation_evidence_refs": ["s0001", "s0002"],
-                "source_mention": "辽宁出现强降雨",
-                "relation_cue": "出现",
-                "target_mention": "沈阳出现特大暴雨",
             }
         ],
     )
@@ -1377,9 +1239,6 @@ def test_intra_chunk_fast_path_keeps_grounded_inferred_relation() -> None:
                 "decision_class": "inferred",
                 "relation_kind": "temporal_progression",
                 "relation_evidence_refs": ["s0001", "s0002"],
-                "source_mention": "员工离开甲公司",
-                "relation_cue": "随后",
-                "target_mention": "员工随后加入乙公司",
             }
         ],
     )
@@ -1392,6 +1251,9 @@ def test_intra_chunk_fast_path_keeps_grounded_inferred_relation() -> None:
 
     assert len(validated.relations) == 1
     assert validated.relations[0].decision_class == "inferred"
+    assert validated.relations[0].inference_mechanism == (
+        "员工离开甲公司。员工随后加入乙公司。"
+    )
     assert validated.discarded_relation_count == 0
 
 
@@ -1410,9 +1272,6 @@ async def test_invalid_relation_does_not_trigger_repair_or_discard_cards(monkeyp
                 "decision_class": "observed",
                 "relation_kind": "same_event",
                 "relation_evidence_refs": ["s0001", "s0002"],
-                "source_mention": "辽宁出现强降雨",
-                "relation_cue": "出现",
-                "target_mention": "沈阳出现特大暴雨",
             }
         ],
     )
@@ -1620,6 +1479,9 @@ async def test_stage_stops_at_cards_ready_and_cleans_stale_targets(monkeypatch) 
                 "inserted_cards": len(cards),
                 "deleted_cards": 1,
                 "deleted_card_ids": ["kg_cognitive_card:stale"],
+                "fact_id_by_card": {
+                    cards[0].cognitive_card_id: "kg_fact:shared"
+                },
             }
 
         def list_atomic_cognitive_card_ids_for_inactive_evidence(self, _adapter_name):
@@ -1665,6 +1527,11 @@ async def test_stage_stops_at_cards_ready_and_cleans_stale_targets(monkeypatch) 
     )
 
     assert result.status == "cards_ready"
+    assert result.cards[0].fact_id == "kg_fact:shared"
+    assert {
+        document.metadata["fact_id"]
+        for document in retriever.upserts[0]["documents"]
+    } == {"kg_fact:shared"}
     assert result.diagnostics["assignment_executed"] is False
     assert result.diagnostics["milvus_documents_written"] == 2
     assert [item["collection_role"] for item in retriever.deletes] == [
@@ -1692,9 +1559,6 @@ async def test_stage_persists_intra_chunk_relations_after_card_documents(monkeyp
                 "decision_class": "observed",
                 "relation_kind": "causal_influence",
                 "relation_evidence_refs": ["s0001", "s0002"],
-                "source_mention": "辽宁出现强降雨",
-                "relation_cue": "受强降雨影响",
-                "target_mention": "多地停课",
             }
         ],
     )
@@ -1743,7 +1607,7 @@ async def test_stage_persists_intra_chunk_relations_after_card_documents(monkeyp
     relation_call = calls[2]
     assert len(relation_call[1]) == 1
     assert relation_call[1][0].relation_kind == "causal_influence"
-    assert relation_call[2]["pipeline_version"] == "atomic_card_intra_chunk_relation_v7"
+    assert relation_call[2]["pipeline_version"] == "atomic_card_intra_chunk_relation_v14"
     assert result.diagnostics["intra_chunk_relations"] == 1
     assert result.diagnostics["intra_chunk_observed"] == 1
     assert result.diagnostics["intra_chunk_inferred"] == 0

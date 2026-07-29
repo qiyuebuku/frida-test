@@ -10,6 +10,7 @@
 #   ./deploy.sh --logs [N]   # 查看 smart-fund-server 最近日志（默认 50 行）
 #   ./deploy.sh --test       # 远程健康检查
 #   ./deploy.sh --router     # 只部署/重启 smart-router
+#   ./deploy.sh --milvus-tunnel  # 部署生产 Milvus 19530 FRP 映射
 
 set -e
 
@@ -34,6 +35,15 @@ REMOTE_DIR="${PROJECT_ROOT}/.claude/skills"
 SERVER_DIR="${REMOTE_DIR}/smart-fund-server"
 SKILL_DIR="${REMOTE_DIR}/fund-trade"
 ROUTER_DIR="${REMOTE_DIR}/smart-router"
+FRP_DIR="/home/${REMOTE_USER}/frp_0.57.0_linux_amd64"
+FRP_SERVER_ADDR="${FRP_SERVER_ADDR:-119.23.227.187}"
+FRP_SERVER_PORT="${FRP_SERVER_PORT:-7000}"
+MILVUS_INTERNAL_HOST="${MILVUS_INTERNAL_HOST:-10.168.1.113}"
+MILVUS_INTERNAL_PORT="${MILVUS_INTERNAL_PORT:-19530}"
+MILVUS_PUBLIC_PORT="${MILVUS_PUBLIC_PORT:-19530}"
+MILVUS_FRP_NAME="smart_fund_milvus_${MILVUS_PUBLIC_PORT}"
+MILVUS_FRP_CONFIG="${FRP_DIR}/frpc_${MILVUS_FRP_NAME}.toml"
+MILVUS_SUPERVISOR_CONFIG="/etc/supervisor/conf.d/frpc_${MILVUS_FRP_NAME}.conf"
 
 # SSH key（WSL2 路径）
 SSH_KEY="/mnt/c/Users/阮雨阳/.ssh/id_rsa"
@@ -151,6 +161,58 @@ restart_router() {
     fi
 }
 
+# ==================== 生产 Milvus FRP 映射 ====================
+install_milvus_tunnel() {
+    echo "📦 部署生产 Milvus FRP 映射..."
+
+    ssh_cmd "test -x '${FRP_DIR}/frpc'"
+    ssh_cmd "timeout 5 bash -lc '</dev/tcp/${MILVUS_INTERNAL_HOST}/${MILVUS_INTERNAL_PORT}'"
+
+    ssh_cmd "cat > '/tmp/frpc_${MILVUS_FRP_NAME}.toml' <<'EOF'
+serverAddr = \"${FRP_SERVER_ADDR}\"
+serverPort = ${FRP_SERVER_PORT}
+
+[[proxies]]
+name = \"${MILVUS_FRP_NAME}\"
+type = \"tcp\"
+localIp = \"${MILVUS_INTERNAL_HOST}\"
+localPort = ${MILVUS_INTERNAL_PORT}
+remotePort = ${MILVUS_PUBLIC_PORT}
+transport.useEncryption = true
+transport.useCompression = true
+EOF
+
+cat > '/tmp/frpc_${MILVUS_FRP_NAME}.conf' <<'EOF'
+[program:${MILVUS_FRP_NAME}]
+command=${FRP_DIR}/frpc -c ${MILVUS_FRP_CONFIG}
+directory=${FRP_DIR}
+autostart=true
+autorestart=true
+startsecs=3
+startretries=10
+stderr_logfile=/var/log/frpc_${MILVUS_FRP_NAME}.err.log
+stdout_logfile=/var/log/frpc_${MILVUS_FRP_NAME}.out.log
+user=${REMOTE_USER}
+EOF"
+
+    sudo_cmd "install -m 644 '/tmp/frpc_${MILVUS_FRP_NAME}.toml' '${MILVUS_FRP_CONFIG}'"
+    sudo_cmd "install -m 644 '/tmp/frpc_${MILVUS_FRP_NAME}.conf' '${MILVUS_SUPERVISOR_CONFIG}'"
+    sudo_cmd "supervisorctl reread"
+    sudo_cmd "supervisorctl update"
+    sudo_cmd "supervisorctl restart '${MILVUS_FRP_NAME}'"
+    sudo_cmd "supervisorctl status '${MILVUS_FRP_NAME}' | grep -q RUNNING"
+    local attempt
+    for attempt in $(seq 1 15); do
+        if timeout 3 bash -lc "</dev/tcp/${REMOTE_HOST}/${MILVUS_PUBLIC_PORT}" 2>/dev/null; then
+            echo "✅ Milvus 公网映射已就绪: ${REMOTE_HOST}:${MILVUS_PUBLIC_PORT}"
+            return 0
+        fi
+        sleep 2
+    done
+    echo "❌ FRP 已启动，但公网端口不可达: ${REMOTE_HOST}:${MILVUS_PUBLIC_PORT}" >&2
+    return 1
+}
+
 # ==================== 重启所有服务 ====================
 restart_all() {
     restart_server
@@ -196,6 +258,11 @@ remote_test() {
         -H 'Content-Type: application/json' \
         -H 'anthropic-version: 2023-06-01' \
         -d '{\"model\":\"GLM-5.1\",\"max_tokens\":5,\"messages\":[{\"role\":\"user\",\"content\":\"say ok\"}]}' 2>/dev/null"
+    echo ""
+    echo "--- Milvus FRP ---"
+    sudo_cmd "supervisorctl status '${MILVUS_FRP_NAME}'"
+    timeout 5 bash -lc "</dev/tcp/${REMOTE_HOST}/${MILVUS_PUBLIC_PORT}"
+    echo "Milvus TCP: ${REMOTE_HOST}:${MILVUS_PUBLIC_PORT}"
     echo ""
 }
 
@@ -260,6 +327,7 @@ SVCEOF"
 
     # 9. 启动所有服务
     restart_all
+    install_milvus_tunnel
 
     echo ""
     echo "🎉 首次部署完成！"
@@ -301,6 +369,9 @@ main() {
             sync_code
             install_router_service
             restart_router
+            ;;
+        --milvus-tunnel)
+            install_milvus_tunnel
             ;;
         *)
             sync_code

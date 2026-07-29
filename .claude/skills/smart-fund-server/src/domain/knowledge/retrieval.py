@@ -71,7 +71,6 @@ class RetrievalTrace(KnowledgeBaseModel):
     channels_used: list[str] = Field(default_factory=list)
     semantic_enabled: bool = False
     milvus_enabled: bool = False
-    agentic_enabled: bool = False
     planner_enabled: bool = False
     steps: list[RetrievalStep] = Field(default_factory=list)
     warnings: list[str] = Field(default_factory=list)
@@ -1251,7 +1250,6 @@ def _trace_for(
         ],
         semantic_enabled=semantic_enabled,
         milvus_enabled=semantic_enabled and backend_name == "milvus",
-        agentic_enabled=False,
         planner_enabled=False,
         steps=steps,
         warnings=warnings,

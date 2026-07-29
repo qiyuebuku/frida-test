@@ -355,9 +355,47 @@ def _clean_news_text(value: Any) -> str:
 
 
 def _news_text_contains(container: str, item: str) -> bool:
-    container_key = re.sub(r"\s+", "", container or "")
-    item_key = re.sub(r"\s+", "", item or "")
-    return bool(container_key and item_key and item_key in container_key)
+    container_key = _news_text_comparison_key(container)
+    item_key = _news_text_comparison_key(item)
+    if not container_key or not item_key:
+        return False
+    return item_key in container_key or _is_compact_subsequence(
+        item_key,
+        container_key,
+    )
+
+
+def _news_text_comparison_key(value: str) -> str:
+    without_stock_codes = re.sub(
+        r"[（(]\s*(?:[A-Za-z]{0,2}\s*)?\d{5,6}(?:\.[A-Za-z]{2})?\s*[）)]",
+        "",
+        value or "",
+    )
+    return "".join(
+        character.casefold()
+        for character in without_stock_codes
+        if character.isalnum()
+    )
+
+
+def _is_compact_subsequence(item: str, container: str) -> bool:
+    if len(item) < 8 or len(item) > len(container):
+        return False
+    max_window = len(item) + max(4, len(item) // 3)
+    starts = (
+        index
+        for index, character in enumerate(container)
+        if character == item[0]
+    )
+    for start in starts:
+        cursor = start
+        for character in item[1:]:
+            cursor = container.find(character, cursor + 1)
+            if cursor < 0 or cursor - start + 1 > max_window:
+                break
+        else:
+            return True
+    return False
 
 
 def _target_ref_from_market_data(data: dict[str, Any] | list[Any]) -> str | None:

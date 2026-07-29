@@ -4,15 +4,21 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from sqlalchemy import BigInteger, DateTime, Float, Index, Integer, Sequence, String, Text, UniqueConstraint
+from sqlalchemy import (
+    CheckConstraint,
+    DateTime,
+    Float,
+    Index,
+    Integer,
+    String,
+    Text,
+    UniqueConstraint,
+)
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 from sqlalchemy.sql import func
 
 from src.infrastructure.persistence.models.base import Base
-
-
-GRAPH_COMMUNITY_ID_SEQUENCE = Sequence("kg_graph_community_id_seq", metadata=Base.metadata)
 
 
 class KnowledgeEvidence(Base):
@@ -176,41 +182,152 @@ class KnowledgeEvidenceChunk(Base):
 
 
 class KnowledgeGraphCommunity(Base):
-    """Graph Index community identity/version state."""
+    """Current relationship-connected Graph Community state."""
 
     __tablename__ = "kg_graph_communities"
     __table_args__ = (
-        Index("ix_kg_graph_communities_id", "id"),
-        Index("ix_kg_graph_communities_adapter_projection", "adapter_name", "projection"),
-        Index("ix_kg_graph_communities_parent", "parent_community_id"),
-        Index("ix_kg_graph_communities_status", "status"),
+        Index("ix_kg_graph_communities_adapter_graph_status", "adapter_name", "graph_status"),
+        Index("ix_kg_graph_communities_anchor", "identity_anchor_card_id"),
+        Index("ix_kg_graph_communities_fact_status", "fact_report_status"),
+        Index("ix_kg_graph_communities_projection_status", "projection_status"),
+        Index("ix_kg_graph_communities_graph_fingerprint", "graph_fingerprint"),
     )
 
     community_id: Mapped[str] = mapped_column(String(180), primary_key=True)
-    id: Mapped[int | None] = mapped_column(BigInteger, server_default=GRAPH_COMMUNITY_ID_SEQUENCE.next_value())
-    version_id: Mapped[str] = mapped_column(String(220), nullable=False)
     adapter_name: Mapped[str] = mapped_column(String(64), nullable=False)
-    projection: Mapped[str] = mapped_column(String(64), nullable=False)
-    level: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
-    parent_community_id: Mapped[str] = mapped_column(String(180), nullable=False, default="")
-    title: Mapped[str] = mapped_column(Text, nullable=False)
-    summary: Mapped[str] = mapped_column(Text, nullable=False, default="")
-    member_node_ids: Mapped[list] = mapped_column(JSONB, default=list, nullable=False)
+    identity_anchor_card_id: Mapped[str] = mapped_column(String(180), nullable=False)
+    member_card_ids: Mapped[list] = mapped_column(JSONB, default=list, nullable=False)
     member_edge_ids: Mapped[list] = mapped_column(JSONB, default=list, nullable=False)
-    evidence_ids: Mapped[list] = mapped_column(JSONB, default=list, nullable=False)
-    chunk_ids: Mapped[list] = mapped_column(JSONB, default=list, nullable=False)
-    metrics: Mapped[dict] = mapped_column(JSONB, default=dict, nullable=False)
-    status: Mapped[str] = mapped_column(String(32), nullable=False, default="active")
-    previous_version_id: Mapped[str] = mapped_column(String(220), nullable=False, default="")
-    change_reason: Mapped[str] = mapped_column(String(64), nullable=False, default="build")
-    lineage_id: Mapped[str] = mapped_column(String(180), nullable=False, default="")
-    previous_community_ids: Mapped[list] = mapped_column(JSONB, default=list, nullable=False)
-    last_insight_generated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    graph_fingerprint: Mapped[str] = mapped_column(String(64), nullable=False)
+    graph_version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    graph_status: Mapped[str] = mapped_column(String(32), nullable=False, default="active")
+    title: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    fact_report: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    fact_referenced_card_ids: Mapped[list] = mapped_column(JSONB, default=list, nullable=False)
+    fact_referenced_edge_ids: Mapped[list] = mapped_column(JSONB, default=list, nullable=False)
+    fact_report_version: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    fact_report_generator_version: Mapped[str] = mapped_column(
+        String(96), nullable=False, default=""
+    )
+    fact_report_graph_fingerprint: Mapped[str] = mapped_column(
+        String(64), nullable=False, default=""
+    )
+    fact_report_status: Mapped[str] = mapped_column(
+        String(32), nullable=False, default="missing"
+    )
+    fact_report_error: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    report_task_dispatched_fingerprint: Mapped[str] = mapped_column(
+        String(64), nullable=False, default=""
+    )
+    fact_semantic_synced_version: Mapped[str] = mapped_column(
+        String(64), nullable=False, default=""
+    )
+    conditional_projections: Mapped[list] = mapped_column(JSONB, default=list, nullable=False)
+    projection_version: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    projection_generator_version: Mapped[str] = mapped_column(
+        String(96), nullable=False, default=""
+    )
+    projection_graph_fingerprint: Mapped[str] = mapped_column(
+        String(64), nullable=False, default=""
+    )
+    projection_fact_report_version: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=0
+    )
+    projection_status: Mapped[str] = mapped_column(
+        String(32), nullable=False, default="missing"
+    )
+    projection_error: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    projection_task_dispatched_version: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=0
+    )
+    projection_semantic_synced_version: Mapped[str] = mapped_column(
+        String(64), nullable=False, default=""
+    )
+    graph_changed_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+    fact_report_generated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    projection_generated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     created_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )
     updated_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+
+class KnowledgeGraphCommunityRelation(Base):
+    """Current relation projection between flat Graph Communities."""
+
+    __tablename__ = "kg_graph_community_relations"
+    __table_args__ = (
+        UniqueConstraint(
+            "source_community_id",
+            "target_community_id",
+            "relation_kind",
+            name="uq_kg_graph_community_relations_pair_kind",
+        ),
+        CheckConstraint(
+            "source_community_id <> target_community_id",
+            name="ck_kg_graph_community_relations_distinct_endpoints",
+        ),
+        CheckConstraint(
+            "status IN ('active')",
+            name="ck_kg_graph_community_relations_status",
+        ),
+        Index(
+            "ix_kg_graph_community_relations_source_status",
+            "source_community_id",
+            "status",
+        ),
+        Index(
+            "ix_kg_graph_community_relations_target_status",
+            "target_community_id",
+            "status",
+        ),
+        Index(
+            "ix_kg_graph_community_relations_kind_status",
+            "relation_kind",
+            "status",
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(String(180), primary_key=True)
+    source_community_id: Mapped[str] = mapped_column(String(180), nullable=False)
+    target_community_id: Mapped[str] = mapped_column(String(180), nullable=False)
+    relation_kind: Mapped[str] = mapped_column(String(48), nullable=False)
+    supporting_edge_ids: Mapped[list] = mapped_column(
+        JSONB,
+        default=list,
+        nullable=False,
+    )
+    observed_edge_count: Mapped[int] = mapped_column(
+        Integer,
+        nullable=False,
+        default=0,
+    )
+    inferred_edge_count: Mapped[int] = mapped_column(
+        Integer,
+        nullable=False,
+        default=0,
+    )
+    relation_fingerprint: Mapped[str] = mapped_column(
+        String(64),
+        nullable=False,
+    )
+    status: Mapped[str] = mapped_column(
+        String(32),
+        nullable=False,
+        default="active",
+    )
+    created_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+    )
+    updated_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        onupdate=func.now(),
     )
 
 
@@ -259,6 +376,7 @@ class KnowledgeCognitiveCard(Base):
         Index("ix_kg_cognitive_cards_evidence", "evidence_id"),
         Index("ix_kg_cognitive_cards_chunk", "primary_chunk_id"),
         Index("ix_kg_cognitive_cards_source", "adapter_name", "source_type", "source_id"),
+        Index("ix_kg_cognitive_cards_fact", "adapter_name", "fact_id", "status"),
     )
 
     cognitive_card_id: Mapped[str] = mapped_column(String(180), primary_key=True)
@@ -272,6 +390,7 @@ class KnowledgeCognitiveCard(Base):
     focus_evidence_refs: Mapped[list] = mapped_column(JSONB, default=list, nullable=False)
     focus_span_offsets: Mapped[list] = mapped_column(JSONB, default=list, nullable=False)
     relation_probes: Mapped[list] = mapped_column(JSONB, default=list, nullable=False)
+    fact_id: Mapped[str] = mapped_column(String(180), nullable=False, default="")
     schema_version: Mapped[str] = mapped_column(String(96), nullable=False, default="")
     generator_version: Mapped[str] = mapped_column(String(96), nullable=False, default="")
     status: Mapped[str] = mapped_column(String(32), nullable=False, default="active")

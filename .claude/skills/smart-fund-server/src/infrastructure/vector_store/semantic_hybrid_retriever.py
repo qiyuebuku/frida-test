@@ -13,9 +13,10 @@ from src.domain.knowledge.graph_index import GraphProjectionProfile
 from src.domain.knowledge.semantic_index_materials import (
     SEMANTIC_COLLECTION_CHUNK,
     SEMANTIC_COLLECTION_CARD_RELATION,
-    SEMANTIC_COLLECTION_COGNITIVE_CARD,
     SEMANTIC_COLLECTION_COMMUNITY,
-    SEMANTIC_COLLECTION_COMMUNITY_INSIGHT,
+    SEMANTIC_COLLECTION_COGNITIVE_CARD,
+    SEMANTIC_COLLECTION_GRAPH_COMMUNITY_PROJECTION,
+    SEMANTIC_COLLECTION_GRAPH_COMMUNITY_REPORT,
     SEMANTIC_COLLECTION_RELATION,
     SEMANTIC_COLLECTION_ROLES,
     SemanticVectorDocument,
@@ -40,8 +41,8 @@ AGENT_READ_COLLECTION_ROLES = (
     SEMANTIC_COLLECTION_CHUNK,
     SEMANTIC_COLLECTION_COGNITIVE_CARD,
     SEMANTIC_COLLECTION_CARD_RELATION,
-    SEMANTIC_COLLECTION_COMMUNITY,
-    SEMANTIC_COLLECTION_COMMUNITY_INSIGHT,
+    SEMANTIC_COLLECTION_GRAPH_COMMUNITY_REPORT,
+    SEMANTIC_COLLECTION_GRAPH_COMMUNITY_PROJECTION,
 )
 
 
@@ -110,7 +111,7 @@ class MilvusSemanticHybridRetriever(SemanticHybridRetriever):
             limit=limit,
             search_limit=search_limit,
         )
-        search_limits = _typed_search_limits(limit)
+        search_limits = _typed_search_limits(limit, query=query)
         result: list[RetrievalHit] = []
         raw_count = 0
         per_collection_hits: dict[str, int] = {}
@@ -615,13 +616,26 @@ def _candidate_limit(limit: int) -> int:
     return max(limit, min(limit * 3, limit + 30))
 
 
-def _typed_search_limits(limit: int) -> dict[str, int]:
-    return {
+def _typed_search_limits(limit: int, *, query: str = "") -> dict[str, int]:
+    limits = {
         SEMANTIC_COLLECTION_CHUNK: _configured_role_limit(settings.MILVUS_SEMANTIC_CHUNK_TOPK, fallback=limit, limit=limit),
         SEMANTIC_COLLECTION_COGNITIVE_CARD: _configured_role_limit(settings.MILVUS_SEMANTIC_COGNITIVE_CARD_TOPK, fallback=12, limit=limit),
         SEMANTIC_COLLECTION_CARD_RELATION: _configured_role_limit(settings.MILVUS_SEMANTIC_RELATION_TOPK, fallback=12, limit=limit),
-        SEMANTIC_COLLECTION_COMMUNITY: _configured_role_limit(settings.MILVUS_SEMANTIC_COMMUNITY_TOPK, fallback=8, limit=limit),
+        SEMANTIC_COLLECTION_GRAPH_COMMUNITY_REPORT: _configured_role_limit(
+            settings.MILVUS_SEMANTIC_COMMUNITY_TOPK,
+            fallback=8,
+            limit=limit,
+        ),
     }
+    if _query_requests_projection(query):
+        limits[SEMANTIC_COLLECTION_GRAPH_COMMUNITY_PROJECTION] = (
+            _configured_role_limit(
+                settings.MILVUS_SEMANTIC_COMMUNITY_TOPK,
+                fallback=8,
+                limit=limit,
+            )
+        )
+    return limits
 
 
 def _roles_for_target_ids(target_ids: list[str]) -> tuple[str, ...]:
@@ -633,11 +647,19 @@ def _roles_for_target_ids(target_ids: list[str]) -> tuple[str, ...]:
             roles.add(SEMANTIC_COLLECTION_COGNITIVE_CARD)
         elif target_id.startswith(("kg_card_relation:", "kg_card:edge:")):
             roles.add(SEMANTIC_COLLECTION_CARD_RELATION)
-        elif target_id.startswith(("kgc:", "kg_finding:", "kg_community:")):
+        elif target_id.startswith("kg_finding:"):
             roles.add(SEMANTIC_COLLECTION_COMMUNITY)
+        elif target_id.startswith("kgc:") and target_id.endswith(":projection"):
+            roles.add(SEMANTIC_COLLECTION_GRAPH_COMMUNITY_PROJECTION)
+        elif target_id.startswith(("kgc:", "kg_community:")):
+            roles.add(SEMANTIC_COLLECTION_GRAPH_COMMUNITY_REPORT)
         elif not roles:
             return AGENT_READ_COLLECTION_ROLES
-    return tuple(role for role in AGENT_READ_COLLECTION_ROLES if role in roles)
+    ordered_roles = (
+        *AGENT_READ_COLLECTION_ROLES,
+        SEMANTIC_COLLECTION_COMMUNITY,
+    )
+    return tuple(role for role in ordered_roles if role in roles)
 
 
 def _configured_role_limit(value: int, *, fallback: int, limit: int) -> int:
@@ -704,6 +726,35 @@ def _retrieval_hit_from_milvus_hit(hit: MilvusHybridHit, *, score: float) -> Ret
             evidence_refs=evidence_refs,
             matched_fields=["milvus.cognitive_card"],
         )
+    if source_type in {
+        "kg_graph_community_fact_report",
+        "kg_graph_community_projection",
+    } and source_id:
+        is_projection = source_type == "kg_graph_community_projection"
+        return RetrievalHit(
+            hit_id=hit.chunk_id,
+            hit_type="semantic_hybrid",
+            title=_semantic_hit_title(hit, fallback=f"community:{source_id}"),
+            snippet=hit.text[:800],
+            score=score,
+            source="semantic_hybrid",
+            source_channels=["semantic_hybrid"],
+            edge_refs=[
+                str(item)
+                for item in (hit.metadata.get("edge_ids") or [])
+                if item
+            ],
+            matched_fields=[
+                (
+                    "milvus.community_projection"
+                    if is_projection
+                    else "milvus.community_fact_report"
+                )
+            ],
+            consumption_scope=(
+                "conditional_projection" if is_projection else "context"
+            ),
+        )
     if source_type in {"kg_community_report", "kg_community_insight", "kg_finding"} and source_id:
         return RetrievalHit(
             hit_id=hit.chunk_id,
@@ -739,6 +790,28 @@ def _retrieval_hit_from_milvus_hit(hit: MilvusHybridHit, *, score: float) -> Ret
         source="semantic_hybrid",
         chunk_refs=cited_chunk_ids,
         evidence_refs=evidence_refs,
+    )
+
+
+def _query_requests_projection(query: str) -> bool:
+    text = str(query or "").lower()
+    return any(
+        term in text
+        for term in (
+            "未来",
+            "预测",
+            "推演",
+            "情景",
+            "展望",
+            "后续可能",
+            "风险路径",
+            "观察指标",
+            "失效条件",
+            "time horizon",
+            "forecast",
+            "scenario",
+            "outlook",
+        )
     )
 
 

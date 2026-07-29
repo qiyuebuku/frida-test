@@ -332,7 +332,7 @@ def test_deepseek_repairs_unparseable_json_with_second_llm_call(monkeypatch):
         "output_tokens": 10,
         "total_tokens": 18,
         "prompt_cache_hit_tokens": 0,
-        "prompt_cache_miss_tokens": 0,
+        "prompt_cache_miss_tokens": 8,
         "reasoning_tokens": 0,
     }
     assert response.proxy["json_repair_attempted"] is True

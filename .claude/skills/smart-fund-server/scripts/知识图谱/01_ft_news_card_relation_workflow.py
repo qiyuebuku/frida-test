@@ -98,22 +98,14 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--thinking-type",
         choices=["enabled", "disabled"],
-        default="disabled",
-        help="仅 cards 模式：显式开启或关闭 Card 模型思考；默认 disabled",
+        default="",
+        help="仅 cards 模式：显式覆盖 Card 思考模式；默认不传，使用模型默认行为",
     )
     parser.add_argument(
         "--probe-thinking-type",
         choices=["enabled", "disabled"],
-        default="disabled",
-        help="仅 cards 模式：单独控制 Relation Probe 思考；默认 disabled",
-    )
-    parser.add_argument(
-        "--evidence-topology-preplan",
-        action="store_true",
-        help=(
-            "仅 cards 模式：强制所有 Chunk 先生成紧凑 Evidence Topology；"
-            "未指定时，复杂 Chunk 会按现有 Flash/Pro 路由阈值自动开启"
-        ),
+        default="",
+        help="仅 cards 模式：单独覆盖 Relation Probe 思考模式；默认不传",
     )
     parser.add_argument(
         "--prompt-profile",
@@ -255,7 +247,6 @@ async def run_card_validation(
         relation_probe_thinking_type=(
             str(args.probe_thinking_type or "").strip() or None
         ),
-        evidence_topology_preplan=bool(args.evidence_topology_preplan),
         prompt_profile=str(args.prompt_profile or "production").strip(),
         concurrency=concurrency,
     )
@@ -288,7 +279,6 @@ async def run_card_validation(
                 "discarded_relation_count": result.discarded_relation_count,
                 "validation_issues": list(result.validation_issues),
                 "skip_reason": result.skip_reason,
-                "evidence_topology": result.evidence_topology,
                 "llm_stage_usage": result.llm_stage_usage,
                 "cards": [
                     {
@@ -355,7 +345,6 @@ async def run_card_validation(
         "provider": str(args.provider or "").strip() or None,
         "card_thinking_type": str(args.thinking_type or "").strip() or None,
         "probe_thinking_type": str(args.probe_thinking_type or "").strip() or None,
-        "evidence_topology_preplan": bool(args.evidence_topology_preplan),
         "prompt_profile": str(args.prompt_profile or "production").strip(),
         "session_id": session_id,
         "requested_concurrency": requested_concurrency,
@@ -506,6 +495,30 @@ async def cleanup_workflow_state(*, adapter_name: str, target: str) -> dict:
             ).rowcount
             or 0
         )
+        source_card_exists = (
+            select(KnowledgeCognitiveCard.cognitive_card_id)
+            .where(
+                KnowledgeCognitiveCard.cognitive_card_id
+                == KnowledgeCardRelation.source_card_id
+            )
+            .exists()
+        )
+        target_card_exists = (
+            select(KnowledgeCognitiveCard.cognitive_card_id)
+            .where(
+                KnowledgeCognitiveCard.cognitive_card_id
+                == KnowledgeCardRelation.target_card_id
+            )
+            .exists()
+        )
+        orphan_relation_count = int(
+            session.execute(
+                delete(KnowledgeCardRelation).where(
+                    ~source_card_exists | ~target_card_exists
+                )
+            ).rowcount
+            or 0
+        )
         chunk_count = int(
             session.execute(
                 delete(KnowledgeEvidenceChunk).where(
@@ -536,7 +549,8 @@ async def cleanup_workflow_state(*, adapter_name: str, target: str) -> dict:
         "adapter_name": adapter_name,
         "target": target,
         "postgres": {
-            "card_relations": relation_count,
+            "card_relations": relation_count + orphan_relation_count,
+            "orphan_card_relations": orphan_relation_count,
             "community_assignments": assignment_count,
             "cognitive_cards": card_count,
             "evidence_chunks": chunk_count,
@@ -550,11 +564,10 @@ async def cleanup_workflow_state(*, adapter_name: str, target: str) -> dict:
 async def main_async(args: argparse.Namespace) -> None:
     if (
         str(args.provider or "").strip() or str(args.model or "").strip()
-        or bool(args.evidence_topology_preplan)
         or str(args.prompt_profile or "production").strip() != "production"
     ) and args.mode != "cards":
         raise ValueError(
-            "--model、--provider、--evidence-topology-preplan 和自定义 --prompt-profile "
+            "--model、--provider 和自定义 --prompt-profile "
             "当前仅用于 cards 质量验证模式"
         )
     session_id = args.session_id or f"ft-news-card-relation-{uuid4().hex[:12]}"
@@ -574,7 +587,6 @@ async def main_async(args: argparse.Namespace) -> None:
         "clean_before_run": args.mode == "workflow" and not args.keep_existing_data,
         "concurrency": max(1, min(20, int(args.concurrency))),
         "chunk_timeout_seconds": max(1.0, float(args.chunk_timeout)),
-        "evidence_topology_preplan": bool(args.evidence_topology_preplan),
         "prompt_profile": str(args.prompt_profile or "production").strip(),
         "session_id": session_id,
     }
@@ -621,7 +633,6 @@ async def main_async(args: argparse.Namespace) -> None:
 def _result_summary(result: dict) -> dict:
     workflow = result["workflow"]
     ingestion = workflow["ingestion"]
-    relation = workflow["relation_discovery"]
     statistics = workflow.get("relation_statistics") or {}
     total_statistics = statistics.get("total") or {}
     cross_statistics = statistics.get("cross_chunk") or {}

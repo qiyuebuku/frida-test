@@ -52,6 +52,17 @@ class CollectionStateRepository(ABC):
         ...
 
     @abstractmethod
+    def arm_backfill(
+        self,
+        aggregator: str,
+        source_name: str,
+        target_time: str,
+        cursor: Any = None,
+    ) -> bool:
+        """保留现有时间边界，将单个 source 安全切换到历史回填模式。"""
+        ...
+
+    @abstractmethod
     def disable(self, aggregator: str, source_name: str) -> bool:
         ...
 

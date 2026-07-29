@@ -49,13 +49,15 @@ def langfuse_propagation_context(
         logger.warning("Langfuse propagate_attributes unavailable: %s", exc)
         return nullcontext()
     try:
-        return propagate_attributes(
-            session_id=normalize_langfuse_session_id(session_id or _env_session_id()),
-            tags=langfuse_tags(tags),
-            metadata=_attribute_metadata(metadata or {}),
-            version=version or _env_version(),
-            trace_name=trace_name,
-        )
+        attributes = {
+            "session_id": normalize_langfuse_session_id(session_id or _env_session_id()),
+            "tags": langfuse_tags(tags),
+            "metadata": _attribute_metadata(metadata or {}),
+            "version": version or _env_version(),
+        }
+        if not _has_active_span():
+            attributes["trace_name"] = trace_name
+        return propagate_attributes(**attributes)
     except Exception as exc:
         logger.warning("Langfuse propagation context failed: %s", exc)
         return nullcontext()
@@ -222,3 +224,12 @@ def json_dumps_compact(value: Any) -> str:
     import json
 
     return json.dumps(value, ensure_ascii=False, default=str, separators=(",", ":"))
+
+
+def _has_active_span() -> bool:
+    try:
+        from opentelemetry import trace
+
+        return bool(trace.get_current_span().get_span_context().is_valid)
+    except Exception:
+        return False

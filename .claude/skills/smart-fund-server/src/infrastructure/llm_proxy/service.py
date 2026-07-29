@@ -294,7 +294,12 @@ def _llm_trace_input(request: LLMProxyRequest) -> dict[str, Any]:
         "provider_options": {
             key: value
             for key, value in (request.provider_options or {}).items()
-            if key in {"reasoning_effort", "thinking_type"}
+            if key
+            in {
+                "reasoning_effort",
+                "thinking_budget_tokens",
+                "thinking_type",
+            }
         },
         "use_cache": request.use_cache,
     }

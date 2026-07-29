@@ -15,6 +15,7 @@ from src.infrastructure.vector_store.milvus_hybrid_store import (
     MilvusHybridDocument,
     MilvusHybridStore,
     MilvusTypedHybridStore,
+    _is_transient_milvus_connection_error,
 )
 
 
@@ -202,6 +203,15 @@ def test_hybrid_search_retries_once_after_transient_connection_reset() -> None:
     assert first_client.closed is True
     assert second_client.hybrid_search_calls == 1
     assert store.connection_manager_closed == 1
+
+
+def test_milvus_channel_distribution_unavailable_is_transient() -> None:
+    error = RuntimeError(
+        "failed to search/query delegator: channel distribution is not "
+        "serviceable: channel not available"
+    )
+
+    assert _is_transient_milvus_connection_error(error) is True
 
 
 def test_hybrid_search_adds_time_range_filter() -> None:
@@ -413,6 +423,19 @@ def test_get_documents_queries_by_target_id_and_returns_hits() -> None:
     assert hits[0].metadata["node_ids"] == ["kg:financial:stock:300750"]
     assert 'target_id == "kg_chunk:ev:1:0"' in fake_client.query_calls[0]["filter"]
     assert "chunk_id ==" not in fake_client.query_calls[0]["filter"]
+    assert fake_client.query_calls[0]["consistency_level"] == "Strong"
+
+
+def test_typed_store_opens_collection_clients_lazily() -> None:
+    store = MilvusTypedHybridStore(dim=3)
+    ready_roles: list[str] = []
+
+    for role, role_store in store._stores.items():
+        role_store.ensure_ready = lambda role=role: ready_roles.append(role)  # type: ignore[method-assign]
+
+    store.ensure_ready()
+
+    assert ready_roles == [MILVUS_COLLECTION_CHUNK]
 
 
 def test_collection_registry_names_are_explicit() -> None:

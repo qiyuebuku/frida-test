@@ -29,7 +29,13 @@ class ChatContentPart(BaseModel):
 
 class ChatMessage(BaseModel):
     role: str
-    content: str | list[ChatContentPart | dict[str, Any]]
+    content: str | list[ChatContentPart | dict[str, Any]] | None = None
+    name: str | None = None
+    tool_call_id: str | None = None
+    tool_calls: list[dict[str, Any]] | None = None
+    reasoning_content: str | None = None
+
+    model_config = ConfigDict(extra="allow")
 
 
 class ResponseFormatConfig(BaseModel):
@@ -282,7 +288,11 @@ def _split_messages(messages: list[ChatMessage]) -> tuple[str | None, str]:
     return system_prompt, prompt
 
 
-def _content_to_text(content: str | list[ChatContentPart | dict[str, Any]]) -> str:
+def _content_to_text(
+    content: str | list[ChatContentPart | dict[str, Any]] | None,
+) -> str:
+    if content is None:
+        return ""
     if isinstance(content, str):
         return content
 

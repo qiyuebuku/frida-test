@@ -10,17 +10,13 @@ def test_resolve_kg_llm_model_uses_active_plan(monkeypatch):
         {
             "deepseek_balanced": {
                 "*": "deepseek-v4-flash",
-                "kg_retrieval_controller": "deepseek-v4-flash",
-                "kg_candidate_judge": "deepseek-v4-flash",
-                "kg_agentic_retrieval": "deepseek-v4-pro",
+                "kg_graph_community_report": "deepseek-v4-pro",
             }
         },
     )
 
     assert config.resolve_kg_llm_model("financial_news_extraction") == "deepseek-v4-flash"
-    assert config.resolve_kg_llm_model("kg_retrieval_controller") == "deepseek-v4-flash"
-    assert config.resolve_kg_llm_model("kg_candidate_judge") == "deepseek-v4-flash"
-    assert config.resolve_kg_llm_model("kg_agentic_retrieval") == "deepseek-v4-pro"
+    assert config.resolve_kg_llm_model("kg_graph_community_report") == "deepseek-v4-pro"
 
 
 def test_community_insight_uses_pro_model_by_default(monkeypatch):
@@ -41,4 +37,4 @@ def test_resolve_kg_llm_model_force_model_wins(monkeypatch):
         {"glm_subscription": {"*": "glm-5.1"}},
     )
 
-    assert config.resolve_kg_llm_model("kg_agentic_retrieval") == "deepseek-v4-flash"
+    assert config.resolve_kg_llm_model("kg_graph_community_report") == "deepseek-v4-flash"

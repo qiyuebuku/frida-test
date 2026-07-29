@@ -15,11 +15,7 @@
 | `1. 知识模型与领域适配设计方案.md` | 知识图谱表达什么、通用层和领域适配器如何分工、金融适配器第一版覆盖什么。 |
 | `2. 数据源投影与Source Record设计方案.md` | 业务表 Raw Row 如何变成知识编译统一输入 Source Record。 |
 | `3. 知识编译、标准化与写入设计方案.md` | Source Record 如何被编译、标准化、去重并写入可追踪主图事实。 |
-| `4. 检索与Query Context设计方案.md` | 如何通过多通道检索、候选重排和证据回读生成统一 Query Context。 |
 | `5. Wiki与消费场景设计方案.md` | Wiki 派生层如何生成，以及投研问答、事件抽取、策略解释和复盘如何消费图谱。 |
-| `6. 检索与Query Context优化方案.md` | 第 4 篇的专项优化方案，说明如何约束图谱扩展、治理候选噪声、避免 Query Context 被无关 evidence/node/edge 污染。 |
-| `7. Agentic检索候选排序优化方案.md` | 说明 Agentic 检索中 recall pool 到 judge topK 的排序级联如何优化，重点覆盖系统级检索质量评估、写入期检索增强、关键词/BM25召回补齐、rank fusion、业务特征重排、覆盖感知选择和二批 judge。 |
-| `8. 基于OpenAI Agent驱动的检索方案.md` | 说明如何在现有投影、编译、写入和索引能力不变的前提下，新增基于 `openai-agents-python` 的检索运行时，把 keyword、semantic、graph、wiki、open、rank、judge、stop verifier 等能力封装成 Tool Kernel，由 OpenAI Agent 自主调度，并与现有固定工作流做 A/B 对比。 |
 | `9. 检索索引架构重构讨论.md` | 作为检索索引架构重构的设计侧文档，说明新增能力后系统应该长什么样、整体架构图、查询链路图、数据形态图，以及 PG 确定性查询、向量语义查询、graph 按需展开、事实归并和 reranker 的核心边界。 |
 | `10. 写入侧语义索引材料设计方案.md` | 说明写入侧如何从 PG facts 派生 enriched vector docs、relation preview，并让旧 `kg_retrieval_*` / Wiki / retrieval document 退出核心检索链路。 |
 | `11. KG认知辅助层定位与证据优先检索重构讨论.md` | 明确知识图谱认知辅助层应该交付 evidence-backed cognitive package，而不是裸 node / edge。 |
@@ -30,10 +26,12 @@
 | `16. Community Topic高维信号提取验证方案.md` | 历史方案：记录原文 / Chunk -> Cognitive Card -> Community Assignment 的主题归档路线。 |
 | `17. Seed Community Topic与归档Prompt优化方案.md` | 历史方案：记录 Seed Community 和 L0 主题粒度治理。 |
 | `18. Community Assignment候选上下文账本缓存优化实施方案.md` | 历史方案：记录 Community Assignment 候选账本和前缀缓存优化。 |
-| `19. Agent检索与决策上下文设计方案.md` | 说明写入链路跑通后，如何为 Agent 提供 search / open / expand / refine 检索能力，并返回 evidence package、覆盖摘要、质量诊断和下一步搜索建议。 |
 | `20. Community Graph写入性能优化设计方案.md` | 历史方案：记录主题 Community Assignment 的 bucket、缓存、合并和并发控制。 |
 | `21. Community Insight高级认知索引设计方案.md` | 历史方案：记录在主题 Community 之上单独生成 Insight 的旧路线。 |
-| `22. 关系优先Graph Community重构设计方案.md` | 当前最新方案：先提取原子 Card，再通过 Relation Probe 按关系角色召回候选，经关系感知 Summary 筛选和双方原文核验建立 Observed / Inferred Edge，最后从关系图中发现 Graph Community，并直接生成高级认知报告和条件性推演。 |
+| `22. 关系优先Graph Community重构设计方案.md` | 当前关系图主链路：先提取原子 Card，再通过 Relation Probe 按关系角色召回候选，经关系感知 Summary 筛选和双方原文核验建立 Observed / Inferred Edge，最后从关系图中发现 Graph Community。 |
+| `23. 新增新闻驱动的关系知识图谱自动化任务工作流设计方案.md` | 说明新增新闻如何通过 Redis 任务驱动 Card、Relation Probe、跨 Chunk 关系发现、Edge 写入和 Community 刷新。 |
+| `24. 平行Graph Community图聚类与跨社区关系设计方案.md` | 定义连通分量不再直接等于 Community；大型关系区域通过图聚类形成平行 Community，小型关系簇继续保留，跨 Community Card Edge 聚合为可追溯的 Community Relation。 |
+| `26. 关系图Agent检索工具设计方案.md` | 定义 Card 搜索、Card/Community 独立展开、Card/Edge/Community 独立打开的 Agent 工具边界，以及关系图检索的使用路径和验收口径。 |
 
 ## 3. 总体设计结论
 
@@ -49,7 +47,9 @@
    - 负责把具体领域的数据解释成知识图谱可理解的实体、关系、证据和规则。
    - 当前第一版领域适配器是金融适配器。
 
-知识图谱高级认知链路以第 22 篇为当前设计基线：系统不再维护主题 Community 目录，也不再通过 Community Assignment 把 Card 归档到预先存在的主题中。Cognitive Card 必须先原子化，正式关系必须经过双方原文核验，`kg_graph_communities` 只能从有效关系图中产生。
+知识图谱高级认知链路以第 22、24 篇为当前设计基线：系统不再维护主题 Community 目录，也不再通过 Community Assignment 把 Card 归档到预先存在的主题中。Cognitive Card 必须先原子化，正式关系必须经过双方原文核验，`kg_graph_communities` 只能从有效关系图中产生。
+
+有效关系图中的连通分量只作为计算边界，不直接等于 Community。大型关系区域通过图聚类形成多个平行 Community；小型关系簇继续保留；跨 Community 的有效 Card Edge 通过派生关系投影表达，不因 Community 拆分而丢失。
 
 ## 4. 核心原则
 

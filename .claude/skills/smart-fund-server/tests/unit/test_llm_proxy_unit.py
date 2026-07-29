@@ -303,6 +303,27 @@ def test_chat_completion_helpers_map_messages_and_schema():
     assert usage["completion_tokens_details"] == {"reasoning_tokens": 0}
 
 
+def test_chat_message_accepts_tool_call_without_text_content():
+    llm_proxy = _load_llm_proxy_module()
+    message = llm_proxy.ChatMessage(
+        role="assistant",
+        content=None,
+        tool_calls=[
+            {
+                "id": "call_1",
+                "type": "function",
+                "function": {
+                    "name": "kg_card_open",
+                    "arguments": '{"card_ids":["card-1"]}',
+                },
+            }
+        ],
+    )
+
+    assert llm_proxy._content_to_text(message.content) == ""
+    assert message.model_dump(mode="json")["tool_calls"][0]["id"] == "call_1"
+
+
 def test_embeddings_endpoint_maps_remote_embedding_service(monkeypatch):
     llm_proxy = _load_llm_proxy_module()
     calls = {}

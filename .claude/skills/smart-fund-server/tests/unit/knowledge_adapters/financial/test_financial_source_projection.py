@@ -77,6 +77,66 @@ def test_ft_news_projection_dedupes_title_summary_content_text() -> None:
     assert record["raw_text"] == content
 
 
+def test_ft_news_projection_dedupes_title_when_body_inserts_stock_codes() -> None:
+    title = "培育钻石板块持续下挫，黄河旋风触及跌停"
+    content = (
+        "培育钻石（885937）板块持续下挫，黄河旋风（600172）触及跌停，"
+        "惠丰钻石跌超11%，博云新材（002297）、四方达（300179）跟跌。"
+    )
+
+    record = project_ft_news_row(
+        {
+            "id": 109537,
+            "title": title,
+            "summary": "",
+            "content": content,
+            "source": "cls",
+            "source_name": "财联社电报",
+            "source_reliability": 0.85,
+            "category": "",
+            "url": "",
+            "tags": [],
+            "related_stocks": [],
+            "published_at": datetime(2026, 7, 13, tzinfo=timezone.utc),
+            "fingerprint": "fp",
+            "created_at": datetime(2026, 7, 13, tzinfo=timezone.utc),
+        }
+    )
+
+    assert record is not None
+    assert record["raw_text"] == content
+
+
+def test_ft_news_projection_dedupes_title_when_body_inserts_short_modifier() -> None:
+    title = "存储芯片概念持续下挫 德明利触及跌停"
+    content = (
+        "财联社7月13日电，存储芯片概念盘中持续下挫，德明利触及跌停，"
+        "香农芯创跌近19%。"
+    )
+
+    record = project_ft_news_row(
+        {
+            "id": 109286,
+            "title": title,
+            "summary": "",
+            "content": content,
+            "source": "cls",
+            "source_name": "财联社电报",
+            "source_reliability": 0.85,
+            "category": "",
+            "url": "",
+            "tags": [],
+            "related_stocks": [],
+            "published_at": datetime(2026, 7, 13, tzinfo=timezone.utc),
+            "fingerprint": "fp",
+            "created_at": datetime(2026, 7, 13, tzinfo=timezone.utc),
+        }
+    )
+
+    assert record is not None
+    assert record["raw_text"] == content
+
+
 def test_ft_market_flow_projection_outputs_derived_signal() -> None:
     record = project_ft_market_flow_row(
         {

@@ -132,7 +132,11 @@ KG_RELATION_RERANK_CONCURRENCY = int(os.getenv("KG_RELATION_RERANK_CONCURRENCY",
 # Do not gate it behind an environment flag: if pymilvus or the configured
 # Milvus endpoint is unavailable, the service should fail loudly.
 MILVUS_ENABLED = True
-MILVUS_URI = _resolve_local_path_setting(os.getenv("MILVUS_URI", "./data/milvus/kg_vectors.db"))
+MILVUS_URI = _resolve_local_path_setting(
+    os.getenv("KG_MILVUS_URI")
+    or os.getenv("MILVUS_URI")
+    or "./data/milvus/kg_vectors.db"
+)
 MILVUS_TOKEN = os.getenv("MILVUS_TOKEN", "")
 MILVUS_COLLECTION = os.getenv("MILVUS_COLLECTION", "kg_evidence_chunk_vectors")
 MILVUS_CHUNK_COLLECTION = os.getenv("MILVUS_CHUNK_COLLECTION", "kg_evidence_chunks")
@@ -149,6 +153,14 @@ MILVUS_CARD_RELATION_COLLECTION = os.getenv(
 )
 MILVUS_COMMUNITY_COLLECTION = os.getenv("MILVUS_COMMUNITY_COLLECTION", "kg_community_reports")
 MILVUS_COMMUNITY_INSIGHT_COLLECTION = os.getenv("MILVUS_COMMUNITY_INSIGHT_COLLECTION", "kg_community_insights")
+MILVUS_GRAPH_COMMUNITY_REPORT_COLLECTION = os.getenv(
+    "MILVUS_GRAPH_COMMUNITY_REPORT_COLLECTION",
+    "kg_graph_community_reports",
+)
+MILVUS_GRAPH_COMMUNITY_PROJECTION_COLLECTION = os.getenv(
+    "MILVUS_GRAPH_COMMUNITY_PROJECTION_COLLECTION",
+    "kg_graph_community_projections",
+)
 MILVUS_ASSIGNMENT_BUCKET_COLLECTION = os.getenv("MILVUS_ASSIGNMENT_BUCKET_COLLECTION", "kg_assignment_bucket_cache")
 MILVUS_METRIC_TYPE = os.getenv("MILVUS_METRIC_TYPE", "COSINE")
 MILVUS_RRF_K = int(os.getenv("MILVUS_RRF_K", "60"))
@@ -278,8 +290,9 @@ def _load_gateway_model_routes() -> dict[str, list[str]]:
         "sonnet": ["claude_tmux"],
         "opus": ["claude_tmux"],
         "glm-5.1": ["claude_tmux", "glm_http"],
-        "deepseek-v4-flash": ["aliyun", "deepseek", "volcengine"],
-        "deepseek-v4-pro": ["deepseek", "aliyun", "volcengine"],
+        "glm-5.2": ["aiclient2api", "aliyun"],
+        "deepseek-v4-flash": ["aliyun"],
+        "deepseek-v4-pro": ["deepseek"],
         "qwen3.7-plus": ["aliyun"],
         "qwen3.7-max": ["aliyun"],
         "qwen-plus*": ["aliyun"],
@@ -311,6 +324,8 @@ def _load_gateway_model_aliases() -> dict[str, str]:
         {
             "glm5.1": "glm-5.1",
             "GLM-5.1": "glm-5.1",
+            "glm5.2": "glm-5.2",
+            "GLM-5.2": "glm-5.2",
             "deepseek-flash": "deepseek-v4-flash",
             "deepseek-pro": "deepseek-v4-pro",
         }
@@ -370,6 +385,32 @@ VOLCENGINE_LLM_RATE_LIMIT_COOLDOWN_SECONDS = float(
     os.getenv("VOLCENGINE_LLM_RATE_LIMIT_COOLDOWN_SECONDS", "60")
 )
 VOLCENGINE_LLM_THINKING_TYPE = os.getenv("VOLCENGINE_LLM_THINKING_TYPE", "")
+AICLIENT2API_LLM_BASE_URL = os.getenv(
+    "AICLIENT2API_LLM_BASE_URL",
+    "http://119.23.227.187:13000/v1",
+)
+AICLIENT2API_LLM_API_KEY = os.getenv(
+    "AICLIENT2API_LLM_API_KEY", ""
+) or os.getenv("AICLIENT2API_API_KEY", "")
+AICLIENT2API_LLM_DEFAULT_MODEL = os.getenv(
+    "AICLIENT2API_LLM_DEFAULT_MODEL",
+    "glm-5.2",
+)
+AICLIENT2API_LLM_TIMEOUT = float(os.getenv("AICLIENT2API_LLM_TIMEOUT", "1800"))
+AICLIENT2API_LLM_MAX_CONCURRENCY = int(
+    os.getenv("AICLIENT2API_LLM_MAX_CONCURRENCY", "5")
+)
+AICLIENT2API_LLM_RATE_LIMIT_COOLDOWN_SECONDS = float(
+    os.getenv("AICLIENT2API_LLM_RATE_LIMIT_COOLDOWN_SECONDS", "60")
+)
+AICLIENT2API_LLM_THINKING_TYPE = os.getenv(
+    "AICLIENT2API_LLM_THINKING_TYPE",
+    "",
+)
+AICLIENT2API_LLM_REASONING_EFFORT = os.getenv(
+    "AICLIENT2API_LLM_REASONING_EFFORT",
+    "",
+)
 LLM_PROXY_OPENAI_COMPATIBLE_PROVIDERS_JSON = os.getenv(
     "LLM_PROXY_OPENAI_COMPATIBLE_PROVIDERS_JSON", ""
 )
@@ -429,6 +470,30 @@ def _load_openai_compatible_provider_configs() -> list[dict]:
                 "doubao-seed-2.0-code": "doubao-seed-2-0-code-preview-260215",
             },
         },
+        "aiclient2api": {
+            "base_url": AICLIENT2API_LLM_BASE_URL,
+            "api_key": AICLIENT2API_LLM_API_KEY,
+            "default_model": AICLIENT2API_LLM_DEFAULT_MODEL,
+            "timeout": AICLIENT2API_LLM_TIMEOUT,
+            "max_concurrency": AICLIENT2API_LLM_MAX_CONCURRENCY,
+            "rate_limit_cooldown_seconds": (
+                AICLIENT2API_LLM_RATE_LIMIT_COOLDOWN_SECONDS
+            ),
+            "reasoning_style": "aiclient2api",
+            "cache_usage_style": "separate",
+            "thinking_type": AICLIENT2API_LLM_THINKING_TYPE,
+            "reasoning_effort": AICLIENT2API_LLM_REASONING_EFFORT,
+            "model_mappings": {
+                "glm-4.5": "glm-4.5",
+                "glm-4.5-air": "glm-4.5-air",
+                "glm-4.6": "glm-4.6",
+                "glm-4.7": "glm-4.7",
+                "glm-5": "glm-5",
+                "glm-5-turbo": "glm-5-turbo",
+                "glm-5.1": "glm-5.1",
+                "glm-5.2": "glm-5.2",
+            },
+        },
     }
     custom = _load_json_dict(LLM_PROXY_OPENAI_COMPATIBLE_PROVIDERS_JSON)
     for raw_name, raw_config in custom.items():
@@ -448,6 +513,7 @@ def _load_openai_compatible_provider_configs() -> list[dict]:
     allowed_fields = {
         "api_key",
         "base_url",
+        "cache_usage_style",
         "default_model",
         "enabled",
         "initial_retry_delay_seconds",
@@ -507,17 +573,41 @@ KG_COGNITIVE_CARD_SIMPLE_MODEL = os.getenv(
 KG_COGNITIVE_CARD_COMPLEX_MODEL = os.getenv(
     "KG_COGNITIVE_CARD_COMPLEX_MODEL", "deepseek-v4-pro"
 )
-KG_COGNITIVE_CARD_SIMPLE_MAX_SPANS = int(
-    os.getenv("KG_COGNITIVE_CARD_SIMPLE_MAX_SPANS", "8")
+KG_COGNITIVE_CARD_SIMPLE_MAX_SENTENCE_BLOCKS = int(
+    os.getenv("KG_COGNITIVE_CARD_SIMPLE_MAX_SENTENCE_BLOCKS", "6")
 )
 KG_COGNITIVE_CARD_SIMPLE_MAX_CHARS = int(
     os.getenv("KG_COGNITIVE_CARD_SIMPLE_MAX_CHARS", "2500")
 )
 KG_COGNITIVE_CARD_THINKING_TYPE = os.getenv(
-    "KG_COGNITIVE_CARD_THINKING_TYPE", "disabled"
+    "KG_COGNITIVE_CARD_THINKING_TYPE", ""
 )
 KG_RELATION_PROBE_THINKING_TYPE = os.getenv(
-    "KG_RELATION_PROBE_THINKING_TYPE", "disabled"
+    "KG_RELATION_PROBE_THINKING_TYPE", ""
+)
+KG_GRAPH_COMMUNITY_REPORT_QUIET_WINDOW_SECONDS = int(
+    os.getenv("KG_GRAPH_COMMUNITY_REPORT_QUIET_WINDOW_SECONDS", "300")
+)
+KG_GRAPH_COMMUNITY_CLUSTER_NODE_THRESHOLD = int(
+    os.getenv("KG_GRAPH_COMMUNITY_CLUSTER_NODE_THRESHOLD", "40")
+)
+KG_GRAPH_COMMUNITY_CLUSTER_EDGE_THRESHOLD = int(
+    os.getenv("KG_GRAPH_COMMUNITY_CLUSTER_EDGE_THRESHOLD", "80")
+)
+KG_GRAPH_COMMUNITY_LEIDEN_RESOLUTION = float(
+    os.getenv("KG_GRAPH_COMMUNITY_LEIDEN_RESOLUTION", "1.0")
+)
+KG_GRAPH_COMMUNITY_LEIDEN_MIN_MODULARITY = float(
+    os.getenv("KG_GRAPH_COMMUNITY_LEIDEN_MIN_MODULARITY", "0.05")
+)
+KG_GRAPH_COMMUNITY_MAX_CROSS_EDGE_RATIO = float(
+    os.getenv("KG_GRAPH_COMMUNITY_MAX_CROSS_EDGE_RATIO", "0.35")
+)
+KG_GRAPH_COMMUNITY_REPORT_MAX_TOKENS = int(
+    os.getenv("KG_GRAPH_COMMUNITY_REPORT_MAX_TOKENS", "10000")
+)
+KG_GRAPH_COMMUNITY_PROJECTION_MAX_TOKENS = int(
+    os.getenv("KG_GRAPH_COMMUNITY_PROJECTION_MAX_TOKENS", "7000")
 )
 
 # 知识图谱 LLM 任务模型方案。这里只选择模型名；模型到供应商的路由由 LLM Proxy 负责。
@@ -532,15 +622,14 @@ def _load_kg_llm_plans() -> dict[str, dict[str, str]]:
         "*": "deepseek-v4-flash",
         "financial_news_extraction": "deepseek-v4-flash",
         "financial_entity_normalization": "deepseek-v4-flash",
-        "kg_retrieval_controller": "deepseek-v4-flash",
-        "kg_candidate_judge": "deepseek-v4-flash",
-        "kg_agentic_retrieval": "deepseek-v4-flash",
         "simple_extraction": "deepseek-v4-flash",
         "complex_extraction": "deepseek-v4-flash",
         "query_planning": "deepseek-v4-flash",
         "summarization": "deepseek-v4-flash",
         "kg_community_report": "deepseek-v4-flash",
         "kg_community_insight": "deepseek-v4-pro",
+        "kg_graph_community_report": "deepseek-v4-pro",
+        "kg_graph_community_projection": "deepseek-v4-pro",
         "kg_cognitive_card": "deepseek-v4-flash",
         "kg_relation_candidate_screen": "deepseek-v4-flash",
         "kg_relation_evidence_verify": "deepseek-v4-pro",
@@ -554,14 +643,13 @@ def _load_kg_llm_plans() -> dict[str, dict[str, str]]:
         "deepseek_balanced": {
             **all_deepseek_flash,
             "financial_entity_normalization": "deepseek-v4-flash",
-            "kg_retrieval_controller": "deepseek-v4-flash",
-            "kg_candidate_judge": "deepseek-v4-flash",
-            "kg_agentic_retrieval": "deepseek-v4-pro",
             "complex_extraction": "deepseek-v4-pro",
             "query_planning": "deepseek-v4-pro",
             "summarization": "deepseek-v4-pro",
             "kg_community_report": "deepseek-v4-pro",
             "kg_community_insight": "deepseek-v4-pro",
+            "kg_graph_community_report": "deepseek-v4-pro",
+            "kg_graph_community_projection": "deepseek-v4-pro",
             "kg_cognitive_card": "deepseek-v4-flash",
             "kg_relation_candidate_screen": "deepseek-v4-flash",
             "kg_relation_evidence_verify": "deepseek-v4-pro",
@@ -574,9 +662,6 @@ def _load_kg_llm_plans() -> dict[str, dict[str, str]]:
             "*": "glm-5.1",
             "financial_news_extraction": "glm-5.1",
             "financial_entity_normalization": "glm-5.1",
-            "kg_retrieval_controller": "glm-5.1",
-            "kg_candidate_judge": "glm-5.1",
-            "kg_agentic_retrieval": "glm-5.1",
             "simple_extraction": "glm-5.1",
             "complex_extraction": "glm-5.1",
             "query_planning": "glm-5.1",

@@ -15,7 +15,10 @@ from src.domain.knowledge_adapters.financial.source_projection import project_ft
 from src.infrastructure.connections import get_session
 from src.infrastructure.db import redis_lock
 from src.infrastructure.persistence.models.collection import News
-from src.infrastructure.tasks.jettask_dispatcher import send_kg_relation_discovery
+from src.infrastructure.tasks.jettask_dispatcher import (
+    build_kg_news_workflow_id,
+    send_kg_relation_discovery,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -38,21 +41,40 @@ class KnowledgeNewsIngestionService:
         self._target = target
         self._knowledge_service = knowledge_service or create_knowledge_service(target=target)
 
-    async def ingest_ft_news_ids(self, news_ids: list[int]) -> dict[str, Any]:
+    async def ingest_ft_news_ids(
+        self,
+        news_ids: list[int],
+        *,
+        workflow_id: str = "",
+    ) -> dict[str, Any]:
         """编译新闻并把新增 Card 投递到独立关系发现任务。"""
 
-        return await self._run_ft_news_ids(news_ids, dispatch_relation_tasks=True)
+        return await self._run_ft_news_ids(
+            news_ids,
+            dispatch_relation_tasks=True,
+            workflow_id=workflow_id,
+        )
 
-    async def compile_ft_news_ids(self, news_ids: list[int]) -> dict[str, Any]:
+    async def compile_ft_news_ids(
+        self,
+        news_ids: list[int],
+        *,
+        workflow_id: str = "",
+    ) -> dict[str, Any]:
         """同步工作流入口：完成 Card 发布，但不额外投递关系发现消息。"""
 
-        return await self._run_ft_news_ids(news_ids, dispatch_relation_tasks=False)
+        return await self._run_ft_news_ids(
+            news_ids,
+            dispatch_relation_tasks=False,
+            workflow_id=workflow_id,
+        )
 
     async def _run_ft_news_ids(
         self,
         news_ids: list[int],
         *,
         dispatch_relation_tasks: bool,
+        workflow_id: str = "",
     ) -> dict[str, Any]:
         unique_ids = _ordered_unique_ints(news_ids)
         if not unique_ids:
@@ -63,6 +85,9 @@ class KnowledgeNewsIngestionService:
                 "compiled_evidence": 0,
                 "failed_records": 0,
             }
+        identity = str(workflow_id or "").strip() or build_kg_news_workflow_id(
+            unique_ids
+        )
 
         t0 = time.time()
         with redis_lock.acquire(KG_NEWS_INGEST_LOCK_NAME, ttl=KG_NEWS_INGEST_LOCK_TTL_SECONDS) as lock:
@@ -80,6 +105,7 @@ class KnowledgeNewsIngestionService:
                     unique_ids,
                     lock_lost,
                     dispatch_relation_tasks=dispatch_relation_tasks,
+                    workflow_id=identity,
                 )
                 result["duration_seconds"] = round(time.time() - t0, 3)
                 return result
@@ -93,6 +119,7 @@ class KnowledgeNewsIngestionService:
         lock_lost: asyncio.Event,
         *,
         dispatch_relation_tasks: bool = True,
+        workflow_id: str = "",
     ) -> dict[str, Any]:
         batches = 0
         consumed_ids = 0
@@ -118,7 +145,11 @@ class KnowledgeNewsIngestionService:
                 logger.warning("[kg_news_ingest] 未找到可用 ft_news 行: ids=%s", batch_ids)
                 continue
 
-            request_id = f"kg_news_ingest:ft_news:{batch_ids[0]}-{batch_ids[-1]}:{int(time.time())}"
+            request_id = (
+                f"{workflow_id}:batch:{start // KG_NEWS_INGEST_BATCH_SIZE}"
+                if workflow_id
+                else f"kg_news_ingest:ft_news:{batch_ids[0]}-{batch_ids[-1]}"
+            )
             result = await self._knowledge_service.compile_kg(
                 KnowledgeCompileCommand(
                     adapter_name="financial",
@@ -129,10 +160,20 @@ class KnowledgeNewsIngestionService:
                     concurrency=KG_NEWS_INGEST_COMPILE_CONCURRENCY,
                 )
             )
+            if result.failed_records:
+                failed_sources = [
+                    str(item.get("source_id") or item.get("reason") or "").strip()
+                    for item in (result.failures or [])
+                    if isinstance(item, dict)
+                ]
+                raise RuntimeError(
+                    "[kg_news_ingest] 编译批次存在失败记录，必须由 Jettask 幂等重试 "
+                    f"ids={batch_ids} failed_records={result.failed_records} "
+                    f"failures={failed_sources[:10]}"
+                )
             batches += 1
             consumed_ids += len(batch_ids)
             compiled_evidence += result.evidence
-            failed_records += result.failed_records
             cognitive_index = (result.index_refresh or {}).get("cognitive_index") or {}
             card_ids = [
                 str(item)
@@ -158,7 +199,10 @@ class KnowledgeNewsIngestionService:
             if card_ids:
                 relation_card_ids.extend(card_ids)
                 if dispatch_relation_tasks:
-                    event_ids = await send_kg_relation_discovery(card_ids)
+                    event_ids = await send_kg_relation_discovery(
+                        card_ids,
+                        workflow_id=workflow_id,
+                    )
                     relation_event_ids.extend(event_ids)
                     logger.info(
                         "[kg_news_ingest] 已投递原子 Card 到 kg_relation_discovery: cards=%s event_ids=%s",
@@ -183,6 +227,7 @@ class KnowledgeNewsIngestionService:
             "relation_card_ids": list(dict.fromkeys(relation_card_ids)),
             "relation_event_ids": relation_event_ids,
             "relation_dispatch_skipped": not dispatch_relation_tasks,
+            "workflow_id": workflow_id,
             "intra_chunk_relations": intra_chunk_relations,
             "intra_chunk_observed": intra_chunk_observed,
             "intra_chunk_inferred": intra_chunk_inferred,

@@ -189,6 +189,38 @@ class CollectionStateRepositoryImpl(CollectionStateRepository):
             logger.warning(f"reset 失败: {e}")
             return False
 
+    def arm_backfill(
+        self,
+        aggregator: str,
+        source_name: str,
+        target_time: str,
+        cursor=None,
+    ) -> bool:
+        """定向开启历史回填，保留 newest_time/oldest_time 和累计统计。"""
+        try:
+            with get_session() as s:
+                result = s.execute(
+                    update(CollectionState)
+                    .where(
+                        CollectionState.aggregator == aggregator,
+                        CollectionState.source_name == source_name,
+                    )
+                    .values(
+                        mode="backfill",
+                        target_time=target_time,
+                        backfill_status=None,
+                        cursor=cursor,
+                        last_run_at=None,
+                        consecutive_failures=0,
+                        last_error="",
+                        updated_at=func.now(),
+                    )
+                )
+                return (result.rowcount or 0) > 0
+        except Exception as e:
+            logger.warning(f"arm_backfill({aggregator},{source_name}) 失败: {e}")
+            return False
+
     def disable(self, aggregator: str, source_name: str) -> bool:
         return self._set_enabled(aggregator, source_name, False)
 

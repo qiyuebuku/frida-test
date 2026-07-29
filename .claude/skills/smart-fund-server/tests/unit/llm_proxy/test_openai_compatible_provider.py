@@ -87,6 +87,84 @@ def test_aliyun_usage_reads_nested_cached_tokens() -> None:
 
     assert usage["prompt_cache_hit_tokens"] == 2048
     assert usage["prompt_cache_miss_tokens"] == 971
+    assert usage["input_tokens"] == 3019
+    assert usage["total_tokens"] == 3123
+
+
+def test_aiclient2api_usage_combines_separate_fresh_and_cached_input() -> None:
+    usage = OpenAICompatibleProvider._normalized_usage(
+        {
+            "usage": {
+                "prompt_tokens": 554,
+                "completion_tokens": 249,
+                "total_tokens": 803,
+                "prompt_cache_hit_tokens": 1664,
+            }
+        },
+        cache_usage_style="separate",
+    )
+
+    assert usage["input_tokens"] == 2218
+    assert usage["output_tokens"] == 249
+    assert usage["total_tokens"] == 2467
+    assert usage["prompt_cache_hit_tokens"] == 1664
+    assert usage["prompt_cache_miss_tokens"] == 554
+
+
+def test_aiclient2api_usage_counts_first_request_as_cache_miss() -> None:
+    usage = OpenAICompatibleProvider._normalized_usage(
+        {
+            "usage": {
+                "prompt_tokens": 2506,
+                "completion_tokens": 554,
+                "total_tokens": 3060,
+                "prompt_cache_hit_tokens": 0,
+            }
+        },
+        cache_usage_style="separate",
+    )
+
+    assert usage["input_tokens"] == 2506
+    assert usage["total_tokens"] == 3060
+    assert usage["prompt_cache_hit_tokens"] == 0
+    assert usage["prompt_cache_miss_tokens"] == 2506
+
+
+def test_aiclient2api_diagnostics_keep_raw_and_normalized_usage() -> None:
+    provider = _provider(
+        name="aiclient2api",
+        base_url="http://127.0.0.1:3000/v1",
+        reasoning_style="aiclient2api",
+        cache_usage_style="separate",
+    )
+    provider_usage = {
+        "prompt_tokens": 554,
+        "completion_tokens": 249,
+        "total_tokens": 803,
+        "prompt_cache_hit_tokens": 1664,
+    }
+
+    diagnostics = provider._response_diagnostics(
+        {
+            "choices": [
+                {
+                    "message": {"content": "ok"},
+                    "finish_reason": "stop",
+                }
+            ],
+            "usage": provider_usage,
+        }
+    )
+
+    assert diagnostics["usage"] == {
+        "input_tokens": 2218,
+        "output_tokens": 249,
+        "total_tokens": 2467,
+        "prompt_cache_hit_tokens": 1664,
+        "prompt_cache_miss_tokens": 554,
+        "reasoning_tokens": 0,
+    }
+    assert diagnostics["provider_usage"] == provider_usage
 
 
 def test_volcengine_thinking_options_use_ark_parameter() -> None:
@@ -104,6 +182,96 @@ def test_volcengine_thinking_options_use_ark_parameter() -> None:
 
     assert payload["thinking"] == {"type": "disabled"}
     assert "enable_thinking" not in payload
+
+
+def test_aiclient2api_thinking_uses_anthropic_extra_body() -> None:
+    provider = _provider(
+        name="aiclient2api",
+        base_url="http://127.0.0.1:3000/v1",
+        reasoning_style="aiclient2api",
+    )
+
+    payload = provider._request_payload(
+        LLMProxyRequest(
+            prompt="推理",
+            provider_options={
+                "thinking_type": "enabled",
+                "reasoning_effort": "medium",
+            },
+        ),
+        _route("glm-5.2"),
+    )
+
+    assert payload["extra_body"]["anthropic"]["thinking"] == {
+        "type": "adaptive",
+        "effort": "medium",
+    }
+    assert "thinking" not in payload
+    assert "reasoning_effort" not in payload
+
+
+def test_aiclient2api_default_omits_thinking_options() -> None:
+    provider = _provider(
+        name="aiclient2api",
+        base_url="http://127.0.0.1:3000/v1",
+        reasoning_style="aiclient2api",
+        thinking_type="",
+        reasoning_effort="",
+    )
+
+    payload = provider._request_payload(
+        LLMProxyRequest(prompt="使用模型默认思考模式"),
+        _route("glm-5.2"),
+    )
+
+    assert "extra_body" not in payload
+    assert "thinking" not in payload
+    assert "enable_thinking" not in payload
+    assert "reasoning_effort" not in payload
+
+
+def test_aiclient2api_thinking_supports_explicit_budget() -> None:
+    provider = _provider(
+        name="aiclient2api",
+        base_url="http://127.0.0.1:3000/v1",
+        reasoning_style="aiclient2api",
+    )
+
+    payload = provider._request_payload(
+        LLMProxyRequest(
+            prompt="推理",
+            provider_options={
+                "thinking_type": "enabled",
+                "thinking_budget_tokens": 2048,
+            },
+        ),
+        _route("glm-5.2"),
+    )
+
+    assert payload["extra_body"]["anthropic"]["thinking"] == {
+        "type": "enabled",
+        "budget_tokens": 2048,
+    }
+
+
+def test_aiclient2api_disabled_thinking_is_explicit() -> None:
+    provider = _provider(
+        name="aiclient2api",
+        base_url="http://127.0.0.1:3000/v1",
+        reasoning_style="aiclient2api",
+    )
+
+    payload = provider._request_payload(
+        LLMProxyRequest(
+            prompt="推理",
+            provider_options={"thinking_type": "disabled"},
+        ),
+        _route("glm-5.2"),
+    )
+
+    assert payload["extra_body"]["anthropic"]["thinking"] == {
+        "type": "disabled",
+    }
 
 
 def test_provider_extra_body_cannot_override_routing_fields() -> None:

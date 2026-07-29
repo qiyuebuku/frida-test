@@ -16,8 +16,6 @@
 | `2. 知识编译与写入技术方案.md` | Source Record 编译、标准化、Fact Store 写入、证据版本治理、事实层到检索层的解耦交接。 |
 | `3. 知识建模与领域适配技术方案.md` | 通用领域模型、Adapter 协议、金融适配器、本体和置信策略。 |
 | `4. 实体标准化与规则治理技术方案.md` | 标准化规则、写入前决策、LLM 规则候选、审计和迁移。 |
-| `5. 检索与Query Context技术方案.md` | Query Anchor、三段式检索路由、候选裁判、受控图扩展、Chunk Window、Agentic Retrieval 和质量回放。 |
-| `6. Agentic检索候选排序优化技术方案.md` | Retrieval Quality Evaluation、Retrieval Document、Keyword/BM25、Rank Fusion、Feature Rerank、Coverage Selector、Stop Verifier 和排序验收。 |
 | `7. 检索索引架构重构实施方案.md` | 承接检索索引架构重构的最终设计结论，说明 PG deterministic search、Vector semantic search、Query Parser、enriched vector docs、relation preview、canonical merge、reranker、Agent graph expand 和索引一致性的实施方向。 |
 | `8. 写入侧语义索引材料适配实施方案.md` | 承接写入侧语义索引材料设计，说明 relation preview、enriched vector docs、旧派生检索材料退出和索引刷新侧的实施边界。 |
 | `9. 待优化.md` | 实施偏差、降级、妥协和后续整改记录。 |
@@ -27,11 +25,12 @@
 | `13. Milvus多集合语义索引拆分优化方案.md` | 说明 Milvus chunk/entity/relation/community 多集合拆分、各集合职责、写入刷新和查询聚合方式。 |
 | `14. Graph Index增量构建与多索引分层实施方案.md` | 承接 Graph Index 增量构建设计，说明基础分析图、Projection、层级 Community、Lineage、Dirty Subgraph、Community Change Score、Report、Delta、Finding 和 Milvus 发布的实施方案。 |
 | `18. Community Assignment候选上下文账本缓存优化实施方案.md` | 说明 Community Assignment 阶段如何使用 Redis 候选账本稳定 prompt 前缀、降低候选上下文抖动，并记录当前实现边界。 |
-| `19. Agent检索与决策上下文实施方案.md` | 说明面向 Agent 的 search / open / expand / refine 检索运行时如何基于 Community、Cognitive Card 和 Evidence/Chunk 构建 Retrieval Decision Context。 |
 | `20. Community Insight证据归属与高级认知索引实施方案.md` | 历史方案：记录基于 topic intent、Community Assignment 和独立 Insight 的旧高级认知链路。 |
 | `21. 原子Cognitive Card与Relation Probe提取实施方案.md` | 关系优先重构第一阶段：第一轮将 Chunk 提取为零到多个原子 Card 并生成 Relation Probe；至少两个有效 Card 时，在完全相同的对话前缀后追加第二轮追问判断同 Chunk 关系。PG 保存 manifest、Probe 与 Focus 引用，Milvus 发布 Summary 和 Focus Evidence 双视图。 |
 | `22. 跨Chunk Card召回与原文关系核验实施方案.md` | 关系优先重构第二阶段：Relation Discovery 使用 Summary baseline 与 PG Relation Probe 多路搜索 Summary/Focus Evidence 双视图，逐路 Summary 精排后按 Card 合并，经 LLM 初筛再精确取回双方原文核验关系。 |
 | `23. 关系图Graph Community高级认知报告与条件性预测实施方案.md` | 关系优先重构第三阶段：持久化双方证据 Edge，按关系连通子图构建 Graph Community，直接生成完整高级认知报告和隔离的条件性预测，并发布为 Agent 可直接消费的 Milvus Community target。 |
+| `24. 平行Graph Community图聚类与跨社区关系实施方案.md` | 使用连通区域作为计算边界，对大型关系区域递归执行图聚类，保留小型关系簇，并将跨分区 Card Edge 投影为 Community Relation。 |
+| `25. 关系图Agent检索工具实施方案.md` | 实现 Card 双视图召回、Card/Community 有界展开、Card/Edge/Community 精确打开、HTTP 与 Agent Tool 复用以及 Langfuse 评测链路。 |
 
 ## 3. 实施规则
 

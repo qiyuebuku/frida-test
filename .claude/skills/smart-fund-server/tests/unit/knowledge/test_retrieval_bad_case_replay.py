@@ -11,8 +11,6 @@ from src.application.dto.knowledge_dto import (
 from src.application.services import knowledge_service as knowledge_service_module
 from src.application.services.knowledge_service import KnowledgeService
 from src.domain.knowledge.enums import ConfidenceLabel, EdgeStatus, EvidenceType, NodeStatus
-from src.domain.knowledge.agentic_retrieval import RetrievalControllerDecision
-from src.domain.knowledge.retrieval_judge import DeterministicCandidateJudge
 from src.domain.knowledge.retrieval import RetrievalHit, RetrievalOptions, SemanticHybridRetriever
 from src.domain.knowledge.retrieval_eval import RetrievalBadCase, evaluate_retrieval_bad_case
 from src.domain.knowledge.schemas import CompiledEdge, CompiledEvidence, CompiledNode
@@ -92,13 +90,6 @@ class _Milvus(SemanticHybridRetriever):
         ]
 
 
-class _StopAfterSemanticStrategy:
-    async def next_decision(self, *, query, working_set, observations, constraints):
-        if not observations:
-            return RetrievalControllerDecision(next_tool="search", query_rewrites=[query])
-        return RetrievalControllerDecision(next_tool="stop", stop_reason="evidence_sufficient")
-
-
 def test_evaluate_retrieval_bad_case_reports_missing_items() -> None:
     result = evaluate_retrieval_bad_case(
         RetrievalBadCase(
@@ -167,16 +158,6 @@ async def test_service_replays_research_context_bad_cases(monkeypatch) -> None:
         "_semantic_hybrid_retriever",
         lambda: _Milvus(),
     )
-    monkeypatch.setattr(
-        knowledge_service_module,
-        "_agentic_retrieval_strategy",
-        lambda: _StopAfterSemanticStrategy(),
-    )
-    monkeypatch.setattr(
-        knowledge_service_module,
-        "_agentic_candidate_judge",
-        lambda: DeterministicCandidateJudge(),
-    )
     service = KnowledgeService(repository=_Repo())
 
     result = await service.replay_research_context_bad_cases(
@@ -210,9 +191,6 @@ async def test_service_replays_research_context_bad_cases(monkeypatch) -> None:
     assert "search" in result.results[0]["channels_used"]
     assert "open" in result.results[0]["channels_used"]
     assert result.results[0]["query_anchor"]
-    assert result.results[0]["routing_decision"]["final_mode"] in {
-        "deterministic_plan",
-        "agentic_arag",
-    }
+    assert result.results[0]["routing_decision"]["final_mode"] == "deterministic_plan"
     assert result.results[0]["candidate_judgement_summary"]["total"] >= 1
     assert sum(result.metrics["route_coverage"].values()) == 1

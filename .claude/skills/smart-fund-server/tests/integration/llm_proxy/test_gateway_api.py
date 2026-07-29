@@ -78,6 +78,51 @@ def test_chat_completion_response_is_openai_compatible(monkeypatch):
     assert gateway.requests[0].provider == "aliyun"
 
 
+def test_chat_completion_preserves_native_tool_call_messages(monkeypatch):
+    gateway = FakeGateway()
+    monkeypatch.setattr(llm_proxy, "get_llm_gateway_service", lambda: gateway)
+    tool_calls = [
+        {
+            "id": "call_search_1",
+            "type": "function",
+            "function": {
+                "name": "kg_relation_graph_search",
+                "arguments": '{"query":"原油价格"}',
+            },
+        }
+    ]
+
+    asyncio.run(
+        llm_proxy.chat_completions(
+            llm_proxy.ChatCompletionRequest(
+                model="glm-5.2",
+                messages=[
+                    llm_proxy.ChatMessage(role="user", content="分析原油价格"),
+                    llm_proxy.ChatMessage(
+                        role="assistant",
+                        content=None,
+                        tool_calls=tool_calls,
+                        reasoning_content="先检索图谱",
+                    ),
+                    llm_proxy.ChatMessage(
+                        role="tool",
+                        content='{"cards":[]}',
+                        name="kg_relation_graph_search",
+                        tool_call_id="call_search_1",
+                    ),
+                ],
+            )
+        )
+    )
+
+    messages = gateway.requests[0].messages
+    assert messages[1]["tool_calls"] == tool_calls
+    assert messages[1]["reasoning_content"] == "先检索图谱"
+    assert messages[1]["content"] is None
+    assert messages[2]["tool_call_id"] == "call_search_1"
+    assert messages[2]["name"] == "kg_relation_graph_search"
+
+
 def test_chat_completion_error_maps_to_502(monkeypatch):
     from src.infrastructure.llm_proxy.types import LLMProxyError
 

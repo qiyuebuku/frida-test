@@ -14,6 +14,8 @@ from src.domain.knowledge.retrieval_profile import profile_event, profile_span
 from src.infrastructure.config import settings
 
 logger = logging.getLogger(__name__)
+
+MILVUS_READ_AFTER_WRITE_CONSISTENCY = "Strong"
 _EMPTY_SCOPE_WARNED: set[tuple[str, str, str]] = set()
 
 
@@ -25,6 +27,8 @@ MILVUS_COLLECTION_RELATION = "relation"
 MILVUS_COLLECTION_CARD_RELATION = "card_relation"
 MILVUS_COLLECTION_COMMUNITY = "community"
 MILVUS_COLLECTION_COMMUNITY_INSIGHT = "community_insight"
+MILVUS_COLLECTION_GRAPH_COMMUNITY_REPORT = "graph_community_report"
+MILVUS_COLLECTION_GRAPH_COMMUNITY_PROJECTION = "graph_community_projection"
 MILVUS_COLLECTION_ASSIGNMENT_BUCKET = "assignment_bucket"
 MILVUS_COLLECTION_ROLES = (
     MILVUS_COLLECTION_CHUNK,
@@ -35,6 +39,8 @@ MILVUS_COLLECTION_ROLES = (
     MILVUS_COLLECTION_CARD_RELATION,
     MILVUS_COLLECTION_COMMUNITY,
     MILVUS_COLLECTION_COMMUNITY_INSIGHT,
+    MILVUS_COLLECTION_GRAPH_COMMUNITY_REPORT,
+    MILVUS_COLLECTION_GRAPH_COMMUNITY_PROJECTION,
     MILVUS_COLLECTION_ASSIGNMENT_BUCKET,
 )
 
@@ -50,6 +56,8 @@ class MilvusCollectionRegistry:
     assignment_bucket: str
     cognitive_card_focus: str = ""
     card_relation: str = ""
+    graph_community_report: str = ""
+    graph_community_projection: str = ""
 
     @classmethod
     def from_settings(cls) -> "MilvusCollectionRegistry":
@@ -61,6 +69,10 @@ class MilvusCollectionRegistry:
             card_relation=settings.MILVUS_CARD_RELATION_COLLECTION,
             community=settings.MILVUS_COMMUNITY_COLLECTION,
             community_insight=settings.MILVUS_COMMUNITY_INSIGHT_COLLECTION,
+            graph_community_report=settings.MILVUS_GRAPH_COMMUNITY_REPORT_COLLECTION,
+            graph_community_projection=(
+                settings.MILVUS_GRAPH_COMMUNITY_PROJECTION_COLLECTION
+            ),
             assignment_bucket=settings.MILVUS_ASSIGNMENT_BUCKET_COLLECTION,
             cognitive_card_focus=settings.MILVUS_COGNITIVE_CARD_FOCUS_COLLECTION,
         )
@@ -82,6 +94,16 @@ class MilvusCollectionRegistry:
             return self.community
         if collection_role == MILVUS_COLLECTION_COMMUNITY_INSIGHT:
             return self.community_insight
+        if collection_role == MILVUS_COLLECTION_GRAPH_COMMUNITY_REPORT:
+            return (
+                self.graph_community_report
+                or settings.MILVUS_GRAPH_COMMUNITY_REPORT_COLLECTION
+            )
+        if collection_role == MILVUS_COLLECTION_GRAPH_COMMUNITY_PROJECTION:
+            return (
+                self.graph_community_projection
+                or settings.MILVUS_GRAPH_COMMUNITY_PROJECTION_COLLECTION
+            )
         if collection_role == MILVUS_COLLECTION_ASSIGNMENT_BUCKET:
             return self.assignment_bucket
         raise ValueError(f"unsupported Milvus collection role: {collection_role}")
@@ -235,6 +257,7 @@ class MilvusHybridStore:
             collection_name=self.collection_name,
             schema=schema,
             index_params=index_params,
+            consistency_level=MILVUS_READ_AFTER_WRITE_CONSISTENCY,
         )
 
     def replace_chunks(
@@ -446,9 +469,8 @@ class MilvusHybridStore:
                 batch_size=len(batch),
                 total=len(target_ids),
             ):
-                rows = client.query(
-                    collection_name=self.collection_name,
-                    filter=_scoped_in_filter(
+                rows = self._query_with_connection_retry(
+                    filter_text=_scoped_in_filter(
                         adapter_name=adapter_name,
                         target=target,
                         field="target_id",
@@ -643,6 +665,7 @@ class MilvusHybridStore:
                 filter=f'adapter_name == "{_escape_filter_value(adapter_name)}" and target == "{_escape_filter_value(target)}"',
                 output_fields=["target_id"],
                 limit=1,
+                consistency_level=MILVUS_READ_AFTER_WRITE_CONSISTENCY,
             )
         except Exception:
             logger.warning(
@@ -704,6 +727,7 @@ class MilvusHybridStore:
                     filter=scope_filter,
                     limit=limit,
                     output_fields=output_fields,
+                    consistency_level=MILVUS_READ_AFTER_WRITE_CONSISTENCY,
                 )
             except Exception as exc:
                 if _is_sparse_row_error(exc):
@@ -724,6 +748,7 @@ class MilvusHybridStore:
                         filter=scope_filter,
                         limit=limit,
                         output_fields=output_fields,
+                        consistency_level=MILVUS_READ_AFTER_WRITE_CONSISTENCY,
                     )
                 if attempt == 0 and _is_transient_milvus_connection_error(exc):
                     logger.warning(
@@ -757,6 +782,7 @@ class MilvusHybridStore:
                     filter=scope_filter,
                     limit=limit,
                     output_fields=output_fields,
+                    consistency_level=MILVUS_READ_AFTER_WRITE_CONSISTENCY,
                 )
             except Exception as exc:
                 if attempt == 0 and _is_transient_milvus_connection_error(exc):
@@ -766,6 +792,37 @@ class MilvusHybridStore:
                     )
                     profile_event(
                         "milvus_store.vector_search_connection_retry",
+                        collection=self.collection_name,
+                        error=type(exc).__name__,
+                    )
+                    self._reset_client_connection()
+                    continue
+                raise
+
+    def _query_with_connection_retry(
+        self,
+        *,
+        filter_text: str,
+        output_fields: list[str],
+        limit: int,
+    ) -> Any:
+        for attempt in range(2):
+            try:
+                return self._get_client().query(
+                    collection_name=self.collection_name,
+                    filter=filter_text,
+                    output_fields=output_fields,
+                    limit=limit,
+                    consistency_level=MILVUS_READ_AFTER_WRITE_CONSISTENCY,
+                )
+            except Exception as exc:
+                if attempt == 0 and _is_transient_milvus_connection_error(exc):
+                    logger.warning(
+                        "Milvus exact query connection failed; resetting client and retrying once: %s",
+                        exc,
+                    )
+                    profile_event(
+                        "milvus_store.exact_query_connection_retry",
                         collection=self.collection_name,
                         error=type(exc).__name__,
                     )
@@ -846,9 +903,12 @@ class MilvusTypedHybridStore:
             return False
 
     def ensure_ready(self) -> None:
-        for role, store in self._stores.items():
-            with profile_span("milvus_typed_store.ensure_ready", collection_role=role):
-                store.ensure_ready()
+        # Connectivity is URI-scoped. Opening one dedicated gRPC client per
+        # collection here creates unnecessary keepalive traffic in Milvus Lite;
+        # each role opens its own client lazily when first used.
+        role, store = next(iter(self._stores.items()))
+        with profile_span("milvus_typed_store.ensure_ready", collection_role=role):
+            store.ensure_ready()
 
     def close(self) -> None:
         for store in self._stores.values():
@@ -927,7 +987,7 @@ class MilvusTypedHybridStore:
         kg_version: str = "",
     ) -> int:
         total = 0
-        for role in MILVUS_COLLECTION_ROLES:
+        for role in self._stores:
             if role == MILVUS_COLLECTION_COMMUNITY_INSIGHT and not documents_by_role.get(role):
                 continue
             total += self.store_for(role).replace_documents(
@@ -1267,6 +1327,9 @@ def _is_transient_milvus_connection_error(exc: Exception) -> bool:
         "grpc_status:14",
         "server unavailable",
         "fail connecting to server",
+        "channel distribution is not serviceable",
+        "channel not available",
+        "failed to search/query delegator",
         "channel_ready",
         "futuretimeouterror",
         "too_many_pings",

@@ -9,11 +9,6 @@ from typing import Any, Literal
 from uuid import uuid4
 
 from src.application.dto.knowledge_dto import (
-    KnowledgeAgentExpandCommand,
-    KnowledgeAgentOpenCommand,
-    KnowledgeAgentRefineCommand,
-    KnowledgeAgentRetrievalContextDTO,
-    KnowledgeAgentSearchCommand,
     KnowledgeBadCaseReplayCommand,
     KnowledgeBadCaseReplayResultDTO,
     KnowledgeBootstrapStockNewsCommand,
@@ -49,27 +44,10 @@ from src.application.services.knowledge_adapter_registry import get_adapter, lis
 from src.application.services.knowledge_source_projection_service import (
     KnowledgeSourceProjectionService,
 )
-from src.application.services.llm_agentic_retrieval_strategy import LLMAgenticRetrievalStrategy
-from src.application.services.llm_candidate_judge import LLMCandidateJudge
 from src.application.services.graph_index_reporter import GraphIndexLLMReporter
 from src.application.services.graph_index_profiles import FINANCIAL_GRAPH_PROJECTIONS, GRAPH_INDEX_PUBLIC_LENS_ALIASES
 from src.application.services.atomic_cognitive_card_service import AtomicCognitiveCardStageService
 from src.application.services.card_relation_write_service import CardRelationWriteService
-from src.application.services.openai_agents_retrieval_runtime import (
-    OpenAIAgentsRetrievalRuntime,
-)
-from src.domain.knowledge.agentic_retrieval import (
-    AgenticRetrievalConstraints,
-    AgenticRetrievalController,
-)
-from src.domain.knowledge.agent_retrieval_context import (
-    AgentExpandRequest,
-    AgentOpenRequest,
-    AgentRefineRequest,
-    AgentRetrievalContextFacade,
-    AgentSearchRequest,
-    AgentTimeRange,
-)
 from src.domain.knowledge.adapter import DomainAdapter
 from src.domain.knowledge.chunking import build_chunks_for_compiled_evidence
 from src.domain.knowledge.compiler import KnowledgeCompiler
@@ -102,7 +80,6 @@ from src.domain.knowledge.retrieval import (
     HybridRetrievalRuntime,
     RetrievalOptions,
     RetrievalTrace,
-    _inherit_evidence_scores,
 )
 from src.domain.knowledge.retrieval_profile import profile_span
 from src.domain.knowledge.retrieval_anchor import build_guarded_query_anchor
@@ -118,7 +95,7 @@ from src.domain.knowledge.retrieval_eval import (
     evaluate_retrieval_bad_case,
 )
 from src.domain.knowledge.retrieval_trace_replay import replay_retrieval_trace
-from src.domain.knowledge.retrieval_tools import RetrievalToolCall, RetrievalToolRegistry
+from src.domain.knowledge.retrieval_tools import RetrievalToolRegistry
 from src.domain.knowledge.repositories import (
     KnowledgeRepository,
     KnowledgeSourceProjectionRepository,
@@ -203,10 +180,7 @@ class KnowledgeService:
                 "source_projection",
                 "quality_scan",
                 "reviews",
-                "agent_search",
-                "agent_open",
-                "agent_expand",
-                "agent_refine",
+                "relation_graph_agent_tools",
             ],
         )
 
@@ -226,116 +200,6 @@ class KnowledgeService:
             target=self.target,
             kg_version="seed_bootstrap",
         )
-
-    async def agent_search(self, command: KnowledgeAgentSearchCommand) -> KnowledgeAgentRetrievalContextDTO:
-        metadata = _knowledge_command_metadata(command)
-        with langfuse_propagation_context(
-            trace_name=f"kg.agent_search:{command.adapter_name}",
-            session_id=command.session_id,
-            tags=["kg", "agent-retrieval", "search"],
-            metadata=metadata,
-        ):
-            with langfuse_observation(name="kg.agent_search", as_type="chain", input=metadata, metadata=metadata):
-                facade = self._agent_retrieval_facade()
-                context = await facade.search(
-                    AgentSearchRequest(
-                        query=command.query,
-                        adapter_name=command.adapter_name,
-                        target=command.target,
-                        session_id=command.session_id,
-                        limit=command.limit,
-                        candidate_limit=command.candidate_limit,
-                        sort=command.sort,
-                        time_range=AgentTimeRange(start=command.time_start, end=command.time_end)
-                        if command.time_start or command.time_end
-                        else None,
-                        max_chars=command.max_chars,
-                        focus_aspects=command.focus_aspects,
-                    )
-                )
-                langfuse_update_span(output=_agent_trace_output(context), status_message="completed")
-                return _agent_context_dto(context)
-
-    async def agent_open(self, command: KnowledgeAgentOpenCommand) -> KnowledgeAgentRetrievalContextDTO:
-        metadata = _knowledge_command_metadata(command)
-        with langfuse_propagation_context(
-            trace_name=f"kg.agent_open:{command.adapter_name}",
-            session_id=command.session_id,
-            tags=["kg", "agent-retrieval", "open"],
-            metadata=metadata,
-        ):
-            with langfuse_observation(name="kg.agent_open", as_type="chain", input=metadata, metadata=metadata):
-                facade = self._agent_retrieval_facade()
-                context = await facade.open(
-                    AgentOpenRequest(
-                        target_ids=command.target_ids,
-                        query=command.query,
-                        adapter_name=command.adapter_name,
-                        target=command.target,
-                        session_id=command.session_id,
-                        include_neighbors=command.include_neighbors,
-                        limit=command.limit,
-                        max_chars=command.max_chars,
-                    )
-                )
-                langfuse_update_span(output=_agent_trace_output(context), status_message="completed")
-                return _agent_context_dto(context)
-
-    async def agent_expand(self, command: KnowledgeAgentExpandCommand) -> KnowledgeAgentRetrievalContextDTO:
-        metadata = _knowledge_command_metadata(command)
-        with langfuse_propagation_context(
-            trace_name=f"kg.agent_expand:{command.adapter_name}",
-            session_id=command.session_id,
-            tags=["kg", "agent-retrieval", "expand"],
-            metadata=metadata,
-        ):
-            with langfuse_observation(name="kg.agent_expand", as_type="chain", input=metadata, metadata=metadata):
-                facade = self._agent_retrieval_facade()
-                context = await facade.expand(
-                    AgentExpandRequest(
-                        target_id=command.target_id,
-                        query=command.query,
-                        adapter_name=command.adapter_name,
-                        target=command.target,
-                        session_id=command.session_id,
-                        direction=command.direction,
-                        limit=command.limit,
-                        max_chars=command.max_chars,
-                    )
-                )
-                langfuse_update_span(output=_agent_trace_output(context), status_message="completed")
-                return _agent_context_dto(context)
-
-    async def agent_refine(self, command: KnowledgeAgentRefineCommand) -> KnowledgeAgentRetrievalContextDTO:
-        metadata = _knowledge_command_metadata(command)
-        with langfuse_propagation_context(
-            trace_name=f"kg.agent_refine:{command.adapter_name}",
-            session_id=command.session_id,
-            tags=["kg", "agent-retrieval", "refine"],
-            metadata=metadata,
-        ):
-            with langfuse_observation(name="kg.agent_refine", as_type="chain", input=metadata, metadata=metadata):
-                facade = self._agent_retrieval_facade()
-                context = await facade.refine(
-                    AgentRefineRequest(
-                        query=command.query,
-                        adapter_name=command.adapter_name,
-                        target=command.target,
-                        session_id=command.session_id,
-                        limit=command.limit,
-                        candidate_limit=command.candidate_limit,
-                        sort=command.sort,
-                        time_range=AgentTimeRange(start=command.time_start, end=command.time_end)
-                        if command.time_start or command.time_end
-                        else None,
-                        max_chars=command.max_chars,
-                        focus_aspects=command.focus_aspects,
-                        previous_context=command.previous_context,
-                        refinement=command.refinement,
-                    )
-                )
-                langfuse_update_span(output=_agent_trace_output(context), status_message="completed")
-                return _agent_context_dto(context)
 
     async def compile_kg(self, command: KnowledgeCompileCommand) -> KnowledgeCompileResultDTO:
         metadata = _knowledge_command_metadata(command)
@@ -401,7 +265,11 @@ class KnowledgeService:
         result = await compiler.compile(adapter, inputs)
         result.failed_records[:0] = normalize_failures
         index_refresh = (
-            await self._refresh_incremental_indexes(result, command.target)
+            await self._refresh_incremental_indexes(
+                result,
+                command.target,
+                workflow_id=command.request_id or "",
+            )
             if self.repository is not None and not command.dry_run
             else {}
         )
@@ -879,21 +747,6 @@ class KnowledgeService:
                 RetrievalQualityMetrics.model_validate(context.trace.retrieval_metrics),
                 anchor,
             )
-        if routing.upgraded and routing.final_mode == "agentic_arag":
-            context = await self._build_research_answer_context(
-                command.query,
-                options,
-                retrieval_plan=None,
-                retrieval_mode="agentic_arag",
-            )
-            if context.trace.retrieval_metrics:
-                routing = routing.model_copy(
-                    update={
-                        "metrics": RetrievalQualityMetrics.model_validate(
-                            context.trace.retrieval_metrics
-                        )
-                    }
-                )
         context.trace.routing_decision.update(routing.model_dump(mode="json"))
         trace = dto_to_dict(context.trace)
         hard_score_edges = [
@@ -925,7 +778,6 @@ class KnowledgeService:
             retrieval_channels_used=context.trace.channels_used,
             semantic_enabled=context.trace.semantic_enabled,
             milvus_enabled=context.trace.milvus_enabled,
-            agentic_enabled=context.trace.agentic_enabled,
             planner_enabled=context.trace.planner_enabled,
             retrieval_plan=(
                 dto_to_dict(retrieval_plan)
@@ -1115,7 +967,6 @@ class KnowledgeService:
             retrieval_channels_used=context.trace.channels_used,
             semantic_enabled=context.trace.semantic_enabled,
             milvus_enabled=context.trace.milvus_enabled,
-            agentic_enabled=context.trace.agentic_enabled,
             planner_enabled=context.trace.planner_enabled,
             retrieval_trace=dto_to_dict(context.trace),
             warnings=list(context.trace.warnings),
@@ -1175,82 +1026,6 @@ class KnowledgeService:
             repository,
             semantic_retriever=_semantic_hybrid_retriever(),
         )
-        if retrieval_mode in {"agentic_arag", "openai_agents_arag"}:
-            registry = _retrieval_tool_registry(runtime, options)
-            bootstrap_first = retrieval_mode == "openai_agents_arag"
-            with profile_span(
-                "kg_context.agentic_run",
-                mode=retrieval_mode,
-                bootstrap_first=bootstrap_first,
-                query=_clip_text(query, 120),
-            ):
-                if bootstrap_first:
-                    constraints = AgenticRetrievalConstraints(
-                        max_hits=options.max_hits,
-                        max_turns=12,
-                        max_tool_calls=12,
-                    )
-                    agentic = await OpenAIAgentsRetrievalRuntime(
-                        registry,
-                        _agentic_retrieval_strategy(),
-                        _agentic_candidate_judge(),
-                        constraints,
-                    ).run(query)
-                else:
-                    constraints = AgenticRetrievalConstraints(max_hits=options.max_hits)
-                    agentic = await AgenticRetrievalController(
-                        registry,
-                        _agentic_retrieval_strategy(),
-                        _agentic_candidate_judge(),
-                        constraints,
-                    ).run(query)
-            hits = list(agentic.hits)
-            trace = agentic.trace
-            if retrieval_mode != "openai_agents_arag" and agentic.evidence_refs and "open" not in trace.channels_used:
-                with profile_span(
-                    "kg_context.agentic_missing_open",
-                    evidence_count=len(agentic.evidence_refs),
-                ):
-                    chunk_result = await registry.execute(
-                        RetrievalToolCall(
-                            tool="open",
-                            evidence_ids=agentic.evidence_refs,
-                            limit=options.evidence_limit,
-                        )
-                    )
-                chunk_hits = _inherit_evidence_scores(chunk_result.hits, hits)
-                hits.extend(chunk_hits)
-                trace = trace.model_copy(
-                    update={
-                        "channels_used": _ordered_unique([*trace.channels_used, "open"]),
-                        "steps": [*trace.steps, chunk_result.step],
-                    }
-                )
-            with profile_span(
-                "kg_context.build_from_agentic_hits",
-                hits=len(hits),
-                evidence_refs=len(agentic.evidence_refs),
-            ):
-                context = runtime.build_answer_context_from_hits(
-                    query=query,
-                    hits=hits,
-                    options=options,
-                    trace=trace,
-                    apply_judgement=retrieval_mode != "openai_agents_arag",
-                )
-            _save_retrieval_trace_snapshot(
-                repository,
-                query=query,
-                options=options,
-                context=context,
-                strategy_name=retrieval_mode,
-                strategy_version=(
-                    "bootstrap_first_agent_loop_v1"
-                    if bootstrap_first
-                    else "rrf_feature_coverage_v1"
-                ),
-            )
-            return context
         if retrieval_plan is None:
             context = await runtime.build_answer_context_async(query, options)
             _save_retrieval_trace_snapshot(
@@ -1436,6 +1211,8 @@ class KnowledgeService:
         self,
         result: CompileResult,
         target: Target,
+        *,
+        workflow_id: str = "",
     ) -> dict[str, Any]:
         repository = self._require_repository()
         if not result.nodes and not result.edges and not result.evidence:
@@ -1506,6 +1283,7 @@ class KnowledgeService:
                 result=result,
                 target=target,
                 changed_chunks=semantic_materials.chunks,
+                workflow_id=workflow_id,
             )
             graph_index = {
                 "status": "pending_relation_graph_phase",
@@ -1583,18 +1361,6 @@ class KnowledgeService:
             raise RuntimeError("Knowledge repository is required for this use case")
         return self.repository
 
-    def _agent_retrieval_facade(self) -> AgentRetrievalContextFacade:
-        return AgentRetrievalContextFacade(
-            repository=self._require_repository(),
-            semantic_retriever=_semantic_hybrid_retriever(),
-            reranker_client=RerankerClient(
-                base_url=settings.RERANKER_URL,
-                timeout=settings.RERANKER_TIMEOUT,
-                max_documents=settings.RERANKER_MAX_DOCUMENTS,
-            ),
-        )
-
-
 Target = Literal["prod", "test"]
 
 
@@ -1604,6 +1370,7 @@ async def _refresh_cognitive_index(
     result: CompileResult,
     target: Target,
     changed_chunks: list[EvidenceChunk],
+    workflow_id: str = "",
 ) -> dict[str, Any]:
     semantic_retriever = _semantic_hybrid_retriever()
     stage = AtomicCognitiveCardStageService(
@@ -1612,6 +1379,7 @@ async def _refresh_cognitive_index(
         relation_writer=CardRelationWriteService(
             knowledge_repository=repository,
             semantic_retriever=semantic_retriever,
+            workflow_id=workflow_id,
         ),
     )
     result_stage = await stage.refresh(
@@ -2733,39 +2501,6 @@ def _semantic_hybrid_retriever():
     return _SEMANTIC_HYBRID_RETRIEVER
 
 
-def _agent_context_dto(context) -> KnowledgeAgentRetrievalContextDTO:
-    payload = context.model_dump(mode="json")
-    return KnowledgeAgentRetrievalContextDTO(
-        query=payload.get("query") or "",
-        session_id=payload.get("session_id"),
-        mode=payload.get("mode") or "",
-        request=payload.get("request") or {},
-        evidence_package=payload.get("evidence_package") or [],
-        coverage_summary=payload.get("coverage_summary") or {},
-        quality_diagnostics=payload.get("quality_diagnostics") or {},
-        available_operations=payload.get("available_operations") or [],
-        trace=payload.get("trace") or {},
-    )
-
-
-def _agent_trace_output(context) -> dict[str, Any]:
-    payload = context.model_dump(mode="json")
-    packages = payload.get("evidence_package") or []
-    return {
-        "mode": payload.get("mode"),
-        "result_count": len(packages),
-        "result_ids": [item.get("result_id") for item in packages[:20] if isinstance(item, dict)],
-        "layer_counts": (
-            payload.get("quality_diagnostics", {})
-            .get("diversity", {})
-            .get("layer_counts", {})
-        ),
-        "coverage_summary": payload.get("coverage_summary") or {},
-        "available_operations": payload.get("available_operations") or [],
-        "trace": payload.get("trace") or {},
-    }
-
-
 def _semantic_index_materials_for_result(
     repository: KnowledgeRepository,
     result: CompileResult,
@@ -2902,14 +2637,6 @@ def _sum_step_metric(result: dict[str, Any], metric: str) -> int:
         if isinstance(step_result, dict):
             total += int(step_result.get(metric) or 0)
     return total
-
-
-def _agentic_retrieval_strategy():
-    return LLMAgenticRetrievalStrategy()
-
-
-def _agentic_candidate_judge():
-    return LLMCandidateJudge()
 
 
 def _graph_time_window_for_plan(
@@ -3130,7 +2857,6 @@ def _bad_case_replay_metrics(results: list[dict[str, Any]]) -> dict[str, Any]:
     passed = sum(1 for item in results if item.get("passed"))
     channel_counts: dict[str, int] = {}
     route_counts: dict[str, int] = {}
-    upgraded = 0
     total_metrics = {
         "hits": 0,
         "evidence_refs": 0,
@@ -3146,8 +2872,6 @@ def _bad_case_replay_metrics(results: list[dict[str, Any]]) -> dict[str, Any]:
         routing = item.get("routing_decision") or {}
         route = str(routing.get("final_mode") or item.get("retrieval_mode") or "unknown")
         route_counts[route] = route_counts.get(route, 0) + 1
-        if routing.get("upgraded"):
-            upgraded += 1
         metrics = item.get("metrics") or {}
         for name in total_metrics:
             total_metrics[name] += int(metrics.get(name) or 0)
@@ -3159,7 +2883,6 @@ def _bad_case_replay_metrics(results: list[dict[str, Any]]) -> dict[str, Any]:
         "pass_rate": (passed / total) if total else 0.0,
         "channel_coverage": channel_counts,
         "route_coverage": route_counts,
-        "upgraded": upgraded,
         "avg_hits": (total_metrics["hits"] / total) if total else 0.0,
         "avg_evidence_refs": (total_metrics["evidence_refs"] / total) if total else 0.0,
         "avg_matched_nodes": (total_metrics["matched_nodes"] / total) if total else 0.0,

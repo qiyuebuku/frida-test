@@ -92,39 +92,73 @@ CREATE TABLE IF NOT EXISTS public.kg_evidence_chunks (
     created_at timestamp with time zone DEFAULT now()
 );
 
-CREATE SEQUENCE IF NOT EXISTS public.kg_graph_community_id_seq;
-
 CREATE TABLE IF NOT EXISTS public.kg_graph_communities (
     community_id character varying(180) PRIMARY KEY,
-    id bigint DEFAULT nextval('public.kg_graph_community_id_seq'::regclass),
-    version_id character varying(220) NOT NULL,
     adapter_name character varying(64) NOT NULL,
-    projection character varying(64) NOT NULL,
-    level integer NOT NULL DEFAULT 0,
-    parent_community_id character varying(180) NOT NULL DEFAULT '',
-    title text NOT NULL,
-    summary text NOT NULL DEFAULT '',
-    member_node_ids jsonb NOT NULL DEFAULT '[]'::jsonb,
+    identity_anchor_card_id character varying(180) NOT NULL,
+    member_card_ids jsonb NOT NULL DEFAULT '[]'::jsonb,
     member_edge_ids jsonb NOT NULL DEFAULT '[]'::jsonb,
-    evidence_ids jsonb NOT NULL DEFAULT '[]'::jsonb,
-    chunk_ids jsonb NOT NULL DEFAULT '[]'::jsonb,
-    metrics jsonb NOT NULL DEFAULT '{}'::jsonb,
-    status character varying(32) NOT NULL DEFAULT 'active',
-    previous_version_id character varying(220) NOT NULL DEFAULT '',
-    change_reason character varying(64) NOT NULL DEFAULT 'build',
-    lineage_id character varying(180) NOT NULL DEFAULT '',
-    previous_community_ids jsonb NOT NULL DEFAULT '[]'::jsonb,
-    last_insight_generated_at timestamp with time zone,
+    graph_fingerprint character varying(64) NOT NULL,
+    graph_version integer NOT NULL DEFAULT 1,
+    graph_status character varying(32) NOT NULL DEFAULT 'active',
+    title text NOT NULL DEFAULT '',
+    fact_report text NOT NULL DEFAULT '',
+    fact_referenced_card_ids jsonb NOT NULL DEFAULT '[]'::jsonb,
+    fact_referenced_edge_ids jsonb NOT NULL DEFAULT '[]'::jsonb,
+    fact_report_version integer NOT NULL DEFAULT 0,
+    fact_report_generator_version character varying(96) NOT NULL DEFAULT '',
+    fact_report_graph_fingerprint character varying(64) NOT NULL DEFAULT '',
+    fact_report_status character varying(32) NOT NULL DEFAULT 'missing',
+    fact_report_error text NOT NULL DEFAULT '',
+    report_task_dispatched_fingerprint character varying(64) NOT NULL DEFAULT '',
+    fact_semantic_synced_version character varying(64) NOT NULL DEFAULT '',
+    conditional_projections jsonb NOT NULL DEFAULT '[]'::jsonb,
+    projection_version integer NOT NULL DEFAULT 0,
+    projection_generator_version character varying(96) NOT NULL DEFAULT '',
+    projection_graph_fingerprint character varying(64) NOT NULL DEFAULT '',
+    projection_fact_report_version integer NOT NULL DEFAULT 0,
+    projection_status character varying(32) NOT NULL DEFAULT 'missing',
+    projection_error text NOT NULL DEFAULT '',
+    projection_task_dispatched_version integer NOT NULL DEFAULT 0,
+    projection_semantic_synced_version character varying(64) NOT NULL DEFAULT '',
+    graph_changed_at timestamp with time zone DEFAULT now(),
+    fact_report_generated_at timestamp with time zone,
+    projection_generated_at timestamp with time zone,
     created_at timestamp with time zone DEFAULT now(),
     updated_at timestamp with time zone DEFAULT now()
 );
 
-ALTER TABLE IF EXISTS public.kg_graph_communities
-    ADD COLUMN IF NOT EXISTS id bigint;
-ALTER TABLE IF EXISTS public.kg_graph_communities
-    ALTER COLUMN id SET DEFAULT nextval('public.kg_graph_community_id_seq'::regclass);
-ALTER TABLE IF EXISTS public.kg_graph_communities
-    ADD COLUMN IF NOT EXISTS last_insight_generated_at timestamp with time zone;
+CREATE TABLE IF NOT EXISTS public.kg_graph_community_relations (
+    id character varying(180) PRIMARY KEY,
+    source_community_id character varying(180) NOT NULL,
+    target_community_id character varying(180) NOT NULL,
+    relation_kind character varying(48) NOT NULL,
+    supporting_edge_ids jsonb NOT NULL DEFAULT '[]'::jsonb,
+    observed_edge_count integer NOT NULL DEFAULT 0,
+    inferred_edge_count integer NOT NULL DEFAULT 0,
+    relation_fingerprint character varying(64) NOT NULL,
+    status character varying(32) NOT NULL DEFAULT 'active',
+    created_at timestamp with time zone DEFAULT now(),
+    updated_at timestamp with time zone DEFAULT now(),
+    CONSTRAINT uq_kg_graph_community_relations_pair_kind
+        UNIQUE (source_community_id, target_community_id, relation_kind),
+    CONSTRAINT ck_kg_graph_community_relations_distinct_endpoints
+        CHECK (source_community_id <> target_community_id),
+    CONSTRAINT ck_kg_graph_community_relations_status
+        CHECK (status IN ('active'))
+);
+
+CREATE INDEX IF NOT EXISTS ix_kg_graph_community_relations_source_status
+    ON public.kg_graph_community_relations(source_community_id, status);
+CREATE INDEX IF NOT EXISTS ix_kg_graph_community_relations_target_status
+    ON public.kg_graph_community_relations(target_community_id, status);
+CREATE INDEX IF NOT EXISTS ix_kg_graph_community_relations_kind_status
+    ON public.kg_graph_community_relations(relation_kind, status);
+
+COMMENT ON TABLE public.kg_graph_community_relations IS
+    '由跨平行 Community 的 active Card Edge 聚合生成的当前态关系投影';
+COMMENT ON COLUMN public.kg_graph_community_relations.supporting_edge_ids IS
+    '支持当前 Community 关系的 kg_card_relations.id 列表';
 
 CREATE TABLE IF NOT EXISTS public.kg_community_insights (
     insight_id character varying(220) PRIMARY KEY,
@@ -161,6 +195,7 @@ CREATE TABLE IF NOT EXISTS public.kg_cognitive_cards (
     focus_evidence_refs jsonb NOT NULL DEFAULT '[]'::jsonb,
     focus_span_offsets jsonb NOT NULL DEFAULT '[]'::jsonb,
     relation_probes jsonb NOT NULL DEFAULT '[]'::jsonb,
+    fact_id character varying(180) NOT NULL DEFAULT '',
     schema_version character varying(96) NOT NULL DEFAULT '',
     generator_version character varying(96) NOT NULL DEFAULT '',
     status character varying(32) NOT NULL DEFAULT 'active',
@@ -172,6 +207,7 @@ COMMENT ON TABLE public.kg_cognitive_cards IS '原子 Cognitive Card manifest；
 COMMENT ON COLUMN public.kg_cognitive_cards.focus_evidence_refs IS 'Card 焦点原文 Span Ref 列表';
 COMMENT ON COLUMN public.kg_cognitive_cards.focus_span_offsets IS '焦点 Span 在 primary chunk 中的 offset 指针';
 COMMENT ON COLUMN public.kg_cognitive_cards.relation_probes IS '跨 Chunk 关系发现使用的候选事件搜索方向，不代表正式关系';
+COMMENT ON COLUMN public.kg_cognitive_cards.fact_id IS '由 active observed same_fact 关系投影得到的等价事实分组 ID；无匹配时为 Card 单例事实';
 
 CREATE TABLE IF NOT EXISTS public.kg_community_assignments (
     assignment_id character varying(180) PRIMARY KEY,
@@ -340,14 +376,16 @@ CREATE INDEX IF NOT EXISTS ix_kg_evidence_chunks_evidence
 CREATE INDEX IF NOT EXISTS ix_kg_evidence_chunks_evidence_index
     ON public.kg_evidence_chunks(evidence_id, chunk_index);
 
-CREATE INDEX IF NOT EXISTS ix_kg_graph_communities_adapter_projection
-    ON public.kg_graph_communities(adapter_name, projection);
-CREATE INDEX IF NOT EXISTS ix_kg_graph_communities_id
-    ON public.kg_graph_communities(id);
-CREATE INDEX IF NOT EXISTS ix_kg_graph_communities_parent
-    ON public.kg_graph_communities(parent_community_id);
-CREATE INDEX IF NOT EXISTS ix_kg_graph_communities_status
-    ON public.kg_graph_communities(status);
+CREATE INDEX IF NOT EXISTS ix_kg_graph_communities_adapter_graph_status
+    ON public.kg_graph_communities(adapter_name, graph_status);
+CREATE INDEX IF NOT EXISTS ix_kg_graph_communities_anchor
+    ON public.kg_graph_communities(identity_anchor_card_id);
+CREATE INDEX IF NOT EXISTS ix_kg_graph_communities_fact_status
+    ON public.kg_graph_communities(fact_report_status);
+CREATE INDEX IF NOT EXISTS ix_kg_graph_communities_projection_status
+    ON public.kg_graph_communities(projection_status);
+CREATE INDEX IF NOT EXISTS ix_kg_graph_communities_graph_fingerprint
+    ON public.kg_graph_communities(graph_fingerprint);
 CREATE INDEX IF NOT EXISTS ix_kg_community_insights_adapter_status
     ON public.kg_community_insights(adapter_name, status);
 CREATE INDEX IF NOT EXISTS ix_kg_community_insights_community
@@ -363,6 +401,8 @@ CREATE INDEX IF NOT EXISTS ix_kg_cognitive_cards_chunk
     ON public.kg_cognitive_cards(primary_chunk_id);
 CREATE INDEX IF NOT EXISTS ix_kg_cognitive_cards_source
     ON public.kg_cognitive_cards(adapter_name, source_type, source_id);
+CREATE INDEX IF NOT EXISTS ix_kg_cognitive_cards_fact
+    ON public.kg_cognitive_cards(adapter_name, fact_id, status);
 
 CREATE INDEX IF NOT EXISTS ix_kg_community_assignments_adapter_status
     ON public.kg_community_assignments(adapter_name, status);

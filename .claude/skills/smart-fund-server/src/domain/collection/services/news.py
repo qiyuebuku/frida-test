@@ -1,14 +1,16 @@
 """新闻事件聚合 (P0)
 
-数据源: 财联社电报、财联社深度、政府网站、人民银行(OMO+货币政策)、
+数据源: 财联社电报、财联社深度、财联社热门文章、政府网站、人民银行(OMO+货币政策)、
         东方财富(资讯+研报)、同花顺资讯、新浪财经、雪球快讯
 目标表: ft_news
 """
 
+import asyncio
 import hashlib
-import json
+import html
 import logging
-from datetime import datetime, timezone, timedelta
+import re
+from datetime import datetime, timedelta, timezone
 
 from src.domain.collection.services.base import BaseAggregator, SourceDef
 
@@ -159,6 +161,19 @@ def _classify_by_keywords(text: str) -> str:
     return ""
 
 
+def _html_to_text(content: str) -> str:
+    """将文章正文 HTML 转为保留自然段的纯文本。"""
+    if not content:
+        return ""
+    text = re.sub(r"<(script|style)[^>]*>.*?</\1>", "", content, flags=re.DOTALL | re.IGNORECASE)
+    text = re.sub(r"<br\s*/?>", "\n", text, flags=re.IGNORECASE)
+    text = re.sub(r"</?(?:p|div|h[1-6]|li|blockquote)[^>]*>", "\n", text, flags=re.IGNORECASE)
+    text = re.sub(r"<[^>]+>", "", text)
+    text = html.unescape(text).replace("\u00a0", " ").replace("\u3000", " ")
+    lines = [re.sub(r"[ \t]+", " ", line).strip() for line in text.splitlines()]
+    return "\n".join(line for line in lines if line)
+
+
 # ==================== Normalize 函数 ====================
 
 
@@ -239,6 +254,54 @@ def normalize_cls_depth(raw_items: list) -> list[dict]:
             "related_stocks": related_stocks,
             "published_at": _ts_to_iso(item.get("ctime", 0)),
             "fingerprint": _fingerprint(f"{item_id}:{title}", "cls_depth"),
+        })
+    return results
+
+
+def normalize_cls_hot_articles(raw_items: list) -> list[dict]:
+    """财联社热门文章详情 → 统一格式。"""
+    results = []
+    for item in raw_items:
+        title = item.get("title") or ""
+        item_id = item.get("id")
+        ctime = item.get("ctime")
+        if not title or not item_id or not ctime:
+            continue
+
+        brief = item.get("brief") or ""
+        content = _html_to_text(item.get("content") or "") or brief
+
+        tags = []
+        for tag in item.get("visibleTags") or []:
+            name = tag.get("name") if isinstance(tag, dict) else ""
+            if name:
+                tags.append(name)
+        for subject in item.get("subject") or []:
+            name = subject.get("name") if isinstance(subject, dict) else ""
+            if name:
+                tags.append(name)
+
+        related_stocks = []
+        for stock in item.get("stocks") or []:
+            if not isinstance(stock, dict):
+                continue
+            code = stock.get("stockId") or stock.get("stock_id") or stock.get("code") or ""
+            if code:
+                related_stocks.append(str(code))
+
+        results.append({
+            "title": title,
+            "summary": brief or title[:100],
+            "content": content,
+            "source": "cls_hot_article",
+            "source_name": "财联社热门文章",
+            "source_reliability": 0.85,
+            "category": _classify_by_keywords(f"{title} {brief} {content}"),
+            "url": f"https://www.cls.cn/detail/{item_id}",
+            "tags": list(dict.fromkeys(tags)),
+            "related_stocks": list(dict.fromkeys(related_stocks)),
+            "published_at": _ts_to_iso(ctime),
+            "fingerprint": _fingerprint(f"{item_id}:{title}", "cls_hot_article"),
         })
     return results
 
@@ -490,7 +553,7 @@ def normalize_xueqiu(raw_items) -> list[dict]:
 class NewsAggregator(BaseAggregator):
     """新闻事件聚合 — 时间驱动模型
 
-    10 个数据源，统一采集到 ft_news，用 fingerprint 去重。
+    11 个数据源，统一采集到 ft_news，用 fingerprint 去重。
 
     采集策略（全部以时间为准）:
         backfill 模式: 从最新向历史方向翻页，直到数据时间 <= target_time 或触顶
@@ -504,6 +567,13 @@ class NewsAggregator(BaseAggregator):
     SOURCE_CONFIGS = {
         "cls":           {"target_days": 1,   "page_size": 50, "interval": 180},    # API 只有几小时数据
         "cls_depth":     {"target_days": 7,   "page_size": 20, "interval": 600, "depth_id": 1000},  # 财联社深度/头条文章
+        "cls_hot_article": {
+            "target_days": 0,
+            "interval": 300,
+            "default_mode": "incremental",
+            "seen_ids_limit": 1000,
+            "detail_concurrency": 5,
+        },
         "gov":           {"target_days": 90,  "page_size": 20, "interval": 10800},   # 政府网站历史深
         "pboc_omo":      {"target_days": 180, "page_size": 50, "interval": 86400},   # 央行发布频率低
         "pboc_monetary": {"target_days": 180, "page_size": 50, "interval": 86400},
@@ -513,6 +583,8 @@ class NewsAggregator(BaseAggregator):
         "sina":          {"target_days": 60,  "page_size": 20, "interval": 3600},    # 新浪可翻很深
         "xueqiu":        {"target_days": 4,   "page_size": 10, "interval": 1800},    # 雪球 API 最多 1000 条/4 天
     }
+    BACKFILL_SOURCES = frozenset(SOURCE_CONFIGS)
+    AUTO_CATCHUP_SOURCES = BACKFILL_SOURCES
 
     # MAX_PAGES_PER_TICK 继承自 BaseAggregator
 
@@ -838,6 +910,71 @@ class NewsAggregator(BaseAggregator):
             return await clients.cls.get_depth_since(ctime, depth_id=depth_id, page_size=page_size)
         return await clients.cls.get_depth_list(depth_id=depth_id, rn=page_size)
 
+    async def _fetch_cls_hot_articles(self, cp: dict) -> list:
+        """拉取热门榜单，只为 checkpoint 中未见过的文章请求详情。"""
+        from src.infrastructure import clients
+
+        ranked_items = await clients.cls.get_hot_article_list()
+        if not ranked_items:
+            return []
+
+        cursor = cp.get("cursor")
+        seen_ids = cursor.get("seen_ids", []) if isinstance(cursor, dict) else []
+        seen_id_set = {
+            int(article_id)
+            for article_id in seen_ids
+            if isinstance(article_id, int) or (isinstance(article_id, str) and article_id.isdigit())
+        }
+
+        new_ids = []
+        for item in ranked_items:
+            if not isinstance(item, dict):
+                continue
+            article_id = item.get("id")
+            if not isinstance(article_id, int) or article_id <= 0:
+                continue
+            if article_id not in seen_id_set and article_id not in new_ids:
+                new_ids.append(article_id)
+
+        if not new_ids:
+            logger.debug("[news:cls_hot_article] 榜单无新增文章，跳过详情请求")
+            return []
+
+        config = cp.get("_config") or {}
+        concurrency = max(1, int(config.get("detail_concurrency", 5)))
+        semaphore = asyncio.Semaphore(concurrency)
+
+        async def fetch_detail(article_id: int):
+            async with semaphore:
+                return await clients.cls.get_article_detail(article_id)
+
+        detail_results = await asyncio.gather(
+            *(fetch_detail(article_id) for article_id in new_ids),
+            return_exceptions=True,
+        )
+
+        details = []
+        successful_ids = []
+        for article_id, result in zip(new_ids, detail_results):
+            if isinstance(result, Exception):
+                logger.warning(
+                    "[news:cls_hot_article] 详情采集失败 article_id=%s: %s",
+                    article_id,
+                    result,
+                )
+                continue
+            if isinstance(result, dict):
+                details.append(result)
+                successful_ids.append(article_id)
+
+        if not details:
+            raise RuntimeError(f"CLS hot article details all failed: ids={new_ids}")
+
+        seen_ids_limit = max(1, int(config.get("seen_ids_limit", 1000)))
+        merged_seen_ids = list(dict.fromkeys([*successful_ids, *seen_ids]))[:seen_ids_limit]
+        cp["cursor"] = {"seen_ids": merged_seen_ids}
+        return details
+
     async def _fetch_gov(self, cp: dict) -> list:
         from src.infrastructure import clients
         mode = cp.get("mode", "incremental")
@@ -975,6 +1112,7 @@ class NewsAggregator(BaseAggregator):
         self.sources = [
             SourceDef("cls", self._fetch_cls, 180, normalize_cls),
             SourceDef("cls_depth", self._fetch_cls_depth, 600, normalize_cls_depth),
+            SourceDef("cls_hot_article", self._fetch_cls_hot_articles, 300, normalize_cls_hot_articles),
             SourceDef("gov", self._fetch_gov, 10800, normalize_gov),
             SourceDef("pboc_omo", self._fetch_pboc_omo, 86400, normalize_pboc),
             SourceDef("pboc_monetary", self._fetch_pboc_monetary, 86400, normalize_pboc),
@@ -1044,12 +1182,15 @@ class NewsAggregator(BaseAggregator):
             if not item.get("title") or not item.get("published_at"):
                 continue
             title = item["title"]
-            # 跨源标题相似度去重
+            # 热门榜来源本身表达“文章进入榜单”，即使其他来源已有同标题也需要独立保留。
+            preserve_source_record = item.get("source") == "cls_hot_article"
+            # 其他来源继续执行跨源标题相似度去重。
             is_dup = False
-            for exist in existing_titles:
-                if self._is_similar(title, exist):
-                    is_dup = True
-                    break
+            if not preserve_source_record:
+                for exist in existing_titles:
+                    if self._is_similar(title, exist):
+                        is_dup = True
+                        break
             if not is_dup:
                 for exist in seen_titles_in_batch:
                     if self._is_similar(title, exist):

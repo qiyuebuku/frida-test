@@ -586,6 +586,7 @@ class MacroAggregator(BaseAggregator):
         "akshare_us_cpi":       {"target_days": 365, "page_size": 219, "interval": 21600},
         "akshare_cnus_yield":   {"target_days": 90, "page_size": 90, "interval": 21600},
     }
+    BACKFILL_SOURCES = frozenset(SOURCE_CONFIGS)
 
     def __init__(self):
         super().__init__()

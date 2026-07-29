@@ -5,8 +5,9 @@
 cookie 在首次请求时懒加载，缓存 1 小时，过期或失败时自动刷新重试。
 """
 
-import time
+import asyncio
 import logging
+import time
 
 from src.infrastructure.clients.base import BaseClient, cached
 
@@ -44,6 +45,7 @@ class XueqiuClient(BaseClient):
         self._cookie_str: str = ""
         self._cookie_time: float = 0
         self._cookie_ttl: float = 3600  # cookie 缓存 1 小时
+        self._cookie_lock = asyncio.Lock()
         self._cf_session = None
 
     # ==================== cookie 管理 ====================
@@ -61,38 +63,61 @@ class XueqiuClient(BaseClient):
         if self._cookie_str and (now - self._cookie_time) < self._cookie_ttl:
             return self._cookie_str
 
-        # 从 spy 获取 cookie
-        try:
-            resp = await self._client.get(
-                f"{self.SPY_URL}/cookies", params={"domain": "xueqiu"}, timeout=10)
-            cookies = resp.json().get("cookies", [])
-        except Exception:
-            cookies = []
+        async with self._cookie_lock:
+            now = time.time()
+            if self._cookie_str and (now - self._cookie_time) < self._cookie_ttl:
+                return self._cookie_str
 
-        # 如果没有 xq_a_token，让 spy 访问雪球首页通过 WAF
-        if not any(c.get("name") == "xq_a_token" for c in cookies):
-            logger.info("xq_a_token 不存在，让 spy 访问雪球首页...")
+            # 从主 API 服务内的外部 BrowserSpy 获取 cookie。
             try:
-                await self._client.post(
-                    f"{self.SPY_URL}/goto",
-                    json={"url": "https://xueqiu.com/", "wait_after": 10},
-                    timeout=30,
-                )
                 resp = await self._client.get(
-                    f"{self.SPY_URL}/cookies", params={"domain": "xueqiu"}, timeout=10)
+                    f"{self.SPY_URL}/cookies",
+                    params={"domain": "xueqiu"},
+                    timeout=10,
+                )
+                resp.raise_for_status()
                 cookies = resp.json().get("cookies", [])
-            except Exception as e:
-                logger.warning(f"spy 访问雪球失败: {e}")
+            except Exception:
+                cookies = []
+
+            # 如果没有 xq_a_token，让主 API 的 spy 访问雪球首页通过 WAF。
+            if not any(c.get("name") == "xq_a_token" for c in cookies):
+                logger.info("xq_a_token 不存在，让 spy 访问雪球首页...")
+                try:
+                    resp = await self._client.post(
+                        f"{self.SPY_URL}/goto",
+                        json={"url": "https://xueqiu.com/", "wait_after": 10},
+                        timeout=30,
+                    )
+                    resp.raise_for_status()
+                    resp = await self._client.get(
+                        f"{self.SPY_URL}/cookies",
+                        params={"domain": "xueqiu"},
+                        timeout=10,
+                    )
+                    resp.raise_for_status()
+                    cookies = resp.json().get("cookies", [])
+                except Exception as e:
+                    logger.warning(
+                        "spy 访问雪球失败: %s spy_url=%s；"
+                        "请确认主 API 已通过 `python -m src.interfaces.cli api` 启动",
+                        e,
+                        self.SPY_URL,
+                    )
+                    return ""
+
+            if not cookies:
                 return ""
 
-        if not cookies:
-            return ""
-
-        parts = [f'{c["name"]}={c["value"]}' for c in cookies if "xueqiu.com" in c.get("domain", "")]
-        self._cookie_str = "; ".join(parts)
-        self._cookie_time = now
-        logger.info(f"雪球 cookie 已刷新，长度={len(self._cookie_str)}")
-        return self._cookie_str
+            parts = [
+                f'{c["name"]}={c["value"]}'
+                for c in cookies
+                if "xueqiu.com" in c.get("domain", "")
+            ]
+            self._cookie_str = "; ".join(parts)
+            self._cookie_time = time.time()
+            logger.info("雪球 cookie 已刷新，长度=%s", len(self._cookie_str))
+            return self._cookie_str
 
     def _invalidate_cookies(self):
         self._cookie_str = ""

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import dataclass
+from datetime import datetime
 
 from src.domain.knowledge.relation_discovery import RecallView, RelationRecallHit, RelationRoute
 from src.infrastructure.clients.embedding import embed_texts
@@ -24,6 +25,16 @@ class RelationCardText:
     metadata: dict
 
 
+@dataclass(frozen=True)
+class RelationCardSearchHit:
+    card_id: str
+    summary: str
+    metadata: dict
+    matched_views: tuple[RecallView, ...]
+    fusion_score: float
+    semantic_score: float
+
+
 class MilvusRelationCandidateStore:
     """将 Summary/Focus 两个 Collection 暴露为关系发现专用接口。"""
 
@@ -35,6 +46,116 @@ class MilvusRelationCandidateStore:
     def __init__(self, store: MilvusTypedHybridStore | None = None) -> None:
         self._store = store or MilvusTypedHybridStore()
         self._store.ensure_ready()
+
+    @property
+    def store(self) -> MilvusTypedHybridStore:
+        return self._store
+
+    async def search_cards(
+        self,
+        query: str,
+        *,
+        adapter_name: str,
+        target: str,
+        limit: int,
+        time_start: datetime | None = None,
+        time_end: datetime | None = None,
+    ) -> list[RelationCardSearchHit]:
+        """Search Card summary and focus evidence views, then fuse by rank."""
+
+        normalized_query = str(query or "").strip()
+        if not normalized_query or limit <= 0:
+            return []
+        vector = (await embed_texts([normalized_query]))[0]
+        per_view_limit = max(limit, min(100, limit * 2))
+
+        async def search_view(
+            view: RecallView,
+            collection_role: str,
+        ) -> tuple[RecallView, list[MilvusHybridHit]]:
+            hits = await asyncio.to_thread(
+                self._store.hybrid_search,
+                collection_role=collection_role,
+                query_text=normalized_query,
+                query_vector=vector,
+                adapter_name=adapter_name,
+                target=target,
+                limit=per_view_limit,
+                time_start=time_start,
+                time_end=time_end,
+            )
+            return view, hits
+
+        view_results = await asyncio.gather(
+            *[
+                search_view(view, collection_role)
+                for view, collection_role in self._VIEW_ROLES
+            ]
+        )
+        fused: dict[str, dict] = {}
+        for view, hits in view_results:
+            for rank, hit in enumerate(hits, start=1):
+                card_id = hit.target_id
+                if not card_id:
+                    continue
+                item = fused.setdefault(
+                    card_id,
+                    {
+                        "fusion_score": 0.0,
+                        "semantic_score": 0.0,
+                        "views": set(),
+                        "metadata": {},
+                        "focus_text": "",
+                    },
+                )
+                item["fusion_score"] += 1.0 / (60.0 + rank)
+                item["semantic_score"] = max(
+                    float(item["semantic_score"]),
+                    float(hit.score),
+                )
+                item["views"].add(view)
+                if view == "summary":
+                    item["metadata"] = dict(hit.metadata)
+                elif not item["focus_text"]:
+                    item["focus_text"] = hit.text
+                    if not item["metadata"]:
+                        item["metadata"] = dict(hit.metadata)
+
+        ranked_ids = [
+            card_id
+            for card_id, _ in sorted(
+                fused.items(),
+                key=lambda item: (
+                    -float(item[1]["fusion_score"]),
+                    -float(item[1]["semantic_score"]),
+                    item[0],
+                ),
+            )[:limit]
+        ]
+        summaries = await self.get_summaries(
+            ranked_ids,
+            adapter_name=adapter_name,
+            target=target,
+        )
+        result: list[RelationCardSearchHit] = []
+        for card_id in ranked_ids:
+            item = fused[card_id]
+            summary = summaries.get(card_id)
+            result.append(
+                RelationCardSearchHit(
+                    card_id=card_id,
+                    summary=summary.text if summary else "",
+                    metadata=(
+                        dict(summary.metadata)
+                        if summary
+                        else dict(item["metadata"])
+                    ),
+                    matched_views=tuple(sorted(item["views"])),
+                    fusion_score=float(item["fusion_score"]),
+                    semantic_score=float(item["semantic_score"]),
+                )
+            )
+        return result
 
     async def recall_routes(
         self,

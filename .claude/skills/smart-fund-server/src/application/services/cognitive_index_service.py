@@ -1498,7 +1498,7 @@ class CommunityBucketPlanner:
         use_cache: bool = True,
         auto_merge_threshold: int = ASSIGNMENT_BUCKET_MAX_COUNT,
         auto_merge_candidate_limit: int = ASSIGNMENT_BUCKET_AUTO_MERGE_CANDIDATE_LIMIT,
-        bucket_thinking: str = "disabled",
+        bucket_thinking: str = "",
         semantic_bucket_cache: AssignmentBucketSemanticCache | None = None,
     ) -> None:
         self._store = store
@@ -1508,7 +1508,12 @@ class CommunityBucketPlanner:
         self._use_cache = bool(use_cache)
         self._auto_merge_threshold = max(1, int(auto_merge_threshold or ASSIGNMENT_BUCKET_MAX_COUNT))
         self._auto_merge_candidate_limit = max(1, int(auto_merge_candidate_limit or ASSIGNMENT_BUCKET_AUTO_MERGE_CANDIDATE_LIMIT))
-        self._bucket_thinking = "disabled" if str(bucket_thinking).lower() == "disabled" else "enabled"
+        normalized_bucket_thinking = str(bucket_thinking or "").strip().lower()
+        if normalized_bucket_thinking not in {"", "enabled", "disabled"}:
+            raise ValueError(
+                "bucket_thinking 只允许 enabled、disabled 或空值"
+            )
+        self._bucket_thinking = normalized_bucket_thinking or None
         self._semantic_bucket_cache = semantic_bucket_cache
 
     async def plan(
@@ -1830,7 +1835,11 @@ class CommunityBucketPlanner:
             temperature=0,
             max_tokens=BUCKET_PLANNING_MAX_TOKENS,
             json_schema=BUCKET_PLANNING_SCHEMA,
-            provider_options={"thinking_type": self._bucket_thinking},
+            provider_options=(
+                {"thinking_type": self._bucket_thinking}
+                if self._bucket_thinking
+                else {}
+            ),
             metadata={
                 "task": "kg_assignment_bucket_planning",
                 "unknown_intents": len(unknown),
@@ -1873,11 +1882,10 @@ class CommunityBucketPlanner:
             temperature=0,
             max_tokens=BUCKET_MERGE_MAX_TOKENS,
             json_schema=BUCKET_MERGE_SCHEMA,
-            provider_options={"thinking_type": "disabled"},
             metadata={
                 "task": "kg_assignment_bucket_merge",
                 "merge_candidates": len(merge_candidates),
-                "thinking_type": "disabled",
+                "thinking_type": "provider_default",
                 "catalog_elided": True,
                 "llm_use_cache": self._use_cache,
             },

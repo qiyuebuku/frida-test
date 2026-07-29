@@ -70,6 +70,20 @@ def reset(aggregator: str, source_name: str) -> bool:
     return _get_repo().reset(aggregator, source_name)
 
 
+def arm_backfill(
+    aggregator: str,
+    source_name: str,
+    target_time: str,
+    cursor=None,
+) -> bool:
+    return _get_repo().arm_backfill(
+        aggregator,
+        source_name,
+        target_time,
+        cursor=cursor,
+    )
+
+
 def disable(aggregator: str, source_name: str) -> bool:
     return _get_repo().disable(aggregator, source_name)
 

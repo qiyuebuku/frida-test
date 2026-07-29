@@ -64,7 +64,12 @@ def test_evidence_card_and_chunk_manifests_do_not_restore_legacy_fact_graph() ->
     assert {"chunk_id", "evidence_id", "chunk_index", "start_offset", "end_offset"}.issubset(
         set(KnowledgeEvidenceChunk.__table__.columns.keys())
     )
-    assert {"cognitive_card_id", "focus_evidence_refs", "status"}.issubset(
+    assert {
+        "cognitive_card_id",
+        "fact_id",
+        "focus_evidence_refs",
+        "status",
+    }.issubset(
         set(KnowledgeCognitiveCard.__table__.columns.keys())
     )
     assert "relation_probes" in KnowledgeCognitiveCard.__table__.columns

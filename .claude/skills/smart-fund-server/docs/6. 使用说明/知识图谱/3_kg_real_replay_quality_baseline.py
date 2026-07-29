@@ -192,7 +192,6 @@ class ReplayConfig:
     dynamic_case_limit: int = 12
     codes: tuple[str, ...] = ("300750", "603305")
     max_chars: int = 8000
-    strict_agentic: bool = False
     trace_retrieval_llm: bool = True
     trace_retrieval_llm_max_chars: int = 4000
     trace_retrieval_llm_max_items: int = 8
@@ -744,20 +743,6 @@ def _case(
     }
 
 
-def agentic_cases_from(cases: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    result = []
-    for case in cases:
-        # Agentic A-RAG 的价值就是由 LLM 自主选工具，不能硬断言固定 channel。
-        # 仍然检查核心节点/关系/最小召回量，避免假通过。
-        relaxed = dict(case, retrieval_mode="agentic_arag")
-        relaxed["expected_channels_used"] = []
-        relaxed["forbidden_node_names"] = []
-        relaxed["forbidden_evidence_refs"] = []
-        relaxed["forbidden_topics"] = []
-        result.append(relaxed)
-    return result
-
-
 def sample_queries() -> list[str]:
     return [
         "宁德时代 300750 最近受哪些事件影响",
@@ -955,10 +940,7 @@ async def replay(
     if data["failed"] and fail_on_error:
         raise AssertionError(data)
     if data["failed"]:
-        print(
-            "\nAgentic A-RAG replay has failures but is observational by default. "
-            "Set config.strict_agentic=True if you want it to fail the script."
-        )
+        print("\nReplay has failures but is observational because fail_on_error is disabled.")
     return data
 
 
@@ -1356,7 +1338,6 @@ async def inspect_sample_contexts(service: KnowledgeService, config: ReplayConfi
                 "evidence_refs": len(data["evidence_refs"]),
                 "channels_used": data["retrieval_channels_used"],
                 "milvus_enabled": data["milvus_enabled"],
-                "agentic_enabled": data["agentic_enabled"],
                 "query_anchor": data.get("query_anchor") or {},
                 "routing_decision": data.get("routing_decision") or {},
                 "retrieval_metrics": _compact_retrieval_metrics_from_trace(data.get("retrieval_trace") or {}),
@@ -1830,7 +1811,6 @@ async def main() -> None:
         dynamic_case_limit=env_int("KG_REPLAY_DYNAMIC_CASE_LIMIT", 12),
         codes=("300750", "603305"),
         max_chars=8000,
-        strict_agentic=False,
         trace_retrieval_llm=True,
         trace_retrieval_llm_max_chars=4000,
         trace_retrieval_llm_max_items=8,
@@ -1955,19 +1935,7 @@ async def main() -> None:
         raise AssertionError(replay_data)
     RUN_STATE["status"] = "success"
 
-    # # Step 5: Agentic A-RAG 观测；不需要时直接注释整个 await replay(...) 块。
-    # await run_step(
-    #     "Step 5 replay Agentic A-RAG observation",
-    #     lambda: replay(
-    #         service,
-    #         config,
-    #         mode="agentic_arag",
-    #         cases=agentic_cases_from(cases),
-    #         fail_on_error=config.strict_agentic,
-    #     ),
-    # )
-
-    # # Step 6: 抽样查看研究上下文；不需要时直接注释下一行。
+    # Step 5: 抽样查看研究上下文。
     # await run_step("Step 6 inspect sample research contexts", lambda: inspect_sample_contexts(service, config))
 
     # print("\nOK")

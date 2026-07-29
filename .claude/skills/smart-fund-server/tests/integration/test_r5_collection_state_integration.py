@@ -139,6 +139,37 @@ def test_r5_reset_clears_state(clean_state):
 
 
 @pytest.mark.integration
+def test_r5_arm_backfill_preserves_time_boundaries(clean_state):
+    """定向回填只调整回填控制字段，保留已采集时间边界。"""
+    from src.infrastructure.persistence.repositories import CollectionStateRepositoryImpl
+
+    repo = CollectionStateRepositoryImpl()
+    repo.update_success("test_r5", "src1", {
+        "mode": "incremental",
+        "target_time": "2026-04-01",
+        "newest_time": "2026-07-20T12:00:00+08:00",
+        "oldest_time": "2026-04-01T00:00:00+08:00",
+        "backfill_status": "done",
+        "cursor": None,
+    }, 100)
+
+    assert repo.arm_backfill(
+        "test_r5",
+        "src1",
+        "2026-01-01",
+        cursor={"page": 9},
+    )
+    state = repo.get("test_r5", "src1")
+    assert state["mode"] == "backfill"
+    assert state["target_time"] == "2026-01-01"
+    assert state["newest_time"] == "2026-07-20T12:00:00+08:00"
+    assert state["oldest_time"] == "2026-04-01T00:00:00+08:00"
+    assert state["backfill_status"] is None
+    assert state["cursor"] == {"page": 9}
+    assert state["last_run_at"] is None
+
+
+@pytest.mark.integration
 def test_r5_init_state_classmethod():
     """BaseAggregator.init_state 写入正确的列"""
     from src.infrastructure.persistence.repositories import CollectionStateRepositoryImpl

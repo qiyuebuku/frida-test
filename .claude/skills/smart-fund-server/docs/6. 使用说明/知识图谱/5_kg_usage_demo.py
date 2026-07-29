@@ -64,7 +64,6 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--query", action="append", help="extra query; can be repeated")
     parser.add_argument("--seed-baseline", action="store_true", help="compile controlled baseline records")
     parser.add_argument("--dry-run", action="store_true", help="compile without writing when --seed-baseline is used")
-    parser.add_argument("--agentic", action="store_true", help="also run Agentic A-RAG for comparison")
     parser.add_argument("--run-incremental-task", action="store_true", help="submit and run the trackable incremental task")
     parser.add_argument("--codes", nargs="*", default=["300750"], help="codes for incremental task demo")
     parser.add_argument("--stock-limit", type=int, default=20)
@@ -200,24 +199,6 @@ async def main() -> None:
             show_context=args.show_context,
         )
         summary["queries"].append(result)
-
-    if args.agentic:
-        print_title("5. Agentic A-RAG 对比演示")
-        print("Agentic 会调用 LLM 决定工具路径，延迟更高；用于深度研究和 bad case 观测，不是在线默认路径。")
-        for query in queries[:3]:
-            result = await run_query(
-                service,
-                adapter=args.adapter,
-                target=args.target,
-                query=query,
-                mode="agentic_arag",
-                max_chars=args.max_chars,
-                show_context=args.show_context,
-            )
-            summary["queries"].append(result)
-    else:
-        print_title("5. 跳过 Agentic 对比")
-        print("需要观察 LLM 工具选择路径时，加 --agentic。")
 
     print_title("6. 当前系统特点")
     print(

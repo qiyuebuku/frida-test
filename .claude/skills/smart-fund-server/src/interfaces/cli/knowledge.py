@@ -281,10 +281,10 @@ def normalization_migration_plan(adapter_name: str, target: Target, json_output:
 @click.option("--max-chars", default=5000, type=click.IntRange(500, 20000))
 @click.option(
     "--retrieval-mode",
-    type=click.Choice(["auto", "deterministic_plan", "agentic_arag"]),
+    type=click.Choice(["auto", "deterministic_plan"]),
     default="auto",
     show_default=True,
-    help="检索模式；auto 会自动路由，agentic_arag 为显式深度研究路径",
+    help="检索模式；auto 和 deterministic_plan 均使用确定性投研上下文检索",
 )
 @click.option("--json", "json_output", is_flag=True, help="输出 JSON")
 def query(

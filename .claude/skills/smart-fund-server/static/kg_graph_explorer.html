@@ -1,0 +1,140 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Graph Community Explorer</title>
+  <link rel="stylesheet" href="/static/kg_graph_explorer.css">
+</head>
+<body>
+  <div class="app-shell">
+    <header class="topbar">
+      <div class="brand-block">
+        <span class="brand-mark" aria-hidden="true"></span>
+        <div>
+          <h1>Graph Community Explorer</h1>
+          <p id="header-subtitle">关系优先知识图谱</p>
+        </div>
+      </div>
+      <div class="header-status">
+        <span id="connection-dot" class="status-dot loading" aria-hidden="true"></span>
+        <span id="connection-label">正在连接</span>
+      </div>
+    </header>
+
+    <main class="workspace">
+      <section class="graph-panel">
+        <div class="graph-toolbar">
+          <div class="view-switch" aria-label="图层级">
+            <button id="overview-view-button" class="active" type="button" title="查看全部 Community 之间的关系">Community 网络</button>
+            <button id="detail-view-button" type="button" disabled title="查看当前 Community 内的 Card 关系">Card 子图</button>
+          </div>
+
+          <label class="graph-search" title="按 Community 名称、摘要或 ID 搜索">
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <circle cx="11" cy="11" r="7"></circle>
+              <path d="m20 20-4-4"></path>
+            </svg>
+            <input id="node-search" type="search" placeholder="搜索 Community" autocomplete="off">
+          </label>
+
+          <label class="compact-select toolbar-target">
+            <span>数据</span>
+            <select id="target-select">
+              <option value="prod">prod</option>
+              <option value="test">test</option>
+            </select>
+          </label>
+
+          <label class="toolbar-adapter">
+            <span>Adapter</span>
+            <input id="adapter-input" value="financial" spellcheck="false">
+          </label>
+
+          <div class="segmented" aria-label="关系可信度筛选">
+            <label title="显示原文明示或直接观察到的关系">
+              <input id="show-observed" type="checkbox" checked>
+              <span>Observed</span>
+            </label>
+            <label title="显示经原文核验后推断的关系">
+              <input id="show-inferred" type="checkbox" checked>
+              <span>Inferred</span>
+            </label>
+          </div>
+
+          <label id="chunk-scope-control" class="compact-select">
+            <span>范围</span>
+            <select id="chunk-scope">
+              <option value="all">全部关系</option>
+              <option value="cross">跨 Chunk</option>
+              <option value="intra">同 Chunk</option>
+            </select>
+          </label>
+
+          <label class="compact-select">
+            <span>布局</span>
+            <select id="layout-select">
+              <option value="cose">关系聚合</option>
+              <option value="breadthfirst">方向层级</option>
+              <option value="circle">环形</option>
+              <option value="grid">网格</option>
+            </select>
+          </label>
+
+          <label class="compact-select">
+            <span>邻居</span>
+            <select id="neighbor-depth">
+              <option value="all">全部</option>
+              <option value="1">1 跳</option>
+              <option value="2">2 跳</option>
+            </select>
+          </label>
+
+          <button id="fit-button" class="icon-button" type="button" title="适应画布">
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M8 3H3v5M16 3h5v5M8 21H3v-5M16 21h5v-5"></path>
+            </svg>
+          </button>
+          <button id="refresh-button" class="icon-button" type="button" title="刷新 Community 网络">
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M20 11a8 8 0 1 0-2.3 5.7"></path>
+              <path d="M20 4v7h-7"></path>
+            </svg>
+          </button>
+          <button id="reset-button" class="icon-button" type="button" title="清除选择和局部筛选">
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M4 7h11a5 5 0 0 1 0 10H9"></path>
+              <path d="m7 4-3 3 3 3"></path>
+            </svg>
+          </button>
+        </div>
+
+        <div class="graph-stage">
+          <div id="cy" role="img" aria-label="Community Card 关系图"></div>
+          <div id="graph-empty" class="empty-state">
+            <strong>暂无可展示的关系图</strong>
+            <span>当前筛选范围没有有效节点和关系</span>
+          </div>
+          <div id="graph-summary" class="graph-summary"></div>
+          <div id="relation-legend" class="relation-legend"></div>
+          <div id="graph-tooltip" class="graph-tooltip" role="tooltip"></div>
+        </div>
+      </section>
+
+      <aside class="detail-panel">
+        <nav class="detail-tabs" aria-label="详情视图">
+          <button class="detail-tab active" data-tab="selection" type="button">Community 详情</button>
+          <button class="detail-tab" data-tab="report" type="button">事实报告</button>
+          <button class="detail-tab" data-tab="projections" type="button">条件预测</button>
+        </nav>
+        <div id="detail-content" class="detail-content"></div>
+      </aside>
+    </main>
+  </div>
+
+  <div id="toast" class="toast" role="status" aria-live="polite"></div>
+
+  <script src="/static/vendor/cytoscape.min.js"></script>
+  <script src="/static/kg_graph_explorer.js"></script>
+</body>
+</html>

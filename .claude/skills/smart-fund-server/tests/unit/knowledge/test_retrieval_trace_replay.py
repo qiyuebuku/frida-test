@@ -77,8 +77,7 @@ async def test_replay_retrieval_trace_reexecutes_recorded_tool_calls() -> None:
     search_call = RetrievalToolCall(tool="search", query="宁德时代")
     open_call = RetrievalToolCall(tool="open", evidence_ids=["kg_ev:financial:news:1"])
     recorded_trace = RetrievalTrace(
-        mode="agentic_arag",
-        agentic_enabled=True,
+        mode="deterministic_plan",
         steps=[
             RetrievalStep(
                 tool="search",
@@ -104,7 +103,7 @@ async def test_replay_retrieval_trace_reexecutes_recorded_tool_calls() -> None:
         ),
     )
 
-    assert result.trace.mode == "agentic_arag_trace_replay"
+    assert result.trace.mode == "deterministic_plan_trace_replay"
     assert result.trace.milvus_enabled is True
     assert result.trace.channels_used == ["search", "open"]
     assert result.evidence_refs == ["kg_ev:financial:news:1"]
@@ -114,7 +113,7 @@ async def test_replay_retrieval_trace_reexecutes_recorded_tool_calls() -> None:
 @pytest.mark.asyncio
 async def test_replay_retrieval_trace_reports_output_mismatch() -> None:
     recorded_trace = RetrievalTrace(
-        mode="agentic_arag",
+        mode="deterministic_plan",
         steps=[
             RetrievalStep(
                 tool="search",

@@ -1067,6 +1067,8 @@ class FundFlowAggregator(BaseAggregator):
         "dragon_tiger_ths": {"target_days": 0, "page_size": 50, "interval": 21600, "default_mode": "incremental"}, # → data_type: dragon_tiger
         "watchlist_data":   {"target_days": 0, "interval": 1800, "default_mode": "incremental"},                   # → ft_watchlist_data 20种 data_type
     }
+    BACKFILL_SOURCES = frozenset({"northbound"})
+    AUTO_CATCHUP_SOURCES = BACKFILL_SOURCES
 
     def __init__(self):
         super().__init__()
@@ -1081,8 +1083,8 @@ class FundFlowAggregator(BaseAggregator):
 
         def _northbound_fetch(cp):
             # 首次：拉 60 天历史；增量：拉 7 天即可（防漏掉补录）
-            is_first = not cp or not cp.get("max_trade_date")
-            page_size = 60 if is_first else 7
+            is_backfill = not cp or cp.get("mode") == "backfill" or not cp.get("newest_time")
+            page_size = 60 if is_backfill else 7
             return clients.eastmoney.get_northbound_recent(page_size=page_size)
 
         self.sources = [

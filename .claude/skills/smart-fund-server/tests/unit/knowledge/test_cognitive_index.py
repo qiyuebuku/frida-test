@@ -24,7 +24,6 @@ from src.application.services.cognitive_index_service import (
 from src.domain.knowledge.cognitive_index import (
     ASSIGNMENT_MAX_TOKENS,
     COGNITIVE_CARD_MAX_TOKENS,
-    CognitiveCard,
     _assignment_topic_intent,
     _drafts_from_existing,
     assignment_query_text,
@@ -1490,8 +1489,8 @@ async def test_bucket_planner_can_bypass_llm_cache_for_validation_runs():
 
     assert llm.requests[0].use_cache is False
     assert llm.requests[0].metadata["llm_use_cache"] is False
-    assert llm.requests[0].provider_options["thinking_type"] == "disabled"
-    assert llm.requests[0].metadata["thinking_type"] == "disabled"
+    assert llm.requests[0].provider_options == {}
+    assert llm.requests[0].metadata["thinking_type"] is None
     assert llm.requests[0].metadata["merge_decoupled"] is True
 
 
@@ -1887,7 +1886,7 @@ async def test_bucket_planner_auto_runs_independent_merge_when_catalog_exceeds_t
     assert "community_summaries" not in merge_prompt
     assert 1 <= len(merge_prompt["merge_candidates"]) <= 4
     assert all("source_scope" in item and "target_scope" in item for item in merge_prompt["merge_candidates"])
-    assert llm.requests[1].provider_options["thinking_type"] == "disabled"
+    assert llm.requests[1].provider_options == {}
     assert result["merge_result"]["triggered"] is True
     assert result["merge_result"]["merged"] == 1
     saved = json.loads(redis.get(store._state_key(adapter_name="financial")))

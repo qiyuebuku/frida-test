@@ -22,7 +22,7 @@ from src.domain.knowledge.semantic_index_materials import (
 
 
 ATOMIC_COGNITIVE_CARD_SCHEMA_VERSION = "atomic_cognitive_card_v7"
-ATOMIC_COGNITIVE_CARD_GENERATOR_VERSION = "atomic_card_extractor_v117"
+ATOMIC_COGNITIVE_CARD_GENERATOR_VERSION = "atomic_card_extractor_v134_coreference_resolution"
 INTRA_CHUNK_RELATION_KINDS = frozenset(
     {
         "confirmation",
@@ -31,6 +31,7 @@ INTRA_CHUNK_RELATION_KINDS = frozenset(
         "causal_influence",
         "common_driver",
         "constraint",
+        "market_co_movement",
     }
 )
 
@@ -117,6 +118,7 @@ class AtomicCognitiveCard:
     schema_version: str = ATOMIC_COGNITIVE_CARD_SCHEMA_VERSION
     generator_version: str = ATOMIC_COGNITIVE_CARD_GENERATOR_VERSION
     status: str = "active"
+    fact_id: str = ""
 
     def manifest(self) -> "CognitiveCardManifest":
         return CognitiveCardManifest(
@@ -134,6 +136,7 @@ class AtomicCognitiveCard:
             schema_version=self.schema_version,
             generator_version=self.generator_version,
             status=self.status,
+            fact_id=self.fact_id,
         )
 
 
@@ -155,6 +158,7 @@ class CognitiveCardManifest:
     generator_version: str
     relation_probes: list[RelationProbe] = field(default_factory=list)
     status: str = "active"
+    fact_id: str = ""
 
 
 @dataclass(frozen=True)
@@ -175,7 +179,6 @@ class AtomicCardExtractionResult:
     discarded_relation_count: int = 0
     validation_issues: list[str] = field(default_factory=list)
     skip_reason: str = ""
-    evidence_topology: dict[str, Any] = field(default_factory=dict)
     llm_stage_usage: dict[str, dict[str, Any]] = field(default_factory=dict)
 
 
@@ -185,7 +188,7 @@ class StableSpanSegmenter:
     _HARD_BOUNDARY_RE = re.compile(r"(?:[。！？!?；;]+[\"'”’）】》]*|\n+)")
     _LEADING_TITLE_RE = re.compile(r"^\s*【[^】\n]{1,200}】")
     _SOFT_BOUNDARY_RE = re.compile(r"[，,:：]+[\"'”’）】》]*")
-    _MAX_SPAN_CHARS = 80
+    _MAX_SPAN_CHARS = 160
 
     def segment(self, content: str) -> list[SpanReference]:
         return [part for block in self.segment_blocks(content) for part in block.parts]
@@ -378,6 +381,7 @@ def atomic_card_from_llm_item(
         relation_probes=[],
         source_published_at=_clean_text(payload.get("published_at")),
         source_title=_clean_text(payload.get("title")),
+        fact_id=default_card_fact_id(card_id),
     )
 
 
@@ -396,9 +400,6 @@ def intra_chunk_relation_from_llm_item(
         "decision_class",
         "relation_kind",
         "relation_evidence_refs",
-        "source_mention",
-        "relation_cue",
-        "target_mention",
     }
     missing = sorted(required.difference(item))
     extra = sorted(set(item).difference(required))
@@ -444,15 +445,6 @@ def intra_chunk_relation_from_llm_item(
     if not basis:
         raise ValueError("同 Chunk Relation 关系证据没有可读原文")
 
-    for field_name in ("source_mention", "relation_cue", "target_mention"):
-        fragment = _clean_text(item.get(field_name))
-        if not fragment:
-            raise ValueError(f"同 Chunk Relation {field_name} 不能为空")
-        if fragment not in relation_text:
-            raise ValueError(
-                f"同 Chunk Relation {field_name} 不是关系证据中的原文片段: {fragment}"
-            )
-
     relation_type, direction = _normalized_intra_chunk_relation_fields(relation_kind)
 
     return VerifiedRelationDecision(
@@ -465,7 +457,7 @@ def intra_chunk_relation_from_llm_item(
         basis=basis,
         source_evidence_refs=list(source_card.focus_evidence_refs),
         target_evidence_refs=list(target_card.focus_evidence_refs),
-        inference_mechanism="",
+        inference_mechanism=basis if decision_class == "inferred" else "",
         confidence=1.0 if decision_class == "observed" else 0.85,
         relation_evidence_refs=[
             {"chunk_id": chunk.chunk_id, "refs": relation_refs}
@@ -481,10 +473,17 @@ def _normalized_intra_chunk_relation_fields(relation_kind: str) -> tuple[str, st
         "causal_influence": "原文明确因果影响",
         "common_driver": "原文明确共同驱动",
         "constraint": "原文明确约束关系",
+        "market_co_movement": "原文明示跨市场同步或背离表现",
     }
     direction = (
         "symmetric"
-        if relation_kind in {"confirmation", "contradiction", "common_driver"}
+        if relation_kind
+        in {
+            "confirmation",
+            "contradiction",
+            "common_driver",
+            "market_co_movement",
+        }
         else "source_to_target"
     )
     return labels[relation_kind], direction
@@ -714,6 +713,7 @@ def _atomic_card_milvus_metadata(
         "target_id": card.cognitive_card_id,
         "target_type": target_type,
         "cognitive_card_id": card.cognitive_card_id,
+        "fact_id": card.fact_id,
         "original_source_type": card.source_type,
         "original_source_id": card.source_id,
         "evidence_id": card.evidence_id,
@@ -727,6 +727,19 @@ def _atomic_card_milvus_metadata(
         "generator_version": card.generator_version,
         "status": card.status,
     }
+
+
+def default_card_fact_id(card_id: str) -> str:
+    """为尚未命中 same_fact 的 Card 生成稳定单例事实 ID。"""
+
+    normalized = _clean_text(card_id)
+    if not normalized:
+        raise ValueError("生成 fact_id 时 cognitive_card_id 不能为空")
+    suffix = normalized.rsplit(":", 1)[-1]
+    if re.fullmatch(r"[0-9a-zA-Z_-]{8,80}", suffix):
+        return f"kg_fact:{suffix}"
+    digest = hashlib.sha256(normalized.encode("utf-8")).hexdigest()[:20]
+    return f"kg_fact:{digest}"
 
 
 def _ordered_unique(values: Any) -> list[str]:

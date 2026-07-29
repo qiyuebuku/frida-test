@@ -15,6 +15,7 @@ RouteType = Literal["summary", "probe"]
 RecallView = Literal["summary", "focus_evidence"]
 RelationDecisionClass = Literal["observed", "inferred", "no_relation"]
 RelationKind = Literal[
+    "same_fact",
     "same_event",
     "confirmation",
     "contradiction",
@@ -22,6 +23,7 @@ RelationKind = Literal[
     "causal_influence",
     "common_driver",
     "constraint",
+    "market_co_movement",
 ]
 
 
@@ -100,6 +102,8 @@ class PairEvidencePackage:
     candidate_evidence_context: list[dict[str, Any]]
     candidate_focus_refs: list[str]
     candidate_published_at: str
+    source_card_summary: str = ""
+    candidate_card_summary: str = ""
     source_chunk_summary: str = ""
     candidate_chunk_summary: str = ""
 

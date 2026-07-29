@@ -11,6 +11,7 @@ from src.domain.knowledge.relation_discovery import VerifiedRelationDecision
 
 
 RelationKind = Literal[
+    "same_fact",
     "same_event",
     "confirmation",
     "contradiction",
@@ -18,10 +19,12 @@ RelationKind = Literal[
     "causal_influence",
     "common_driver",
     "constraint",
+    "market_co_movement",
 ]
 
 RELATION_KINDS = frozenset(
     {
+        "same_fact",
         "same_event",
         "confirmation",
         "contradiction",
@@ -29,12 +32,20 @@ RELATION_KINDS = frozenset(
         "causal_influence",
         "common_driver",
         "constraint",
+        "market_co_movement",
     }
 )
 SYMMETRIC_RELATION_KINDS = frozenset(
-    {"same_event", "confirmation", "contradiction", "common_driver"}
+    {
+        "same_fact",
+        "same_event",
+        "confirmation",
+        "contradiction",
+        "common_driver",
+        "market_co_movement",
+    }
 )
-CARD_RELATION_SCHEMA_VERSION = "card_relation_edge_v2"
+CARD_RELATION_SCHEMA_VERSION = "card_relation_edge_v3"
 
 
 @dataclass(frozen=True)
@@ -104,6 +115,11 @@ def build_card_relation_edge(
         raise ValueError("只有 observed/inferred 可以生成正式 Edge")
     if decision.relation_kind not in RELATION_KINDS:
         raise ValueError(f"未知 relation_kind: {decision.relation_kind}")
+    if (
+        decision.relation_kind in {"same_fact", "same_event"}
+        and decision.decision_class != "observed"
+    ):
+        raise ValueError(f"{decision.relation_kind} 只能由 observed 关系建立")
     source_id = decision.source_card_id
     target_id = decision.target_card_id
     source_refs = list(dict.fromkeys(decision.source_evidence_refs))

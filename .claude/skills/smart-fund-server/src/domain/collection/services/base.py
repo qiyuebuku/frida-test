@@ -3,7 +3,7 @@
 import json
 import logging
 import time
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Any, Callable
 
 import psycopg2
@@ -59,6 +59,10 @@ class BaseAggregator:
     task_interval: int = 60
     sources: list[SourceDef] = []
     SOURCE_CONFIGS: dict = {}
+    BACKFILL_SOURCES: frozenset[str] = frozenset()
+    AUTO_CATCHUP_SOURCES: frozenset[str] = frozenset()
+    AUTO_CATCHUP_MIN_STALE_SECONDS: int = 3600
+    AUTO_CATCHUP_OVERLAP_DAYS: int = 1
     MAX_PAGES_PER_TICK: int = 500  # 回填安全阀：单次 tick 最多翻页数
 
     def __init__(self):
@@ -186,17 +190,12 @@ class BaseAggregator:
                         if (now_utc - last_run).total_seconds() < min_interval:
                             continue
 
-                # 构建 cp dict（从独立列组装，供 fetch_fn 读取）
-                cp = {
-                    "mode": state.get("mode", "incremental"),
-                    "target_time": state.get("target_time"),
-                    "newest_time": state.get("newest_time"),
-                    "oldest_time": state.get("oldest_time"),
-                    "backfill_status": state.get("backfill_status"),
-                    "cursor": state.get("cursor"),
-                    "_config": state.get("config") or {},
-                    "_lock": lock,
-                }
+                cp = self._build_runtime_checkpoint(
+                    state=state,
+                    source=src,
+                    now_utc=now_utc,
+                    lock=lock,
+                )
 
                 try:
                     # ── 5. fetch（网络异常自动重试） ──
@@ -227,6 +226,65 @@ class BaseAggregator:
                     logger.warning(f"[{self.data_domain}:{src.name}] 采集失败: {err_msg}")
                     checkpoint_store.update_failure(self.data_domain, src.name, err_msg)
         return {"sources_run": sources_run, "total_saved": total_saved}
+
+    def _build_runtime_checkpoint(
+        self,
+        *,
+        state: dict,
+        source: SourceDef,
+        now_utc: datetime,
+        lock,
+    ) -> dict:
+        """构建本次 fetch checkpoint，并在长时间停机后自动追赶断档。"""
+        cp = {
+            "mode": state.get("mode", "incremental"),
+            "target_time": state.get("target_time"),
+            "newest_time": state.get("newest_time"),
+            "oldest_time": state.get("oldest_time"),
+            "backfill_status": state.get("backfill_status"),
+            "cursor": state.get("cursor"),
+            "_config": state.get("config") or {},
+            "_lock": lock,
+        }
+
+        if cp["mode"] != "incremental" or source.name not in self.AUTO_CATCHUP_SOURCES:
+            return cp
+
+        last_success_at = state.get("last_success_at")
+        newest_time = state.get("newest_time")
+        if last_success_at is None or not newest_time:
+            return cp
+
+        effective_interval = int(state.get("interval_override") or source.interval)
+        stale_after = max(effective_interval * 2, self.AUTO_CATCHUP_MIN_STALE_SECONDS)
+        if (now_utc - last_success_at).total_seconds() <= stale_after:
+            return cp
+
+        try:
+            newest_date = datetime.fromisoformat(str(newest_time)[:10]).date()
+        except ValueError:
+            logger.warning(
+                f"[{self.data_domain}:{source.name}] newest_time 无法解析，跳过自动断档追赶: "
+                f"{newest_time!r}"
+            )
+            return cp
+
+        target_date = newest_date - timedelta(days=self.AUTO_CATCHUP_OVERLAP_DAYS)
+        cp.update(
+            {
+                "mode": "backfill",
+                "target_time": target_date.isoformat(),
+                "cursor": None,
+                "backfill_status": None,
+                "_auto_catchup": True,
+            }
+        )
+        logger.warning(
+            f"[{self.data_domain}:{source.name}] 检测到采集断档 "
+            f"{int((now_utc - last_success_at).total_seconds())}s，"
+            f"自动从当前数据向后追赶至 {target_date.isoformat()}"
+        )
+        return cp
 
     # ==================== 子类必须实现 ====================
 
@@ -299,11 +357,23 @@ class BaseAggregator:
         if new_cp.get("mode") == "backfill":
             target_time = new_cp.get("target_time")
             oldest_time = new_cp.get("oldest_time")
+            is_auto_catchup = bool(prev_cp.get("_auto_catchup"))
+            reached_time = batch_oldest if is_auto_catchup else oldest_time
+            target_date = str(target_time)[:10] if target_time else ""
+            reached_date = str(reached_time)[:10] if reached_time else ""
+            no_time_progress = bool(
+                target_date
+                and prev_oldest
+                and batch_oldest >= prev_oldest
+                and str(oldest_time)[:10] > target_date
+            )
 
             # 子类 hook：可通过 _get_backfill_signal 注入额外信号（如 _backfill_loop 的触顶/完成）
             signal = self._get_backfill_signal(source_name)
 
-            if signal == "done" or (target_time and oldest_time and oldest_time <= target_time):
+            if signal == "done" or (
+                target_date and reached_date and reached_date <= target_date
+            ):
                 new_cp["mode"] = "incremental"
                 new_cp["cursor"] = None
                 new_cp["backfill_status"] = "done"
@@ -317,6 +387,24 @@ class BaseAggregator:
                 new_cp["backfill_status"] = "ceiling"
                 logger.warning(
                     f"[{self.data_domain}:{source_name}] 回填触顶（数据源历史不足）: "
+                    f"覆盖 {oldest_time} ~ {new_cp.get('newest_time')}, "
+                    f"目标 {target_time} 未达到"
+                )
+            elif is_auto_catchup:
+                new_cp["mode"] = "incremental"
+                new_cp["cursor"] = None
+                new_cp["backfill_status"] = "ceiling"
+                logger.warning(
+                    f"[{self.data_domain}:{source_name}] 自动断档追赶未到达停机边界，"
+                    f"按当前接口单次返回上限结束: batch_oldest={batch_oldest}, "
+                    f"target={target_time}"
+                )
+            elif no_time_progress:
+                new_cp["mode"] = "incremental"
+                new_cp["cursor"] = None
+                new_cp["backfill_status"] = "ceiling"
+                logger.warning(
+                    f"[{self.data_domain}:{source_name}] 回填无时间进展，按数据源历史上限结束: "
                     f"覆盖 {oldest_time} ~ {new_cp.get('newest_time')}, "
                     f"目标 {target_time} 未达到"
                 )

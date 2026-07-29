@@ -31,21 +31,21 @@ def test_aliyun_openai_compatible_provider_is_configured() -> None:
     assert aliyun["reasoning_style"] == "aliyun"
 
 
-def test_deepseek_flash_prefers_aliyun_provider() -> None:
-    assert settings.LLM_PROXY_MODEL_ROUTES["deepseek-v4-flash"] == [
-        "aliyun",
-        "deepseek",
-        "volcengine",
-    ]
+def test_deepseek_flash_uses_aliyun_provider() -> None:
+    assert settings.LLM_PROXY_MODEL_ROUTES["deepseek-v4-flash"] == ["aliyun"]
+
+
+def test_deepseek_pro_uses_official_provider() -> None:
+    assert settings.LLM_PROXY_MODEL_ROUTES["deepseek-v4-pro"] == ["deepseek"]
 
 
 def test_atomic_card_dynamic_model_route_defaults() -> None:
     assert settings.KG_COGNITIVE_CARD_SIMPLE_MODEL == "deepseek-v4-flash"
     assert settings.KG_COGNITIVE_CARD_COMPLEX_MODEL == "deepseek-v4-pro"
-    assert settings.KG_COGNITIVE_CARD_SIMPLE_MAX_SPANS == 8
+    assert settings.KG_COGNITIVE_CARD_SIMPLE_MAX_SENTENCE_BLOCKS == 6
     assert settings.KG_COGNITIVE_CARD_SIMPLE_MAX_CHARS == 2500
-    assert settings.KG_COGNITIVE_CARD_THINKING_TYPE == "disabled"
-    assert settings.KG_RELATION_PROBE_THINKING_TYPE == "disabled"
+    assert settings.KG_COGNITIVE_CARD_THINKING_TYPE == ""
+    assert settings.KG_RELATION_PROBE_THINKING_TYPE == ""
 
 
 def test_volcengine_openai_compatible_provider_is_configured() -> None:
@@ -63,6 +63,31 @@ def test_volcengine_openai_compatible_provider_is_configured() -> None:
         == "doubao-seed-2-1-turbo-260628"
     )
     assert volcengine["reasoning_style"] == "volcengine"
+
+
+def test_aiclient2api_openai_compatible_provider_is_configured() -> None:
+    provider = next(
+        item
+        for item in settings.LLM_PROXY_OPENAI_COMPATIBLE_PROVIDERS
+        if item["name"] == "aiclient2api"
+    )
+
+    assert provider["base_url"] == "http://119.23.227.187:13000/v1"
+    assert provider["default_model"] == "glm-5.2"
+    assert provider["timeout"] == 1800
+    assert provider["model_mappings"]["glm-4.5"] == "glm-4.5"
+    assert provider["model_mappings"]["glm-5.2"] == "glm-5.2"
+    assert provider["reasoning_style"] == "aiclient2api"
+    assert provider["thinking_type"] == ""
+    assert provider["reasoning_effort"] == ""
+
+
+def test_glm_5_2_prefers_aiclient2api_provider() -> None:
+    assert settings.LLM_PROXY_MODEL_ROUTES["glm-5.2"] == [
+        "aiclient2api",
+        "aliyun",
+    ]
+    assert settings.LLM_PROXY_MODEL_ALIASES["glm5.2"] == "glm-5.2"
 
 
 def test_custom_openai_compatible_provider_reads_key_from_named_env(monkeypatch) -> None:

@@ -79,7 +79,6 @@ class RetrievalPlanExecutor:
                 channels_used=_ordered_unique(result.tool for result in observations),
                 semantic_enabled=semantic_enabled,
                 milvus_enabled=milvus_enabled,
-                agentic_enabled=False,
                 planner_enabled=True,
                 steps=[result.step for result in observations],
                 warnings=_warnings_for(

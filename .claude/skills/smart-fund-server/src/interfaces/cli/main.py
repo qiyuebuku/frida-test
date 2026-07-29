@@ -18,6 +18,10 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
 
 import click
 
+from src.application.services.collection_backfill_service import (
+    CollectionBackfillError,
+    CollectionBackfillService,
+)
 from src.infrastructure.observability import configure_logging
 
 
@@ -112,15 +116,47 @@ def worker(concurrency: int, tasks: tuple[str, ...]):
         "collect_market",
         "collect_macro",
         "collect_sentiment",
-        # "kg_news_ingest",
-        # "kg_relation_discovery",
-        # "kg_community_insight_refresh",
+        "materialize_sentiment_signal",
     ]
     task_names = list(tasks) if tasks else ALL_TASKS
 
     click.echo(f"🚀 启动 Worker（并发={concurrency}）")
     click.echo(f"   任务: {', '.join(task_names)}")
     app.start_worker(task_names=task_names, concurrency=concurrency, prefetch=100)
+
+
+@cli.command("knowledge-worker")
+@click.option(
+    "--stage",
+    type=click.Choice(["card", "relation", "graph", "all"]),
+    default="all",
+    show_default=True,
+    help="知识工作流阶段；生产环境建议三个阶段分别启动",
+)
+@click.option("-c", "--concurrency", type=int, default=1, help="并发数")
+def knowledge_worker(stage: str, concurrency: int):
+    """启动关系优先知识图谱 Worker。"""
+
+    from src.interfaces.tasks import app
+
+    task_groups = {
+        "card": ["kg_news_ingest"],
+        "relation": ["kg_relation_discovery"],
+        "graph": ["kg_graph_community_refresh"],
+        "all": [
+            "kg_news_ingest",
+            "kg_relation_discovery",
+            "kg_graph_community_refresh",
+        ],
+    }
+    task_names = task_groups[stage]
+    click.echo(f"启动知识 Worker（阶段={stage}，并发={concurrency}）")
+    click.echo(f"任务: {', '.join(task_names)}")
+    app.start_worker(
+        task_names=task_names,
+        concurrency=concurrency,
+        prefetch=100,
+    )
 
 
 @cli.command()
@@ -151,7 +187,10 @@ def _run_api_server(host: str, port: int, reload: bool) -> None:
     import uvicorn
 
     click.echo(f"🌐 启动 API 服务  http://{host}:{port}")
-    click.echo("   包含 LLM 代理接口: /api/llm-proxy/health  /v1/chat/completions  /v1/embeddings")
+    click.echo("   API 文档: /docs")
+    click.echo("   Graph Community Explorer: /api/kg/graph-viewer")
+    click.echo("   Browser Spy: /api/spy/status")
+    click.echo("   LLM Proxy: /api/llm-proxy/health  /v1/chat/completions  /v1/embeddings")
     uvicorn.run("main:app", host=host, port=port, reload=reload)
 
 
@@ -306,6 +345,89 @@ def trigger(
     for q, eid in zip(target, ids):
         click.echo(f"   {q:<24} {eid}")
     app.close()
+
+
+# ==================== collection 运维命令 ====================
+
+
+@cli.group("collection")
+def collection():
+    """数据采集状态与历史回填运维。"""
+
+
+@collection.command("backfill-sources")
+@click.option(
+    "--aggregator",
+    type=click.Choice(["news", "fund_flow", "market", "sentiment", "macro"]),
+    default=None,
+    help="只查看指定 aggregator",
+)
+def collection_backfill_sources(aggregator: str | None):
+    """列出各 source 的历史回填能力和当前状态。"""
+    service = CollectionBackfillService()
+    try:
+        rows = service.list_capabilities(aggregator)
+    except CollectionBackfillError as exc:
+        raise click.ClickException(str(exc)) from exc
+
+    click.echo(
+        f"{'aggregator':<12} {'source':<24} {'supported':<10} "
+        f"{'mode':<12} {'oldest':<12} {'target_days':>11}"
+    )
+    for item in rows:
+        click.echo(
+            f"{item['aggregator']:<12} "
+            f"{item['source_name']:<24} "
+            f"{str(item['supported']):<10} "
+            f"{str(item['mode'] or '-'):<12} "
+            f"{str(item['oldest_time'] or '-')[:10]:<12} "
+            f"{item['configured_target_days']:>11}"
+        )
+
+
+@collection.command("backfill")
+@click.argument(
+    "aggregator",
+    type=click.Choice(["news", "fund_flow", "market", "sentiment", "macro"]),
+)
+@click.argument("source_name")
+@click.option("--start-date", required=True, help="历史回填目标日期 YYYY-MM-DD")
+@click.option("--dry-run", is_flag=True, help="只预览 checkpoint 变更，不写数据库")
+def collection_backfill(
+    aggregator: str,
+    source_name: str,
+    start_date: str,
+    dry_run: bool,
+):
+    """将单个支持历史接口的 source 切换到受控回填模式。"""
+    service = CollectionBackfillService()
+    try:
+        result = service.prepare(
+            aggregator=aggregator,
+            source_name=source_name,
+            start_date=start_date,
+            dry_run=dry_run,
+        )
+    except CollectionBackfillError as exc:
+        raise click.ClickException(str(exc)) from exc
+
+    data = result.to_dict()
+    click.echo(f"status={data['status']} changed={data['changed']} dry_run={data['dry_run']}")
+    click.echo(
+        f"source={data['aggregator']}:{data['source_name']} "
+        f"target={data['target_time']} queue={data['queue']}"
+    )
+    click.echo(
+        f"previous_mode={data['previous_mode']} "
+        f"oldest={data['oldest_time'] or '-'} newest={data['newest_time'] or '-'} "
+        f"cursor_preserved={data['cursor_preserved']}"
+    )
+    if data["warning"]:
+        click.echo(f"warning={data['warning']}", err=True)
+    if data["changed"] and not dry_run:
+        click.echo(
+            f"已设置 last_run_at=NULL；下一次 {data['queue']} 调度会立即执行该 source 的历史回填"
+        )
 
 
 # ==================== init 子命令组 ====================

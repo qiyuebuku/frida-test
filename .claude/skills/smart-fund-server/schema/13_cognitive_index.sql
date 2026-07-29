@@ -1,17 +1,6 @@
--- Cognitive Card and Community Assignment tables.
--- PG stores structured cognitive signals and refs only; readable chunk/card text stays in Milvus.
-
-CREATE SEQUENCE IF NOT EXISTS public.kg_graph_community_id_seq;
-
-ALTER TABLE IF EXISTS public.kg_graph_communities
-    ADD COLUMN IF NOT EXISTS id bigint;
-ALTER TABLE IF EXISTS public.kg_graph_communities
-    ALTER COLUMN id SET DEFAULT nextval('public.kg_graph_community_id_seq'::regclass);
-ALTER TABLE IF EXISTS public.kg_graph_communities
-    ADD COLUMN IF NOT EXISTS last_insight_generated_at timestamp with time zone;
-
-CREATE INDEX IF NOT EXISTS ix_kg_graph_communities_id
-    ON public.kg_graph_communities(id);
+-- Cognitive Card and legacy Community Assignment tables.
+-- Relationship-first kg_graph_communities is defined in 06_knowledge.sql and
+-- replaced for existing databases by 18_relation_graph_communities.sql.
 
 CREATE TABLE IF NOT EXISTS public.kg_community_insights (
     insight_id character varying(220) PRIMARY KEY,
@@ -55,6 +44,7 @@ CREATE TABLE IF NOT EXISTS public.kg_cognitive_cards (
     focus_evidence_refs jsonb NOT NULL DEFAULT '[]'::jsonb,
     focus_span_offsets jsonb NOT NULL DEFAULT '[]'::jsonb,
     relation_probes jsonb NOT NULL DEFAULT '[]'::jsonb,
+    fact_id character varying(180) NOT NULL DEFAULT '',
     schema_version character varying(96) NOT NULL DEFAULT '',
     generator_version character varying(96) NOT NULL DEFAULT '',
     status character varying(32) NOT NULL DEFAULT 'active',
@@ -66,6 +56,7 @@ COMMENT ON TABLE public.kg_cognitive_cards IS '原子 Cognitive Card manifest；
 COMMENT ON COLUMN public.kg_cognitive_cards.focus_evidence_refs IS 'Card 焦点原文 Span Ref 列表';
 COMMENT ON COLUMN public.kg_cognitive_cards.focus_span_offsets IS '焦点 Span 在 primary chunk 中的 offset 指针';
 COMMENT ON COLUMN public.kg_cognitive_cards.relation_probes IS '跨 Chunk 关系发现使用的候选事件搜索方向，不代表正式关系';
+COMMENT ON COLUMN public.kg_cognitive_cards.fact_id IS '由 active observed same_fact 关系投影得到的等价事实分组 ID；无匹配时为 Card 单例事实';
 
 CREATE TABLE IF NOT EXISTS public.kg_community_assignments (
     assignment_id character varying(180) PRIMARY KEY,
@@ -108,6 +99,8 @@ CREATE INDEX IF NOT EXISTS ix_kg_cognitive_cards_chunk
     ON public.kg_cognitive_cards(primary_chunk_id);
 CREATE INDEX IF NOT EXISTS ix_kg_cognitive_cards_source
     ON public.kg_cognitive_cards(adapter_name, source_type, source_id);
+CREATE INDEX IF NOT EXISTS ix_kg_cognitive_cards_fact
+    ON public.kg_cognitive_cards(adapter_name, fact_id, status);
 
 CREATE INDEX IF NOT EXISTS ix_kg_community_assignments_adapter_status
     ON public.kg_community_assignments(adapter_name, status);

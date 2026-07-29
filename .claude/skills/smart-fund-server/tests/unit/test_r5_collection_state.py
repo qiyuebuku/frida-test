@@ -111,9 +111,9 @@ def test_r5_compute_checkpoint_backfill_not_reached():
 
 @pytest.mark.unit
 def test_r5_news_source_configs_complete():
-    """NewsAggregator.SOURCE_CONFIGS 包含所有 10 个源"""
+    """NewsAggregator.SOURCE_CONFIGS 包含所有 11 个源"""
     from src.domain.collection.services.news import NewsAggregator
-    expected = {"cls", "cls_depth", "gov", "pboc_omo", "pboc_monetary", "em_news",
+    expected = {"cls", "cls_depth", "cls_hot_article", "gov", "pboc_omo", "pboc_monetary", "em_news",
                 "em_reports", "ths", "sina", "xueqiu"}
     assert set(NewsAggregator.SOURCE_CONFIGS.keys()) == expected
 

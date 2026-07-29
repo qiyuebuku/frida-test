@@ -5,14 +5,11 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any, Literal
 
-from fastapi import APIRouter, BackgroundTasks, HTTPException, Query
+from fastapi import APIRouter, BackgroundTasks, HTTPException, Query, Request
+from fastapi.responses import RedirectResponse
 from pydantic import BaseModel, Field
 
 from src.application.dto.knowledge_dto import (
-    KnowledgeAgentExpandCommand,
-    KnowledgeAgentOpenCommand,
-    KnowledgeAgentRefineCommand,
-    KnowledgeAgentSearchCommand,
     KnowledgeCompileCommand,
     KnowledgeIncrementalRefreshCommand,
     KnowledgeQualityScanCommand,
@@ -24,6 +21,16 @@ from src.application.dto.knowledge_dto import (
 )
 from src.application.services.knowledge_adapter_registry import AdapterNotFoundError
 from src.application.services.knowledge_service import create_knowledge_service
+from src.application.services.relation_graph_explorer_service import (
+    create_relation_graph_explorer_service,
+)
+from src.application.services.relation_graph_agent_retrieval_service import (
+    create_relation_graph_agent_retrieval_service,
+)
+from src.infrastructure.observability.langfuse_tracing import (
+    langfuse_flush,
+    langfuse_propagation_context,
+)
 
 router = APIRouter(prefix="/api/kg", tags=["知识图谱"])
 
@@ -61,9 +68,9 @@ class KGResearchContextRequest(BaseModel):
     query: str = Field(..., min_length=1, description="查询文本")
     adapter_name: str = Field("financial", description="adapter 名称")
     target: Target = Field("prod", description="数据库目标")
-    retrieval_mode: Literal["auto", "deterministic_plan", "agentic_arag", "openai_agents_arag"] = Field(
+    retrieval_mode: Literal["auto", "deterministic_plan"] = Field(
         "auto",
-        description="检索模式；auto 会自动路由到 deterministic_plan 或 agentic_arag；openai_agents_arag 为 Agent SDK 方案灰度入口",
+        description="检索模式；auto 和 deterministic_plan 均使用确定性投研上下文检索",
     )
     graph_depth: int = Field(3, ge=1, le=4)
     graph_limit: int = Field(20, ge=1, le=100)
@@ -118,50 +125,188 @@ class KGAgentTimeRangeRequest(BaseModel):
     end: str | None = None
 
 
-class KGAgentSearchRequest(BaseModel):
-    query: str = Field(..., min_length=1, description="Agent 的自然语言检索意图")
-    adapter_name: str = Field("financial")
+class KGRelationGraphSearchRequest(BaseModel):
+    query: str = Field(..., min_length=1)
+    adapter_name: str = Field("financial", min_length=1)
     target: Target = "prod"
-    session_id: str = Field(..., min_length=1, description="Agent 检索会话 ID；同一任务的 search/open/expand/refine 必须复用同一个值")
-    limit: int = Field(8, ge=1, le=50, description="最终返回给 Agent 的 evidence package 数量")
-    candidate_limit: int | None = Field(None, ge=1, le=300, description="内部候选池规模")
-    sort: Literal["relevance", "freshness", "evidence_strength", "diversity"] = "relevance"
+    session_id: str | None = Field(
+        None,
+        description="可选 Agent 会话 ID，用于串联 Langfuse Trace",
+    )
+    seed_limit: int = Field(8, ge=1, le=30)
+    candidate_limit: int = Field(32, ge=1, le=100)
     time_range: KGAgentTimeRangeRequest | None = None
-    max_chars: int = Field(8000, ge=1000, le=40000)
-    focus_aspects: list[str] = Field(default_factory=list, description="Agent 显式关注的检索侧面")
 
 
-class KGAgentOpenRequest(BaseModel):
-    target_ids: list[str] = Field(..., min_length=1)
-    query: str | None = Field(None, description="可选原始查询；提供后用于对邻接上下文做 query-aware 排序")
-    adapter_name: str = Field("financial")
+class KGCardExpandRequest(BaseModel):
+    card_ids: list[str] = Field(..., min_length=1, max_length=30)
+    adapter_name: str = Field("financial", min_length=1)
     target: Target = "prod"
-    session_id: str = Field(..., min_length=1, description="Agent 检索会话 ID；用于串联上下文和过滤重复结果")
-    include_neighbors: bool = True
-    limit: int = Field(12, ge=1, le=100)
-    max_chars: int = Field(12000, ge=1000, le=60000)
+    session_id: str | None = None
+    hop_limit: int = Field(1, ge=1, le=2)
+    node_limit: int = Field(40, ge=1, le=100)
+    edge_limit: int = Field(80, ge=1, le=200)
+    relation_kinds: list[str] = Field(default_factory=list)
+    decision_classes: list[Literal["observed", "inferred"]] = Field(
+        default_factory=lambda: ["observed", "inferred"]
+    )
+    min_confidence: float = Field(0.0, ge=0.0, le=1.0)
 
 
-class KGAgentExpandRequest(BaseModel):
-    target_id: str = Field(..., min_length=1)
-    query: str | None = Field(None, description="可选原始查询；提供后用于对展开结果做 query-aware 排序")
-    adapter_name: str = Field("financial")
+class KGCommunityExpandRequest(BaseModel):
+    community_ids: list[str] = Field(..., min_length=1, max_length=20)
+    adapter_name: str = Field("financial", min_length=1)
     target: Target = "prod"
-    session_id: str = Field(..., min_length=1, description="Agent 检索会话 ID；用于串联上下文和过滤重复结果")
-    direction: Literal["supporting_cards", "supporting_chunks", "neighbors", "auto"] = "auto"
-    limit: int = Field(20, ge=1, le=150)
-    max_chars: int = Field(12000, ge=1000, le=60000)
+    session_id: str | None = None
+    hop_limit: int = Field(1, ge=1, le=2)
+    community_limit: int = Field(30, ge=1, le=100)
+    relation_limit: int = Field(60, ge=1, le=200)
+    relation_kinds: list[str] = Field(default_factory=list)
 
 
-class KGAgentRefineRequest(KGAgentSearchRequest):
-    previous_context: dict[str, Any] = Field(default_factory=dict)
-    refinement: str = ""
+class KGCardOpenRequest(BaseModel):
+    card_ids: list[str] = Field(..., min_length=1, max_length=30)
+    adapter_name: str = Field("financial", min_length=1)
+    target: Target = "prod"
+    session_id: str | None = None
+    incident_edge_limit: int = Field(40, ge=1, le=200)
+
+
+class KGEdgeOpenRequest(BaseModel):
+    edge_ids: list[str] = Field(..., min_length=1, max_length=50)
+    adapter_name: str = Field("financial", min_length=1)
+    target: Target = "prod"
+    session_id: str | None = None
+
+
+class KGCommunityOpenRequest(BaseModel):
+    community_ids: list[str] = Field(..., min_length=1, max_length=20)
+    adapter_name: str = Field("financial", min_length=1)
+    target: Target = "prod"
+    session_id: str | None = None
+    member_limit: int = Field(40, ge=1, le=100)
+    edge_limit: int = Field(80, ge=1, le=200)
 
 
 @router.get("/health", summary="知识图谱健康检查")
 async def knowledge_health(target: Target = Query("prod")):
     service = create_knowledge_service(target=target)
     return (await service.health()).to_dict()
+
+
+@router.get("/graph-viewer", include_in_schema=False)
+async def graph_viewer(request: Request):
+    query = request.url.query
+    suffix = f"?{query}" if query else ""
+    return RedirectResponse(url=f"/static/kg_graph_explorer.html{suffix}")
+
+
+@router.get("/graph-communities", summary="查询关系图 Community")
+async def list_graph_communities(
+    adapter_name: str = Query("financial", min_length=1),
+    graph_status: str = Query("active", min_length=1),
+    query: str = Query(""),
+    sort_by: Literal[
+        "edge_count",
+        "card_count",
+        "relation_count",
+        "updated_at",
+    ] = Query(
+        "updated_at"
+    ),
+    sort_order: Literal["asc", "desc"] = Query("desc"),
+    limit: int = Query(100, ge=1, le=500),
+    offset: int = Query(0, ge=0),
+    target: Target = Query("prod"),
+):
+    service = create_relation_graph_explorer_service(target=target)
+    return await _call(
+        service.list_communities(
+            adapter_name=adapter_name,
+            graph_status=graph_status,
+            query=query,
+            sort_by=sort_by,
+            sort_order=sort_order,
+            limit=limit,
+            offset=offset,
+        )
+    )
+
+
+@router.get(
+    "/graph-community-overview",
+    summary="查询平行 Graph Community 关系概览",
+)
+async def get_graph_community_overview(
+    adapter_name: str = Query("financial", min_length=1),
+    graph_status: str = Query("active", min_length=1),
+    query: str = Query(""),
+    relation_kind: str = Query(""),
+    sort_by: Literal[
+        "edge_count",
+        "card_count",
+        "relation_count",
+        "updated_at",
+    ] = Query("relation_count"),
+    sort_order: Literal["asc", "desc"] = Query("desc"),
+    limit: int = Query(
+        0,
+        ge=0,
+        le=5000,
+        description="0 表示返回全部 Community；正数表示分页上限",
+    ),
+    offset: int = Query(0, ge=0),
+    target: Target = Query("prod"),
+):
+    service = create_relation_graph_explorer_service(target=target)
+    return await _call(
+        service.get_overview(
+            adapter_name=adapter_name,
+            graph_status=graph_status,
+            query=query,
+            relation_kind=relation_kind,
+            sort_by=sort_by,
+            sort_order=sort_order,
+            limit=limit,
+            offset=offset,
+        )
+    )
+
+
+@router.get(
+    "/graph-communities/{community_id}",
+    summary="查询关系图 Community 详情",
+)
+async def get_graph_community(
+    community_id: str,
+    target: Target = Query("prod"),
+):
+    service = create_relation_graph_explorer_service(target=target)
+    result = await _call(service.get_community(community_id=community_id))
+    if result is None:
+        raise HTTPException(status_code=404, detail="Graph Community 不存在")
+    return result
+
+
+@router.get(
+    "/graph-community-relations/{relation_id}",
+    summary="查询跨 Community 关系及底层 Card Edge",
+)
+async def get_graph_community_relation(
+    relation_id: str,
+    adapter_name: str = Query("financial", min_length=1),
+    target: Target = Query("prod"),
+):
+    service = create_relation_graph_explorer_service(target=target)
+    result = await _call(
+        service.get_community_relation(
+            relation_id=relation_id,
+            adapter_name=adapter_name,
+        )
+    )
+    if result is None:
+        raise HTTPException(status_code=404, detail="Community Relation 不存在")
+    return result
 
 
 @router.post("/compile", summary="编译知识图谱")
@@ -232,87 +377,138 @@ async def research_context(req: KGResearchContextRequest):
     )
 
 
-@router.post("/agent/search", summary="Agent 知识检索")
-async def agent_search(req: KGAgentSearchRequest):
-    service = create_knowledge_service(target=req.target)
-    return await _call(
-        service.agent_search(
-            KnowledgeAgentSearchCommand(
-                query=req.query,
-                adapter_name=req.adapter_name,
-                target=req.target,
-                session_id=req.session_id,
-                limit=req.limit,
-                candidate_limit=req.candidate_limit,
-                sort=req.sort,
-                time_start=_parse_api_datetime(req.time_range.start) if req.time_range else None,
-                time_end=_parse_api_datetime(req.time_range.end) if req.time_range else None,
-                max_chars=req.max_chars,
-                focus_aspects=req.focus_aspects,
-            )
-        )
+@router.post(
+    "/agent/relation-graph/search",
+    summary="Agent 语义检索关系图 Card",
+)
+async def relation_graph_search(req: KGRelationGraphSearchRequest):
+    service = create_relation_graph_agent_retrieval_service(
+        target=req.target
+    )
+    return await _relation_graph_call(
+        req,
+        "search",
+        service.search(
+            query=req.query,
+            adapter_name=req.adapter_name,
+            seed_limit=req.seed_limit,
+            candidate_limit=req.candidate_limit,
+            time_start=(
+                _parse_api_datetime(req.time_range.start)
+                if req.time_range
+                else None
+            ),
+            time_end=(
+                _parse_api_datetime(req.time_range.end)
+                if req.time_range
+                else None
+            ),
+        ),
     )
 
 
-@router.post("/agent/open", summary="Agent 打开检索命中上下文")
-async def agent_open(req: KGAgentOpenRequest):
-    service = create_knowledge_service(target=req.target)
-    return await _call(
-        service.agent_open(
-            KnowledgeAgentOpenCommand(
-                target_ids=req.target_ids,
-                query=req.query,
-                adapter_name=req.adapter_name,
-                target=req.target,
-                session_id=req.session_id,
-                include_neighbors=req.include_neighbors,
-                limit=req.limit,
-                max_chars=req.max_chars,
-            )
-        )
+@router.post(
+    "/agent/relation-graph/cards/expand",
+    summary="Agent 沿 Card Edge 展开关系图",
+)
+async def relation_graph_card_expand(req: KGCardExpandRequest):
+    service = create_relation_graph_agent_retrieval_service(
+        target=req.target
+    )
+    return await _relation_graph_call(
+        req,
+        "card_expand",
+        service.expand_cards(
+            card_ids=req.card_ids,
+            adapter_name=req.adapter_name,
+            hop_limit=req.hop_limit,
+            node_limit=req.node_limit,
+            edge_limit=req.edge_limit,
+            relation_kinds=req.relation_kinds,
+            decision_classes=list(req.decision_classes),
+            min_confidence=req.min_confidence,
+        ),
     )
 
 
-@router.post("/agent/expand", summary="Agent 展开 community/card/chunk")
-async def agent_expand(req: KGAgentExpandRequest):
-    service = create_knowledge_service(target=req.target)
-    return await _call(
-        service.agent_expand(
-            KnowledgeAgentExpandCommand(
-                target_id=req.target_id,
-                query=req.query,
-                adapter_name=req.adapter_name,
-                target=req.target,
-                session_id=req.session_id,
-                direction=req.direction,
-                limit=req.limit,
-                max_chars=req.max_chars,
-            )
-        )
+@router.post(
+    "/agent/relation-graph/communities/expand",
+    summary="Agent 沿跨 Community 关系展开",
+)
+async def relation_graph_community_expand(
+    req: KGCommunityExpandRequest,
+):
+    service = create_relation_graph_agent_retrieval_service(
+        target=req.target
+    )
+    return await _relation_graph_call(
+        req,
+        "community_expand",
+        service.expand_communities(
+            community_ids=req.community_ids,
+            adapter_name=req.adapter_name,
+            hop_limit=req.hop_limit,
+            community_limit=req.community_limit,
+            relation_limit=req.relation_limit,
+            relation_kinds=req.relation_kinds,
+        ),
     )
 
 
-@router.post("/agent/refine", summary="Agent 基于上一轮检索继续 refine")
-async def agent_refine(req: KGAgentRefineRequest):
-    service = create_knowledge_service(target=req.target)
-    return await _call(
-        service.agent_refine(
-            KnowledgeAgentRefineCommand(
-                query=req.query,
-                adapter_name=req.adapter_name,
-                target=req.target,
-                session_id=req.session_id,
-                limit=req.limit,
-                candidate_limit=req.candidate_limit,
-                sort=req.sort,
-                time_start=_parse_api_datetime(req.time_range.start) if req.time_range else None,
-                time_end=_parse_api_datetime(req.time_range.end) if req.time_range else None,
-                max_chars=req.max_chars,
-                focus_aspects=req.focus_aspects,
-                previous_context=req.previous_context,
-                refinement=req.refinement,
-            )
-        )
+@router.post(
+    "/agent/relation-graph/cards/open",
+    summary="Agent 精确打开 Card 和焦点原文",
+)
+async def relation_graph_card_open(req: KGCardOpenRequest):
+    service = create_relation_graph_agent_retrieval_service(
+        target=req.target
+    )
+    return await _relation_graph_call(
+        req,
+        "card_open",
+        service.open_cards(
+            card_ids=req.card_ids,
+            adapter_name=req.adapter_name,
+            incident_edge_limit=req.incident_edge_limit,
+        ),
+    )
+
+
+@router.post(
+    "/agent/relation-graph/edges/open",
+    summary="Agent 精确打开 Card Edge 和关系证据",
+)
+async def relation_graph_edge_open(req: KGEdgeOpenRequest):
+    service = create_relation_graph_agent_retrieval_service(
+        target=req.target
+    )
+    return await _relation_graph_call(
+        req,
+        "edge_open",
+        service.open_edges(
+            edge_ids=req.edge_ids,
+            adapter_name=req.adapter_name,
+        ),
+    )
+
+
+@router.post(
+    "/agent/relation-graph/communities/open",
+    summary="Agent 精确打开 Community 内部结构",
+)
+async def relation_graph_community_open(req: KGCommunityOpenRequest):
+    service = create_relation_graph_agent_retrieval_service(
+        target=req.target
+    )
+    return await _relation_graph_call(
+        req,
+        "community_open",
+        service.open_communities(
+            community_ids=req.community_ids,
+            adapter_name=req.adapter_name,
+            member_limit=req.member_limit,
+            edge_limit=req.edge_limit,
+        ),
     )
 
 
@@ -456,6 +652,24 @@ async def _call(coro):
         raise HTTPException(status_code=500, detail=str(exc)) from exc
     except Exception as exc:
         raise HTTPException(status_code=500, detail=f"知识图谱服务异常: {exc}") from exc
+
+
+async def _relation_graph_call(req, operation: str, coro):
+    metadata = {
+        "operation": operation,
+        "adapter_name": req.adapter_name,
+        "target": req.target,
+    }
+    try:
+        with langfuse_propagation_context(
+            trace_name=f"kg.relation_graph_agent.{operation}",
+            session_id=req.session_id,
+            tags=["kg", "agent-tool", "relation-graph", operation],
+            metadata=metadata,
+        ):
+            return await _call(coro)
+    finally:
+        langfuse_flush()
 
 
 async def _run_incremental_refresh_task(run_id: str, target: Target) -> None:

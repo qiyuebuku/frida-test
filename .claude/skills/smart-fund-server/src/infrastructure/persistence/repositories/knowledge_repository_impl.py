@@ -19,6 +19,7 @@ from src.domain.knowledge.chunking import build_evidence_chunks, evidence_conten
 from src.domain.knowledge.atomic_cognitive_card import (
     AtomicCognitiveCard,
     CognitiveCardManifest,
+    default_card_fact_id,
 )
 from src.domain.knowledge.cognitive_index import CommunityAssignment
 from src.domain.knowledge.graph_index import (
@@ -40,7 +41,6 @@ from src.domain.knowledge.retrieval_profile import profile_span
 from src.domain.knowledge.schemas import CompiledEvidence, EvidenceChunk
 from src.infrastructure.connections import get_session
 from src.infrastructure.persistence.models.knowledge import (
-    GRAPH_COMMUNITY_ID_SEQUENCE,
     KnowledgeCompilationRun,
     KnowledgeCognitiveCard,
     KnowledgeCommunityAssignment,
@@ -395,16 +395,26 @@ class KnowledgeRepositoryImpl(KnowledgeRepository):
         ):
             with self._session_scope() as session:
                 old_card_ids: list[str] = []
+                old_fact_id_by_card: dict[str, str] = {}
                 if unique_evidence_ids:
+                    old_rows = session.execute(
+                        select(
+                            KnowledgeCognitiveCard.cognitive_card_id,
+                            KnowledgeCognitiveCard.fact_id,
+                        ).where(
+                            KnowledgeCognitiveCard.adapter_name == adapter_name,
+                            KnowledgeCognitiveCard.evidence_id.in_(unique_evidence_ids),
+                        )
+                    ).all()
                     old_card_ids = [
-                        str(item)
-                        for item in session.scalars(
-                            select(KnowledgeCognitiveCard.cognitive_card_id).where(
-                                KnowledgeCognitiveCard.adapter_name == adapter_name,
-                                KnowledgeCognitiveCard.evidence_id.in_(unique_evidence_ids),
-                            )
-                        ).all()
+                        str(card_id)
+                        for card_id, _fact_id in old_rows
                     ]
+                    old_fact_id_by_card = {
+                        str(card_id): str(fact_id)
+                        for card_id, fact_id in old_rows
+                        if fact_id
+                    }
                 new_card_ids = [item.cognitive_card_id for item in cards]
                 old_card_id_set = set(old_card_ids)
                 new_card_id_set = set(new_card_ids)
@@ -419,13 +429,28 @@ class KnowledgeRepositoryImpl(KnowledgeRepository):
                         )
                     )
                 card_count = 0
+                values: list[dict[str, Any]] = []
                 if cards:
+                    values = [
+                        _atomic_cognitive_card_manifest_values(item)
+                        for item in cards
+                    ]
+                    for value in values:
+                        retained_fact_id = old_fact_id_by_card.get(
+                            value["cognitive_card_id"]
+                        )
+                        if retained_fact_id:
+                            value["fact_id"] = retained_fact_id
                     result = session.execute(
                         pg_insert(KnowledgeCognitiveCard).values(
-                            [_atomic_cognitive_card_manifest_values(item) for item in cards]
+                            values
                         )
                     )
                     card_count = result.rowcount or 0
+                fact_id_by_card = {
+                    value["cognitive_card_id"]: value["fact_id"]
+                    for value in values
+                }
                 return {
                     "deleted_cards": len(stale_card_ids),
                     "deleted_card_ids": stale_card_ids,
@@ -434,6 +459,7 @@ class KnowledgeRepositoryImpl(KnowledgeRepository):
                     "retained_card_ids": retained_card_ids,
                     "added_cards": len(added_card_ids),
                     "added_card_ids": added_card_ids,
+                    "fact_id_by_card": fact_id_by_card,
                     "evidence_ids": unique_evidence_ids,
                 }
 
@@ -781,17 +807,14 @@ class KnowledgeRepositoryImpl(KnowledgeRepository):
     def list_graph_communities(self, adapter_name: str) -> list[GraphIndexCommunity]:
         with profile_span("kg_repository.list_graph_communities", adapter=adapter_name):
             with self._session_scope() as session:
-                self._ensure_graph_community_id_columns(session)
                 rows = list(
                     session.scalars(
                         select(KnowledgeGraphCommunity)
-                        .where(KnowledgeGraphCommunity.adapter_name == adapter_name)
-                        .order_by(
-                            KnowledgeGraphCommunity.projection,
-                            KnowledgeGraphCommunity.level,
-                            KnowledgeGraphCommunity.id.asc().nullslast(),
-                            KnowledgeGraphCommunity.community_id,
+                        .where(
+                            KnowledgeGraphCommunity.adapter_name == adapter_name,
+                            KnowledgeGraphCommunity.graph_status == "active",
                         )
+                        .order_by(KnowledgeGraphCommunity.community_id)
                     ).all()
                 )
                 return [_graph_community_schema(row) for row in rows]
@@ -811,20 +834,15 @@ class KnowledgeRepositoryImpl(KnowledgeRepository):
             communities=len(unique_ids),
         ):
             with self._session_scope() as session:
-                self._ensure_graph_community_id_columns(session)
                 rows = list(
                     session.scalars(
                         select(KnowledgeGraphCommunity)
                         .where(
                             KnowledgeGraphCommunity.adapter_name == adapter_name,
                             KnowledgeGraphCommunity.community_id.in_(unique_ids),
+                            KnowledgeGraphCommunity.graph_status == "active",
                         )
-                        .order_by(
-                            KnowledgeGraphCommunity.projection,
-                            KnowledgeGraphCommunity.level,
-                            KnowledgeGraphCommunity.id.asc().nullslast(),
-                            KnowledgeGraphCommunity.community_id,
-                        )
+                        .order_by(KnowledgeGraphCommunity.community_id)
                     ).all()
                 )
                 return [_graph_community_schema(row) for row in rows]
@@ -844,9 +862,8 @@ class KnowledgeRepositoryImpl(KnowledgeRepository):
             cards=len(unique_ids),
         ):
             with self._session_scope() as session:
-                self._ensure_graph_community_id_columns(session)
                 predicates = [
-                    KnowledgeGraphCommunity.metrics["cognitive_card_ids"].contains([card_id])
+                    KnowledgeGraphCommunity.member_card_ids.contains([card_id])
                     for card_id in unique_ids
                 ]
                 rows = list(
@@ -854,25 +871,19 @@ class KnowledgeRepositoryImpl(KnowledgeRepository):
                         select(KnowledgeGraphCommunity)
                         .where(
                             KnowledgeGraphCommunity.adapter_name == adapter_name,
-                            KnowledgeGraphCommunity.status == "active",
+                            KnowledgeGraphCommunity.graph_status == "active",
                             or_(*predicates),
                         )
-                        .order_by(
-                            KnowledgeGraphCommunity.projection,
-                            KnowledgeGraphCommunity.level,
-                            KnowledgeGraphCommunity.id.asc().nullslast(),
-                            KnowledgeGraphCommunity.community_id,
-                        )
+                        .order_by(KnowledgeGraphCommunity.community_id)
                     ).all()
                 )
                 return [_graph_community_schema(row) for row in rows]
 
     def allocate_graph_community_id(self, adapter_name: str, *, level: int = 0) -> str:
-        with profile_span("kg_repository.allocate_graph_community_id", adapter=adapter_name, level=level):
-            with self._session_scope() as session:
-                self._ensure_graph_community_id_columns(session)
-                sequence_id = int(session.scalar(select(GRAPH_COMMUNITY_ID_SEQUENCE.next_value())))
-                return f"kgc:{adapter_name}:l{int(level)}:{sequence_id}"
+        raise RuntimeError(
+            "旧 Topic Community ID 分配器已停用；"
+            "关系图 Community ID 必须由 identity anchor 确定性生成"
+        )
 
     def list_graph_findings(self, adapter_name: str) -> list[GraphIndexFinding]:
         with profile_span("kg_repository.list_graph_findings", adapter=adapter_name):
@@ -2149,6 +2160,7 @@ def _atomic_cognitive_card_manifest_values(item: AtomicCognitiveCard) -> dict[st
         "focus_evidence_refs": item.focus_evidence_refs,
         "focus_span_offsets": item.focus_span_offsets,
         "relation_probes": [probe.as_dict() for probe in item.relation_probes],
+        "fact_id": item.fact_id or default_card_fact_id(item.cognitive_card_id),
         "schema_version": item.schema_version,
         "generator_version": item.generator_version,
         "status": item.status,
@@ -2172,6 +2184,7 @@ def _atomic_cognitive_card_manifest_schema(row: KnowledgeCognitiveCard) -> Cogni
         generator_version=row.generator_version or "",
         relation_probes=_relation_probes_from_json(row.relation_probes),
         status=row.status or "active",
+        fact_id=row.fact_id or default_card_fact_id(row.cognitive_card_id),
     )
 
 
@@ -2209,29 +2222,42 @@ def _community_assignment_values(item: CommunityAssignment) -> dict[str, Any]:
 
 
 def _graph_community_schema(row: KnowledgeGraphCommunity) -> GraphIndexCommunity:
-    community = GraphIndexCommunity(
+    return GraphIndexCommunity(
         community_id=row.community_id,
-        version_id=row.version_id,
+        version_id=(
+            f"{row.community_id}:graph:{int(row.graph_version or 0)}"
+            f":fact:{int(row.fact_report_version or 0)}"
+        ),
         adapter_name=row.adapter_name,
-        projection=row.projection,
-        level=row.level,
-        parent_community_id=row.parent_community_id or "",
-        title=row.title,
-        summary=row.summary,
-        member_node_ids=[str(item) for item in row.member_node_ids or [] if item],
+        projection="relation_graph",
+        level=0,
+        parent_community_id="",
+        title=row.title or "",
+        summary=row.fact_report or "",
+        member_node_ids=[
+            str(item) for item in row.member_card_ids or [] if item
+        ],
         member_edge_ids=[str(item) for item in row.member_edge_ids or [] if item],
-        evidence_ids=[str(item) for item in row.evidence_ids or [] if item],
-        chunk_ids=[str(item) for item in row.chunk_ids or [] if item],
-        metrics=dict(row.metrics or {}),
-        status=row.status,
-        previous_version_id=row.previous_version_id or "",
-        change_reason=row.change_reason or "build",
-        lineage_id=row.lineage_id or "",
-        previous_community_ids=[str(item) for item in row.previous_community_ids or [] if item],
+        evidence_ids=[],
+        chunk_ids=[],
+        metrics={
+            "cognitive_card_ids": [
+                str(item) for item in row.member_card_ids or [] if item
+            ],
+            "graph_fingerprint": row.graph_fingerprint,
+            "graph_version": int(row.graph_version or 0),
+            "fact_report_version": int(row.fact_report_version or 0),
+            "fact_report_status": row.fact_report_status,
+            "projection_version": int(row.projection_version or 0),
+            "projection_status": row.projection_status,
+            "conditional_projections": list(
+                row.conditional_projections or []
+            ),
+        },
+        status=row.graph_status,
+        change_reason="relation_graph",
+        lineage_id=row.identity_anchor_card_id,
     )
-    if row.id is not None:
-        community.metrics.setdefault("community_numeric_id", int(row.id))
-    return community
 
 
 def _graph_community_numeric_id(community_id: str) -> int | None:

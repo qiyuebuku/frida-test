@@ -19,8 +19,17 @@ def resolve_kg_llm_model(task: str, *, plan_name: str | None = None) -> str:
     plan_key = (plan_name or settings.KG_LLM_PLAN or "").strip()
     plans = settings.KG_LLM_PLANS
     plan = plans.get(plan_key) or plans.get("deepseek_balanced") or {}
+    task_default = {
+        "kg_graph_community_report": "deepseek-v4-pro",
+        "kg_graph_community_projection": "deepseek-v4-pro",
+    }.get(task)
     return (
-        str(plan.get(task) or plan.get("*") or settings.LLM_PROXY_DEFAULT_MODEL)
+        str(
+            plan.get(task)
+            or task_default
+            or plan.get("*")
+            or settings.LLM_PROXY_DEFAULT_MODEL
+        )
         .strip()
         or settings.LLM_PROXY_DEFAULT_MODEL
     )
@@ -39,15 +48,18 @@ def kg_llm_config_summary() -> dict:
         "resolved_models": {
             "financial_news_extraction": resolve_kg_llm_model("financial_news_extraction"),
             "financial_entity_normalization": resolve_kg_llm_model("financial_entity_normalization"),
-            "kg_retrieval_controller": resolve_kg_llm_model("kg_retrieval_controller"),
-            "kg_candidate_judge": resolve_kg_llm_model("kg_candidate_judge"),
-            "kg_agentic_retrieval": resolve_kg_llm_model("kg_agentic_retrieval"),
             "kg_cognitive_card": resolve_kg_llm_model("kg_cognitive_card"),
             "kg_relation_candidate_screen": resolve_kg_llm_model("kg_relation_candidate_screen"),
             "kg_relation_evidence_verify": resolve_kg_llm_model("kg_relation_evidence_verify"),
             "kg_community_assignment": resolve_kg_llm_model("kg_community_assignment"),
             "kg_community_report": resolve_kg_llm_model("kg_community_report"),
             "kg_community_insight": resolve_kg_llm_model("kg_community_insight"),
+            "kg_graph_community_report": resolve_kg_llm_model(
+                "kg_graph_community_report"
+            ),
+            "kg_graph_community_projection": resolve_kg_llm_model(
+                "kg_graph_community_projection"
+            ),
             "kg_delta_finding": resolve_kg_llm_model("kg_delta_finding"),
             "kg_finding_evidence_validate": resolve_kg_llm_model("kg_finding_evidence_validate"),
         },

@@ -14,6 +14,7 @@ from src.infrastructure.vector_store.semantic_hybrid_retriever import (
     MilvusSemanticHybridRetriever,
     _candidate_limit,
     _expanded_query_text,
+    _query_requests_projection,
     _roles_for_target_ids,
     _strong_query_terms,
 )
@@ -24,6 +25,8 @@ from src.domain.knowledge.atomic_cognitive_card import (
 from src.domain.knowledge.semantic_index_materials import (
     SEMANTIC_COLLECTION_CARD_RELATION,
     SEMANTIC_COLLECTION_COGNITIVE_CARD,
+    SEMANTIC_COLLECTION_GRAPH_COMMUNITY_PROJECTION,
+    SEMANTIC_COLLECTION_GRAPH_COMMUNITY_REPORT,
 )
 
 
@@ -158,18 +161,28 @@ def test_candidate_limit_overfetches_without_unbounded_growth() -> None:
     assert _candidate_limit(50) == 80
 
 
-def test_roles_for_target_ids_routes_cognitive_community_ids_to_community_collection() -> None:
-    assert _roles_for_target_ids(["kgc:financial:l0:3"]) == ("community",)
+def test_roles_for_target_ids_routes_relation_community_derivatives() -> None:
+    assert _roles_for_target_ids(
+        ["kgc:financial:relation:abc123"]
+    ) == (SEMANTIC_COLLECTION_GRAPH_COMMUNITY_REPORT,)
+    assert _roles_for_target_ids(
+        ["kgc:financial:relation:abc123:projection"]
+    ) == (SEMANTIC_COLLECTION_GRAPH_COMMUNITY_PROJECTION,)
     assert _roles_for_target_ids(["kg_edge:financial:affects:catl"]) == (
         "chunk",
         "cognitive_card",
         "card_relation",
-        "community",
-        "community_insight",
+        "graph_community_report",
+        "graph_community_projection",
     )
     assert _roles_for_target_ids(["kg_card_relation:abc123"]) == (
         SEMANTIC_COLLECTION_CARD_RELATION,
     )
+
+
+def test_projection_collection_requires_explicit_future_query() -> None:
+    assert not _query_requests_projection("存储成本如何影响手机产品结构")
+    assert _query_requests_projection("未来存储成本持续上涨会怎样")
 
 
 @pytest.mark.asyncio
@@ -563,7 +576,7 @@ async def test_semantic_hybrid_search_skips_legacy_entity_and_relation_collectio
         "chunk",
         "cognitive_card",
         "card_relation",
-        "community",
+        "graph_community_report",
     }
 
 

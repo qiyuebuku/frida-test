@@ -35,6 +35,7 @@ class OpenAICompatibleProvider:
         model_patterns: tuple[str, ...] = (),
         model_mappings: dict[str, str] | None = None,
         reasoning_style: str = "generic",
+        cache_usage_style: str = "inclusive",
         json_prefix_completion_enabled: bool = False,
         max_concurrency: int = 5,
         rate_limit_cooldown_seconds: float = 60,
@@ -69,8 +70,19 @@ class OpenAICompatibleProvider:
             if str(canonical).strip() and str(upstream).strip()
         }
         self.reasoning_style = str(reasoning_style or "generic").strip().lower()
-        if self.reasoning_style not in {"generic", "deepseek", "aliyun", "volcengine"}:
+        if self.reasoning_style not in {
+            "generic",
+            "deepseek",
+            "aliyun",
+            "volcengine",
+            "aiclient2api",
+        }:
             raise ValueError(f"{self.name} reasoning_style 不支持: {self.reasoning_style}")
+        self.cache_usage_style = str(cache_usage_style or "inclusive").strip().lower()
+        if self.cache_usage_style not in {"inclusive", "separate"}:
+            raise ValueError(
+                f"{self.name} cache_usage_style 不支持: {self.cache_usage_style}"
+            )
         self.json_prefix_completion_enabled = bool(json_prefix_completion_enabled)
         self.max_concurrency = max(1, int(max_concurrency or 1))
         self.rate_limit_cooldown_seconds = max(0.0, float(rate_limit_cooldown_seconds or 0))
@@ -189,14 +201,26 @@ class OpenAICompatibleProvider:
             text = json.dumps(structured_output, ensure_ascii=False)
         reasoning_content = self._render_reasoning_stages(reasoning_stages)
 
-        normalized_usage = self._normalized_usage(primary_data)
+        normalized_usage = self._normalized_usage(
+            primary_data,
+            cache_usage_style=self.cache_usage_style,
+        )
         if prefix_continuation_data is not None:
             normalized_usage = self._merge_usage(
                 normalized_usage,
-                self._normalized_usage(prefix_continuation_data),
+                self._normalized_usage(
+                    prefix_continuation_data,
+                    cache_usage_style=self.cache_usage_style,
+                ),
             )
         if repair_data is not None:
-            normalized_usage = self._merge_usage(normalized_usage, self._normalized_usage(repair_data))
+            normalized_usage = self._merge_usage(
+                normalized_usage,
+                self._normalized_usage(
+                    repair_data,
+                    cache_usage_style=self.cache_usage_style,
+                ),
+            )
         primary_diagnostics = self._response_diagnostics(primary_data)
         prefix_continuation_diagnostics = (
             self._response_diagnostics(prefix_continuation_data)
@@ -637,9 +661,22 @@ class OpenAICompatibleProvider:
                 "0",
                 "off",
             }
+        elif self.reasoning_style == "aiclient2api" and thinking_type:
+            self._apply_aiclient2api_thinking(
+                payload,
+                thinking_type=str(thinking_type),
+                reasoning_effort=options.get(
+                    "reasoning_effort",
+                    self.reasoning_effort,
+                ),
+                budget_tokens=options.get("thinking_budget_tokens"),
+            )
         elif thinking_type:
             payload["thinking"] = {"type": str(thinking_type)}
-        if str(thinking_type or "").strip().lower() != "disabled":
+        if (
+            self.reasoning_style != "aiclient2api"
+            and str(thinking_type or "").strip().lower() != "disabled"
+        ):
             reasoning_effort = options.get("reasoning_effort", self.reasoning_effort)
             if reasoning_effort:
                 payload["reasoning_effort"] = str(reasoning_effort)
@@ -650,12 +687,73 @@ class OpenAICompatibleProvider:
                 {str(key): value for key, value in extra_body.items() if key not in protected}
             )
 
+    @staticmethod
+    def _apply_aiclient2api_thinking(
+        payload: dict[str, Any],
+        *,
+        thinking_type: str,
+        reasoning_effort: Any,
+        budget_tokens: Any,
+    ) -> None:
+        normalized_type = str(thinking_type or "").strip().lower()
+        if normalized_type in {"false", "0", "off"}:
+            normalized_type = "disabled"
+        elif normalized_type in {"true", "1", "on"}:
+            normalized_type = "enabled"
+
+        thinking: dict[str, Any]
+        if normalized_type == "disabled":
+            thinking = {"type": "disabled"}
+        elif normalized_type in {"enabled", "adaptive"}:
+            if budget_tokens is not None:
+                try:
+                    normalized_budget = max(1, int(budget_tokens))
+                except (TypeError, ValueError) as exc:
+                    raise ValueError("thinking_budget_tokens 必须是正整数") from exc
+                thinking = {
+                    "type": "enabled",
+                    "budget_tokens": normalized_budget,
+                }
+            else:
+                normalized_effort = (
+                    str(reasoning_effort or "medium").strip().lower()
+                )
+                if normalized_effort not in {"low", "medium", "high"}:
+                    normalized_effort = "medium"
+                thinking = {
+                    "type": "adaptive",
+                    "effort": normalized_effort,
+                }
+        else:
+            raise ValueError(
+                "AIClient2API thinking_type 只支持 enabled、adaptive 或 disabled"
+            )
+
+        extra_body = payload.setdefault("extra_body", {})
+        if not isinstance(extra_body, dict):
+            extra_body = {}
+            payload["extra_body"] = extra_body
+        anthropic = extra_body.setdefault("anthropic", {})
+        if not isinstance(anthropic, dict):
+            anthropic = {}
+            extra_body["anthropic"] = anthropic
+        anthropic["thinking"] = thinking
+
     def _disable_reasoning(self, payload: dict[str, Any]) -> None:
         if self.reasoning_style == "aliyun":
             payload["enable_thinking"] = False
             payload.pop("thinking", None)
         elif self.reasoning_style in {"deepseek", "volcengine"}:
             payload["thinking"] = {"type": "disabled"}
+            payload.pop("enable_thinking", None)
+        elif self.reasoning_style == "aiclient2api":
+            self._apply_aiclient2api_thinking(
+                payload,
+                thinking_type="disabled",
+                reasoning_effort=None,
+                budget_tokens=None,
+            )
+            payload.pop("thinking", None)
             payload.pop("enable_thinking", None)
         else:
             payload.pop("thinking", None)
@@ -668,8 +766,7 @@ class OpenAICompatibleProvider:
         message = choice.get("message") or {}
         return str(message.get("content") or "")
 
-    @staticmethod
-    def _response_diagnostics(data: dict[str, Any]) -> dict[str, Any]:
+    def _response_diagnostics(self, data: dict[str, Any]) -> dict[str, Any]:
         choice = (data.get("choices") or [{}])[0]
         message = choice.get("message") or {}
         content = str(message.get("content") or "")
@@ -678,14 +775,22 @@ class OpenAICompatibleProvider:
             "id": data.get("id"),
             "model": data.get("model"),
             "finish_reason": choice.get("finish_reason"),
-            "usage": OpenAICompatibleProvider._normalized_usage(data),
+            "usage": self._normalized_usage(
+                data,
+                cache_usage_style=self.cache_usage_style,
+            ),
+            "provider_usage": dict(data.get("usage") or {}),
             "content_chars": len(content),
             "reasoning_chars": len(reasoning_content),
             "has_tool_calls": bool(message.get("tool_calls")),
         }
 
     @staticmethod
-    def _normalized_usage(data: dict[str, Any]) -> dict[str, Any]:
+    def _normalized_usage(
+        data: dict[str, Any],
+        *,
+        cache_usage_style: str = "inclusive",
+    ) -> dict[str, Any]:
         usage = data.get("usage") or {}
         prompt_details = usage.get("prompt_tokens_details") or {}
         nested_cached_tokens = (
@@ -693,32 +798,33 @@ class OpenAICompatibleProvider:
             if isinstance(prompt_details, dict)
             else 0
         )
-        input_tokens = int(usage.get("prompt_tokens", 0) or 0)
+        provider_input_tokens = int(usage.get("prompt_tokens", 0) or 0)
         cache_hit_tokens = int(usage.get("prompt_cache_hit_tokens", 0) or 0)
         if not cache_hit_tokens:
             cache_hit_tokens = nested_cached_tokens
-        cache_miss_tokens = int(usage.get("prompt_cache_miss_tokens", 0) or 0)
-        if (
-            not cache_miss_tokens
-            and input_tokens
-            and isinstance(prompt_details, dict)
-            and "cached_tokens" in prompt_details
-        ):
-            cache_miss_tokens = max(0, input_tokens - cache_hit_tokens)
+        if cache_usage_style == "separate":
+            # Anthropic-style usage reports fresh input separately from cache reads.
+            cache_miss_tokens = provider_input_tokens
+            input_tokens = provider_input_tokens + cache_hit_tokens
+        else:
+            input_tokens = provider_input_tokens
+            if "prompt_cache_miss_tokens" in usage:
+                cache_miss_tokens = int(
+                    usage.get("prompt_cache_miss_tokens", 0) or 0
+                )
+            else:
+                cache_miss_tokens = max(0, input_tokens - cache_hit_tokens)
+        output_tokens = int(usage.get("completion_tokens", 0) or 0)
         normalized_usage = {
             "input_tokens": input_tokens,
-            "output_tokens": int(usage.get("completion_tokens", 0) or 0),
-            "total_tokens": int(usage.get("total_tokens", 0) or 0),
+            "output_tokens": output_tokens,
+            "total_tokens": input_tokens + output_tokens,
             "prompt_cache_hit_tokens": cache_hit_tokens,
             "prompt_cache_miss_tokens": cache_miss_tokens,
         }
         completion_details = usage.get("completion_tokens_details") or {}
         if isinstance(completion_details, dict):
             normalized_usage["reasoning_tokens"] = int(completion_details.get("reasoning_tokens", 0) or 0)
-        if not normalized_usage["total_tokens"]:
-            normalized_usage["total_tokens"] = (
-                normalized_usage["input_tokens"] + normalized_usage["output_tokens"]
-            )
         for key, value in usage.items():
             normalized_key = str(key).lower()
             if "cost" in normalized_key or normalized_key in {"currency", "cost_currency"}:

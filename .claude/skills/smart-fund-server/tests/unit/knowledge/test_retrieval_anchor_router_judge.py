@@ -36,20 +36,20 @@ def test_guarded_anchor_preserves_strong_constraints() -> None:
     assert ("exact_entity", "宁德时代") in constraints
 
 
-def test_fast_router_uses_explicit_mode_and_complex_intent() -> None:
+def test_fast_router_uses_deterministic_plan_for_auto_and_explicit_mode() -> None:
     anchor = build_guarded_query_anchor("为什么并购重组会影响半导体和券商")
 
     decision = fast_route("为什么并购重组会影响半导体和券商", anchor, "auto")
 
-    assert decision.initial_mode == "agentic_arag"
-    assert decision.reasons == ["complex_intent"]
+    assert decision.initial_mode == "deterministic_plan"
+    assert decision.reasons == ["auto_uses_deterministic_plan"]
 
     explicit = fast_route("普通查询", anchor, "deterministic_plan")
     assert explicit.final_mode == "deterministic_plan"
     assert explicit.reasons == ["explicit_mode"]
 
 
-def test_auto_route_starts_with_agentic_judge_instead_of_late_upgrade() -> None:
+def test_auto_route_does_not_upgrade_to_removed_agent_runtime() -> None:
     anchor = build_guarded_query_anchor("中东冲突影响哪些资产")
     decision = fast_route("中东冲突影响哪些资产", anchor, "auto")
 
@@ -65,9 +65,9 @@ def test_auto_route_starts_with_agentic_judge_instead_of_late_upgrade() -> None:
         anchor,
     )
 
-    assert decision.initial_mode == "agentic_arag"
-    assert routed.final_mode == "agentic_arag"
-    assert routed.upgrade_reason is None
+    assert decision.initial_mode == "deterministic_plan"
+    assert routed.final_mode == "deterministic_plan"
+    assert routed.metrics is not None
 
 
 def test_candidate_judge_drops_unrelated_semantic_noise() -> None:

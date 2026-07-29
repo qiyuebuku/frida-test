@@ -13,6 +13,9 @@ from src.domain.knowledge.relation_discovery import VerifiedRelationDecision
 from src.infrastructure.persistence.repositories.card_relation_repository import (
     CardRelationSyncResult,
 )
+from src.infrastructure.persistence.repositories.card_fact_repository import (
+    CardFactProjectionResult,
+)
 from src.infrastructure.vector_store.relation_candidate_store import RelationCardText
 
 
@@ -76,10 +79,47 @@ class _KnowledgeRepository:
 class _CandidateStore:
     async def get_summaries(self, card_ids, **_kwargs):
         values = {
-            "card:1": RelationCardText("card:1", "存储器价格预期上修。", {}),
-            "card:2": RelationCardText("card:2", "半导体设备销售预期上调。", {}),
+            "card:1": RelationCardText(
+                "card:1",
+                "存储器价格预期上修。",
+                {"fact_id": "kg_fact:1"},
+            ),
+            "card:2": RelationCardText(
+                "card:2",
+                "半导体设备销售预期上调。",
+                {"fact_id": "kg_fact:2"},
+            ),
         }
         return {item: values[item] for item in card_ids}
+
+    async def get_focus_evidence(self, card_ids, **_kwargs):
+        values = {
+            "card:1": RelationCardText(
+                "card:1",
+                "存储器价格预期上修原文。",
+                {"fact_id": "kg_fact:1"},
+            ),
+            "card:2": RelationCardText(
+                "card:2",
+                "半导体设备销售预期上调原文。",
+                {"fact_id": "kg_fact:2"},
+            ),
+        }
+        return {item: values[item] for item in card_ids}
+
+
+class _LegacyEventCandidateStore(_CandidateStore):
+    async def get_summaries(self, card_ids, **kwargs):
+        values = await super().get_summaries(card_ids, **kwargs)
+        for value in values.values():
+            value.metadata["event_id"] = "kg_event:legacy"
+        return values
+
+    async def get_focus_evidence(self, card_ids, **kwargs):
+        values = await super().get_focus_evidence(card_ids, **kwargs)
+        for value in values.values():
+            value.metadata["event_id"] = "kg_event:legacy"
+        return values
 
 
 class _RelationRepository:
@@ -139,6 +179,57 @@ class _SemanticRetriever:
         return len(kwargs["target_ids"])
 
 
+class _CardFactRepository:
+    def __init__(self):
+        self.seed_card_ids = []
+
+    def refresh_affected(self, *, adapter_name, seed_card_ids):
+        self.seed_card_ids = list(seed_card_ids)
+        return CardFactProjectionResult(
+            affected_card_ids=tuple(sorted(seed_card_ids)),
+            changed_card_ids=(),
+            fact_ids=("kg_fact:1", "kg_fact:2"),
+            fact_by_card_id={
+                "card:1": "kg_fact:1",
+                "card:2": "kg_fact:2",
+            },
+        )
+
+
+class _ChangedCardFactRepository:
+    def refresh_affected(self, *, adapter_name, seed_card_ids):
+        return CardFactProjectionResult(
+            affected_card_ids=("card:1", "card:2"),
+            changed_card_ids=("card:2",),
+            fact_ids=("kg_fact:shared",),
+            fact_by_card_id={
+                "card:1": "kg_fact:shared",
+                "card:2": "kg_fact:shared",
+            },
+        )
+
+
+def test_writer_reuses_semantic_retriever_store_for_card_reads() -> None:
+    class SharedStore:
+        def __init__(self):
+            self.ready_calls = 0
+
+        def ensure_ready(self):
+            self.ready_calls += 1
+
+    shared_store = SharedStore()
+    semantic_retriever = SimpleNamespace(store=shared_store)
+
+    service = CardRelationWriteService(
+        knowledge_repository=_KnowledgeRepository(),
+        semantic_retriever=semantic_retriever,
+    )
+
+    assert service._semantic_retriever is semantic_retriever
+    assert service._relation_candidate_store.store is shared_store
+    assert shared_store.ready_calls == 1
+
+
 def test_symmetric_relation_identity_is_stable_when_endpoints_swap() -> None:
     left = build_card_relation_edge(
         _decision(source_id="card:1", target_id="card:2"),
@@ -159,6 +250,49 @@ def test_symmetric_relation_identity_is_stable_when_endpoints_swap() -> None:
     assert left.relation_evidence_refs == right.relation_evidence_refs
 
 
+def test_market_co_movement_normalizes_as_symmetric_edge() -> None:
+    edge = build_card_relation_edge(
+        _decision(
+            source_id="card:2",
+            target_id="card:1",
+            relation_kind="market_co_movement",
+        ),
+        pipeline_version="pipeline-v1",
+        model_name="model-v1",
+        prompt_version="prompt-v1",
+    )
+
+    assert edge.source_card_id == "card:1"
+    assert edge.target_card_id == "card:2"
+    assert edge.relation_kind == "market_co_movement"
+
+
+def test_inferred_same_fact_cannot_create_fact_identity_edge() -> None:
+    with pytest.raises(ValueError, match="same_fact 只能由 observed"):
+        build_card_relation_edge(
+            _decision(
+                decision_class="inferred",
+                relation_kind="same_fact",
+            ),
+            pipeline_version="pipeline-v1",
+            model_name="model-v1",
+            prompt_version="prompt-v1",
+        )
+
+
+def test_inferred_same_event_cannot_create_event_relation_edge() -> None:
+    with pytest.raises(ValueError, match="same_event 只能由 observed"):
+        build_card_relation_edge(
+            _decision(
+                decision_class="inferred",
+                relation_kind="same_event",
+            ),
+            pipeline_version="pipeline-v1",
+            model_name="model-v1",
+            prompt_version="prompt-v1",
+        )
+
+
 @pytest.mark.asyncio
 async def test_positive_relation_publishes_readable_milvus_edge_then_graph_event() -> None:
     repository = _RelationRepository()
@@ -172,6 +306,7 @@ async def test_positive_relation_publishes_readable_milvus_edge_then_graph_event
     service = CardRelationWriteService(
         knowledge_repository=_KnowledgeRepository(),
         relation_repository=repository,
+        card_fact_repository=_CardFactRepository(),
         semantic_retriever=semantic,
         relation_candidate_store=_CandidateStore(),
         graph_event_publisher=publish_event,
@@ -183,6 +318,7 @@ async def test_positive_relation_publishes_readable_milvus_edge_then_graph_event
         pipeline_version="pipeline-v1",
         model_name="model-v1",
         prompt_version="prompt-v1",
+        workflow_id="workflow:test",
     )
 
     assert len(repository.accepted) == 1
@@ -195,7 +331,57 @@ async def test_positive_relation_publishes_readable_milvus_edge_then_graph_event
     assert repository.semantic_synced == [edge.id]
     assert repository.events_published == [edge.id]
     assert published_events[0]["changed_edge_ids"] == [edge.id]
+    assert published_events[0]["workflow_id"] == "workflow:test"
     assert result["graph_event_ids"] == ["jettask-event-1"]
+    assert result["workflow_id"] == "workflow:test"
+
+
+@pytest.mark.asyncio
+async def test_fact_projection_repairs_both_card_views_before_graph_event() -> None:
+    repository = _RelationRepository()
+    semantic = _SemanticRetriever()
+    published_events = []
+
+    async def publish_event(**kwargs):
+        published_events.append(kwargs)
+        return ["jettask-event-1"]
+
+    service = CardRelationWriteService(
+        knowledge_repository=_KnowledgeRepository(),
+        relation_repository=repository,
+        card_fact_repository=_ChangedCardFactRepository(),
+        semantic_retriever=semantic,
+        relation_candidate_store=_LegacyEventCandidateStore(),
+        graph_event_publisher=publish_event,
+    )
+
+    result = await service.persist_verified_decisions(
+        [_decision()],
+        adapter_name="financial",
+        target="test",
+        pipeline_version="pipeline-v1",
+        model_name="model-v1",
+        prompt_version="prompt-v1",
+    )
+
+    card_documents = [
+        document
+        for document in semantic.documents
+        if document.collection_role
+        in {"cognitive_card", "cognitive_card_focus"}
+    ]
+    assert len(card_documents) == 4
+    assert {
+        document.metadata["fact_id"] for document in card_documents
+    } == {"kg_fact:shared"}
+    assert all(
+        "event_id" not in document.metadata
+        for document in card_documents
+    )
+    assert result["fact_id_changed_card_ids"] == ["card:2"]
+    assert published_events[0]["changes"]["fact_id_changed_card_ids"] == [
+        "card:2"
+    ]
 
 
 @pytest.mark.asyncio
@@ -205,6 +391,7 @@ async def test_no_relation_only_synchronizes_rejected_pair_without_edge_document
     service = CardRelationWriteService(
         knowledge_repository=_KnowledgeRepository(),
         relation_repository=repository,
+        card_fact_repository=_CardFactRepository(),
         semantic_retriever=semantic,
         relation_candidate_store=_CandidateStore(),
         graph_event_publisher=lambda **_kwargs: None,  # 不会被调用
@@ -234,6 +421,7 @@ async def test_graph_event_failure_does_not_advance_published_version() -> None:
     service = CardRelationWriteService(
         knowledge_repository=_KnowledgeRepository(),
         relation_repository=repository,
+        card_fact_repository=_CardFactRepository(),
         semantic_retriever=_SemanticRetriever(),
         relation_candidate_store=_CandidateStore(),
         graph_event_publisher=fail_event,
