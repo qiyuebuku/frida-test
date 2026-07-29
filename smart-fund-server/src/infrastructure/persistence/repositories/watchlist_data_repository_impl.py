@@ -2,7 +2,7 @@
 import logging
 from datetime import date
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 
 from src.infrastructure.connections import get_session
@@ -42,7 +42,10 @@ class WatchlistDataRepositoryImpl:
                 stmt = pg_insert(WatchlistData).values(values)
                 stmt = stmt.on_conflict_do_update(
                     index_elements=["code", "data_type", "trade_date"],
-                    set_={"data": stmt.excluded.data},
+                    set_={
+                        "data": stmt.excluded.data,
+                        "updated_at": func.now(),
+                    },
                 )
                 result = s.execute(stmt)
                 saved += result.rowcount or 0
@@ -71,6 +74,7 @@ class WatchlistDataRepositoryImpl:
                     "trade_date": r.trade_date,
                     "data": r.data,
                     "created_at": r.created_at,
+                    "updated_at": r.updated_at,
                 }
                 for r in rows
             ]
@@ -95,11 +99,81 @@ class WatchlistDataRepositoryImpl:
                 "data_type": row.data_type,
                 "trade_date": row.trade_date,
                 "data": row.data,
+                "updated_at": row.updated_at,
             }
+
+    def query_latest_by_codes(
+        self,
+        codes: list[str],
+        data_types: list[str] | None = None,
+    ) -> list[dict]:
+        """Return the latest row for every (code, data_type)."""
+
+        normalized_codes = [
+            code
+            for code in dict.fromkeys(str(code).strip().lower() for code in codes)
+            if code
+        ]
+        if not normalized_codes:
+            return []
+        with get_session() as session:
+            ranked = (
+                select(
+                    WatchlistData.id.label("id"),
+                    func.row_number()
+                    .over(
+                        partition_by=(
+                            WatchlistData.code,
+                            WatchlistData.data_type,
+                        ),
+                        order_by=(
+                            WatchlistData.trade_date.desc().nullslast(),
+                            WatchlistData.updated_at.desc().nullslast(),
+                            WatchlistData.id.desc(),
+                        ),
+                    )
+                    .label("rank"),
+                )
+                .where(WatchlistData.code.in_(normalized_codes))
+            )
+            if data_types:
+                ranked = ranked.where(WatchlistData.data_type.in_(data_types))
+            ranked_subquery = ranked.subquery()
+            rows = session.scalars(
+                select(WatchlistData)
+                .join(ranked_subquery, ranked_subquery.c.id == WatchlistData.id)
+                .where(ranked_subquery.c.rank == 1)
+                .order_by(WatchlistData.code, WatchlistData.data_type)
+            ).all()
+            return [_serialize(row) for row in rows]
+
+    def query_history(
+        self,
+        *,
+        code: str,
+        data_type: str,
+        date_start: date | None = None,
+        date_end: date | None = None,
+        limit: int = 120,
+    ) -> list[dict]:
+        with get_session() as session:
+            stmt = select(WatchlistData).where(
+                WatchlistData.code == str(code).strip().lower(),
+                WatchlistData.data_type == str(data_type).strip(),
+            )
+            if date_start is not None:
+                stmt = stmt.where(WatchlistData.trade_date >= date_start)
+            if date_end is not None:
+                stmt = stmt.where(WatchlistData.trade_date <= date_end)
+            rows = session.scalars(
+                stmt.order_by(WatchlistData.trade_date.desc()).limit(
+                    max(1, min(int(limit), 500))
+                )
+            ).all()
+            return [_serialize(row) for row in rows]
 
     def count_by_code(self, code: str) -> dict[str, int]:
         """统计某标的各维度数据条数"""
-        from sqlalchemy import func
         with get_session() as s:
             rows = s.execute(
                 select(WatchlistData.data_type, func.count())
@@ -116,3 +190,15 @@ class WatchlistDataRepositoryImpl:
                 delete(WatchlistData).where(WatchlistData.code == code)
             )
             return result.rowcount or 0
+
+
+def _serialize(row: WatchlistData) -> dict:
+    return {
+        "id": row.id,
+        "code": row.code,
+        "data_type": row.data_type,
+        "trade_date": row.trade_date,
+        "data": row.data,
+        "created_at": row.created_at,
+        "updated_at": row.updated_at,
+    }

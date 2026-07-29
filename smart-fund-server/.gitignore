@@ -3,6 +3,7 @@ __pycache__/
 .env
 .env.*
 !.env.example
+.deployment.local.env
 .env copy
 .venv/
 *.egg-info/
@@ -10,6 +11,9 @@ __pycache__/
 .ruff_cache/
 data/
 logs/
+packages/references/
+docs/.backup/
+docs/6. 使用说明/知识图谱/data/
 server.log
 auth_cache.json
 config.json

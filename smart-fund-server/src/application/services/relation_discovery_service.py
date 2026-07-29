@@ -210,6 +210,8 @@ class RelationDiscoveryService:
 
             all_decisions: list[VerifiedRelationDecision] = []
             card_diagnostics: list[dict[str, Any]] = []
+            persistence_checkpoints: list[dict[str, Any]] = []
+            checkpointed_card_ids: list[str] = []
             seen_pairs: set[tuple[str, str]] = set()
             for card_id in unique_ids:
                 if card_id not in manifest_by_id:
@@ -224,15 +226,50 @@ class RelationDiscoveryService:
                 )
                 all_decisions.extend(decisions)
                 card_diagnostics.append(diagnostics)
+                if persist_edges and decisions:
+                    with langfuse_observation(
+                        name="kg.relation.card_checkpoint",
+                        as_type="span",
+                        input={
+                            "source_card_id": card_id,
+                            "decision_count": len(decisions),
+                        },
+                    ):
+                        checkpoint = (
+                            await self._relation_writer.persist_verified_decisions(
+                                decisions,
+                                adapter_name=adapter_name,
+                                target=target,
+                                pipeline_version=RELATION_DISCOVERY_PIPELINE_VERSION,
+                                model_name=resolve_kg_llm_model(
+                                    "kg_relation_evidence_verify"
+                                ),
+                                prompt_version=RELATION_VERIFICATION_PROMPT_VERSION,
+                                workflow_id=workflow_id,
+                            )
+                        )
+                        persistence_checkpoints.append(checkpoint)
+                        checkpointed_card_ids.append(card_id)
+                        langfuse_update_span(
+                            output={
+                                "source_card_id": card_id,
+                                "changed_edge_ids": list(
+                                    checkpoint.get("changed_edge_ids") or []
+                                ),
+                                "fact_id_changed_card_ids": list(
+                                    checkpoint.get("fact_id_changed_card_ids") or []
+                                ),
+                                "graph_event_ids": list(
+                                    checkpoint.get("graph_event_ids") or []
+                                ),
+                            },
+                            status_message="completed",
+                        )
 
             edge_persistence = (
-                await self._relation_writer.persist_verified_decisions(
-                    all_decisions,
-                    adapter_name=adapter_name,
-                    target=target,
-                    pipeline_version=RELATION_DISCOVERY_PIPELINE_VERSION,
-                    model_name=resolve_kg_llm_model("kg_relation_evidence_verify"),
-                    prompt_version=RELATION_VERIFICATION_PROMPT_VERSION,
+                _merge_edge_persistence_checkpoints(
+                    persistence_checkpoints,
+                    checkpointed_card_ids=checkpointed_card_ids,
                     workflow_id=workflow_id,
                 )
                 if persist_edges
@@ -1457,6 +1494,50 @@ def _ordered_candidate_ids(values: Any) -> list[str]:
         item
         for item in dict.fromkeys(str(value) for value in values if str(value).strip())
     ]
+
+
+def _merge_edge_persistence_checkpoints(
+    checkpoints: list[dict[str, Any]],
+    *,
+    checkpointed_card_ids: list[str],
+    workflow_id: str,
+) -> dict[str, Any]:
+    """Merge per-Card durable write results into the historical batch result shape."""
+
+    list_fields = (
+        "touched_edge_ids",
+        "changed_edge_ids",
+        "milvus_upserted_edge_ids",
+        "milvus_deleted_edge_ids",
+        "graph_event_ids",
+        "affected_card_ids",
+        "card_fact_ids",
+        "fact_id_changed_card_ids",
+    )
+    result: dict[str, Any] = {field: [] for field in list_fields}
+    for checkpoint in checkpoints:
+        for field in list_fields:
+            result[field].extend(
+                str(item)
+                for item in checkpoint.get(field) or []
+                if str(item).strip()
+            )
+    for field in list_fields:
+        result[field] = list(dict.fromkeys(result[field]))
+    result.update(
+        {
+            "checkpoint_count": len(checkpoints),
+            "checkpointed_card_ids": list(
+                dict.fromkeys(
+                    str(item)
+                    for item in checkpointed_card_ids
+                    if str(item).strip()
+                )
+            ),
+            "workflow_id": str(workflow_id or "").strip(),
+        }
+    )
+    return result
 
 
 def _other_card_id(decision: VerifiedRelationDecision, source_card_id: str) -> str:

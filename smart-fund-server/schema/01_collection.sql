@@ -327,7 +327,8 @@ CREATE TABLE public.ft_watchlist_data (
     data_type character varying(32) NOT NULL,
     trade_date date,
     data jsonb NOT NULL,
-    created_at timestamp with time zone DEFAULT now()
+    created_at timestamp with time zone DEFAULT now(),
+    updated_at timestamp with time zone DEFAULT now()
 );
 
 -- SEQUENCE: ft_watchlist_data_id_seq

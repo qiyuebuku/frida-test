@@ -87,7 +87,6 @@ class MarketFlow(Base):
     created_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )
-
     def __repr__(self) -> str:
         return f"<MarketFlow id={self.id} type={self.data_type} date={self.trade_date}>"
 
@@ -337,6 +336,12 @@ class WatchlistData(Base):
     )
     created_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
+    )
+    updated_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        onupdate=func.now(),
+        comment="最近一次采集覆盖时间",
     )
 
     def __repr__(self) -> str:

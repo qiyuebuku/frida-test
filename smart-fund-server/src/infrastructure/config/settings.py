@@ -66,6 +66,74 @@ SERVER_PORT = int(os.getenv("SERVER_PORT", "8900"))
 # 本服务的外部可访问地址（供客户端内部互调用）
 SERVICE_BASE_URL = os.getenv("SERVICE_BASE_URL", "http://119.23.227.187:8900")
 
+# ==================== MCP ====================
+
+# 关系图 MCP 与现有 FastAPI 共用 8900 端口。生产环境应配置 Bearer Token；
+# 留空仅用于本地开发和协议测试。
+SMART_FUND_MCP_BEARER_TOKEN = os.getenv(
+    "SMART_FUND_MCP_BEARER_TOKEN",
+    "",
+).strip()
+SMART_FUND_MCP_TARGET = os.getenv("SMART_FUND_MCP_TARGET", "prod").strip()
+SMART_FUND_MCP_ADAPTER_NAME = os.getenv(
+    "SMART_FUND_MCP_ADAPTER_NAME",
+    "financial",
+).strip()
+SMART_FUND_MCP_PUBLIC_URL = os.getenv(
+    "SMART_FUND_MCP_PUBLIC_URL",
+    f"{SERVICE_BASE_URL.rstrip('/')}/mcp",
+).strip()
+SMART_FUND_MCP_LOG_LEVEL = os.getenv(
+    "SMART_FUND_MCP_LOG_LEVEL",
+    "WARNING",
+).strip().upper()
+
+# ==================== External Research ====================
+
+# Agent 只调用 Smart Fund 的统一工具；下面的 capability route 决定实际厂商。
+EXTERNAL_WEB_SEARCH_PROVIDER = os.getenv(
+    "EXTERNAL_WEB_SEARCH_PROVIDER",
+    "zhipu",
+).strip()
+EXTERNAL_WEB_READ_PROVIDER = os.getenv(
+    "EXTERNAL_WEB_READ_PROVIDER",
+    "zhipu",
+).strip()
+EXTERNAL_REPOSITORY_PROVIDER = os.getenv(
+    "EXTERNAL_REPOSITORY_PROVIDER",
+    "zhipu",
+).strip()
+EXTERNAL_RESEARCH_TIMEOUT_SECONDS = float(
+    os.getenv("EXTERNAL_RESEARCH_TIMEOUT_SECONDS", "60")
+)
+EXTERNAL_CONTENT_TTL_SECONDS = int(
+    os.getenv("EXTERNAL_CONTENT_TTL_SECONDS", "3600")
+)
+EXTERNAL_CONTENT_PREVIEW_CHARS = int(
+    os.getenv("EXTERNAL_CONTENT_PREVIEW_CHARS", "4000")
+)
+EXTERNAL_CONTENT_MAX_PAGE_CHARS = int(
+    os.getenv("EXTERNAL_CONTENT_MAX_PAGE_CHARS", "20000")
+)
+
+ZHIPU_CODING_PLAN_API_KEY = (
+    os.getenv("ZHIPU_CODING_PLAN_API_KEY", "")
+    or os.getenv("Z_AI_API_KEY", "")
+    or os.getenv("ZHIPU_ANTHROPIC_TOKEN", "")
+).strip()
+ZHIPU_WEB_SEARCH_MCP_URL = os.getenv(
+    "ZHIPU_WEB_SEARCH_MCP_URL",
+    "https://open.bigmodel.cn/api/mcp/web_search_prime/mcp",
+).strip()
+ZHIPU_WEB_READER_MCP_URL = os.getenv(
+    "ZHIPU_WEB_READER_MCP_URL",
+    "https://open.bigmodel.cn/api/mcp/web_reader/mcp",
+).strip()
+ZHIPU_ZREAD_MCP_URL = os.getenv(
+    "ZHIPU_ZREAD_MCP_URL",
+    "https://open.bigmodel.cn/api/mcp/zread/mcp",
+).strip()
+
 # ==================== OCR ====================
 
 OCR_URL = os.getenv("OCR_URL", "http://119.23.227.187:8675/glmocr/parse")

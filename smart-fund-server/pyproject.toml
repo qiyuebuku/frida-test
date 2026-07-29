@@ -21,6 +21,7 @@ dependencies = [
     "pymilvus[milvus_lite]>=2.6,<3",
     "milvus-lite>=2.5,<3",
     "langfuse>=3.0",
+    "mcp>=1.27,<2",
     "networkx>=3.0",
     "graspologic-native>=1.2,<2",
     "setuptools<81",

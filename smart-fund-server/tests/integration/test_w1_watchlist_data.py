@@ -31,7 +31,15 @@ def test_w1_orm_columns():
     """WatchlistData ORM 列数和字段正确"""
     from src.infrastructure.persistence.models.collection import WatchlistData
     cols = {c.name for c in WatchlistData.__table__.columns}
-    assert cols == {"id", "code", "data_type", "trade_date", "data", "created_at"}
+    assert cols == {
+        "id",
+        "code",
+        "data_type",
+        "trade_date",
+        "data",
+        "created_at",
+        "updated_at",
+    }
 
 
 @pytest.mark.unit
@@ -88,6 +96,7 @@ def test_w1_upsert_on_conflict(clean_watchlist_data):
     latest = repo.query_latest("test_007380", "nav")
     assert latest is not None
     assert latest["data"]["nav"] == 2.0
+    assert latest["updated_at"] is not None
 
     rows = repo.query_by_code("test_007380", data_type="nav")
     assert len(rows) == 1  # 没有重复

@@ -1,0 +1,4 @@
+interface:
+  display_name: "Financial Graph Research"
+  short_description: "Research financial events through verified graph evidence"
+  default_prompt: "Use the financial relation graph to research this market question with cited Card and Edge evidence."

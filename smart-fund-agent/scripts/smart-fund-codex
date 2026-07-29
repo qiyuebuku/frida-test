@@ -1,0 +1,44 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+SCRIPT_PATH="$(readlink -f "${BASH_SOURCE[0]}")"
+PROJECT_ROOT="$(cd "$(dirname "${SCRIPT_PATH}")/.." && pwd)"
+CODEX_HOME="${SMART_FUND_CODEX_HOME:-${HOME}/.codex-smart-fund}"
+AICLIENT_ENV_FILE="${AICLIENT2API_ENV_FILE:-${PROJECT_ROOT}/../AIClient2API/.deployment.local.env}"
+AGENT_ENV_FILE="${SMART_FUND_AGENT_ENV_FILE:-${PROJECT_ROOT}/.deployment.local.env}"
+
+if [[ ! -f "${CODEX_HOME}/config.toml" ]]; then
+    echo "Smart Fund Codex runtime is not initialized." >&2
+    echo "Run: bash ${PROJECT_ROOT}/scripts/setup_codex_runtime.sh" >&2
+    exit 1
+fi
+
+if [[ ! -r "${AICLIENT_ENV_FILE}" ]]; then
+    echo "AIClient2API environment file is not readable: ${AICLIENT_ENV_FILE}" >&2
+    exit 1
+fi
+
+if [[ ! -r "${AGENT_ENV_FILE}" ]]; then
+    echo "Smart Fund Agent environment file is not readable: ${AGENT_ENV_FILE}" >&2
+    exit 1
+fi
+
+set -a
+# shellcheck disable=SC1090
+source "${AICLIENT_ENV_FILE}"
+# shellcheck disable=SC1090
+source "${AGENT_ENV_FILE}"
+set +a
+
+if [[ -z "${AICLIENT2API_API_KEY:-}" ]]; then
+    echo "AICLIENT2API_API_KEY is missing from ${AICLIENT_ENV_FILE}" >&2
+    exit 1
+fi
+if [[ -z "${SMART_FUND_MCP_BEARER_TOKEN:-}" ]]; then
+    echo "SMART_FUND_MCP_BEARER_TOKEN is missing from ${AGENT_ENV_FILE}" >&2
+    exit 1
+fi
+
+export CODEX_HOME
+exec codex -C "${PROJECT_ROOT}" "$@"

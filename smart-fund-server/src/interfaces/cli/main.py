@@ -113,6 +113,7 @@ def worker(concurrency: int, tasks: tuple[str, ...]):
     ALL_TASKS = [
         "collect_news",
         "collect_fund_flow",
+        "collect_watchlist_instruments",
         "collect_market",
         "collect_macro",
         "collect_sentiment",
@@ -189,6 +190,7 @@ def _run_api_server(host: str, port: int, reload: bool) -> None:
     click.echo(f"🌐 启动 API 服务  http://{host}:{port}")
     click.echo("   API 文档: /docs")
     click.echo("   Graph Community Explorer: /api/kg/graph-viewer")
+    click.echo("   Relation Graph MCP: /mcp")
     click.echo("   Browser Spy: /api/spy/status")
     click.echo("   LLM Proxy: /api/llm-proxy/health  /v1/chat/completions  /v1/embeddings")
     uvicorn.run("main:app", host=host, port=port, reload=reload)

@@ -1,0 +1,22 @@
+model = "glm-5.2"
+model_provider = "aiclient2api"
+model_catalog_json = "__CODEX_HOME__/model-catalog.json"
+model_context_window = 1000000
+model_auto_compact_token_limit = 900000
+model_auto_compact_token_limit_scope = "total"
+
+[model_providers.aiclient2api]
+name = "AIClient2API"
+base_url = "http://119.23.227.187:13000/v1"
+env_key = "AICLIENT2API_API_KEY"
+env_key_instructions = "Run scripts/setup_codex_runtime.sh and start Codex with smart-fund-codex."
+wire_api = "responses"
+request_max_retries = 2
+stream_max_retries = 2
+stream_idle_timeout_ms = 500000
+
+[projects."__PROJECT_ROOT__"]
+trust_level = "trusted"
+
+[notice]
+hide_rate_limit_model_nudge = true

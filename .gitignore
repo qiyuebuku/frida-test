@@ -15,6 +15,7 @@ build/
 __pycache__/
 __pycache__
 *.pyc
+*.log
 *.bak
 *.jar
 .idea/
@@ -50,10 +51,17 @@ smart-fund-server/config.json
 scraped_docs/
 
 smart-fund-server/data
+smart-fund-server/packages/references/
+smart-fund-server/docs/.backup/
+smart-fund-server/docs/6. 使用说明/知识图谱/data/
 
 # Langfuse / 调试 trace 运行产物
 langfuse-full-traces/
 langfuse-investigation/
 trace-*.json
+
+# 当前工作区中的独立参考项目与运行产物
+/AIClient2API/
+/artifacts/
 
 18tv/video

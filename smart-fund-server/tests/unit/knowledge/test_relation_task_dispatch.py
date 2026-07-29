@@ -22,7 +22,7 @@ async def test_relation_dispatch_message_contains_only_card_ids(monkeypatch) -> 
 
         async def send(self, messages):
             sent.extend(messages)
-            return ["event:1"]
+            return [f"event:{index}" for index, _message in enumerate(messages, 1)]
 
         def close(self):
             return None
@@ -31,10 +31,48 @@ async def test_relation_dispatch_message_contains_only_card_ids(monkeypatch) -> 
 
     event_ids = await dispatcher.send_kg_relation_discovery(["card:1", "card:1", "card:2"])
 
-    assert event_ids == ["event:1"]
-    assert len(sent) == 1
-    assert sent[0].queue == "kg_relation_discovery"
-    assert sent[0].kwargs == {"card_ids": ["card:1", "card:2"]}
+    assert event_ids == ["event:1", "event:2"]
+    assert len(sent) == 2
+    assert [message.queue for message in sent] == [
+        "kg_relation_discovery",
+        "kg_relation_discovery",
+    ]
+    assert [message.kwargs for message in sent] == [
+        {"card_ids": ["card:1"]},
+        {"card_ids": ["card:2"]},
+    ]
+
+
+@pytest.mark.asyncio
+async def test_watchlist_dispatch_isolated_per_instrument(monkeypatch) -> None:
+    sent = []
+
+    class FakeJettask:
+        def __init__(self, **_kwargs):
+            pass
+
+        async def send(self, messages):
+            sent.extend(messages)
+            return [f"event:{index}" for index, _message in enumerate(messages, 1)]
+
+        def close(self):
+            return None
+
+    monkeypatch.setattr(dispatcher, "Jettask", FakeJettask)
+
+    event_ids = await dispatcher.send_watchlist_instrument_collection(
+        ["sh600036", "sh600036", "159915"]
+    )
+
+    assert event_ids == ["event:1", "event:2"]
+    assert [message.queue for message in sent] == [
+        "collect_watchlist_instruments",
+        "collect_watchlist_instruments",
+    ]
+    assert [message.kwargs for message in sent] == [
+        {"codes": ["sh600036"]},
+        {"codes": ["159915"]},
+    ]
 
 
 @pytest.mark.asyncio

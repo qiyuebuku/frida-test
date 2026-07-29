@@ -94,7 +94,7 @@ python client.py health
 如果服务不可用，通过部署脚本重启：
 ```bash
 cd /home/yuyang/frida-test
-REMOTE_SUDO_PASSWORD=... ./.claude/skills/deploy_113.sh --restart
+REMOTE_SUDO_PASSWORD=... ./smart-fund-server/deploy_113.sh --restart
 ```
 
 **0b. 前置检查**：

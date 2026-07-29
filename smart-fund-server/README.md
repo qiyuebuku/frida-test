@@ -72,11 +72,18 @@ smart-fund-server/
 
 ## 部署
 
-部署入口位于工作区，而不是项目目录：
+部署入口位于项目根目录：
 
 ```bash
-cd /home/yuyang/frida-test
-REMOTE_SUDO_PASSWORD=... ./.claude/skills/deploy_113.sh
+cd /home/yuyang/frida-test/smart-fund-server
+./deploy_113.sh
+```
+
+本地 sudo 凭据保存在 Git 忽略且不会被 `rsync` 上传的
+`.deployment.local.env`：
+
+```bash
+REMOTE_SUDO_PASSWORD=...
 ```
 
 日常部署会同步代码、更新 systemd unit、重启应用服务并执行完整健康检查。它复用生产机已有的 `smart-fund` Conda 环境，不会重新创建环境或下载依赖；Milvus 已运行时也不会因普通代码发布而重启。
@@ -84,18 +91,18 @@ REMOTE_SUDO_PASSWORD=... ./.claude/skills/deploy_113.sh
 首次初始化或显式更新依赖时使用：
 
 ```bash
-REMOTE_SUDO_PASSWORD=... ./.claude/skills/deploy_113.sh --init
-./.claude/skills/deploy_113.sh --deps
+./deploy_113.sh --init
+./deploy_113.sh --deps
 ```
 
 常用运维命令：
 
 ```bash
-./.claude/skills/deploy_113.sh --sync-only
-REMOTE_SUDO_PASSWORD=... ./.claude/skills/deploy_113.sh --restart
-./.claude/skills/deploy_113.sh --status
-./.claude/skills/deploy_113.sh --logs worker 200
-./.claude/skills/deploy_113.sh --test
+./deploy_113.sh --sync-only
+./deploy_113.sh --restart
+./deploy_113.sh --status
+./deploy_113.sh --logs worker 200
+./deploy_113.sh --test
 ```
 
 ## 排查问题
@@ -103,8 +110,8 @@ REMOTE_SUDO_PASSWORD=... ./.claude/skills/deploy_113.sh --restart
 ### 服务启动失败
 
 ```bash
-./.claude/skills/deploy_113.sh --status
-./.claude/skills/deploy_113.sh --logs api 200
+./deploy_113.sh --status
+./deploy_113.sh --logs api 200
 
 ssh -p 1113 yuyangruan@119.23.227.187
 cd /home/yuyangruan/smart-fund/smart-fund-server

@@ -16,6 +16,7 @@ from src.interfaces.api.routes import router, start_auth_auto_refresh
 from src.infrastructure.clients import init_clients, close_clients
 
 _PROJECT_ROOT = Path(__file__).resolve().parents[3]  # smart-fund-server/
+logger = logging.getLogger(__name__)
 
 logging.basicConfig(
     level=logging.INFO,
@@ -26,24 +27,35 @@ logging.basicConfig(
 
 @asynccontextmanager
 async def _lifespan(app: FastAPI):
-    # 初始化所有数据源客户端
-    init_clients()
+    from src.interfaces.mcp import relation_graph_mcp_app
 
-    # 初始化 SkillRegistry
-    skills_dir = os.getenv("SKILLS_DIR", str(_PROJECT_ROOT.parent))
-    sr.skill_registry = sr.SkillRegistry(skills_dir)
-    print(f"✅ SkillRegistry 已初始化 (skills_dir={skills_dir})")
+    async with relation_graph_mcp_app.router.lifespan_context(
+        relation_graph_mcp_app
+    ):
+        # 初始化所有数据源客户端
+        init_clients()
 
-    # 启动 auth token 自动刷新后台任务
-    await start_auth_auto_refresh()
+        # 初始化 SkillRegistry
+        skills_dir = os.getenv("SKILLS_DIR", str(_PROJECT_ROOT.parent))
+        sr.skill_registry = sr.SkillRegistry(skills_dir)
+        print(f"✅ SkillRegistry 已初始化 (skills_dir={skills_dir})")
 
-    yield
+        # 启动 auth token 自动刷新后台任务
+        await start_auth_auto_refresh()
 
-    await close_clients()
+        yield
+
+        await close_clients()
 
 
 def create_app() -> FastAPI:
     """创建并配置 FastAPI 应用"""
+    from src.infrastructure.config import settings
+
+    if not settings.SMART_FUND_MCP_BEARER_TOKEN:
+        logger.warning(
+            "SMART_FUND_MCP_BEARER_TOKEN 未配置，/mcp 当前未启用鉴权"
+        )
     app = FastAPI(
         title="智能基金服务",
         description="同花顺基金 API + 截屏助手 OCR",
@@ -84,5 +96,9 @@ def create_app() -> FastAPI:
         StaticFiles(directory=str(_PROJECT_ROOT / "static")),
         name="static",
     )
+
+    # MCP SDK owns /mcp and shares this process/lifespan with FastAPI.
+    from src.interfaces.mcp import relation_graph_mcp_app
+    app.mount("/", relation_graph_mcp_app, name="relation-graph-mcp")
 
     return app

@@ -28,6 +28,9 @@ KG_GRAPH_COMMUNITY_DERIVATION_TIMEOUT_SECONDS = 1800
 KG_GRAPH_COMMUNITY_DERIVATION_MAX_RETRIES = 5
 KG_TASK_SEND_MAX_ATTEMPTS = 3
 KG_TASK_SEND_RETRY_BASE_SECONDS = 0.5
+WATCHLIST_INSTRUMENT_COLLECTION_QUEUE = "collect_watchlist_instruments"
+WATCHLIST_INSTRUMENT_COLLECTION_TIMEOUT_SECONDS = 900
+WATCHLIST_INSTRUMENT_COLLECTION_MAX_RETRIES = 3
 
 
 async def send_kg_news_ingest(
@@ -63,29 +66,56 @@ async def send_kg_news_ingest(
     )
 
 
+async def send_watchlist_instrument_collection(codes: list[str]) -> list[str]:
+    """Immediately collect newly created or reactivated instruments."""
+
+    normalized_codes = [
+        code
+        for code in dict.fromkeys(str(code).strip().lower() for code in codes)
+        if code
+    ]
+    if not normalized_codes:
+        return []
+    return await _send_messages_with_retry(
+        [
+            TaskMessage(
+                queue=WATCHLIST_INSTRUMENT_COLLECTION_QUEUE,
+                kwargs={"codes": [code]},
+                max_retries=WATCHLIST_INSTRUMENT_COLLECTION_MAX_RETRIES,
+                timeout=WATCHLIST_INSTRUMENT_COLLECTION_TIMEOUT_SECONDS,
+            )
+            for code in normalized_codes
+        ],
+        queue=WATCHLIST_INSTRUMENT_COLLECTION_QUEUE,
+    )
+
+
 async def send_kg_relation_discovery(
     card_ids: list[str],
     *,
     workflow_id: str = "",
 ) -> list[str]:
-    """在 Card 双视图发布成功后投递独立关系发现任务。"""
+    """在 Card 双视图发布成功后，按单 Card 分片投递关系发现任务。"""
 
     normalized_ids = [item for item in dict.fromkeys(card_ids) if str(item).strip()]
     if not normalized_ids:
         return []
-    kwargs: dict[str, object] = {"card_ids": normalized_ids}
     identity = str(workflow_id or "").strip()
-    if identity:
-        kwargs["workflow_id"] = identity
-    return await _send_messages_with_retry(
-        [
+    messages: list[TaskMessage] = []
+    for card_id in normalized_ids:
+        kwargs: dict[str, object] = {"card_ids": [card_id]}
+        if identity:
+            kwargs["workflow_id"] = identity
+        messages.append(
             TaskMessage(
                 queue=KG_RELATION_DISCOVERY_QUEUE,
                 kwargs=kwargs,
                 max_retries=KG_RELATION_DISCOVERY_MAX_RETRIES,
                 timeout=KG_RELATION_DISCOVERY_TIMEOUT_SECONDS,
             )
-        ],
+        )
+    return await _send_messages_with_retry(
+        messages,
         queue=KG_RELATION_DISCOVERY_QUEUE,
     )
 

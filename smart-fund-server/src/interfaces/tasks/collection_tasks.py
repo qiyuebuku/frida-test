@@ -84,6 +84,21 @@ async def collect_fund_flow():
     logger.info(f"[collect_fund_flow] 完成,耗时 {time.time()-t0:.1f}s {result.to_dict()}")
 
 
+@_register_task(queue="collect_watchlist_instruments", max_retries=3)
+async def collect_watchlist_instruments(codes: list[str]):
+    """新增或恢复标的后立即执行首轮采集。"""
+
+    logger.info("[collect_watchlist_instruments] 开始执行 codes=%s", codes)
+    t0 = time.time()
+    result = await _collection.run_watchlist_instrument_collection(codes)
+    logger.info(
+        "[collect_watchlist_instruments] 完成,耗时 %.1fs result=%s",
+        time.time() - t0,
+        result,
+    )
+    return result
+
+
 # ==================== P1: 辅助任务 ====================
 
 

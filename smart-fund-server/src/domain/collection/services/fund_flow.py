@@ -51,9 +51,10 @@ ft_watchlist_data 的 data_type（源: watchlist_data）：
 
 import json
 import logging
-from datetime import datetime, date
+from datetime import datetime, date, timezone
 
 from src.domain.collection.services.base import BaseAggregator, SourceDef
+from src.domain.collection.watchlist_instrument import is_exchange_traded_fund
 from src.infrastructure.time_utils import app_today, app_today_iso
 
 logger = logging.getLogger(__name__)
@@ -261,14 +262,7 @@ def _is_exchange_traded(code: str) -> bool:
       上交所场内：510xxx~518xxx（ETF）、501xxx~502xxx（LOF）
       注意：519xxx 开头是场外基金（OTC），不是场内！
     """
-    if not code or not isinstance(code, str):
-        return False
-    if code.startswith(("15", "16")):
-        return True
-    # 51xxxx 中只有 510~518 是上交所场内，519xxx 是 OTC 场外
-    if code.startswith("51") and not code.startswith("519"):
-        return True
-    return False
+    return is_exchange_traded_fund(code)
 
 
 def _expand_timeseries(code: str, dim: str, data, today: date, since: str = None) -> list[dict]:
@@ -629,10 +623,71 @@ def _expand_timeseries(code: str, dim: str, data, today: date, since: str = None
     return rows
 
 
-async def _fetch_watchlist_data(ths_client, tencent_client, sina_client=None, em_client=None, cp=None) -> list[dict]:
+def _watchlist_collection_plan(
+    item: dict,
+    *,
+    today: date,
+    force: bool,
+) -> dict | None:
+    """Build a due/retention plan from the instrument's own checkpoint."""
+
+    config = item.get("config") or {}
+    mode = str(item.get("mode") or "incremental")
+    last_run_at = item.get("last_run_at")
+    interval = max(1, int(config.get("interval") or 1800))
+    if not force and mode != "backfill" and last_run_at is not None:
+        now = datetime.now(timezone.utc)
+        if last_run_at.tzinfo is None:
+            last_run_at = last_run_at.replace(tzinfo=timezone.utc)
+        if (now - last_run_at).total_seconds() < interval:
+            return None
+
+    newest_time = item.get("newest_time")
+    if mode == "backfill" or not newest_time:
+        gap = None
+        nav_period = "year"
+        kline_len = 60
+        flow_days = 20
+        since = None
+    else:
+        if isinstance(newest_time, str):
+            newest_date = date.fromisoformat(newest_time[:10])
+        else:
+            newest_date = (
+                newest_time
+                if isinstance(newest_time, date)
+                else newest_time.date()
+            )
+        gap = max(1, (today - newest_date).days + 1)
+        nav_period = "month" if gap <= 30 else "year"
+        kline_len = min(max(gap, 3), 60)
+        flow_days = min(max(gap, 3), 20)
+        since = newest_date.isoformat()
+
+    return {
+        "gap": gap,
+        "nav_period": nav_period,
+        "kline_len": kline_len,
+        "flow_days": flow_days,
+        "since": since,
+        "collect_daily": gap is None or gap > 1,
+        "collect_low": gap is None or gap > 7,
+    }
+
+
+async def _fetch_watchlist_data(
+    ths_client,
+    tencent_client,
+    sina_client=None,
+    em_client=None,
+    cp=None,
+    *,
+    codes: list[str] | None = None,
+    force: bool = False,
+) -> list[dict]:
     """遍历 watchlist，按 type 采集各维度数据
 
-    增量策略（基于 cp.newest_time）：
+    增量策略（基于每个标的自己的 checkpoint）：
         - 首次（无 newest_time）：全量回填 nav=year, kline=60, stock_flow=20，采集全部维度
         - 增量 gap=1（今日已采）：仅高频维度（nav/realtime）
         - 增量 gap 2-7：高频 + 日频（+performance/flow_trend）
@@ -649,58 +704,43 @@ async def _fetch_watchlist_data(ths_client, tencent_client, sina_client=None, em
     from src.infrastructure.db import checkpoint_store
     import time as _time
 
-    cp = cp or {}
-    newest_time = cp.get("newest_time")
     today = app_today()
-
-    if newest_time:
-        if isinstance(newest_time, str):
-            nt_date = date.fromisoformat(newest_time[:10])
-        else:
-            nt_date = newest_time if isinstance(newest_time, date) else newest_time.date()
-        gap = (today - nt_date).days + 1
-        # nav: API 只支持 month(~30天)/year(~250天)，选最小能覆盖 gap 的
-        nav_period = "month" if gap <= 30 else "year"
-        kline_len = min(max(gap, 3), 60)
-        flow_days = min(max(gap, 3), 20)
-        since = nt_date.isoformat()
-    else:
-        gap = None  # 首次全量
-        nav_period = "year"
-        kline_len = 60
-        flow_days = 20
-        since = None
-
-    # 频率分级：决定本轮采哪些维度
-    # gap=None  → 全量（首次），采全部
-    # gap=1     → 今日已采，仅高频
-    # gap 2-7   → 1-6 天前，高频+日频
-    # gap>7     → 超过一周，全部
-    collect_daily = (gap is None) or (gap > 1)
-    collect_low   = (gap is None) or (gap > 7)
-
-    if gap is None:
-        tier_label = "全部（首次）"
-        mode_label = "全量回填"
-    elif not collect_daily:
-        tier_label = "高频"
-        mode_label = f"增量 gap={gap}d, since={since}"
-    elif not collect_low:
-        tier_label = "高频+日频"
-        mode_label = f"增量 gap={gap}d, since={since}"
-    else:
-        tier_label = "全部"
-        mode_label = f"增量 gap={gap}d, since={since}"
+    source_lock = cp.get("_lock") if isinstance(cp, dict) else None
 
     all_items = checkpoint_store.list_all("watchlist")
     if not all_items:
         return []
 
-    enabled = [x for x in all_items if x.get("enabled", True)]
-    total = len(enabled)
+    requested_codes = {
+        str(code).strip().lower() for code in (codes or []) if str(code).strip()
+    }
+    due_items = []
+    for item in all_items:
+        code = str(item.get("source_name") or "").strip().lower()
+        if not item.get("enabled", True):
+            continue
+        if requested_codes and code not in requested_codes:
+            continue
+        plan = _watchlist_collection_plan(item, today=today, force=force)
+        if plan is not None:
+            due_items.append((item, plan))
+    if requested_codes:
+        found = {
+            str(item.get("source_name") or "").strip().lower()
+            for item, _plan in due_items
+        }
+        missing = requested_codes - found
+        if missing:
+            logger.warning("[watchlist] 请求的标的不存在、已停用或未到期: %s", sorted(missing))
+    if not due_items:
+        return []
+
+    total = len(due_items)
     logger.info(
-        f"[watchlist] 开始采集 {total} 只标的（{mode_label}, 维度层级={tier_label}, "
-        f"并发={_WATCHLIST_CONCURRENCY}: nav={nav_period}, kline={kline_len}, flow={flow_days}d）"
+        "[watchlist] 开始采集 %s 只到期标的（名单=%s, 并发=%s）",
+        total,
+        len(all_items),
+        _WATCHLIST_CONCURRENCY,
     )
 
     results = []
@@ -708,11 +748,18 @@ async def _fetch_watchlist_data(ths_client, tencent_client, sina_client=None, em
     sem = _asyncio.Semaphore(_WATCHLIST_CONCURRENCY)
     completed_count = [0]  # 用列表实现闭包内可变计数器
 
-    async def _collect_one(item) -> list[dict]:
+    async def _collect_one(item, plan: dict) -> list[dict]:
         code = item["source_name"]
         config = item.get("config", {})
         item_type = config.get("type", "fund")
+        nav_period = plan["nav_period"]
+        kline_len = plan["kline_len"]
+        flow_days = plan["flow_days"]
+        since = plan["since"]
+        collect_daily = plan["collect_daily"]
+        collect_low = plan["collect_low"]
         code_results = []
+        collection_error = False
 
         async with sem:
             try:
@@ -883,21 +930,57 @@ async def _fetch_watchlist_data(ths_client, tencent_client, sina_client=None, em
                         data = raw.get("data", raw) if isinstance(raw, dict) else raw
                         code_results.extend(_expand_timeseries(code, dim, data, today, since))
 
-                if code_results:
-                    checkpoint_store.update_success("watchlist", code, {
-                        "mode": "incremental",
-                        "newest_time": today.isoformat(),
-                    }, saved_count=len(code_results))
+                elif item_type == "index":
+                    index_tasks = {
+                        "quote": tencent_client.get_stock_quote([code]),
+                        "minute_data": tencent_client.get_minute_data(code),
+                    }
+                    if sina_client:
+                        index_tasks["kline"] = sina_client.get_kline(
+                            code,
+                            scale=240,
+                            datalen=kline_len,
+                        )
+                    index_keys = list(index_tasks.keys())
+                    index_results = await _asyncio.gather(
+                        *index_tasks.values(),
+                        return_exceptions=True,
+                    )
+                    for dim, raw in zip(index_keys, index_results):
+                        if isinstance(raw, Exception):
+                            logger.debug(f"[watchlist:{code}] {dim} 失败: {raw}")
+                            continue
+                        data = raw.get("data", raw) if isinstance(raw, dict) else raw
+                        code_results.extend(
+                            _expand_timeseries(code, dim, data, today, since)
+                        )
+
+                else:
+                    raise ValueError(f"不支持的 watchlist type: {item_type!r}")
 
             except Exception as e:
+                collection_error = True
                 logger.warning(f"[watchlist:{code}] 采集异常: {e}")
+                checkpoint_store.update_failure(
+                    "watchlist",
+                    code,
+                    f"{type(e).__name__}: {e}",
+                )
+
+        if not code_results and not collection_error:
+            checkpoint_store.update_failure(
+                "watchlist",
+                code,
+                "所有采集维度均未返回可用数据",
+            )
 
         # 实时进度（在 sem 释放后更新，避免被锁影响日志顺序）
         completed_count[0] += 1
         idx = completed_count[0]
+        if source_lock and idx % 5 == 0:
+            source_lock.renew()
         if idx % 10 == 0 or idx == total:
             elapsed = _time.time() - t0
-            done_items = sum(len(r) for r in [code_results])  # 本只
             logger.info(
                 f"[watchlist] 进度 {idx}/{total} ({idx*100//total}%), "
                 f"本只 {len(code_results)} 条, 耗时 {elapsed:.0f}s"
@@ -907,7 +990,7 @@ async def _fetch_watchlist_data(ths_client, tencent_client, sina_client=None, em
 
     # 并发采集所有标的
     all_code_results = await _asyncio.gather(
-        *[_collect_one(item) for item in enabled],
+        *[_collect_one(item, plan) for item, plan in due_items],
         return_exceptions=True,
     )
     for r in all_code_results:
@@ -919,14 +1002,22 @@ async def _fetch_watchlist_data(ths_client, tencent_client, sina_client=None, em
     # ── QDII 关联：全市场级数据（只采一次，code='_market'） ──
     try:
         market_tasks = {}
-        if sina_client:
+        market_since_values = [
+            plan["since"] for _item, plan in due_items if plan["since"]
+        ]
+        market_since = min(market_since_values) if market_since_values else None
+        if requested_codes:
+            market_tasks = {}
+        elif sina_client:
             market_tasks["global_index"] = sina_client.get_global_index()
             market_tasks["forex"]        = sina_client.get_forex()
-        if tencent_client:
+        if not requested_codes and tencent_client:
             market_tasks["intl_futures"] = tencent_client.get_intl_futures()
-        if em_client:
-            if since:
-                market_tasks["research"] = em_client.get_research_reports_since(since)
+        if not requested_codes and em_client:
+            if market_since:
+                market_tasks["research"] = em_client.get_research_reports_since(
+                    market_since
+                )
             else:
                 market_tasks["research"] = em_client.get_research_reports(page_size=50)
 
@@ -954,7 +1045,7 @@ async def _fetch_watchlist_data(ths_client, tencent_client, sina_client=None, em
     elapsed_total = _time.time() - t0
     if results:
         logger.info(
-            f"[watchlist] 采集完成: {len(enabled)} 只标的, {len(results)} 条数据, "
+            f"[watchlist] 采集完成: {len(due_items)} 只标的, {len(results)} 条数据, "
             f"总耗时 {elapsed_total:.0f}s"
         )
 
@@ -1065,7 +1156,7 @@ class FundFlowAggregator(BaseAggregator):
         "sector_flow_sina": {"target_days": 0, "page_size": 50, "interval": 1800, "default_mode": "incremental"},  # → data_type: sector_flow
         "dragon_tiger_em":  {"target_days": 0, "page_size": 50, "interval": 21600, "default_mode": "incremental"}, # → data_type: dragon_tiger
         "dragon_tiger_ths": {"target_days": 0, "page_size": 50, "interval": 21600, "default_mode": "incremental"}, # → data_type: dragon_tiger
-        "watchlist_data":   {"target_days": 0, "interval": 1800, "default_mode": "incremental"},                   # → ft_watchlist_data 20种 data_type
+        "watchlist_data":   {"target_days": 0, "interval": 300, "default_mode": "incremental"},                    # → 每5分钟扫描各标的独立 interval
     }
     BACKFILL_SOURCES = frozenset({"northbound"})
     AUTO_CATCHUP_SOURCES = BACKFILL_SOURCES
@@ -1117,13 +1208,13 @@ class FundFlowAggregator(BaseAggregator):
                 21600,
                 normalize_dragon_tiger_ths,
             ),
-            # 自选标的数据采集 — watchlist 驱动，30 分钟
+            # 自选标的数据采集 — 每 5 分钟扫描，标的自身 interval 决定是否到期
             SourceDef(
                 "watchlist_data",
                 lambda cp: _fetch_watchlist_data(
                     clients.ths, clients.tencent, clients.sina, clients.eastmoney, cp,
                 ),
-                1800,
+                300,
                 _normalize_watchlist_data,
             ),
         ]
@@ -1175,9 +1266,98 @@ class FundFlowAggregator(BaseAggregator):
             t0 = _time.time()
             logger.info(f"[watchlist] 开始入库 {len(watchlist_items)} 条")
             saved += WatchlistDataRepositoryImpl().save_batch(watchlist_items)
+            self._update_watchlist_item_checkpoints(watchlist_items)
             logger.info(f"[watchlist] 入库完成，耗时 {_time.time()-t0:.1f}s")
 
         return saved
+
+    @staticmethod
+    def _update_watchlist_item_checkpoints(items: list[dict]) -> None:
+        """Advance each instrument only after its rows have been persisted."""
+
+        from collections import defaultdict
+        from src.infrastructure.db import checkpoint_store
+
+        grouped: dict[str, list[dict]] = defaultdict(list)
+        for item in items:
+            code = str(item.get("code") or "").strip()
+            if code and code != "_market":
+                grouped[code].append(item)
+
+        for code, code_items in grouped.items():
+            state = checkpoint_store.get("watchlist", code) or {}
+            dates = sorted(
+                str(item["trade_date"])[:10]
+                for item in code_items
+                if item.get("trade_date")
+            )
+            if not dates:
+                continue
+            oldest = min(
+                [str(state.get("oldest_time"))[:10]]
+                + dates
+                if state.get("oldest_time")
+                else dates
+            )
+            newest = max(
+                [str(state.get("newest_time"))[:10]]
+                + dates
+                if state.get("newest_time")
+                else dates
+            )
+            checkpoint = {
+                "mode": "incremental",
+                "target_time": state.get("target_time"),
+                "newest_time": newest,
+                "oldest_time": oldest,
+                "backfill_status": state.get("backfill_status"),
+                "cursor": None,
+            }
+            if state.get("mode") == "backfill":
+                target = str(state.get("target_time") or "")[:10]
+                checkpoint["backfill_status"] = (
+                    "done" if target and oldest <= target else "ceiling"
+                )
+            checkpoint_store.update_success(
+                "watchlist",
+                code,
+                checkpoint,
+                saved_count=len(code_items),
+            )
+
+    async def collect_watchlist_codes(
+        self,
+        codes: list[str],
+        *,
+        force: bool = True,
+    ) -> dict:
+        """Collect selected instruments through the same production pipeline."""
+
+        from src.infrastructure import clients
+
+        raw = await _fetch_watchlist_data(
+            clients.ths,
+            clients.tencent,
+            clients.sina,
+            clients.eastmoney,
+            {},
+            codes=codes,
+            force=force,
+        )
+        saved = self._save(raw)
+        collected_codes = sorted(
+            {
+                str(item.get("code") or "")
+                for item in raw
+                if item.get("code") and item.get("code") != "_market"
+            }
+        )
+        return {
+            "requested_codes": list(dict.fromkeys(codes)),
+            "collected_codes": collected_codes,
+            "rows": len(raw),
+            "saved": saved,
+        }
 
     # ==================== 查询 ====================
 

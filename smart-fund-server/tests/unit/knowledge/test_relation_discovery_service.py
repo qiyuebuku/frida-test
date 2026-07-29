@@ -21,6 +21,7 @@ from src.domain.knowledge.relation_discovery import (
     PairEvidencePackage,
     RelationProbe,
     RelationRecallHit,
+    VerifiedRelationDecision,
 )
 from src.infrastructure.clients.reranker import RerankResponse, RerankResult
 from src.infrastructure.config import settings
@@ -450,6 +451,24 @@ class _RelationWriter:
         }
 
 
+def _verified_decision(
+    source_card_id: str,
+    target_card_id: str,
+) -> VerifiedRelationDecision:
+    return VerifiedRelationDecision(
+        source_card_id=source_card_id,
+        target_card_id=target_card_id,
+        decision_class="observed",
+        relation_kind="same_event",
+        relation_type="同一事件的不同事实侧面",
+        direction="symmetric",
+        basis="双方证据对齐同一可识别事件。",
+        source_evidence_refs=["s0001"],
+        target_evidence_refs=["s0001"],
+        confidence=0.9,
+    )
+
+
 @dataclass
 class _SameFactLLM:
     requests: list
@@ -665,6 +684,93 @@ async def test_dual_view_recall_uses_summary_for_rerank_and_full_text_only_for_v
         "screening_basis",
     ):
         assert removed_key not in verify_request.prompt
+
+
+@pytest.mark.asyncio
+async def test_batch_discovery_persists_each_card_before_processing_the_next(
+    monkeypatch,
+) -> None:
+    manifests = [
+        _manifest("card:1", "chunk:1"),
+        _manifest("card:2", "chunk:2"),
+    ]
+    writer = _RelationWriter()
+    service = RelationDiscoveryService(
+        repository=_Repository(manifests),
+        vector_store=_VectorStore(),
+        reranker=_Reranker(),
+        llm=_LLM([]),
+        relation_writer=writer,
+    )
+
+    async def discover_one(*, manifest, **_kwargs):
+        if manifest.cognitive_card_id == "card:2":
+            raise RuntimeError("second card failed")
+        return (
+            [_verified_decision("card:1", "card:2")],
+            {"card_id": manifest.cognitive_card_id},
+        )
+
+    monkeypatch.setattr(service, "_discover_one", discover_one)
+
+    with pytest.raises(RuntimeError, match="second card failed"):
+        await service.discover_card_relations(
+            ["card:1", "card:2"],
+            target="test",
+            workflow_id="workflow:checkpoint",
+        )
+
+    assert len(writer.calls) == 1
+    decisions, kwargs = writer.calls[0]
+    assert decisions == [_verified_decision("card:1", "card:2")]
+    assert kwargs["workflow_id"] == "workflow:checkpoint"
+
+
+@pytest.mark.asyncio
+async def test_batch_discovery_merges_per_card_persistence_results(
+    monkeypatch,
+) -> None:
+    manifests = [
+        _manifest("card:1", "chunk:1"),
+        _manifest("card:2", "chunk:2"),
+        _manifest("card:3", "chunk:3"),
+    ]
+    writer = _RelationWriter()
+    service = RelationDiscoveryService(
+        repository=_Repository(manifests),
+        vector_store=_VectorStore(),
+        reranker=_Reranker(),
+        llm=_LLM([]),
+        relation_writer=writer,
+    )
+
+    async def discover_one(*, manifest, **_kwargs):
+        card_id = manifest.cognitive_card_id
+        return (
+            [_verified_decision(card_id, "card:3")],
+            {"card_id": card_id},
+        )
+
+    monkeypatch.setattr(service, "_discover_one", discover_one)
+
+    result = await service.discover_card_relations(
+        ["card:1", "card:2"],
+        target="test",
+        workflow_id="workflow:checkpoint",
+    )
+
+    assert len(writer.calls) == 2
+    assert result["observed"] == 2
+    assert result["edge_persistence"]["checkpoint_count"] == 2
+    assert result["edge_persistence"]["checkpointed_card_ids"] == [
+        "card:1",
+        "card:2",
+    ]
+    assert result["edge_persistence"]["changed_edge_ids"] == [
+        "kg_card_relation:test"
+    ]
+    assert result["edge_persistence"]["graph_event_ids"] == ["event:test"]
+    assert result["edge_persistence"]["workflow_id"] == "workflow:checkpoint"
 
 
 @pytest.mark.asyncio
