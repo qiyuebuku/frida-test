@@ -1,0 +1,2920 @@
+{
+  "config": {
+    "adapter_name": "financial",
+    "target": "prod",
+    "validation_cache_target": "prod:bucket_validation",
+    "semantic_cache_target": "prod:bucket_validation",
+    "cache_mode": "reuse",
+    "llm_cache_mode": "bypass",
+    "llm_use_cache": false,
+    "bucket_thinking": "disabled",
+    "auto_merge_threshold": 999,
+    "auto_merge_candidate_limit": 24,
+    "cache_cleanup": {
+      "enabled": false,
+      "deleted": 0,
+      "state_key": ""
+    },
+    "card_limit": 0,
+    "intent_limit": 0
+  },
+  "loaded": {
+    "cognitive_cards": 100,
+    "topic_intents": 109
+  },
+  "bucket_plan": {
+    "bucket_count": 34,
+    "unknown_intents": 4,
+    "llm_assignments": 4,
+    "new_buckets": 0,
+    "merge_suggestions": 0,
+    "semantic_cache": {
+      "redis_exact_hits": 68,
+      "semantic_requests": 45,
+      "semantic_raw_hits": 225,
+      "semantic_candidate_hits": 199,
+      "semantic_direct_hits": 37,
+      "semantic_direct_exact_theme_hits": 32,
+      "semantic_direct_score_margin_hits": 5,
+      "semantic_skipped_empty_scope": 0,
+      "semantic_upserted": 4,
+      "semantic_scope_has_entries_initial": 1
+    },
+    "merge_result": {
+      "triggered": false,
+      "reason": "under_threshold",
+      "bucket_count": 34,
+      "threshold": 999,
+      "candidate_count": 0,
+      "merged": 0
+    },
+    "bucket_sizes": {
+      "bucket_agriculture_earnings": 4,
+      "bucket_agriculture_performance": 2,
+      "bucket_ai_infra": 13,
+      "bucket_battery_capacity_expansion": 1,
+      "bucket_bilateral_financial_cooperation": 2,
+      "bucket_biotech_ipo": 4,
+      "bucket_broker_risk": 5,
+      "bucket_copper_supply": 2,
+      "bucket_customs_ip_enforcement": 1,
+      "bucket_energy_storage_overseas": 2,
+      "bucket_fed_policy": 4,
+      "bucket_foreign_automaker_china_strategy": 1,
+      "bucket_foreign_political_appointments": 1,
+      "bucket_geological_heritage_cooperation": 1,
+      "bucket_geopolitical_risk": 16,
+      "bucket_global_inflation": 4,
+      "bucket_gold_market": 1,
+      "bucket_industrial_gas_supply": 1,
+      "bucket_industrial_robot": 4,
+      "bucket_lithium_industry": 1,
+      "bucket_ma": 11,
+      "bucket_macro_liquidity": 3,
+      "bucket_market_defensive_rotation": 3,
+      "bucket_media_ip_transformation": 1,
+      "bucket_railway_accident": 1,
+      "bucket_regional_economic_data": 2,
+      "bucket_regional_financial_policy": 3,
+      "bucket_regulatory_investigation": 3,
+      "bucket_renewable_energy_projects": 1,
+      "bucket_semiconductor_equipment": 1,
+      "bucket_service_industry_policy": 7,
+      "bucket_us_earnings_season": 1,
+      "bucket_us_immigration_policy": 1,
+      "bucket_us_labor_market": 1
+    }
+  },
+  "bucket_details": [
+    {
+      "bucket_id": "bucket_agriculture_earnings",
+      "size": 4,
+      "intents": [
+        {
+          "intent_id": "kg_cognitive_card:850a89076afbb57f:1",
+          "cognitive_card_id": "kg_cognitive_card:850a89076afbb57f",
+          "source_id": "usage_demo_write_path:ft_news:75050",
+          "chunk_index": 0,
+          "intent_index": 1,
+          "raw_theme": "农业农村部部署“十五五”农业科技创新重点任务",
+          "title_candidate": "十五五农业科技创新战略部署",
+          "parent_themes": [
+            "农业科技政策",
+            "国家粮食安全战略",
+            "科技创新驱动"
+          ],
+          "broad_topics": [
+            "农业科技创新体系",
+            "农业科技自立自强"
+          ],
+          "bucket_assignment": {
+            "bucket_id": "bucket_agriculture_earnings",
+            "bucket_title": "农业板块业绩驱动行情",
+            "canonical_theme": "农业科技政策",
+            "from_cache": true,
+            "cache_source": "semantic",
+            "semantic_score": 0.497
+          }
+        },
+        {
+          "intent_id": "kg_cognitive_card:4cadb08abfbd3782:1",
+          "cognitive_card_id": "kg_cognitive_card:4cadb08abfbd3782",
+          "source_id": "usage_demo_write_path:ft_news:75052",
+          "chunk_index": 0,
+          "intent_index": 1,
+          "raw_theme": "农业农村部发布农业科技与智能化发展成果",
+          "title_candidate": "中国农业科技与智能化发展成果发布",
+          "parent_themes": [
+            "农业科技",
+            "农业智能化",
+            "无人机产业"
+          ],
+          "broad_topics": [
+            "农业科技进步",
+            "农业数字化转型"
+          ],
+          "bucket_assignment": {
+            "bucket_id": "bucket_agriculture_earnings",
+            "bucket_title": "农业板块业绩驱动行情",
+            "canonical_theme": "中国农业科技与智能化发展成果发布",
+            "from_cache": true
+          }
+        },
+        {
+          "intent_id": "kg_cognitive_card:d0f37f48ba454aa3:1",
+          "cognitive_card_id": "kg_cognitive_card:d0f37f48ba454aa3",
+          "source_id": "usage_demo_write_path:ft_news:75053",
+          "chunk_index": 0,
+          "intent_index": 1,
+          "raw_theme": "农业农村部种业振兴行动部署",
+          "title_candidate": "种业振兴行动五大重点",
+          "parent_themes": [
+            "种业振兴政策",
+            "农业科技自主"
+          ],
+          "broad_topics": [
+            "农业政策",
+            "种业发展"
+          ],
+          "bucket_assignment": {
+            "bucket_id": "bucket_agriculture_earnings",
+            "bucket_title": "农业板块业绩驱动行情",
+            "canonical_theme": "种业振兴行动五大重点",
+            "from_cache": true
+          }
+        },
+        {
+          "intent_id": "kg_cognitive_card:6b48a718a769e4e7:1",
+          "cognitive_card_id": "kg_cognitive_card:6b48a718a769e4e7",
+          "source_id": "usage_demo_write_path:ft_news:75054",
+          "chunk_index": 0,
+          "intent_index": 1,
+          "raw_theme": "政策推动农村集体经济改革与农民增收",
+          "title_candidate": "农村集体经济改革与农民增收政策",
+          "parent_themes": [
+            "农村经济政策",
+            "农业改革",
+            "农民增收"
+          ],
+          "broad_topics": [
+            "农村集体经济",
+            "农村产权改革",
+            "农业农村政策"
+          ],
+          "bucket_assignment": {
+            "bucket_id": "bucket_agriculture_earnings",
+            "bucket_title": "农业板块业绩驱动行情",
+            "canonical_theme": "农村集体经济改革与农民增收政策",
+            "from_cache": true
+          }
+        }
+      ]
+    },
+    {
+      "bucket_id": "bucket_agriculture_performance",
+      "size": 2,
+      "intents": [
+        {
+          "intent_id": "kg_cognitive_card:d95eef78e019e138:1",
+          "cognitive_card_id": "kg_cognitive_card:d95eef78e019e138",
+          "source_id": "usage_demo_write_path:ft_news:74432",
+          "chunk_index": 0,
+          "intent_index": 1,
+          "raw_theme": "农业板块因业绩超预期逆势活跃",
+          "title_candidate": "农业板块业绩驱动行情",
+          "parent_themes": [
+            "行业景气度驱动",
+            "业绩超预期",
+            "农林牧渔"
+          ],
+          "broad_topics": [
+            "农林牧渔",
+            "食用菌产业"
+          ],
+          "bucket_assignment": {
+            "bucket_id": "bucket_agriculture_performance",
+            "bucket_title": "农业板块业绩驱动行情",
+            "canonical_theme": "行业景气度驱动",
+            "from_cache": true,
+            "cache_source": "semantic",
+            "semantic_score": 0.6956
+          }
+        },
+        {
+          "intent_id": "kg_cognitive_card:6a52bcdc4937c2ff:1",
+          "cognitive_card_id": "kg_cognitive_card:6a52bcdc4937c2ff",
+          "source_id": "usage_demo_write_path:ft_news:74743",
+          "chunk_index": 0,
+          "intent_index": 1,
+          "raw_theme": "春耕化肥保供稳价及春播进展",
+          "title_candidate": "春耕化肥保供与春播生产形势",
+          "parent_themes": [
+            "农业政策与生产保障",
+            "化肥产业链供需"
+          ],
+          "broad_topics": [
+            "农业种植业",
+            "化肥行业"
+          ],
+          "bucket_assignment": {
+            "bucket_id": "bucket_agriculture_performance",
+            "bucket_title": "农业板块业绩驱动行情",
+            "canonical_theme": "春耕化肥保供与春播生产形势",
+            "from_cache": true
+          }
+        }
+      ]
+    },
+    {
+      "bucket_id": "bucket_ai_infra",
+      "size": 13,
+      "intents": [
+        {
+          "intent_id": "kg_cognitive_card:ada3b41bfe5bccc8:1",
+          "cognitive_card_id": "kg_cognitive_card:ada3b41bfe5bccc8",
+          "source_id": "usage_demo_write_path:ft_news:59604",
+          "chunk_index": 0,
+          "intent_index": 1,
+          "raw_theme": "AI应用与光模块板块共振上涨，产业趋势驱动行情",
+          "title_candidate": "AI产业链行情与产业逻辑",
+          "parent_themes": [
+            "AI产业发展",
+            "AI应用商业化",
+            "算力基础设施"
+          ],
+          "broad_topics": [
+            "人工智能应用",
+            "光模块/CPO",
+            "主题ETF资金流向"
+          ],
+          "bucket_assignment": {
+            "bucket_id": "bucket_ai_infra",
+            "bucket_title": "AI基础设施与产业链",
+            "canonical_theme": "AI产业发展",
+            "from_cache": true,
+            "cache_source": "semantic",
+            "semantic_score": 0.6734
+          }
+        },
+        {
+          "intent_id": "kg_cognitive_card:b3b1b5a81fe2a344:1",
+          "cognitive_card_id": "kg_cognitive_card:b3b1b5a81fe2a344",
+          "source_id": "usage_demo_write_path:ft_news:59604",
+          "chunk_index": 1,
+          "intent_index": 1,
+          "raw_theme": "AI主题ETF投资布局",
+          "title_candidate": "人工智能ETF投资布局",
+          "parent_themes": [
+            "人工智能产业投资"
+          ],
+          "broad_topics": [
+            "AI算力投资",
+            "AI应用投资"
+          ],
+          "bucket_assignment": {
+            "bucket_id": "bucket_ai_infra",
+            "bucket_title": "AI基础设施与产业链",
+            "canonical_theme": "人工智能ETF投资布局",
+            "from_cache": true
+          }
+        },
+        {
+          "intent_id": "kg_cognitive_card:fbd5e2e3ab816482:1",
+          "cognitive_card_id": "kg_cognitive_card:fbd5e2e3ab816482",
+          "source_id": "usage_demo_write_path:ft_news:74416",
+          "chunk_index": 0,
+          "intent_index": 1,
+          "raw_theme": "算力基础设施需求驱动光模块龙头业绩爆发与市值突破",
+          "title_candidate": "AI算力硬件产业链景气度提升",
+          "parent_themes": [
+            "算力产业链",
+            "AI基础设施投资"
+          ],
+          "broad_topics": [
+            "光模块产业",
+            "AI算力硬件"
+          ],
+          "bucket_assignment": {
+            "bucket_id": "bucket_ai_infra",
+            "bucket_title": "AI基础设施与产业链",
+            "canonical_theme": "AI算力硬件产业链景气度提升",
+            "from_cache": true
+          }
+        },
+        {
+          "intent_id": "kg_cognitive_card:67f9f5fd5cd7b309:1",
+          "cognitive_card_id": "kg_cognitive_card:67f9f5fd5cd7b309",
+          "source_id": "usage_demo_write_path:ft_news:74416",
+          "chunk_index": 1,
+          "intent_index": 1,
+          "raw_theme": "AI算力需求驱动光模块行业高景气",
+          "title_candidate": "AI算力驱动光模块产业链爆发",
+          "parent_themes": [
+            "AI算力基础设施",
+            "光模块产业链",
+            "科技行业资本开支"
+          ],
+          "broad_topics": [
+            "光模块行业景气度",
+            "AI算力需求"
+          ],
+          "bucket_assignment": {
+            "bucket_id": "bucket_ai_infra",
+            "bucket_title": "AI基础设施与产业链",
+            "canonical_theme": "AI算力驱动光模块产业链爆发",
+            "from_cache": true
+          }
+        },
+        {
+          "intent_id": "kg_cognitive_card:abbc59c9177178a4:1",
+          "cognitive_card_id": "kg_cognitive_card:abbc59c9177178a4",
+          "source_id": "usage_demo_write_path:ft_news:74416",
+          "chunk_index": 2,
+          "intent_index": 1,
+          "raw_theme": "人工智能ETF产品宣传与投资主题",
+          "title_candidate": "人工智能ETF产品推广",
+          "parent_themes": [
+            "人工智能投资主题",
+            "ETF产品推广"
+          ],
+          "broad_topics": [
+            "AI算力",
+            "AI应用",
+            "ETF投资"
+          ],
+          "bucket_assignment": {
+            "bucket_id": "bucket_ai_infra",
+            "bucket_title": "AI基础设施与产业链",
+            "canonical_theme": "人工智能ETF产品推广",
+            "from_cache": true
+          }
+        },
+        {
+          "intent_id": "kg_cognitive_card:ee7711c5178a18bb:1",
+          "cognitive_card_id": "kg_cognitive_card:ee7711c5178a18bb",
+          "source_id": "usage_demo_write_path:ft_news:74425",
+          "chunk_index": 0,
+          "intent_index": 1,
+          "raw_theme": "AI芯片供应短缺预期",
+          "title_candidate": "AI芯片供应瓶颈与自建芯片",
+          "parent_themes": [
+            "人工智能产业",
+            "半导体供应链"
+          ],
+          "broad_topics": [
+            "AI芯片",
+            "芯片需求"
+          ],
+          "bucket_assignment": {
+            "bucket_id": "bucket_ai_infra",
+            "bucket_title": "AI基础设施与产业链",
+            "canonical_theme": "AI芯片供应瓶颈与自建芯片",
+            "from_cache": true
+          }
+        },
+        {
+          "intent_id": "kg_cognitive_card:c60caa26f364cb4a:1",
+          "cognitive_card_id": "kg_cognitive_card:c60caa26f364cb4a",
+          "source_id": "usage_demo_write_path:ft_news:74428",
+          "chunk_index": 0,
+          "intent_index": 1,
+          "raw_theme": "特斯拉大幅增加资本支出，押注AI与机器人领域",
+          "title_candidate": "全球AI与机器人产业投资热潮",
+          "parent_themes": [
+            "人工智能基础设施投资浪潮",
+            "全球汽车产业电动化与智能化转型"
+          ],
+          "broad_topics": [
+            "自动驾驶技术发展",
+            "机器人产业投资",
+            "半导体自主化"
+          ],
+          "bucket_assignment": {
+            "bucket_id": "bucket_ai_infra",
+            "bucket_title": "AI基础设施与产业链",
+            "canonical_theme": "全球AI与机器人产业投资热潮",
+            "from_cache": true
+          }
+        },
+        {
+          "intent_id": "kg_cognitive_card:6a1006d69cb1c288:2",
+          "cognitive_card_id": "kg_cognitive_card:6a1006d69cb1c288",
+          "source_id": "usage_demo_write_path:ft_news:75051",
+          "chunk_index": 0,
+          "intent_index": 2,
+          "raw_theme": "算力硬件股集体调整",
+          "title_candidate": "算力硬件板块调整",
+          "parent_themes": [
+            "科技硬件板块调整"
+          ],
+          "broad_topics": [
+            "CPO",
+            "算力硬件"
+          ],
+          "bucket_assignment": {
+            "bucket_id": "bucket_ai_infra",
+            "bucket_title": "AI基础设施与产业链",
+            "canonical_theme": "算力硬件板块调整",
+            "from_cache": true
+          }
+        },
+        {
+          "intent_id": "kg_cognitive_card:aa3a7101c0ac9b35:1",
+          "cognitive_card_id": "kg_cognitive_card:aa3a7101c0ac9b35",
+          "source_id": "usage_demo_write_path:ft_news:75461",
+          "chunk_index": 0,
+          "intent_index": 1,
+          "raw_theme": "华勤技术港股上市与AI驱动的业务扩张",
+          "title_candidate": "华勤技术港股上市及AI算力业务增长",
+          "parent_themes": [
+            "科技企业港股上市",
+            "AI算力基础设施",
+            "消费电子ODM"
+          ],
+          "broad_topics": [
+            "港股IPO市场",
+            "AI服务器与数据中心",
+            "智能硬件ODM"
+          ],
+          "bucket_assignment": {
+            "bucket_id": "bucket_ai_infra",
+            "bucket_title": "AI基础设施与产业链",
+            "canonical_theme": "华勤技术港股上市及AI算力业务增长",
+            "from_cache": true
+          }
+        },
+        {
+          "intent_id": "kg_cognitive_card:7a77bd1e5b59ef9d:1",
+          "cognitive_card_id": "kg_cognitive_card:7a77bd1e5b59ef9d",
+          "source_id": "usage_demo_write_path:ft_news:75813",
+          "chunk_index": 0,
+          "intent_index": 1,
+          "raw_theme": "SpaceX巨额资本支出警告",
+          "title_candidate": "公司资本支出与硬件制造投资",
+          "parent_themes": [
+            "资本支出与投资扩张",
+            "硬件制造与供应链投资"
+          ],
+          "broad_topics": [
+            "科技公司资本支出",
+            "航天企业投资动态"
+          ],
+          "bucket_assignment": {
+            "bucket_id": "bucket_ai_infra",
+            "bucket_title": "AI基础设施与产业链",
+            "canonical_theme": "SpaceX资本支出与硬件制造投资",
+            "from_cache": false
+          }
+        },
+        {
+          "intent_id": "kg_cognitive_card:c3ca8d104a861093:1",
+          "cognitive_card_id": "kg_cognitive_card:c3ca8d104a861093",
+          "source_id": "usage_demo_write_path:ft_news:75814",
+          "chunk_index": 0,
+          "intent_index": 1,
+          "raw_theme": "中国科学家构建数字虚拟宇宙",
+          "title_candidate": "数字虚拟宇宙模拟项目",
+          "parent_themes": [
+            "科学与技术突破",
+            "超级计算与模拟",
+            "宇宙学研究"
+          ],
+          "broad_topics": [
+            "天文宇宙学",
+            "数字孪生宇宙"
+          ],
+          "bucket_assignment": {
+            "bucket_id": "bucket_ai_infra",
+            "bucket_title": "AI基础设施与产业链",
+            "canonical_theme": "数字虚拟宇宙模拟项目",
+            "from_cache": true
+          }
+        },
+        {
+          "intent_id": "kg_cognitive_card:969ecb8e7a7e160e:1",
+          "cognitive_card_id": "kg_cognitive_card:969ecb8e7a7e160e",
+          "source_id": "usage_demo_write_path:ft_news:75817",
+          "chunk_index": 0,
+          "intent_index": 1,
+          "raw_theme": "全球电信连接市场收入与5G连接数增长",
+          "title_candidate": "全球电信行业收入增长与5G渗透",
+          "parent_themes": [
+            "电信行业",
+            "5G发展",
+            "通信基础设施",
+            "数字经济"
+          ],
+          "broad_topics": [
+            "全球电信市场",
+            "5G产业"
+          ],
+          "bucket_assignment": {
+            "bucket_id": "bucket_ai_infra",
+            "bucket_title": "AI基础设施与产业链",
+            "canonical_theme": "全球电信行业收入增长与5G渗透",
+            "from_cache": true
+          }
+        },
+        {
+          "intent_id": "kg_cognitive_card:24bc97817c7c7a0d:1",
+          "cognitive_card_id": "kg_cognitive_card:24bc97817c7c7a0d",
+          "source_id": "usage_demo_write_path:ft_news:76581",
+          "chunk_index": 0,
+          "intent_index": 1,
+          "raw_theme": "算力硬件股午后局部回暖，多只个股涨停创历史新高",
+          "title_candidate": "算力硬件板块局部回暖",
+          "parent_themes": [
+            "算力基础设施建设",
+            "AI算力硬件产业链"
+          ],
+          "broad_topics": [
+            "A股科技板块",
+            "算力设备行业"
+          ],
+          "bucket_assignment": {
+            "bucket_id": "bucket_ai_infra",
+            "bucket_title": "AI基础设施与产业链",
+            "canonical_theme": "算力硬件板块局部回暖",
+            "from_cache": true
+          }
+        }
+      ]
+    },
+    {
+      "bucket_id": "bucket_battery_capacity_expansion",
+      "size": 1,
+      "intents": [
+        {
+          "intent_id": "kg_cognitive_card:a2d68a9878bc23d2:1",
+          "cognitive_card_id": "kg_cognitive_card:a2d68a9878bc23d2",
+          "source_id": "usage_demo_write_path:ft_news:72795",
+          "chunk_index": 0,
+          "intent_index": 1,
+          "raw_theme": "消费类锂离子电芯产能投资",
+          "title_candidate": "消费类软包电芯产能扩张",
+          "parent_themes": [
+            "消费电子供应链",
+            "锂电池制造"
+          ],
+          "broad_topics": [
+            "消费电子",
+            "锂电池"
+          ],
+          "bucket_assignment": {
+            "bucket_id": "bucket_battery_capacity_expansion",
+            "bucket_title": "电池产能扩张与产业布局",
+            "canonical_theme": "消费电子供应链",
+            "from_cache": true,
+            "cache_source": "semantic",
+            "semantic_score": 0.711
+          }
+        }
+      ]
+    },
+    {
+      "bucket_id": "bucket_bilateral_financial_cooperation",
+      "size": 2,
+      "intents": [
+        {
+          "intent_id": "kg_cognitive_card:0880299b35ad52e9:1",
+          "cognitive_card_id": "kg_cognitive_card:0880299b35ad52e9",
+          "source_id": "usage_demo_write_path:ft_news:74735",
+          "chunk_index": 0,
+          "intent_index": 1,
+          "raw_theme": "中莫财金合作会谈",
+          "title_candidate": "中莫财金合作对话",
+          "parent_themes": [
+            "国际财金合作",
+            "双边外交财金"
+          ],
+          "broad_topics": [
+            "中非合作",
+            "国际财政合作"
+          ],
+          "bucket_assignment": {
+            "bucket_id": "bucket_bilateral_financial_cooperation",
+            "bucket_title": "双边财金合作对话",
+            "canonical_theme": "国际财金合作",
+            "from_cache": true,
+            "cache_source": "semantic",
+            "semantic_score": 0.6476
+          }
+        },
+        {
+          "intent_id": "kg_cognitive_card:7e1d155870faaff0:1",
+          "cognitive_card_id": "kg_cognitive_card:7e1d155870faaff0",
+          "source_id": "usage_demo_write_path:ft_news:75460",
+          "chunk_index": 0,
+          "intent_index": 1,
+          "raw_theme": "伊朗航空公司恢复对华直飞客运航线",
+          "title_candidate": "伊朗航空恢复中国直飞航线",
+          "parent_themes": [
+            "国际航空航线恢复",
+            "中伊双边交通"
+          ],
+          "broad_topics": [
+            "航空业",
+            "国际旅行"
+          ],
+          "bucket_assignment": {
+            "bucket_id": "bucket_bilateral_financial_cooperation",
+            "bucket_title": "双边财金合作对话",
+            "canonical_theme": "伊朗航空恢复中国直飞航线",
+            "from_cache": true
+          }
+        }
+      ]
+    },
+    {
+      "bucket_id": "bucket_biotech_ipo",
+      "size": 4,
+      "intents": [
+        {
+          "intent_id": "kg_cognitive_card:e748ec6f2773234e:1",
+          "cognitive_card_id": "kg_cognitive_card:e748ec6f2773234e",
+          "source_id": "usage_demo_write_path:ft_news:70367",
+          "chunk_index": 0,
+          "intent_index": 1,
+          "raw_theme": "艾米森二次递表港股IPO及未盈利状况",
+          "title_candidate": "癌症早筛企业港股上市进展",
+          "parent_themes": [
+            "医疗健康企业IPO",
+            "癌症早筛产业",
+            "生物科技公司融资与上市"
+          ],
+          "broad_topics": [
+            "癌症早筛行业",
+            "体外诊断（IVD）行业",
+            "港股医疗板块"
+          ],
+          "bucket_assignment": {
+            "bucket_id": "bucket_biotech_ipo",
+            "bucket_title": "生物科技企业IPO与风险",
+            "canonical_theme": "医疗健康企业IPO",
+            "from_cache": true,
+            "cache_source": "semantic",
+            "semantic_score": 0.622
+          }
+        },
+        {
+          "intent_id": "kg_cognitive_card:c3e77b57a500f490:1",
+          "cognitive_card_id": "kg_cognitive_card:c3e77b57a500f490",
+          "source_id": "usage_demo_write_path:ft_news:70367",
+          "chunk_index": 1,
+          "intent_index": 1,
+          "raw_theme": "生物科技初创企业商业化初期亏损与营收增长并存",
+          "title_candidate": "生物科技企业商业化初期财务表现",
+          "parent_themes": [
+            "生物科技企业商业化",
+            "创新药企盈利周期"
+          ],
+          "broad_topics": [
+            "体外诊断",
+            "癌症早筛"
+          ],
+          "bucket_assignment": {
+            "bucket_id": "bucket_biotech_ipo",
+            "bucket_title": "生物科技企业IPO与风险",
+            "canonical_theme": "生物科技企业商业化初期财务表现",
+            "from_cache": true
+          }
+        },
+        {
+          "intent_id": "kg_cognitive_card:0db3343e7f0b6292:1",
+          "cognitive_card_id": "kg_cognitive_card:0db3343e7f0b6292",
+          "source_id": "usage_demo_write_path:ft_news:70367",
+          "chunk_index": 2,
+          "intent_index": 1,
+          "raw_theme": "艾米森IPO面临临床试验失败风险与客户依赖关联方问题",
+          "title_candidate": "生物科技IPO临床风险及关联交易依赖",
+          "parent_themes": [
+            "生物科技IPO风险",
+            "医疗企业上市审核"
+          ],
+          "broad_topics": [
+            "临床研发失败风险",
+            "关联交易依赖"
+          ],
+          "bucket_assignment": {
+            "bucket_id": "bucket_biotech_ipo",
+            "bucket_title": "生物科技企业IPO与风险",
+            "canonical_theme": "生物科技IPO临床风险及关联交易依赖",
+            "from_cache": true
+          }
+        },
+        {
+          "intent_id": "kg_cognitive_card:0ba34093c8890638:1",
+          "cognitive_card_id": "kg_cognitive_card:0ba34093c8890638",
+          "source_id": "usage_demo_write_path:ft_news:70367",
+          "chunk_index": 3,
+          "intent_index": 1,
+          "raw_theme": "艾米森二度赴港IPO与客户集中度风险",
+          "title_candidate": "企业IPO客户集中度风险",
+          "parent_themes": [
+            "企业上市与融资",
+            "客户依赖风险"
+          ],
+          "broad_topics": [
+            "生物医药",
+            "癌症早筛"
+          ],
+          "bucket_assignment": {
+            "bucket_id": "bucket_biotech_ipo",
+            "bucket_title": "生物科技企业IPO与风险",
+            "canonical_theme": "企业IPO客户集中度风险",
+            "from_cache": true
+          }
+        }
+      ]
+    },
+    {
+      "bucket_id": "bucket_broker_risk",
+      "size": 5,
+      "intents": [
+        {
+          "intent_id": "kg_cognitive_card:fcba35e541526dfd:1",
+          "cognitive_card_id": "kg_cognitive_card:fcba35e541526dfd",
+          "source_id": "usage_demo_write_path:ft_news:59597",
+          "chunk_index": 0,
+          "intent_index": 1,
+          "raw_theme": "国海证券自营业务规模萎缩导致收入大幅下滑",
+          "title_candidate": "券商自营业务五年分化：国海证券掉队",
+          "parent_themes": [
+            "证券行业竞争格局",
+            "券商业务结构变迁"
+          ],
+          "broad_topics": [
+            "证券行业",
+            "上市券商"
+          ],
+          "bucket_assignment": {
+            "bucket_id": "bucket_broker_risk",
+            "bucket_title": "券商风险与业绩",
+            "canonical_theme": "证券行业竞争格局",
+            "from_cache": true,
+            "cache_source": "semantic",
+            "semantic_score": 0.5511
+          }
+        },
+        {
+          "intent_id": "kg_cognitive_card:5e22e2590c5487e4:1",
+          "cognitive_card_id": "kg_cognitive_card:5e22e2590c5487e4",
+          "source_id": "usage_demo_write_path:ft_news:59597",
+          "chunk_index": 1,
+          "intent_index": 1,
+          "raw_theme": "国海证券因股权质押业务风险导致自营业务萎缩",
+          "title_candidate": "股票质押业务风险拖累券商自营",
+          "parent_themes": [
+            "券商信用风险",
+            "股票质押业务风险",
+            "券商自营业务困境"
+          ],
+          "broad_topics": [
+            "金融监管风险",
+            "资本市场流动性"
+          ],
+          "bucket_assignment": {
+            "bucket_id": "bucket_broker_risk",
+            "bucket_title": "券商风险与业绩",
+            "canonical_theme": "股票质押业务风险拖累券商自营",
+            "from_cache": true
+          }
+        },
+        {
+          "intent_id": "kg_cognitive_card:e58329f63f329286:1",
+          "cognitive_card_id": "kg_cognitive_card:e58329f63f329286",
+          "source_id": "usage_demo_write_path:ft_news:59597",
+          "chunk_index": 2,
+          "intent_index": 1,
+          "raw_theme": "券商股质业务风险累积与出清对自营资金的长期影响",
+          "title_candidate": "券商股质业务风险与自营资金约束",
+          "parent_themes": [
+            "证券行业业务风险",
+            "券商资产质量与盈利"
+          ],
+          "broad_topics": [
+            "股票质押业务风险",
+            "自营业务资金约束"
+          ],
+          "bucket_assignment": {
+            "bucket_id": "bucket_broker_risk",
+            "bucket_title": "券商风险与业绩",
+            "canonical_theme": "券商股质业务风险与自营资金约束",
+            "from_cache": true
+          }
+        },
+        {
+          "intent_id": "kg_cognitive_card:8ee3fb45cc40abc0:3",
+          "cognitive_card_id": "kg_cognitive_card:8ee3fb45cc40abc0",
+          "source_id": "usage_demo_write_path:ft_news:59598",
+          "chunk_index": 0,
+          "intent_index": 3,
+          "raw_theme": "券商ETF资金连续流入，板块估值处于低位",
+          "title_candidate": "券商板块低估值吸引资金布局",
+          "parent_themes": [
+            "资本市场流动性",
+            "券商板块估值修复"
+          ],
+          "broad_topics": [
+            "ETF资金流向",
+            "市场估值"
+          ],
+          "bucket_assignment": {
+            "bucket_id": "bucket_broker_risk",
+            "bucket_title": "券商风险与业绩",
+            "canonical_theme": "券商板块低估值资金流入",
+            "from_cache": false
+          }
+        },
+        {
+          "intent_id": "kg_cognitive_card:f939042c90eb168b:1",
+          "cognitive_card_id": "kg_cognitive_card:f939042c90eb168b",
+          "source_id": "usage_demo_write_path:ft_news:59598",
+          "chunk_index": 1,
+          "intent_index": 1,
+          "raw_theme": "券商ETF投资宣传",
+          "title_candidate": "券商ETF投资价值与费率",
+          "parent_themes": [
+            "券商行业投资",
+            "ETF基金产品"
+          ],
+          "broad_topics": [
+            "证券公司板块",
+            "被动投资工具"
+          ],
+          "bucket_assignment": {
+            "bucket_id": "bucket_broker_risk",
+            "bucket_title": "券商风险与业绩",
+            "canonical_theme": "券商ETF投资价值与费率",
+            "from_cache": true
+          }
+        }
+      ]
+    },
+    {
+      "bucket_id": "bucket_copper_supply",
+      "size": 2,
+      "intents": [
+        {
+          "intent_id": "kg_cognitive_card:f7bbbe62abf10782:1",
+          "cognitive_card_id": "kg_cognitive_card:f7bbbe62abf10782",
+          "source_id": "usage_demo_write_path:ft_news:74419",
+          "chunk_index": 0,
+          "intent_index": 1,
+          "raw_theme": "硫酸短缺推升铜供应风险",
+          "title_candidate": "铜供应紧张驱动价格上涨",
+          "parent_themes": [
+            "铜产业链",
+            "基本金属供应"
+          ],
+          "broad_topics": [
+            "有色金属",
+            "供应端风险"
+          ],
+          "bucket_assignment": {
+            "bucket_id": "bucket_copper_supply",
+            "bucket_title": "铜供应紧张与价格驱动",
+            "canonical_theme": "铜产业链",
+            "from_cache": true,
+            "cache_source": "semantic",
+            "semantic_score": 0.817
+          }
+        },
+        {
+          "intent_id": "kg_cognitive_card:094015a1ebb6973d:1",
+          "cognitive_card_id": "kg_cognitive_card:094015a1ebb6973d",
+          "source_id": "usage_demo_write_path:ft_news:74419",
+          "chunk_index": 1,
+          "intent_index": 1,
+          "raw_theme": "硫酸短缺加剧全球铜供应危机",
+          "title_candidate": "全球铜供应危机与需求结构性增长",
+          "parent_themes": [
+            "有色金属供应链",
+            "全球资源品供需",
+            "铜产业链"
+          ],
+          "broad_topics": [
+            "大宗商品周期",
+            "全球矿业挑战"
+          ],
+          "bucket_assignment": {
+            "bucket_id": "bucket_copper_supply",
+            "bucket_title": "铜供应紧张与价格驱动",
+            "canonical_theme": "铜产业链",
+            "from_cache": true
+          }
+        }
+      ]
+    },
+    {
+      "bucket_id": "bucket_customs_ip_enforcement",
+      "size": 1,
+      "intents": [
+        {
+          "intent_id": "kg_cognitive_card:55151a321b174e54:1",
+          "cognitive_card_id": "kg_cognitive_card:55151a321b174e54",
+          "source_id": "usage_demo_write_path:ft_news:75455",
+          "chunk_index": 0,
+          "intent_index": 1,
+          "raw_theme": "十四五期间知识产权海关保护成效显著",
+          "title_candidate": "十四五时期知识产权海关备案与执法成果",
+          "parent_themes": [
+            "知识产权保护",
+            "海关执法"
+          ],
+          "broad_topics": [
+            "知识产权海关备案",
+            "侵权打击"
+          ],
+          "bucket_assignment": {
+            "bucket_id": "bucket_customs_ip_enforcement",
+            "bucket_title": "海关知识产权执法",
+            "canonical_theme": "知识产权保护",
+            "from_cache": true,
+            "cache_source": "semantic",
+            "semantic_score": 0.8334
+          }
+        }
+      ]
+    },
+    {
+      "bucket_id": "bucket_energy_storage_overseas",
+      "size": 2,
+      "intents": [
+        {
+          "intent_id": "kg_cognitive_card:d04c825e54c772bd:1",
+          "cognitive_card_id": "kg_cognitive_card:d04c825e54c772bd",
+          "source_id": "usage_demo_write_path:ft_news:66308",
+          "chunk_index": 0,
+          "intent_index": 1,
+          "raw_theme": "中国储能企业海外建厂（西班牙）",
+          "title_candidate": "中国储能企业海外建厂（西班牙）",
+          "parent_themes": [
+            "储能产业链",
+            "中国企业海外投资",
+            "中欧经贸合作"
+          ],
+          "broad_topics": [
+            "储能电池制造",
+            "欧洲新能源布局"
+          ],
+          "bucket_assignment": {
+            "bucket_id": "bucket_energy_storage_overseas",
+            "bucket_title": "储能企业海外投资建厂",
+            "canonical_theme": "储能产业链",
+            "from_cache": true,
+            "cache_source": "semantic",
+            "semantic_score": 0.7366
+          }
+        },
+        {
+          "intent_id": "kg_cognitive_card:d0ea17c87747ceb5:1",
+          "cognitive_card_id": "kg_cognitive_card:d0ea17c87747ceb5",
+          "source_id": "usage_demo_write_path:ft_news:76220",
+          "chunk_index": 0,
+          "intent_index": 1,
+          "raw_theme": "节能降碳政策推动算电协同方向涨停异动",
+          "title_candidate": "节能降碳政策驱动算电协同",
+          "parent_themes": [
+            "节能降碳政策",
+            "数字基础设施",
+            "绿电产业"
+          ],
+          "broad_topics": [
+            "节能降碳",
+            "绿电",
+            "算力"
+          ],
+          "bucket_assignment": {
+            "bucket_id": "bucket_energy_storage_overseas",
+            "bucket_title": "储能企业海外投资建厂",
+            "canonical_theme": "节能降碳政策驱动算电协同",
+            "from_cache": true
+          }
+        }
+      ]
+    },
+    {
+      "bucket_id": "bucket_fed_policy",
+      "size": 4,
+      "intents": [
+        {
+          "intent_id": "kg_cognitive_card:e8b04ad3a7ac9fcd:1",
+          "cognitive_card_id": "kg_cognitive_card:e8b04ad3a7ac9fcd",
+          "source_id": "usage_demo_write_path:ft_news:59605",
+          "chunk_index": 0,
+          "intent_index": 1,
+          "raw_theme": "美联储主席提名听证会驱动美债市场预期",
+          "title_candidate": "沃什提名听证会与美联储政策路径",
+          "parent_themes": [
+            "美联储货币政策预期",
+            "美债市场对政策信号反应"
+          ],
+          "broad_topics": [
+            "利率政策",
+            "通胀与降息预期"
+          ],
+          "bucket_assignment": {
+            "bucket_id": "bucket_fed_policy",
+            "bucket_title": "bucket_fed_policy",
+            "canonical_theme": "美联储货币政策预期",
+            "from_cache": true,
+            "cache_source": "semantic",
+            "semantic_score": 0.5915
+          }
+        },
+        {
+          "intent_id": "kg_cognitive_card:3875b14d672e1e04:1",
+          "cognitive_card_id": "kg_cognitive_card:3875b14d672e1e04",
+          "source_id": "usage_demo_write_path:ft_news:59605",
+          "chunk_index": 1,
+          "intent_index": 1,
+          "raw_theme": "沃什提名听证会引发的美联储政策路径预期变化",
+          "title_candidate": "沃什听证会与美联储政策路径",
+          "parent_themes": [
+            "美联储政策",
+            "美国利率市场"
+          ],
+          "broad_topics": [
+            "货币政策预期",
+            "通胀与就业权衡"
+          ],
+          "bucket_assignment": {
+            "bucket_id": "bucket_fed_policy",
+            "bucket_title": "bucket_fed_policy",
+            "canonical_theme": "沃什听证会与美联储政策路径",
+            "from_cache": true
+          }
+        },
+        {
+          "intent_id": "kg_cognitive_card:eec760e42f2aca84:1",
+          "cognitive_card_id": "kg_cognitive_card:eec760e42f2aca84",
+          "source_id": "usage_demo_write_path:ft_news:59605",
+          "chunk_index": 2,
+          "intent_index": 1,
+          "raw_theme": "美联储主席候选人政策立场与市场影响",
+          "title_candidate": "沃什提名确认听证会与美联储政策路径",
+          "parent_themes": [
+            "美联储货币政策",
+            "利率政策",
+            "通胀风险"
+          ],
+          "broad_topics": [
+            "美联储主席换届",
+            "降息预期",
+            "市场不确定性"
+          ],
+          "bucket_assignment": {
+            "bucket_id": "bucket_fed_policy",
+            "bucket_title": "bucket_fed_policy",
+            "canonical_theme": "美联储货币政策",
+            "from_cache": true,
+            "cache_source": "semantic",
+            "semantic_score": 0.6213
+          }
+        },
+        {
+          "intent_id": "kg_cognitive_card:2a79eca127efd820:1",
+          "cognitive_card_id": "kg_cognitive_card:2a79eca127efd820",
+          "source_id": "usage_demo_write_path:ft_news:59605",
+          "chunk_index": 3,
+          "intent_index": 1,
+          "raw_theme": "美联储主席任命的政治与法律障碍",
+          "title_candidate": "美联储领导权更迭与货币政策路径",
+          "parent_themes": [
+            "美联储领导层与货币政策",
+            "政治风险与央行独立性"
+          ],
+          "broad_topics": [
+            "美国货币政策展望",
+            "特朗普政府金融监管"
+          ],
+          "bucket_assignment": {
+            "bucket_id": "bucket_fed_policy",
+            "bucket_title": "bucket_fed_policy",
+            "canonical_theme": "美联储领导权更迭与货币政策路径",
+            "from_cache": true
+          }
+        }
+      ]
+    },
+    {
+      "bucket_id": "bucket_foreign_automaker_china_strategy",
+      "size": 1,
+      "intents": [
+        {
+          "intent_id": "kg_cognitive_card:13822779bfd2c335:1",
+          "cognitive_card_id": "kg_cognitive_card:13822779bfd2c335",
+          "source_id": "usage_demo_write_path:ft_news:76840",
+          "chunk_index": 0,
+          "intent_index": 1,
+          "raw_theme": "大众汽车下调在华销量目标",
+          "title_candidate": "大众汽车中国销量预期下调",
+          "parent_themes": [
+            "外资车企在华战略调整"
+          ],
+          "broad_topics": [
+            "汽车行业竞争",
+            "中国市场销量预期"
+          ],
+          "bucket_assignment": {
+            "bucket_id": "bucket_foreign_automaker_china_strategy",
+            "bucket_title": "外资车企在华战略调整",
+            "canonical_theme": "外资车企在华战略调整",
+            "from_cache": true,
+            "cache_source": "semantic",
+            "semantic_score": 0.8147
+          }
+        }
+      ]
+    },
+    {
+      "bucket_id": "bucket_foreign_political_appointments",
+      "size": 1,
+      "intents": [
+        {
+          "intent_id": "kg_cognitive_card:48d86dffbb9e8b4c:1",
+          "cognitive_card_id": "kg_cognitive_card:48d86dffbb9e8b4c",
+          "source_id": "usage_demo_write_path:ft_news:74737",
+          "chunk_index": 0,
+          "intent_index": 1,
+          "raw_theme": "秘鲁总统任命国防部长",
+          "title_candidate": "秘鲁国防部长任命",
+          "parent_themes": [
+            "政治人事任命",
+            "国际政治动态"
+          ],
+          "broad_topics": [
+            "拉美政治"
+          ],
+          "bucket_assignment": {
+            "bucket_id": "bucket_foreign_political_appointments",
+            "bucket_title": "外国政治人事任命",
+            "canonical_theme": "政治人事任命",
+            "from_cache": true,
+            "cache_source": "semantic",
+            "semantic_score": 0.7244
+          }
+        }
+      ]
+    },
+    {
+      "bucket_id": "bucket_geological_heritage_cooperation",
+      "size": 1,
+      "intents": [
+        {
+          "intent_id": "kg_cognitive_card:4ac094e299b42e7b:1",
+          "cognitive_card_id": "kg_cognitive_card:4ac094e299b42e7b",
+          "source_id": "usage_demo_write_path:ft_news:77545",
+          "chunk_index": 0,
+          "intent_index": 1,
+          "raw_theme": "中国在地质公园领域的国际地位和影响力",
+          "title_candidate": "地质遗产保护国际合作",
+          "parent_themes": [
+            "地质遗产保护",
+            "国际科技合作"
+          ],
+          "broad_topics": [
+            "自然保护地管理",
+            "联合国教科文组织认证"
+          ],
+          "bucket_assignment": {
+            "bucket_id": "bucket_geological_heritage_cooperation",
+            "bucket_title": "地质遗产保护与国际合作",
+            "canonical_theme": "地质遗产保护",
+            "from_cache": true,
+            "cache_source": "semantic",
+            "semantic_score": 0.7299
+          }
+        }
+      ]
+    },
+    {
+      "bucket_id": "bucket_geopolitical_risk",
+      "size": 16,
+      "intents": [
+        {
+          "intent_id": "kg_cognitive_card:f7bbbe62abf10782:2",
+          "cognitive_card_id": "kg_cognitive_card:f7bbbe62abf10782",
+          "source_id": "usage_demo_write_path:ft_news:74419",
+          "chunk_index": 0,
+          "intent_index": 2,
+          "raw_theme": "美伊博弈加剧地缘政治风险",
+          "title_candidate": "地缘政治风险影响大宗商品市场",
+          "parent_themes": [
+            "地缘政治风险",
+            "宏观风险"
+          ],
+          "broad_topics": [
+            "中东局势",
+            "原油供应"
+          ],
+          "bucket_assignment": {
+            "bucket_id": "bucket_geopolitical_risk",
+            "bucket_title": "地缘政治风险与大宗商品",
+            "canonical_theme": "地缘政治风险",
+            "from_cache": true,
+            "cache_source": "semantic",
+            "semantic_score": 0.7771
+          }
+        },
+        {
+          "intent_id": "kg_cognitive_card:f63edb6ef7288c80:1",
+          "cognitive_card_id": "kg_cognitive_card:f63edb6ef7288c80",
+          "source_id": "usage_demo_write_path:ft_news:74420",
+          "chunk_index": 0,
+          "intent_index": 1,
+          "raw_theme": "美伊对峙与锌市场联动",
+          "title_candidate": "美伊停火对峙下锌价上涨风险",
+          "parent_themes": [
+            "地缘政治与大宗商品",
+            "美伊冲突与市场风险"
+          ],
+          "broad_topics": [
+            "美伊局势",
+            "锌市场"
+          ],
+          "bucket_assignment": {
+            "bucket_id": "bucket_geopolitical_risk",
+            "bucket_title": "地缘政治风险与大宗商品",
+            "canonical_theme": "地缘政治与大宗商品",
+            "from_cache": true,
+            "cache_source": "semantic",
+            "semantic_score": 0.6853
+          }
+        },
+        {
+          "intent_id": "kg_cognitive_card:5339020d4cf4b7ab:2",
+          "cognitive_card_id": "kg_cognitive_card:5339020d4cf4b7ab",
+          "source_id": "usage_demo_write_path:ft_news:74420",
+          "chunk_index": 1,
+          "intent_index": 2,
+          "raw_theme": "锌产业矿紧锭松格局与地缘风险",
+          "title_candidate": "锌产业链供需与地缘风险",
+          "parent_themes": [
+            "有色金属产业链",
+            "地缘政治风险"
+          ],
+          "broad_topics": [
+            "锌供需",
+            "冶炼利润",
+            "库存周期"
+          ],
+          "bucket_assignment": {
+            "bucket_id": "bucket_geopolitical_risk",
+            "bucket_title": "地缘政治风险与大宗商品",
+            "canonical_theme": "地缘政治风险",
+            "from_cache": true
+          }
+        },
+        {
+          "intent_id": "kg_cognitive_card:9e12225940edd6fc:1",
+          "cognitive_card_id": "kg_cognitive_card:9e12225940edd6fc",
+          "source_id": "usage_demo_write_path:ft_news:74424",
+          "chunk_index": 0,
+          "intent_index": 1,
+          "raw_theme": "美伊停火预期推动镍价上涨",
+          "title_candidate": "地缘风险缓解与镍价反弹",
+          "parent_themes": [
+            "地缘政治风险与商品定价",
+            "有色金属市场驱动因素"
+          ],
+          "broad_topics": [
+            "镍价宏观驱动",
+            "全球风险偏好回升"
+          ],
+          "bucket_assignment": {
+            "bucket_id": "bucket_geopolitical_risk",
+            "bucket_title": "地缘政治风险与大宗商品",
+            "canonical_theme": "地缘风险缓解与镍价反弹",
+            "from_cache": true
+          }
+        },
+        {
+          "intent_id": "kg_cognitive_card:e46dbcf96d49696e:1",
+          "cognitive_card_id": "kg_cognitive_card:e46dbcf96d49696e",
+          "source_id": "usage_demo_write_path:ft_news:74424",
+          "chunk_index": 1,
+          "intent_index": 1,
+          "raw_theme": "镍期货短期走势与操作建议",
+          "title_candidate": "镍期货短期震荡偏强但上行受限",
+          "parent_themes": [
+            "有色金属市场分析",
+            "期货市场展望"
+          ],
+          "broad_topics": [
+            "镍市场分析",
+            "期货短期策略"
+          ],
+          "bucket_assignment": {
+            "bucket_id": "bucket_geopolitical_risk",
+            "bucket_title": "地缘政治风险与大宗商品",
+            "canonical_theme": "镍期货短期震荡偏强但上行受限",
+            "from_cache": true
+          }
+        },
+        {
+          "intent_id": "kg_cognitive_card:0151bd69266bda73:1",
+          "cognitive_card_id": "kg_cognitive_card:0151bd69266bda73",
+          "source_id": "usage_demo_write_path:ft_news:74739",
+          "chunk_index": 0,
+          "intent_index": 1,
+          "raw_theme": "国际油价上涨推动油气板块反弹",
+          "title_candidate": "国际油价上涨驱动油气股反弹",
+          "parent_themes": [
+            "大宗商品价格波动",
+            "地缘政治风险"
+          ],
+          "broad_topics": [
+            "全球能源市场",
+            "石油天然气行业"
+          ],
+          "bucket_assignment": {
+            "bucket_id": "bucket_geopolitical_risk",
+            "bucket_title": "地缘政治风险与大宗商品",
+            "canonical_theme": "地缘政治风险",
+            "from_cache": true
+          }
+        },
+        {
+          "intent_id": "kg_cognitive_card:e5a7394ab1bd1c01:1",
+          "cognitive_card_id": "kg_cognitive_card:e5a7394ab1bd1c01",
+          "source_id": "usage_demo_write_path:ft_news:74742",
+          "chunk_index": 0,
+          "intent_index": 1,
+          "raw_theme": "港股油气设备股出现集体反弹行情",
+          "title_candidate": "油气设备股反弹",
+          "parent_themes": [
+            "油气产业链",
+            "港股能源板块"
+          ],
+          "broad_topics": [
+            "油气设备与服务",
+            "港股能源股行情"
+          ],
+          "bucket_assignment": {
+            "bucket_id": "bucket_geopolitical_risk",
+            "bucket_title": "地缘政治风险与大宗商品",
+            "canonical_theme": "油气设备股反弹",
+            "from_cache": true
+          }
+        },
+        {
+          "intent_id": "kg_cognitive_card:25824a231462f94f:1",
+          "cognitive_card_id": "kg_cognitive_card:25824a231462f94f",
+          "source_id": "usage_demo_write_path:ft_news:76834",
+          "chunk_index": 0,
+          "intent_index": 1,
+          "raw_theme": "市场低估美伊冲突引发的油气供应中断风险",
+          "title_candidate": "霍尔木兹海峡油气供应中断风险被低估",
+          "parent_themes": [
+            "地缘政治风险",
+            "能源安全",
+            "油气供应"
+          ],
+          "broad_topics": [
+            "中东地缘冲突",
+            "全球能源市场"
+          ],
+          "bucket_assignment": {
+            "bucket_id": "bucket_geopolitical_risk",
+            "bucket_title": "地缘政治风险与大宗商品",
+            "canonical_theme": "地缘政治风险",
+            "from_cache": true
+          }
+        },
+        {
+          "intent_id": "kg_cognitive_card:81d755858e2f127e:1",
+          "cognitive_card_id": "kg_cognitive_card:81d755858e2f127e",
+          "source_id": "usage_demo_write_path:ft_news:77543",
+          "chunk_index": 0,
+          "intent_index": 1,
+          "raw_theme": "俄罗斯警告欧洲全面对抗回归",
+          "title_candidate": "俄欧军事对抗升级信号",
+          "parent_themes": [
+            "欧洲安全对抗格局",
+            "俄欧军事对峙"
+          ],
+          "broad_topics": [
+            "北约-俄罗斯紧张",
+            "东欧军事部署"
+          ],
+          "bucket_assignment": {
+            "bucket_id": "bucket_geopolitical_risk",
+            "bucket_title": "地缘政治风险与大宗商品",
+            "canonical_theme": "俄欧军事对抗升级信号",
+            "from_cache": true
+          }
+        },
+        {
+          "intent_id": "kg_cognitive_card:59e8d388f18e0673:1",
+          "cognitive_card_id": "kg_cognitive_card:59e8d388f18e0673",
+          "source_id": "usage_demo_write_path:ft_news:77544",
+          "chunk_index": 0,
+          "intent_index": 1,
+          "raw_theme": "伊朗针对美及其盟友潜在军事行动的反击预案",
+          "title_candidate": "伊朗发布反击方案应对潜在军事冲突",
+          "parent_themes": [
+            "中东地缘政治",
+            "地缘冲突与战争风险"
+          ],
+          "broad_topics": [
+            "美伊对抗",
+            "中东安全局势"
+          ],
+          "bucket_assignment": {
+            "bucket_id": "bucket_geopolitical_risk",
+            "bucket_title": "地缘政治风险与大宗商品",
+            "canonical_theme": "伊朗发布反击方案应对潜在军事冲突",
+            "from_cache": true
+          }
+        },
+        {
+          "intent_id": "kg_cognitive_card:01c620bd749ac56b:1",
+          "cognitive_card_id": "kg_cognitive_card:01c620bd749ac56b",
+          "source_id": "usage_demo_write_path:ft_news:77546",
+          "chunk_index": 0,
+          "intent_index": 1,
+          "raw_theme": "欧盟财政军事支持乌克兰并制裁俄罗斯",
+          "title_candidate": "欧盟对乌克兰援助与对俄制裁",
+          "parent_themes": [
+            "地缘政治与安全",
+            "国际金融援助",
+            "制裁政策"
+          ],
+          "broad_topics": [
+            "欧洲地缘政治",
+            "国际关系",
+            "金融制裁"
+          ],
+          "bucket_assignment": {
+            "bucket_id": "bucket_geopolitical_risk",
+            "bucket_title": "地缘政治风险与大宗商品",
+            "canonical_theme": "欧盟对乌克兰援助与对俄制裁",
+            "from_cache": true
+          }
+        },
+        {
+          "intent_id": "kg_cognitive_card:565bfd8bbc02584d:1",
+          "cognitive_card_id": "kg_cognitive_card:565bfd8bbc02584d",
+          "source_id": "usage_demo_write_path:ft_news:77547",
+          "chunk_index": 0,
+          "intent_index": 1,
+          "raw_theme": "霍尔木兹海峡美伊海上博弈与地缘风险",
+          "title_candidate": "美伊在霍尔木兹海峡的海上对峙",
+          "parent_themes": [
+            "地缘政治风险",
+            "能源安全"
+          ],
+          "broad_topics": [
+            "中东地缘",
+            "能源通道安全"
+          ],
+          "bucket_assignment": {
+            "bucket_id": "bucket_geopolitical_risk",
+            "bucket_title": "地缘政治风险与大宗商品",
+            "canonical_theme": "地缘政治风险",
+            "from_cache": true
+          }
+        },
+        {
+          "intent_id": "kg_cognitive_card:413189a5e7b4f5d9:1",
+          "cognitive_card_id": "kg_cognitive_card:413189a5e7b4f5d9",
+          "source_id": "usage_demo_write_path:ft_news:77549",
+          "chunk_index": 0,
+          "intent_index": 1,
+          "raw_theme": "伊朗战争期间Pimco为海湾国家提供私募贷款以建立现金缓冲",
+          "title_candidate": "地缘冲突下的主权私募融资",
+          "parent_themes": [
+            "地缘政治风险",
+            "主权债务融资",
+            "战争经济影响"
+          ],
+          "broad_topics": [
+            "中东地缘冲突",
+            "私募债券市场",
+            "海湾国家财政"
+          ],
+          "bucket_assignment": {
+            "bucket_id": "bucket_geopolitical_risk",
+            "bucket_title": "地缘政治风险与大宗商品",
+            "canonical_theme": "地缘政治风险",
+            "from_cache": true
+          }
+        },
+        {
+          "intent_id": "kg_cognitive_card:b6c5d782380f7f7d:1",
+          "cognitive_card_id": "kg_cognitive_card:b6c5d782380f7f7d",
+          "source_id": "usage_demo_write_path:ft_news:77550",
+          "chunk_index": 0,
+          "intent_index": 1,
+          "raw_theme": "以色列准备重启对伊战争",
+          "title_candidate": "以色列威胁重启对伊战争",
+          "parent_themes": [
+            "中东地缘政治冲突",
+            "伊朗-以色列对抗",
+            "美国中东政策"
+          ],
+          "broad_topics": [
+            "中东军事冲突",
+            "地缘政治风险"
+          ],
+          "bucket_assignment": {
+            "bucket_id": "bucket_geopolitical_risk",
+            "bucket_title": "地缘政治风险与大宗商品",
+            "canonical_theme": "地缘政治风险",
+            "from_cache": true
+          }
+        },
+        {
+          "intent_id": "kg_cognitive_card:6912014ec112ef77:1",
+          "cognitive_card_id": "kg_cognitive_card:6912014ec112ef77",
+          "source_id": "usage_demo_write_path:ft_news:77551",
+          "chunk_index": 0,
+          "intent_index": 1,
+          "raw_theme": "中东地缘政治紧张与美股市场反应",
+          "title_candidate": "地缘政治风险主导美股波动",
+          "parent_themes": [
+            "地缘政治风险",
+            "中东局势"
+          ],
+          "broad_topics": [
+            "地缘政治与金融市场",
+            "美伊关系",
+            "中东局势"
+          ],
+          "bucket_assignment": {
+            "bucket_id": "bucket_geopolitical_risk",
+            "bucket_title": "地缘政治风险与大宗商品",
+            "canonical_theme": "地缘政治风险",
+            "from_cache": true
+          }
+        },
+        {
+          "intent_id": "kg_cognitive_card:8db9dd0e78185c9f:1",
+          "cognitive_card_id": "kg_cognitive_card:8db9dd0e78185c9f",
+          "source_id": "usage_demo_write_path:ft_news:77551",
+          "chunk_index": 1,
+          "intent_index": 1,
+          "raw_theme": "美伊关系紧张影响市场信心",
+          "title_candidate": "美伊地缘政治紧张升级",
+          "parent_themes": [
+            "地缘政治风险",
+            "中东局势"
+          ],
+          "broad_topics": [
+            "美伊关系",
+            "霍尔木兹海峡安全"
+          ],
+          "bucket_assignment": {
+            "bucket_id": "bucket_geopolitical_risk",
+            "bucket_title": "地缘政治风险与大宗商品",
+            "canonical_theme": "地缘政治风险",
+            "from_cache": true
+          }
+        }
+      ]
+    },
+    {
+      "bucket_id": "bucket_global_inflation",
+      "size": 4,
+      "intents": [
+        {
+          "intent_id": "kg_cognitive_card:2aaabc056e7559a7:1",
+          "cognitive_card_id": "kg_cognitive_card:2aaabc056e7559a7",
+          "source_id": "usage_demo_write_path:ft_news:61608",
+          "chunk_index": 0,
+          "intent_index": 1,
+          "raw_theme": "日本家庭通胀预期上升与经济信心恶化",
+          "title_candidate": "日本家庭通胀预期升至二十年新高",
+          "parent_themes": [
+            "通胀预期",
+            "家庭经济信心",
+            "货币政策预期"
+          ],
+          "broad_topics": [
+            "日本宏观经济",
+            "通胀动态"
+          ],
+          "bucket_assignment": {
+            "bucket_id": "bucket_global_inflation",
+            "bucket_title": "全球通胀预期与央行政策",
+            "canonical_theme": "通胀预期",
+            "from_cache": true,
+            "cache_source": "semantic",
+            "semantic_score": 0.8055
+          }
+        },
+        {
+          "intent_id": "kg_cognitive_card:d2d83d55ed2f9980:1",
+          "cognitive_card_id": "kg_cognitive_card:d2d83d55ed2f9980",
+          "source_id": "usage_demo_write_path:ft_news:76221",
+          "chunk_index": 0,
+          "intent_index": 1,
+          "raw_theme": "现代汽车第一季度业绩低于预期",
+          "title_candidate": "现代汽车业绩不及预期",
+          "parent_themes": [
+            "企业盈利预警",
+            "汽车行业季度业绩"
+          ],
+          "broad_topics": [
+            "汽车制造业",
+            "企业财报"
+          ],
+          "bucket_assignment": {
+            "bucket_id": "bucket_global_inflation",
+            "bucket_title": "全球通胀预期与央行政策",
+            "canonical_theme": "现代汽车业绩不及预期",
+            "from_cache": true
+          }
+        },
+        {
+          "intent_id": "kg_cognitive_card:b3c8980376d35c46:1",
+          "cognitive_card_id": "kg_cognitive_card:b3c8980376d35c46",
+          "source_id": "usage_demo_write_path:ft_news:76579",
+          "chunk_index": 0,
+          "intent_index": 1,
+          "raw_theme": "雷诺集团2026年一季度营收及财务目标",
+          "title_candidate": "雷诺集团2026年第一季度财务业绩",
+          "parent_themes": [
+            "汽车行业财报",
+            "欧洲车企经营动态"
+          ],
+          "broad_topics": [
+            "汽车制造",
+            "乘用车市场"
+          ],
+          "bucket_assignment": {
+            "bucket_id": "bucket_global_inflation",
+            "bucket_title": "全球通胀预期与央行政策",
+            "canonical_theme": "雷诺集团2026年第一季度财务业绩",
+            "from_cache": true
+          }
+        },
+        {
+          "intent_id": "kg_cognitive_card:0b64cc2246dad87c:1",
+          "cognitive_card_id": "kg_cognitive_card:0b64cc2246dad87c",
+          "source_id": "usage_demo_write_path:ft_news:76837",
+          "chunk_index": 0,
+          "intent_index": 1,
+          "raw_theme": "法国4月商业与制造业信心指数分化",
+          "title_candidate": "法国4月经济信心指数分化",
+          "parent_themes": [
+            "经济信心调查"
+          ],
+          "broad_topics": [
+            "法国经济"
+          ],
+          "bucket_assignment": {
+            "bucket_id": "bucket_global_inflation",
+            "bucket_title": "全球通胀预期与央行政策",
+            "canonical_theme": "法国4月经济信心指数分化",
+            "from_cache": true
+          }
+        }
+      ]
+    },
+    {
+      "bucket_id": "bucket_gold_market",
+      "size": 1,
+      "intents": [
+        {
+          "intent_id": "kg_cognitive_card:f5ab0634f1fcd9ec:1",
+          "cognitive_card_id": "kg_cognitive_card:f5ab0634f1fcd9ec",
+          "source_id": "usage_demo_write_path:ft_news:65440",
+          "chunk_index": 0,
+          "intent_index": 1,
+          "raw_theme": "央行发布2026年3月黄金市场交易数据",
+          "title_candidate": "黄金市场运行数据",
+          "parent_themes": [
+            "金融市场运行监测",
+            "贵金属市场"
+          ],
+          "broad_topics": [
+            "黄金市场",
+            "央行市场报告"
+          ],
+          "bucket_assignment": {
+            "bucket_id": "bucket_gold_market",
+            "bucket_title": "黄金市场运行监测",
+            "canonical_theme": "金融市场运行监测",
+            "from_cache": true,
+            "cache_source": "semantic",
+            "semantic_score": 0.6935
+          }
+        }
+      ]
+    },
+    {
+      "bucket_id": "bucket_industrial_gas_supply",
+      "size": 1,
+      "intents": [
+        {
+          "intent_id": "kg_cognitive_card:7cf2cd8f6751a986:1",
+          "cognitive_card_id": "kg_cognitive_card:7cf2cd8f6751a986",
+          "source_id": "usage_demo_write_path:ft_news:76580",
+          "chunk_index": 0,
+          "intent_index": 1,
+          "raw_theme": "高纯氦气价格快速上涨带动工业气体概念股走强",
+          "title_candidate": "高纯氦气价格暴涨驱动工业气体板块行情",
+          "parent_themes": [
+            "工业气体产业链",
+            "特种气体供需"
+          ],
+          "broad_topics": [
+            "工业气体行业",
+            "稀有气体市场"
+          ],
+          "bucket_assignment": {
+            "bucket_id": "bucket_industrial_gas_supply",
+            "bucket_title": "工业气体供应与价格波动",
+            "canonical_theme": "工业气体产业链",
+            "from_cache": true,
+            "cache_source": "semantic",
+            "semantic_score": 0.8154
+          }
+        }
+      ]
+    },
+    {
+      "bucket_id": "bucket_industrial_robot",
+      "size": 4,
+      "intents": [
+        {
+          "intent_id": "kg_cognitive_card:ec27872ffe820b62:1",
+          "cognitive_card_id": "kg_cognitive_card:ec27872ffe820b62",
+          "source_id": "usage_demo_write_path:ft_news:73304",
+          "chunk_index": 0,
+          "intent_index": 1,
+          "raw_theme": "工业机器人企业业绩大幅增长",
+          "title_candidate": "工业机器人产业链业绩释放",
+          "parent_themes": [
+            "工业机器人",
+            "智能制造装备"
+          ],
+          "broad_topics": [
+            "自动化应用系统",
+            "数控机床",
+            "注塑装备"
+          ],
+          "bucket_assignment": {
+            "bucket_id": "bucket_industrial_robot",
+            "bucket_title": "工业机器人产业链业绩",
+            "canonical_theme": "工业机器人",
+            "from_cache": true,
+            "cache_source": "semantic",
+            "semantic_score": 0.6047
+          }
+        },
+        {
+          "intent_id": "kg_cognitive_card:a105939aeff6240a:1",
+          "cognitive_card_id": "kg_cognitive_card:a105939aeff6240a",
+          "source_id": "usage_demo_write_path:ft_news:74426",
+          "chunk_index": 0,
+          "intent_index": 1,
+          "raw_theme": "深圳机器人产业年产值突破2400亿元",
+          "title_candidate": "深圳机器人产业产值创新高",
+          "parent_themes": [
+            "区域产业发展",
+            "机器人产业",
+            "制造业升级"
+          ],
+          "broad_topics": [
+            "深圳经济",
+            "智能制造",
+            "新兴产业"
+          ],
+          "bucket_assignment": {
+            "bucket_id": "bucket_industrial_robot",
+            "bucket_title": "工业机器人产业链业绩",
+            "canonical_theme": "深圳机器人产业产值创新高",
+            "from_cache": true
+          }
+        },
+        {
+          "intent_id": "kg_cognitive_card:b295ae64d065aace:1",
+          "cognitive_card_id": "kg_cognitive_card:b295ae64d065aace",
+          "source_id": "usage_demo_write_path:ft_news:74431",
+          "chunk_index": 0,
+          "intent_index": 1,
+          "raw_theme": "小鹏汽车机器人量产与扩张计划",
+          "title_candidate": "小鹏机器人量产节点与扩张计划",
+          "parent_themes": [
+            "机器人产业",
+            "新能源汽车企业多元化",
+            "AI机器人"
+          ],
+          "broad_topics": [
+            "机器人制造",
+            "商业化落地",
+            "合作伙伴扩张"
+          ],
+          "bucket_assignment": {
+            "bucket_id": "bucket_industrial_robot",
+            "bucket_title": "工业机器人产业链业绩",
+            "canonical_theme": "小鹏机器人量产与扩张计划",
+            "from_cache": false
+          }
+        },
+        {
+          "intent_id": "kg_cognitive_card:e72cea0cfffd908f:1",
+          "cognitive_card_id": "kg_cognitive_card:e72cea0cfffd908f",
+          "source_id": "usage_demo_write_path:ft_news:76219",
+          "chunk_index": 0,
+          "intent_index": 1,
+          "raw_theme": "特斯拉人形机器人产品发布与量产计划",
+          "title_candidate": "特斯拉人形机器人量产进展",
+          "parent_themes": [
+            "人形机器人产业化",
+            "AI机器人商业化"
+          ],
+          "broad_topics": [
+            "人形机器人",
+            "智能机器人制造"
+          ],
+          "bucket_assignment": {
+            "bucket_id": "bucket_industrial_robot",
+            "bucket_title": "工业机器人产业链业绩",
+            "canonical_theme": "特斯拉人形机器人量产进展",
+            "from_cache": true
+          }
+        }
+      ]
+    },
+    {
+      "bucket_id": "bucket_lithium_industry",
+      "size": 1,
+      "intents": [
+        {
+          "intent_id": "kg_cognitive_card:78559095806dbfc9:1",
+          "cognitive_card_id": "kg_cognitive_card:78559095806dbfc9",
+          "source_id": "usage_demo_write_path:ft_news:65445",
+          "chunk_index": 0,
+          "intent_index": 1,
+          "raw_theme": "天齐锂业2026年一季度净利润预增超15倍",
+          "title_candidate": "天齐锂业业绩大幅预增",
+          "parent_themes": [
+            "锂行业景气周期",
+            "新能源上游材料供需"
+          ],
+          "broad_topics": [
+            "锂资源",
+            "锂盐"
+          ],
+          "bucket_assignment": {
+            "bucket_id": "bucket_lithium_industry",
+            "bucket_title": "锂行业景气与业绩",
+            "canonical_theme": "锂行业景气周期",
+            "from_cache": true,
+            "cache_source": "semantic",
+            "semantic_score": 0.7214
+          }
+        }
+      ]
+    },
+    {
+      "bucket_id": "bucket_ma",
+      "size": 11,
+      "intents": [
+        {
+          "intent_id": "kg_cognitive_card:622da63e03502b55:1",
+          "cognitive_card_id": "kg_cognitive_card:622da63e03502b55",
+          "source_id": "usage_demo_write_path:ft_news:59519",
+          "chunk_index": 0,
+          "intent_index": 1,
+          "raw_theme": "A股上市公司并购重组活跃",
+          "title_candidate": "A股并购重组热潮",
+          "parent_themes": [
+            "上市公司并购重组",
+            "企业资本运作"
+          ],
+          "broad_topics": [
+            "A股市场并购",
+            "资产整合浪潮"
+          ],
+          "bucket_assignment": {
+            "bucket_id": "bucket_ma",
+            "bucket_title": "并购重组",
+            "canonical_theme": "上市公司并购重组",
+            "from_cache": true,
+            "cache_source": "semantic",
+            "semantic_score": 0.6469
+          }
+        },
+        {
+          "intent_id": "kg_cognitive_card:e2cbeccab34b53d0:1",
+          "cognitive_card_id": "kg_cognitive_card:e2cbeccab34b53d0",
+          "source_id": "usage_demo_write_path:ft_news:59519",
+          "chunk_index": 1,
+          "intent_index": 1,
+          "raw_theme": "上市公司并购重组活跃",
+          "title_candidate": "并购重组市场升温",
+          "parent_themes": [
+            "并购重组",
+            "产业整合"
+          ],
+          "broad_topics": [
+            "资产收购",
+            "上市公司资本运作"
+          ],
+          "bucket_assignment": {
+            "bucket_id": "bucket_ma",
+            "bucket_title": "并购重组",
+            "canonical_theme": "并购重组市场升温",
+            "from_cache": true
+          }
+        },
+        {
+          "intent_id": "kg_cognitive_card:51faf1a338eeca62:1",
+          "cognitive_card_id": "kg_cognitive_card:51faf1a338eeca62",
+          "source_id": "usage_demo_write_path:ft_news:59519",
+          "chunk_index": 2,
+          "intent_index": 1,
+          "raw_theme": "永杰新材收购奥科宁克铝加工资产，强化高端铝材布局",
+          "title_candidate": "铝加工行业整合与高端材料布局",
+          "parent_themes": [
+            "有色金属产业链",
+            "铝材加工行业整合"
+          ],
+          "broad_topics": [
+            "铝加工",
+            "高端铝材",
+            "金属材料"
+          ],
+          "bucket_assignment": {
+            "bucket_id": "bucket_ma",
+            "bucket_title": "并购重组",
+            "canonical_theme": "铝加工行业整合与高端材料布局",
+            "from_cache": true
+          }
+        },
+        {
+          "intent_id": "kg_cognitive_card:51faf1a338eeca62:2",
+          "cognitive_card_id": "kg_cognitive_card:51faf1a338eeca62",
+          "source_id": "usage_demo_write_path:ft_news:59519",
+          "chunk_index": 2,
+          "intent_index": 2,
+          "raw_theme": "时空科技收购嘉合劲威，跨界进入半导体存储领域",
+          "title_candidate": "上市公司跨界半导体存储",
+          "parent_themes": [
+            "半导体产业链",
+            "存储芯片行业"
+          ],
+          "broad_topics": [
+            "半导体",
+            "存储芯片",
+            "DRAM",
+            "NAND Flash"
+          ],
+          "bucket_assignment": {
+            "bucket_id": "bucket_ma",
+            "bucket_title": "并购重组",
+            "canonical_theme": "上市公司跨界半导体存储",
+            "from_cache": true
+          }
+        },
+        {
+          "intent_id": "kg_cognitive_card:8ee3fb45cc40abc0:1",
+          "cognitive_card_id": "kg_cognitive_card:8ee3fb45cc40abc0",
+          "source_id": "usage_demo_write_path:ft_news:59598",
+          "chunk_index": 0,
+          "intent_index": 1,
+          "raw_theme": "东方证券拟收购上海证券，券商并购重组持续活跃",
+          "title_candidate": "券商并购重组驱动行业整合",
+          "parent_themes": [
+            "证券行业并购重组",
+            "券商行业整合"
+          ],
+          "broad_topics": [
+            "金融监管政策",
+            "资本市场改革"
+          ],
+          "bucket_assignment": {
+            "bucket_id": "bucket_ma",
+            "bucket_title": "并购重组",
+            "canonical_theme": "券商并购重组驱动行业整合",
+            "from_cache": true
+          }
+        },
+        {
+          "intent_id": "kg_cognitive_card:8ee3fb45cc40abc0:2",
+          "cognitive_card_id": "kg_cognitive_card:8ee3fb45cc40abc0",
+          "source_id": "usage_demo_write_path:ft_news:59598",
+          "chunk_index": 0,
+          "intent_index": 2,
+          "raw_theme": "券商并购后业绩验证，国泰海通、国联民生年报业绩大增",
+          "title_candidate": "并购重组提升券商盈利能力",
+          "parent_themes": [
+            "证券行业并购重组",
+            "券商行业整合"
+          ],
+          "broad_topics": [
+            "金融监管政策",
+            "资本市场改革"
+          ],
+          "bucket_assignment": {
+            "bucket_id": "bucket_ma",
+            "bucket_title": "并购重组",
+            "canonical_theme": "证券行业并购重组",
+            "from_cache": true,
+            "cache_source": "semantic",
+            "semantic_score": 0.6427
+          }
+        },
+        {
+          "intent_id": "kg_cognitive_card:8ee3fb45cc40abc0:4",
+          "cognitive_card_id": "kg_cognitive_card:8ee3fb45cc40abc0",
+          "source_id": "usage_demo_write_path:ft_news:59598",
+          "chunk_index": 0,
+          "intent_index": 4,
+          "raw_theme": "政策推动券商高质量发展，并购重组是外延发展手段",
+          "title_candidate": "政策红利驱动券商行业整合",
+          "parent_themes": [
+            "金融监管政策",
+            "证券行业并购重组"
+          ],
+          "broad_topics": [
+            "资本市场改革",
+            "金融监管"
+          ],
+          "bucket_assignment": {
+            "bucket_id": "bucket_ma",
+            "bucket_title": "并购重组",
+            "canonical_theme": "证券行业并购重组",
+            "from_cache": true
+          }
+        },
+        {
+          "intent_id": "kg_cognitive_card:40f5da0406066eef:1",
+          "cognitive_card_id": "kg_cognitive_card:40f5da0406066eef",
+          "source_id": "usage_demo_write_path:ft_news:75456",
+          "chunk_index": 0,
+          "intent_index": 1,
+          "raw_theme": "日本政府以国家安全为由干预外资收购",
+          "title_candidate": "日本对韩资收购的国家安全审查",
+          "parent_themes": [
+            "跨境并购审查",
+            "国家安全审查",
+            "外资监管"
+          ],
+          "broad_topics": [
+            "日韩经济关系",
+            "外资收购政策"
+          ],
+          "bucket_assignment": {
+            "bucket_id": "bucket_ma",
+            "bucket_title": "并购重组",
+            "canonical_theme": "日本对韩资收购的国家安全审查",
+            "from_cache": true
+          }
+        },
+        {
+          "intent_id": "kg_cognitive_card:10cc63db7fc9dbd8:1",
+          "cognitive_card_id": "kg_cognitive_card:10cc63db7fc9dbd8",
+          "source_id": "usage_demo_write_path:ft_news:75457",
+          "chunk_index": 0,
+          "intent_index": 1,
+          "raw_theme": "恒勃股份设立全资子公司进行区域扩张",
+          "title_candidate": "汽车零部件企业区域扩张",
+          "parent_themes": [
+            "汽车零部件产业链扩张",
+            "企业区域产能布局"
+          ],
+          "broad_topics": [
+            "汽车零部件",
+            "企业扩张战略"
+          ],
+          "bucket_assignment": {
+            "bucket_id": "bucket_ma",
+            "bucket_title": "并购重组",
+            "canonical_theme": "汽车零部件企业区域扩张",
+            "from_cache": true
+          }
+        },
+        {
+          "intent_id": "kg_cognitive_card:087b61f339c87bbd:1",
+          "cognitive_card_id": "kg_cognitive_card:087b61f339c87bbd",
+          "source_id": "usage_demo_write_path:ft_news:83904",
+          "chunk_index": 0,
+          "intent_index": 1,
+          "raw_theme": "A股并购重组市场呈现三方面新变化",
+          "title_candidate": "A股并购重组市场新趋势",
+          "parent_themes": [
+            "并购重组政策导向",
+            "产业结构优化与升级"
+          ],
+          "broad_topics": [
+            "A股市场制度变革",
+            "产业整合与协同"
+          ],
+          "bucket_assignment": {
+            "bucket_id": "bucket_ma",
+            "bucket_title": "并购重组",
+            "canonical_theme": "A股并购重组市场新趋势",
+            "from_cache": true
+          }
+        },
+        {
+          "intent_id": "kg_cognitive_card:63c3e68cc2f8faec:1",
+          "cognitive_card_id": "kg_cognitive_card:63c3e68cc2f8faec",
+          "source_id": "usage_demo_write_path:ft_news:83904",
+          "chunk_index": 1,
+          "intent_index": 1,
+          "raw_theme": "A股并购重组市场呈现新变化：市场化、机构角色升级",
+          "title_candidate": "A股并购重组市场变革与中介机构转型",
+          "parent_themes": [
+            "资本市场改革",
+            "并购重组市场",
+            "中介机构转型"
+          ],
+          "broad_topics": [
+            "A股市场",
+            "并购重组",
+            "机构业务升级"
+          ],
+          "bucket_assignment": {
+            "bucket_id": "bucket_ma",
+            "bucket_title": "并购重组",
+            "canonical_theme": "A股并购重组市场变革与中介机构转型",
+            "from_cache": true
+          }
+        }
+      ]
+    },
+    {
+      "bucket_id": "bucket_macro_liquidity",
+      "size": 3,
+      "intents": [
+        {
+          "intent_id": "kg_cognitive_card:5339020d4cf4b7ab:1",
+          "cognitive_card_id": "kg_cognitive_card:5339020d4cf4b7ab",
+          "source_id": "usage_demo_write_path:ft_news:74420",
+          "chunk_index": 1,
+          "intent_index": 1,
+          "raw_theme": "宏观政策与经济增长数据发布",
+          "title_candidate": "货币政策与工业经济数据",
+          "parent_themes": [
+            "货币政策",
+            "工业经济"
+          ],
+          "broad_topics": [
+            "利率政策",
+            "经济增长"
+          ],
+          "bucket_assignment": {
+            "bucket_id": "bucket_macro_liquidity",
+            "bucket_title": "宏观流动性与货币政策",
+            "canonical_theme": "货币政策",
+            "from_cache": true,
+            "cache_source": "semantic",
+            "semantic_score": 0.5213
+          }
+        },
+        {
+          "intent_id": "kg_cognitive_card:b34a586fa3dbe3cc:1",
+          "cognitive_card_id": "kg_cognitive_card:b34a586fa3dbe3cc",
+          "source_id": "usage_demo_write_path:ft_news:74430",
+          "chunk_index": 0,
+          "intent_index": 1,
+          "raw_theme": "沪深两市成交额大幅放量",
+          "title_candidate": "A股成交额放量突破1.5万亿",
+          "parent_themes": [
+            "市场流动性"
+          ],
+          "broad_topics": [
+            "A股市场"
+          ],
+          "bucket_assignment": {
+            "bucket_id": "bucket_macro_liquidity",
+            "bucket_title": "宏观流动性与货币政策",
+            "canonical_theme": "A股成交额放量突破1.5万亿",
+            "from_cache": true
+          }
+        },
+        {
+          "intent_id": "kg_cognitive_card:5d32abecd3bb50ee:1",
+          "cognitive_card_id": "kg_cognitive_card:5d32abecd3bb50ee",
+          "source_id": "usage_demo_write_path:ft_news:76575",
+          "chunk_index": 0,
+          "intent_index": 1,
+          "raw_theme": "印尼央行加大干预力度维持印尼盾汇率稳定",
+          "title_candidate": "印尼央行汇率干预",
+          "parent_themes": [
+            "外汇市场干预",
+            "央行汇率政策"
+          ],
+          "broad_topics": [
+            "亚洲新兴市场货币政策",
+            "外汇市场稳定"
+          ],
+          "bucket_assignment": {
+            "bucket_id": "bucket_macro_liquidity",
+            "bucket_title": "宏观流动性与货币政策",
+            "canonical_theme": "印尼央行汇率干预",
+            "from_cache": true
+          }
+        }
+      ]
+    },
+    {
+      "bucket_id": "bucket_market_defensive_rotation",
+      "size": 3,
+      "intents": [
+        {
+          "intent_id": "kg_cognitive_card:6b964adcd1bb4862:1",
+          "cognitive_card_id": "kg_cognitive_card:6b964adcd1bb4862",
+          "source_id": "usage_demo_write_path:ft_news:74741",
+          "chunk_index": 0,
+          "intent_index": 1,
+          "raw_theme": "早盘资金流向分化：有色电子遭减持，食品消费获增持",
+          "title_candidate": "主力资金监控显示行业轮动加速",
+          "parent_themes": [
+            "资金流向与市场结构"
+          ],
+          "broad_topics": [
+            "A股资金面",
+            "行业资金异动"
+          ],
+          "bucket_assignment": {
+            "bucket_id": "bucket_market_defensive_rotation",
+            "bucket_title": "市场防御性轮动行情",
+            "canonical_theme": "主力资金监控与行业轮动",
+            "from_cache": false
+          }
+        },
+        {
+          "intent_id": "kg_cognitive_card:6a1006d69cb1c288:1",
+          "cognitive_card_id": "kg_cognitive_card:6a1006d69cb1c288",
+          "source_id": "usage_demo_write_path:ft_news:75051",
+          "chunk_index": 0,
+          "intent_index": 1,
+          "raw_theme": "市场调整中防御性板块走强",
+          "title_candidate": "防御性板块集体走强",
+          "parent_themes": [
+            "市场防御性轮动"
+          ],
+          "broad_topics": [
+            "大消费",
+            "银行",
+            "油气",
+            "燃气轮机"
+          ],
+          "bucket_assignment": {
+            "bucket_id": "bucket_market_defensive_rotation",
+            "bucket_title": "市场防御性轮动行情",
+            "canonical_theme": "市场防御性轮动",
+            "from_cache": true,
+            "cache_source": "semantic",
+            "semantic_score": 0.882
+          }
+        },
+        {
+          "intent_id": "kg_cognitive_card:192278e902507922:1",
+          "cognitive_card_id": "kg_cognitive_card:192278e902507922",
+          "source_id": "usage_demo_write_path:ft_news:76218",
+          "chunk_index": 0,
+          "intent_index": 1,
+          "raw_theme": "沪深两市成交额连续多日突破2万亿并持续放量",
+          "title_candidate": "A股成交额高位运行",
+          "parent_themes": [
+            "市场流动性"
+          ],
+          "broad_topics": [
+            "A股成交额"
+          ],
+          "bucket_assignment": {
+            "bucket_id": "bucket_market_defensive_rotation",
+            "bucket_title": "市场防御性轮动行情",
+            "canonical_theme": "A股成交额高位运行",
+            "from_cache": true
+          }
+        }
+      ]
+    },
+    {
+      "bucket_id": "bucket_media_ip_transformation",
+      "size": 1,
+      "intents": [
+        {
+          "intent_id": "kg_cognitive_card:fa2ca8c241424fc5:1",
+          "cognitive_card_id": "kg_cognitive_card:fa2ca8c241424fc5",
+          "source_id": "usage_demo_write_path:ft_news:76836",
+          "chunk_index": 0,
+          "intent_index": 1,
+          "raw_theme": "横店影视向IP全链路运营模式转型",
+          "title_candidate": "影视公司IP全链路运营转型",
+          "parent_themes": [
+            "影视行业战略转型",
+            "文化产业IP运营"
+          ],
+          "broad_topics": [
+            "IP经济",
+            "影视产业升级",
+            "数字内容"
+          ],
+          "bucket_assignment": {
+            "bucket_id": "bucket_media_ip_transformation",
+            "bucket_title": "影视传媒IP运营与战略转型",
+            "canonical_theme": "影视行业战略转型",
+            "from_cache": true,
+            "cache_source": "semantic",
+            "semantic_score": 0.8099
+          }
+        }
+      ]
+    },
+    {
+      "bucket_id": "bucket_railway_accident",
+      "size": 1,
+      "intents": [
+        {
+          "intent_id": "kg_cognitive_card:67afaae7bd7010e4:1",
+          "cognitive_card_id": "kg_cognitive_card:67afaae7bd7010e4",
+          "source_id": "usage_demo_write_path:ft_news:76577",
+          "chunk_index": 0,
+          "intent_index": 1,
+          "raw_theme": "丹麦铁路交通事故",
+          "title_candidate": "丹麦列车相撞事故",
+          "parent_themes": [
+            "铁路交通事故",
+            "公共安全事件"
+          ],
+          "broad_topics": [
+            "交通运输安全"
+          ],
+          "bucket_assignment": {
+            "bucket_id": "bucket_railway_accident",
+            "bucket_title": "铁路交通事故与安全",
+            "canonical_theme": "铁路交通事故",
+            "from_cache": true,
+            "cache_source": "semantic",
+            "semantic_score": 0.7894
+          }
+        }
+      ]
+    },
+    {
+      "bucket_id": "bucket_regional_economic_data",
+      "size": 2,
+      "intents": [
+        {
+          "intent_id": "kg_cognitive_card:2b7e645e011f7f3e:1",
+          "cognitive_card_id": "kg_cognitive_card:2b7e645e011f7f3e",
+          "source_id": "usage_demo_write_path:ft_news:74433",
+          "chunk_index": 0,
+          "intent_index": 1,
+          "raw_theme": "广州市一季度经济增速6%",
+          "title_candidate": "广州一季度经济增速6%",
+          "parent_themes": [
+            "区域经济增长",
+            "地方经济数据"
+          ],
+          "broad_topics": [
+            "宏观经济",
+            "中国区域经济"
+          ],
+          "bucket_assignment": {
+            "bucket_id": "bucket_regional_economic_data",
+            "bucket_title": "地方经济数据发布",
+            "canonical_theme": "区域经济增长",
+            "from_cache": true,
+            "cache_source": "semantic",
+            "semantic_score": 0.7724
+          }
+        },
+        {
+          "intent_id": "kg_cognitive_card:fd2bbb04f55acd42:1",
+          "cognitive_card_id": "kg_cognitive_card:fd2bbb04f55acd42",
+          "source_id": "usage_demo_write_path:ft_news:74738",
+          "chunk_index": 0,
+          "intent_index": 1,
+          "raw_theme": "广东金融总量突破新台阶",
+          "title_candidate": "广东金融总量运行数据",
+          "parent_themes": [
+            "区域金融运行",
+            "社会融资规模"
+          ],
+          "broad_topics": [
+            "广东省金融",
+            "信贷市场",
+            "存款市场"
+          ],
+          "bucket_assignment": {
+            "bucket_id": "bucket_regional_economic_data",
+            "bucket_title": "地方经济数据发布",
+            "canonical_theme": "广东金融总量运行数据",
+            "from_cache": true
+          }
+        }
+      ]
+    },
+    {
+      "bucket_id": "bucket_regional_financial_policy",
+      "size": 3,
+      "intents": [
+        {
+          "intent_id": "kg_cognitive_card:b371c0e355b74dd3:1",
+          "cognitive_card_id": "kg_cognitive_card:b371c0e355b74dd3",
+          "source_id": "usage_demo_write_path:ft_news:72799",
+          "chunk_index": 0,
+          "intent_index": 1,
+          "raw_theme": "广东股权市场培育行动方案目标",
+          "title_candidate": "广东股权市场十五五培育目标",
+          "parent_themes": [
+            "区域金融政策",
+            "资本市场改革"
+          ],
+          "broad_topics": [
+            "股权市场发展",
+            "地方金融改革"
+          ],
+          "bucket_assignment": {
+            "bucket_id": "bucket_regional_financial_policy",
+            "bucket_title": "bucket_regional_financial_policy",
+            "canonical_theme": "区域金融政策",
+            "from_cache": true,
+            "cache_source": "semantic",
+            "semantic_score": 0.5808
+          }
+        },
+        {
+          "intent_id": "kg_cognitive_card:14fa044d3a78bd60:1",
+          "cognitive_card_id": "kg_cognitive_card:14fa044d3a78bd60",
+          "source_id": "usage_demo_write_path:ft_news:75816",
+          "chunk_index": 0,
+          "intent_index": 1,
+          "raw_theme": "土耳其禁止15岁以下使用社交媒体法案通过",
+          "title_candidate": "土耳其社交媒体年龄限制法案",
+          "parent_themes": [
+            "网络监管政策",
+            "未成年人保护政策"
+          ],
+          "broad_topics": [
+            "社交媒体监管",
+            "未成年人网络保护"
+          ],
+          "bucket_assignment": {
+            "bucket_id": "bucket_regional_financial_policy",
+            "bucket_title": "bucket_regional_financial_policy",
+            "canonical_theme": "土耳其社交媒体年龄限制法案",
+            "from_cache": true
+          }
+        },
+        {
+          "intent_id": "kg_cognitive_card:aef217a108dc54d2:1",
+          "cognitive_card_id": "kg_cognitive_card:aef217a108dc54d2",
+          "source_id": "usage_demo_write_path:ft_news:76578",
+          "chunk_index": 0,
+          "intent_index": 1,
+          "raw_theme": "福建出台意见支持厦门建设金砖产业合作与出海综合服务港",
+          "title_candidate": "金砖产业合作与出海综合服务港政策",
+          "parent_themes": [
+            "金砖合作",
+            "产业出海",
+            "供应链布局"
+          ],
+          "broad_topics": [
+            "金砖国家合作",
+            "海外投资",
+            "供应链安全"
+          ],
+          "bucket_assignment": {
+            "bucket_id": "bucket_regional_financial_policy",
+            "bucket_title": "bucket_regional_financial_policy",
+            "canonical_theme": "金砖产业合作与出海综合服务港政策",
+            "from_cache": true
+          }
+        }
+      ]
+    },
+    {
+      "bucket_id": "bucket_regulatory_investigation",
+      "size": 3,
+      "intents": [
+        {
+          "intent_id": "kg_cognitive_card:52d6a355cc4cded1:1",
+          "cognitive_card_id": "kg_cognitive_card:52d6a355cc4cded1",
+          "source_id": "usage_demo_write_path:ft_news:74223",
+          "chunk_index": 0,
+          "intent_index": 1,
+          "raw_theme": "欢瑞世纪因信息披露违规被证监会立案调查",
+          "title_candidate": "上市公司信息披露违规立案调查",
+          "parent_themes": [
+            "上市公司信息披露监管",
+            "证监会调查执法"
+          ],
+          "broad_topics": [
+            "监管合规",
+            "会计处理争议"
+          ],
+          "bucket_assignment": {
+            "bucket_id": "bucket_regulatory_investigation",
+            "bucket_title": "上市公司监管调查与违规",
+            "canonical_theme": "上市公司信息披露监管",
+            "from_cache": true,
+            "cache_source": "semantic",
+            "semantic_score": 0.7014
+          }
+        },
+        {
+          "intent_id": "kg_cognitive_card:49fe074165f2ad02:1",
+          "cognitive_card_id": "kg_cognitive_card:49fe074165f2ad02",
+          "source_id": "usage_demo_write_path:ft_news:74339",
+          "chunk_index": 0,
+          "intent_index": 1,
+          "raw_theme": "多家A股公司因信披违规被证监会立案",
+          "title_candidate": "A股信披违规立案潮",
+          "parent_themes": [
+            "证券市场监管"
+          ],
+          "broad_topics": [
+            "A股监管",
+            "退市风险"
+          ],
+          "bucket_assignment": {
+            "bucket_id": "bucket_regulatory_investigation",
+            "bucket_title": "上市公司监管调查与违规",
+            "canonical_theme": "A股信披违规立案潮",
+            "from_cache": true
+          }
+        },
+        {
+          "intent_id": "kg_cognitive_card:072b9f92ad3f917e:1",
+          "cognitive_card_id": "kg_cognitive_card:072b9f92ad3f917e",
+          "source_id": "usage_demo_write_path:ft_news:74339",
+          "chunk_index": 1,
+          "intent_index": 1,
+          "raw_theme": "多家上市公司因信息披露问题被证监会立案调查",
+          "title_candidate": "上市公司信息披露违规监管",
+          "parent_themes": [
+            "监管合规与信息披露违规"
+          ],
+          "broad_topics": [
+            "证券市场监管",
+            "上市公司治理"
+          ],
+          "bucket_assignment": {
+            "bucket_id": "bucket_regulatory_investigation",
+            "bucket_title": "上市公司监管调查与违规",
+            "canonical_theme": "上市公司信息披露违规监管",
+            "from_cache": true
+          }
+        }
+      ]
+    },
+    {
+      "bucket_id": "bucket_renewable_energy_projects",
+      "size": 1,
+      "intents": [
+        {
+          "intent_id": "kg_cognitive_card:350ef9488bbd062d:1",
+          "cognitive_card_id": "kg_cognitive_card:350ef9488bbd062d",
+          "source_id": "usage_demo_write_path:ft_news:76835",
+          "chunk_index": 0,
+          "intent_index": 1,
+          "raw_theme": "2026年3月全国新增新能源发电项目统计",
+          "title_candidate": "全国新增新能源发电项目月度统计",
+          "parent_themes": [
+            "新能源发电",
+            "能源基础设施建设",
+            "可再生能源发展"
+          ],
+          "broad_topics": [
+            "光伏发电",
+            "风电",
+            "生物质发电"
+          ],
+          "bucket_assignment": {
+            "bucket_id": "bucket_renewable_energy_projects",
+            "bucket_title": "新能源发电项目统计与政策",
+            "canonical_theme": "新能源发电",
+            "from_cache": true,
+            "cache_source": "semantic",
+            "semantic_score": 0.7078
+          }
+        }
+      ]
+    },
+    {
+      "bucket_id": "bucket_semiconductor_equipment",
+      "size": 1,
+      "intents": [
+        {
+          "intent_id": "kg_cognitive_card:3a2d86192adb19c6:1",
+          "cognitive_card_id": "kg_cognitive_card:3a2d86192adb19c6",
+          "source_id": "usage_demo_write_path:ft_news:65901",
+          "chunk_index": 0,
+          "intent_index": 1,
+          "raw_theme": "2025年全球半导体设备商Top10营收集中度分析",
+          "title_candidate": "全球半导体设备市场头部厂商营收格局",
+          "parent_themes": [
+            "半导体设备产业格局",
+            "全球科技供应链集中度"
+          ],
+          "broad_topics": [
+            "半导体设备市场",
+            "头部厂商竞争"
+          ],
+          "bucket_assignment": {
+            "bucket_id": "bucket_semiconductor_equipment",
+            "bucket_title": "半导体设备产业格局",
+            "canonical_theme": "半导体设备产业格局",
+            "from_cache": true,
+            "cache_source": "semantic",
+            "semantic_score": 0.7875
+          }
+        }
+      ]
+    },
+    {
+      "bucket_id": "bucket_service_industry_policy",
+      "size": 7,
+      "intents": [
+        {
+          "intent_id": "kg_cognitive_card:ab4e5320c45e8e59:1",
+          "cognitive_card_id": "kg_cognitive_card:ab4e5320c45e8e59",
+          "source_id": "usage_demo_write_path:ft_news:68104",
+          "chunk_index": 0,
+          "intent_index": 1,
+          "raw_theme": "政策支持生产性服务业中小微企业贷款贴息及金融工具",
+          "title_candidate": "国务院服务业扩能提质金融支持政策",
+          "parent_themes": [
+            "产业政策",
+            "金融服务",
+            "中小企业支持"
+          ],
+          "broad_topics": [
+            "财政金融政策工具",
+            "服务业发展",
+            "民营经济融资"
+          ],
+          "bucket_assignment": {
+            "bucket_id": "bucket_service_industry_policy",
+            "bucket_title": "服务业产业政策与金融支持",
+            "canonical_theme": "产业政策",
+            "from_cache": true,
+            "cache_source": "semantic",
+            "semantic_score": 0.6373
+          }
+        },
+        {
+          "intent_id": "kg_cognitive_card:f1f59e21e10e57b4:1",
+          "cognitive_card_id": "kg_cognitive_card:f1f59e21e10e57b4",
+          "source_id": "usage_demo_write_path:ft_news:75045",
+          "chunk_index": 0,
+          "intent_index": 1,
+          "raw_theme": "数字贸易标准化政策推进",
+          "title_candidate": "数字贸易标准化行动计划",
+          "parent_themes": [
+            "数字贸易政策",
+            "数据安全与隐私保护",
+            "服务贸易标准化"
+          ],
+          "broad_topics": [
+            "数字贸易",
+            "数据要素",
+            "标准体系建设"
+          ],
+          "bucket_assignment": {
+            "bucket_id": "bucket_service_industry_policy",
+            "bucket_title": "服务业产业政策与金融支持",
+            "canonical_theme": "数字贸易标准化行动计划",
+            "from_cache": true
+          }
+        },
+        {
+          "intent_id": "kg_cognitive_card:c00d0320b99c4920:1",
+          "cognitive_card_id": "kg_cognitive_card:c00d0320b99c4920",
+          "source_id": "usage_demo_write_path:ft_news:75046",
+          "chunk_index": 0,
+          "intent_index": 1,
+          "raw_theme": "服务贸易标准化行动计划（2026-2030）",
+          "title_candidate": "服务贸易标准化建设",
+          "parent_themes": [
+            "服务贸易政策",
+            "标准化战略",
+            "服务外包产业"
+          ],
+          "broad_topics": [
+            "服务贸易",
+            "标准化",
+            "服务外包"
+          ],
+          "bucket_assignment": {
+            "bucket_id": "bucket_service_industry_policy",
+            "bucket_title": "服务业产业政策与金融支持",
+            "canonical_theme": "服务贸易标准化建设",
+            "from_cache": true
+          }
+        },
+        {
+          "intent_id": "kg_cognitive_card:a6dc73ec0aa636c4:1",
+          "cognitive_card_id": "kg_cognitive_card:a6dc73ec0aa636c4",
+          "source_id": "usage_demo_write_path:ft_news:75047",
+          "chunk_index": 0,
+          "intent_index": 1,
+          "raw_theme": "服务贸易标准化行动计划鼓励企业创新",
+          "title_candidate": "服务贸易标准化与企业创新激励",
+          "parent_themes": [
+            "服务贸易",
+            "标准化",
+            "企业创新政策"
+          ],
+          "broad_topics": [
+            "服务贸易",
+            "标准化体系",
+            "企业创新激励"
+          ],
+          "bucket_assignment": {
+            "bucket_id": "bucket_service_industry_policy",
+            "bucket_title": "服务业产业政策与金融支持",
+            "canonical_theme": "服务贸易标准化与企业创新激励",
+            "from_cache": true
+          }
+        },
+        {
+          "intent_id": "kg_cognitive_card:af86077f7cc3987c:1",
+          "cognitive_card_id": "kg_cognitive_card:af86077f7cc3987c",
+          "source_id": "usage_demo_write_path:ft_news:75048",
+          "chunk_index": 0,
+          "intent_index": 1,
+          "raw_theme": "服务贸易标准化工作行动计划发布",
+          "title_candidate": "服务贸易标准化政策行动",
+          "parent_themes": [
+            "政策监管",
+            "国际贸易",
+            "标准化战略",
+            "服务贸易"
+          ],
+          "broad_topics": [
+            "贸易政策",
+            "标准体系建设",
+            "国际标准合作"
+          ],
+          "bucket_assignment": {
+            "bucket_id": "bucket_service_industry_policy",
+            "bucket_title": "服务业产业政策与金融支持",
+            "canonical_theme": "服务贸易标准化政策行动",
+            "from_cache": true
+          }
+        },
+        {
+          "intent_id": "kg_cognitive_card:6ae8fbb7f5b67ab2:1",
+          "cognitive_card_id": "kg_cognitive_card:6ae8fbb7f5b67ab2",
+          "source_id": "usage_demo_write_path:ft_news:75049",
+          "chunk_index": 0,
+          "intent_index": 1,
+          "raw_theme": "服务贸易标准化体系建设",
+          "title_candidate": "服务贸易标准化行动",
+          "parent_themes": [
+            "服务贸易政策",
+            "标准化体系建设"
+          ],
+          "broad_topics": [
+            "服务贸易"
+          ],
+          "bucket_assignment": {
+            "bucket_id": "bucket_service_industry_policy",
+            "bucket_title": "服务业产业政策与金融支持",
+            "canonical_theme": "服务贸易标准化行动",
+            "from_cache": true
+          }
+        },
+        {
+          "intent_id": "kg_cognitive_card:5dcf69a6f965af57:1",
+          "cognitive_card_id": "kg_cognitive_card:5dcf69a6f965af57",
+          "source_id": "usage_demo_write_path:ft_news:75815",
+          "chunk_index": 0,
+          "intent_index": 1,
+          "raw_theme": "海南推出外卖骑手参与食品安全监督的共治机制",
+          "title_candidate": "海南网络餐饮食品安全共治",
+          "parent_themes": [
+            "食品安全监管",
+            "网络餐饮治理"
+          ],
+          "broad_topics": [
+            "食品安全社会共治",
+            "外卖行业监管"
+          ],
+          "bucket_assignment": {
+            "bucket_id": "bucket_service_industry_policy",
+            "bucket_title": "服务业产业政策与金融支持",
+            "canonical_theme": "海南网络餐饮食品安全共治",
+            "from_cache": true
+          }
+        }
+      ]
+    },
+    {
+      "bucket_id": "bucket_us_earnings_season",
+      "size": 1,
+      "intents": [
+        {
+          "intent_id": "kg_cognitive_card:8db9dd0e78185c9f:2",
+          "cognitive_card_id": "kg_cognitive_card:8db9dd0e78185c9f",
+          "source_id": "usage_demo_write_path:ft_news:77551",
+          "chunk_index": 1,
+          "intent_index": 2,
+          "raw_theme": "美股财报季业绩亮眼",
+          "title_candidate": "标普500成分公司财报超预期比例高",
+          "parent_themes": [
+            "企业盈利表现",
+            "财报季业绩驱动"
+          ],
+          "broad_topics": [
+            "美股财报季",
+            "企业盈利"
+          ],
+          "bucket_assignment": {
+            "bucket_id": "bucket_us_earnings_season",
+            "bucket_title": "美股财报季业绩驱动",
+            "canonical_theme": "企业盈利表现",
+            "from_cache": true,
+            "cache_source": "semantic",
+            "semantic_score": 0.7714
+          }
+        }
+      ]
+    },
+    {
+      "bucket_id": "bucket_us_immigration_policy",
+      "size": 1,
+      "intents": [
+        {
+          "intent_id": "kg_cognitive_card:d1eded68fa095a3e:1",
+          "cognitive_card_id": "kg_cognitive_card:d1eded68fa095a3e",
+          "source_id": "usage_demo_write_path:ft_news:77548",
+          "chunk_index": 0,
+          "intent_index": 1,
+          "raw_theme": "特朗普金卡签证项目获批进展",
+          "title_candidate": "特朗普金卡签证项目最新进展",
+          "parent_themes": [
+            "美国移民政策"
+          ],
+          "broad_topics": [
+            "高净值投资移民签证"
+          ],
+          "bucket_assignment": {
+            "bucket_id": "bucket_us_immigration_policy",
+            "bucket_title": "美国移民政策与签证项目",
+            "canonical_theme": "美国移民政策",
+            "from_cache": true,
+            "cache_source": "semantic",
+            "semantic_score": 0.8207
+          }
+        }
+      ]
+    },
+    {
+      "bucket_id": "bucket_us_labor_market",
+      "size": 1,
+      "intents": [
+        {
+          "intent_id": "kg_cognitive_card:8db9dd0e78185c9f:3",
+          "cognitive_card_id": "kg_cognitive_card:8db9dd0e78185c9f",
+          "source_id": "usage_demo_write_path:ft_news:77551",
+          "chunk_index": 1,
+          "intent_index": 3,
+          "raw_theme": "美国初请失业金人数略高于预期但低位",
+          "title_candidate": "美国劳动力市场仍保持韧性",
+          "parent_themes": [
+            "美国就业市场",
+            "劳动力数据"
+          ],
+          "broad_topics": [
+            "美国经济数据",
+            "就业指标"
+          ],
+          "bucket_assignment": {
+            "bucket_id": "bucket_us_labor_market",
+            "bucket_title": "美国劳动力市场数据",
+            "canonical_theme": "美国就业市场",
+            "from_cache": true,
+            "cache_source": "semantic",
+            "semantic_score": 0.7904
+          }
+        }
+      ]
+    }
+  ]
+}

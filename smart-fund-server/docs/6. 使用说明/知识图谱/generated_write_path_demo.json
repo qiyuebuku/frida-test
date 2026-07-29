@@ -1,0 +1,2700 @@
+{
+  "schema_check": {
+    "status": "ok",
+    "missing_tables": [],
+    "missing_columns": {},
+    "forbidden_columns": {},
+    "schema_files": [
+      "schema/06_knowledge.sql",
+      "schema/08_drop_physical_foreign_keys.sql",
+      "schema/09_graph_index_lineage_delta_upgrade.sql",
+      "schema/10_drop_kg_evidence_chunks_content.sql",
+      "schema/11_drop_graph_index_version_tables.sql",
+      "schema/12_graph_unassigned_signals.sql",
+      "schema/13_cognitive_index.sql"
+    ],
+    "kg_evidence_chunks_columns": [
+      "adapter_name",
+      "chunk_id",
+      "chunk_index",
+      "chunker_version",
+      "created_at",
+      "end_offset",
+      "evidence_id",
+      "next_chunk_id",
+      "previous_chunk_id",
+      "start_offset",
+      "text_hash"
+    ],
+    "kg_cognitive_cards_columns": [
+      "actor_signals",
+      "adapter_name",
+      "chunk_ids",
+      "chunk_index",
+      "cognitive_card_id",
+      "created_at",
+      "evidence_id",
+      "local_impact_signals",
+      "payload",
+      "primary_chunk_id",
+      "risk_signals",
+      "schema_version",
+      "source_id",
+      "source_type",
+      "status",
+      "summary",
+      "supporting_text",
+      "system_pointers",
+      "title_candidates",
+      "topic_intents",
+      "updated_at"
+    ],
+    "kg_community_assignments_columns": [
+      "action",
+      "adapter_name",
+      "assignment_id",
+      "cognitive_card_id",
+      "community_id",
+      "confidence",
+      "created_at",
+      "decision",
+      "intent_id",
+      "intent_index",
+      "matched_reason",
+      "reason",
+      "status",
+      "topic_intent",
+      "update_mode",
+      "updated_at",
+      "weight"
+    ]
+  },
+  "cleanup": {
+    "source_prefix": "usage_demo_write_path",
+    "evidence_ids": [
+      "kg_ev:financial:news_articles:usage_demo_write_path:ft_news:95281:b77d2ef5a767a73b",
+      "kg_ev:financial:news_articles:usage_demo_write_path:ft_news:98163:9d6ddc4c11d2b56d",
+      "kg_ev:financial:news_articles:usage_demo_write_path:ft_news:98164:d2c187292aedeb31",
+      "kg_ev:financial:news_articles:usage_demo_write_path:ft_news:98965:60fd08a6aa7e3e2f"
+    ],
+    "chunk_ids": [
+      "kg_chunk:kg_ev:financial:news_articles:usage_demo_write_path:ft_news:95281:b77d2ef5a767a73b:0",
+      "kg_chunk:kg_ev:financial:news_articles:usage_demo_write_path:ft_news:98163:9d6ddc4c11d2b56d:0",
+      "kg_chunk:kg_ev:financial:news_articles:usage_demo_write_path:ft_news:98164:d2c187292aedeb31:0",
+      "kg_chunk:kg_ev:financial:news_articles:usage_demo_write_path:ft_news:98965:60fd08a6aa7e3e2f:0"
+    ],
+    "cognitive_card_ids": [
+      "kg_cognitive_card:8ced0261d2f3cf45",
+      "kg_cognitive_card:158107632f823b2c",
+      "kg_cognitive_card:833cf08c5be8d64a",
+      "kg_cognitive_card:3ec97acc63b85eaf"
+    ],
+    "edge_ids": [],
+    "candidate_node_ids": [],
+    "graph_target_ids": {
+      "community_ids": [
+        "kgc:financial:l0:505"
+      ],
+      "finding_ids": [],
+      "delta_ids": [],
+      "unassigned_signal_ids": []
+    },
+    "weather_repro_reset_community_ids": [],
+    "protected_seed_community_ids": [],
+    "milvus_target_ids": [
+      "kg_chunk:kg_ev:financial:news_articles:usage_demo_write_path:ft_news:95281:b77d2ef5a767a73b:0",
+      "kg_chunk:kg_ev:financial:news_articles:usage_demo_write_path:ft_news:98163:9d6ddc4c11d2b56d:0",
+      "kg_chunk:kg_ev:financial:news_articles:usage_demo_write_path:ft_news:98164:d2c187292aedeb31:0",
+      "kg_chunk:kg_ev:financial:news_articles:usage_demo_write_path:ft_news:98965:60fd08a6aa7e3e2f:0",
+      "kgc:financial:l0:505"
+    ],
+    "deleted": {
+      "community_assignments": 4,
+      "weather_repro_existing_assignments": 0,
+      "cognitive_cards": 4,
+      "graph_unassigned_signals": 0,
+      "graph_deltas": 0,
+      "graph_findings": 0,
+      "graph_communities": 1,
+      "edge_chunk_refs": 0,
+      "evidence_chunks": 4,
+      "edge_evidence_refs": 0,
+      "graph_adjacency": 0,
+      "edges": 0,
+      "evidence": 4,
+      "legacy_nodes": 0
+    },
+    "milvus": {
+      "deleted_target_ids": 5,
+      "legacy_entity_target_ids": 0,
+      "legacy_relation_target_ids": 0,
+      "legacy_entity_deleted": 0,
+      "legacy_relation_deleted": 0
+    },
+    "redis": {
+      "candidate_ledger_key": "kg:assignment_candidate_ledger:prod:financial",
+      "candidate_ledger_deleted": 1
+    }
+  },
+  "compile": {
+    "adapter_name": "financial",
+    "run_id": "kg_run:financial:c9c391ec-5e80-4d11-bf78-b99d8112315d",
+    "nodes": 0,
+    "edges": 0,
+    "evidence": 4,
+    "failed_records": 0,
+    "node_ids": [],
+    "edge_ids": [],
+    "evidence_ids": [
+      "kg_ev:financial:news_articles:usage_demo_write_path:ft_news:95281:b77d2ef5a767a73b",
+      "kg_ev:financial:news_articles:usage_demo_write_path:ft_news:98163:9d6ddc4c11d2b56d",
+      "kg_ev:financial:news_articles:usage_demo_write_path:ft_news:98164:d2c187292aedeb31",
+      "kg_ev:financial:news_articles:usage_demo_write_path:ft_news:98965:60fd08a6aa7e3e2f"
+    ],
+    "index_refresh": {
+      "mode": "incremental",
+      "graph_adjacency": 0,
+      "evidence_chunks": 4,
+      "hybrid_chunks": 4,
+      "graph_index": {
+        "status": "replaced_by_cognitive_index",
+        "reason": "community_topics_are_built_from_cognitive_cards"
+      },
+      "cognitive_index": {
+        "status": "completed",
+        "changed_chunks": 4,
+        "changed_evidence": 4,
+        "cards": 4,
+        "all_cards": null,
+        "assignments": 4,
+        "assignment_rows": 4,
+        "communities": 2,
+        "documents_written": 4,
+        "cognitive_card_documents_written": 4,
+        "stale_documents_deleted": 0,
+        "orphan_community_documents_deleted": 0,
+        "orphan_cognitive_card_documents_deleted": 0,
+        "card_persistence": {
+          "deleted_cards": 0,
+          "deleted_card_ids": [],
+          "inserted_cards": 4,
+          "evidence_ids": [
+            "kg_ev:financial:news_articles:usage_demo_write_path:ft_news:95281:b77d2ef5a767a73b",
+            "kg_ev:financial:news_articles:usage_demo_write_path:ft_news:98163:9d6ddc4c11d2b56d",
+            "kg_ev:financial:news_articles:usage_demo_write_path:ft_news:98164:d2c187292aedeb31",
+            "kg_ev:financial:news_articles:usage_demo_write_path:ft_news:98965:60fd08a6aa7e3e2f"
+          ]
+        },
+        "graph_persistence": {
+          "mode": "incremental_stream_commit",
+          "scope_commits": 4,
+          "updated_community_ids": [
+            "kgc:financial:l0:506",
+            "kgc:financial:l0:507"
+          ],
+          "scope_results": [
+            {
+              "communities": 1,
+              "findings": 0,
+              "deltas": 0,
+              "unassigned_signals": 0,
+              "promoted_unassigned_signals": 0,
+              "stale_target_ids": [],
+              "removed_community_ids": 0,
+              "removed_finding_ids": 0,
+              "removed_delta_ids": 0,
+              "migrated_assignments": 0
+            },
+            {
+              "communities": 1,
+              "findings": 0,
+              "deltas": 0,
+              "unassigned_signals": 0,
+              "promoted_unassigned_signals": 0,
+              "stale_target_ids": [],
+              "removed_community_ids": 0,
+              "removed_finding_ids": 0,
+              "removed_delta_ids": 0,
+              "migrated_assignments": 0
+            },
+            {
+              "communities": 1,
+              "findings": 0,
+              "deltas": 0,
+              "unassigned_signals": 0,
+              "promoted_unassigned_signals": 0,
+              "stale_target_ids": [],
+              "removed_community_ids": 0,
+              "removed_finding_ids": 0,
+              "removed_delta_ids": 0,
+              "migrated_assignments": 0
+            },
+            {
+              "communities": 1,
+              "findings": 0,
+              "deltas": 0,
+              "unassigned_signals": 0,
+              "promoted_unassigned_signals": 0,
+              "stale_target_ids": [
+                "kgc:financial:l0:506"
+              ],
+              "removed_community_ids": 1,
+              "removed_finding_ids": 0,
+              "removed_delta_ids": 0,
+              "migrated_assignments": 0
+            }
+          ]
+        },
+        "diagnostics": {
+          "cards": 4,
+          "intents": 4,
+          "assignments": 4,
+          "communities": 20,
+          "assignment_validation_errors": 0,
+          "candidate_recall": "semantic_community",
+          "seed_candidates": 8,
+          "candidate_rerank": "external_reranker",
+          "community_builder": "cognitive_card_assignment_bucket_v1",
+          "bucket_planning": {
+            "enabled": true,
+            "bucket_count": 1,
+            "bucket_sizes": {
+              "bucket_natural_disaster": 4
+            },
+            "unknown_intents": 3,
+            "llm_assignments": 3,
+            "new_buckets": 0,
+            "merge_suggestions": 0,
+            "semantic_cache": {
+              "redis_exact_hits": 1,
+              "semantic_requests": 6,
+              "semantic_raw_hits": 30,
+              "semantic_candidate_hits": 12,
+              "semantic_direct_hits": 0,
+              "semantic_direct_exact_theme_hits": 0,
+              "semantic_direct_score_margin_hits": 0,
+              "semantic_skipped_empty_scope": 0,
+              "semantic_upserted": 1,
+              "semantic_scope_has_entries_initial": 1
+            },
+            "merge_result": {
+              "triggered": false,
+              "reason": "under_threshold",
+              "bucket_count": 18,
+              "threshold": 40,
+              "candidate_count": 0,
+              "merged": 0
+            }
+          },
+          "bucket_concurrency": 20,
+          "candidate_ledger": {
+            "calls": 7,
+            "redis_available_count": 7,
+            "redis_unavailable_count": 0,
+            "appended_base_total": 20,
+            "appended_update_total": 0,
+            "appended_redirect_total": 1,
+            "checkpointed_count": 0,
+            "checkpoint_skipped_by_overlap_count": 0,
+            "max_append_log_entries": 21,
+            "max_base_count": 20,
+            "max_update_count": 0,
+            "max_redirect_count": 1,
+            "error_types": {}
+          }
+        },
+        "seed_bootstrap": {
+          "status": "completed",
+          "communities": 8,
+          "documents_written": 8,
+          "community_ids": [
+            "kgc:financial:l0:1",
+            "kgc:financial:l0:2",
+            "kgc:financial:l0:3",
+            "kgc:financial:l0:4",
+            "kgc:financial:l0:5",
+            "kgc:financial:l0:6",
+            "kgc:financial:l0:7",
+            "kgc:financial:l0:8"
+          ],
+          "persistence": {
+            "communities": 8,
+            "findings": 0,
+            "deltas": 0,
+            "unassigned_signals": 0,
+            "promoted_unassigned_signals": 0,
+            "stale_target_ids": [],
+            "removed_community_ids": 0,
+            "removed_finding_ids": 0,
+            "removed_delta_ids": 0
+          }
+        }
+      },
+      "node_ids": [],
+      "edge_ids": [],
+      "evidence_ids": [
+        "kg_ev:financial:news_articles:usage_demo_write_path:ft_news:95281:b77d2ef5a767a73b",
+        "kg_ev:financial:news_articles:usage_demo_write_path:ft_news:98163:9d6ddc4c11d2b56d",
+        "kg_ev:financial:news_articles:usage_demo_write_path:ft_news:98164:d2c187292aedeb31",
+        "kg_ev:financial:news_articles:usage_demo_write_path:ft_news:98965:60fd08a6aa7e3e2f"
+      ],
+      "stale_evidence_cleanup": {
+        "evidence": 0,
+        "edges": 0,
+        "evidence_ids": [],
+        "edge_ids": []
+      },
+      "stale_hybrid_vectors_deleted": 4,
+      "stale_semantic_documents_deleted": 4,
+      "semantic_materials": {
+        "chunks": 4,
+        "nodes": 0,
+        "edges": 0,
+        "stale_chunk_ids": [
+          "kg_chunk:kg_ev:financial:news_articles:usage_demo_write_path:ft_news:95281:b77d2ef5a767a73b:0",
+          "kg_chunk:kg_ev:financial:news_articles:usage_demo_write_path:ft_news:98163:9d6ddc4c11d2b56d:0",
+          "kg_chunk:kg_ev:financial:news_articles:usage_demo_write_path:ft_news:98164:d2c187292aedeb31:0",
+          "kg_chunk:kg_ev:financial:news_articles:usage_demo_write_path:ft_news:98965:60fd08a6aa7e3e2f:0"
+        ]
+      }
+    },
+    "warnings": [],
+    "failures": [],
+    "dry_run": false
+  },
+  "pg_state": {
+    "evidence": [
+      {
+        "evidence_id": "kg_ev:financial:news_articles:usage_demo_write_path:ft_news:95281:b77d2ef5a767a73b",
+        "source_type": "news_articles",
+        "source_id": "usage_demo_write_path:ft_news:95281",
+        "evidence_type": "text_span",
+        "status": "active",
+        "content_length": 434,
+        "content_preview": "【广西东兴市将防御台风三级应急响应提升为二级应急响应】根据东兴市气象信息，东兴市气象局已于7月5日3时40分提升重大气象灾害（台风）Ⅳ级应急响应为Ⅱ级应急响应。 【广西东兴市将防御台风三级应急响应提升为二级应急响应】根据东兴市气象信息，东兴市气象局已于7月5日3时40分提升重大气象灾害（台风）Ⅳ级应急响应为Ⅱ级应急响应。按照《东兴市防御台风应急预案》的...",
+        "payload_keys": [
+          "affected_entities",
+          "document_id",
+          "mentioned_entities",
+          "original_source_id",
+          "published_at",
+          "source_id",
+          "source_name",
+          "title"
+        ]
+      },
+      {
+        "evidence_id": "kg_ev:financial:news_articles:usage_demo_write_path:ft_news:98163:9d6ddc4c11d2b56d",
+        "source_type": "news_articles",
+        "source_id": "usage_demo_write_path:ft_news:98163",
+        "evidence_type": "text_span",
+        "status": "active",
+        "content_length": 372,
+        "content_preview": "【北京市发布雷电黄色预警 部分地区或有冰雹】北京市气象局7月5日9时发布雷电黄色预警信号：预计14时至23时，北京市自西北向东南将先后出现雷阵雨天气，影响城区的 【北京市发布雷电黄色预警 部分地区或有冰雹】北京市气象局7月5日9时发布雷电黄色预警信号：预计14时至23时，北京市自西北向东南将先后出现雷阵雨天气，影响城区的主要时段为17时至20时。延庆、...",
+        "payload_keys": [
+          "affected_entities",
+          "document_id",
+          "mentioned_entities",
+          "original_source_id",
+          "published_at",
+          "source_id",
+          "source_name",
+          "title"
+        ]
+      },
+      {
+        "evidence_id": "kg_ev:financial:news_articles:usage_demo_write_path:ft_news:98164:d2c187292aedeb31",
+        "source_type": "news_articles",
+        "source_id": "usage_demo_write_path:ft_news:98164",
+        "evidence_type": "text_span",
+        "status": "active",
+        "content_length": 392,
+        "content_preview": "【广西贵州等地强降雨持续 北方降雨增多高温范围缩减】受台风“美莎克”和季风气流共同影响，未来三天（7月5日至7日），华南至长江中下游一带强降雨持续，广西、贵州、 【广西贵州等地强降雨持续 北方降雨增多高温范围缩减】受台风“美莎克”和季风气流共同影响，未来三天（7月5日至7日），华南至长江中下游一带强降雨持续，广西、贵州、湖南等地需警惕暴雨致灾。随着北方...",
+        "payload_keys": [
+          "affected_entities",
+          "document_id",
+          "mentioned_entities",
+          "original_source_id",
+          "published_at",
+          "source_id",
+          "source_name",
+          "title"
+        ]
+      },
+      {
+        "evidence_id": "kg_ev:financial:news_articles:usage_demo_write_path:ft_news:98965:60fd08a6aa7e3e2f",
+        "source_type": "news_articles",
+        "source_id": "usage_demo_write_path:ft_news:98965",
+        "evidence_type": "text_span",
+        "status": "active",
+        "content_length": 362,
+        "content_preview": "【罕见热浪来袭 预计美国超1.65亿人面临高温健康风险】近期，一场大范围罕见热浪正席卷美国东部和中部地区，多地刷新历史同期最高气温纪录。据美国国家气象局预测，7 【罕见热浪来袭 预计美国超1.65亿人面临高温健康风险】近期，一场大范围罕见热浪正席卷美国东部和中部地区，多地刷新历史同期最高气温纪录。据美国国家气象局预测，7月4日美国“独立日”假期期间，美...",
+        "payload_keys": [
+          "affected_entities",
+          "document_id",
+          "mentioned_entities",
+          "original_source_id",
+          "published_at",
+          "source_id",
+          "source_name",
+          "title"
+        ]
+      }
+    ],
+    "chunks": [
+      {
+        "chunk_id": "kg_chunk:kg_ev:financial:news_articles:usage_demo_write_path:ft_news:95281:b77d2ef5a767a73b:0",
+        "evidence_id": "kg_ev:financial:news_articles:usage_demo_write_path:ft_news:95281:b77d2ef5a767a73b",
+        "chunk_index": 0,
+        "start_offset": 0,
+        "end_offset": 434,
+        "previous_chunk_id": "",
+        "next_chunk_id": "",
+        "text_hash": "1c497cd0b3a4507ba723ac504b7597c8f356af0ef1e2c52e61dfa8c9a4d52477",
+        "chunker_version": "recursive_zh_v1"
+      },
+      {
+        "chunk_id": "kg_chunk:kg_ev:financial:news_articles:usage_demo_write_path:ft_news:98163:9d6ddc4c11d2b56d:0",
+        "evidence_id": "kg_ev:financial:news_articles:usage_demo_write_path:ft_news:98163:9d6ddc4c11d2b56d",
+        "chunk_index": 0,
+        "start_offset": 0,
+        "end_offset": 372,
+        "previous_chunk_id": "",
+        "next_chunk_id": "",
+        "text_hash": "23fc2125bc4a412349cb8de8e85ceffb13c5ab2b8819d8f523714d7c556263d0",
+        "chunker_version": "recursive_zh_v1"
+      },
+      {
+        "chunk_id": "kg_chunk:kg_ev:financial:news_articles:usage_demo_write_path:ft_news:98164:d2c187292aedeb31:0",
+        "evidence_id": "kg_ev:financial:news_articles:usage_demo_write_path:ft_news:98164:d2c187292aedeb31",
+        "chunk_index": 0,
+        "start_offset": 0,
+        "end_offset": 392,
+        "previous_chunk_id": "",
+        "next_chunk_id": "",
+        "text_hash": "22442edc6efaca91b830c62d460ad0a1890fe1f3c347be92d9bc51e835289a31",
+        "chunker_version": "recursive_zh_v1"
+      },
+      {
+        "chunk_id": "kg_chunk:kg_ev:financial:news_articles:usage_demo_write_path:ft_news:98965:60fd08a6aa7e3e2f:0",
+        "evidence_id": "kg_ev:financial:news_articles:usage_demo_write_path:ft_news:98965:60fd08a6aa7e3e2f",
+        "chunk_index": 0,
+        "start_offset": 0,
+        "end_offset": 362,
+        "previous_chunk_id": "",
+        "next_chunk_id": "",
+        "text_hash": "b532f572bc9481b9cf12eafc8e8be3bb9e19d5cf09c972aa383e6c701bd4788d",
+        "chunker_version": "recursive_zh_v1"
+      }
+    ],
+    "nodes": [],
+    "edges": [],
+    "edge_evidence_refs": [],
+    "edge_chunk_refs": [],
+    "normalization_rules": [
+      {
+        "rule_type": "relation_decision",
+        "raw_value": "relation:related_to:全国海关:查获侵权嫌疑货物大案要案",
+        "canonical_value": "related_to",
+        "status": "active",
+        "confidence": 1.0,
+        "source": "fast_path"
+      },
+      {
+        "rule_type": "relation_decision",
+        "raw_value": "relation:related_to:全国海关:十四五时期新增知识产权海关备案权利人",
+        "canonical_value": "related_to",
+        "status": "active",
+        "confidence": 1.0,
+        "source": "fast_path"
+      },
+      {
+        "rule_type": "entity_decision",
+        "raw_value": "entity:institution::公安机关",
+        "canonical_value": "公安机关",
+        "status": "active",
+        "confidence": 1.0,
+        "source": "fast_path"
+      },
+      {
+        "rule_type": "entity_decision",
+        "raw_value": "entity:institution::全国海关",
+        "canonical_value": "全国海关",
+        "status": "active",
+        "confidence": 1.0,
+        "source": "fast_path"
+      },
+      {
+        "rule_type": "relation_decision",
+        "raw_value": "relation:related_to:日本政府:日本政府反对mbkpartners收购牧野铣床",
+        "canonical_value": "related_to",
+        "status": "active",
+        "confidence": 0.95,
+        "source": "fast_path"
+      },
+      {
+        "rule_type": "relation_decision",
+        "raw_value": "relation:affects:日本政府反对mbkpartners收购牧野铣床:mbkpartners",
+        "canonical_value": "affects",
+        "status": "active",
+        "confidence": 0.95,
+        "source": "fast_path"
+      },
+      {
+        "rule_type": "relation_decision",
+        "raw_value": "relation:affects:日本政府反对mbkpartners收购牧野铣床:牧野铣床",
+        "canonical_value": "affects",
+        "status": "active",
+        "confidence": 0.95,
+        "source": "fast_path"
+      },
+      {
+        "rule_type": "entity_decision",
+        "raw_value": "entity:region::韩国首尔",
+        "canonical_value": "韩国首尔",
+        "status": "active",
+        "confidence": 0.9,
+        "source": "fast_path"
+      },
+      {
+        "rule_type": "entity_decision",
+        "raw_value": "entity:institution::日本政府",
+        "canonical_value": "日本政府",
+        "status": "active",
+        "confidence": 0.95,
+        "source": "fast_path"
+      },
+      {
+        "rule_type": "entity_decision",
+        "raw_value": "entity:institution::mbkpartners",
+        "canonical_value": "MBKPartners",
+        "status": "active",
+        "confidence": 0.95,
+        "source": "fast_path"
+      },
+      {
+        "rule_type": "entity_decision",
+        "raw_value": "entity:institution::牧野铣床",
+        "canonical_value": "牧野铣床",
+        "status": "active",
+        "confidence": 0.95,
+        "source": "fast_path"
+      },
+      {
+        "rule_type": "relation_decision",
+        "raw_value": "relation:mentions:华勤技术港股上市:瑞银",
+        "canonical_value": "mentions",
+        "status": "active",
+        "confidence": 1.0,
+        "source": "fast_path"
+      }
+    ],
+    "ids": {
+      "evidence_ids": [
+        "kg_ev:financial:news_articles:usage_demo_write_path:ft_news:95281:b77d2ef5a767a73b",
+        "kg_ev:financial:news_articles:usage_demo_write_path:ft_news:98163:9d6ddc4c11d2b56d",
+        "kg_ev:financial:news_articles:usage_demo_write_path:ft_news:98164:d2c187292aedeb31",
+        "kg_ev:financial:news_articles:usage_demo_write_path:ft_news:98965:60fd08a6aa7e3e2f"
+      ],
+      "chunk_ids": [
+        "kg_chunk:kg_ev:financial:news_articles:usage_demo_write_path:ft_news:95281:b77d2ef5a767a73b:0",
+        "kg_chunk:kg_ev:financial:news_articles:usage_demo_write_path:ft_news:98163:9d6ddc4c11d2b56d:0",
+        "kg_chunk:kg_ev:financial:news_articles:usage_demo_write_path:ft_news:98164:d2c187292aedeb31:0",
+        "kg_chunk:kg_ev:financial:news_articles:usage_demo_write_path:ft_news:98965:60fd08a6aa7e3e2f:0"
+      ],
+      "node_ids": [],
+      "edge_ids": [],
+      "entity_target_ids": [],
+      "relation_target_ids": []
+    }
+  },
+  "graph_index": {
+    "compile_graph_index": {
+      "communities": null,
+      "findings": null,
+      "deltas": null,
+      "built_communities": null,
+      "built_findings": null,
+      "built_deltas": null,
+      "documents_written": null,
+      "stale_documents_deleted": null,
+      "refresh_action": null,
+      "refresh_score": null,
+      "refresh_reasons": null,
+      "actual_refresh_strategy": null,
+      "replacement_scope": {},
+      "community_algorithm": null,
+      "community_report_generator": null,
+      "rolling_delta_count": null
+    },
+    "compile_cognitive_index": {
+      "status": "completed",
+      "changed_chunks": 4,
+      "changed_evidence": 4,
+      "cards": 4,
+      "all_cards": null,
+      "assignments": 4,
+      "communities": 2,
+      "documents_written": 4,
+      "stale_documents_deleted": 0,
+      "community_builder": "cognitive_card_assignment_bucket_v1",
+      "assignment_validation_errors": 0,
+      "candidate_ledger": {
+        "calls": 7,
+        "redis_available_count": 7,
+        "redis_unavailable_count": 0,
+        "appended_base_total": 20,
+        "appended_update_total": 0,
+        "appended_redirect_total": 1,
+        "checkpointed_count": 0,
+        "checkpoint_skipped_by_overlap_count": 0,
+        "max_append_log_entries": 21,
+        "max_base_count": 20,
+        "max_update_count": 0,
+        "max_redirect_count": 1,
+        "error_types": {}
+      }
+    },
+    "manual_graph_index_build": {},
+    "related_cognitive_cards": [
+      {
+        "cognitive_card_id": "kg_cognitive_card:8ced0261d2f3cf45",
+        "source_id": "usage_demo_write_path:ft_news:95281",
+        "evidence_id": "kg_ev:financial:news_articles:usage_demo_write_path:ft_news:95281:b77d2ef5a767a73b",
+        "primary_chunk_id": "kg_chunk:kg_ev:financial:news_articles:usage_demo_write_path:ft_news:95281:b77d2ef5a767a73b:0",
+        "chunk_index": 0,
+        "summary": "广西东兴市因台风将防御台风三级应急响应提升为二级，气象局同时提升气象灾害应急响应至Ⅱ级。",
+        "title_candidates": [
+          "台风应急响应升级",
+          "地方台风防御能力",
+          "东兴市防灾应急"
+        ],
+        "topic_intent_count": 1,
+        "risk_signal_count": 1,
+        "local_impact_signal_count": 1,
+        "supporting_text": [
+          "东兴市气象局已于7月5日3时40分提升重大气象灾害（台风）Ⅳ级应急响应为Ⅱ级应急响应。",
+          "决定于7月5日4时将东兴市防御台风三级应急响应提升为二级应急响应。"
+        ],
+        "schema_version": "cognitive_card_v1",
+        "status": "active"
+      },
+      {
+        "cognitive_card_id": "kg_cognitive_card:158107632f823b2c",
+        "source_id": "usage_demo_write_path:ft_news:98163",
+        "evidence_id": "kg_ev:financial:news_articles:usage_demo_write_path:ft_news:98163:9d6ddc4c11d2b56d",
+        "primary_chunk_id": "kg_chunk:kg_ev:financial:news_articles:usage_demo_write_path:ft_news:98163:9d6ddc4c11d2b56d:0",
+        "chunk_index": 0,
+        "summary": "北京市气象局发布雷电黄色预警，预计有雷阵雨、阵风及冰雹，需防范。",
+        "title_candidates": [
+          "北京发布雷电黄色预警",
+          "北京市雷阵雨冰雹预警",
+          "气象灾害预警信号"
+        ],
+        "topic_intent_count": 1,
+        "risk_signal_count": 1,
+        "local_impact_signal_count": 1,
+        "supporting_text": [
+          "北京市气象局7月5日9时发布雷电黄色预警信号。"
+        ],
+        "schema_version": "cognitive_card_v1",
+        "status": "active"
+      },
+      {
+        "cognitive_card_id": "kg_cognitive_card:833cf08c5be8d64a",
+        "source_id": "usage_demo_write_path:ft_news:98164",
+        "evidence_id": "kg_ev:financial:news_articles:usage_demo_write_path:ft_news:98164:d2c187292aedeb31",
+        "primary_chunk_id": "kg_chunk:kg_ev:financial:news_articles:usage_demo_write_path:ft_news:98164:d2c187292aedeb31:0",
+        "chunk_index": 0,
+        "summary": "受台风和季风气流影响，未来三天华南至长江中下游强降雨持续，北方降雨增多高温缩减，西南东部及江南东部多高温闷热。",
+        "title_candidates": [
+          "自然灾害",
+          "气象灾害",
+          "强降雨与高温",
+          "台风影响",
+          "区域天气变化"
+        ],
+        "topic_intent_count": 1,
+        "risk_signal_count": 2,
+        "local_impact_signal_count": 2,
+        "supporting_text": [
+          "受台风\"美莎克\"和季风气流共同影响，未来三天华南至长江中下游一带强降雨持续。",
+          "广西、贵州、湖南等地需警惕暴雨致灾。",
+          "随着北方降雨增多，华北、黄淮等地高温天气将逐渐缩减，热意有所缓和。"
+        ],
+        "schema_version": "cognitive_card_v1",
+        "status": "active"
+      },
+      {
+        "cognitive_card_id": "kg_cognitive_card:3ec97acc63b85eaf",
+        "source_id": "usage_demo_write_path:ft_news:98965",
+        "evidence_id": "kg_ev:financial:news_articles:usage_demo_write_path:ft_news:98965:60fd08a6aa7e3e2f",
+        "primary_chunk_id": "kg_chunk:kg_ev:financial:news_articles:usage_demo_write_path:ft_news:98965:60fd08a6aa7e3e2f:0",
+        "chunk_index": 0,
+        "summary": "美国遭遇罕见大范围热浪，预计超1.65亿人面临高温健康风险，影响集中在独立日期间。",
+        "title_candidates": [
+          "美国极端热浪与公共健康风险",
+          "北美高温天气灾害",
+          "极端天气对人口健康的影响",
+          "美国夏季热浪预警"
+        ],
+        "topic_intent_count": 1,
+        "risk_signal_count": 2,
+        "local_impact_signal_count": 2,
+        "supporting_text": [
+          "一场大范围罕见热浪正席卷美国东部和中部地区，多地刷新历史同期最高气温纪录。",
+          "预计将有超过1.65亿人面临‘重大’或‘极端’高温健康风险。"
+        ],
+        "schema_version": "cognitive_card_v1",
+        "status": "active"
+      }
+    ],
+    "related_community_assignments": [
+      {
+        "assignment_id": "kg_community_assignment:da13bfdb7f02506c",
+        "cognitive_card_id": "kg_cognitive_card:158107632f823b2c",
+        "intent_index": 1,
+        "community_id": "kgc:financial:l0:507",
+        "action": "attach_existing",
+        "weight": 0.9,
+        "confidence": 0.95,
+        "update_mode": "update_delta",
+        "matched_reason": "fit_type=existing_direction; 当前主题为北京地区雷阵雨及冰雹预警，属于典型的自然灾害预警事件。候选社区 l0:506 的 scope 明确包括台风、暴雨、洪涝、地震等自然灾害的应急响应和预警发布，其 can...",
+        "reason": "fit_type=existing_direction; 当前主题为北京地区雷阵雨及冰雹预警，属于典型的自然灾害预警事件。候选社区 l0:506 的 scope 明确包括台风、暴雨、洪涝、地震等自然灾害的应急响应和预警发布，其 can...",
+        "status": "active"
+      },
+      {
+        "assignment_id": "kg_community_assignment:fd36e61d529c33dc",
+        "cognitive_card_id": "kg_cognitive_card:3ec97acc63b85eaf",
+        "intent_index": 1,
+        "community_id": "kgc:financial:l0:507",
+        "action": "create_parent_and_absorb_existing",
+        "weight": 0.9,
+        "confidence": 0.85,
+        "update_mode": "rewrite_summary",
+        "matched_reason": "fit_type=new_parent_topic; 现有候选 community l0:506 '自然灾害应急响应' 只覆盖极端天气事件的应急响应阶段，粒度偏细；当前 topic_intent 描述美国热浪健康风险，属于更广泛的极端...",
+        "reason": "fit_type=new_parent_topic; 现有候选 community l0:506 '自然灾害应急响应' 只覆盖极端天气事件的应急响应阶段，粒度偏细；当前 topic_intent 描述美国热浪健康风险，属于更广泛的极端...",
+        "status": "active"
+      },
+      {
+        "assignment_id": "kg_community_assignment:073827ad8f509a30",
+        "cognitive_card_id": "kg_cognitive_card:833cf08c5be8d64a",
+        "intent_index": 1,
+        "community_id": "kgc:financial:l0:507",
+        "action": "attach_existing",
+        "weight": 0.9,
+        "confidence": 0.95,
+        "update_mode": "update_delta",
+        "matched_reason": "fit_type=existing_direction; 当前topic_intent描述台风美莎克和季风引起的强降雨及高温变化，属于自然灾害范畴，与'自然灾害应急响应'的scope（台风、暴雨、应急响应等）直接匹配，可作为已有事件子...",
+        "reason": "fit_type=existing_direction; 当前topic_intent描述台风美莎克和季风引起的强降雨及高温变化，属于自然灾害范畴，与'自然灾害应急响应'的scope（台风、暴雨、应急响应等）直接匹配，可作为已有事件子...",
+        "status": "active"
+      },
+      {
+        "assignment_id": "kg_community_assignment:df3619d357b1fae4",
+        "cognitive_card_id": "kg_cognitive_card:8ced0261d2f3cf45",
+        "intent_index": 1,
+        "community_id": "kgc:financial:l0:507",
+        "action": "create_new",
+        "weight": 1.0,
+        "confidence": 0.95,
+        "update_mode": "rewrite_summary",
+        "matched_reason": "fit_type=new_parent_topic; 现有候选community中无与自然灾害应急响应或台风防御相关的主题；当前topic_intent明确属于自然灾害应急响应范畴，需要创建可长期复用的L0父级主题以承接未来类似的应急...",
+        "reason": "fit_type=new_parent_topic; 现有候选community中无与自然灾害应急响应或台风防御相关的主题；当前topic_intent明确属于自然灾害应急响应范畴，需要创建可长期复用的L0父级主题以承接未来类似的应急...",
+        "status": "active"
+      }
+    ],
+    "related_communities": [
+      {
+        "community_id": "kgc:financial:l0:507",
+        "version_id": "kgc:financial:l0:507:v:5a5851e9c8325d13",
+        "projection": "cognitive_topic",
+        "level": 0,
+        "parent_community_id": "",
+        "title": "极端天气与气候风险",
+        "summary": "极端天气与气候风险 聚合了 4 个来源、4 个 chunk 的认知信号。 父级主题：自然灾害应急响应；台风灾害防御；自然灾害预警；极端天气；自然灾害；气象灾害。 主要线索：台风应急响应升级；北京地区雷阵雨及冰雹预警；台风美莎克和季风气流引起的大范围强降雨；美国大范围热浪导致人口健康风险；广西台风防御；雷阵雨。 影响对象：东兴市；台风影响区域；北京市；华南；长江中下游；广西；贵州；湖南。 风险线索：自然灾害风险；台风风险；自然灾害；暴雨致灾；高温天气；极端天气风险。",
+        "member_nodes": 0,
+        "member_edges": 0,
+        "evidence": 4,
+        "chunks": 4,
+        "status": "active",
+        "lineage_id": "kg_community_lineage:3bcb0df658ef359e",
+        "previous_version_id": "",
+        "change_reason": "cognitive_assignment",
+        "metrics": {
+          "absorbed_community_ids": [
+            "kgc:financial:l0:506"
+          ],
+          "assigned_intent_count": 4,
+          "assigned_intents": [
+            {
+              "actors": [
+                "东兴市防汛抗旱指挥部",
+                "东兴市气象局"
+              ],
+              "driver": [
+                "台风气象灾害"
+              ],
+              "summary": "广西东兴市将防御台风三级应急响应提升为二级，气象局同步提升气象灾害应急响应至Ⅱ级。",
+              "chunk_ids": [
+                "kg_chunk:kg_ev:financial:news_articles:usage_demo_write_path:ft_news:95281:b77d2ef5a767a73b:0"
+              ],
+              "intent_id": "kg_cognitive_card:8ced0261d2f3cf45:intent:1",
+              "raw_theme": "台风应急响应升级",
+              "risk_type": [
+                "自然灾害风险",
+                "台风风险"
+              ],
+              "source_id": "usage_demo_write_path:ft_news:95281",
+              "event_time": "7月5日",
+              "importance": 0.6,
+              "mid_topics": [
+                "广西台风防御"
+              ],
+              "evidence_id": "kg_ev:financial:news_articles:usage_demo_write_path:ft_news:95281:b77d2ef5a767a73b",
+              "broad_topics": [
+                "极端天气事件",
+                "华南地区防灾"
+              ],
+              "event_action": [
+                "提升应急响应等级"
+              ],
+              "event_thread": [
+                "2023年台风应急响应"
+              ],
+              "impact_target": [
+                "东兴市",
+                "台风影响区域"
+              ],
+              "parent_themes": [
+                "自然灾害应急响应",
+                "台风灾害防御"
+              ],
+              "specific_topics": [
+                "东兴市台风应急响应升级"
+              ],
+              "title_candidate": "台风应急响应升级",
+              "impact_direction": "negative",
+              "primary_chunk_id": "kg_chunk:kg_ev:financial:news_articles:usage_demo_write_path:ft_news:95281:b77d2ef5a767a73b:0",
+              "topic_level_hint": "specific",
+              "cognitive_card_id": "kg_cognitive_card:8ced0261d2f3cf45",
+              "source_published_at": "2026-07-04T23:56:39+00:00"
+            },
+            {
+              "actors": [
+                "北京市气象局"
+              ],
+              "driver": [
+                "气象条件"
+              ],
+              "summary": "北京市气象局发布雷电黄色预警，预计有雷阵雨、阵风及冰雹，需防范。",
+              "chunk_ids": [
+                "kg_chunk:kg_ev:financial:news_articles:usage_demo_write_path:ft_news:98163:9d6ddc4c11d2b56d:0"
+              ],
+              "intent_id": "kg_cognitive_card:158107632f823b2c:intent:1",
+              "raw_theme": "北京地区雷阵雨及冰雹预警",
+              "risk_type": [
+                "自然灾害"
+              ],
+              "source_id": "usage_demo_write_path:ft_news:98163",
+              "event_time": "7月5日9时",
+              "importance": 0.7,
+              "mid_topics": [
+                "雷阵雨",
+                "冰雹",
+                "强风"
+              ],
+              "evidence_id": "kg_ev:financial:news_articles:usage_demo_write_path:ft_news:98163:9d6ddc4c11d2b56d",
+              "broad_topics": [
+                "气象灾害",
+                "预警信号"
+              ],
+              "event_action": [
+                "发布预警"
+              ],
+              "event_thread": [
+                "天气预警事件"
+              ],
+              "impact_target": [
+                "北京市"
+              ],
+              "parent_themes": [
+                "自然灾害预警",
+                "极端天气"
+              ],
+              "specific_topics": [
+                "北京市预警",
+                "延庆等区县防范"
+              ],
+              "title_candidate": "北京发布雷电黄色预警",
+              "impact_direction": "negative",
+              "primary_chunk_id": "kg_chunk:kg_ev:financial:news_articles:usage_demo_write_path:ft_news:98163:9d6ddc4c11d2b56d:0",
+              "topic_level_hint": "mid",
+              "cognitive_card_id": "kg_cognitive_card:158107632f823b2c",
+              "source_published_at": "2026-07-05T01:46:27+00:00"
+            },
+            {
+              "actors": [],
+              "driver": [
+                "台风",
+                "季风气流",
+                "大气环流"
+              ],
+              "summary": "台风和季风导致华南至长江中下游强降雨持续，警惕暴雨致灾；北方降雨增多缓解高温，西南东部江南东部仍多高温闷热。",
+              "chunk_ids": [
+                "kg_chunk:kg_ev:financial:news_articles:usage_demo_write_path:ft_news:98164:d2c187292aedeb31:0"
+              ],
+              "intent_id": "kg_cognitive_card:833cf08c5be8d64a:intent:1",
+              "raw_theme": "台风美莎克和季风气流引起的大范围强降雨",
+              "risk_type": [
+                "暴雨致灾",
+                "高温天气"
+              ],
+              "source_id": "usage_demo_write_path:ft_news:98164",
+              "event_time": "7月5日至7日",
+              "importance": 0.6,
+              "mid_topics": [
+                "华南强降雨",
+                "北方降雨增多",
+                "高温缩减",
+                "高温闷热"
+              ],
+              "evidence_id": "kg_ev:financial:news_articles:usage_demo_write_path:ft_news:98164:d2c187292aedeb31",
+              "broad_topics": [
+                "台风影响",
+                "强降雨",
+                "高温天气"
+              ],
+              "event_action": [
+                "强降雨持续",
+                "暴雨预警",
+                "高温缩减"
+              ],
+              "event_thread": [
+                "台风美莎克路径与影响",
+                "2024年7月中国天气"
+              ],
+              "impact_target": [
+                "华南",
+                "长江中下游",
+                "广西",
+                "贵州",
+                "湖南",
+                "华北",
+                "黄淮",
+                "西南东部"
+              ],
+              "parent_themes": [
+                "自然灾害",
+                "气象灾害"
+              ],
+              "specific_topics": [
+                "台风美莎克",
+                "广西贵州暴雨",
+                "湖南暴雨",
+                "华北黄淮高温缩减",
+                "西南东部高温"
+              ],
+              "title_candidate": "华南持续性暴雨与北方高温缩减",
+              "impact_direction": "mixed",
+              "primary_chunk_id": "kg_chunk:kg_ev:financial:news_articles:usage_demo_write_path:ft_news:98164:d2c187292aedeb31:0",
+              "topic_level_hint": "mixed",
+              "cognitive_card_id": "kg_cognitive_card:833cf08c5be8d64a",
+              "source_published_at": "2026-07-05T01:46:02+00:00"
+            },
+            {
+              "actors": [
+                "美国国家气象局",
+                "美国公众"
+              ],
+              "driver": [
+                "气候异常",
+                "热浪天气系统"
+              ],
+              "summary": "罕见热浪席卷美国东部和中部，预计超1.65亿人面临重大或极端高温健康风险，多地刷新气温纪录。",
+              "chunk_ids": [
+                "kg_chunk:kg_ev:financial:news_articles:usage_demo_write_path:ft_news:98965:60fd08a6aa7e3e2f:0"
+              ],
+              "intent_id": "kg_cognitive_card:3ec97acc63b85eaf:intent:1",
+              "raw_theme": "美国大范围热浪导致人口健康风险",
+              "risk_type": [
+                "极端天气风险",
+                "高温健康风险"
+              ],
+              "source_id": "usage_demo_write_path:ft_news:98965",
+              "event_time": "2025年7月4日前后",
+              "importance": 0.8,
+              "mid_topics": [
+                "美国东部中部地区高温",
+                "独立日期间热浪"
+              ],
+              "evidence_id": "kg_ev:financial:news_articles:usage_demo_write_path:ft_news:98965:60fd08a6aa7e3e2f",
+              "broad_topics": [
+                "美国热浪灾害",
+                "高温健康风险"
+              ],
+              "event_action": [
+                "热浪袭击",
+                "发布健康风险预警"
+              ],
+              "event_thread": [
+                "北美极端天气事件"
+              ],
+              "impact_target": [
+                "美国公众健康",
+                "人口密集地区"
+              ],
+              "parent_themes": [
+                "极端天气与气候风险",
+                "自然灾害与公共健康"
+              ],
+              "specific_topics": [
+                "超1.65亿人面临高风险",
+                "历史同期气温纪录刷新"
+              ],
+              "title_candidate": "美国极端热浪与公共健康风险",
+              "impact_direction": "negative",
+              "primary_chunk_id": "kg_chunk:kg_ev:financial:news_articles:usage_demo_write_path:ft_news:98965:60fd08a6aa7e3e2f:0",
+              "topic_level_hint": "broad",
+              "cognitive_card_id": "kg_cognitive_card:3ec97acc63b85eaf",
+              "source_published_at": "2026-07-05T02:01:59+00:00"
+            }
+          ],
+          "assignment_count": 4,
+          "assignments": [
+            {
+              "action": "create_new",
+              "reason": "现有候选community中无与自然灾害应急响应或台风防御相关的主题；当前topic_intent明确属于自然灾害应急响应范畴，需要创建可长期复用的L0父级主题以承接未来类似的应急响应事件。",
+              "weight": 1.0,
+              "fit_type": "new_parent_topic",
+              "intent_id": "kg_cognitive_card:8ced0261d2f3cf45:intent:1",
+              "confidence": 0.95,
+              "community_id": "new_1",
+              "intent_index": 1,
+              "assignment_id": "kg_community_assignment:de06d74c2c8c953d",
+              "cognitive_card_id": "kg_cognitive_card:8ced0261d2f3cf45",
+              "absorb_community_ids": [],
+              "resolved_community_id": "kgc:financial:l0:507",
+              "absorbed_from_community_id": "kgc:financial:l0:506"
+            },
+            {
+              "action": "attach_existing",
+              "reason": "当前主题为北京地区雷阵雨及冰雹预警，属于典型的自然灾害预警事件。候选社区 l0:506 的 scope 明确包括台风、暴雨、洪涝、地震等自然灾害的应急响应和预警发布，其 canonical_labels 包含 '极端天气事件'，并已吸收过台风应急响应等子方向。雷电、冰雹预警是该社区既有范围的合理延伸，因此直接挂入。",
+              "weight": 0.9,
+              "fit_type": "existing_direction",
+              "intent_id": "kg_cognitive_card:158107632f823b2c:intent:1",
+              "confidence": 0.95,
+              "community_id": "kgc:financial:l0:507",
+              "intent_index": 1,
+              "assignment_id": "kg_community_assignment:5bd8e88ca8913e14",
+              "cognitive_card_id": "kg_cognitive_card:158107632f823b2c",
+              "absorb_community_ids": [],
+              "resolved_community_id": "kgc:financial:l0:507",
+              "absorbed_from_community_id": "kgc:financial:l0:506"
+            },
+            {
+              "action": "attach_existing",
+              "reason": "当前topic_intent描述台风美莎克和季风引起的强降雨及高温变化，属于自然灾害范畴，与'自然灾害应急响应'的scope（台风、暴雨、应急响应等）直接匹配，可作为已有事件子方向归档。",
+              "weight": 0.9,
+              "fit_type": "existing_direction",
+              "intent_id": "kg_cognitive_card:833cf08c5be8d64a:intent:1",
+              "confidence": 0.95,
+              "community_id": "kgc:financial:l0:507",
+              "intent_index": 1,
+              "assignment_id": "kg_community_assignment:000389729761d061",
+              "cognitive_card_id": "kg_cognitive_card:833cf08c5be8d64a",
+              "absorb_community_ids": [],
+              "resolved_community_id": "kgc:financial:l0:507",
+              "absorbed_from_community_id": "kgc:financial:l0:506"
+            },
+            {
+              "action": "create_parent_and_absorb_existing",
+              "reason": "现有候选 community l0:506 '自然灾害应急响应' 只覆盖极端天气事件的应急响应阶段，粒度偏细；当前 topic_intent 描述美国热浪健康风险，属于更广泛的极端天气与气候风险范畴。创建新父主题 '极端天气与气候风险' 可稳定承接热浪、寒潮、暴雨、干旱等极端天气事件及其对公共健康、经济、基础设施的影响，同时将 l0:506 作为其应急响应子方向吸收，避免平级重复。",
+              "weight": 0.9,
+              "fit_type": "new_parent_topic",
+              "intent_id": "kg_cognitive_card:3ec97acc63b85eaf:intent:1",
+              "confidence": 0.85,
+              "community_id": "new_1",
+              "intent_index": 1,
+              "assignment_id": "kg_community_assignment:fd36e61d529c33dc",
+              "cognitive_card_id": "kg_cognitive_card:3ec97acc63b85eaf",
+              "absorb_community_ids": [
+                "kgc:financial:l0:506"
+              ],
+              "resolved_community_id": "kgc:financial:l0:507"
+            }
+          ],
+          "avg_assignment_weight": 0.925,
+          "canonical_labels": [
+            "极端天气与气候风险",
+            "自然灾害应急响应",
+            "台风灾害防御",
+            "自然灾害预警",
+            "极端天气",
+            "自然灾害"
+          ],
+          "chunk_count": 4,
+          "cognitive_card_count": 4,
+          "cognitive_card_ids": [
+            "kg_cognitive_card:8ced0261d2f3cf45",
+            "kg_cognitive_card:158107632f823b2c",
+            "kg_cognitive_card:833cf08c5be8d64a",
+            "kg_cognitive_card:3ec97acc63b85eaf"
+          ],
+          "community_builder": "cognitive_card_assignment_v1",
+          "coverage_contract": "可承接父主题：极端天气与气候风险、自然灾害应急响应、台风灾害防御、自然灾害预警、极端天气、自然灾害；可吸收子方向：极端天气事件、华南地区防灾、气象灾害、预警信号、台风影响、强降雨、高温天气、美国热浪灾害、高温健康风险、广西台风防御、雷..."
+        }
+      }
+    ],
+    "related_findings": [],
+    "related_deltas": [],
+    "related_unassigned_signals": [],
+    "ids": {
+      "community_target_ids": [
+        "kgc:financial:l0:507"
+      ],
+      "finding_target_ids": [],
+      "delta_target_ids": []
+    }
+  },
+  "weather_merge_repro_quality": {
+    "source_ids": [
+      "usage_demo_write_path:ft_news:95281",
+      "usage_demo_write_path:ft_news:98163",
+      "usage_demo_write_path:ft_news:98164",
+      "usage_demo_write_path:ft_news:98965"
+    ],
+    "card_count": 4,
+    "assignment_count": 4,
+    "assigned_community_count": 1,
+    "assigned_communities": [
+      {
+        "community_id": "kgc:financial:l0:507",
+        "version_id": "kgc:financial:l0:507:v:5a5851e9c8325d13",
+        "projection": "cognitive_topic",
+        "level": 0,
+        "parent_community_id": "",
+        "title": "极端天气与气候风险",
+        "summary": "极端天气与气候风险 聚合了 4 个来源、4 个 chunk 的认知信号。 父级主题：自然灾害应急响应；台风灾害防御；自然灾害预警；极端天气；自然灾害；气象灾害。 主要线索：台风应急响应升级；北京地区雷阵雨及冰雹预警；台风美莎克和季风气流引起的大范围强降雨；美国大范围热浪导致人口健康风险；广西台风防御；雷阵雨。 影响对象：东兴市；台风影响区域；北京市；华南；长江中下游；广西；贵州；湖南。 风险线索：自然灾害风险；台风风险；自然灾害；暴雨致灾；高温天气；极端天气风险。",
+        "member_nodes": 0,
+        "member_edges": 0,
+        "evidence": 4,
+        "chunks": 4,
+        "status": "active",
+        "lineage_id": "kg_community_lineage:3bcb0df658ef359e",
+        "previous_version_id": "",
+        "change_reason": "cognitive_assignment",
+        "metrics": {
+          "absorbed_community_ids": [
+            "kgc:financial:l0:506"
+          ],
+          "assigned_intent_count": 4,
+          "assigned_intents": [
+            {
+              "actors": [
+                "东兴市防汛抗旱指挥部",
+                "东兴市气象局"
+              ],
+              "driver": [
+                "台风气象灾害"
+              ],
+              "summary": "广西东兴市将防御台风三级应急响应提升为二级，气象局同步提升气象灾害应急响应至Ⅱ级。",
+              "chunk_ids": [
+                "kg_chunk:kg_ev:financial:news_articles:usage_demo_write_path:ft_news:95281:b77d2ef5a767a73b:0"
+              ],
+              "intent_id": "kg_cognitive_card:8ced0261d2f3cf45:intent:1",
+              "raw_theme": "台风应急响应升级",
+              "risk_type": [
+                "自然灾害风险",
+                "台风风险"
+              ],
+              "source_id": "usage_demo_write_path:ft_news:95281",
+              "event_time": "7月5日",
+              "importance": 0.6,
+              "mid_topics": [
+                "广西台风防御"
+              ],
+              "evidence_id": "kg_ev:financial:news_articles:usage_demo_write_path:ft_news:95281:b77d2ef5a767a73b",
+              "broad_topics": [
+                "极端天气事件",
+                "华南地区防灾"
+              ],
+              "event_action": [
+                "提升应急响应等级"
+              ],
+              "event_thread": [
+                "2023年台风应急响应"
+              ],
+              "impact_target": [
+                "东兴市",
+                "台风影响区域"
+              ],
+              "parent_themes": [
+                "自然灾害应急响应",
+                "台风灾害防御"
+              ],
+              "specific_topics": [
+                "东兴市台风应急响应升级"
+              ],
+              "title_candidate": "台风应急响应升级",
+              "impact_direction": "negative",
+              "primary_chunk_id": "kg_chunk:kg_ev:financial:news_articles:usage_demo_write_path:ft_news:95281:b77d2ef5a767a73b:0",
+              "topic_level_hint": "specific",
+              "cognitive_card_id": "kg_cognitive_card:8ced0261d2f3cf45",
+              "source_published_at": "2026-07-04T23:56:39+00:00"
+            },
+            {
+              "actors": [
+                "北京市气象局"
+              ],
+              "driver": [
+                "气象条件"
+              ],
+              "summary": "北京市气象局发布雷电黄色预警，预计有雷阵雨、阵风及冰雹，需防范。",
+              "chunk_ids": [
+                "kg_chunk:kg_ev:financial:news_articles:usage_demo_write_path:ft_news:98163:9d6ddc4c11d2b56d:0"
+              ],
+              "intent_id": "kg_cognitive_card:158107632f823b2c:intent:1",
+              "raw_theme": "北京地区雷阵雨及冰雹预警",
+              "risk_type": [
+                "自然灾害"
+              ],
+              "source_id": "usage_demo_write_path:ft_news:98163",
+              "event_time": "7月5日9时",
+              "importance": 0.7,
+              "mid_topics": [
+                "雷阵雨",
+                "冰雹",
+                "强风"
+              ],
+              "evidence_id": "kg_ev:financial:news_articles:usage_demo_write_path:ft_news:98163:9d6ddc4c11d2b56d",
+              "broad_topics": [
+                "气象灾害",
+                "预警信号"
+              ],
+              "event_action": [
+                "发布预警"
+              ],
+              "event_thread": [
+                "天气预警事件"
+              ],
+              "impact_target": [
+                "北京市"
+              ],
+              "parent_themes": [
+                "自然灾害预警",
+                "极端天气"
+              ],
+              "specific_topics": [
+                "北京市预警",
+                "延庆等区县防范"
+              ],
+              "title_candidate": "北京发布雷电黄色预警",
+              "impact_direction": "negative",
+              "primary_chunk_id": "kg_chunk:kg_ev:financial:news_articles:usage_demo_write_path:ft_news:98163:9d6ddc4c11d2b56d:0",
+              "topic_level_hint": "mid",
+              "cognitive_card_id": "kg_cognitive_card:158107632f823b2c",
+              "source_published_at": "2026-07-05T01:46:27+00:00"
+            },
+            {
+              "actors": [],
+              "driver": [
+                "台风",
+                "季风气流",
+                "大气环流"
+              ],
+              "summary": "台风和季风导致华南至长江中下游强降雨持续，警惕暴雨致灾；北方降雨增多缓解高温，西南东部江南东部仍多高温闷热。",
+              "chunk_ids": [
+                "kg_chunk:kg_ev:financial:news_articles:usage_demo_write_path:ft_news:98164:d2c187292aedeb31:0"
+              ],
+              "intent_id": "kg_cognitive_card:833cf08c5be8d64a:intent:1",
+              "raw_theme": "台风美莎克和季风气流引起的大范围强降雨",
+              "risk_type": [
+                "暴雨致灾",
+                "高温天气"
+              ],
+              "source_id": "usage_demo_write_path:ft_news:98164",
+              "event_time": "7月5日至7日",
+              "importance": 0.6,
+              "mid_topics": [
+                "华南强降雨",
+                "北方降雨增多",
+                "高温缩减",
+                "高温闷热"
+              ],
+              "evidence_id": "kg_ev:financial:news_articles:usage_demo_write_path:ft_news:98164:d2c187292aedeb31",
+              "broad_topics": [
+                "台风影响",
+                "强降雨",
+                "高温天气"
+              ],
+              "event_action": [
+                "强降雨持续",
+                "暴雨预警",
+                "高温缩减"
+              ],
+              "event_thread": [
+                "台风美莎克路径与影响",
+                "2024年7月中国天气"
+              ],
+              "impact_target": [
+                "华南",
+                "长江中下游",
+                "广西",
+                "贵州",
+                "湖南",
+                "华北",
+                "黄淮",
+                "西南东部"
+              ],
+              "parent_themes": [
+                "自然灾害",
+                "气象灾害"
+              ],
+              "specific_topics": [
+                "台风美莎克",
+                "广西贵州暴雨",
+                "湖南暴雨",
+                "华北黄淮高温缩减",
+                "西南东部高温"
+              ],
+              "title_candidate": "华南持续性暴雨与北方高温缩减",
+              "impact_direction": "mixed",
+              "primary_chunk_id": "kg_chunk:kg_ev:financial:news_articles:usage_demo_write_path:ft_news:98164:d2c187292aedeb31:0",
+              "topic_level_hint": "mixed",
+              "cognitive_card_id": "kg_cognitive_card:833cf08c5be8d64a",
+              "source_published_at": "2026-07-05T01:46:02+00:00"
+            },
+            {
+              "actors": [
+                "美国国家气象局",
+                "美国公众"
+              ],
+              "driver": [
+                "气候异常",
+                "热浪天气系统"
+              ],
+              "summary": "罕见热浪席卷美国东部和中部，预计超1.65亿人面临重大或极端高温健康风险，多地刷新气温纪录。",
+              "chunk_ids": [
+                "kg_chunk:kg_ev:financial:news_articles:usage_demo_write_path:ft_news:98965:60fd08a6aa7e3e2f:0"
+              ],
+              "intent_id": "kg_cognitive_card:3ec97acc63b85eaf:intent:1",
+              "raw_theme": "美国大范围热浪导致人口健康风险",
+              "risk_type": [
+                "极端天气风险",
+                "高温健康风险"
+              ],
+              "source_id": "usage_demo_write_path:ft_news:98965",
+              "event_time": "2025年7月4日前后",
+              "importance": 0.8,
+              "mid_topics": [
+                "美国东部中部地区高温",
+                "独立日期间热浪"
+              ],
+              "evidence_id": "kg_ev:financial:news_articles:usage_demo_write_path:ft_news:98965:60fd08a6aa7e3e2f",
+              "broad_topics": [
+                "美国热浪灾害",
+                "高温健康风险"
+              ],
+              "event_action": [
+                "热浪袭击",
+                "发布健康风险预警"
+              ],
+              "event_thread": [
+                "北美极端天气事件"
+              ],
+              "impact_target": [
+                "美国公众健康",
+                "人口密集地区"
+              ],
+              "parent_themes": [
+                "极端天气与气候风险",
+                "自然灾害与公共健康"
+              ],
+              "specific_topics": [
+                "超1.65亿人面临高风险",
+                "历史同期气温纪录刷新"
+              ],
+              "title_candidate": "美国极端热浪与公共健康风险",
+              "impact_direction": "negative",
+              "primary_chunk_id": "kg_chunk:kg_ev:financial:news_articles:usage_demo_write_path:ft_news:98965:60fd08a6aa7e3e2f:0",
+              "topic_level_hint": "broad",
+              "cognitive_card_id": "kg_cognitive_card:3ec97acc63b85eaf",
+              "source_published_at": "2026-07-05T02:01:59+00:00"
+            }
+          ],
+          "assignment_count": 4,
+          "assignments": [
+            {
+              "action": "create_new",
+              "reason": "现有候选community中无与自然灾害应急响应或台风防御相关的主题；当前topic_intent明确属于自然灾害应急响应范畴，需要创建可长期复用的L0父级主题以承接未来类似的应急响应事件。",
+              "weight": 1.0,
+              "fit_type": "new_parent_topic",
+              "intent_id": "kg_cognitive_card:8ced0261d2f3cf45:intent:1",
+              "confidence": 0.95,
+              "community_id": "new_1",
+              "intent_index": 1,
+              "assignment_id": "kg_community_assignment:de06d74c2c8c953d",
+              "cognitive_card_id": "kg_cognitive_card:8ced0261d2f3cf45",
+              "absorb_community_ids": [],
+              "resolved_community_id": "kgc:financial:l0:507",
+              "absorbed_from_community_id": "kgc:financial:l0:506"
+            },
+            {
+              "action": "attach_existing",
+              "reason": "当前主题为北京地区雷阵雨及冰雹预警，属于典型的自然灾害预警事件。候选社区 l0:506 的 scope 明确包括台风、暴雨、洪涝、地震等自然灾害的应急响应和预警发布，其 canonical_labels 包含 '极端天气事件'，并已吸收过台风应急响应等子方向。雷电、冰雹预警是该社区既有范围的合理延伸，因此直接挂入。",
+              "weight": 0.9,
+              "fit_type": "existing_direction",
+              "intent_id": "kg_cognitive_card:158107632f823b2c:intent:1",
+              "confidence": 0.95,
+              "community_id": "kgc:financial:l0:507",
+              "intent_index": 1,
+              "assignment_id": "kg_community_assignment:5bd8e88ca8913e14",
+              "cognitive_card_id": "kg_cognitive_card:158107632f823b2c",
+              "absorb_community_ids": [],
+              "resolved_community_id": "kgc:financial:l0:507",
+              "absorbed_from_community_id": "kgc:financial:l0:506"
+            },
+            {
+              "action": "attach_existing",
+              "reason": "当前topic_intent描述台风美莎克和季风引起的强降雨及高温变化，属于自然灾害范畴，与'自然灾害应急响应'的scope（台风、暴雨、应急响应等）直接匹配，可作为已有事件子方向归档。",
+              "weight": 0.9,
+              "fit_type": "existing_direction",
+              "intent_id": "kg_cognitive_card:833cf08c5be8d64a:intent:1",
+              "confidence": 0.95,
+              "community_id": "kgc:financial:l0:507",
+              "intent_index": 1,
+              "assignment_id": "kg_community_assignment:000389729761d061",
+              "cognitive_card_id": "kg_cognitive_card:833cf08c5be8d64a",
+              "absorb_community_ids": [],
+              "resolved_community_id": "kgc:financial:l0:507",
+              "absorbed_from_community_id": "kgc:financial:l0:506"
+            },
+            {
+              "action": "create_parent_and_absorb_existing",
+              "reason": "现有候选 community l0:506 '自然灾害应急响应' 只覆盖极端天气事件的应急响应阶段，粒度偏细；当前 topic_intent 描述美国热浪健康风险，属于更广泛的极端天气与气候风险范畴。创建新父主题 '极端天气与气候风险' 可稳定承接热浪、寒潮、暴雨、干旱等极端天气事件及其对公共健康、经济、基础设施的影响，同时将 l0:506 作为其应急响应子方向吸收，避免平级重复。",
+              "weight": 0.9,
+              "fit_type": "new_parent_topic",
+              "intent_id": "kg_cognitive_card:3ec97acc63b85eaf:intent:1",
+              "confidence": 0.85,
+              "community_id": "new_1",
+              "intent_index": 1,
+              "assignment_id": "kg_community_assignment:fd36e61d529c33dc",
+              "cognitive_card_id": "kg_cognitive_card:3ec97acc63b85eaf",
+              "absorb_community_ids": [
+                "kgc:financial:l0:506"
+              ],
+              "resolved_community_id": "kgc:financial:l0:507"
+            }
+          ],
+          "avg_assignment_weight": 0.925,
+          "canonical_labels": [
+            "极端天气与气候风险",
+            "自然灾害应急响应",
+            "台风灾害防御",
+            "自然灾害预警",
+            "极端天气",
+            "自然灾害"
+          ],
+          "chunk_count": 4,
+          "cognitive_card_count": 4,
+          "cognitive_card_ids": [
+            "kg_cognitive_card:8ced0261d2f3cf45",
+            "kg_cognitive_card:158107632f823b2c",
+            "kg_cognitive_card:833cf08c5be8d64a",
+            "kg_cognitive_card:3ec97acc63b85eaf"
+          ],
+          "community_builder": "cognitive_card_assignment_v1",
+          "coverage_contract": "可承接父主题：极端天气与气候风险、自然灾害应急响应、台风灾害防御、自然灾害预警、极端天气、自然灾害；可吸收子方向：极端天气事件、华南地区防灾、气象灾害、预警信号、台风影响、强降雨、高温天气、美国热浪灾害、高温健康风险、广西台风防御、雷..."
+        }
+      }
+    ],
+    "assignments": [
+      {
+        "assignment_id": "kg_community_assignment:df3619d357b1fae4",
+        "cognitive_card_id": "kg_cognitive_card:8ced0261d2f3cf45",
+        "intent_index": 1,
+        "community_id": "kgc:financial:l0:507",
+        "action": "create_new",
+        "weight": 1.0,
+        "confidence": 0.95,
+        "update_mode": "rewrite_summary",
+        "matched_reason": "fit_type=new_parent_topic; 现有候选community中无与自然灾害应急响应或台风防御相关的主题；当前topic_intent明确属于自然灾害应急响应范畴，需要创建可长期复用的L0父级主题以承接未来类似的应急...",
+        "reason": "fit_type=new_parent_topic; 现有候选community中无与自然灾害应急响应或台风防御相关的主题；当前topic_intent明确属于自然灾害应急响应范畴，需要创建可长期复用的L0父级主题以承接未来类似的应急...",
+        "status": "active"
+      },
+      {
+        "assignment_id": "kg_community_assignment:da13bfdb7f02506c",
+        "cognitive_card_id": "kg_cognitive_card:158107632f823b2c",
+        "intent_index": 1,
+        "community_id": "kgc:financial:l0:507",
+        "action": "attach_existing",
+        "weight": 0.9,
+        "confidence": 0.95,
+        "update_mode": "update_delta",
+        "matched_reason": "fit_type=existing_direction; 当前主题为北京地区雷阵雨及冰雹预警，属于典型的自然灾害预警事件。候选社区 l0:506 的 scope 明确包括台风、暴雨、洪涝、地震等自然灾害的应急响应和预警发布，其 can...",
+        "reason": "fit_type=existing_direction; 当前主题为北京地区雷阵雨及冰雹预警，属于典型的自然灾害预警事件。候选社区 l0:506 的 scope 明确包括台风、暴雨、洪涝、地震等自然灾害的应急响应和预警发布，其 can...",
+        "status": "active"
+      },
+      {
+        "assignment_id": "kg_community_assignment:073827ad8f509a30",
+        "cognitive_card_id": "kg_cognitive_card:833cf08c5be8d64a",
+        "intent_index": 1,
+        "community_id": "kgc:financial:l0:507",
+        "action": "attach_existing",
+        "weight": 0.9,
+        "confidence": 0.95,
+        "update_mode": "update_delta",
+        "matched_reason": "fit_type=existing_direction; 当前topic_intent描述台风美莎克和季风引起的强降雨及高温变化，属于自然灾害范畴，与'自然灾害应急响应'的scope（台风、暴雨、应急响应等）直接匹配，可作为已有事件子...",
+        "reason": "fit_type=existing_direction; 当前topic_intent描述台风美莎克和季风引起的强降雨及高温变化，属于自然灾害范畴，与'自然灾害应急响应'的scope（台风、暴雨、应急响应等）直接匹配，可作为已有事件子...",
+        "status": "active"
+      },
+      {
+        "assignment_id": "kg_community_assignment:fd36e61d529c33dc",
+        "cognitive_card_id": "kg_cognitive_card:3ec97acc63b85eaf",
+        "intent_index": 1,
+        "community_id": "kgc:financial:l0:507",
+        "action": "create_parent_and_absorb_existing",
+        "weight": 0.9,
+        "confidence": 0.85,
+        "update_mode": "rewrite_summary",
+        "matched_reason": "fit_type=new_parent_topic; 现有候选 community l0:506 '自然灾害应急响应' 只覆盖极端天气事件的应急响应阶段，粒度偏细；当前 topic_intent 描述美国热浪健康风险，属于更广泛的极端...",
+        "reason": "fit_type=new_parent_topic; 现有候选 community l0:506 '自然灾害应急响应' 只覆盖极端天气事件的应急响应阶段，粒度偏细；当前 topic_intent 描述美国热浪健康风险，属于更广泛的极端...",
+        "status": "active"
+      }
+    ],
+    "weather_like_community_count": 1,
+    "weather_like_communities": [
+      {
+        "community_id": "kgc:financial:l0:507",
+        "version_id": "kgc:financial:l0:507:v:5a5851e9c8325d13",
+        "projection": "cognitive_topic",
+        "level": 0,
+        "parent_community_id": "",
+        "title": "极端天气与气候风险",
+        "summary": "极端天气与气候风险 聚合了 4 个来源、4 个 chunk 的认知信号。 父级主题：自然灾害应急响应；台风灾害防御；自然灾害预警；极端天气；自然灾害；气象灾害。 主要线索：台风应急响应升级；北京地区雷阵雨及冰雹预警；台风美莎克和季风气流引起的大范围强降雨；美国大范围热浪导致人口健康风险；广西台风防御；雷阵雨。 影响对象：东兴市；台风影响区域；北京市；华南；长江中下游；广西；贵州；湖南。 风险线索：自然灾害风险；台风风险；自然灾害；暴雨致灾；高温天气；极端天气风险。",
+        "member_nodes": 0,
+        "member_edges": 0,
+        "evidence": 4,
+        "chunks": 4,
+        "status": "active",
+        "lineage_id": "kg_community_lineage:3bcb0df658ef359e",
+        "previous_version_id": "",
+        "change_reason": "cognitive_assignment",
+        "metrics": {
+          "absorbed_community_ids": [
+            "kgc:financial:l0:506"
+          ],
+          "assigned_intent_count": 4,
+          "assigned_intents": [
+            {
+              "actors": [
+                "东兴市防汛抗旱指挥部",
+                "东兴市气象局"
+              ],
+              "driver": [
+                "台风气象灾害"
+              ],
+              "summary": "广西东兴市将防御台风三级应急响应提升为二级，气象局同步提升气象灾害应急响应至Ⅱ级。",
+              "chunk_ids": [
+                "kg_chunk:kg_ev:financial:news_articles:usage_demo_write_path:ft_news:95281:b77d2ef5a767a73b:0"
+              ],
+              "intent_id": "kg_cognitive_card:8ced0261d2f3cf45:intent:1",
+              "raw_theme": "台风应急响应升级",
+              "risk_type": [
+                "自然灾害风险",
+                "台风风险"
+              ],
+              "source_id": "usage_demo_write_path:ft_news:95281",
+              "event_time": "7月5日",
+              "importance": 0.6,
+              "mid_topics": [
+                "广西台风防御"
+              ],
+              "evidence_id": "kg_ev:financial:news_articles:usage_demo_write_path:ft_news:95281:b77d2ef5a767a73b",
+              "broad_topics": [
+                "极端天气事件",
+                "华南地区防灾"
+              ],
+              "event_action": [
+                "提升应急响应等级"
+              ],
+              "event_thread": [
+                "2023年台风应急响应"
+              ],
+              "impact_target": [
+                "东兴市",
+                "台风影响区域"
+              ],
+              "parent_themes": [
+                "自然灾害应急响应",
+                "台风灾害防御"
+              ],
+              "specific_topics": [
+                "东兴市台风应急响应升级"
+              ],
+              "title_candidate": "台风应急响应升级",
+              "impact_direction": "negative",
+              "primary_chunk_id": "kg_chunk:kg_ev:financial:news_articles:usage_demo_write_path:ft_news:95281:b77d2ef5a767a73b:0",
+              "topic_level_hint": "specific",
+              "cognitive_card_id": "kg_cognitive_card:8ced0261d2f3cf45",
+              "source_published_at": "2026-07-04T23:56:39+00:00"
+            },
+            {
+              "actors": [
+                "北京市气象局"
+              ],
+              "driver": [
+                "气象条件"
+              ],
+              "summary": "北京市气象局发布雷电黄色预警，预计有雷阵雨、阵风及冰雹，需防范。",
+              "chunk_ids": [
+                "kg_chunk:kg_ev:financial:news_articles:usage_demo_write_path:ft_news:98163:9d6ddc4c11d2b56d:0"
+              ],
+              "intent_id": "kg_cognitive_card:158107632f823b2c:intent:1",
+              "raw_theme": "北京地区雷阵雨及冰雹预警",
+              "risk_type": [
+                "自然灾害"
+              ],
+              "source_id": "usage_demo_write_path:ft_news:98163",
+              "event_time": "7月5日9时",
+              "importance": 0.7,
+              "mid_topics": [
+                "雷阵雨",
+                "冰雹",
+                "强风"
+              ],
+              "evidence_id": "kg_ev:financial:news_articles:usage_demo_write_path:ft_news:98163:9d6ddc4c11d2b56d",
+              "broad_topics": [
+                "气象灾害",
+                "预警信号"
+              ],
+              "event_action": [
+                "发布预警"
+              ],
+              "event_thread": [
+                "天气预警事件"
+              ],
+              "impact_target": [
+                "北京市"
+              ],
+              "parent_themes": [
+                "自然灾害预警",
+                "极端天气"
+              ],
+              "specific_topics": [
+                "北京市预警",
+                "延庆等区县防范"
+              ],
+              "title_candidate": "北京发布雷电黄色预警",
+              "impact_direction": "negative",
+              "primary_chunk_id": "kg_chunk:kg_ev:financial:news_articles:usage_demo_write_path:ft_news:98163:9d6ddc4c11d2b56d:0",
+              "topic_level_hint": "mid",
+              "cognitive_card_id": "kg_cognitive_card:158107632f823b2c",
+              "source_published_at": "2026-07-05T01:46:27+00:00"
+            },
+            {
+              "actors": [],
+              "driver": [
+                "台风",
+                "季风气流",
+                "大气环流"
+              ],
+              "summary": "台风和季风导致华南至长江中下游强降雨持续，警惕暴雨致灾；北方降雨增多缓解高温，西南东部江南东部仍多高温闷热。",
+              "chunk_ids": [
+                "kg_chunk:kg_ev:financial:news_articles:usage_demo_write_path:ft_news:98164:d2c187292aedeb31:0"
+              ],
+              "intent_id": "kg_cognitive_card:833cf08c5be8d64a:intent:1",
+              "raw_theme": "台风美莎克和季风气流引起的大范围强降雨",
+              "risk_type": [
+                "暴雨致灾",
+                "高温天气"
+              ],
+              "source_id": "usage_demo_write_path:ft_news:98164",
+              "event_time": "7月5日至7日",
+              "importance": 0.6,
+              "mid_topics": [
+                "华南强降雨",
+                "北方降雨增多",
+                "高温缩减",
+                "高温闷热"
+              ],
+              "evidence_id": "kg_ev:financial:news_articles:usage_demo_write_path:ft_news:98164:d2c187292aedeb31",
+              "broad_topics": [
+                "台风影响",
+                "强降雨",
+                "高温天气"
+              ],
+              "event_action": [
+                "强降雨持续",
+                "暴雨预警",
+                "高温缩减"
+              ],
+              "event_thread": [
+                "台风美莎克路径与影响",
+                "2024年7月中国天气"
+              ],
+              "impact_target": [
+                "华南",
+                "长江中下游",
+                "广西",
+                "贵州",
+                "湖南",
+                "华北",
+                "黄淮",
+                "西南东部"
+              ],
+              "parent_themes": [
+                "自然灾害",
+                "气象灾害"
+              ],
+              "specific_topics": [
+                "台风美莎克",
+                "广西贵州暴雨",
+                "湖南暴雨",
+                "华北黄淮高温缩减",
+                "西南东部高温"
+              ],
+              "title_candidate": "华南持续性暴雨与北方高温缩减",
+              "impact_direction": "mixed",
+              "primary_chunk_id": "kg_chunk:kg_ev:financial:news_articles:usage_demo_write_path:ft_news:98164:d2c187292aedeb31:0",
+              "topic_level_hint": "mixed",
+              "cognitive_card_id": "kg_cognitive_card:833cf08c5be8d64a",
+              "source_published_at": "2026-07-05T01:46:02+00:00"
+            },
+            {
+              "actors": [
+                "美国国家气象局",
+                "美国公众"
+              ],
+              "driver": [
+                "气候异常",
+                "热浪天气系统"
+              ],
+              "summary": "罕见热浪席卷美国东部和中部，预计超1.65亿人面临重大或极端高温健康风险，多地刷新气温纪录。",
+              "chunk_ids": [
+                "kg_chunk:kg_ev:financial:news_articles:usage_demo_write_path:ft_news:98965:60fd08a6aa7e3e2f:0"
+              ],
+              "intent_id": "kg_cognitive_card:3ec97acc63b85eaf:intent:1",
+              "raw_theme": "美国大范围热浪导致人口健康风险",
+              "risk_type": [
+                "极端天气风险",
+                "高温健康风险"
+              ],
+              "source_id": "usage_demo_write_path:ft_news:98965",
+              "event_time": "2025年7月4日前后",
+              "importance": 0.8,
+              "mid_topics": [
+                "美国东部中部地区高温",
+                "独立日期间热浪"
+              ],
+              "evidence_id": "kg_ev:financial:news_articles:usage_demo_write_path:ft_news:98965:60fd08a6aa7e3e2f",
+              "broad_topics": [
+                "美国热浪灾害",
+                "高温健康风险"
+              ],
+              "event_action": [
+                "热浪袭击",
+                "发布健康风险预警"
+              ],
+              "event_thread": [
+                "北美极端天气事件"
+              ],
+              "impact_target": [
+                "美国公众健康",
+                "人口密集地区"
+              ],
+              "parent_themes": [
+                "极端天气与气候风险",
+                "自然灾害与公共健康"
+              ],
+              "specific_topics": [
+                "超1.65亿人面临高风险",
+                "历史同期气温纪录刷新"
+              ],
+              "title_candidate": "美国极端热浪与公共健康风险",
+              "impact_direction": "negative",
+              "primary_chunk_id": "kg_chunk:kg_ev:financial:news_articles:usage_demo_write_path:ft_news:98965:60fd08a6aa7e3e2f:0",
+              "topic_level_hint": "broad",
+              "cognitive_card_id": "kg_cognitive_card:3ec97acc63b85eaf",
+              "source_published_at": "2026-07-05T02:01:59+00:00"
+            }
+          ],
+          "assignment_count": 4,
+          "assignments": [
+            {
+              "action": "create_new",
+              "reason": "现有候选community中无与自然灾害应急响应或台风防御相关的主题；当前topic_intent明确属于自然灾害应急响应范畴，需要创建可长期复用的L0父级主题以承接未来类似的应急响应事件。",
+              "weight": 1.0,
+              "fit_type": "new_parent_topic",
+              "intent_id": "kg_cognitive_card:8ced0261d2f3cf45:intent:1",
+              "confidence": 0.95,
+              "community_id": "new_1",
+              "intent_index": 1,
+              "assignment_id": "kg_community_assignment:de06d74c2c8c953d",
+              "cognitive_card_id": "kg_cognitive_card:8ced0261d2f3cf45",
+              "absorb_community_ids": [],
+              "resolved_community_id": "kgc:financial:l0:507",
+              "absorbed_from_community_id": "kgc:financial:l0:506"
+            },
+            {
+              "action": "attach_existing",
+              "reason": "当前主题为北京地区雷阵雨及冰雹预警，属于典型的自然灾害预警事件。候选社区 l0:506 的 scope 明确包括台风、暴雨、洪涝、地震等自然灾害的应急响应和预警发布，其 canonical_labels 包含 '极端天气事件'，并已吸收过台风应急响应等子方向。雷电、冰雹预警是该社区既有范围的合理延伸，因此直接挂入。",
+              "weight": 0.9,
+              "fit_type": "existing_direction",
+              "intent_id": "kg_cognitive_card:158107632f823b2c:intent:1",
+              "confidence": 0.95,
+              "community_id": "kgc:financial:l0:507",
+              "intent_index": 1,
+              "assignment_id": "kg_community_assignment:5bd8e88ca8913e14",
+              "cognitive_card_id": "kg_cognitive_card:158107632f823b2c",
+              "absorb_community_ids": [],
+              "resolved_community_id": "kgc:financial:l0:507",
+              "absorbed_from_community_id": "kgc:financial:l0:506"
+            },
+            {
+              "action": "attach_existing",
+              "reason": "当前topic_intent描述台风美莎克和季风引起的强降雨及高温变化，属于自然灾害范畴，与'自然灾害应急响应'的scope（台风、暴雨、应急响应等）直接匹配，可作为已有事件子方向归档。",
+              "weight": 0.9,
+              "fit_type": "existing_direction",
+              "intent_id": "kg_cognitive_card:833cf08c5be8d64a:intent:1",
+              "confidence": 0.95,
+              "community_id": "kgc:financial:l0:507",
+              "intent_index": 1,
+              "assignment_id": "kg_community_assignment:000389729761d061",
+              "cognitive_card_id": "kg_cognitive_card:833cf08c5be8d64a",
+              "absorb_community_ids": [],
+              "resolved_community_id": "kgc:financial:l0:507",
+              "absorbed_from_community_id": "kgc:financial:l0:506"
+            },
+            {
+              "action": "create_parent_and_absorb_existing",
+              "reason": "现有候选 community l0:506 '自然灾害应急响应' 只覆盖极端天气事件的应急响应阶段，粒度偏细；当前 topic_intent 描述美国热浪健康风险，属于更广泛的极端天气与气候风险范畴。创建新父主题 '极端天气与气候风险' 可稳定承接热浪、寒潮、暴雨、干旱等极端天气事件及其对公共健康、经济、基础设施的影响，同时将 l0:506 作为其应急响应子方向吸收，避免平级重复。",
+              "weight": 0.9,
+              "fit_type": "new_parent_topic",
+              "intent_id": "kg_cognitive_card:3ec97acc63b85eaf:intent:1",
+              "confidence": 0.85,
+              "community_id": "new_1",
+              "intent_index": 1,
+              "assignment_id": "kg_community_assignment:fd36e61d529c33dc",
+              "cognitive_card_id": "kg_cognitive_card:3ec97acc63b85eaf",
+              "absorb_community_ids": [
+                "kgc:financial:l0:506"
+              ],
+              "resolved_community_id": "kgc:financial:l0:507"
+            }
+          ],
+          "avg_assignment_weight": 0.925,
+          "canonical_labels": [
+            "极端天气与气候风险",
+            "自然灾害应急响应",
+            "台风灾害防御",
+            "自然灾害预警",
+            "极端天气",
+            "自然灾害"
+          ],
+          "chunk_count": 4,
+          "cognitive_card_count": 4,
+          "cognitive_card_ids": [
+            "kg_cognitive_card:8ced0261d2f3cf45",
+            "kg_cognitive_card:158107632f823b2c",
+            "kg_cognitive_card:833cf08c5be8d64a",
+            "kg_cognitive_card:3ec97acc63b85eaf"
+          ],
+          "community_builder": "cognitive_card_assignment_v1",
+          "coverage_contract": "可承接父主题：极端天气与气候风险、自然灾害应急响应、台风灾害防御、自然灾害预警、极端天气、自然灾害；可吸收子方向：极端天气事件、华南地区防灾、气象灾害、预警信号、台风影响、强降雨、高温天气、美国热浪灾害、高温健康风险、广西台风防御、雷..."
+        }
+      }
+    ],
+    "split_stage_titles": [],
+    "passed": true,
+    "expected_after_fix": "所有气象灾害、预警发布、应急响应和后续影响应归入同一个更稳定的父级 L0；不应同时出现“气象灾害”“气象灾害预警”“自然灾害应急响应”这类平级拆分。"
+  },
+  "milvus_get_by_ids": {
+    "requested_groups": {
+      "chunk": [
+        "kg_chunk:kg_ev:financial:news_articles:usage_demo_write_path:ft_news:95281:b77d2ef5a767a73b:0",
+        "kg_chunk:kg_ev:financial:news_articles:usage_demo_write_path:ft_news:98163:9d6ddc4c11d2b56d:0",
+        "kg_chunk:kg_ev:financial:news_articles:usage_demo_write_path:ft_news:98164:d2c187292aedeb31:0",
+        "kg_chunk:kg_ev:financial:news_articles:usage_demo_write_path:ft_news:98965:60fd08a6aa7e3e2f:0"
+      ],
+      "community": [
+        "kgc:financial:l0:507"
+      ]
+    },
+    "requested_target_ids": [
+      "kg_chunk:kg_ev:financial:news_articles:usage_demo_write_path:ft_news:95281:b77d2ef5a767a73b:0",
+      "kg_chunk:kg_ev:financial:news_articles:usage_demo_write_path:ft_news:98163:9d6ddc4c11d2b56d:0",
+      "kg_chunk:kg_ev:financial:news_articles:usage_demo_write_path:ft_news:98164:d2c187292aedeb31:0",
+      "kg_chunk:kg_ev:financial:news_articles:usage_demo_write_path:ft_news:98965:60fd08a6aa7e3e2f:0",
+      "kgc:financial:l0:507"
+    ],
+    "requested_counts": {
+      "chunk": 4,
+      "community": 1
+    },
+    "hit_count": 5,
+    "hit_counts": {
+      "chunk": 4,
+      "community": 1
+    },
+    "hits": [
+      {
+        "hit_id": "kg_chunk:kg_ev:financial:news_articles:usage_demo_write_path:ft_news:95281:b77d2ef5a767a73b:0",
+        "hit_type": "evidence",
+        "title": "【广西东兴市将防御台风三级应急响应提升为二级应急响应】根据东兴市气象信息，东兴市气象局已于7月5日3时40分提升重大气象灾害（台风）Ⅳ级应急响应为Ⅱ级应急响应。",
+        "score": 1.0,
+        "source": "semantic_hybrid",
+        "source_channels": [],
+        "node_refs": [],
+        "edge_refs": [],
+        "evidence_refs": [
+          "kg_ev:financial:news_articles:usage_demo_write_path:ft_news:95281:b77d2ef5a767a73b"
+        ],
+        "snippet": "Document Type: Evidence Chunk Title: 【广西东兴市将防御台风三级应急响应提升为二级应急响应】根据东兴市气象信息，东兴市气象局已于7月5日3时40分提升重大气象灾害（台风）Ⅳ级应急响应为Ⅱ级应急响应。 Summary: Evidence: kg_ev:financial:news_articles:usage_demo_write_path:ft_news:95281:b77d2ef5a767a73b Source: news_arti..."
+      },
+      {
+        "hit_id": "kg_chunk:kg_ev:financial:news_articles:usage_demo_write_path:ft_news:98163:9d6ddc4c11d2b56d:0",
+        "hit_type": "evidence",
+        "title": "【北京市发布雷电黄色预警 部分地区或有冰雹】北京市气象局7月5日9时发布雷电黄色预警信号：预计14时至23时，北京市自西北向东南将先后出现雷阵雨天气，影响城区的",
+        "score": 1.0,
+        "source": "semantic_hybrid",
+        "source_channels": [],
+        "node_refs": [],
+        "edge_refs": [],
+        "evidence_refs": [
+          "kg_ev:financial:news_articles:usage_demo_write_path:ft_news:98163:9d6ddc4c11d2b56d"
+        ],
+        "snippet": "Document Type: Evidence Chunk Title: 【北京市发布雷电黄色预警 部分地区或有冰雹】北京市气象局7月5日9时发布雷电黄色预警信号：预计14时至23时，北京市自西北向东南将先后出现雷阵雨天气，影响城区的 Summary: Evidence: kg_ev:financial:news_articles:usage_demo_write_path:ft_news:98163:9d6ddc4c11d2b56d Source: news_arti..."
+      },
+      {
+        "hit_id": "kg_chunk:kg_ev:financial:news_articles:usage_demo_write_path:ft_news:98164:d2c187292aedeb31:0",
+        "hit_type": "evidence",
+        "title": "【广西贵州等地强降雨持续 北方降雨增多高温范围缩减】受台风“美莎克”和季风气流共同影响，未来三天（7月5日至7日），华南至长江中下游一带强降雨持续，广西、贵州、",
+        "score": 1.0,
+        "source": "semantic_hybrid",
+        "source_channels": [],
+        "node_refs": [],
+        "edge_refs": [],
+        "evidence_refs": [
+          "kg_ev:financial:news_articles:usage_demo_write_path:ft_news:98164:d2c187292aedeb31"
+        ],
+        "snippet": "Document Type: Evidence Chunk Title: 【广西贵州等地强降雨持续 北方降雨增多高温范围缩减】受台风“美莎克”和季风气流共同影响，未来三天（7月5日至7日），华南至长江中下游一带强降雨持续，广西、贵州、 Summary: Evidence: kg_ev:financial:news_articles:usage_demo_write_path:ft_news:98164:d2c187292aedeb31 Source: news_arti..."
+      },
+      {
+        "hit_id": "kg_chunk:kg_ev:financial:news_articles:usage_demo_write_path:ft_news:98965:60fd08a6aa7e3e2f:0",
+        "hit_type": "evidence",
+        "title": "【罕见热浪来袭 预计美国超1.65亿人面临高温健康风险】近期，一场大范围罕见热浪正席卷美国东部和中部地区，多地刷新历史同期最高气温纪录。据美国国家气象局预测，7",
+        "score": 1.0,
+        "source": "semantic_hybrid",
+        "source_channels": [],
+        "node_refs": [],
+        "edge_refs": [],
+        "evidence_refs": [
+          "kg_ev:financial:news_articles:usage_demo_write_path:ft_news:98965:60fd08a6aa7e3e2f"
+        ],
+        "snippet": "Document Type: Evidence Chunk Title: 【罕见热浪来袭 预计美国超1.65亿人面临高温健康风险】近期，一场大范围罕见热浪正席卷美国东部和中部地区，多地刷新历史同期最高气温纪录。据美国国家气象局预测，7 Summary: Evidence: kg_ev:financial:news_articles:usage_demo_write_path:ft_news:98965:60fd08a6aa7e3e2f Source: news_arti..."
+      },
+      {
+        "hit_id": "kgc:financial:l0:507",
+        "hit_type": "semantic_hybrid",
+        "title": "极端天气与气候风险",
+        "score": 1.0,
+        "source": "semantic_hybrid",
+        "source_channels": [
+          "semantic_hybrid"
+        ],
+        "node_refs": [],
+        "edge_refs": [],
+        "evidence_refs": [
+          "kg_ev:financial:news_articles:usage_demo_write_path:ft_news:95281:b77d2ef5a767a73b",
+          "kg_ev:financial:news_articles:usage_demo_write_path:ft_news:98163:9d6ddc4c11d2b56d",
+          "kg_ev:financial:news_articles:usage_demo_write_path:ft_news:98164:d2c187292aedeb31",
+          "kg_ev:financial:news_articles:usage_demo_write_path:ft_news:98965:60fd08a6aa7e3e2f"
+        ],
+        "snippet": "Document Type: Community Report Community: 极端天气与气候风险 Projection: cognitive_topic Community Level: 0 Origin: emergent Maturity: multi_evidence Directory Scope: 承接极端天气事件（热浪、寒潮、暴雨、洪涝、干旱、飓风等）的发生、影响及应急响应，包括对公共健康、基础设施、经济活动和市场情绪的影响。涵盖气象预警、灾害应急、..."
+      }
+    ]
+  },
+  "milvus_semantic_search": {
+    "query": "最近气象灾害、预警发布和应急响应是否被归并到同一高维主题？",
+    "hit_count": 32,
+    "demo_scope_hit_count": 9,
+    "diagnostics": {
+      "query": "最近气象灾害、预警发布和应急响应是否被归并到同一高维主题？",
+      "expanded_query": "最近气象灾害、预警发布和应急响应是否被归并到同一高维主题？",
+      "collection_limits": {
+        "chunk": 12,
+        "cognitive_card": 12,
+        "community": 8
+      },
+      "per_collection_raw_hits": {
+        "chunk": 36,
+        "cognitive_card": 36,
+        "community": 20
+      },
+      "per_collection_selected_hits": {
+        "chunk": 12,
+        "cognitive_card": 12,
+        "community": 8
+      },
+      "per_collection_latency_ms": {
+        "chunk": 11.2,
+        "cognitive_card": 13.3,
+        "community": 142.8
+      },
+      "total_raw_hits": 92,
+      "total_selected_hits": 32
+    },
+    "hits": [
+      {
+        "hit_id": "kg_chunk:kg_ev:financial:policy_news:ft_news:103033:e4a56876d64be08d:0",
+        "hit_type": "evidence",
+        "title": "【主汛期台风和暴雨愈加频繁 国家防总办公室调度部署重点地区防汛防台风工作】国家防总办公室、应急管理部组织中国气象局、水利部、自然资源部、住房和城乡建设部、交通运",
+        "score": 0.0164,
+        "source": "semantic_hybrid",
+        "source_channels": [],
+        "node_refs": [],
+        "edge_refs": [],
+        "evidence_refs": [
+          "kg_ev:financial:policy_news:ft_news:103033:e4a56876d64be08d"
+        ],
+        "snippet": "Document Type: Evidence Chunk Title: 【主汛期台风和暴雨愈加频繁 国家防总办公室调度部署重点地区防汛防台风工作】国家防总办公室、应急管理部组织中国气象局、水利部、自然资源部、住房和城乡建设部、交通运 Summary: Evidence: kg_ev:financial:policy_news:ft_news:103033:e4a56876d64be08d Source: policy_news:ft_news:103033 Sourc..."
+      },
+      {
+        "hit_id": "kg_chunk:kg_ev:financial:news_articles:ft_news:98163:9d6ddc4c11d2b56d:0",
+        "hit_type": "evidence",
+        "title": "【北京市发布雷电黄色预警 部分地区或有冰雹】北京市气象局7月5日9时发布雷电黄色预警信号：预计14时至23时，北京市自西北向东南将先后出现雷阵雨天气，影响城区的",
+        "score": 0.0161,
+        "source": "semantic_hybrid",
+        "source_channels": [],
+        "node_refs": [],
+        "edge_refs": [],
+        "evidence_refs": [
+          "kg_ev:financial:news_articles:ft_news:98163:9d6ddc4c11d2b56d"
+        ],
+        "snippet": "Document Type: Evidence Chunk Title: 【北京市发布雷电黄色预警 部分地区或有冰雹】北京市气象局7月5日9时发布雷电黄色预警信号：预计14时至23时，北京市自西北向东南将先后出现雷阵雨天气，影响城区的 Summary: Evidence: kg_ev:financial:news_articles:ft_news:98163:9d6ddc4c11d2b56d Source: news_articles:ft_news:98163 Sou..."
+      },
+      {
+        "hit_id": "kg_chunk:kg_ev:financial:news_articles:usage_demo_write_path:ft_news:98965:60fd08a6aa7e3e2f:0",
+        "hit_type": "evidence",
+        "title": "【罕见热浪来袭 预计美国超1.65亿人面临高温健康风险】近期，一场大范围罕见热浪正席卷美国东部和中部地区，多地刷新历史同期最高气温纪录。据美国国家气象局预测，7",
+        "score": 0.0159,
+        "source": "semantic_hybrid",
+        "source_channels": [],
+        "node_refs": [],
+        "edge_refs": [],
+        "evidence_refs": [
+          "kg_ev:financial:news_articles:usage_demo_write_path:ft_news:98965:60fd08a6aa7e3e2f"
+        ],
+        "snippet": "Document Type: Evidence Chunk Title: 【罕见热浪来袭 预计美国超1.65亿人面临高温健康风险】近期，一场大范围罕见热浪正席卷美国东部和中部地区，多地刷新历史同期最高气温纪录。据美国国家气象局预测，7 Summary: Evidence: kg_ev:financial:news_articles:usage_demo_write_path:ft_news:98965:60fd08a6aa7e3e2f Source: news_arti..."
+      },
+      {
+        "hit_id": "kg_chunk:kg_ev:financial:news_articles:usage_demo_write_path:ft_news:95281:b77d2ef5a767a73b:0",
+        "hit_type": "evidence",
+        "title": "【广西东兴市将防御台风三级应急响应提升为二级应急响应】根据东兴市气象信息，东兴市气象局已于7月5日3时40分提升重大气象灾害（台风）Ⅳ级应急响应为Ⅱ级应急响应。",
+        "score": 0.0156,
+        "source": "semantic_hybrid",
+        "source_channels": [],
+        "node_refs": [],
+        "edge_refs": [],
+        "evidence_refs": [
+          "kg_ev:financial:news_articles:usage_demo_write_path:ft_news:95281:b77d2ef5a767a73b"
+        ],
+        "snippet": "Document Type: Evidence Chunk Title: 【广西东兴市将防御台风三级应急响应提升为二级应急响应】根据东兴市气象信息，东兴市气象局已于7月5日3时40分提升重大气象灾害（台风）Ⅳ级应急响应为Ⅱ级应急响应。 Summary: Evidence: kg_ev:financial:news_articles:usage_demo_write_path:ft_news:95281:b77d2ef5a767a73b Source: news_arti..."
+      },
+      {
+        "hit_id": "kg_chunk:kg_ev:financial:news_articles:ft_news:98965:60fd08a6aa7e3e2f:0",
+        "hit_type": "evidence",
+        "title": "【罕见热浪来袭 预计美国超1.65亿人面临高温健康风险】近期，一场大范围罕见热浪正席卷美国东部和中部地区，多地刷新历史同期最高气温纪录。据美国国家气象局预测，7",
+        "score": 0.0154,
+        "source": "semantic_hybrid",
+        "source_channels": [],
+        "node_refs": [],
+        "edge_refs": [],
+        "evidence_refs": [
+          "kg_ev:financial:news_articles:ft_news:98965:60fd08a6aa7e3e2f"
+        ],
+        "snippet": "Document Type: Evidence Chunk Title: 【罕见热浪来袭 预计美国超1.65亿人面临高温健康风险】近期，一场大范围罕见热浪正席卷美国东部和中部地区，多地刷新历史同期最高气温纪录。据美国国家气象局预测，7 Summary: Evidence: kg_ev:financial:news_articles:ft_news:98965:60fd08a6aa7e3e2f Source: news_articles:ft_news:98965 Sou..."
+      },
+      {
+        "hit_id": "kg_chunk:kg_ev:financial:news_articles:ft_news:95281:b77d2ef5a767a73b:0",
+        "hit_type": "evidence",
+        "title": "【广西东兴市将防御台风三级应急响应提升为二级应急响应】根据东兴市气象信息，东兴市气象局已于7月5日3时40分提升重大气象灾害（台风）Ⅳ级应急响应为Ⅱ级应急响应。",
+        "score": 0.0152,
+        "source": "semantic_hybrid",
+        "source_channels": [],
+        "node_refs": [],
+        "edge_refs": [],
+        "evidence_refs": [
+          "kg_ev:financial:news_articles:ft_news:95281:b77d2ef5a767a73b"
+        ],
+        "snippet": "Document Type: Evidence Chunk Title: 【广西东兴市将防御台风三级应急响应提升为二级应急响应】根据东兴市气象信息，东兴市气象局已于7月5日3时40分提升重大气象灾害（台风）Ⅳ级应急响应为Ⅱ级应急响应。 Summary: Evidence: kg_ev:financial:news_articles:ft_news:95281:b77d2ef5a767a73b Source: news_articles:ft_news:95281 Sou..."
+      },
+      {
+        "hit_id": "kg_chunk:kg_ev:financial:news_articles:ft_news:102337:252b6b386fa89dc0:0",
+        "hit_type": "evidence",
+        "title": "【受高温影响 美国华盛顿附近一地铁列车脱轨】一辆地铁列车当地时间4日在与华盛顿特区交界的马里兰州乔治王子县发生脱轨事故，车上人员紧急疏散，没有造成人员受伤。地铁",
+        "score": 0.0149,
+        "source": "semantic_hybrid",
+        "source_channels": [],
+        "node_refs": [],
+        "edge_refs": [],
+        "evidence_refs": [
+          "kg_ev:financial:news_articles:ft_news:102337:252b6b386fa89dc0"
+        ],
+        "snippet": "Document Type: Evidence Chunk Title: 【受高温影响 美国华盛顿附近一地铁列车脱轨】一辆地铁列车当地时间4日在与华盛顿特区交界的马里兰州乔治王子县发生脱轨事故，车上人员紧急疏散，没有造成人员受伤。地铁 Summary: Evidence: kg_ev:financial:news_articles:ft_news:102337:252b6b386fa89dc0 Source: news_articles:ft_news:102337 S..."
+      },
+      {
+        "hit_id": "kg_chunk:kg_ev:financial:news_articles:usage_demo_write_path:ft_news:98163:9d6ddc4c11d2b56d:0",
+        "hit_type": "evidence",
+        "title": "【北京市发布雷电黄色预警 部分地区或有冰雹】北京市气象局7月5日9时发布雷电黄色预警信号：预计14时至23时，北京市自西北向东南将先后出现雷阵雨天气，影响城区的",
+        "score": 0.0147,
+        "source": "semantic_hybrid",
+        "source_channels": [],
+        "node_refs": [],
+        "edge_refs": [],
+        "evidence_refs": [
+          "kg_ev:financial:news_articles:usage_demo_write_path:ft_news:98163:9d6ddc4c11d2b56d"
+        ],
+        "snippet": "Document Type: Evidence Chunk Title: 【北京市发布雷电黄色预警 部分地区或有冰雹】北京市气象局7月5日9时发布雷电黄色预警信号：预计14时至23时，北京市自西北向东南将先后出现雷阵雨天气，影响城区的 Summary: Evidence: kg_ev:financial:news_articles:usage_demo_write_path:ft_news:98163:9d6ddc4c11d2b56d Source: news_arti..."
+      },
+      {
+        "hit_id": "kg_chunk:kg_ev:financial:news_articles:usage_demo_write_path:ft_news:98164:d2c187292aedeb31:0",
+        "hit_type": "evidence",
+        "title": "【广西贵州等地强降雨持续 北方降雨增多高温范围缩减】受台风“美莎克”和季风气流共同影响，未来三天（7月5日至7日），华南至长江中下游一带强降雨持续，广西、贵州、",
+        "score": 0.0145,
+        "source": "semantic_hybrid",
+        "source_channels": [],
+        "node_refs": [],
+        "edge_refs": [],
+        "evidence_refs": [
+          "kg_ev:financial:news_articles:usage_demo_write_path:ft_news:98164:d2c187292aedeb31"
+        ],
+        "snippet": "Document Type: Evidence Chunk Title: 【广西贵州等地强降雨持续 北方降雨增多高温范围缩减】受台风“美莎克”和季风气流共同影响，未来三天（7月5日至7日），华南至长江中下游一带强降雨持续，广西、贵州、 Summary: Evidence: kg_ev:financial:news_articles:usage_demo_write_path:ft_news:98164:d2c187292aedeb31 Source: news_arti..."
+      },
+      {
+        "hit_id": "kg_chunk:kg_ev:financial:news_articles:ft_news:98164:d2c187292aedeb31:0",
+        "hit_type": "evidence",
+        "title": "【广西贵州等地强降雨持续 北方降雨增多高温范围缩减】受台风“美莎克”和季风气流共同影响，未来三天（7月5日至7日），华南至长江中下游一带强降雨持续，广西、贵州、",
+        "score": 0.0143,
+        "source": "semantic_hybrid",
+        "source_channels": [],
+        "node_refs": [],
+        "edge_refs": [],
+        "evidence_refs": [
+          "kg_ev:financial:news_articles:ft_news:98164:d2c187292aedeb31"
+        ],
+        "snippet": "Document Type: Evidence Chunk Title: 【广西贵州等地强降雨持续 北方降雨增多高温范围缩减】受台风“美莎克”和季风气流共同影响，未来三天（7月5日至7日），华南至长江中下游一带强降雨持续，广西、贵州、 Summary: Evidence: kg_ev:financial:news_articles:ft_news:98164:d2c187292aedeb31 Source: news_articles:ft_news:98164 Sou..."
+      },
+      {
+        "hit_id": "kg_chunk:kg_ev:financial:news_articles:ft_news:103032:3c98796a64ef8311:0",
+        "hit_type": "evidence",
+        "title": "【受台风“美莎克”影响 广西多条河流多个站超警】受今年第10号台风“美莎克”影响，7月4日8时至5日8时，据广西水文中心监测，防城港、钦州、南宁、崇左及北海等市",
+        "score": 0.0141,
+        "source": "semantic_hybrid",
+        "source_channels": [],
+        "node_refs": [],
+        "edge_refs": [],
+        "evidence_refs": [
+          "kg_ev:financial:news_articles:ft_news:103032:3c98796a64ef8311"
+        ],
+        "snippet": "Document Type: Evidence Chunk Title: 【受台风“美莎克”影响 广西多条河流多个站超警】受今年第10号台风“美莎克”影响，7月4日8时至5日8时，据广西水文中心监测，防城港、钦州、南宁、崇左及北海等市 Summary: Evidence: kg_ev:financial:news_articles:ft_news:103032:3c98796a64ef8311 Source: news_articles:ft_news:103032 S..."
+      },
+      {
+        "hit_id": "kg_chunk:kg_ev:financial:news_articles:ft_news:102336:6f133aa554656d1c:0",
+        "hit_type": "evidence",
+        "title": "【俄罗斯新识别系统可强制民用无人机降落】据俄罗斯媒体近日报道，该国企业开发出一款名为“红色按钮”的无人机识别系统，可在紧急情况下强制降落民用无人机。",
+        "score": 0.0139,
+        "source": "semantic_hybrid",
+        "source_channels": [],
+        "node_refs": [],
+        "edge_refs": [],
+        "evidence_refs": [
+          "kg_ev:financial:news_articles:ft_news:102336:6f133aa554656d1c"
+        ],
+        "snippet": "Document Type: Evidence Chunk Title: 【俄罗斯新识别系统可强制民用无人机降落】据俄罗斯媒体近日报道，该国企业开发出一款名为“红色按钮”的无人机识别系统，可在紧急情况下强制降落民用无人机。 Summary: Evidence: kg_ev:financial:news_articles:ft_news:102336:6f133aa554656d1c Source: news_articles:ft_news:102336 Source ..."
+      },
+      {
+        "hit_id": "kg_cognitive_card:7d3730a93ae00206",
+        "hit_type": "cognitive_card",
+        "title": "【主汛期台风和暴雨愈加频繁 国家防总办公室调度部署重点地区防汛防台风工作】国家防总办公室、应急管理部组织中国气象局、水利部、自然资源部、住房和城乡建设部、交通运",
+        "score": 0.0164,
+        "source": "semantic_hybrid",
+        "source_channels": [
+          "semantic_hybrid"
+        ],
+        "node_refs": [],
+        "edge_refs": [],
+        "evidence_refs": [
+          "kg_ev:financial:policy_news:ft_news:103033:e4a56876d64be08d"
+        ],
+        "snippet": "Document Type: Cognitive Card Cognitive Card: kg_cognitive_card:7d3730a93ae00206 Title: 【主汛期台风和暴雨愈加频繁 国家防总办公室调度部署重点地区防汛防台风工作】国家防总办公室、应急管理部组织中国气象局、水利部、自然资源部、住房和城乡建设部、交通运 Source: policy_news:ft_news:103033 Evidence: kg_ev:financial:policy_..."
+      },
+      {
+        "hit_id": "kg_cognitive_card:8ced0261d2f3cf45",
+        "hit_type": "cognitive_card",
+        "title": "【广西东兴市将防御台风三级应急响应提升为二级应急响应】根据东兴市气象信息，东兴市气象局已于7月5日3时40分提升重大气象灾害（台风）Ⅳ级应急响应为Ⅱ级应急响应。",
+        "score": 0.0161,
+        "source": "semantic_hybrid",
+        "source_channels": [
+          "semantic_hybrid"
+        ],
+        "node_refs": [],
+        "edge_refs": [],
+        "evidence_refs": [
+          "kg_ev:financial:news_articles:usage_demo_write_path:ft_news:95281:b77d2ef5a767a73b"
+        ],
+        "snippet": "Document Type: Cognitive Card Cognitive Card: kg_cognitive_card:8ced0261d2f3cf45 Title: 【广西东兴市将防御台风三级应急响应提升为二级应急响应】根据东兴市气象信息，东兴市气象局已于7月5日3时40分提升重大气象灾害（台风）Ⅳ级应急响应为Ⅱ级应急响应。 Source: news_articles:usage_demo_write_path:ft_news:95281 Evidence: ..."
+      },
+      {
+        "hit_id": "kg_cognitive_card:ca3da8f0ae1c978e",
+        "hit_type": "cognitive_card",
+        "title": "【受高温影响 美国华盛顿附近一地铁列车脱轨】一辆地铁列车当地时间4日在与华盛顿特区交界的马里兰州乔治王子县发生脱轨事故，车上人员紧急疏散，没有造成人员受伤。地铁",
+        "score": 0.0159,
+        "source": "semantic_hybrid",
+        "source_channels": [
+          "semantic_hybrid"
+        ],
+        "node_refs": [],
+        "edge_refs": [],
+        "evidence_refs": [
+          "kg_ev:financial:news_articles:ft_news:102337:252b6b386fa89dc0"
+        ],
+        "snippet": "Document Type: Cognitive Card Cognitive Card: kg_cognitive_card:ca3da8f0ae1c978e Title: 【受高温影响 美国华盛顿附近一地铁列车脱轨】一辆地铁列车当地时间4日在与华盛顿特区交界的马里兰州乔治王子县发生脱轨事故，车上人员紧急疏散，没有造成人员受伤。地铁 Source: news_articles:ft_news:102337 Evidence: kg_ev:financial:news_..."
+      },
+      {
+        "hit_id": "kg_cognitive_card:18e3473895a67fd9",
+        "hit_type": "cognitive_card",
+        "title": "【广西东兴市将防御台风三级应急响应提升为二级应急响应】根据东兴市气象信息，东兴市气象局已于7月5日3时40分提升重大气象灾害（台风）Ⅳ级应急响应为Ⅱ级应急响应。",
+        "score": 0.0156,
+        "source": "semantic_hybrid",
+        "source_channels": [
+          "semantic_hybrid"
+        ],
+        "node_refs": [],
+        "edge_refs": [],
+        "evidence_refs": [
+          "kg_ev:financial:news_articles:ft_news:95281:b77d2ef5a767a73b"
+        ],
+        "snippet": "Document Type: Cognitive Card Cognitive Card: kg_cognitive_card:18e3473895a67fd9 Title: 【广西东兴市将防御台风三级应急响应提升为二级应急响应】根据东兴市气象信息，东兴市气象局已于7月5日3时40分提升重大气象灾害（台风）Ⅳ级应急响应为Ⅱ级应急响应。 Source: news_articles:ft_news:95281 Evidence: kg_ev:financial:news_a..."
+      },
+      {
+        "hit_id": "kg_cognitive_card:3ec97acc63b85eaf",
+        "hit_type": "cognitive_card",
+        "title": "【罕见热浪来袭 预计美国超1.65亿人面临高温健康风险】近期，一场大范围罕见热浪正席卷美国东部和中部地区，多地刷新历史同期最高气温纪录。据美国国家气象局预测，7",
+        "score": 0.0154,
+        "source": "semantic_hybrid",
+        "source_channels": [
+          "semantic_hybrid"
+        ],
+        "node_refs": [],
+        "edge_refs": [],
+        "evidence_refs": [
+          "kg_ev:financial:news_articles:usage_demo_write_path:ft_news:98965:60fd08a6aa7e3e2f"
+        ],
+        "snippet": "Document Type: Cognitive Card Cognitive Card: kg_cognitive_card:3ec97acc63b85eaf Title: 【罕见热浪来袭 预计美国超1.65亿人面临高温健康风险】近期，一场大范围罕见热浪正席卷美国东部和中部地区，多地刷新历史同期最高气温纪录。据美国国家气象局预测，7 Source: news_articles:usage_demo_write_path:ft_news:98965 Evidence: ..."
+      },
+      {
+        "hit_id": "kg_cognitive_card:bb95c61a3174d36f",
+        "hit_type": "cognitive_card",
+        "title": "【广西贵州等地强降雨持续 北方降雨增多高温范围缩减】受台风“美莎克”和季风气流共同影响，未来三天（7月5日至7日），华南至长江中下游一带强降雨持续，广西、贵州、",
+        "score": 0.0152,
+        "source": "semantic_hybrid",
+        "source_channels": [
+          "semantic_hybrid"
+        ],
+        "node_refs": [],
+        "edge_refs": [],
+        "evidence_refs": [
+          "kg_ev:financial:news_articles:ft_news:98164:d2c187292aedeb31"
+        ],
+        "snippet": "Document Type: Cognitive Card Cognitive Card: kg_cognitive_card:bb95c61a3174d36f Title: 【广西贵州等地强降雨持续 北方降雨增多高温范围缩减】受台风“美莎克”和季风气流共同影响，未来三天（7月5日至7日），华南至长江中下游一带强降雨持续，广西、贵州、 Source: news_articles:ft_news:98164 Evidence: kg_ev:financial:news_a..."
+      },
+      {
+        "hit_id": "kg_cognitive_card:15523a001da7e16f",
+        "hit_type": "cognitive_card",
+        "title": "【罕见热浪来袭 预计美国超1.65亿人面临高温健康风险】近期，一场大范围罕见热浪正席卷美国东部和中部地区，多地刷新历史同期最高气温纪录。据美国国家气象局预测，7",
+        "score": 0.0149,
+        "source": "semantic_hybrid",
+        "source_channels": [
+          "semantic_hybrid"
+        ],
+        "node_refs": [],
+        "edge_refs": [],
+        "evidence_refs": [
+          "kg_ev:financial:news_articles:ft_news:98965:60fd08a6aa7e3e2f"
+        ],
+        "snippet": "Document Type: Cognitive Card Cognitive Card: kg_cognitive_card:15523a001da7e16f Title: 【罕见热浪来袭 预计美国超1.65亿人面临高温健康风险】近期，一场大范围罕见热浪正席卷美国东部和中部地区，多地刷新历史同期最高气温纪录。据美国国家气象局预测，7 Source: news_articles:ft_news:98965 Evidence: kg_ev:financial:news_a..."
+      },
+      {
+        "hit_id": "kg_cognitive_card:833cf08c5be8d64a",
+        "hit_type": "cognitive_card",
+        "title": "【广西贵州等地强降雨持续 北方降雨增多高温范围缩减】受台风“美莎克”和季风气流共同影响，未来三天（7月5日至7日），华南至长江中下游一带强降雨持续，广西、贵州、",
+        "score": 0.0147,
+        "source": "semantic_hybrid",
+        "source_channels": [
+          "semantic_hybrid"
+        ],
+        "node_refs": [],
+        "edge_refs": [],
+        "evidence_refs": [
+          "kg_ev:financial:news_articles:usage_demo_write_path:ft_news:98164:d2c187292aedeb31"
+        ],
+        "snippet": "Document Type: Cognitive Card Cognitive Card: kg_cognitive_card:833cf08c5be8d64a Title: 【广西贵州等地强降雨持续 北方降雨增多高温范围缩减】受台风“美莎克”和季风气流共同影响，未来三天（7月5日至7日），华南至长江中下游一带强降雨持续，广西、贵州、 Source: news_articles:usage_demo_write_path:ft_news:98164 Evidence: ..."
+      },
+      {
+        "hit_id": "kg_cognitive_card:158107632f823b2c",
+        "hit_type": "cognitive_card",
+        "title": "【北京市发布雷电黄色预警 部分地区或有冰雹】北京市气象局7月5日9时发布雷电黄色预警信号：预计14时至23时，北京市自西北向东南将先后出现雷阵雨天气，影响城区的",
+        "score": 0.0145,
+        "source": "semantic_hybrid",
+        "source_channels": [
+          "semantic_hybrid"
+        ],
+        "node_refs": [],
+        "edge_refs": [],
+        "evidence_refs": [
+          "kg_ev:financial:news_articles:usage_demo_write_path:ft_news:98163:9d6ddc4c11d2b56d"
+        ],
+        "snippet": "Document Type: Cognitive Card Cognitive Card: kg_cognitive_card:158107632f823b2c Title: 【北京市发布雷电黄色预警 部分地区或有冰雹】北京市气象局7月5日9时发布雷电黄色预警信号：预计14时至23时，北京市自西北向东南将先后出现雷阵雨天气，影响城区的 Source: news_articles:usage_demo_write_path:ft_news:98163 Evidence: ..."
+      },
+      {
+        "hit_id": "kg_cognitive_card:085c0d13337f612d",
+        "hit_type": "cognitive_card",
+        "title": "【北京市发布雷电黄色预警 部分地区或有冰雹】北京市气象局7月5日9时发布雷电黄色预警信号：预计14时至23时，北京市自西北向东南将先后出现雷阵雨天气，影响城区的",
+        "score": 0.0143,
+        "source": "semantic_hybrid",
+        "source_channels": [
+          "semantic_hybrid"
+        ],
+        "node_refs": [],
+        "edge_refs": [],
+        "evidence_refs": [
+          "kg_ev:financial:news_articles:ft_news:98163:9d6ddc4c11d2b56d"
+        ],
+        "snippet": "Document Type: Cognitive Card Cognitive Card: kg_cognitive_card:085c0d13337f612d Title: 【北京市发布雷电黄色预警 部分地区或有冰雹】北京市气象局7月5日9时发布雷电黄色预警信号：预计14时至23时，北京市自西北向东南将先后出现雷阵雨天气，影响城区的 Source: news_articles:ft_news:98163 Evidence: kg_ev:financial:news_a..."
+      },
+      {
+        "hit_id": "kg_cognitive_card:ba1c92db079af040",
+        "hit_type": "cognitive_card",
+        "title": "【受台风“美莎克”影响 广西多条河流多个站超警】受今年第10号台风“美莎克”影响，7月4日8时至5日8时，据广西水文中心监测，防城港、钦州、南宁、崇左及北海等市",
+        "score": 0.0141,
+        "source": "semantic_hybrid",
+        "source_channels": [
+          "semantic_hybrid"
+        ],
+        "node_refs": [],
+        "edge_refs": [],
+        "evidence_refs": [
+          "kg_ev:financial:news_articles:ft_news:103032:3c98796a64ef8311"
+        ],
+        "snippet": "Document Type: Cognitive Card Cognitive Card: kg_cognitive_card:ba1c92db079af040 Title: 【受台风“美莎克”影响 广西多条河流多个站超警】受今年第10号台风“美莎克”影响，7月4日8时至5日8时，据广西水文中心监测，防城港、钦州、南宁、崇左及北海等市 Source: news_articles:ft_news:103032 Evidence: kg_ev:financial:news_..."
+      },
+      {
+        "hit_id": "kg_cognitive_card:5015efb65d13adb6",
+        "hit_type": "cognitive_card",
+        "title": "【云南省大理州宾川县1小时内发生3次四级以上地震】据中国地震台网速报，云南省大理州宾川县在一个小时内接连发生3次四级以上地震，造成当地震感明显。",
+        "score": 0.0139,
+        "source": "semantic_hybrid",
+        "source_channels": [
+          "semantic_hybrid"
+        ],
+        "node_refs": [],
+        "edge_refs": [],
+        "evidence_refs": [
+          "kg_ev:financial:news_articles:ft_news:89971:d8817c02a477167b"
+        ],
+        "snippet": "Document Type: Cognitive Card Cognitive Card: kg_cognitive_card:5015efb65d13adb6 Title: 【云南省大理州宾川县1小时内发生3次四级以上地震】据中国地震台网速报，云南省大理州宾川县在一个小时内接连发生3次四级以上地震，造成当地震感明显。 Source: news_articles:ft_news:89971 Evidence: kg_ev:financial:news_articles:..."
+      },
+      {
+        "hit_id": "kgc:financial:l0:507",
+        "hit_type": "semantic_hybrid",
+        "title": "极端天气与气候风险",
+        "score": 0.0164,
+        "source": "semantic_hybrid",
+        "source_channels": [
+          "semantic_hybrid"
+        ],
+        "node_refs": [],
+        "edge_refs": [],
+        "evidence_refs": [
+          "kg_ev:financial:news_articles:usage_demo_write_path:ft_news:95281:b77d2ef5a767a73b",
+          "kg_ev:financial:news_articles:usage_demo_write_path:ft_news:98163:9d6ddc4c11d2b56d",
+          "kg_ev:financial:news_articles:usage_demo_write_path:ft_news:98164:d2c187292aedeb31",
+          "kg_ev:financial:news_articles:usage_demo_write_path:ft_news:98965:60fd08a6aa7e3e2f"
+        ],
+        "snippet": "Document Type: Community Report Community: 极端天气与气候风险 Projection: cognitive_topic Community Level: 0 Origin: emergent Maturity: multi_evidence Directory Scope: 承接极端天气事件（热浪、寒潮、暴雨、洪涝、干旱、飓风等）的发生、影响及应急响应，包括对公共健康、基础设施、经济活动和市场情绪的影响。涵盖气象预警、灾害应急、..."
+      },
+      {
+        "hit_id": "kgc:financial:l0:6",
+        "hit_type": "semantic_hybrid",
+        "title": "资本市场改革",
+        "score": 0.0161,
+        "source": "semantic_hybrid",
+        "source_channels": [
+          "semantic_hybrid"
+        ],
+        "node_refs": [],
+        "edge_refs": [],
+        "evidence_refs": [],
+        "snippet": "Document Type: Community Report Community: 资本市场改革 Projection: cognitive_topic Community Level: 0 Origin: seed Maturity: single_evidence Directory Scope: 承接资本市场制度改革、区域股权市场、IPO、并购重组、上市融资、投行业务和证券行业生态变化。 Include Rules: IPO、再融资、并购重组、区域股权市场、交易..."
+      },
+      {
+        "hit_id": "kgc:financial:l0:486",
+        "hit_type": "semantic_hybrid",
+        "title": "反无人机技术",
+        "score": 0.0159,
+        "source": "semantic_hybrid",
+        "source_channels": [
+          "semantic_hybrid"
+        ],
+        "node_refs": [],
+        "edge_refs": [],
+        "evidence_refs": [
+          "kg_ev:financial:news_articles:ft_news:102336:6f133aa554656d1c"
+        ],
+        "snippet": "Document Type: Community Report Community: 反无人机技术 Projection: cognitive_topic Community Level: 0 Origin: emergent Maturity: single_evidence Directory Scope: 承接反无人机系统研发、技术进展、产品发布、政策监管、市场需求及对无人机产业的影响。包括军用和民用反无人机技术、强制降落、干扰、拦截等。 Coverage Con..."
+      },
+      {
+        "hit_id": "kgc:financial:l0:482",
+        "hit_type": "semantic_hybrid",
+        "title": "企业战略转型",
+        "score": 0.0156,
+        "source": "semantic_hybrid",
+        "source_channels": [
+          "semantic_hybrid"
+        ],
+        "node_refs": [],
+        "edge_refs": [],
+        "evidence_refs": [
+          "kg_ev:financial:news_articles:ft_news:98961:0fa1e4b8a0d54a75"
+        ],
+        "snippet": "Document Type: Community Report Community: 企业战略转型 Projection: cognitive_topic Community Level: 0 Origin: emergent Maturity: single_evidence Directory Scope: 承接企业战略转型、业务多元化、技术升级、平台化转型、第二成长曲线等事件，及其对产业链、竞争格局和资本市场的影响。包括公司层面战略宣布、业务模式创新等。不包括纯公..."
+      },
+      {
+        "hit_id": "kgc:financial:l0:4",
+        "hit_type": "semantic_hybrid",
+        "title": "政策监管与产业扶持",
+        "score": 0.0154,
+        "source": "semantic_hybrid",
+        "source_channels": [
+          "semantic_hybrid"
+        ],
+        "node_refs": [],
+        "edge_refs": [],
+        "evidence_refs": [],
+        "snippet": "Document Type: Community Report Community: 政策监管与产业扶持 Projection: cognitive_topic Community Level: 0 Origin: seed Maturity: single_evidence Directory Scope: 承接宏观政策、产业政策、监管规则、财政金融支持、区域扶持政策及其产业影响。 Include Rules: 国务院、部委、地方政府、监管部门发布的产业扶持或监管政策..."
+      },
+      {
+        "hit_id": "kgc:financial:l0:8",
+        "hit_type": "semantic_hybrid",
+        "title": "宏观流动性与汇率利率",
+        "score": 0.0152,
+        "source": "semantic_hybrid",
+        "source_channels": [
+          "semantic_hybrid"
+        ],
+        "node_refs": [],
+        "edge_refs": [],
+        "evidence_refs": [],
+        "snippet": "Document Type: Community Report Community: 宏观流动性与汇率利率 Projection: cognitive_topic Community Level: 0 Origin: seed Maturity: single_evidence Directory Scope: 承接央行操作、利率、汇率、债券市场、社会融资、信贷、流动性和宏观金融条件变化。 Include Rules: 央行干预、利率路径、汇率稳定、债券收益率、信贷和社..."
+      },
+      {
+        "hit_id": "kgc:financial:l0:478",
+        "hit_type": "semantic_hybrid",
+        "title": "航空装备研制",
+        "score": 0.0149,
+        "source": "semantic_hybrid",
+        "source_channels": [
+          "semantic_hybrid"
+        ],
+        "node_refs": [],
+        "edge_refs": [],
+        "evidence_refs": [
+          "kg_ev:financial:news_articles:ft_news:95280:5b8af585f07ee99b"
+        ],
+        "snippet": "Document Type: Community Report Community: 航空装备研制 Projection: cognitive_topic Community Level: 0 Origin: emergent Maturity: single_evidence Directory Scope: 承接国产飞机型号研制、首飞、技术突破、任务系统开发等航空装备进展，涵盖固定翼飞机、直升机、特种飞机等。包括中国航空工业集团等单位的研制动态。不包含航空运输、航线..."
+      },
+      {
+        "hit_id": "kgc:financial:l0:485",
+        "hit_type": "semantic_hybrid",
+        "title": "产业孵化与区域生态",
+        "score": 0.0147,
+        "source": "semantic_hybrid",
+        "source_channels": [
+          "semantic_hybrid"
+        ],
+        "node_refs": [],
+        "edge_refs": [],
+        "evidence_refs": [
+          "kg_ev:financial:news_articles:ft_news:99857:27dbe2b7052c2019"
+        ],
+        "snippet": "Document Type: Community Report Community: 产业孵化与区域生态 Projection: cognitive_topic Community Level: 0 Origin: emergent Maturity: single_evidence Directory Scope: 承接区域产业加速营、供需对接会、企业培育、技术转化、跨行业协同等产业生态建设活动及其对区域经济和产业链的影响。涵盖政府、投资机构、企业等多方参与的产业服务..."
+      }
+    ],
+    "demo_scope_hits": [
+      {
+        "hit_id": "kg_chunk:kg_ev:financial:news_articles:usage_demo_write_path:ft_news:98965:60fd08a6aa7e3e2f:0",
+        "hit_type": "evidence",
+        "title": "【罕见热浪来袭 预计美国超1.65亿人面临高温健康风险】近期，一场大范围罕见热浪正席卷美国东部和中部地区，多地刷新历史同期最高气温纪录。据美国国家气象局预测，7",
+        "score": 0.0159,
+        "source": "semantic_hybrid",
+        "source_channels": [],
+        "node_refs": [],
+        "edge_refs": [],
+        "evidence_refs": [
+          "kg_ev:financial:news_articles:usage_demo_write_path:ft_news:98965:60fd08a6aa7e3e2f"
+        ],
+        "snippet": "Document Type: Evidence Chunk Title: 【罕见热浪来袭 预计美国超1.65亿人面临高温健康风险】近期，一场大范围罕见热浪正席卷美国东部和中部地区，多地刷新历史同期最高气温纪录。据美国国家气象局预测，7 Summary: Evidence: kg_ev:financial:news_articles:usage_demo_write_path:ft_news:98965:60fd08a6aa7e3e2f Source: news_arti..."
+      },
+      {
+        "hit_id": "kg_chunk:kg_ev:financial:news_articles:usage_demo_write_path:ft_news:95281:b77d2ef5a767a73b:0",
+        "hit_type": "evidence",
+        "title": "【广西东兴市将防御台风三级应急响应提升为二级应急响应】根据东兴市气象信息，东兴市气象局已于7月5日3时40分提升重大气象灾害（台风）Ⅳ级应急响应为Ⅱ级应急响应。",
+        "score": 0.0156,
+        "source": "semantic_hybrid",
+        "source_channels": [],
+        "node_refs": [],
+        "edge_refs": [],
+        "evidence_refs": [
+          "kg_ev:financial:news_articles:usage_demo_write_path:ft_news:95281:b77d2ef5a767a73b"
+        ],
+        "snippet": "Document Type: Evidence Chunk Title: 【广西东兴市将防御台风三级应急响应提升为二级应急响应】根据东兴市气象信息，东兴市气象局已于7月5日3时40分提升重大气象灾害（台风）Ⅳ级应急响应为Ⅱ级应急响应。 Summary: Evidence: kg_ev:financial:news_articles:usage_demo_write_path:ft_news:95281:b77d2ef5a767a73b Source: news_arti..."
+      },
+      {
+        "hit_id": "kg_chunk:kg_ev:financial:news_articles:usage_demo_write_path:ft_news:98163:9d6ddc4c11d2b56d:0",
+        "hit_type": "evidence",
+        "title": "【北京市发布雷电黄色预警 部分地区或有冰雹】北京市气象局7月5日9时发布雷电黄色预警信号：预计14时至23时，北京市自西北向东南将先后出现雷阵雨天气，影响城区的",
+        "score": 0.0147,
+        "source": "semantic_hybrid",
+        "source_channels": [],
+        "node_refs": [],
+        "edge_refs": [],
+        "evidence_refs": [
+          "kg_ev:financial:news_articles:usage_demo_write_path:ft_news:98163:9d6ddc4c11d2b56d"
+        ],
+        "snippet": "Document Type: Evidence Chunk Title: 【北京市发布雷电黄色预警 部分地区或有冰雹】北京市气象局7月5日9时发布雷电黄色预警信号：预计14时至23时，北京市自西北向东南将先后出现雷阵雨天气，影响城区的 Summary: Evidence: kg_ev:financial:news_articles:usage_demo_write_path:ft_news:98163:9d6ddc4c11d2b56d Source: news_arti..."
+      },
+      {
+        "hit_id": "kg_chunk:kg_ev:financial:news_articles:usage_demo_write_path:ft_news:98164:d2c187292aedeb31:0",
+        "hit_type": "evidence",
+        "title": "【广西贵州等地强降雨持续 北方降雨增多高温范围缩减】受台风“美莎克”和季风气流共同影响，未来三天（7月5日至7日），华南至长江中下游一带强降雨持续，广西、贵州、",
+        "score": 0.0145,
+        "source": "semantic_hybrid",
+        "source_channels": [],
+        "node_refs": [],
+        "edge_refs": [],
+        "evidence_refs": [
+          "kg_ev:financial:news_articles:usage_demo_write_path:ft_news:98164:d2c187292aedeb31"
+        ],
+        "snippet": "Document Type: Evidence Chunk Title: 【广西贵州等地强降雨持续 北方降雨增多高温范围缩减】受台风“美莎克”和季风气流共同影响，未来三天（7月5日至7日），华南至长江中下游一带强降雨持续，广西、贵州、 Summary: Evidence: kg_ev:financial:news_articles:usage_demo_write_path:ft_news:98164:d2c187292aedeb31 Source: news_arti..."
+      },
+      {
+        "hit_id": "kg_cognitive_card:8ced0261d2f3cf45",
+        "hit_type": "cognitive_card",
+        "title": "【广西东兴市将防御台风三级应急响应提升为二级应急响应】根据东兴市气象信息，东兴市气象局已于7月5日3时40分提升重大气象灾害（台风）Ⅳ级应急响应为Ⅱ级应急响应。",
+        "score": 0.0161,
+        "source": "semantic_hybrid",
+        "source_channels": [
+          "semantic_hybrid"
+        ],
+        "node_refs": [],
+        "edge_refs": [],
+        "evidence_refs": [
+          "kg_ev:financial:news_articles:usage_demo_write_path:ft_news:95281:b77d2ef5a767a73b"
+        ],
+        "snippet": "Document Type: Cognitive Card Cognitive Card: kg_cognitive_card:8ced0261d2f3cf45 Title: 【广西东兴市将防御台风三级应急响应提升为二级应急响应】根据东兴市气象信息，东兴市气象局已于7月5日3时40分提升重大气象灾害（台风）Ⅳ级应急响应为Ⅱ级应急响应。 Source: news_articles:usage_demo_write_path:ft_news:95281 Evidence: ..."
+      },
+      {
+        "hit_id": "kg_cognitive_card:3ec97acc63b85eaf",
+        "hit_type": "cognitive_card",
+        "title": "【罕见热浪来袭 预计美国超1.65亿人面临高温健康风险】近期，一场大范围罕见热浪正席卷美国东部和中部地区，多地刷新历史同期最高气温纪录。据美国国家气象局预测，7",
+        "score": 0.0154,
+        "source": "semantic_hybrid",
+        "source_channels": [
+          "semantic_hybrid"
+        ],
+        "node_refs": [],
+        "edge_refs": [],
+        "evidence_refs": [
+          "kg_ev:financial:news_articles:usage_demo_write_path:ft_news:98965:60fd08a6aa7e3e2f"
+        ],
+        "snippet": "Document Type: Cognitive Card Cognitive Card: kg_cognitive_card:3ec97acc63b85eaf Title: 【罕见热浪来袭 预计美国超1.65亿人面临高温健康风险】近期，一场大范围罕见热浪正席卷美国东部和中部地区，多地刷新历史同期最高气温纪录。据美国国家气象局预测，7 Source: news_articles:usage_demo_write_path:ft_news:98965 Evidence: ..."
+      },
+      {
+        "hit_id": "kg_cognitive_card:833cf08c5be8d64a",
+        "hit_type": "cognitive_card",
+        "title": "【广西贵州等地强降雨持续 北方降雨增多高温范围缩减】受台风“美莎克”和季风气流共同影响，未来三天（7月5日至7日），华南至长江中下游一带强降雨持续，广西、贵州、",
+        "score": 0.0147,
+        "source": "semantic_hybrid",
+        "source_channels": [
+          "semantic_hybrid"
+        ],
+        "node_refs": [],
+        "edge_refs": [],
+        "evidence_refs": [
+          "kg_ev:financial:news_articles:usage_demo_write_path:ft_news:98164:d2c187292aedeb31"
+        ],
+        "snippet": "Document Type: Cognitive Card Cognitive Card: kg_cognitive_card:833cf08c5be8d64a Title: 【广西贵州等地强降雨持续 北方降雨增多高温范围缩减】受台风“美莎克”和季风气流共同影响，未来三天（7月5日至7日），华南至长江中下游一带强降雨持续，广西、贵州、 Source: news_articles:usage_demo_write_path:ft_news:98164 Evidence: ..."
+      },
+      {
+        "hit_id": "kg_cognitive_card:158107632f823b2c",
+        "hit_type": "cognitive_card",
+        "title": "【北京市发布雷电黄色预警 部分地区或有冰雹】北京市气象局7月5日9时发布雷电黄色预警信号：预计14时至23时，北京市自西北向东南将先后出现雷阵雨天气，影响城区的",
+        "score": 0.0145,
+        "source": "semantic_hybrid",
+        "source_channels": [
+          "semantic_hybrid"
+        ],
+        "node_refs": [],
+        "edge_refs": [],
+        "evidence_refs": [
+          "kg_ev:financial:news_articles:usage_demo_write_path:ft_news:98163:9d6ddc4c11d2b56d"
+        ],
+        "snippet": "Document Type: Cognitive Card Cognitive Card: kg_cognitive_card:158107632f823b2c Title: 【北京市发布雷电黄色预警 部分地区或有冰雹】北京市气象局7月5日9时发布雷电黄色预警信号：预计14时至23时，北京市自西北向东南将先后出现雷阵雨天气，影响城区的 Source: news_articles:usage_demo_write_path:ft_news:98163 Evidence: ..."
+      },
+      {
+        "hit_id": "kgc:financial:l0:507",
+        "hit_type": "semantic_hybrid",
+        "title": "极端天气与气候风险",
+        "score": 0.0164,
+        "source": "semantic_hybrid",
+        "source_channels": [
+          "semantic_hybrid"
+        ],
+        "node_refs": [],
+        "edge_refs": [],
+        "evidence_refs": [
+          "kg_ev:financial:news_articles:usage_demo_write_path:ft_news:95281:b77d2ef5a767a73b",
+          "kg_ev:financial:news_articles:usage_demo_write_path:ft_news:98163:9d6ddc4c11d2b56d",
+          "kg_ev:financial:news_articles:usage_demo_write_path:ft_news:98164:d2c187292aedeb31",
+          "kg_ev:financial:news_articles:usage_demo_write_path:ft_news:98965:60fd08a6aa7e3e2f"
+        ],
+        "snippet": "Document Type: Community Report Community: 极端天气与气候风险 Projection: cognitive_topic Community Level: 0 Origin: emergent Maturity: multi_evidence Directory Scope: 承接极端天气事件（热浪、寒潮、暴雨、洪涝、干旱、飓风等）的发生、影响及应急响应，包括对公共健康、基础设施、经济活动和市场情绪的影响。涵盖气象预警、灾害应急、..."
+      }
+    ],
+    "demo_scope_refs": {
+      "evidence_ids": [
+        "kg_ev:financial:news_articles:usage_demo_write_path:ft_news:95281:b77d2ef5a767a73b",
+        "kg_ev:financial:news_articles:usage_demo_write_path:ft_news:98163:9d6ddc4c11d2b56d",
+        "kg_ev:financial:news_articles:usage_demo_write_path:ft_news:98164:d2c187292aedeb31",
+        "kg_ev:financial:news_articles:usage_demo_write_path:ft_news:98965:60fd08a6aa7e3e2f"
+      ],
+      "chunk_ids": [
+        "kg_chunk:kg_ev:financial:news_articles:usage_demo_write_path:ft_news:95281:b77d2ef5a767a73b:0",
+        "kg_chunk:kg_ev:financial:news_articles:usage_demo_write_path:ft_news:98163:9d6ddc4c11d2b56d:0",
+        "kg_chunk:kg_ev:financial:news_articles:usage_demo_write_path:ft_news:98164:d2c187292aedeb31:0",
+        "kg_chunk:kg_ev:financial:news_articles:usage_demo_write_path:ft_news:98965:60fd08a6aa7e3e2f:0"
+      ],
+      "node_ids": [],
+      "edge_ids": [],
+      "target_ids": [
+        "kg_chunk:kg_ev:financial:news_articles:usage_demo_write_path:ft_news:95281:b77d2ef5a767a73b:0",
+        "kg_chunk:kg_ev:financial:news_articles:usage_demo_write_path:ft_news:98163:9d6ddc4c11d2b56d:0",
+        "kg_chunk:kg_ev:financial:news_articles:usage_demo_write_path:ft_news:98164:d2c187292aedeb31:0",
+        "kg_chunk:kg_ev:financial:news_articles:usage_demo_write_path:ft_news:98965:60fd08a6aa7e3e2f:0",
+        "kgc:financial:l0:507"
+      ]
+    }
+  }
+}

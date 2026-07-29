@@ -1,0 +1,811 @@
+{
+  "input": {
+    "prompt": {
+      "existing_bucket_catalog": [],
+      "topic_intent_signatures": [
+        {
+          "intent_id": "kg_cognitive_card:622da63e03502b55:1",
+          "parent_themes": [
+            "上市公司并购重组",
+            "企业资本运作"
+          ],
+          "broad_topics": [
+            "A股市场并购",
+            "资产整合浪潮"
+          ],
+          "mid_topics": [
+            "券商收购整合",
+            "自动化领域并购",
+            "铝业资产收购"
+          ],
+          "event_thread": [
+            "A股并购重组主线程"
+          ],
+          "driver": [
+            "企业战略扩张",
+            "行业整合需求"
+          ],
+          "impact_target": [
+            "A股上市公司",
+            "券商行业",
+            "自动化行业",
+            "铝业"
+          ],
+          "risk_type": [
+            "并购整合风险",
+            "监管审批风险"
+          ],
+          "title_candidate": "A股并购重组热潮",
+          "summary": "当前chunk描述了A股市场多起重大资产重组事件，包括东方证券收购上海证券、天迈科技和佳华科技收购芬能自动化、永杰新材收购铝业资产等，并统计了4月13-19日共18家上市公司披露并购重组进展。"
+        },
+        {
+          "intent_id": "kg_cognitive_card:e2cbeccab34b53d0:1",
+          "parent_themes": [
+            "并购重组",
+            "产业整合"
+          ],
+          "broad_topics": [
+            "资产收购",
+            "上市公司资本运作"
+          ],
+          "mid_topics": [
+            "重大资产重组",
+            "跨界收购",
+            "产业协同"
+          ],
+          "event_thread": [
+            "并购重组事件线"
+          ],
+          "driver": [
+            "产业整合",
+            "规模扩张"
+          ],
+          "impact_target": [
+            "自动化设备行业",
+            "铝业"
+          ],
+          "risk_type": [
+            "交易不确定性",
+            "审批风险"
+          ],
+          "title_candidate": "并购重组市场升温",
+          "summary": "天迈科技拟收购芬能自动化100%股份，永杰新材拟收购铝业资产，并购重组市场活跃。"
+        },
+        {
+          "intent_id": "kg_cognitive_card:51faf1a338eeca62:1",
+          "parent_themes": [
+            "有色金属产业链",
+            "铝材加工行业整合"
+          ],
+          "broad_topics": [
+            "铝加工",
+            "高端铝材",
+            "金属材料"
+          ],
+          "mid_topics": [
+            "罐体料",
+            "热管理材料",
+            "汽车车身板"
+          ],
+          "event_thread": [
+            "铝加工行业并购整合"
+          ],
+          "driver": [
+            "产业链整合",
+            "技术升级",
+            "市场拓展"
+          ],
+          "impact_target": [
+            "铝加工行业",
+            "永杰新材",
+            "奥科宁克资产"
+          ],
+          "risk_type": [
+            "并购整合风险",
+            "行业周期性风险"
+          ],
+          "title_candidate": "铝加工行业整合与高端材料布局",
+          "summary": "永杰新材通过现金收购美国铝业在华两家铝加工基地，提升罐体料、热管理材料等领域竞争力。"
+        },
+        {
+          "intent_id": "kg_cognitive_card:51faf1a338eeca62:2",
+          "parent_themes": [
+            "半导体产业链",
+            "存储芯片行业"
+          ],
+          "broad_topics": [
+            "半导体",
+            "存储芯片",
+            "DRAM",
+            "NAND Flash"
+          ],
+          "mid_topics": [
+            "内存模组",
+            "固态硬盘",
+            "存储芯片设计制造"
+          ],
+          "event_thread": [
+            "上市公司跨界半导体存储"
+          ],
+          "driver": [
+            "战略转型",
+            "新质生产力",
+            "跨界并购"
+          ],
+          "impact_target": [
+            "半导体存储行业",
+            "时空科技",
+            "嘉合劲威"
+          ],
+          "risk_type": [
+            "跨界整合风险",
+            "行业竞争风险"
+          ],
+          "title_candidate": "上市公司跨界半导体存储",
+          "summary": "时空科技拟发行股份及现金收购嘉合劲威，切入半导体存储领域，实现从夜间经济向新质生产力的战略转型。"
+        },
+        {
+          "intent_id": "kg_cognitive_card:fcba35e541526dfd:1",
+          "parent_themes": [
+            "证券行业竞争格局",
+            "券商业务结构变迁"
+          ],
+          "broad_topics": [
+            "证券行业",
+            "上市券商"
+          ],
+          "mid_topics": [
+            "自营业务表现",
+            "券商营收结构"
+          ],
+          "event_thread": [
+            "券商年报业绩线"
+          ],
+          "driver": [
+            "规模驱动不足",
+            "投资策略失误"
+          ],
+          "impact_target": [
+            "国海证券",
+            "券商自营"
+          ],
+          "risk_type": [
+            "业务衰退风险",
+            "市场份额下降风险"
+          ],
+          "title_candidate": "券商自营业务五年分化：国海证券掉队",
+          "summary": "国海证券自营业务因投资规模大幅缩减，收入下滑60.45%，成为券商自营扩张中掉队最严重的案例。"
+        },
+        {
+          "intent_id": "kg_cognitive_card:5e22e2590c5487e4:1",
+          "parent_themes": [
+            "券商信用风险",
+            "股票质押业务风险",
+            "券商自营业务困境"
+          ],
+          "broad_topics": [
+            "金融监管风险",
+            "资本市场流动性"
+          ],
+          "mid_topics": [
+            "股权质押违约",
+            "券商被动缩表",
+            "自营业务表现"
+          ],
+          "event_thread": [
+            "股票质押业务风险事件线"
+          ],
+          "driver": [
+            "股价大幅下跌",
+            "融资人放弃回购",
+            "股权质押违约潮"
+          ],
+          "impact_target": [
+            "国海证券",
+            "券商自营业务",
+            "股票质押市场"
+          ],
+          "risk_type": [
+            "信用风险",
+            "流动性风险",
+            "法律诉讼风险"
+          ],
+          "title_candidate": "股票质押业务风险拖累券商自营",
+          "summary": "国海证券股权质押业务暴雷导致资金长期占用，自营规模被挤占，业绩垫底，体现股票质押风险对券商的重创。"
+        }
+      ],
+      "target": "为每个 intent 选择 bucket，必要时创建新 bucket，并输出 canonical_theme。"
+    },
+    "system_prompt": "你是金融知识图谱的 Community Assignment 并发分桶规划器。\n\n你的任务不是创建 community，也不是判断最终归档结果。\n你的任务是根据一批 topic intent 的语义关系，规划哪些 intent 必须放在同一个串行执行 bucket 中，哪些 intent 可以放到不同 bucket 并发处理。\n\n核心原则：\n- bucket 是执行调度通道，不是业务主题，不是检索对象，不是 community。\n- 同一 bucket 内的 intent 会串行执行，目的是避免相近主题并发创建重复 community。\n- 不同 bucket 之间会并发执行，因此只有相互影响较小的 intent 才能拆开。\n- 如果多个 intent 可能竞争同一批 community，必须放入同一个 bucket。\n- 如果多个 intent 只是同一父主题下的不同子方向，必须放入同一个 bucket。\n- bucket 粒度应大于具体新闻主题，小于全市场大类。\n- 不要把单家公司、单个项目、单次行情、单个产品、单笔交易创建成 bucket。\n- bucket_id 必须是稳定调度 ID，只能表达长期语义边界；禁止包含日期、时间、批次号、新闻 ID、公司名或一次性事件。\n- bucket_id 使用短英文 snake_case，例如 bucket_ma、bucket_broker_risk、bucket_ai_infra、bucket_macro_liquidity。\n- 如果已有 bucket 能承接新增 theme，应优先复用已有 bucket。\n- 如果新增 theme 与已有 bucket 都不匹配，可以创建新 bucket。\n- 首轮没有已有 bucket 时，也要尽量创建可复用的大 bucket，不要为单个 intent 创建过细 bucket。\n- 如果发现已有 bucket 过细，可以提出 merge_suggestions。\n- 对相近 theme 必须输出 canonical_theme，后续会缓存 canonical_theme -> bucket_id。\n\n输出要求：\n- assignments 每项只输出 intent_id、canonical_theme、bucket_id 三个字段。\n- 不要给 assignment 输出 reason、confidence、action、bucket_title 或其他解释字段。\n- new_buckets 只在确实创建新 bucket 时输出；已有 bucket 不要重复输出。\n- theme_bucket_updates 只输出额外同义 theme 映射；如果没有额外映射，输出空数组。\n- merge_suggestions 只在确实需要合并 bucket 时输出；reason 控制在一句短语内。\n- 输出必须尽量紧凑，禁止冗长解释。\n\n你必须只输出符合 JSON Schema 的 JSON 对象，不要输出 Markdown、解释文字或代码块。",
+    "messages": [],
+    "prompt_text_preview": {
+      "existing_bucket_catalog": [],
+      "topic_intent_signatures": [
+        {
+          "intent_id": "kg_cognitive_card:622da63e03502b55:1",
+          "parent_themes": [
+            "上市公司并购重组",
+            "企业资本运作"
+          ],
+          "broad_topics": [
+            "A股市场并购",
+            "资产整合浪潮"
+          ],
+          "mid_topics": [
+            "券商收购整合",
+            "自动化领域并购",
+            "铝业资产收购"
+          ],
+          "event_thread": [
+            "A股并购重组主线程"
+          ],
+          "driver": [
+            "企业战略扩张",
+            "行业整合需求"
+          ],
+          "impact_target": [
+            "A股上市公司",
+            "券商行业",
+            "自动化行业",
+            "铝业"
+          ],
+          "risk_type": [
+            "并购整合风险",
+            "监管审批风险"
+          ],
+          "title_candidate": "A股并购重组热潮",
+          "summary": "当前chunk描述了A股市场多起重大资产重组事件，包括东方证券收购上海证券、天迈科技和佳华科技收购芬能自动化、永杰新材收购铝业资产等，并统计了4月13-19日共18家上市公司披露并购重组进展。"
+        },
+        {
+          "intent_id": "kg_cognitive_card:e2cbeccab34b53d0:1",
+          "parent_themes": [
+            "并购重组",
+            "产业整合"
+          ],
+          "broad_topics": [
+            "资产收购",
+            "上市公司资本运作"
+          ],
+          "mid_topics": [
+            "重大资产重组",
+            "跨界收购",
+            "产业协同"
+          ],
+          "event_thread": [
+            "并购重组事件线"
+          ],
+          "driver": [
+            "产业整合",
+            "规模扩张"
+          ],
+          "impact_target": [
+            "自动化设备行业",
+            "铝业"
+          ],
+          "risk_type": [
+            "交易不确定性",
+            "审批风险"
+          ],
+          "title_candidate": "并购重组市场升温",
+          "summary": "天迈科技拟收购芬能自动化100%股份，永杰新材拟收购铝业资产，并购重组市场活跃。"
+        },
+        {
+          "intent_id": "kg_cognitive_card:51faf1a338eeca62:1",
+          "parent_themes": [
+            "有色金属产业链",
+            "铝材加工行业整合"
+          ],
+          "broad_topics": [
+            "铝加工",
+            "高端铝材",
+            "金属材料"
+          ],
+          "mid_topics": [
+            "罐体料",
+            "热管理材料",
+            "汽车车身板"
+          ],
+          "event_thread": [
+            "铝加工行业并购整合"
+          ],
+          "driver": [
+            "产业链整合",
+            "技术升级",
+            "市场拓展"
+          ],
+          "impact_target": [
+            "铝加工行业",
+            "永杰新材",
+            "奥科宁克资产"
+          ],
+          "risk_type": [
+            "并购整合风险",
+            "行业周期性风险"
+          ],
+          "title_candidate": "铝加工行业整合与高端材料布局",
+          "summary": "永杰新材通过现金收购美国铝业在华两家铝加工基地，提升罐体料、热管理材料等领域竞争力。"
+        },
+        {
+          "intent_id": "kg_cognitive_card:51faf1a338eeca62:2",
+          "parent_themes": [
+            "半导体产业链",
+            "存储芯片行业"
+          ],
+          "broad_topics": [
+            "半导体",
+            "存储芯片",
+            "DRAM",
+            "NAND Flash"
+          ],
+          "mid_topics": [
+            "内存模组",
+            "固态硬盘",
+            "存储芯片设计制造"
+          ],
+          "event_thread": [
+            "上市公司跨界半导体存储"
+          ],
+          "driver": [
+            "战略转型",
+            "新质生产力",
+            "跨界并购"
+          ],
+          "impact_target": [
+            "半导体存储行业",
+            "时空科技",
+            "嘉合劲威"
+          ],
+          "risk_type": [
+            "跨界整合风险",
+            "行业竞争风险"
+          ],
+          "title_candidate": "上市公司跨界半导体存储",
+          "summary": "时空科技拟发行股份及现金收购嘉合劲威，切入半导体存储领域，实现从夜间经济向新质生产力的战略转型。"
+        },
+        {
+          "intent_id": "kg_cognitive_card:fcba35e541526dfd:1",
+          "parent_themes": [
+            "证券行业竞争格局",
+            "券商业务结构变迁"
+          ],
+          "broad_topics": [
+            "证券行业",
+            "上市券商"
+          ],
+          "mid_topics": [
+            "自营业务表现",
+            "券商营收结构"
+          ],
+          "event_thread": [
+            "券商年报业绩线"
+          ],
+          "driver": [
+            "规模驱动不足",
+            "投资策略失误"
+          ],
+          "impact_target": [
+            "国海证券",
+            "券商自营"
+          ],
+          "risk_type": [
+            "业务衰退风险",
+            "市场份额下降风险"
+          ],
+          "title_candidate": "券商自营业务五年分化：国海证券掉队",
+          "summary": "国海证券自营业务因投资规模大幅缩减，收入下滑60.45%，成为券商自营扩张中掉队最严重的案例。"
+        },
+        {
+          "intent_id": "kg_cognitive_card:5e22e2590c5487e4:1",
+          "parent_themes": [
+            "券商信用风险",
+            "股票质押业务风险",
+            "券商自营业务困境"
+          ],
+          "broad_topics": [
+            "金融监管风险",
+            "资本市场流动性"
+          ],
+          "mid_topics": [
+            "股权质押违约",
+            "券商被动缩表",
+            "自营业务表现"
+          ],
+          "event_thread": [
+            "股票质押业务风险事件线"
+          ],
+          "driver": [
+            "股价大幅下跌",
+            "融资人放弃回购",
+            "股权质押违约潮"
+          ],
+          "impact_target": [
+            "国海证券",
+            "券商自营业务",
+            "股票质押市场"
+          ],
+          "risk_type": [
+            "信用风险",
+            "流动性风险",
+            "法律诉讼风险"
+          ],
+          "title_candidate": "股票质押业务风险拖累券商自营",
+          "summary": "国海证券股权质押业务暴雷导致资金长期占用，自营规模被挤占，业绩垫底，体现股票质押风险对券商的重创。"
+        }
+      ],
+      "target": "为每个 intent 选择 bucket，必要时创建新 bucket，并输出 canonical_theme。"
+    },
+    "metadata": {
+      "task": "kg_assignment_bucket_planning",
+      "unknown_intents": 6
+    },
+    "json_schema": {
+      "type": "object",
+      "properties": {
+        "assignments": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "intent_id": {
+                "type": "string"
+              },
+              "canonical_theme": {
+                "type": "string"
+              },
+              "bucket_id": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "intent_id",
+              "canonical_theme",
+              "bucket_id"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "new_buckets": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "bucket_id": {
+                "type": "string"
+              },
+              "bucket_title": {
+                "type": "string"
+              },
+              "scope": {
+                "type": "string"
+              },
+              "canonical_themes": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              }
+            },
+            "required": [
+              "bucket_id",
+              "bucket_title",
+              "scope",
+              "canonical_themes"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "theme_bucket_updates": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "canonical_theme": {
+                "type": "string"
+              },
+              "bucket_id": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "canonical_theme",
+              "bucket_id"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "merge_suggestions": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "source_bucket_id": {
+                "type": "string"
+              },
+              "target_bucket_id": {
+                "type": "string"
+              },
+              "reason": {
+                "type": "string",
+                "maxLength": 80
+              },
+              "confidence": {
+                "type": "number",
+                "minimum": 0,
+                "maximum": 1
+              }
+            },
+            "required": [
+              "source_bucket_id",
+              "target_bucket_id",
+              "reason",
+              "confidence"
+            ],
+            "additionalProperties": false
+          }
+        }
+      },
+      "required": [
+        "assignments",
+        "new_buckets",
+        "theme_bucket_updates",
+        "merge_suggestions"
+      ],
+      "additionalProperties": false
+    },
+    "response_format": {
+      "type": "json_object"
+    },
+    "use_cache": true
+  },
+  "output": {
+    "text": {
+      "assignments": [
+        {
+          "intent_id": "kg_cognitive_card:622da63e03502b55:1",
+          "canonical_theme": "A股并购重组热潮",
+          "bucket_id": "bucket_ma"
+        },
+        {
+          "intent_id": "kg_cognitive_card:e2cbeccab34b53d0:1",
+          "canonical_theme": "并购重组市场升温",
+          "bucket_id": "bucket_ma"
+        },
+        {
+          "intent_id": "kg_cognitive_card:51faf1a338eeca62:1",
+          "canonical_theme": "铝加工行业整合",
+          "bucket_id": "bucket_ma"
+        },
+        {
+          "intent_id": "kg_cognitive_card:51faf1a338eeca62:2",
+          "canonical_theme": "上市公司跨界半导体存储",
+          "bucket_id": "bucket_semicon_ma"
+        },
+        {
+          "intent_id": "kg_cognitive_card:fcba35e541526dfd:1",
+          "canonical_theme": "券商自营业务分化掉队",
+          "bucket_id": "bucket_broker_risk"
+        },
+        {
+          "intent_id": "kg_cognitive_card:5e22e2590c5487e4:1",
+          "canonical_theme": "股票质押风险拖累券商",
+          "bucket_id": "bucket_broker_risk"
+        }
+      ],
+      "new_buckets": [
+        {
+          "bucket_id": "bucket_ma",
+          "bucket_title": "并购重组与产业整合",
+          "scope": "涵盖A股上市公司并购重组、资产收购、跨界收购等事件，包括自动化、铝业等行业的整合",
+          "canonical_themes": [
+            "A股并购重组热潮",
+            "并购重组市场升温",
+            "铝加工行业整合"
+          ]
+        },
+        {
+          "bucket_id": "bucket_semicon_ma",
+          "bucket_title": "半导体存储跨界并购",
+          "scope": "上市公司跨界进入半导体存储领域的收购案例",
+          "canonical_themes": [
+            "上市公司跨界半导体存储"
+          ]
+        },
+        {
+          "bucket_id": "bucket_broker_risk",
+          "bucket_title": "券商风险与业务困境",
+          "scope": "券商自营业务表现、股票质押风险、信用风险等事件",
+          "canonical_themes": [
+            "券商自营业务分化掉队",
+            "股票质押风险拖累券商"
+          ]
+        }
+      ],
+      "theme_bucket_updates": [],
+      "merge_suggestions": []
+    },
+    "structured_output": {
+      "assignments": [
+        {
+          "intent_id": "kg_cognitive_card:622da63e03502b55:1",
+          "canonical_theme": "A股并购重组热潮",
+          "bucket_id": "bucket_ma"
+        },
+        {
+          "intent_id": "kg_cognitive_card:e2cbeccab34b53d0:1",
+          "canonical_theme": "并购重组市场升温",
+          "bucket_id": "bucket_ma"
+        },
+        {
+          "intent_id": "kg_cognitive_card:51faf1a338eeca62:1",
+          "canonical_theme": "铝加工行业整合",
+          "bucket_id": "bucket_ma"
+        },
+        {
+          "intent_id": "kg_cognitive_card:51faf1a338eeca62:2",
+          "canonical_theme": "上市公司跨界半导体存储",
+          "bucket_id": "bucket_semicon_ma"
+        },
+        {
+          "intent_id": "kg_cognitive_card:fcba35e541526dfd:1",
+          "canonical_theme": "券商自营业务分化掉队",
+          "bucket_id": "bucket_broker_risk"
+        },
+        {
+          "intent_id": "kg_cognitive_card:5e22e2590c5487e4:1",
+          "canonical_theme": "股票质押风险拖累券商",
+          "bucket_id": "bucket_broker_risk"
+        }
+      ],
+      "new_buckets": [
+        {
+          "bucket_id": "bucket_ma",
+          "bucket_title": "并购重组与产业整合",
+          "scope": "涵盖A股上市公司并购重组、资产收购、跨界收购等事件，包括自动化、铝业等行业的整合",
+          "canonical_themes": [
+            "A股并购重组热潮",
+            "并购重组市场升温",
+            "铝加工行业整合"
+          ]
+        },
+        {
+          "bucket_id": "bucket_semicon_ma",
+          "bucket_title": "半导体存储跨界并购",
+          "scope": "上市公司跨界进入半导体存储领域的收购案例",
+          "canonical_themes": [
+            "上市公司跨界半导体存储"
+          ]
+        },
+        {
+          "bucket_id": "bucket_broker_risk",
+          "bucket_title": "券商风险与业务困境",
+          "scope": "券商自营业务表现、股票质押风险、信用风险等事件",
+          "canonical_themes": [
+            "券商自营业务分化掉队",
+            "股票质押风险拖累券商"
+          ]
+        }
+      ],
+      "theme_bucket_updates": [],
+      "merge_suggestions": []
+    },
+    "usage": {
+      "input_tokens": 2382,
+      "output_tokens": 1345,
+      "total_tokens": 3727,
+      "prompt_cache_hit_tokens": 0,
+      "prompt_cache_miss_tokens": 2382,
+      "reasoning_tokens": 767
+    },
+    "duration_ms": 16403,
+    "cache_hit": false,
+    "proxy": {
+      "provider": "deepseek",
+      "requested_model": "deepseek-v4-flash",
+      "resolved_model": "deepseek-v4-flash",
+      "upstream_model": "deepseek-v4-flash",
+      "route_reason": "model_exact",
+      "retry_count": 0,
+      "upstream_retry_events": [],
+      "upstream_max_retries": 10,
+      "upstream_max_retry_delay_seconds": 60,
+      "json_mode_retry_attempted": false,
+      "json_mode_retry_success": false,
+      "json_mode_retry_error": null,
+      "json_mode_initial_finish_reason": "stop",
+      "json_mode_retry_finish_reason": null,
+      "json_mode_initial_usage": {
+        "input_tokens": 2382,
+        "output_tokens": 1345,
+        "total_tokens": 3727,
+        "prompt_cache_hit_tokens": 0,
+        "prompt_cache_miss_tokens": 2382,
+        "reasoning_tokens": 767
+      },
+      "json_mode_retry_usage": null,
+      "json_repair_attempted": false,
+      "json_repair_success": false,
+      "json_repair_error": null,
+      "json_repair_finish_reason": null,
+      "json_repair_usage": null
+    },
+    "provider_diagnostics": {
+      "finish_reason": "stop",
+      "json_mode_initial": {
+        "id": "3fb414ec-31ed-4b4c-8e0e-d72948073672",
+        "model": "deepseek-v4-flash",
+        "finish_reason": "stop",
+        "usage": {
+          "input_tokens": 2382,
+          "output_tokens": 1345,
+          "total_tokens": 3727,
+          "prompt_cache_hit_tokens": 0,
+          "prompt_cache_miss_tokens": 2382,
+          "reasoning_tokens": 767
+        },
+        "content_chars": 1533,
+        "reasoning_chars": 1725,
+        "has_tool_calls": false
+      }
+    }
+  },
+  "metadata": {
+    "session_id": "kg-bucket-replay:prod:financial:1782991595",
+    "intent_limit": 0,
+    "card_limit": 5,
+    "bucket_only": true,
+    "cache_namespace": "bucket_replay_validation_stable_id_test",
+    "target": "prod",
+    "adapter_name": "financial",
+    "proxy": {
+      "provider": "deepseek",
+      "requested_model": "deepseek-v4-flash",
+      "resolved_model": "deepseek-v4-flash",
+      "upstream_model": "deepseek-v4-flash",
+      "route_reason": "model_exact",
+      "retry_count": 0,
+      "upstream_retry_events": [],
+      "upstream_max_retries": 10,
+      "upstream_max_retry_delay_seconds": 60,
+      "json_mode_retry_attempted": false,
+      "json_mode_retry_success": false,
+      "json_mode_retry_error": null,
+      "json_mode_initial_finish_reason": "stop",
+      "json_mode_retry_finish_reason": null,
+      "json_mode_initial_usage": {
+        "input_tokens": 2382,
+        "output_tokens": 1345,
+        "total_tokens": 3727,
+        "prompt_cache_hit_tokens": 0,
+        "prompt_cache_miss_tokens": 2382,
+        "reasoning_tokens": 767
+      },
+      "json_mode_retry_usage": null,
+      "json_repair_attempted": false,
+      "json_repair_success": false,
+      "json_repair_error": null,
+      "json_repair_finish_reason": null,
+      "json_repair_usage": null
+    },
+    "duration_ms": 16403,
+    "cache_hit": false,
+    "cache_store": "miss",
+    "has_tool_choice": false,
+    "tools_count": 0,
+    "prompt_chars": 4247,
+    "has_json_schema": true,
+    "use_cache": true,
+    "backend": "deepseek",
+    "model": "deepseek-v4-flash",
+    "provider": "deepseek",
+    "source_type": "-",
+    "source_id": "-",
+    "task": "kg_assignment_bucket_planning",
+    "scope.attributes.public_key": "pk-lf-d52cf296-5725-45dc-a0f7-31202673d39f",
+    "scope.version": "4.6.1",
+    "scope.name": "langfuse-sdk",
+    "resourceAttributes.service.name": "unknown_service",
+    "resourceAttributes.telemetry.sdk.version": "1.41.1",
+    "resourceAttributes.telemetry.sdk.name": "opentelemetry",
+    "resourceAttributes.telemetry.sdk.language": "python"
+  }
+}

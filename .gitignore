@@ -38,10 +38,10 @@ qidian/novel_kb/*
 .claude/skills/fund-trade/.env
 
 # smart-fund-server 运行时/敏感文件
-.claude/skills/smart-fund-server/server.log
-.claude/skills/smart-fund-server/images/
-.claude/skills/smart-fund-server/auth_cache.json
-.claude/skills/smart-fund-server/config.json
+smart-fund-server/server.log
+smart-fund-server/images/
+smart-fund-server/auth_cache.json
+smart-fund-server/config.json
 
 # fund-trade 敏感文件
 .claude/skills/fund-trade/config.json
@@ -49,7 +49,7 @@ qidian/novel_kb/*
 # 采集的文档（体积大）
 scraped_docs/
 
-.claude/skills/smart-fund-server/data
+smart-fund-server/data
 
 # Langfuse / 调试 trace 运行产物
 langfuse-full-traces/

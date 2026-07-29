@@ -1,8 +1,0 @@
-[
-  {
-    "case_id": "missing_context_ref",
-    "query": "Alpha",
-    "expected_refs": ["kg:toy:project:alpha"],
-    "actual_refs": []
-  }
-]

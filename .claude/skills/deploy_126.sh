@@ -26,15 +26,17 @@ CONDA_BASE="/home/${REMOTE_USER}/anaconda3"
 SVC_SERVER="smart-fund-server"
 SVC_ROUTER="smart-router"
 
-# 本地项目根目录（deploy.sh 所在目录，即 .claude/skills/）
-LOCAL_DIR="$(cd "$(dirname "$0")" && pwd)"
+# 本地 Skill 目录与工作区根目录
+LOCAL_SKILLS_DIR="$(cd "$(dirname "$0")" && pwd)"
+LOCAL_WORKSPACE_ROOT="$(cd "${LOCAL_SKILLS_DIR}/../.." && pwd)"
+LOCAL_SERVER_DIR="${LOCAL_WORKSPACE_ROOT}/smart-fund-server"
 
 # 远程部署目录
 PROJECT_ROOT="/home/${REMOTE_USER}/smart-fund"
-REMOTE_DIR="${PROJECT_ROOT}/.claude/skills"
-SERVER_DIR="${REMOTE_DIR}/smart-fund-server"
-SKILL_DIR="${REMOTE_DIR}/fund-trade"
-ROUTER_DIR="${REMOTE_DIR}/smart-router"
+REMOTE_SKILLS_DIR="${PROJECT_ROOT}/.claude/skills"
+SERVER_DIR="${PROJECT_ROOT}/smart-fund-server"
+SKILL_DIR="${REMOTE_SKILLS_DIR}/fund-trade"
+ROUTER_DIR="${REMOTE_SKILLS_DIR}/smart-router"
 FRP_DIR="/home/${REMOTE_USER}/frp_0.57.0_linux_amd64"
 FRP_SERVER_ADDR="${FRP_SERVER_ADDR:-119.23.227.187}"
 FRP_SERVER_PORT="${FRP_SERVER_PORT:-7000}"
@@ -73,12 +75,17 @@ sudo_cmd() {
 # ==================== 同步代码（rsync） ====================
 sync_code() {
     echo "📦 同步代码到远程..."
-    ssh_cmd "mkdir -p ${REMOTE_DIR}"
+    ssh_cmd "mkdir -p ${SERVER_DIR} ${REMOTE_SKILLS_DIR}"
 
     rsync -az --delete $EXCLUDES \
         -e "ssh ${SSH_OPTS}" \
-        "${LOCAL_DIR}/" \
-        "${REMOTE_USER}@${REMOTE_HOST}:${REMOTE_DIR}/"
+        "${LOCAL_SERVER_DIR}/" \
+        "${REMOTE_USER}@${REMOTE_HOST}:${SERVER_DIR}/"
+
+    rsync -az --delete $EXCLUDES \
+        -e "ssh ${SSH_OPTS}" \
+        "${LOCAL_SKILLS_DIR}/" \
+        "${REMOTE_USER}@${REMOTE_HOST}:${REMOTE_SKILLS_DIR}/"
 
     # 创建运行时目录
     ssh_cmd "mkdir -p ${SERVER_DIR}/images ${SKILL_DIR}/data"

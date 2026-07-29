@@ -1,5 +1,0 @@
-{
-  "node_types": ["document", "person", "project"],
-  "relation_types": ["blocks", "owns", "references"],
-  "input_count": 1
-}

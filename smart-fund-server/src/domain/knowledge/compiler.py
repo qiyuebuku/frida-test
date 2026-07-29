@@ -1,0 +1,184 @@
+"""Generic knowledge compiler."""
+
+from __future__ import annotations
+
+import asyncio
+import logging
+import time
+from collections.abc import Awaitable, Callable
+from uuid import uuid4
+
+from src.domain.knowledge.adapter import DomainAdapter
+from src.domain.knowledge.chunking import build_chunks_for_compiled_evidence
+from src.domain.knowledge.evidence import EvidenceManager
+from src.domain.knowledge.retrieval_profile import profile_span
+from src.domain.knowledge.repositories import KnowledgeRepository
+from src.domain.knowledge.schemas import (
+    CompileResult,
+    CompiledEvidence,
+    EvidenceDraft,
+    FailedRecord,
+    KnowledgeInput,
+    ValidationIssue,
+)
+from src.domain.knowledge.source_record import validate_source_record_contract
+
+logger = logging.getLogger(__name__)
+
+PreExtractionChunkMaterializer = Callable[[str, str, list[CompiledEvidence]], Awaitable[None]]
+
+
+class KnowledgeCompiler:
+    def __init__(
+        self,
+        repository: KnowledgeRepository | None = None,
+        evidence_manager: EvidenceManager | None = None,
+        concurrency: int = 1,
+        pre_extraction_chunk_materializer: PreExtractionChunkMaterializer | None = None,
+    ):
+        self.repository = repository
+        self.evidence_manager = evidence_manager or EvidenceManager()
+        # Controls per-record extraction concurrency. Keep it aligned with the
+        # downstream LLM proxy/pool limit when adapters call remote models.
+        self.concurrency = max(1, int(concurrency))
+        self.pre_extraction_chunk_materializer = pre_extraction_chunk_materializer
+
+    async def compile(self, adapter: DomainAdapter, inputs: list[KnowledgeInput]) -> CompileResult:
+        run_id = f"kg_run:{adapter.spec.name}:{uuid4()}"
+        version = adapter.spec.version
+        failed_records: list[FailedRecord] = []
+        warnings: list[ValidationIssue] = []
+
+        total = len(inputs)
+        logger.info(
+            "[compile] adapter=%s start total_records=%d concurrency=%d run_id=%s",
+            adapter.spec.name, total, self.concurrency, run_id,
+        )
+
+        sem = asyncio.Semaphore(self.concurrency)
+        completed = [0]
+        run_t0 = time.monotonic()
+
+        async def process_one(item: KnowledgeInput):
+            async with sem:
+                t0 = time.monotonic()
+                try:
+                    validate_source_record_contract(item)
+                    item_evidence = adapter.extract_evidence_drafts(item)
+                    compiled_item_evidence = self.evidence_manager.compile(
+                        adapter_name=adapter.spec.name,
+                        version=version,
+                        drafts=item_evidence,
+                    ).evidence
+                    item.metadata["_evidence_chunk_hints"] = _chunk_hints_for_compiled_evidence(compiled_item_evidence)
+                    if self.pre_extraction_chunk_materializer is not None and compiled_item_evidence:
+                        await self.pre_extraction_chunk_materializer(adapter.spec.name, version, compiled_item_evidence)
+                except Exception as exc:
+                    completed[0] += 1
+                    logger.warning(
+                        "[compile] [%d/%d] FAILED source_type=%s source_id=%s reason=%s",
+                        completed[0], total, item.source_type, item.source_id, exc,
+                    )
+                    return None, FailedRecord(
+                        source_type=item.source_type,
+                        source_id=item.source_id,
+                        reason=str(exc),
+                    )
+                completed[0] += 1
+                logger.debug(
+                    "[compile] [%d/%d] ok source_type=%s source_id=%s evidence=%d duration=%.1fs",
+                    completed[0], total, item.source_type, item.source_id,
+                    len(item_evidence), time.monotonic() - t0,
+                )
+                return item_evidence, None
+
+        results = await asyncio.gather(*(process_one(item) for item in inputs))
+
+        evidence_drafts: list[EvidenceDraft] = []
+        for success, fail in results:
+            if fail is not None:
+                failed_records.append(fail)
+                continue
+            item_evidence = success
+            evidence_drafts.extend(item_evidence)
+
+        logger.info(
+            "[compile] adapter=%s extraction done: nodes=%d edges=%d evidence=%d failed=%d total_duration=%.1fs",
+            adapter.spec.name, 0, 0, len(evidence_drafts),
+            len(failed_records), time.monotonic() - run_t0,
+        )
+
+        with profile_span("kg_compile.evidence_compile", drafts=len(evidence_drafts)):
+            evidence_result = self.evidence_manager.compile(
+                adapter_name=adapter.spec.name,
+                version=version,
+                drafts=evidence_drafts,
+            )
+
+        result = CompileResult(
+            run_id=run_id,
+            adapter_name=adapter.spec.name,
+            adapter_version=adapter.spec.version,
+            version=version,
+            nodes=[],
+            edges=[],
+            evidence=evidence_result.evidence,
+            failed_records=failed_records,
+            warnings=warnings,
+        )
+        with profile_span(
+            "kg_compile.persist",
+            nodes=len(result.nodes),
+            edges=len(result.edges),
+            evidence=len(result.evidence),
+            failed=len(result.failed_records),
+        ):
+            self._persist_result(result, input_count=len(inputs))
+        return result
+
+    def _persist_result(self, result: CompileResult, *, input_count: int) -> None:
+        if self.repository is None:
+            return
+        with profile_span("kg_compile.persist.create_run", run_id=result.run_id):
+            self.repository.create_compilation_run(
+                {
+                    "run_id": result.run_id,
+                    "adapter_name": result.adapter_name,
+                    "adapter_version": result.adapter_version,
+                    "input_count": input_count,
+                    "status": "running",
+                }
+            )
+        with profile_span("kg_compile.persist.upsert_evidence", evidence=len(result.evidence)):
+            self.repository.upsert_evidence(result.evidence)
+        with profile_span("kg_compile.persist.upsert_evidence_chunks", evidence=len(result.evidence)):
+            self.repository.upsert_evidence_chunks(result.evidence)
+        with profile_span("kg_compile.persist.finish_run", run_id=result.run_id):
+            self.repository.finish_compilation_run(
+                result.run_id,
+                {
+                    "status": "success" if not result.failed_records else "partial",
+                    "input_count": input_count,
+                    "node_count": len(result.nodes),
+                    "edge_count": len(result.edges),
+                    "evidence_count": len(result.evidence),
+                    "failed_count": len(result.failed_records),
+                },
+            )
+
+
+def _chunk_hints_for_compiled_evidence(compiled_evidence: list[CompiledEvidence]) -> list[dict[str, object]]:
+    hints: list[dict[str, object]] = []
+    for evidence in compiled_evidence:
+        for chunk in build_chunks_for_compiled_evidence(evidence):
+            hints.append(
+                {
+                    "evidence_id": evidence.evidence_id,
+                    "chunk_id": chunk.chunk_id,
+                    "chunk_index": chunk.chunk_index,
+                    "start_offset": chunk.start_offset,
+                    "end_offset": chunk.end_offset,
+                    "text": chunk.content,
+                }
+            )
+    return hints

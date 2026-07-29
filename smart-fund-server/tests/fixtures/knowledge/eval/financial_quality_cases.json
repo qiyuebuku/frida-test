@@ -1,0 +1,6 @@
+[
+  {
+    "case_id": "financial_hard_score_guard",
+    "description": "weak inferred relations must stay out of hard scoring"
+  }
+]

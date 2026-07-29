@@ -1,0 +1,15 @@
+__pycache__/
+*.pyc
+.env
+.env.*
+!.env.example
+.env copy
+.venv/
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+data/
+logs/
+server.log
+auth_cache.json
+config.json

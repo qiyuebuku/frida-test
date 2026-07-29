@@ -1,5 +1,0 @@
-{
-  "query": "固态电池 宁德时代",
-  "requires_nodes": ["concept", "stock", "fund"],
-  "requires_evidence": true
-}

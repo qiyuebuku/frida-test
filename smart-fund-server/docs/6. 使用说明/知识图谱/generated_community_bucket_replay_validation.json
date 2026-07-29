@@ -1,0 +1,126 @@
+{
+  "config": {
+    "adapter_name": "financial",
+    "target": "prod",
+    "replay_cache_target": "prod:bucket_only_smoke_test",
+    "card_limit": 3,
+    "intent_limit": 0
+  },
+  "loaded": {
+    "cognitive_cards": 3,
+    "topic_intents": 4
+  },
+  "bucket_plan": {
+    "bucket_count": 1,
+    "unknown_intents": 4,
+    "llm_assignments": 4,
+    "new_buckets": 1,
+    "merge_suggestions": 0,
+    "bucket_sizes": {
+      "bucket_ma": 4
+    }
+  },
+  "bucket_details": [
+    {
+      "bucket_id": "bucket_ma",
+      "size": 4,
+      "intents": [
+        {
+          "intent_id": "kg_cognitive_card:622da63e03502b55:1",
+          "cognitive_card_id": "kg_cognitive_card:622da63e03502b55",
+          "source_id": "usage_demo_write_path:ft_news:59519",
+          "chunk_index": 0,
+          "intent_index": 1,
+          "raw_theme": "A股上市公司并购重组活跃",
+          "title_candidate": "A股并购重组热潮",
+          "parent_themes": [
+            "上市公司并购重组",
+            "企业资本运作"
+          ],
+          "broad_topics": [
+            "A股市场并购",
+            "资产整合浪潮"
+          ],
+          "bucket_assignment": {
+            "bucket_id": "bucket_ma",
+            "bucket_title": "bucket_ma",
+            "canonical_theme": "A股并购重组热潮",
+            "from_cache": false
+          }
+        },
+        {
+          "intent_id": "kg_cognitive_card:e2cbeccab34b53d0:1",
+          "cognitive_card_id": "kg_cognitive_card:e2cbeccab34b53d0",
+          "source_id": "usage_demo_write_path:ft_news:59519",
+          "chunk_index": 1,
+          "intent_index": 1,
+          "raw_theme": "上市公司并购重组活跃",
+          "title_candidate": "并购重组市场升温",
+          "parent_themes": [
+            "并购重组",
+            "产业整合"
+          ],
+          "broad_topics": [
+            "资产收购",
+            "上市公司资本运作"
+          ],
+          "bucket_assignment": {
+            "bucket_id": "bucket_ma",
+            "bucket_title": "bucket_ma",
+            "canonical_theme": "并购重组市场升温",
+            "from_cache": false
+          }
+        },
+        {
+          "intent_id": "kg_cognitive_card:51faf1a338eeca62:1",
+          "cognitive_card_id": "kg_cognitive_card:51faf1a338eeca62",
+          "source_id": "usage_demo_write_path:ft_news:59519",
+          "chunk_index": 2,
+          "intent_index": 1,
+          "raw_theme": "永杰新材收购奥科宁克铝加工资产，强化高端铝材布局",
+          "title_candidate": "铝加工行业整合与高端材料布局",
+          "parent_themes": [
+            "有色金属产业链",
+            "铝材加工行业整合"
+          ],
+          "broad_topics": [
+            "铝加工",
+            "高端铝材",
+            "金属材料"
+          ],
+          "bucket_assignment": {
+            "bucket_id": "bucket_ma",
+            "bucket_title": "bucket_ma",
+            "canonical_theme": "铝加工行业并购整合",
+            "from_cache": false
+          }
+        },
+        {
+          "intent_id": "kg_cognitive_card:51faf1a338eeca62:2",
+          "cognitive_card_id": "kg_cognitive_card:51faf1a338eeca62",
+          "source_id": "usage_demo_write_path:ft_news:59519",
+          "chunk_index": 2,
+          "intent_index": 2,
+          "raw_theme": "时空科技收购嘉合劲威，跨界进入半导体存储领域",
+          "title_candidate": "上市公司跨界半导体存储",
+          "parent_themes": [
+            "半导体产业链",
+            "存储芯片行业"
+          ],
+          "broad_topics": [
+            "半导体",
+            "存储芯片",
+            "DRAM",
+            "NAND Flash"
+          ],
+          "bucket_assignment": {
+            "bucket_id": "bucket_ma",
+            "bucket_title": "bucket_ma",
+            "canonical_theme": "半导体存储跨界并购",
+            "from_cache": false
+          }
+        }
+      ]
+    }
+  ]
+}

@@ -1,5 +1,0 @@
-name = "my-app-test"
-
-[logging]
-directory = "output/logs"
-filename = "app.log"

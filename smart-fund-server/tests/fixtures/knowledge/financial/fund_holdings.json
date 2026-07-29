@@ -1,0 +1,16 @@
+[
+  {
+    "source_type": "fund_holdings",
+    "observed_at": "2026-04-24T09:30:00+08:00",
+    "payload": {
+      "fund_code": "000001",
+      "fund_name": "示例成长混合",
+      "stock_exchange": "SZ",
+      "stock_code": "300750",
+      "stock_name": "宁德时代",
+      "report_date": "2026-03-31T00:00:00+08:00",
+      "holding_ratio": 0.085,
+      "rank": 1
+    }
+  }
+]

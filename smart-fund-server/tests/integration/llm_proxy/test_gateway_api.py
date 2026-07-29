@@ -1,0 +1,172 @@
+import asyncio
+
+import pytest
+
+from src.infrastructure.llm_proxy.types import LLMProxyResponse
+from src.interfaces.api.routes import llm_proxy
+
+
+class FakeGateway:
+    def __init__(self):
+        self.requests = []
+
+    def health(self):
+        return {
+            "status": "ok",
+            "default_provider": "claude_tmux",
+            "default_model": "glm-5.1",
+            "model_routes": {"deepseek-v4-flash": ["deepseek"]},
+            "providers": {"deepseek": {"api_key_configured": True}},
+        }
+
+    async def generate(self, request):
+        self.requests.append(request)
+        return LLMProxyResponse(
+            text="ok",
+            structured_output=None,
+            usage={"input_tokens": 2, "output_tokens": 3},
+            session_id="sess",
+            duration_ms=10,
+            raw_payload={},
+            reasoning_content="reasoning",
+            proxy={
+                "provider": "deepseek",
+                "requested_model": request.model,
+                "resolved_model": request.model,
+                "upstream_model": request.model,
+                "route_reason": "model_exact",
+                "retry_count": 0,
+            },
+        )
+
+
+def test_llm_proxy_health_lists_routes_and_providers(monkeypatch):
+    gateway = FakeGateway()
+    monkeypatch.setattr(llm_proxy, "get_llm_gateway_service", lambda: gateway)
+
+    response = asyncio.run(llm_proxy.llm_proxy_health())
+
+    assert response["model_routes"]["deepseek-v4-flash"] == ["deepseek"]
+    assert response["providers"]["deepseek"]["api_key_configured"] is True
+
+
+def test_chat_completion_response_is_openai_compatible(monkeypatch):
+    gateway = FakeGateway()
+    monkeypatch.setattr(llm_proxy, "get_llm_gateway_service", lambda: gateway)
+
+    response = asyncio.run(
+        llm_proxy.chat_completions(
+            llm_proxy.ChatCompletionRequest(
+                model="deepseek-v4-flash",
+                provider="aliyun",
+                messages=[llm_proxy.ChatMessage(role="user", content="hello")],
+            )
+        )
+    )
+
+    assert response["object"] == "chat.completion"
+    assert response["model"] == "deepseek-v4-flash"
+    assert response["choices"][0]["message"]["content"] == "ok"
+    assert response["choices"][0]["message"]["reasoning_content"] == "reasoning"
+    assert response["usage"] == {
+        "prompt_tokens": 2,
+        "completion_tokens": 3,
+        "total_tokens": 5,
+    }
+    assert response["_proxy"]["provider"] == "deepseek"
+    assert gateway.requests[0].model == "deepseek-v4-flash"
+    assert gateway.requests[0].provider == "aliyun"
+
+
+def test_chat_completion_preserves_native_tool_call_messages(monkeypatch):
+    gateway = FakeGateway()
+    monkeypatch.setattr(llm_proxy, "get_llm_gateway_service", lambda: gateway)
+    tool_calls = [
+        {
+            "id": "call_search_1",
+            "type": "function",
+            "function": {
+                "name": "kg_relation_graph_search",
+                "arguments": '{"query":"原油价格"}',
+            },
+        }
+    ]
+
+    asyncio.run(
+        llm_proxy.chat_completions(
+            llm_proxy.ChatCompletionRequest(
+                model="glm-5.2",
+                messages=[
+                    llm_proxy.ChatMessage(role="user", content="分析原油价格"),
+                    llm_proxy.ChatMessage(
+                        role="assistant",
+                        content=None,
+                        tool_calls=tool_calls,
+                        reasoning_content="先检索图谱",
+                    ),
+                    llm_proxy.ChatMessage(
+                        role="tool",
+                        content='{"cards":[]}',
+                        name="kg_relation_graph_search",
+                        tool_call_id="call_search_1",
+                    ),
+                ],
+            )
+        )
+    )
+
+    messages = gateway.requests[0].messages
+    assert messages[1]["tool_calls"] == tool_calls
+    assert messages[1]["reasoning_content"] == "先检索图谱"
+    assert messages[1]["content"] is None
+    assert messages[2]["tool_call_id"] == "call_search_1"
+    assert messages[2]["name"] == "kg_relation_graph_search"
+
+
+def test_chat_completion_error_maps_to_502(monkeypatch):
+    from src.infrastructure.llm_proxy.types import LLMProxyError
+
+    class ErrorGateway(FakeGateway):
+        async def generate(self, request):
+            raise LLMProxyError("upstream failed")
+
+    monkeypatch.setattr(llm_proxy, "get_llm_gateway_service", lambda: ErrorGateway())
+
+    with pytest.raises(llm_proxy.HTTPException) as exc:
+        asyncio.run(
+            llm_proxy.chat_completions(
+                llm_proxy.ChatCompletionRequest(
+                    model="deepseek-v4-flash",
+                    messages=[llm_proxy.ChatMessage(role="user", content="hello")],
+                )
+            )
+        )
+
+    assert exc.value.status_code == 502
+
+
+def test_bad_provider_or_model_request_maps_to_400(monkeypatch):
+    from src.infrastructure.llm_proxy.types import LLMProxyError
+
+    class BadRequestGateway(FakeGateway):
+        async def generate(self, request):
+            raise LLMProxyError("provider does not offer model", error_type="bad_request")
+
+    monkeypatch.setattr(
+        llm_proxy,
+        "get_llm_gateway_service",
+        lambda: BadRequestGateway(),
+    )
+
+    with pytest.raises(llm_proxy.HTTPException) as exc:
+        asyncio.run(
+            llm_proxy.chat_completions(
+                llm_proxy.ChatCompletionRequest(
+                    model="deepseek-v4-pro",
+                    provider="missing-vendor",
+                    messages=[llm_proxy.ChatMessage(role="user", content="hello")],
+                )
+            )
+        )
+
+    assert exc.value.status_code == 400

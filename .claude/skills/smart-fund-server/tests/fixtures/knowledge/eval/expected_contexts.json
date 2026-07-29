@@ -1,7 +1,0 @@
-[
-  {
-    "case_id": "financial_solid_battery_query",
-    "must_have_evidence": true,
-    "must_have_node_types": ["concept", "stock"]
-  }
-]

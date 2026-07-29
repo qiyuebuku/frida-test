@@ -25,7 +25,8 @@ PYTHON="${CONDA_BASE}/envs/${CONDA_ENV}/bin/python"
 
 PROJECT_ROOT="/home/${REMOTE_USER}/smart-fund"
 REMOTE_SKILLS_DIR="${PROJECT_ROOT}/.claude/skills"
-SERVER_DIR="${REMOTE_SKILLS_DIR}/smart-fund-server"
+SERVER_DIR="${PROJECT_ROOT}/smart-fund-server"
+LEGACY_SERVER_DIR="${REMOTE_SKILLS_DIR}/smart-fund-server"
 FUND_TRADE_DIR="${REMOTE_SKILLS_DIR}/fund-trade"
 CONFIG_DIR="${PROJECT_ROOT}/config"
 ENV_FILE="${CONFIG_DIR}/smart-fund-server.env"
@@ -58,7 +59,8 @@ SERVICES=(
 )
 
 LOCAL_SKILLS_DIR="$(cd "$(dirname "$0")" && pwd)"
-LOCAL_SERVER_DIR="${LOCAL_SKILLS_DIR}/smart-fund-server"
+LOCAL_WORKSPACE_ROOT="$(cd "${LOCAL_SKILLS_DIR}/../.." && pwd)"
+LOCAL_SERVER_DIR="${LOCAL_WORKSPACE_ROOT}/smart-fund-server"
 LOCAL_FUND_TRADE_DIR="${LOCAL_SKILLS_DIR}/fund-trade"
 LOCAL_ENV_FILE="${LOCAL_SERVER_DIR}/.env"
 LOCAL_AICLIENT2API_ENV="${LOCAL_AICLIENT2API_ENV:-/home/yuyang/frida-test/AIClient2API/.deployment.local.env}"
@@ -786,8 +788,11 @@ PY"
 }
 
 restart_all() {
-    echo "重启全部服务..."
-    sudo_cmd "systemctl restart ${SVC_MILVUS}.service"
+    echo "重启应用服务..."
+    if ! ssh_cmd "systemctl is-active --quiet ${SVC_MILVUS}.service"; then
+        echo "Milvus 未运行，先启动 Milvus..."
+        sudo_cmd "systemctl start ${SVC_MILVUS}.service"
+    fi
     wait_for_milvus
     sudo_cmd "systemctl restart ${SVC_API}.service"
     wait_for_api
@@ -875,6 +880,15 @@ PY"
     echo "生产健康检查通过"
 }
 
+cleanup_legacy_server_dir() {
+    if [[ "${LEGACY_SERVER_DIR}" == "${SERVER_DIR}" ]]; then
+        echo "拒绝清理：新旧服务目录相同" >&2
+        return 1
+    fi
+    ssh_cmd "if [[ -d '${LEGACY_SERVER_DIR}' ]]; then rm -rf '${LEGACY_SERVER_DIR}'; fi"
+    echo "旧服务目录已清理: ${LEGACY_SERVER_DIR}"
+}
+
 init_deploy() {
     sync_code
     install_production_config
@@ -883,6 +897,7 @@ init_deploy() {
     install_units
     initialize_runtime
     remote_test
+    cleanup_legacy_server_dir
 }
 
 main() {
@@ -920,6 +935,7 @@ main() {
             install_units
             restart_all
             remote_test
+            cleanup_legacy_server_dir
             ;;
         *)
             echo "未知参数: $1" >&2

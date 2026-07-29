@@ -1,4 +1,0 @@
-{
-  "node_types": ["concept", "event", "fund", "industry", "policy", "stock"],
-  "minimum_count": 6
-}

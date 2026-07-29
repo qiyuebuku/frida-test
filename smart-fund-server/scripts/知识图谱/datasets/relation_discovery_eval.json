@@ -1,0 +1,153 @@
+{
+  "version": "2026-07-12.2",
+  "adapter": "financial",
+  "description": "Relation Discovery 真实新闻人工标注集，覆盖同一事件、独立印证、并行响应、后续进展、直接因果、共同驱动与硬负样本。",
+  "cases": [
+    {
+      "case_id": "ai_memory_price_and_equipment_demand",
+      "description": "AI需求分别推动存储器价格上修与半导体设备销售预期上调，应识别为共同驱动，不应升级为存储器涨价直接导致设备销售增长。",
+      "source_card_id": "kg_cognitive_card:8f34eac55a893b7a",
+      "expected_relations": [
+        {
+          "target_card_id": "kg_cognitive_card:a826f5c27c7863c0",
+          "decision_class": "inferred",
+          "relation_kind": "common_driver",
+          "relation_type_contains": ["共同"],
+          "direction_contains": ["AI"],
+          "source_evidence_refs": ["s0004"],
+          "target_evidence_refs": ["s0003"]
+        },
+        {
+          "target_card_id": "kg_cognitive_card:021d4404402c632c",
+          "decision_class": "inferred",
+          "relation_kind": "common_driver",
+          "relation_type_contains": ["共同"],
+          "direction_contains": ["AI"],
+          "source_evidence_refs": ["s0004"],
+          "target_evidence_refs": ["s0013"]
+        },
+        {
+          "target_card_id": "kg_cognitive_card:140eb76fb518b1ae",
+          "decision_class": "inferred",
+          "relation_kind": "common_driver",
+          "relation_type_contains": ["共同驱动"],
+          "direction_contains": ["AI"],
+          "source_evidence_refs": ["s0004"],
+          "target_evidence_refs": ["s0008", "s0013"]
+        }
+      ],
+      "hard_negative_card_ids": [
+        "kg_cognitive_card:1c63e3387e453e9a",
+        "kg_cognitive_card:665f76b2fe96eb7e"
+      ]
+    },
+    {
+      "case_id": "unitree_ipo_duplicate_reports",
+      "description": "两条新闻均直接报道宇树科技科创板 IPO 注册生效，应保留重复摘要并由原文核验为同一事件。",
+      "source_card_id": "kg_cognitive_card:cc7c661b9f65b3b3",
+      "expected_relations": [
+        {
+          "target_card_id": "kg_cognitive_card:4be73353cbb67f72",
+          "decision_class": "observed",
+          "relation_kind": "same_event",
+          "relation_type_contains": ["同一事件"],
+          "direction_contains": [],
+          "source_evidence_refs": ["s0001"],
+          "target_evidence_refs": ["s0002"]
+        }
+      ],
+      "hard_negative_card_ids": [
+        "kg_cognitive_card:9b00df6f40bd8eea"
+      ]
+    },
+    {
+      "case_id": "usd_jpy_independent_confirmation",
+      "description": "相隔两分钟的两条报道均观察到美元兑日元上涨 0.7% 至 162.40，应识别为同一市场事件的相互印证。",
+      "source_card_id": "kg_cognitive_card:9b00df6f40bd8eea",
+      "expected_relations": [
+        {
+          "target_card_id": "kg_cognitive_card:4af04411543d01f2",
+          "decision_class": "observed",
+          "relation_kind": "confirmation",
+          "relation_type_contains": ["印证"],
+          "direction_contains": ["对称"],
+          "source_evidence_refs": ["s0002", "s0003", "s0004"],
+          "target_evidence_refs": ["s0002", "s0003"]
+        }
+      ],
+      "hard_negative_card_ids": [
+        "kg_cognitive_card:cc7c661b9f65b3b3"
+      ]
+    },
+    {
+      "case_id": "guangxi_parallel_emergency_responses",
+      "description": "同一灾害事件中，国家救灾委启动四级响应与国家防总提升防汛响应属于有原文支持的同一事件及并行响应。",
+      "source_card_id": "kg_cognitive_card:049bf2187b582dad",
+      "expected_relations": [
+        {
+          "target_card_id": "kg_cognitive_card:67695fffa17194be",
+          "decision_class": "observed",
+          "relation_kind": "same_event",
+          "relation_type_contains": ["事件"],
+          "direction_contains": ["同一事实"],
+          "source_evidence_refs": ["s0003"],
+          "target_evidence_refs": ["s0006"]
+        },
+        {
+          "target_card_id": "kg_cognitive_card:657e2ddca0788529",
+          "decision_class": "inferred",
+          "relation_kind": "confirmation",
+          "relation_type_contains": ["印证"],
+          "direction_contains": ["广西"],
+          "source_evidence_refs": ["s0003"],
+          "target_evidence_refs": ["s0002"]
+        }
+      ],
+      "hard_negative_card_ids": [
+        "kg_cognitive_card:665f76b2fe96eb7e",
+        "kg_cognitive_card:4af04411543d01f2"
+      ]
+    },
+    {
+      "case_id": "maersk_share_decline_progression",
+      "description": "同日较早报道马士基下跌 5.4%，稍后跌幅扩大至 8%，应识别为股价事件的后续进展；航线调整本身不能凭共现升级为股价下跌原因。",
+      "source_card_id": "kg_cognitive_card:df5c32ad74f5eec3",
+      "expected_relations": [
+        {
+          "target_card_id": "kg_cognitive_card:54163cfc6f6bbc47",
+          "decision_class": "observed",
+          "relation_kind": "temporal_progression",
+          "relation_type_contains": ["先后"],
+          "direction_contains": ["更新"],
+          "source_evidence_refs": ["s0002"],
+          "target_evidence_refs": ["s0002"]
+        }
+      ],
+      "hard_negative_card_ids": [
+        "kg_cognitive_card:0bf7fc16f7f011e9",
+        "kg_cognitive_card:69be9d2a5525af37",
+        "kg_cognitive_card:665f76b2fe96eb7e"
+      ]
+    },
+    {
+      "case_id": "tsmc_fundamentals_support_target_raise",
+      "description": "同一研报中的 AI/HPC 需求、供给紧张、扩产和利润率判断是目标价上调的直接依据；仅含目标价结论的 Card 不得借用未标记上下文与其他行业预期建立共同驱动。",
+      "source_card_id": "kg_cognitive_card:fec33e2255ada9ae",
+      "expected_relations": [
+        {
+          "target_card_id": "kg_cognitive_card:140eb76fb518b1ae",
+          "decision_class": "observed",
+          "relation_kind": "causal_influence",
+          "relation_type_contains": ["目标价上调"],
+          "direction_contains": ["AI"],
+          "source_evidence_refs": ["s0004"],
+          "target_evidence_refs": ["s0008"]
+        }
+      ],
+      "hard_negative_card_ids": [
+        "kg_cognitive_card:a826f5c27c7863c0",
+        "kg_cognitive_card:021d4404402c632c"
+      ]
+    }
+  ]
+}

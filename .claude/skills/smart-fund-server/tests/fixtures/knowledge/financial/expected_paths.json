@@ -1,4 +1,0 @@
-{
-  "path": ["policy", "concept", "stock", "fund"],
-  "relations": ["affects", "belongs_to", "holds"]
-}

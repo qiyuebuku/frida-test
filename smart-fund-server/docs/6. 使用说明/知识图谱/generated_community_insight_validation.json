@@ -1,0 +1,122 @@
+{
+  "target": "prod",
+  "limit": 1,
+  "scan_limit": 80,
+  "force": true,
+  "dry_run": false,
+  "skip_refresh": true,
+  "langfuse": {
+    "session_id": "community-insight-validation-20260710T095454Z-kgc:financial:l0:731",
+    "trace_name": "kg.community_insight.refresh_ids",
+    "llm_observation": "llm:kg_community_insight"
+  },
+  "selected": [
+    {
+      "community_id": "kgc:financial:l0:731",
+      "title": "半导体产业链",
+      "updated_at": "2026-07-10T05:12:03.963004+00:00",
+      "last_insight_generated_at": "2026-07-10T05:12:05.116182+00:00",
+      "source_count": 64,
+      "cognitive_card_count": 66,
+      "assignment_count": 70,
+      "existing_insight": {
+        "insight_id": "kgi:kgc:financial:l0:731",
+        "status": "active",
+        "insight_version": 13,
+        "report_chars": 1491,
+        "report_json_keys": [
+          "findings",
+          "key_entities",
+          "key_relationships",
+          "summary"
+        ],
+        "updated_at": "2026-07-10T05:12:05.116182+00:00",
+        "source_count": 53,
+        "cognitive_card_count": 53,
+        "assignment_count": 53
+      }
+    }
+  ],
+  "refresh_result": {
+    "skipped": true,
+    "reason": "skip_refresh"
+  },
+  "pg_insights": {
+    "kgc:financial:l0:731": {
+      "insight_id": "kgi:kgc:financial:l0:731",
+      "status": "active",
+      "insight_version": 13,
+      "report_chars": 1491,
+      "report_json_keys": [
+        "findings",
+        "key_entities",
+        "key_relationships",
+        "summary"
+      ],
+      "updated_at": "2026-07-10T05:12:05.116182+00:00",
+      "source_count": 53,
+      "cognitive_card_count": 53,
+      "assignment_count": 53,
+      "title": "半导体产业链",
+      "report_preview": "半导体产业链在2026年7月上旬呈现出AI驱动的景气周期加速特征，供需紧张从存储芯片向模拟芯片等多个环节扩散，设备投资强劲，同时华为“韬定律”理论的提出为产业链注入新的技术升级预期。多条材料共同表明，AI服务器需求的持续增长正在重塑整个半导体供需格局，而技术路线的潜在变革可能进一步拉动上游工具链和封装环节的价值提升。\n\n综合来看，AI需求已从逻辑芯片延伸至存储和模拟领域，导致全产业链出现结构性短缺。存储芯片方面，HBM因其高利润吸引原厂优先分配产能，导致通用DRAM和NAND供应受限。集邦咨询大幅上调2026年Q1的DRAM合约价涨幅至90-95%，NAND Flash合约价涨幅至55-60%（ft_news:109052），同时三星、SK海力士等存储巨头业绩预期强劲（ft_news:108803），但市场对供需状况的担忧和杠杆ETF获利回吐导致全球芯片股短暂承压（ft_news:108912）。模拟芯片市场同样感受到需求回升带来的压力，亚德诺半导体（ADI）部分产品交期长达六个月，并为维持供应发出涨价通知（ft_news:108985，ft_news:109023）。这反映出AI需求",
+      "core_thesis": null,
+      "quality_flags": []
+    }
+  },
+  "communities_after": {
+    "kgc:financial:l0:731": {
+      "updated_at": "2026-07-10T05:12:03.963004+00:00",
+      "last_insight_generated_at": "2026-07-10T05:12:05.116182+00:00"
+    }
+  },
+  "milvus": {
+    "kgc:financial:l0:731": {
+      "target_id": "kgi:kgc:financial:l0:731",
+      "hit": true,
+      "text_chars": 3170,
+      "metadata_keys": [
+        "adapter_name",
+        "assignment_count",
+        "chunk_id",
+        "cited_chunk_ids",
+        "cited_evidence_ids",
+        "cognitive_card_count",
+        "cognitive_card_ids",
+        "community_id",
+        "community_title",
+        "document_type",
+        "earliest_evidence_at",
+        "event_time_end",
+        "event_time_end_ts",
+        "event_time_start",
+        "event_time_start_ts",
+        "evidence_id",
+        "insight_full_report_chars",
+        "insight_version",
+        "latest_evidence_at",
+        "projection",
+        "published_at_ts",
+        "retrieval_text_chars",
+        "retrieval_text_source",
+        "source_count",
+        "source_id",
+        "source_type",
+        "target",
+        "target_id",
+        "target_type"
+      ],
+      "text_preview": "Community Insight: 半导体产业链\nSummary: 半导体产业链在AI需求驱动下进入景气加速期，存储、模拟芯片供需紧张并出现涨价，设备投资持续上调，华为韬定律论文催生先进封装与EDA工具链增量预期，资本开支计划印证长期需求。\nFinding 1: AI需求导致存储器市场供需严重失衡，HBM产能挤压通用DRAM和NAND供应，推动价格大幅上涨。。集邦咨询大幅上修DRAM合约价季增幅至90-95%、NAND Flash至55-60%（ft_news:109052"
+    }
+  },
+  "quality_summary": {
+    "selected_count": 1,
+    "pg_active_count": 1,
+    "pg_report_min_chars": 1491,
+    "pg_report_max_chars": 1491,
+    "milvus_hit_count": 1,
+    "report_json_missing_core_thesis": [
+      "kgc:financial:l0:731"
+    ]
+  },
+  "duration_seconds": 2.164
+}
