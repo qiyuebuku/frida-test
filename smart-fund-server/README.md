@@ -2,6 +2,10 @@
 
 基金智能交易服务端，提供同花顺基金数据查询、交易执行、风控管理、决策引擎等 API。
 
+服务端同时包含基于 OpenAI Agents SDK 的自动化金融研究 Runtime。Agent 通过本服务
+提供的 Streamable HTTP MCP 使用知识图谱、市场数据和外部研究工具，不直接访问
+PostgreSQL 或 Milvus。
+
 ## 项目结构
 
 ```
@@ -30,6 +34,28 @@ smart-fund-server/
 - Python 3.12（通过 conda 管理）
 - PostgreSQL（数据库名 `jettask`，用户 `jettask`，密码 `123456`）
 - 依赖包：`fastapi uvicorn httpx psycopg2-binary pydantic`
+
+## 金融 Agent
+
+检查 Agent 配置、MCP 连接和只读工具：
+
+```bash
+python -m src.interfaces.cli agent check
+```
+
+执行一次金融研究：
+
+```bash
+python -m src.interfaces.cli agent run --json-output \
+  "分析存储芯片涨价如何影响手机厂商产品策略，并给出图谱证据。"
+```
+
+Agent 默认只读。只有明确允许修改标的跟踪名单时才增加
+`--allow-writes`。自动任务、人工调试和历史重放统一复用
+`src.application.agents.financial_research.FinancialAgentRuntime`。
+
+设计和实施文档统一位于工作区根目录
+`/home/yuyang/frida-test/smart-fund-server/docs`。
 
 ## 架构说明
 
@@ -72,37 +98,39 @@ smart-fund-server/
 
 ## 部署
 
-部署入口位于项目根目录：
+部署文件统一位于 `deployment/`，命令仍从项目根目录执行：
 
 ```bash
 cd /home/yuyang/frida-test/smart-fund-server
-./deploy_113.sh
+./deployment/deploy_113.sh
 ```
 
 本地 sudo 凭据保存在 Git 忽略且不会被 `rsync` 上传的
-`.deployment.local.env`：
+`deployment/.deployment.local.env`：
 
 ```bash
 REMOTE_SUDO_PASSWORD=...
 ```
+
+环境变量模板位于 `deployment/.env.example`，实际运行配置仍写入项目根目录 `.env`。
 
 日常部署会同步代码、更新 systemd unit、重启应用服务并执行完整健康检查。它复用生产机已有的 `smart-fund` Conda 环境，不会重新创建环境或下载依赖；Milvus 已运行时也不会因普通代码发布而重启。
 
 首次初始化或显式更新依赖时使用：
 
 ```bash
-./deploy_113.sh --init
-./deploy_113.sh --deps
+./deployment/deploy_113.sh --init
+./deployment/deploy_113.sh --deps
 ```
 
 常用运维命令：
 
 ```bash
-./deploy_113.sh --sync-only
-./deploy_113.sh --restart
-./deploy_113.sh --status
-./deploy_113.sh --logs worker 200
-./deploy_113.sh --test
+./deployment/deploy_113.sh --sync-only
+./deployment/deploy_113.sh --restart
+./deployment/deploy_113.sh --status
+./deployment/deploy_113.sh --logs worker 200
+./deployment/deploy_113.sh --test
 ```
 
 ## 排查问题
@@ -110,8 +138,8 @@ REMOTE_SUDO_PASSWORD=...
 ### 服务启动失败
 
 ```bash
-./deploy_113.sh --status
-./deploy_113.sh --logs api 200
+./deployment/deploy_113.sh --status
+./deployment/deploy_113.sh --logs api 200
 
 ssh -p 1113 yuyangruan@119.23.227.187
 cd /home/yuyangruan/smart-fund/smart-fund-server

@@ -4,10 +4,10 @@
 - started_at: 2026-05-17T16:40:22+0800
 - finished_at: 2026-05-17T16:46:17+0800
 - script: docs/6. 使用说明/知识图谱/3_kg_real_replay_quality_baseline.py
-- full_log: /home/yuyang/frida-test/smart-fund-server/docs/6. 使用说明/知识图谱/generated_real_replay_full.log
-- llm_full_trace: /home/yuyang/frida-test/smart-fund-server/docs/6. 使用说明/知识图谱/generated_real_replay_llm_full_trace.log
-- retrieval_llm_trace: /home/yuyang/frida-test/smart-fund-server/docs/6. 使用说明/知识图谱/generated_retrieval_llm_trace.log
-- case_file: /home/yuyang/frida-test/smart-fund-server/docs/6. 使用说明/知识图谱/generated_real_replay_bad_cases.json
+- full_log: /home/yuyang/frida-test/docs/6. 使用说明/知识图谱/generated_real_replay_full.log
+- llm_full_trace: /home/yuyang/frida-test/docs/6. 使用说明/知识图谱/generated_real_replay_llm_full_trace.log
+- retrieval_llm_trace: /home/yuyang/frida-test/docs/6. 使用说明/知识图谱/generated_retrieval_llm_trace.log
+- case_file: /home/yuyang/frida-test/docs/6. 使用说明/知识图谱/generated_real_replay_bad_cases.json
 
 ## Config
 
@@ -981,7 +981,7 @@
     "asyncio.exceptions.CancelledError\n",
     "\nDuring handling of the above exception, another exception occurred:\n\n",
     "Traceback (most recent call last):\n",
-    "  File \"/home/yuyang/frida-test/smart-fund-server/docs/6. 使用说明/知识图谱/3_kg_real_replay_quality_baseline.py\", line 2000, in <module>\n    asyncio.run(main())\n",
+    "  File \"/home/yuyang/frida-test/docs/6. 使用说明/知识图谱/3_kg_real_replay_quality_baseline.py\", line 2000, in <module>\n    asyncio.run(main())\n",
     "  File \"/home/yuyang/anaconda3/envs/frida-test/lib/python3.12/asyncio/runners.py\", line 195, in run\n    return runner.run(main)\n           ^^^^^^^^^^^^^^^^\n",
     "  File \"/home/yuyang/anaconda3/envs/frida-test/lib/python3.12/asyncio/runners.py\", line 123, in run\n    raise KeyboardInterrupt()\n",
     "KeyboardInterrupt\n"

@@ -5,6 +5,8 @@
     python -m src.interfaces.cli worker [-c N]
     python -m src.interfaces.cli scheduler
     python -m src.interfaces.cli persist
+    python -m src.interfaces.cli agent check
+    python -m src.interfaces.cli agent run "研究问题"
     python -m src.interfaces.cli trigger [queue...]
     python -m src.interfaces.cli init db [--target prod|test]
     python -m src.interfaces.cli init state [--reset]
@@ -511,6 +513,7 @@ def init_schedules():
     for s in SCHEDULES:
         click.echo(f"  - {s.name}")
     try:
+        app.schedule_delete(["collect_fund_flow_5min"])
         count = app.schedule_register(SCHEDULES)
     except RuntimeError as exc:
         if "command result polling timeout" in str(exc):
@@ -558,8 +561,10 @@ def init_all(ctx, target: str):
 
 
 from src.interfaces.cli.knowledge import kg
+from src.interfaces.cli.agent import agent
 
 cli.add_command(kg)
+cli.add_command(agent)
 
 
 if __name__ == "__main__":

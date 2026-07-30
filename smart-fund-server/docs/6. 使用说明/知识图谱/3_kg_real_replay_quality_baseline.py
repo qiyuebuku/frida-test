@@ -95,12 +95,11 @@ from sqlalchemy import text
 
 
 def _project_root() -> Path:
-    root = Path(__file__).resolve()
-    while root.name != "smart-fund-server" and root.parent != root:
-        root = root.parent
-    if root.name != "smart-fund-server":
-        raise RuntimeError("cannot locate smart-fund-server project root")
-    return root
+    for workspace_root in Path(__file__).resolve().parents:
+        candidate = workspace_root / "smart-fund-server"
+        if (candidate / "src").is_dir():
+            return candidate
+    raise RuntimeError("cannot locate smart-fund-server project root")
 
 
 PROJECT_ROOT = _project_root()
@@ -242,7 +241,7 @@ def print_run_mode(config: ReplayConfig) -> None:
 
 
 def _default_generated_path(filename: str) -> str:
-    return str(PROJECT_ROOT / "docs/6. 使用说明/知识图谱" / filename)
+    return str(Path(__file__).resolve().parent / filename)
 
 
 def full_log_path(config: ReplayConfig) -> str:
@@ -1030,7 +1029,7 @@ def _print_anchor_and_judge_summary(item: dict[str, Any]) -> None:
 
 
 def write_case_file(config: ReplayConfig, cases: list[dict[str, Any]]) -> None:
-    path = PROJECT_ROOT / "docs/6. 使用说明/知识图谱/generated_real_replay_bad_cases.json"
+    path = Path(__file__).resolve().parent / "generated_real_replay_bad_cases.json"
     path.write_text(
         json.dumps({"adapter_name": config.adapter, "target": config.target, "cases": cases}, ensure_ascii=False, indent=2),
         encoding="utf-8",

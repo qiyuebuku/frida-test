@@ -6,10 +6,12 @@ import pytest
 
 from src.application.services.market_tracking_service import (
     MarketTrackingService,
+    _freshness_seconds,
     _resolve_tracked_codes,
 )
 from src.application.services.watchlist_service import (
     WatchlistMutation,
+    WatchlistItem,
     WatchlistUpdateMutation,
 )
 from src.domain.collection.services.fund_flow import _watchlist_collection_plan
@@ -119,6 +121,25 @@ def test_resolve_tracked_codes_rejects_multiple_prefixed_matches() -> None:
             ["123456"],
             ["sh123456", "sz123456"],
         )
+
+
+def test_realtime_dimensions_cap_freshness_at_three_minutes() -> None:
+    assert _freshness_seconds(
+        configured_interval=1800,
+        expected_types={"quote", "kline"},
+    ) == 180
+    assert _freshness_seconds(
+        configured_interval=60,
+        expected_types={"quote"},
+    ) == 60
+    assert _freshness_seconds(
+        configured_interval=1800,
+        expected_types={"nav", "kline"},
+    ) == 1800
+    assert _freshness_seconds(
+        configured_interval=180,
+        expected_types={"nav", "kline"},
+    ) == 1800
 
 
 @pytest.mark.asyncio
@@ -263,3 +284,315 @@ async def test_market_tracking_reactivation_collects_immediately(
 
     assert dispatched == [["159915"]]
     assert result["collection_event_ids"] == ["event:159915"]
+
+
+def _watchlist_item(
+    *,
+    code: str = "sh600036",
+    last_success_at: datetime | None = None,
+    last_run_at: datetime | None = None,
+    last_error: str = "",
+) -> WatchlistItem:
+    return WatchlistItem(
+        code=code,
+        name="招商银行",
+        type="stock",
+        source="agent",
+        reason="测试",
+        enabled=True,
+        mode="incremental",
+        newest_time="2026-07-30",
+        oldest_time="2026-07-01",
+        backfill_status="done",
+        config={"interval": 1800, "type": "stock"},
+        total_runs=1,
+        total_saved=1,
+        last_run_at=last_run_at,
+        last_success_at=last_success_at,
+        last_error=last_error,
+    )
+
+
+class _ReadableWatchlist:
+    def __init__(self, item: WatchlistItem):
+        self.item = item
+
+    def list_all(self, _enabled_only=False):
+        return [self.item]
+
+    def get(self, _code):
+        return self.item
+
+
+class _ReadableDataRepository:
+    def __init__(self, rows: list[dict]):
+        self.rows = rows
+
+    def query_latest_by_codes(self, codes, data_types):
+        return [
+            row
+            for row in self.rows
+            if row["code"] in codes and row["data_type"] in data_types
+        ]
+
+
+@pytest.mark.asyncio
+async def test_market_open_returns_fresh_data_without_refresh(
+    monkeypatch,
+) -> None:
+    now = datetime.now(timezone.utc)
+    watchlist = _ReadableWatchlist(
+        _watchlist_item(last_success_at=now, last_run_at=now)
+    )
+    repository = _ReadableDataRepository(
+        [
+            {
+                "code": "sh600036",
+                "data_type": "quote",
+                "trade_date": date(2026, 7, 30),
+                "data": {"price": 40},
+                "updated_at": now,
+            }
+        ]
+    )
+
+    async def fail_dispatch(_codes):
+        raise AssertionError("fresh data must not trigger collection")
+
+    monkeypatch.setattr(
+        "src.application.services.market_tracking_service."
+        "send_watchlist_instrument_collection",
+        fail_dispatch,
+    )
+    result = await MarketTrackingService(
+        watchlist_service=watchlist,
+        data_repository=repository,
+    ).open_instruments(codes=["600036"], data_types=["quote"])
+
+    instrument = result["instruments"][0]
+    assert instrument["freshness"]["status"] == "fresh"
+    assert instrument["freshness"]["refresh_triggered"] is False
+    assert instrument["freshness"]["is_stale"] is False
+
+
+@pytest.mark.asyncio
+async def test_market_open_does_not_refresh_unsupported_data_type(
+    monkeypatch,
+) -> None:
+    now = datetime.now(timezone.utc)
+    fund = _watchlist_item(last_success_at=now, last_run_at=now)
+    fund.code = "000083"
+    fund.type = "fund"
+    fund.config = {"interval": 1800, "type": "fund"}
+    watchlist = _ReadableWatchlist(fund)
+
+    async def fail_dispatch(_codes):
+        raise AssertionError("unsupported dimensions must not trigger collection")
+
+    monkeypatch.setattr(
+        "src.application.services.market_tracking_service."
+        "send_watchlist_instrument_collection",
+        fail_dispatch,
+    )
+    result = await MarketTrackingService(
+        watchlist_service=watchlist,
+        data_repository=_ReadableDataRepository([]),
+    ).open_instruments(codes=["000083"], data_types=["quote"])
+
+    freshness = result["instruments"][0]["freshness"]
+    assert freshness["status"] == "unsupported_data_types"
+    assert freshness["unsupported_data_types"] == ["quote"]
+    assert freshness["refresh_triggered"] is False
+    assert freshness["is_stale"] is False
+
+
+@pytest.mark.asyncio
+async def test_market_open_waits_for_stale_data_refresh(
+    monkeypatch,
+) -> None:
+    old_time = datetime.now(timezone.utc) - timedelta(hours=2)
+    new_time = datetime.now(timezone.utc)
+    watchlist = _ReadableWatchlist(
+        _watchlist_item(last_success_at=old_time, last_run_at=old_time)
+    )
+    repository = _ReadableDataRepository(
+        [
+            {
+                "code": "sh600036",
+                "data_type": "quote",
+                "trade_date": date(2026, 7, 29),
+                "data": {"price": 39},
+                "updated_at": old_time,
+            }
+        ]
+    )
+
+    async def refresh(codes):
+        assert codes == ["sh600036"]
+        repository.rows = [
+            {
+                "code": "sh600036",
+                "data_type": "quote",
+                "trade_date": date(2026, 7, 30),
+                "data": {"price": 40},
+                "updated_at": new_time,
+            }
+        ]
+        watchlist.item = _watchlist_item(
+            last_success_at=new_time,
+            last_run_at=new_time,
+        )
+        return ["event:refresh"]
+
+    monkeypatch.setattr(
+        "src.application.services.market_tracking_service."
+        "send_watchlist_instrument_collection",
+        refresh,
+    )
+    result = await MarketTrackingService(
+        watchlist_service=watchlist,
+        data_repository=repository,
+        refresh_poll_seconds=0.001,
+    ).open_instruments(codes=["600036"], data_types=["quote"])
+
+    instrument = result["instruments"][0]
+    assert instrument["freshness"]["status"] == "refreshed"
+    assert instrument["freshness"]["refresh_triggered"] is True
+    assert instrument["freshness"]["collection_event_id"] == "event:refresh"
+    assert instrument["latest"][0]["data"]["price"] == 40
+
+
+@pytest.mark.asyncio
+async def test_market_open_refreshes_missing_supported_dimension(
+    monkeypatch,
+) -> None:
+    initial_time = datetime.now(timezone.utc)
+    refreshed_time = initial_time + timedelta(seconds=1)
+    watchlist = _ReadableWatchlist(
+        _watchlist_item(
+            last_success_at=initial_time,
+            last_run_at=initial_time,
+        )
+    )
+    repository = _ReadableDataRepository([])
+
+    async def refresh(_codes):
+        repository.rows = [
+            {
+                "code": "sh600036",
+                "data_type": "quote",
+                "trade_date": date(2026, 7, 30),
+                "data": {"price": 40},
+                "updated_at": refreshed_time,
+            }
+        ]
+        watchlist.item = _watchlist_item(
+            last_success_at=refreshed_time,
+            last_run_at=refreshed_time,
+        )
+        return ["event:missing"]
+
+    monkeypatch.setattr(
+        "src.application.services.market_tracking_service."
+        "send_watchlist_instrument_collection",
+        refresh,
+    )
+    result = await MarketTrackingService(
+        watchlist_service=watchlist,
+        data_repository=repository,
+        refresh_poll_seconds=0.001,
+    ).open_instruments(codes=["600036"], data_types=["quote"])
+
+    instrument = result["instruments"][0]
+    assert instrument["freshness"]["status"] == "refreshed"
+    assert instrument["freshness"]["trigger_reasons"] == ["data_incomplete"]
+    assert instrument["latest"][0]["data"]["price"] == 40
+
+
+@pytest.mark.asyncio
+async def test_market_open_timeout_returns_pre_refresh_snapshot(
+    monkeypatch,
+) -> None:
+    old_time = datetime.now(timezone.utc) - timedelta(hours=2)
+    watchlist = _ReadableWatchlist(
+        _watchlist_item(last_success_at=old_time, last_run_at=old_time)
+    )
+    repository = _ReadableDataRepository(
+        [
+            {
+                "code": "sh600036",
+                "data_type": "quote",
+                "trade_date": date(2026, 7, 29),
+                "data": {"price": 39},
+                "updated_at": old_time,
+            }
+        ]
+    )
+
+    async def dispatch(_codes):
+        return ["event:slow"]
+
+    monkeypatch.setattr(
+        "src.application.services.market_tracking_service."
+        "send_watchlist_instrument_collection",
+        dispatch,
+    )
+    result = await MarketTrackingService(
+        watchlist_service=watchlist,
+        data_repository=repository,
+        refresh_wait_seconds=0.01,
+        refresh_poll_seconds=0.001,
+    ).open_instruments(codes=["600036"], data_types=["quote"])
+
+    instrument = result["instruments"][0]
+    assert instrument["freshness"]["status"] == "refresh_timeout"
+    assert instrument["freshness"]["is_stale"] is True
+    assert instrument["freshness"]["stale_data_returned"] is True
+    assert "旧数据" in instrument["freshness"]["message"]
+    assert instrument["latest"][0]["data"]["price"] == 39
+
+
+@pytest.mark.asyncio
+async def test_market_open_failure_returns_pre_refresh_snapshot(
+    monkeypatch,
+) -> None:
+    old_time = datetime.now(timezone.utc) - timedelta(hours=2)
+    failed_time = datetime.now(timezone.utc)
+    watchlist = _ReadableWatchlist(
+        _watchlist_item(last_success_at=old_time, last_run_at=old_time)
+    )
+    repository = _ReadableDataRepository(
+        [
+            {
+                "code": "sh600036",
+                "data_type": "quote",
+                "trade_date": date(2026, 7, 29),
+                "data": {"price": 39},
+                "updated_at": old_time,
+            }
+        ]
+    )
+
+    async def dispatch(_codes):
+        watchlist.item = _watchlist_item(
+            last_success_at=old_time,
+            last_run_at=failed_time,
+            last_error="upstream unavailable",
+        )
+        return ["event:failed"]
+
+    monkeypatch.setattr(
+        "src.application.services.market_tracking_service."
+        "send_watchlist_instrument_collection",
+        dispatch,
+    )
+    result = await MarketTrackingService(
+        watchlist_service=watchlist,
+        data_repository=repository,
+        refresh_poll_seconds=0.001,
+    ).open_instruments(codes=["600036"], data_types=["quote"])
+
+    instrument = result["instruments"][0]
+    assert instrument["freshness"]["status"] == "refresh_failed"
+    assert instrument["freshness"]["refresh_error"] == "upstream unavailable"
+    assert instrument["latest"][0]["data"]["price"] == 39

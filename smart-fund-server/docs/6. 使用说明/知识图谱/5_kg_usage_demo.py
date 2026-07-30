@@ -26,12 +26,11 @@ from sqlalchemy import text
 
 
 def _project_root() -> Path:
-    root = Path(__file__).resolve()
-    while root.name != "smart-fund-server" and root.parent != root:
-        root = root.parent
-    if root.name != "smart-fund-server":
-        raise RuntimeError("cannot locate smart-fund-server project root")
-    return root
+    for workspace_root in Path(__file__).resolve().parents:
+        candidate = workspace_root / "smart-fund-server"
+        if (candidate / "src").is_dir():
+            return candidate
+    raise RuntimeError("cannot locate smart-fund-server project root")
 
 
 PROJECT_ROOT = _project_root()

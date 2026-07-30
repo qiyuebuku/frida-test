@@ -2,7 +2,7 @@ __pycache__/
 *.pyc
 .env
 .env.*
-!.env.example
+!deployment/.env.example
 .deployment.local.env
 .env copy
 .venv/

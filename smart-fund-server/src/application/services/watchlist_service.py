@@ -17,7 +17,7 @@ from src.infrastructure.persistence.models.collection import CollectionState
 AGGREGATOR = "watchlist"
 MAX_ACTIVE_INSTRUMENTS = 500
 DEFAULT_CONFIG = {
-    "interval": 1800,
+    "interval": 180,
     "target_days": 10,
 }
 
@@ -374,7 +374,7 @@ class WatchlistService:
                 interval = _positive_int(
                     config.get("interval", DEFAULT_CONFIG["interval"]),
                     "interval",
-                    minimum=300,
+                    minimum=60,
                 )
                 target_days = _positive_int(
                     config.get("target_days", DEFAULT_CONFIG["target_days"]),
@@ -504,7 +504,7 @@ class WatchlistService:
         kwargs: dict[str, Any],
     ) -> None:
         if "interval" in kwargs:
-            _positive_int(kwargs["interval"], "interval", minimum=300)
+            _positive_int(kwargs["interval"], "interval", minimum=60)
         if "target_days" in kwargs:
             _positive_int(kwargs["target_days"], "target_days")
         if "source" in kwargs:
@@ -546,7 +546,7 @@ class WatchlistService:
                 if raw.get("interval") is not None
                 else DEFAULT_CONFIG["interval"],
                 "interval",
-                minimum=300,
+                minimum=60,
             )
             source = str(raw.get("source") or "manual").strip().lower()
             if source not in {"manual", "position", "event", "agent"}:

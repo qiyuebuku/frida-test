@@ -172,7 +172,7 @@ async def test_market_watchlist_add_uses_typed_tool_input(monkeypatch) -> None:
             "type": "stock",
             "name": "招商银行",
             "reason": "验证银行板块事件影响",
-            "interval": 1800,
+            "interval": 180,
             "target_days": 10,
         }
     ]

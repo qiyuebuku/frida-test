@@ -65,14 +65,16 @@ async def main() -> None:
     import logging
     import sys
 
-    PROJECT_ROOT = Path.cwd()
-    while PROJECT_ROOT.name != "smart-fund-server" and PROJECT_ROOT.parent != PROJECT_ROOT:
-        PROJECT_ROOT = PROJECT_ROOT.parent
+    WORKSPACE_ROOT = Path(__file__).resolve()
+    while (
+        not (WORKSPACE_ROOT / "smart-fund-server" / "src").is_dir()
+        and WORKSPACE_ROOT.parent != WORKSPACE_ROOT
+    ):
+        WORKSPACE_ROOT = WORKSPACE_ROOT.parent
 
-    if PROJECT_ROOT.name != "smart-fund-server":
-        candidate = Path.cwd() / ".claude" / "skills" / "smart-fund-server"
-        if candidate.exists():
-            PROJECT_ROOT = candidate.resolve()
+    PROJECT_ROOT = WORKSPACE_ROOT / "smart-fund-server"
+    if not (PROJECT_ROOT / "src").is_dir():
+        raise RuntimeError("cannot locate smart-fund-server project root")
 
     if str(PROJECT_ROOT) not in sys.path:
         sys.path.insert(0, str(PROJECT_ROOT))

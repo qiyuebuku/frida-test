@@ -249,14 +249,14 @@ class MarketAggregator(BaseAggregator):
     task_interval = 60  # 1 分钟
 
     SOURCE_CONFIGS = {
-        "market_overview":    {"target_days": 0, "interval": 120, "default_mode": "incremental"},
-        "market_environment": {"target_days": 0, "interval": 300, "default_mode": "incremental"},
-        "global_index":       {"target_days": 0, "interval": 300, "default_mode": "incremental"},
-        "futures_domestic":   {"target_days": 0, "interval": 300, "default_mode": "incremental"},
-        "futures_intl":       {"target_days": 0, "interval": 300, "default_mode": "incremental"},
-        "forex":              {"target_days": 0, "interval": 300, "default_mode": "incremental"},
-        "sector_ranking":     {"target_days": 0, "interval": 300, "default_mode": "incremental"},
-        "sector_kline":       {"target_days": 0, "interval": 900, "default_mode": "incremental"},
+        "market_overview":    {"target_days": 0, "interval": 60, "default_mode": "incremental"},
+        "market_environment": {"target_days": 0, "interval": 180, "default_mode": "incremental"},
+        "global_index":       {"target_days": 0, "interval": 180, "default_mode": "incremental"},
+        "futures_domestic":   {"target_days": 0, "interval": 180, "default_mode": "incremental"},
+        "futures_intl":       {"target_days": 0, "interval": 180, "default_mode": "incremental"},
+        "forex":              {"target_days": 0, "interval": 180, "default_mode": "incremental"},
+        "sector_ranking":     {"target_days": 0, "interval": 180, "default_mode": "incremental"},
+        "sector_kline":       {"target_days": 0, "interval": 180, "default_mode": "incremental"},
     }
 
     def __init__(self):
@@ -267,60 +267,60 @@ class MarketAggregator(BaseAggregator):
         from src.infrastructure import clients
 
         self.sources = [
-            # 大盘总览 — 2 分钟
+            # 大盘总览 — 1 分钟
             SourceDef(
                 "market_overview",
                 lambda cp: clients.aggregator.get_market_overview(),
-                120,
+                60,
                 normalize_market_overview,
             ),
-            # 市场环境 — 5 分钟
+            # 市场环境 — 3 分钟
             SourceDef(
                 "market_environment",
                 lambda cp: clients.aggregator.get_market_environment(),
-                300,
+                180,
                 normalize_market_environment,
             ),
-            # 全球指数 — 5 分钟
+            # 全球指数 — 3 分钟
             SourceDef(
                 "global_index",
                 lambda cp: clients.sina.get_global_index(),
-                300,
+                180,
                 normalize_global_index,
             ),
-            # 国内期货 — 5 分钟
+            # 国内期货 — 3 分钟
             SourceDef(
                 "futures_domestic",
                 lambda cp: clients.sina.get_futures(),
-                300,
+                180,
                 normalize_futures_domestic,
             ),
-            # 国际期货 — 5 分钟
+            # 国际期货 — 3 分钟
             SourceDef(
                 "futures_intl",
                 lambda cp: clients.tencent.get_intl_futures(),
-                300,
+                180,
                 normalize_futures_intl,
             ),
-            # 外汇 — 5 分钟
+            # 外汇 — 3 分钟
             SourceDef(
                 "forex",
                 lambda cp: clients.sina.get_forex(),
-                300,
+                180,
                 normalize_forex,
             ),
-            # 板块涨跌排行 — 5 分钟（含 3d/5d 累计涨幅估算 + 过热标记）
+            # 板块涨跌排行 — 3 分钟（含 3d/5d 累计涨幅估算 + 过热标记）
             SourceDef(
                 "sector_ranking",
                 lambda cp: _fetch_sector_ranking_enriched(clients.sina, clients.eastmoney),
-                300,
+                180,
                 normalize_sector_ranking,
             ),
-            # 板块日 K 线 — 15 分钟（EM 行业+概念板块 K 线，含 change_1d/3d）
+            # 板块日 K 线 — 3 分钟（EM 行业+概念板块 K 线，含 change_1d/3d）
             SourceDef(
                 "sector_kline",
                 lambda cp: _fetch_sector_kline(clients.eastmoney),
-                900,
+                180,
                 normalize_sector_kline,
             ),
         ]

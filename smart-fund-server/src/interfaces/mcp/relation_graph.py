@@ -55,7 +55,7 @@ class MarketWatchlistAddItem(BaseModel):
     type: Literal["stock", "fund", "etf", "index"]
     name: str = ""
     reason: str
-    interval: int = Field(default=1800, ge=300)
+    interval: int = Field(default=180, ge=60)
     target_days: int = Field(default=10, ge=1)
 
 
@@ -65,7 +65,7 @@ class MarketWatchlistUpdateItem(BaseModel):
     name: str | None = None
     type: Literal["stock", "fund", "etf", "index"] | None = None
     reason: str | None = None
-    interval: int | None = Field(default=None, ge=300)
+    interval: int | None = Field(default=None, ge=60)
     target_days: int | None = Field(default=None, ge=1)
 
 
@@ -460,8 +460,10 @@ async def market_watchlist_update(
 @mcp.tool(
     description=(
         "Open the latest collected market snapshot for at most eight tracked "
-        "instruments. Defaults to compact decision-relevant dimensions and "
-        "also returns collection freshness and failure state."
+        "instruments. Missing or stale data automatically triggers immediate "
+        "collection and waits up to 100 seconds. If refresh fails or times "
+        "out, the tool returns the pre-refresh snapshot with an explicit stale "
+        "status. Defaults to compact decision-relevant dimensions."
     ),
     annotations=_READ_ONLY_ANNOTATIONS,
 )

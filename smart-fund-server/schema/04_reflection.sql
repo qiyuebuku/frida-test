@@ -1,6 +1,6 @@
 -- AUTO-GENERATED from pg_dump
 -- 来源: jettask 生产库 (119.23.227.187:5432/jettask)
--- 重构方案: docs/3. 实施方案/3. 系统重构/06-ORM与DDD重构方案.md
+-- 重构方案: ../docs/3. 实施方案/3. 系统重构/06-ORM与DDD重构方案.md
 --
 -- 不要手动编辑;如需更新,跑 schema/regenerate.sh
 

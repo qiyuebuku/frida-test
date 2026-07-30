@@ -104,7 +104,7 @@ class SinaClient(BaseClient):
 
         return {"status_code": 0, "data": {"sort": sort, "count": len(items), "stocks": items}}
 
-    @cached(ttl=1209600, source="sina", domain="market", frequency="daily",
+    @cached(ttl=120, source="sina", domain="market", frequency="realtime",
             market="a_share", source_name="新浪财经")
     async def get_sector_ranking(self, sector_type: str = "concept", count: int = 20) -> dict:
         """板块涨跌排行（新浪财经 API）

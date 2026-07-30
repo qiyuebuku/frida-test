@@ -52,8 +52,8 @@ scraped_docs/
 
 smart-fund-server/data
 smart-fund-server/packages/references/
-smart-fund-server/docs/.backup/
-smart-fund-server/docs/6. 使用说明/知识图谱/data/
+docs/.backup/
+docs/6. 使用说明/知识图谱/data/
 
 # Langfuse / 调试 trace 运行产物
 langfuse-full-traces/

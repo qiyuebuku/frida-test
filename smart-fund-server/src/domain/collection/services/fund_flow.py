@@ -634,7 +634,7 @@ def _watchlist_collection_plan(
     config = item.get("config") or {}
     mode = str(item.get("mode") or "incremental")
     last_run_at = item.get("last_run_at")
-    interval = max(1, int(config.get("interval") or 1800))
+    interval = max(1, int(config.get("interval") or 180))
     if not force and mode != "backfill" and last_run_at is not None:
         now = datetime.now(timezone.utc)
         if last_run_at.tzinfo is None:
@@ -1146,17 +1146,17 @@ class FundFlowAggregator(BaseAggregator):
     """
 
     data_domain = "fund_flow"
-    task_interval = 300  # 5 分钟
+    task_interval = 60  # 1 分钟扫描到期数据源
 
     # 源名称 → 调度配置
     # 注意：源名称 ≠ data_type，一个源可能写多种 data_type
     # 完整映射见文件顶部 DATA_TYPE 注册表
     SOURCE_CONFIGS = {
-        "northbound":       {"target_days": 60, "page_size": 60, "interval": 600},           # → data_type: northbound
-        "sector_flow_sina": {"target_days": 0, "page_size": 50, "interval": 1800, "default_mode": "incremental"},  # → data_type: sector_flow
+        "northbound":       {"target_days": 60, "page_size": 60, "interval": 180},           # → data_type: northbound
+        "sector_flow_sina": {"target_days": 0, "page_size": 50, "interval": 180, "default_mode": "incremental"},   # → data_type: sector_flow
         "dragon_tiger_em":  {"target_days": 0, "page_size": 50, "interval": 21600, "default_mode": "incremental"}, # → data_type: dragon_tiger
         "dragon_tiger_ths": {"target_days": 0, "page_size": 50, "interval": 21600, "default_mode": "incremental"}, # → data_type: dragon_tiger
-        "watchlist_data":   {"target_days": 0, "interval": 300, "default_mode": "incremental"},                    # → 每5分钟扫描各标的独立 interval
+        "watchlist_data":   {"target_days": 0, "interval": 60, "default_mode": "incremental"},                     # → 每分钟扫描各标的独立 interval
     }
     BACKFILL_SOURCES = frozenset({"northbound"})
     AUTO_CATCHUP_SOURCES = BACKFILL_SOURCES
@@ -1179,19 +1179,19 @@ class FundFlowAggregator(BaseAggregator):
             return clients.eastmoney.get_northbound_recent(page_size=page_size)
 
         self.sources = [
-            # 北向资金 — 10 分钟
+            # 北向资金 — 3 分钟
             SourceDef(
                 "northbound",
                 _northbound_fetch,
-                600,
+                180,
                 normalize_northbound,
             ),
-            # 板块资金流（新浪，含超大/大/中/小单分项）— 30 分钟
+            # 板块资金流（新浪，含超大/大/中/小单分项）— 3 分钟
             # 新浪接口只有当前快照，无历史端点，靠 cron 持续累积
             SourceDef(
                 "sector_flow_sina",
                 lambda cp: clients.sina.get_sector_money_flow(),
-                1800,
+                180,
                 normalize_sector_flow_sina,
             ),
             # 龙虎榜 — 东方财富，盘后（6 小时间隔）
@@ -1208,13 +1208,13 @@ class FundFlowAggregator(BaseAggregator):
                 21600,
                 normalize_dragon_tiger_ths,
             ),
-            # 自选标的数据采集 — 每 5 分钟扫描，标的自身 interval 决定是否到期
+            # 自选标的数据采集 — 每分钟扫描，标的自身 interval 决定是否到期
             SourceDef(
                 "watchlist_data",
                 lambda cp: _fetch_watchlist_data(
                     clients.ths, clients.tencent, clients.sina, clients.eastmoney, cp,
                 ),
-                300,
+                60,
                 _normalize_watchlist_data,
             ),
         ]

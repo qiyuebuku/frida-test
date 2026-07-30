@@ -25,7 +25,7 @@ class AddWatchlistRequest(BaseModel):
     source: Literal["manual", "position", "event", "agent"] = "manual"
     reason: str = ""
     target_days: int | None = Field(default=None, ge=1)
-    interval: int | None = Field(default=None, ge=300)
+    interval: int | None = Field(default=None, ge=60)
 
 
 class BatchAddRequest(BaseModel):
@@ -37,7 +37,7 @@ class UpdateWatchlistRequest(BaseModel):
     enabled: bool | None = None
     name: str | None = None
     type: Literal["stock", "fund", "etf", "index"] | None = None
-    interval: int | None = Field(default=None, ge=300)
+    interval: int | None = Field(default=None, ge=60)
     target_days: int | None = Field(default=None, ge=1)
     source: Literal["manual", "position", "event", "agent"] | None = None
     reason: str | None = None

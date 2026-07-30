@@ -2,21 +2,22 @@
 # smart-fund-server 生产部署脚本
 #
 # 用法:
-#   REMOTE_SUDO_PASSWORD=... ./deploy_113.sh --init
-#   REMOTE_SUDO_PASSWORD=... ./deploy_113.sh  # 同步代码、更新 units 并重启全部服务
-#   ./deploy_113.sh --sync-only
-#   REMOTE_SUDO_PASSWORD=... ./deploy_113.sh --restart
-#   ./deploy_113.sh --status
-#   ./deploy_113.sh --logs worker 100
-#   ./deploy_113.sh --test
-#   ./deploy_113.sh --config        # 从本地 .env 重建生产 EnvironmentFile
-#   ./deploy_113.sh --deps          # 更新生产 Python 依赖
-#   REMOTE_SUDO_PASSWORD=... ./deploy_113.sh --migrate
+#   REMOTE_SUDO_PASSWORD=... ./deployment/deploy_113.sh --init
+#   REMOTE_SUDO_PASSWORD=... ./deployment/deploy_113.sh  # 同步代码、更新 units 并重启全部服务
+#   ./deployment/deploy_113.sh --sync-only
+#   REMOTE_SUDO_PASSWORD=... ./deployment/deploy_113.sh --restart
+#   ./deployment/deploy_113.sh --status
+#   ./deployment/deploy_113.sh --logs worker 100
+#   ./deployment/deploy_113.sh --test
+#   ./deployment/deploy_113.sh --config  # 从项目根目录 .env 重建生产 EnvironmentFile
+#   ./deployment/deploy_113.sh --deps    # 更新生产 Python 依赖
+#   REMOTE_SUDO_PASSWORD=... ./deployment/deploy_113.sh --migrate
 
 set -euo pipefail
 
-SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-LOCAL_DEPLOY_ENV="${LOCAL_DEPLOY_ENV:-${SCRIPT_DIR}/.deployment.local.env}"
+DEPLOYMENT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+LOCAL_SERVER_DIR="$(cd "${DEPLOYMENT_DIR}/.." && pwd)"
+LOCAL_DEPLOY_ENV="${LOCAL_DEPLOY_ENV:-${DEPLOYMENT_DIR}/.deployment.local.env}"
 if [[ -f "${LOCAL_DEPLOY_ENV}" ]]; then
     # shellcheck disable=SC1090
     source "${LOCAL_DEPLOY_ENV}"
@@ -66,7 +67,6 @@ SERVICES=(
     "${SVC_KG_GRAPH}"
 )
 
-LOCAL_SERVER_DIR="${SCRIPT_DIR}"
 LOCAL_WORKSPACE_ROOT="$(cd "${LOCAL_SERVER_DIR}/.." && pwd)"
 LOCAL_SKILLS_DIR="${LOCAL_WORKSPACE_ROOT}/.claude/skills"
 LOCAL_FUND_TRADE_DIR="${LOCAL_SKILLS_DIR}/fund-trade"
@@ -104,8 +104,6 @@ RSYNC_EXCLUDES=(
     --exclude=output/
     --exclude=scraped_docs/
     --exclude=packages/references/
-    --exclude=docs/.backup/
-    --exclude='docs/6. 使用说明/知识图谱/data/'
 )
 
 setup_ssh_key() {

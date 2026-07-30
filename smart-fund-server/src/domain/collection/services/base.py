@@ -19,6 +19,24 @@ logger = logging.getLogger(__name__)
 # 必须大于该 source 的最长执行时间，否则锁过期会导致并发
 DEFAULT_LOCK_TTL = 600
 
+
+def _interval_is_due(
+    now: datetime,
+    last_run_at: datetime | None,
+    interval_seconds: int,
+) -> bool:
+    """判断来源是否到期，并吸收调度与网络执行造成的秒级抖动。"""
+    if last_run_at is None:
+        return True
+    interval = max(1, int(interval_seconds))
+    if interval <= 5:
+        grace_seconds = 0
+    else:
+        grace_seconds = min(30, max(1, int(interval * 0.2)))
+    elapsed = (now - last_run_at).total_seconds()
+    return elapsed >= interval - grace_seconds
+
+
 # 应用启动时确保 ft_collection_state 表存在
 checkpoint_store.init_table()
 
@@ -171,9 +189,8 @@ class BaseAggregator:
             else:
                 min_interval = state.get("interval_override") or src.interval
             last_run = state.get("last_run_at")
-            if last_run is not None:
-                if (now_utc - last_run).total_seconds() < min_interval:
-                    continue
+            if not _interval_is_due(now_utc, last_run, min_interval):
+                continue
 
             # ── 4. 分布式锁 ──
             lock_name = f"{self.data_domain}:{src.name}"
@@ -186,9 +203,8 @@ class BaseAggregator:
                 state = checkpoint_store.get(self.data_domain, src.name) or state
                 if state.get("mode") != "backfill":
                     last_run = state.get("last_run_at")
-                    if last_run is not None:
-                        if (now_utc - last_run).total_seconds() < min_interval:
-                            continue
+                    if not _interval_is_due(now_utc, last_run, min_interval):
+                        continue
 
                 cp = self._build_runtime_checkpoint(
                     state=state,

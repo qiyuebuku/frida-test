@@ -5,7 +5,7 @@ from jettask import Schedule
 SCHEDULES = [
     # ── 数据采集 ──────────────────────────
     Schedule(name="collect_news_3min", queue="collect_news", interval_seconds=180, description="新闻采集 — 每 3 分钟"),
-    Schedule(name="collect_fund_flow_5min", queue="collect_fund_flow", interval_seconds=300, description="资金流采集 — 每 5 分钟"),
+    Schedule(name="collect_fund_flow_1min", queue="collect_fund_flow", interval_seconds=60, description="资金流与跟踪标的到期扫描 — 每 1 分钟"),
     Schedule(name="collect_market_1min", queue="collect_market", interval_seconds=60, description="市场数据采集 — 每 1 分钟"),
     Schedule(name="collect_sentiment_15min", queue="collect_sentiment", interval_seconds=900, description="情绪舆情采集 — 每 15 分钟"),
     Schedule(name="collect_macro_1h", queue="collect_macro", interval_seconds=3600, description="宏观指标采集 — 每 1 小时"),

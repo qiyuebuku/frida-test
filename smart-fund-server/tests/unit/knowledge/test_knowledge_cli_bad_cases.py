@@ -47,9 +47,9 @@ def test_load_bad_case_cases_from_file(tmp_path) -> None:
 
 
 def test_financial_bad_case_suite_contains_expanded_coverage_cases() -> None:
-    repo_root = Path(__file__).resolve().parents[3]
+    workspace_root = Path(__file__).resolve().parents[4]
     path = (
-        repo_root
+        workspace_root
         / "docs/3. 实施方案/4. 知识图谱/fixtures/financial_retrieval_bad_cases.json"
     )
 
