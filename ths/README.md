@@ -1,4 +1,41 @@
-# 同花顺基金API逆向工程总结
+# 同花顺逆向工程记录
+
+统一快速验证入口：`python scripts/ths_dev.py test`。部署前强制门禁为
+`python scripts/ths_dev.py predeploy`。
+
+- [同花顺 Hook 快速验证指南](./docs/2026-08-04_同花顺Hook快速验证指南.md)
+- App 内 Hook、协议桥和设备部署代码维护在本目录；服务端解析、入库和调度维护在 `smart-fund-server`。
+
+## 最新进展
+
+客观市场数据和原生行情核心的最新逆向过程记录在：
+
+- [2026-08-01 同花顺客观市场数据原生核心逆向记录](./docs/2026-08-01_ths_market_native_core_reverse.md)
+
+该链路已脱离 Activity、WebView 和 JSBridge，并已部署为 Linux 服务器上的 Android x86_64
+虚拟机常驻服务。它仍依赖同花顺 App 进程及原生通信服务，不是脱离 APK 的纯 Linux 行情 Client。
+
+当前不仅支持页面卡片使用的实时指标，还已经完成 `UnifiedRequestBridge` 无 WebView 调用，并接入：
+
+- 大盘异动曲线与大盘异动事件；
+- 集合竞价热点、板块和竞价轨迹；
+- 短线精灵个股成交异动；
+- 短线精灵板块异动；
+- 大笔委托事件流。
+
+短线精灵接口属于订阅缓冲区，不是分页 API。正式采集系统每 30 秒轮询有效交易时段，使用稳定事件
+ID 将个股、板块和大笔委托拆成事件级记录写入数据库；重复事件幂等更新，不同轮次返回的新成员补充
+入库。具体协议和验收数据见最新逆向记录第 15 节。
+
+服务器运行和维护入口：
+
+- [Android 虚拟机部署说明](./deployment/android-emulator/README.md)
+- `ths-android-emulator.service`
+- `ths-collector-bridge.service`
+
+以下内容为早期基金 HTTP API 逆向总结。
+
+## 同花顺基金 API 逆向工程总结
 
 ## 🎯 项目成果
 

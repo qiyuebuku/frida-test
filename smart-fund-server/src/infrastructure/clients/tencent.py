@@ -4,6 +4,7 @@ import json as _json
 import re
 
 from src.infrastructure.clients.base import BaseClient, cached
+from src.infrastructure.clients.market_contracts import market_error, market_result
 
 
 class TencentClient(BaseClient):
@@ -35,7 +36,7 @@ class TencentClient(BaseClient):
         code = code.strip()
         if code.startswith(("sh", "sz", "hk", "us", "r_")):
             return code
-        if code.startswith(("6", "9")):
+        if code.startswith(("5", "6", "9")):
             return f"sh{code}"
         return f"sz{code}"
 
@@ -312,6 +313,41 @@ class TencentClient(BaseClient):
 
     # ==================== 国际期货 ====================
 
+    async def get_cross_market_quotes(self, market: str, codes: list[str]) -> dict:
+        """以统一契约获取 A股、港股或美股标的实时行情。"""
+        fetchers = {
+            "cn": self.get_stock_quote,
+            "hk": self.get_hk_quote,
+            "us": self.get_us_quote,
+        }
+        if market not in fetchers:
+            raise ValueError("market must be cn, hk or us")
+        try:
+            raw = await fetchers[market](codes)
+            stocks = (raw.get("data") or {}).get("stocks") or []
+            source_time = max(
+                (str(item.get("time")) for item in stocks if item.get("time")),
+                default=None,
+            )
+            for item in stocks:
+                item["trading_status"] = (
+                    "unknown" if item.get("price") is not None else "no_valid_quote"
+                )
+            return market_result(
+                provider="tencent",
+                market=market,
+                data={"count": len(stocks), "quotes": stocks},
+                source_time=source_time,
+                timezone_name={
+                    "cn": "Asia/Shanghai",
+                    "hk": "Asia/Hong_Kong",
+                    "us": "America/New_York",
+                }[market],
+                provider_metadata={"quote_type": "security_snapshot"},
+            )
+        except Exception as exc:
+            return market_error(provider="tencent", market=market, error=exc)
+
     async def get_intl_futures(self, names: list[str] | None = None) -> dict:
         """国际期货行情（纽约金/银/原油/天然气/铜/大豆/玉米/小麦）
 
@@ -466,6 +502,36 @@ class TencentClient(BaseClient):
         return {"status_code": 0, "data": {
             "code": code, "period": period, "count": len(bars), "bars": bars,
         }}
+
+    async def get_cross_market_kline(
+        self,
+        code: str,
+        period: str = "day",
+        count: int = 20,
+    ) -> dict:
+        """以统一契约获取港股或美股 K 线。"""
+        market = "hk" if code.lower().startswith("hk") else "us"
+        try:
+            raw = await self.get_hk_us_kline(code, period, count)
+            bars = (raw.get("data") or {}).get("bars") or []
+            return market_result(
+                provider="tencent",
+                market=market,
+                data={
+                    "code": code,
+                    "interval": period,
+                    "adjustment": "forward",
+                    "count": len(bars),
+                    "bars": bars,
+                },
+                trade_date=bars[-1]["date"] if bars else None,
+                timezone_name=(
+                    "Asia/Hong_Kong" if market == "hk" else "America/New_York"
+                ),
+                provider_metadata={"asset_type": "security"},
+            )
+        except Exception as exc:
+            return market_error(provider="tencent", market=market, error=exc)
 
     # ==================== 行业排名 ====================
 

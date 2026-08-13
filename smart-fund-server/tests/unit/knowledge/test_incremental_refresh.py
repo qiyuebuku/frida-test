@@ -121,6 +121,60 @@ async def test_incremental_refresh_dry_run_skips_rebuild_steps() -> None:
 
 
 @pytest.mark.asyncio
+async def test_rebuild_indexes_treats_retired_graph_adjacency_as_noop(monkeypatch) -> None:
+    repository = _CompileRefreshRepository()
+    repository.rebuild_evidence_chunks = lambda _adapter_name: 0
+    monkeypatch.setattr(service_module, "get_adapter", lambda _name, **_kwargs: ToyProjectAdapter())
+
+    result = await KnowledgeService(repository=repository).rebuild_indexes_for(
+        KnowledgeRebuildIndexesCommand(
+            adapter_name="toy",
+            target="test",
+            index_types=["graph_adjacency"],
+        )
+    )
+
+    assert result.graph_adjacency == 0
+    assert result.warnings == [
+        "graph_adjacency is retired; use graph_index for relation graph materialization"
+    ]
+
+
+@pytest.mark.asyncio
+async def test_rebuild_hybrid_chunks_does_not_require_retired_node_edge_repository_methods(
+    monkeypatch,
+) -> None:
+    class ChunkOnlyRepository:
+        def cleanup_evidence_versions(self, _adapter_name):
+            return {"evidence": 0, "edges": 0, "evidence_ids": [], "edge_ids": []}
+
+        def list_evidence_chunks(self, _adapter_name):
+            return []
+
+    calls = []
+
+    class FakeRetriever:
+        async def rebuild_index(self, **kwargs):
+            calls.append(kwargs)
+            return 0
+
+    monkeypatch.setattr(service_module, "get_adapter", lambda _name, **_kwargs: ToyProjectAdapter())
+    monkeypatch.setattr(service_module, "_semantic_hybrid_retriever", lambda: FakeRetriever())
+
+    result = await KnowledgeService(repository=ChunkOnlyRepository()).rebuild_indexes_for(
+        KnowledgeRebuildIndexesCommand(
+            adapter_name="toy",
+            target="test",
+            index_types=["hybrid_chunks"],
+        )
+    )
+
+    assert result.hybrid_chunks == 0
+    assert calls[0]["nodes"] == []
+    assert calls[0]["edges"] == []
+
+
+@pytest.mark.asyncio
 async def test_compile_kg_refreshes_changed_indexes_incrementally(monkeypatch) -> None:
     records = json.loads((FIXTURE_DIR / "toy_records.json").read_text(encoding="utf-8"))
     repository = _CompileRefreshRepository()

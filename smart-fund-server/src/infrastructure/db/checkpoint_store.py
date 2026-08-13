@@ -51,19 +51,32 @@ def is_enabled(aggregator: str, source_name: str) -> bool:
     return _get_repo().is_enabled(aggregator, source_name)
 
 
+def mark_started(
+    *, task_id: str, aggregator: str, source_name: str,
+    task_type: str = "pull", details: dict | None = None,
+) -> None:
+    return _get_repo().mark_started(
+        task_id=task_id, aggregator=aggregator, source_name=source_name,
+        task_type=task_type, details=details,
+    )
+
+
 def update_success(
     aggregator: str,
     source_name: str,
     new_checkpoint: dict | None = None,
     saved_count: int = 0,
+    **kwargs,
 ) -> None:
     return _get_repo().update_success(
-        aggregator, source_name, new_checkpoint, saved_count,
+        aggregator, source_name, new_checkpoint, saved_count, **kwargs,
     )
 
 
-def update_failure(aggregator: str, source_name: str, error_msg: str) -> None:
-    return _get_repo().update_failure(aggregator, source_name, error_msg)
+def update_failure(
+    aggregator: str, source_name: str, error_msg: str, **kwargs,
+) -> None:
+    return _get_repo().update_failure(aggregator, source_name, error_msg, **kwargs)
 
 
 def reset(aggregator: str, source_name: str) -> bool:

@@ -18,9 +18,12 @@ from typing import Any
 
 
 __all__ = [
+    "AgentMarketQueryService",
     "CollectionAppService",
     "FtNewsKnowledgeGraphWorkflowService",
     "KnowledgeNewsIngestionService",
+    "MarketObservabilityService",
+    "MarketObservationService",
     "RelationGraphCommunityService",
     "RelationGraphCommunityCognitionService",
     "RelationGraphExplorerService",
@@ -36,6 +39,12 @@ def __getattr__(name: str) -> Any:
     not require optional dependencies from collection/trading services.
     """
 
+    if name == "AgentMarketQueryService":
+        from src.application.services.agent_market_query_service import (
+            AgentMarketQueryService,
+        )
+
+        return AgentMarketQueryService
     if name == "CollectionAppService":
         from src.application.services.collection_app_service import CollectionAppService
 
@@ -46,6 +55,18 @@ def __getattr__(name: str) -> Any:
         )
 
         return KnowledgeNewsIngestionService
+    if name == "MarketObservationService":
+        from src.application.services.market_observation_service import (
+            MarketObservationService,
+        )
+
+        return MarketObservationService
+    if name == "MarketObservabilityService":
+        from src.application.services.market_observability_service import (
+            MarketObservabilityService,
+        )
+
+        return MarketObservabilityService
     if name == "FtNewsKnowledgeGraphWorkflowService":
         from src.application.services.ft_news_knowledge_graph_workflow_service import (
             FtNewsKnowledgeGraphWorkflowService,

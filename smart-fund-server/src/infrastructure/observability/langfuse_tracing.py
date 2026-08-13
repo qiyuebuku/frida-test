@@ -6,8 +6,10 @@ import logging
 import os
 import re
 from contextlib import nullcontext
+from functools import lru_cache
 from hashlib import sha256
 from typing import Any
+from urllib.parse import urlparse
 
 from src.infrastructure.config import settings  # noqa: F401  # loads .env before Langfuse imports
 
@@ -21,16 +23,59 @@ def langfuse_enabled() -> bool:
 def langfuse_client_or_none() -> Any | None:
     if not langfuse_enabled():
         return None
-    try:
-        from langfuse import get_client
-    except Exception as exc:
-        logger.warning("Langfuse client unavailable: %s", exc)
+    base_url = (
+        os.getenv("KG_LANGFUSE_BASE_URL", "").strip()
+        or os.getenv("LANGFUSE_BASE_URL", "").strip()
+        or os.getenv("LANGFUSE_HOST", "").strip()
+    ).rstrip("/")
+    public_key = os.getenv("LANGFUSE_PUBLIC_KEY", "").strip()
+    secret_key = os.getenv("LANGFUSE_SECRET_KEY", "").strip()
+    if not base_url or not public_key or not secret_key:
+        logger.error(
+            "KG Langfuse is enabled but self-hosted client configuration is incomplete"
+        )
+        return None
+    if not _is_allowed_self_hosted_langfuse_url(base_url):
+        logger.error(
+            "KG Langfuse refused non-self-hosted endpoint host=%s",
+            urlparse(base_url).hostname or "invalid",
+        )
         return None
     try:
-        return get_client()
+        return _build_langfuse_client(base_url, public_key, secret_key)
     except Exception as exc:
         logger.warning("Langfuse client init failed: %s", exc)
         return None
+
+
+@lru_cache(maxsize=4)
+def _build_langfuse_client(base_url: str, public_key: str, secret_key: str) -> Any:
+    """Build one endpoint-pinned client instead of using the SDK cloud fallback."""
+
+    from langfuse import Langfuse
+
+    client = Langfuse(
+        public_key=public_key,
+        secret_key=secret_key,
+        base_url=base_url,
+    )
+    resources = getattr(client, "_resources", None)
+    exporter_base_url = str(getattr(resources, "base_url", "") or "").rstrip("/")
+    if exporter_base_url != base_url:
+        raise RuntimeError(
+            "Langfuse SDK public-key singleton is already bound to a different endpoint"
+        )
+    return client
+
+
+def _is_allowed_self_hosted_langfuse_url(base_url: str) -> bool:
+    parsed = urlparse(base_url)
+    hostname = (parsed.hostname or "").lower().rstrip(".")
+    if parsed.scheme not in {"http", "https"} or not hostname:
+        return False
+    return hostname != "cloud.langfuse.com" and not hostname.endswith(
+        ".cloud.langfuse.com"
+    )
 
 
 def langfuse_propagation_context(

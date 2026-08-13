@@ -388,17 +388,20 @@ class AggregatorClient:
         ])
 
         # 并发获取所有数据
-        indices_raw, flow_sh_raw, flow_sz_raw, limit_up_raw, limit_down_raw = await asyncio.gather(
+        indices_raw, flow_sh_raw, flow_sz_raw, limit_up_raw, limit_down_raw, native_profile_raw, native_limit_raw = await asyncio.gather(
             self.eastmoney.get_indices_realtime(secids),
             self.eastmoney.get_index_capital_flow_daily("1.000001"),   # 沪市资金流
             self.eastmoney.get_index_capital_flow_daily("0.399001"),   # 深市资金流
             self.ths.get_limit_pool("up"),
             self.ths.get_limit_pool("down"),
+            self.ths.get_native_market_profile(),
+            self.ths.get_native_limit_comparison(),
             return_exceptions=True,
         )
 
         result = {"indices": [], "market_stats": {}, "capital_flow": {},
-                  "limit_up": {}, "limit_down": {}, "cap_comparison": {}, "signals": []}
+                  "limit_up": {}, "limit_down": {}, "cap_comparison": {},
+                  "yesterday_limit": {}, "signals": []}
 
         # ---------- 1. 指数行情 ----------
         if isinstance(indices_raw, dict):
@@ -465,6 +468,22 @@ class AggregatorClient:
                     "stronger": "小盘股更强" if gz2000_chg > hs300_chg else "大盘股更强" if hs300_chg > gz2000_chg else "大小盘持平",
                 }
 
+        # 同花顺行情页三个对比卡必须使用 App 原生口径，不能由其他源推算。
+        if isinstance(native_profile_raw, dict) and native_profile_raw.get("status") == "ok":
+            native_profile = native_profile_raw.get("data") or {}
+            result["yesterday_limit"] = native_profile.get("yesterday_limit") or {}
+            native_cap = native_profile.get("cap_comparison") or {}
+            large = native_cap.get("largeCap") or {}
+            small = native_cap.get("smallCap") or {}
+            if large.get("changeRate") is not None and small.get("changeRate") is not None:
+                native_cap["diff"] = round(small["changeRate"] - large["changeRate"], 2)
+                native_cap["stronger"] = (
+                    "小盘股更强" if small["changeRate"] > large["changeRate"]
+                    else "大盘股更强" if large["changeRate"] > small["changeRate"]
+                    else "大小盘持平"
+                )
+                result["cap_comparison"] = native_cap
+
         # ---------- 2. 资金流向 ----------
         total_main_flow = 0
         flow_details = []
@@ -507,6 +526,11 @@ class AggregatorClient:
                         "tag": s.get("change_tag", ""),
                     })
                 result[key] = {"total": page_info.get("total", 0), "stocks": items}
+
+        if isinstance(native_limit_raw, dict) and native_limit_raw.get("status") == "ok":
+            native_limit = native_limit_raw.get("data") or {}
+            result["limit_up"]["total"] = native_limit.get("limit_up")
+            result["limit_down"]["total"] = native_limit.get("limit_down")
 
         # ---------- 4. 信号生成 ----------
         stats = result["market_stats"]

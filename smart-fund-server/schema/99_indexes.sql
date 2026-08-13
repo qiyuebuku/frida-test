@@ -534,6 +534,16 @@ CREATE INDEX idx_ft_news_extracted ON public.ft_news USING btree (event_extracte
 
 CREATE UNIQUE INDEX idx_ft_news_fingerprint ON public.ft_news USING btree (fingerprint);
 
+CREATE UNIQUE INDEX IF NOT EXISTS idx_ft_news_dedup_key
+    ON public.ft_news USING btree (dedup_key);
+
+CREATE INDEX IF NOT EXISTS idx_ft_news_content_fingerprint
+    ON public.ft_news USING btree (content_fingerprint)
+    WHERE content_fingerprint IS NOT NULL;
+
+CREATE INDEX IF NOT EXISTS idx_ft_news_kind_time
+    ON public.ft_news USING btree (news_kind, published_at DESC);
+
 -- INDEX: idx_ft_news_source_time
 --
 -- Name: idx_ft_news_source_time; Type: INDEX; Schema: public; Owner: -
@@ -762,6 +772,41 @@ ALTER INDEX public.idx_raw_trade_date ATTACH PARTITION public.ft_raw_data_202606
 --
 -- PostgreSQL database dump complete
 
--- ft_watchlist_data indexes
-CREATE UNIQUE INDEX IF NOT EXISTS idx_watchlist_data_unique ON public.ft_watchlist_data(code, data_type, trade_date);
-CREATE INDEX IF NOT EXISTS idx_watchlist_data_code ON public.ft_watchlist_data(code, data_type);
+-- instrument fact indexes
+CREATE INDEX IF NOT EXISTS ix_ft_instrument_profiles_code_type ON public.ft_instrument_profiles(code, data_type);
+CREATE INDEX IF NOT EXISTS ix_ft_instrument_disclosures_code_date ON public.ft_instrument_disclosures(code, data_type, report_date DESC);
+CREATE INDEX IF NOT EXISTS ix_ft_instrument_observations_code_date ON public.ft_instrument_observations(code, data_type, observation_date DESC);
+
+-- Market observation snapshots
+ALTER TABLE ONLY public.ft_market_snapshots
+    ADD CONSTRAINT ft_market_snapshots_pkey PRIMARY KEY (id);
+ALTER TABLE ONLY public.ft_market_snapshots
+    ADD CONSTRAINT uq_ft_market_snapshots_bucket
+    UNIQUE (data_type, subject_id, provider, bucket_at);
+CREATE INDEX ix_ft_market_snapshots_subject_time
+    ON public.ft_market_snapshots (subject_id, data_type, bucket_at);
+CREATE INDEX ix_ft_market_snapshots_trade_type
+    ON public.ft_market_snapshots (trade_date, data_type);
+CREATE INDEX ix_ft_market_snapshots_freshness
+    ON public.ft_market_snapshots (freshness_status, bucket_at);
+
+-- Official ETF daily shares
+ALTER TABLE ONLY public.ft_etf_daily_shares
+    ADD CONSTRAINT ft_etf_daily_shares_pkey PRIMARY KEY (id);
+ALTER TABLE ONLY public.ft_etf_daily_shares
+    ADD CONSTRAINT uq_ft_etf_daily_shares_identity
+    UNIQUE (exchange, code, trade_date);
+CREATE INDEX ix_ft_etf_daily_shares_code_date
+    ON public.ft_etf_daily_shares (code, trade_date);
+CREATE INDEX ix_ft_etf_daily_shares_trade_date
+    ON public.ft_etf_daily_shares (trade_date);
+
+-- Collection execution history
+ALTER TABLE ONLY public.ft_collection_runs
+    ADD CONSTRAINT ft_collection_runs_pkey PRIMARY KEY (id);
+CREATE INDEX ix_ft_collection_runs_task_started
+    ON public.ft_collection_runs (task_name, started_at);
+CREATE INDEX ix_ft_collection_runs_source_started
+    ON public.ft_collection_runs (source_name, started_at);
+CREATE INDEX ix_ft_collection_runs_status_started
+    ON public.ft_collection_runs (status, started_at);

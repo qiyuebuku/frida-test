@@ -50,7 +50,7 @@ def test_build_stock_basics_records_from_sources_dedupes_and_prefers_names(monke
                     "created_at": "2026-04-28T11:00:00+08:00",
                 }
             ]
-        if "from ft_watchlist_data" in sql:
+        if "from ft_instrument_observations" in sql:
             return [
                 {
                     "id": 3,

@@ -111,6 +111,7 @@ class RelationGraphAgentRepository:
         relation_kinds: list[str],
         decision_classes: list[str],
         min_confidence: float,
+        cutoff_at: datetime | None = None,
     ) -> AgentGraphSnapshot:
         seed_ids = _ordered_unique(seed_card_ids)[:node_limit]
         if not seed_ids:
@@ -123,6 +124,7 @@ class RelationGraphAgentRepository:
                         KnowledgeCognitiveCard.adapter_name == adapter_name,
                         KnowledgeCognitiveCard.status == "active",
                         KnowledgeCognitiveCard.cognitive_card_id.in_(seed_ids),
+                        *_created_before(KnowledgeCognitiveCard, cutoff_at),
                     )
                 ).all()
             )
@@ -145,6 +147,7 @@ class RelationGraphAgentRepository:
                 filters = [
                     KnowledgeCardRelation.status == "active",
                     KnowledgeCardRelation.confidence >= min_confidence,
+                    *_created_before(KnowledgeCardRelation, cutoff_at),
                     or_(
                         KnowledgeCardRelation.source_card_id.in_(sorted(frontier)),
                         KnowledgeCardRelation.target_card_id.in_(sorted(frontier)),
@@ -184,6 +187,7 @@ class RelationGraphAgentRepository:
                             KnowledgeCognitiveCard.adapter_name == adapter_name,
                             KnowledgeCognitiveCard.status == "active",
                             KnowledgeCognitiveCard.cognitive_card_id.in_(endpoint_ids),
+                            *_created_before(KnowledgeCognitiveCard, cutoff_at),
                         )
                     ).all()
                 )
@@ -233,6 +237,7 @@ class RelationGraphAgentRepository:
                             == adapter_name,
                             KnowledgeCognitiveCard.status == "active",
                             KnowledgeCognitiveCard.fact_id.in_(fact_ids),
+                            *_created_before(KnowledgeCognitiveCard, cutoff_at),
                         )
                         .order_by(
                             KnowledgeCognitiveCard.created_at.asc().nulls_last(),
@@ -255,6 +260,7 @@ class RelationGraphAgentRepository:
             community_filters = [
                 KnowledgeGraphCommunity.adapter_name == adapter_name,
                 KnowledgeGraphCommunity.graph_status == "active",
+                *_community_before(cutoff_at),
             ]
             community_filters.append(
                 or_(
@@ -310,6 +316,10 @@ class RelationGraphAgentRepository:
                             KnowledgeGraphCommunityRelation.target_community_id.in_(
                                 community_ids
                             ),
+                            *_created_before(
+                                KnowledgeGraphCommunityRelation,
+                                cutoff_at,
+                            ),
                         )
                         .order_by(KnowledgeGraphCommunityRelation.id)
                     ).all()
@@ -351,6 +361,7 @@ class RelationGraphAgentRepository:
         *,
         adapter_name: str,
         card_ids: list[str],
+        cutoff_at: datetime | None = None,
     ) -> list[AgentGraphCardRecord]:
         identities = _ordered_unique(card_ids)
         if not identities:
@@ -362,6 +373,7 @@ class RelationGraphAgentRepository:
                         KnowledgeCognitiveCard.adapter_name == adapter_name,
                         KnowledgeCognitiveCard.status == "active",
                         KnowledgeCognitiveCard.cognitive_card_id.in_(identities),
+                        *_created_before(KnowledgeCognitiveCard, cutoff_at),
                     )
                 ).all()
             )
@@ -377,6 +389,7 @@ class RelationGraphAgentRepository:
         *,
         adapter_name: str,
         fact_ids: list[str],
+        cutoff_at: datetime | None = None,
     ) -> dict[str, int]:
         identities = _ordered_unique(fact_ids)
         if not identities:
@@ -391,6 +404,7 @@ class RelationGraphAgentRepository:
                     KnowledgeCognitiveCard.adapter_name == adapter_name,
                     KnowledgeCognitiveCard.status == "active",
                     KnowledgeCognitiveCard.fact_id.in_(identities),
+                    *_created_before(KnowledgeCognitiveCard, cutoff_at),
                 )
                 .group_by(KnowledgeCognitiveCard.fact_id)
             ).all()
@@ -405,6 +419,7 @@ class RelationGraphAgentRepository:
         *,
         adapter_name: str,
         edge_ids: list[str],
+        cutoff_at: datetime | None = None,
     ) -> list[AgentGraphEdgeRecord]:
         identities = _ordered_unique(edge_ids)
         if not identities:
@@ -432,6 +447,9 @@ class RelationGraphAgentRepository:
                         source_card.status == "active",
                         target_card.adapter_name == adapter_name,
                         target_card.status == "active",
+                        *_created_before(KnowledgeCardRelation, cutoff_at),
+                        *_created_before(source_card, cutoff_at),
+                        *_created_before(target_card, cutoff_at),
                     )
                 ).all()
             )
@@ -447,6 +465,7 @@ class RelationGraphAgentRepository:
         *,
         adapter_name: str,
         community_ids: list[str],
+        cutoff_at: datetime | None = None,
     ) -> list[AgentGraphCommunityRecord]:
         identities = _ordered_unique(community_ids)
         if not identities:
@@ -458,6 +477,7 @@ class RelationGraphAgentRepository:
                         KnowledgeGraphCommunity.adapter_name == adapter_name,
                         KnowledgeGraphCommunity.graph_status == "active",
                         KnowledgeGraphCommunity.community_id.in_(identities),
+                        *_community_before(cutoff_at),
                     )
                 ).all()
             )
@@ -477,6 +497,7 @@ class RelationGraphAgentRepository:
         community_limit: int,
         relation_limit: int,
         relation_kinds: list[str],
+        cutoff_at: datetime | None = None,
     ) -> AgentCommunityGraphSnapshot:
         seed_ids = _ordered_unique(seed_community_ids)[:community_limit]
         if not seed_ids:
@@ -488,6 +509,7 @@ class RelationGraphAgentRepository:
                         KnowledgeGraphCommunity.adapter_name == adapter_name,
                         KnowledgeGraphCommunity.graph_status == "active",
                         KnowledgeGraphCommunity.community_id.in_(seed_ids),
+                        *_community_before(cutoff_at),
                     )
                 ).all()
             )
@@ -509,6 +531,10 @@ class RelationGraphAgentRepository:
                     break
                 filters = [
                     KnowledgeGraphCommunityRelation.status == "active",
+                    *_created_before(
+                        KnowledgeGraphCommunityRelation,
+                        cutoff_at,
+                    ),
                     or_(
                         KnowledgeGraphCommunityRelation.source_community_id.in_(
                             sorted(frontier)
@@ -553,6 +579,7 @@ class RelationGraphAgentRepository:
                             KnowledgeGraphCommunity.adapter_name == adapter_name,
                             KnowledgeGraphCommunity.graph_status == "active",
                             KnowledgeGraphCommunity.community_id.in_(endpoint_ids),
+                            *_community_before(cutoff_at),
                         )
                     ).all()
                 )
@@ -681,6 +708,25 @@ def _community_relation_record(
         observed_edge_count=int(row.observed_edge_count or 0),
         inferred_edge_count=int(row.inferred_edge_count or 0),
     )
+
+
+def _created_before(model: object, cutoff_at: datetime | None) -> list:
+    """Return a strict knowledge-ingestion cutoff predicate when requested."""
+    if cutoff_at is None:
+        return []
+    return [model.created_at <= cutoff_at]
+
+
+def _community_before(cutoff_at: datetime | None) -> list:
+    if cutoff_at is None:
+        return []
+    return [
+        func.coalesce(
+            KnowledgeGraphCommunity.graph_changed_at,
+            KnowledgeGraphCommunity.created_at,
+        )
+        <= cutoff_at
+    ]
 
 
 def _ordered_unique(values: list[str]) -> list[str]:

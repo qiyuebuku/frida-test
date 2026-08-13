@@ -1,0 +1,35 @@
+{
+  "trigger": {
+    "trigger_id": "manual-smoke-20260809",
+    "trigger_slot": "deep_research",
+    "source": "human",
+    "reason": "验证 Research Agent Runtime、MCP 和结构化输出链路",
+    "cutoff_at": "2026-08-09T12:00:00+08:00",
+    "run_mode": "debug",
+    "max_tool_calls": 10,
+    "max_elapsed_seconds": 300
+  },
+  "market_state": {
+    "frame_id": "frame-smoke-20260809",
+    "cutoff_at": "2026-08-09T12:00:00+08:00",
+    "trade_date": "2026-08-09",
+    "market_session": "non_trading_day",
+    "overview": "当前为非交易日。本 Frame 只用于验证运行链路，不包含足以形成 Investment View 的市场事实。",
+    "dimensions": [],
+    "significant_changes": [],
+    "quality_issues": [
+      {
+        "issue_code": "smoke_test_no_market_frame",
+        "severity": "critical",
+        "dimension": "market_overview",
+        "description": "尚未接入生产 Market State Frame Builder，本次不得形成真实投资观点。",
+        "affected_handles": []
+      }
+    ],
+    "drilldown_handles": []
+  },
+  "current_report_revision_id": null,
+  "active_views": [],
+  "memory_items": [],
+  "research_question": "当前数据是否足以形成新的 Investment View？"
+}

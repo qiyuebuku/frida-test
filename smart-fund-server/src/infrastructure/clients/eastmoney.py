@@ -2,9 +2,17 @@
 
 import asyncio
 import json
-from datetime import datetime, timedelta
+import random
+from datetime import datetime, timedelta, timezone
+
+import akshare as ak
 
 from src.infrastructure.clients.base import BaseClient, cached
+from src.infrastructure.clients.market_contracts import (
+    MarketDataStatus,
+    market_error,
+    market_result,
+)
 
 
 class EastmoneyClient(BaseClient):
@@ -15,12 +23,43 @@ class EastmoneyClient(BaseClient):
     EM_FFLOW_UT = "b2884a393a59ad64002292a3e90d46a5"
     INDEX_SECIDS = {
         "上证指数": "1.000001", "深证成指": "0.399001", "创业板指": "0.399006",
+        "科创综指": "1.000680", "科创50": "1.000688", "科创100": "1.000698",
+        "中证A500": "1.000510",
         "沪深300": "1.000300", "上证50": "1.000016", "中证500": "1.000905",
-        "中证1000": "0.399852", "国证2000": "0.399303", "北证50": "0.899050",
+        "中证1000": "1.000852", "深证100": "0.399330",
+        "国证2000": "0.399303", "北证50": "0.899050",
     }
 
     EASTMONEY_PUSH2EX = "https://push2ex.eastmoney.com"
-    PUSH2HIS = "http://push2his.eastmoney.com"
+    PUSH2HIS = "https://push2his.eastmoney.com"
+    PUSH2_HOSTS = (
+        "https://push2.eastmoney.com",
+        "https://2.push2.eastmoney.com",
+        "https://82.push2.eastmoney.com",
+    )
+    PUSH2_DELAY = "https://push2delay.eastmoney.com"
+    MARKET_BREADTH_SECIDS = (
+        "1.000001",  # 上证指数：指数行情和上交所成交额
+        "0.399001",  # 深证成指：指数行情和深交所成交额
+        "0.399006",  # 创业板指：指数行情
+        "1.000680",  # 科创综指
+        "1.000688",  # 科创 50
+        "1.000510",  # 中证 A500
+        "1.000300",  # 沪深 300
+        "1.000852",  # 中证 1000
+        "1.000016",  # 上证 50
+        "1.000905",  # 中证 500
+        "0.399330",  # 深证 100
+        "1.000698",  # 科创 100
+        "1.000002",  # 上证 A 股指数：A 股涨跌家数
+        "0.399107",  # 深证 A 指：A 股涨跌家数
+        "0.899050",  # 北证 50：北交所涨跌家数、成交额和指数行情
+    )
+    MARKET_TURNOVER_SECIDS = (
+        "1.000001",  # 上交所成交额
+        "0.399001",  # 深交所成交额
+        "0.899050",  # 北交所成交额
+    )
 
     CHANGE_TYPES = {
         8201: "火箭发射", 8202: "快速反弹", 8203: "高台跳水", 8204: "加速下跌",
@@ -48,6 +87,7 @@ class EastmoneyClient(BaseClient):
 
     def __init__(self, timeout: float = 10.0):
         super().__init__(timeout)
+        self._request_timeout = timeout
 
     async def _em_datacenter(self, report_name: str, sort_col: str, sort_type: str = "-1",
                              page_size: int = 50, date_filter: str = "", extra_filter: str = "") -> dict:
@@ -453,6 +493,8 @@ class EastmoneyClient(BaseClient):
             "User-Agent": self.DEFAULT_HEADERS["User-Agent"],
         }
 
+        last_error: Exception | None = None
+        received_valid_payload = False
         for attempt in range(3):
             try:
                 resp = await self._client.get(
@@ -745,52 +787,357 @@ class EastmoneyClient(BaseClient):
         Returns:
             {sectors: [{bk_code, name, change_pct}, ...]}
         """
-        fs_map = {"industry": "m:90+t:2+f:!50", "concept": "m:90+t:3+f:!50"}
-        fs = fs_map.get(sector_type, fs_map["industry"])
+        if sector_type not in {"industry", "concept"}:
+            raise ValueError("sector_type must be industry or concept")
+        fs_map = {"industry": "m:90+t:2", "concept": "m:90+t:3"}
+        fs = fs_map[sector_type]
         headers = {
             "User-Agent": self.DEFAULT_HEADERS["User-Agent"],
             "Referer": "https://quote.eastmoney.com/center/boardlist.html",
         }
-        try:
-            resp = await self._client.get(
-                "https://push2ex.eastmoney.com/getTopicBKDaily",
-                params={
-                    "ut": self.EM_UT,
-                    "dession": "",
-                    "fields1": "f1,f2,f3,f4",
-                    "fields2": "f12,f14,f3,f2",
-                    "sort": "f3",
-                    "order": "-1",
-                    "ut": "b2884a393a59ad64002292a3e90d46a5",
-                    "fs": fs,
-                    "pn": 1,
-                    "pz": 500,
-                    "po": 1,
-                    "np": 1,
-                    "fltt": 2,
-                    "invt": 2,
-                    "fid": "f3",
-                },
-                headers=headers,
-                timeout=15,
+        params = {
+            "pn": 1,
+            "pz": 500,
+            "po": 1,
+            "np": 1,
+            "fltt": 2,
+            "invt": 2,
+            "fid": "f3",
+            "fs": fs,
+            "fields": "f2,f3,f4,f5,f6,f7,f8,f12,f14,f20,f62,f104,f105,f109,f128,f140",
+        }
+        raw = None
+        last_error = None
+        hosts = [*self.PUSH2_HOSTS, self.PUSH2_DELAY]
+        random.shuffle(hosts)
+        for host in hosts:
+            try:
+                resp = await self._client.get(
+                    f"{host}/api/qt/clist/get",
+                    params=params,
+                    headers=headers,
+                    timeout=15,
+                )
+                resp.raise_for_status()
+                raw = resp.json()
+                if (raw.get("data") or {}).get("diff") is not None:
+                    break
+            except Exception as exc:
+                last_error = exc
+        if raw is None:
+            return market_error(
+                provider="eastmoney",
+                market="cn",
+                error=last_error or "all Push2 hosts failed",
+                provider_metadata={"attempted_hosts": hosts},
             )
-            resp.raise_for_status()
-            raw = resp.json()
-        except Exception:
-            return {"sectors": []}
+        if not isinstance(raw.get("data"), dict) or not isinstance(raw["data"].get("diff"), list):
+            return market_error(
+                provider="eastmoney",
+                market="cn",
+                error="Push2 response schema changed",
+                status=MarketDataStatus.PARSE_ERROR,
+            )
 
         sectors = []
-        for row in raw.get("data", {}).get("diff", []):
+        for row in raw["data"]["diff"]:
             bk_code = row.get("f12", "")
             name = row.get("f14", "")
-            change_pct = row.get("f3", 0)
             if bk_code and name:
                 sectors.append({
                     "bk_code": bk_code,
                     "name": name,
-                    "change_pct": float(change_pct) if change_pct else 0,
+                    "provider_sector_code": bk_code,
+                    "sector_name": name,
+                    "sector_type": sector_type,
+                    "classification": "eastmoney",
+                    "latest": row.get("f2"),
+                    "change_pct": row.get("f3"),
+                    "change_amount": row.get("f4"),
+                    "volume": row.get("f5"),
+                    "turnover": row.get("f6") or row.get("f20"),
+                    "amplitude_pct": row.get("f7"),
+                    "turnover_rate": row.get("f8"),
+                    "main_net_inflow": row.get("f62"),
+                    "up_count": row.get("f104"),
+                    "down_count": row.get("f105"),
+                    "change_5d_pct": row.get("f109"),
+                    "lead_stock_name": row.get("f128"),
+                    "lead_stock_code": row.get("f140"),
                 })
-        return {"sectors": sectors}
+        result = market_result(
+            provider="eastmoney",
+            market="cn",
+            data={
+                "sector_type": sector_type,
+                "count": len(sectors),
+                "total": raw["data"].get("total"),
+                "sectors": sectors,
+            },
+            timezone_name="Asia/Shanghai",
+            provider_metadata={
+                "complete": len(sectors) == raw["data"].get("total"),
+                "turnover_unit": "yuan",
+                "main_net_inflow_unit": "yuan",
+            },
+        )
+        result["sectors"] = sectors
+        return result
+
+    async def get_stock_ranking(
+        self,
+        sort: str = "rise",
+        count: int = 20,
+    ) -> dict:
+        """Return A-share rankings with industry, speed and fund-flow fields."""
+
+        sort_config = {
+            "rise": ("f3", 1),
+            "fall": ("f3", 0),
+            "quick": ("f22", 1),
+            "turnover": ("f6", 1),
+            "large_order": ("f62", 1),
+        }
+        if sort not in sort_config:
+            raise ValueError(
+                "sort must be rise, fall, quick, turnover or large_order"
+            )
+        field, order = sort_config[sort]
+        params = {
+            "pn": 1,
+            "pz": max(1, min(int(count), 100)),
+            "po": order,
+            "np": 1,
+            "fltt": 2,
+            "invt": 2,
+            "fid": field,
+            "fs": (
+                "m:0+t:6,m:0+t:80,m:1+t:2,m:1+t:23,"
+                "m:0+t:81+s:2048"
+            ),
+            "fields": "f2,f3,f6,f12,f14,f22,f62,f100",
+        }
+        headers = {
+            "Referer": "https://quote.eastmoney.com/center/",
+            "User-Agent": self.DEFAULT_HEADERS["User-Agent"],
+        }
+        raw = None
+        last_error: Exception | None = None
+        for host in (*self.PUSH2_HOSTS, self.PUSH2_DELAY):
+            try:
+                response = await self._client.get(
+                    f"{host}/api/qt/clist/get",
+                    params=params,
+                    headers=headers,
+                    timeout=15,
+                )
+                response.raise_for_status()
+                raw = response.json()
+                if isinstance((raw.get("data") or {}).get("diff"), list):
+                    break
+            except Exception as exc:
+                last_error = exc
+        if not isinstance((raw or {}).get("data"), dict):
+            return market_error(
+                provider="eastmoney",
+                market="cn",
+                error=last_error or "stock ranking source failed",
+            )
+        rows = (raw["data"].get("diff") or [])
+        stocks = [
+            {
+                "code": row.get("f12"),
+                "name": row.get("f14"),
+                "close": row.get("f2"),
+                "changeRate": row.get("f3"),
+                "turnover": row.get("f6"),
+                "speed": row.get("f22"),
+                "largeOrderNet": row.get("f62"),
+                "industry": row.get("f100"),
+            }
+            for row in rows
+        ]
+        result = market_result(
+            provider="eastmoney",
+            market="cn",
+            data={"sort": sort, "count": len(stocks), "stocks": stocks},
+            timezone_name="Asia/Shanghai",
+        )
+        result["status_code"] = 0
+        return result
+
+    async def get_hot_board(
+        self,
+        board_type: str = "concept",
+        sort: str = "rise",
+        count: int = 10,
+    ) -> dict:
+        """获取东方财富板块涨幅、资金流或五日涨幅排行。"""
+        if board_type not in {"industry", "concept"}:
+            raise ValueError("board_type must be industry or concept")
+        sort_fields = {
+            "rise": "change_pct",
+            "flow": "main_net_inflow",
+            "5day": "change_5d_pct",
+        }
+        if sort not in sort_fields:
+            raise ValueError("sort must be rise, flow or 5day")
+        result = await self.get_sector_list(board_type)
+        if result.get("status") != "ok":
+            return result
+        sectors = (result.get("data") or {}).get("sectors") or []
+        sort_field = sort_fields[sort]
+        ranked = sorted(
+            sectors,
+            key=lambda item: item.get(sort_field)
+            if item.get(sort_field) is not None
+            else float("-inf"),
+            reverse=True,
+        )[:count]
+        boards = [
+            {
+                "code": item.get("provider_sector_code"),
+                "name": item.get("sector_name"),
+                "changeRate": item.get("change_pct"),
+                "changeAmt": item.get("change_amount"),
+                "turnoverRate": item.get("turnover_rate"),
+                "amount": item.get("turnover"),
+                "netFlow": item.get("main_net_inflow"),
+                "upCount": item.get("up_count"),
+                "downCount": item.get("down_count"),
+                "leadStock": item.get("lead_stock_name"),
+                "leadCode": item.get("lead_stock_code"),
+                "change5day": item.get("change_5d_pct"),
+            }
+            for item in ranked
+        ]
+        return market_result(
+            provider="eastmoney",
+            market="cn",
+            data={
+                "boardType": board_type,
+                "sort": sort,
+                "sortName": {
+                    "rise": "今日涨幅最大",
+                    "flow": "资金流入最多",
+                    "5day": "5日涨幅最大",
+                }[sort],
+                "total": len(sectors),
+                "boards": boards,
+            },
+            timezone_name="Asia/Shanghai",
+            provider_metadata={
+                "ranking_field": sort_field,
+                "requested_count": count,
+            },
+        )
+
+    async def get_sector_constituents(
+        self,
+        bk_code: str,
+        *,
+        sector_type: str = "industry",
+    ) -> dict:
+        """获取东方财富板块成分股；不在 Client 内计算成分权重。"""
+        if sector_type not in {"industry", "concept"}:
+            raise ValueError("sector_type must be industry or concept")
+        headers = {
+            "User-Agent": self.DEFAULT_HEADERS["User-Agent"],
+            "Referer": f"https://quote.eastmoney.com/bk/90.{bk_code}.html",
+        }
+        params = {
+            "pn": 1,
+            "pz": 500,
+            "po": 1,
+            "np": 1,
+            "fltt": 2,
+            "invt": 2,
+            "fid": "f3",
+            "fs": f"b:{bk_code}+f:!50",
+            "fields": "f2,f3,f5,f6,f8,f9,f12,f14,f15,f16,f17,f18,f20,f21",
+        }
+        raw = None
+        last_error = None
+        hosts = list(self.PUSH2_HOSTS)
+        random.shuffle(hosts)
+        for host in hosts:
+            try:
+                response = await self._client.get(
+                    f"{host}/api/qt/clist/get",
+                    params=params,
+                    headers=headers,
+                    timeout=15,
+                )
+                response.raise_for_status()
+                raw = response.json()
+                if (raw.get("data") or {}).get("diff") is not None:
+                    break
+            except Exception as exc:
+                last_error = exc
+        if raw is None:
+            return market_error(
+                provider="eastmoney",
+                market="cn",
+                error=last_error or "all Push2 hosts failed",
+                provider_metadata={
+                    "attempted_hosts": hosts,
+                    "bk_code": bk_code,
+                },
+            )
+        data = raw.get("data")
+        if not isinstance(data, dict) or not isinstance(data.get("diff"), list):
+            return market_error(
+                provider="eastmoney",
+                market="cn",
+                error="Push2 constituent response schema changed",
+                status=MarketDataStatus.PARSE_ERROR,
+                provider_metadata={"bk_code": bk_code},
+            )
+
+        constituents = []
+        for row in data["diff"]:
+            code = str(row.get("f12") or "")
+            name = str(row.get("f14") or "")
+            if not code or not name:
+                continue
+            constituents.append(
+                {
+                    "stock_code": code,
+                    "stock_name": name,
+                    "latest": row.get("f2"),
+                    "change_pct": row.get("f3"),
+                    "volume": row.get("f5"),
+                    "turnover": row.get("f6"),
+                    "turnover_rate": row.get("f8"),
+                    "pe": row.get("f9"),
+                    "high": row.get("f15"),
+                    "low": row.get("f16"),
+                    "open": row.get("f17"),
+                    "previous_close": row.get("f18"),
+                    "market_cap": row.get("f20"),
+                    "free_float_market_cap": row.get("f21"),
+                    "weight": None,
+                }
+            )
+        result = market_result(
+            provider="eastmoney",
+            market="cn",
+            data={
+                "provider_sector_code": bk_code,
+                "sector_type": sector_type,
+                "count": len(constituents),
+                "total": data.get("total"),
+                "constituents": constituents,
+            },
+            timezone_name="Asia/Shanghai",
+            provider_metadata={
+                "complete": len(constituents) == data.get("total"),
+                "weight_available": False,
+                "turnover_unit": "yuan",
+                "market_cap_unit": "yuan",
+            },
+        )
+        return result
 
     async def get_sector_kline(self, bk_code: str, period: str = "101", limit: int = 60) -> dict:
         """获取板块 K 线数据（行业/概念板块）
@@ -805,33 +1152,77 @@ class EastmoneyClient(BaseClient):
             "User-Agent": self.DEFAULT_HEADERS["User-Agent"],
             "Referer": "https://quote.eastmoney.com/",
         }
-        for attempt in range(3):
+        params = {
+            "secid": secid,
+            "fields1": "f1,f2,f3",
+            "fields2": "f51,f52,f53,f54,f55,f56,f57",
+            "klt": period,
+            "fqt": "1",
+            "end": "20500101",
+            "lmt": str(min(limit, 500)),
+        }
+        data = None
+        selected_host = None
+        errors: list[str] = []
+        # 日 K 不要求盘中实时，生产网络对 delay 域更稳定。
+        hosts = (
+            self.PUSH2_DELAY,
+            self.PUSH2HIS,
+            *self.PUSH2_HOSTS,
+        )
+        for host in hosts:
             try:
                 resp = await self._client.get(
-                    "https://push2his.eastmoney.com/api/qt/stock/kline/get",
-                    params={
-                        "secid": secid,
-                        "fields1": "f1,f2,f3",
-                        "fields2": "f51,f52,f53,f54,f55,f56,f57",
-                        "klt": period,
-                        "fqt": "1",
-                        "end": "20500101",
-                        "lmt": str(min(limit, 500)),
-                    },
+                    f"{host}/api/qt/stock/kline/get",
+                    params=params,
                     headers=headers,
                     timeout=15,
                 )
                 resp.raise_for_status()
-                data = resp.json()
-                break
-            except Exception:
-                if attempt < 2:
-                    await asyncio.sleep(1)
-                else:
-                    return {"status_code": -1, "msg": "获取板块K线失败"}
+                candidate = resp.json()
+                candidate_data = candidate.get("data")
+                if (
+                    candidate.get("rc") == 0
+                    and isinstance(candidate_data, dict)
+                    and candidate_data.get("klines")
+                ):
+                    data = candidate
+                    selected_host = host
+                    break
+                errors.append(f"{host}: empty_kline_payload")
+            except Exception as exc:
+                errors.append(f"{host}: {type(exc).__name__}: {exc}")
+        if data is None:
+            return market_result(
+                provider="eastmoney",
+                market="cn",
+                data={
+                    "bk_code": bk_code,
+                    "interval": {
+                        "101": "1d", "102": "1w", "103": "1mo"
+                    }.get(period, period),
+                    "bars": [],
+                    "klines": [],
+                },
+                status=MarketDataStatus.EMPTY,
+                provider_metadata={
+                    "attempted_hosts": list(hosts),
+                    "errors": errors,
+                },
+            )
 
         if data.get("rc") != 0 or not data.get("data"):
-            return {"status_code": -1, "msg": "无数据"}
+            return market_result(
+                provider="eastmoney",
+                market="cn",
+                data=None,
+                status=MarketDataStatus.EMPTY,
+                provider_metadata={
+                    "bk_code": bk_code,
+                    "upstream_rc": data.get("rc"),
+                    "selected_host": selected_host,
+                },
+            )
 
         raw = data["data"]
         name = raw.get("name", "")
@@ -849,15 +1240,72 @@ class EastmoneyClient(BaseClient):
                 "volume": int(parts[5]),
                 "turnover": float(parts[6]),
             })
-        return {
-            "status_code": 0,
-            "data": {
+        result = market_result(
+            provider="eastmoney",
+            market="cn",
+            data={
                 "bk_code": bk_code,
                 "name": name,
+                "interval": {"101": "1d", "102": "1w", "103": "1mo"}.get(period, period),
+                "adjustment": "forward",
                 "total": len(klines),
+                "bars": klines,
                 "klines": klines,
             },
+            trade_date=klines[-1]["date"] if klines else None,
+            timezone_name="Asia/Shanghai",
+            provider_metadata={
+                "is_sector_index": True,
+                "selected_host": selected_host,
+                "delayed_fallback": selected_host == self.PUSH2_DELAY,
+            },
+        )
+        return result
+
+    async def get_futures_inventory(self, symbol: str = "沪铜") -> dict:
+        """获取东方财富期货库存序列。"""
+        units = {
+            "沪铜": "tonne",
+            "沪铝": "tonne",
+            "沪锌": "tonne",
+            "沪铅": "tonne",
+            "镍": "tonne",
+            "锡": "tonne",
+            "沪金": "kg",
+            "沪银": "kg",
         }
+        try:
+            frame = await asyncio.to_thread(ak.futures_inventory_em, symbol=symbol)
+            items = [
+                {
+                    "date": row.get("日期"),
+                    "inventory": row.get("库存"),
+                    "change": row.get("增减"),
+                    "unit": units.get(symbol, "source_defined"),
+                    "region": "exchange_aggregate",
+                }
+                for row in frame.to_dict("records")
+            ]
+            return market_result(
+                provider="eastmoney",
+                market="cn",
+                data={
+                    "symbol": symbol,
+                    "count": len(items),
+                    "items": items,
+                    "scope": "exchange_inventory",
+                },
+                trade_date=items[-1]["date"] if items else None,
+                timezone_name="Asia/Shanghai",
+                provider_metadata={
+                    "source_page": "data.eastmoney.com/ifdata/kcsj.html",
+                    "unit_source": "exchange_contract_convention",
+                },
+            )
+        except ValueError:
+            raise
+        except Exception as exc:
+            return market_error(provider="eastmoney", market="cn", error=exc)
 
     async def get_sector_minute_kline(self, bk_code: str, trade_date) -> dict:
         """获取板块当日分钟 K 线（5 分钟粒度）
@@ -890,11 +1338,17 @@ class EastmoneyClient(BaseClient):
             )
             resp.raise_for_status()
             data = resp.json()
-        except Exception:
-            return {"status_code": -1, "klines": []}
+        except Exception as exc:
+            return market_error(provider="eastmoney", market="cn", error=exc)
 
         if data.get("rc") != 0 or not data.get("data"):
-            return {"status_code": -1, "klines": []}
+            return market_result(
+                provider="eastmoney",
+                market="cn",
+                data=None,
+                status=MarketDataStatus.EMPTY,
+                provider_metadata={"bk_code": bk_code, "upstream_rc": data.get("rc")},
+            )
 
         klines = []
         for line in data["data"].get("klines", []):
@@ -910,7 +1364,160 @@ class EastmoneyClient(BaseClient):
                 "volume": int(parts[5]),
                 "turnover": float(parts[6]),
             })
-        return {"status_code": 0, "klines": klines}
+        result = market_result(
+            provider="eastmoney",
+            market="cn",
+            data={
+                "bk_code": bk_code,
+                "interval": "5m",
+                "count": len(klines),
+                "bars": klines,
+            },
+            source_time=klines[-1]["datetime"] if klines else None,
+            trade_date=str(trade_date),
+            timezone_name="Asia/Shanghai",
+            provider_metadata={"is_sector_index": True},
+        )
+        result["klines"] = klines
+        return result
+
+    async def get_sector_margin(
+        self,
+        sector_type: str = "industry",
+        *,
+        interval_days: int = 1,
+        count: int = 1000,
+    ) -> dict:
+        """获取东方财富行业、概念或地域板块融资融券统计。"""
+        type_codes = {
+            "industry": "005",
+            "concept": "006",
+            "region": "004",
+        }
+        if sector_type not in type_codes:
+            raise ValueError("sector_type must be industry, concept or region")
+        if interval_days not in {1, 3, 5, 10}:
+            raise ValueError("interval_days must be one of 1, 3, 5 or 10")
+        if count < 1:
+            raise ValueError("count must be greater than zero")
+
+        report_name = (
+            "RPTA_WEB_BKJYMXN"
+            if interval_days == 1
+            else "RPTA_WEB_BKQJYMXN"
+        )
+        filters = [f'(BOARD_TYPE_CODE="{type_codes[sector_type]}")']
+        if interval_days != 1:
+            filters.insert(0, f'(INTERVAL_TYPE="{interval_days}日")')
+        try:
+            rows = []
+            source_total = None
+            page_number = 1
+            while len(rows) < count:
+                response = await self._client.get(
+                    self.EM_DATACENTER,
+                    params={
+                        "reportName": report_name,
+                        "columns": "ALL",
+                        "pageNumber": str(page_number),
+                        "pageSize": str(min(500, count - len(rows))),
+                        "sortColumns": "FIN_NETBUY_AMT",
+                        "sortTypes": "-1",
+                        "stat": "1",
+                        "source": "WEB",
+                        "client": "WEB",
+                        "filter": "".join(filters),
+                    },
+                    headers={
+                        "Referer": "https://data.eastmoney.com/rzrq/hy.html",
+                        "User-Agent": self.DEFAULT_HEADERS["User-Agent"],
+                    },
+                )
+                response.raise_for_status()
+                payload = response.json()
+                result = payload.get("result") or {}
+                page_rows = result.get("data") or []
+                source_total = result.get("count")
+                rows.extend(page_rows)
+                if (
+                    not page_rows
+                    or source_total is None
+                    or len(rows) >= int(source_total)
+                ):
+                    break
+                page_number += 1
+            sectors = [
+                {
+                    "provider_sector_code": f"BK{int(row['BOARD_CODE']):04d}",
+                    "sector_name": row.get("BOARD_NAME"),
+                    "sector_type": sector_type,
+                    "trade_date": (
+                        row.get("TRADE_DATE") or row.get("END_DATE") or ""
+                    )[:10],
+                    "interval_days": interval_days,
+                    "financing_balance": row.get("FIN_BALANCE"),
+                    "financing_buy": row.get("FIN_BUY_AMT"),
+                    "financing_repayment": row.get("FIN_REPAY_AMT"),
+                    "financing_net_buy": row.get("FIN_NETBUY_AMT"),
+                    "securities_lending_balance": row.get("LOAN_BALANCE"),
+                    "securities_lending_balance_volume": row.get("LOAN_BALANCE_VOL"),
+                    "securities_lending_sell_volume": row.get("LOAN_SELL_VOL"),
+                    "securities_lending_repay_volume": row.get("LOAN_REPAY_VOL"),
+                    "securities_lending_net_sell_volume": row.get("FIN_NETSELL_AMT"),
+                    "margin_balance": row.get("MARGIN_BALANCE"),
+                    "financing_balance_ratio": row.get("FIN_BALANCE_RATIO"),
+                    "unrestricted_market_cap": row.get("NOTLIMITED_MARKETCAP_A"),
+                    "currency": "CNY",
+                }
+                for row in rows
+                if row.get("BOARD_CODE") is not None
+            ]
+            source_date = next(
+                (item["trade_date"] for item in sectors if item["trade_date"]),
+                None,
+            )
+            return market_result(
+                provider="eastmoney",
+                market="cn",
+                data={
+                    "sector_type": sector_type,
+                    "interval_days": interval_days,
+                    "count": len(sectors),
+                    "sectors": sectors,
+                },
+                source_time=source_date,
+                trade_date=source_date,
+                timezone_name="Asia/Shanghai",
+                provider_metadata={
+                    "classification": "eastmoney_wealth_board",
+                    "source_report": report_name,
+                    "source_total": source_total,
+                    "pages_fetched": page_number,
+                    "amount_unit": "yuan",
+                    "volume_unit": "share",
+                },
+            )
+        except (KeyError, TypeError, ValueError) as exc:
+            return market_error(
+                provider="eastmoney",
+                market="cn",
+                error=exc,
+                status=MarketDataStatus.PARSE_ERROR,
+                provider_metadata={
+                    "sector_type": sector_type,
+                    "interval_days": interval_days,
+                },
+            )
+        except Exception as exc:
+            return market_error(
+                provider="eastmoney",
+                market="cn",
+                error=exc,
+                provider_metadata={
+                    "sector_type": sector_type,
+                    "interval_days": interval_days,
+                },
+            )
 
     async def get_stock_capital_flow(self, code: str, days: int = 20) -> dict:
         """获取个股资金流向（主力/超大单/大单/中单/小单）
@@ -1002,6 +1609,8 @@ class EastmoneyClient(BaseClient):
             "User-Agent": self.DEFAULT_HEADERS["User-Agent"],
         }
 
+        last_error: Exception | None = None
+        received_valid_payload = False
         for attempt in range(3):
             try:
                 resp = await self._client.get(
@@ -1012,13 +1621,24 @@ class EastmoneyClient(BaseClient):
                 )
                 resp.raise_for_status()
                 data = resp.json()
+                if isinstance(data.get("data"), dict):
+                    received_valid_payload = True
                 if data.get("data") and data["data"].get("allstock"):
                     break
-            except Exception:
-                pass
+            except Exception as exc:
+                last_error = exc
             if attempt < 2:
                 await asyncio.sleep(1)
         else:
+            if not received_valid_payload and last_error is not None:
+                return {
+                    "status_code": -1,
+                    "msg": (
+                        "盘中异动接口请求失败: "
+                        f"{type(last_error).__name__}: {last_error}"
+                    ),
+                    "data": None,
+                }
             return {"status_code": 0, "data": {"changes": [], "total": 0,
                                                 "msg": "非交易时段或数据暂未更新"}}
 
@@ -1072,7 +1692,6 @@ class EastmoneyClient(BaseClient):
             "availableTypes": list(self.CHANGE_TYPE_GROUPS.keys()) + list(self.CHANGE_TYPE_ALIAS.keys()),
         }}
 
-    @cached(ttl=1209600, source="eastmoney", source_name="东方财富", domain="market", frequency="daily", market="a_share")
     async def get_index_kline(self, secid: str, beg_date: str, lmt: int = 250) -> dict:
         """获取指数/ETF K线数据（含重试）
 
@@ -1105,6 +1724,77 @@ class EastmoneyClient(BaseClient):
                 if attempt < 2:
                     await asyncio.sleep(1)
         return {}
+
+    async def get_index_daily_bars(
+        self,
+        index: str,
+        *,
+        limit: int = 120,
+    ) -> dict:
+        """返回主要 A 股指数的标准化日 K 线。
+
+        指数日线每天都会新增，因此这里不能使用跨日原始响应缓存。 ``index``
+        接受 ``INDEX_SECIDS`` 中的中文名称或东方财富 secid。
+        """
+
+        secid = self.INDEX_SECIDS.get(index, index)
+        if secid not in self.INDEX_SECIDS.values():
+            raise ValueError(f"unsupported A-share index: {index}")
+        normalized_limit = max(2, min(int(limit), 500))
+        begin = (datetime.now(timezone.utc) - timedelta(days=800)).strftime(
+            "%Y%m%d"
+        )
+        raw = await self.get_index_kline(secid, begin, normalized_limit)
+        payload = raw.get("data") if isinstance(raw, dict) else None
+        if not isinstance(payload, dict):
+            return market_error(
+                provider="eastmoney",
+                market="cn",
+                error="index daily response contains no data",
+                provider_metadata={"index": index, "secid": secid},
+            )
+        bars = []
+        for line in payload.get("klines") or []:
+            parts = str(line).split(",")
+            if len(parts) < 7:
+                continue
+            try:
+                bars.append(
+                    {
+                        "date": parts[0],
+                        "open": float(parts[1]),
+                        "close": float(parts[2]),
+                        "high": float(parts[3]),
+                        "low": float(parts[4]),
+                        "volume": float(parts[5]),
+                        "turnover": float(parts[6]),
+                    }
+                )
+            except (TypeError, ValueError):
+                continue
+        bars = bars[-normalized_limit:]
+        name = next(
+            (key for key, value in self.INDEX_SECIDS.items() if value == secid),
+            str(payload.get("name") or index),
+        )
+        return market_result(
+            provider="eastmoney",
+            market="cn",
+            data={
+                "name": name,
+                "symbol": secid.split(".", 1)[-1],
+                "secid": secid,
+                "interval": "1d",
+                "count": len(bars),
+                "bars": bars,
+            },
+            trade_date=bars[-1]["date"] if bars else None,
+            timezone_name="Asia/Shanghai",
+            provider_metadata={
+                "asset_type": "benchmark_index",
+                "complete": bool(bars),
+            },
+        )
 
     # 不缓存：每天有新数据，同参数不同时间返回不同结果
     async def get_northbound_recent(self, page_size: int = 30) -> dict:
@@ -1183,6 +1873,369 @@ class EastmoneyClient(BaseClient):
             if attempt < 2:
                 await asyncio.sleep(1)
         return {}
+
+    async def get_market_breadth(self) -> dict:
+        """一次请求获取全 A 股涨跌家数、成交额和主要指数行情。"""
+        fields = "f2,f3,f4,f5,f6,f12,f13,f14,f104,f105,f106,f124"
+        headers = {
+            "Referer": "https://quote.eastmoney.com/center/",
+            "User-Agent": self.DEFAULT_HEADERS["User-Agent"],
+        }
+        params = {
+            "fltt": "2",
+            "invt": "2",
+            "np": "1",
+            "ut": "fa5fd1943c7b386f172d6893dbfba10b",
+            "secids": ",".join(self.MARKET_BREADTH_SECIDS),
+            "fields": fields,
+        }
+        errors: list[str] = []
+        hosts = (self.PUSH2_HOSTS[0], self.PUSH2_DELAY)
+        for host in hosts:
+            try:
+                response = await self._client.get(
+                    f"{host}/api/qt/ulist.np/get",
+                    params=params,
+                    headers=headers,
+                    timeout=min(
+                        self._request_timeout,
+                        3 if host != self.PUSH2_DELAY else 8,
+                    ),
+                )
+                response.raise_for_status()
+                payload = response.json()
+                rows = (payload.get("data") or {}).get("diff")
+                if not isinstance(rows, list):
+                    return market_error(
+                        provider="eastmoney",
+                        market="cn",
+                        error="Eastmoney market breadth response schema changed",
+                        status=MarketDataStatus.PARSE_ERROR,
+                        provider_metadata={"host": host},
+                    )
+                rows_by_code = {
+                    str(row.get("f12") or ""): row
+                    for row in rows
+                    if isinstance(row, dict)
+                }
+                required_codes = {
+                    secid.split(".", 1)[1]
+                    for secid in self.MARKET_BREADTH_SECIDS
+                }
+                missing_codes = sorted(required_codes - rows_by_code.keys())
+                if missing_codes:
+                    return market_error(
+                        provider="eastmoney",
+                        market="cn",
+                        error=f"Eastmoney market breadth missing indices: {missing_codes}",
+                        status=MarketDataStatus.PARSE_ERROR,
+                        provider_metadata={"host": host},
+                    )
+
+                def as_int(value, default: int = 0) -> int:
+                    try:
+                        return int(float(value))
+                    except (TypeError, ValueError):
+                        return default
+
+                def as_float(value) -> float | None:
+                    try:
+                        return float(value)
+                    except (TypeError, ValueError):
+                        return None
+
+                source_times = {
+                    code: datetime.fromtimestamp(
+                        as_int(row["f124"]),
+                        tz=timezone.utc,
+                    )
+                    for code, row in rows_by_code.items()
+                    if row.get("f124") not in (None, "", "-")
+                }
+                if not source_times:
+                    return market_error(
+                        provider="eastmoney",
+                        market="cn",
+                        error="Eastmoney market breadth missing source timestamps",
+                        status=MarketDataStatus.PARSE_ERROR,
+                        provider_metadata={"host": host},
+                    )
+                china_timezone = timezone(timedelta(hours=8))
+                latest_source_time = max(source_times.values())
+                latest_source_time_local = latest_source_time.astimezone(
+                    china_timezone
+                )
+
+                breadth_codes = ("000002", "399107", "899050")
+                turnover_codes = ("000001", "399001", "899050")
+                up_count = sum(as_int(rows_by_code[code]["f104"]) for code in breadth_codes)
+                down_count = sum(as_int(rows_by_code[code]["f105"]) for code in breadth_codes)
+                flat_count = sum(as_int(rows_by_code[code]["f106"]) for code in breadth_codes)
+                turnover = sum(
+                    as_float(rows_by_code[code]["f6"]) or 0.0
+                    for code in turnover_codes
+                )
+                quote_codes = (
+                    "000001",
+                    "399001",
+                    "399006",
+                    "899050",
+                    "000680",
+                    "000688",
+                    "000510",
+                    "000300",
+                    "000852",
+                    "000016",
+                    "000905",
+                    "399330",
+                    "000698",
+                )
+                indices = [
+                    {
+                        "code": code,
+                        "name": rows_by_code[code].get("f14"),
+                        "close": as_float(rows_by_code[code]["f2"]),
+                        "change": as_float(rows_by_code[code]["f4"]),
+                        "change_percent": as_float(rows_by_code[code]["f3"]),
+                        "volume": as_float(rows_by_code[code]["f5"]),
+                        "turnover": as_float(rows_by_code[code]["f6"]),
+                        "turnover_unit": "yuan",
+                        "source_time": source_times.get(
+                            code,
+                            latest_source_time,
+                        ).astimezone(
+                            china_timezone
+                        ).isoformat(),
+                    }
+                    for code in quote_codes
+                ]
+                components = [
+                    {
+                        "code": code,
+                        "name": rows_by_code[code].get("f14"),
+                        "up_count": as_int(rows_by_code[code]["f104"]),
+                        "down_count": as_int(rows_by_code[code]["f105"]),
+                        "flat_count": as_int(rows_by_code[code]["f106"]),
+                        "source_time": source_times.get(
+                            code,
+                            latest_source_time,
+                        ).astimezone(
+                            china_timezone
+                        ).isoformat(),
+                    }
+                    for code in breadth_codes
+                ]
+                covered_count = up_count + down_count + flat_count
+                return market_result(
+                    provider="eastmoney",
+                    market="cn",
+                    data={
+                        "covered_security_count": covered_count,
+                        "valid_quote_count": covered_count,
+                        "up_count": up_count,
+                        "down_count": down_count,
+                        "flat_count": flat_count,
+                        "turnover": turnover,
+                        "turnover_unit": "yuan",
+                        "indices": indices,
+                        "breadth_components": components,
+                    },
+                    observed_at=latest_source_time,
+                    source_time=latest_source_time_local.isoformat(),
+                    trade_date=latest_source_time_local.date(),
+                    timezone_name="Asia/Shanghai",
+                    provider_metadata={
+                        "host": host,
+                        "universe": "sh_sz_bj_a_shares",
+                        "complete": True,
+                        "aggregation": "provider_index_aggregate",
+                        "single_request": True,
+                        "freshness": (
+                            "delayed" if host == self.PUSH2_DELAY else "realtime"
+                        ),
+                        "delayed_fallback": host == self.PUSH2_DELAY,
+                        "breadth_fields": {
+                            "f104": "up_count",
+                            "f105": "down_count",
+                            "f106": "flat_count",
+                            "f124": "source_timestamp",
+                        },
+                    },
+                )
+            except Exception as exc:
+                errors.append(f"{host}: {type(exc).__name__}: {exc}")
+        return market_error(
+            provider="eastmoney",
+            market="cn",
+            error="; ".join(errors) or "Eastmoney market breadth request failed",
+            provider_metadata={"attempted_hosts": list(hosts)},
+        )
+
+    async def get_market_intraday_turnover_comparison(self) -> dict:
+        """获取沪深北最近两日逐分钟成交额，并对齐上一交易日同时刻。"""
+        headers = {
+            "Referer": "https://quote.eastmoney.com/",
+            "User-Agent": self.DEFAULT_HEADERS["User-Agent"],
+        }
+
+        async def fetch_one(secid: str) -> dict:
+            errors: list[str] = []
+            for host in (self.PUSH2HIS, self.PUSH2_HOSTS[0], self.PUSH2_DELAY):
+                try:
+                    response = await self._client.get(
+                        f"{host}/api/qt/stock/trends2/get",
+                        params={
+                            "secid": secid,
+                            "fields1": (
+                                "f1,f2,f3,f4,f5,f6,f7,f8,"
+                                "f9,f10,f11,f12,f13"
+                            ),
+                            "fields2": (
+                                "f51,f52,f53,f54,f55,f56,f57,f58"
+                            ),
+                            "ndays": "2",
+                            "iscr": "0",
+                            "iscca": "0",
+                            "ut": "fa5fd1943c7b386f172d6893dbfba10b",
+                        },
+                        headers=headers,
+                        timeout=min(
+                            self._request_timeout,
+                            5 if host != self.PUSH2_DELAY else 8,
+                        ),
+                    )
+                    response.raise_for_status()
+                    payload = response.json()
+                    data = payload.get("data") or {}
+                    trends = data.get("trends")
+                    if not isinstance(trends, list) or not trends:
+                        raise ValueError("empty intraday turnover trends")
+                    return {
+                        "secid": secid,
+                        "name": data.get("name") or secid,
+                        "trends": trends,
+                        "host": host,
+                    }
+                except Exception as exc:
+                    errors.append(f"{host}: {type(exc).__name__}: {exc}")
+            raise RuntimeError(
+                f"{secid} intraday turnover unavailable: {'; '.join(errors)}"
+            )
+
+        try:
+            responses = await asyncio.gather(
+                *(fetch_one(secid) for secid in self.MARKET_TURNOVER_SECIDS)
+            )
+            series_by_market: list[dict] = []
+            for response in responses:
+                values_by_date: dict[str, dict[str, float]] = {}
+                for line in response["trends"]:
+                    parts = str(line).split(",")
+                    if len(parts) < 7 or " " not in parts[0]:
+                        continue
+                    trade_date, minute = parts[0].split(" ", 1)
+                    try:
+                        turnover = float(parts[6])
+                    except (TypeError, ValueError):
+                        continue
+                    values_by_date.setdefault(trade_date, {})[minute] = turnover
+                if len(values_by_date) < 2:
+                    raise ValueError(
+                        f"{response['secid']} has fewer than two trade dates"
+                    )
+                series_by_market.append(
+                    {
+                        **response,
+                        "values_by_date": values_by_date,
+                    }
+                )
+
+            common_dates = set.intersection(
+                *(
+                    set(item["values_by_date"])
+                    for item in series_by_market
+                )
+            )
+            if len(common_dates) < 2:
+                raise ValueError(
+                    "intraday turnover markets have no two common trade dates"
+                )
+            previous_trade_date, current_trade_date = sorted(common_dates)[-2:]
+            current_last_minutes = [
+                max(item["values_by_date"][current_trade_date])
+                for item in series_by_market
+            ]
+            comparison_minute = min(current_last_minutes)
+
+            components = []
+            current_turnover = 0.0
+            previous_turnover = 0.0
+            for item in series_by_market:
+                current_value = sum(
+                    value
+                    for minute, value in item["values_by_date"][
+                        current_trade_date
+                    ].items()
+                    if minute <= comparison_minute
+                )
+                previous_value = sum(
+                    value
+                    for minute, value in item["values_by_date"][
+                        previous_trade_date
+                    ].items()
+                    if minute <= comparison_minute
+                )
+                current_turnover += current_value
+                previous_turnover += previous_value
+                components.append(
+                    {
+                        "secid": item["secid"],
+                        "name": item["name"],
+                        "current_turnover": current_value,
+                        "previous_turnover": previous_value,
+                    }
+                )
+
+            china_timezone = timezone(timedelta(hours=8))
+            source_time = datetime.strptime(
+                f"{current_trade_date} {comparison_minute}",
+                "%Y-%m-%d %H:%M",
+            ).replace(tzinfo=china_timezone)
+            return market_result(
+                provider="eastmoney",
+                market="cn",
+                data={
+                    "current_trade_date": current_trade_date,
+                    "previous_trade_date": previous_trade_date,
+                    "comparison_time": comparison_minute,
+                    "current_turnover": current_turnover,
+                    "previous_turnover": previous_turnover,
+                    "turnover_unit": "yuan",
+                    "components": components,
+                },
+                source_time=source_time.isoformat(),
+                trade_date=current_trade_date,
+                timezone_name="Asia/Shanghai",
+                provider_metadata={
+                    "interval": "1m",
+                    "amount_field": "f56",
+                    "aggregation": (
+                        "sum minute turnover through comparison time "
+                        "across sh_sz_bj"
+                    ),
+                    "hosts": [item["host"] for item in series_by_market],
+                },
+            )
+        except Exception as exc:
+            return market_error(
+                provider="eastmoney",
+                market="cn",
+                error=exc,
+                provider_metadata={
+                    "secids": list(self.MARKET_TURNOVER_SECIDS),
+                    "interval": "1m",
+                },
+            )
 
     async def get_index_capital_flow_daily(self, secid: str) -> dict:
         """获取指数当日资金流向，带重试

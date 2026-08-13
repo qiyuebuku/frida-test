@@ -1,0 +1,16 @@
+serverAddr = "119.23.227.187"
+serverPort = 7000
+
+[[proxies]]
+name = "smart-fund-langfuse-web"
+type = "tcp"
+localIP = "127.0.0.1"
+localPort = 3001
+remotePort = 3001
+
+[[proxies]]
+name = "smart-fund-langfuse-minio"
+type = "tcp"
+localIP = "127.0.0.1"
+localPort = 9092
+remotePort = 9092

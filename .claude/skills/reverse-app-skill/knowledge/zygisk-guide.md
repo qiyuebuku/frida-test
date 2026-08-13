@@ -264,7 +264,8 @@ $NDK/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android26-clang++ \
 ### 3. 部署到手机
 
 ```bash
-ADB="/mnt/d/123pan/Downloads/一加Ace6/adb命令行/adb.exe -s 3B15BJ00GZL00000"
+ADB="${ADB:-adb}"
+# 多设备时另行设置 ANDROID_SERIAL，并由 adb 自动使用该环境变量。
 MODULE_ID="hook_zygisk"
 
 # 推送文件到临时目录

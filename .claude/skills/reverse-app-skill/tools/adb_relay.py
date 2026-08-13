@@ -14,16 +14,25 @@ import socket
 import subprocess
 import threading
 import sys
+import os
 
-ADB = "/mnt/d/123pan/Downloads/一加Ace6/adb命令行/adb.exe"
-SERIAL = "3B15BJ00GZL00000"
+ADB = os.environ.get("ADB", "adb")
+SERIAL = os.environ.get("ANDROID_SERIAL")
+
+
+def adb_command(*args):
+    command = [ADB]
+    if SERIAL:
+        command.extend(["-s", SERIAL])
+    command.extend(args)
+    return command
 
 
 def relay(client_sock, remote_port):
     """通过 adb shell nc 建立到手机的双向通道"""
     try:
         proc = subprocess.Popen(
-            [ADB, "-s", SERIAL, "shell", f"nc 127.0.0.1 {remote_port}"],
+            adb_command("shell", f"nc 127.0.0.1 {remote_port}"),
             stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
@@ -79,7 +88,7 @@ def main():
     server.bind(("127.0.0.1", local_port))
     server.listen(5)
     print(f"[*] ADB relay: 127.0.0.1:{local_port} → phone:{remote_port}")
-    print(f"[*] Device: {SERIAL}")
+    print(f"[*] Device: {SERIAL or 'adb default device'}")
 
     while True:
         client, addr = server.accept()

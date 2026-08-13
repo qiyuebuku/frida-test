@@ -64,6 +64,12 @@ def test_save_preserves_hot_article_when_same_title_exists_from_another_source(m
             self.records = records
             return [101] if records else []
 
+        def find_existing_content_fingerprints(
+            self,
+            _fingerprints: list[str],
+        ) -> set[str]:
+            return set()
+
     repository = _FakeNewsRepository()
     monkeypatch.setattr(NewsAggregator, "_query_today_titles", lambda _self: ["热门文章一"])
     monkeypatch.setattr(NewsAggregator, "_news_repo", staticmethod(lambda: repository))
@@ -74,7 +80,44 @@ def test_save_preserves_hot_article_when_same_title_exists_from_another_source(m
 
     assert saved == 1
     assert repository.records[0]["source"] == "cls_hot_article"
+    assert repository.records[0]["news_kind"] == "news"
     assert aggregator.last_saved_ids == [101]
+
+
+def test_news_kind_classifies_market_recap_and_preview() -> None:
+    assert NewsAggregator._classify_news_kind(
+        {"title": "A股收评：三大指数集体下跌", "source": "cls"}
+    ) == "market_recap"
+    assert NewsAggregator._classify_news_kind(
+        {"title": "盘前必读：今日重要消息", "source": "cls"}
+    ) == "market_preview"
+
+
+def test_news_dedup_key_is_cross_source_but_date_scoped() -> None:
+    left = NewsAggregator._dedup_key(
+        {
+            "title": "A股 收盘！",
+            "published_at": "2026-07-31T15:00:00+08:00",
+            "source": "cls",
+        }
+    )
+    right = NewsAggregator._dedup_key(
+        {
+            "title": "A股收盘",
+            "published_at": "2026-07-31T15:01:00+08:00",
+            "source": "sina",
+        }
+    )
+    next_day = NewsAggregator._dedup_key(
+        {
+            "title": "A股收盘",
+            "published_at": "2026-08-01T15:00:00+08:00",
+            "source": "sina",
+        }
+    )
+
+    assert left == right
+    assert left != next_day
 
 
 @pytest.mark.asyncio

@@ -6,7 +6,10 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any
 
-from src.application.agents.financial_research.schemas import ResearchTaskMode
+from src.application.agents.financial_research.schemas import (
+    ResearchContextPack,
+    ResearchTaskMode,
+)
 
 
 @dataclass(slots=True)
@@ -24,6 +27,7 @@ class AgentRunContext:
     run_id: str
     session_id: str
     task_mode: ResearchTaskMode
-    allow_writes: bool = False
+    research_context: ResearchContextPack | None = None
     tool_invocations: list[ToolInvocation] = field(default_factory=list)
+    evidence_aliases: dict[str, str] = field(default_factory=dict)
     llm_calls: int = 0

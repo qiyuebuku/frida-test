@@ -1,0 +1,49 @@
+from src.infrastructure.persistence.repositories.agent_mcp_audit_repository import (
+    _extract_opened_evidence,
+)
+
+
+def test_evidence_ledger_records_only_opened_evidence_contracts() -> None:
+    assert _extract_opened_evidence(
+        "kg_relation_graph_search",
+        {"cards": [{"card_id": "card-search-hit"}]},
+    ) == []
+    assert _extract_opened_evidence(
+        "kg_card_open",
+        {"cards": [{"card_id": "card-opened", "evidence_id": "ev-1"}]},
+    ) == ["card-opened", "ev-1"]
+    assert _extract_opened_evidence(
+        "market_evidence_open",
+        {
+            "locator": "market:v1:record",
+            "fields": [{"evidence_locator": "market:v1:field"}],
+        },
+    ) == ["market:v1:record", "market:v1:field"]
+    assert _extract_opened_evidence(
+        "market_change_brief_open",
+        {
+            "significant_changes": [
+                {
+                    "current_evidence_locator": "market:v1:current",
+                    "baseline_evidence_locator": "market:v1:baseline",
+                }
+            ],
+            "dimension_facts": [
+                {"facts": [{"evidence_locator": "market:v1:brief"}]}
+            ]
+        },
+    ) == ["market:v1:current", "market:v1:baseline", "market:v1:brief"]
+    assert _extract_opened_evidence(
+        "market_instrument_history",
+        {"window_evidence": {"120_bars": {
+            "baseline": {"evidence_locator": "market:v1:history-baseline"},
+            "close_high": {"evidence_locator": "market:v1:history-high"},
+        }}},
+    ) == ["market:v1:history-baseline", "market:v1:history-high"]
+    assert _extract_opened_evidence(
+        "market_technical_state_open",
+        {"windows": {"120_bars": {
+            "high_evidence_locator": "market:v1:technical-high",
+            "low_evidence_locator": "market:v1:technical-low",
+        }}},
+    ) == ["market:v1:technical-high", "market:v1:technical-low"]

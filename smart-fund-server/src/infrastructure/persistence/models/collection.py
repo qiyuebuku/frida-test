@@ -10,9 +10,20 @@
 - CollectionState: 采集 checkpoint + 调度元数据
 """
 from datetime import date, datetime
+from decimal import Decimal
 
 from sqlalchemy import (
-    BigInteger, Boolean, Date, DateTime, Float, Integer, String, Text,
+    BigInteger,
+    Boolean,
+    Date,
+    DateTime,
+    Float,
+    Index,
+    Integer,
+    Numeric,
+    String,
+    Text,
+    UniqueConstraint,
 )
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
@@ -25,11 +36,10 @@ from src.infrastructure.persistence.models.base import Base
 
 
 class News(Base):
-    """新闻原始记录(15 列)
+    """新闻原始记录。
 
-    多源采集 → 跨源相似度去重(difflib.SequenceMatcher)
-    fingerprint = SHA256(title + source) 防同源重复
-    event_extracted = True 表示已被 AI 事件抽取处理过
+    多源采集先执行同源指纹、业务日标题和完整正文三层去重；
+    event_extracted=True 表示已被知识抽取流程处理。
     """
     __tablename__ = "ft_news"
 
@@ -49,6 +59,21 @@ class News(Base):
     )
     fingerprint: Mapped[str] = mapped_column(
         String, nullable=False, comment="SHA256(title+source) 去重指纹"
+    )
+    news_kind: Mapped[str] = mapped_column(
+        String(24),
+        nullable=False,
+        default="news",
+        comment="稳定内容类型: news/market_recap/market_preview/research_report",
+    )
+    dedup_key: Mapped[str] = mapped_column(
+        String(64),
+        nullable=False,
+        comment="业务日+归一化标题的跨来源去重键",
+    )
+    content_fingerprint: Mapped[str | None] = mapped_column(
+        String(64),
+        comment="非空完整正文归一化后的 SHA256",
     )
     created_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
@@ -300,6 +325,28 @@ class CollectionState(Base):
     total_runs: Mapped[int | None] = mapped_column(BigInteger, default=0, comment="累计运行次数")
     total_saved: Mapped[int | None] = mapped_column(BigInteger, default=0, comment="累计入库行数")
 
+    # 统一任务状态投影。checkpoint/backfill 字段继续服务业务恢复；以下字段只
+    # 描述任务当前运行状态，拉取、回调和服务端推送使用同一套语义。
+    task_id: Mapped[str | None] = mapped_column(
+        String(192), index=True, comment="对应 scheduled_tasks.scheduler_id 或推送任务 ID"
+    )
+    task_type: Mapped[str | None] = mapped_column(
+        String(24), comment="pull/callback/push/internal/backfill"
+    )
+    status: Mapped[str | None] = mapped_column(
+        String(24), default="pending", comment="pending/running/success/skipped/delayed/failed"
+    )
+    last_started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    last_received_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    last_source_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    last_persisted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    last_finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    last_duration_ms: Mapped[int | None] = mapped_column(BigInteger)
+    last_fetched_count: Mapped[int | None] = mapped_column(BigInteger, default=0)
+    last_saved_count: Mapped[int | None] = mapped_column(BigInteger, default=0)
+    total_received: Mapped[int | None] = mapped_column(BigInteger, default=0)
+    runtime_details: Mapped[dict] = mapped_column(JSONB, default=dict)
+
     created_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )
@@ -311,29 +358,134 @@ class CollectionState(Base):
         return f"<CollectionState {self.aggregator}:{self.source_name} mode={self.mode}>"
 
 
-# ==================== ft_watchlist_data ====================
+class InstrumentProfile(Base):
+    """Current descriptive attributes for a tracked instrument."""
+
+    __tablename__ = "ft_instrument_profiles"
+    __table_args__ = (
+        UniqueConstraint(
+            "code", "data_type", "provider",
+            name="uq_ft_instrument_profiles_identity",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    code: Mapped[str] = mapped_column(String(32), nullable=False)
+    data_type: Mapped[str] = mapped_column(String(32), nullable=False)
+    provider: Mapped[str] = mapped_column(String(32), nullable=False)
+    observed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    fetched_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    data: Mapped[dict] = mapped_column(JSONB, nullable=False)
+    created_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 
 
-class WatchlistData(Base):
-    """自选标的采集数据（基金净值/持仓/个股资金流/行情等）
+class InstrumentDisclosure(Base):
+    """Periodic holdings, scale and ownership disclosures."""
 
-    所有维度用 data_type 区分，按 (code, data_type, trade_date) 去重。
+    __tablename__ = "ft_instrument_disclosures"
+    __table_args__ = (
+        UniqueConstraint(
+            "code", "data_type", "provider", "report_date",
+            name="uq_ft_instrument_disclosures_identity",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    code: Mapped[str] = mapped_column(String(32), nullable=False)
+    data_type: Mapped[str] = mapped_column(String(32), nullable=False)
+    provider: Mapped[str] = mapped_column(String(32), nullable=False)
+    report_date: Mapped[date] = mapped_column(Date, nullable=False)
+    observed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    fetched_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    payload_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    data: Mapped[dict] = mapped_column(JSONB, nullable=False)
+    created_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+
+class InstrumentObservation(Base):
+    """Date-stamped non-market facts and derived instrument metrics."""
+
+    __tablename__ = "ft_instrument_observations"
+    __table_args__ = (
+        UniqueConstraint(
+            "code", "data_type", "provider", "observation_date",
+            name="uq_ft_instrument_observations_identity",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    code: Mapped[str] = mapped_column(String(32), nullable=False)
+    data_type: Mapped[str] = mapped_column(String(32), nullable=False)
+    provider: Mapped[str] = mapped_column(String(32), nullable=False)
+    observation_date: Mapped[date] = mapped_column(Date, nullable=False)
+    observed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    fetched_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    payload_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    data: Mapped[dict] = mapped_column(JSONB, nullable=False)
+    created_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+
+# ==================== ft_market_snapshots ====================
+
+
+class MarketSnapshot(Base):
+    """盘中市场与标的历史快照。
+
+    每个时间桶只保存一个来源口径的观测；同一交易日的不同时间桶不会互相覆盖。
     """
-    __tablename__ = "ft_watchlist_data"
 
-    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    code: Mapped[str] = mapped_column(
-        String(16), nullable=False, comment="股票/基金代码"
+    __tablename__ = "ft_market_snapshots"
+    __table_args__ = (
+        UniqueConstraint(
+            "data_type",
+            "subject_id",
+            "provider",
+            "bucket_at",
+            name="uq_ft_market_snapshots_bucket",
+        ),
+        Index(
+            "ix_ft_market_snapshots_subject_time",
+            "subject_id",
+            "data_type",
+            "bucket_at",
+        ),
+        Index(
+            "ix_ft_market_snapshots_trade_type",
+            "trade_date",
+            "data_type",
+        ),
+        Index(
+            "ix_ft_market_snapshots_freshness",
+            "freshness_status",
+            "bucket_at",
+        ),
     )
-    data_type: Mapped[str] = mapped_column(
-        String(32), nullable=False, comment="数据维度: nav/holdings/stock_flow/..."
+
+    id: Mapped[int] = mapped_column(
+        BigInteger, primary_key=True, autoincrement=True
     )
-    trade_date: Mapped[date | None] = mapped_column(
-        Date, comment="数据日期"
+    data_type: Mapped[str] = mapped_column(String(32), nullable=False)
+    subject_type: Mapped[str] = mapped_column(String(16), nullable=False)
+    subject_id: Mapped[str] = mapped_column(String(128), nullable=False)
+    market: Mapped[str] = mapped_column(String(16), nullable=False)
+    provider: Mapped[str] = mapped_column(String(32), nullable=False)
+    trade_date: Mapped[date] = mapped_column(Date, nullable=False)
+    observed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    fetched_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
     )
-    data: Mapped[dict] = mapped_column(
-        JSONB, nullable=False, comment="数据内容"
+    bucket_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
     )
+    freshness_status: Mapped[str] = mapped_column(
+        String(16), nullable=False, default="unknown"
+    )
+    source_latency_seconds: Mapped[float | None] = mapped_column(Float)
+    payload_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    data: Mapped[dict] = mapped_column(JSONB, nullable=False)
     created_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )
@@ -341,8 +493,118 @@ class WatchlistData(Base):
         DateTime(timezone=True),
         server_default=func.now(),
         onupdate=func.now(),
-        comment="最近一次采集覆盖时间",
     )
 
-    def __repr__(self) -> str:
-        return f"<WatchlistData {self.code}:{self.data_type} {self.trade_date}>"
+
+# ==================== ft_etf_daily_shares ====================
+
+
+class EtfDailyShare(Base):
+    """沪深交易所官方 ETF 日级份额。"""
+
+    __tablename__ = "ft_etf_daily_shares"
+    __table_args__ = (
+        UniqueConstraint(
+            "exchange",
+            "code",
+            "trade_date",
+            name="uq_ft_etf_daily_shares_identity",
+        ),
+        Index(
+            "ix_ft_etf_daily_shares_code_date",
+            "code",
+            "trade_date",
+        ),
+        Index(
+            "ix_ft_etf_daily_shares_trade_date",
+            "trade_date",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(
+        BigInteger, primary_key=True, autoincrement=True
+    )
+    exchange: Mapped[str] = mapped_column(String(8), nullable=False)
+    code: Mapped[str] = mapped_column(String(16), nullable=False)
+    name: Mapped[str] = mapped_column(String(128), nullable=False, default="")
+    trade_date: Mapped[date] = mapped_column(Date, nullable=False)
+    shares: Mapped[Decimal] = mapped_column(Numeric(30, 4), nullable=False)
+    share_unit: Mapped[str] = mapped_column(String(16), nullable=False)
+    provider: Mapped[str] = mapped_column(String(32), nullable=False)
+    observed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    fetched_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
+    data: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
+    created_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+    updated_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        onupdate=func.now(),
+    )
+
+
+# ==================== ft_collection_runs ====================
+
+
+class CollectionRun(Base):
+    """每次采集执行的审计记录。"""
+
+    __tablename__ = "ft_collection_runs"
+    __table_args__ = (
+        Index(
+            "ix_ft_collection_runs_task_started",
+            "task_name",
+            "started_at",
+        ),
+        Index(
+            "ix_ft_collection_runs_source_started",
+            "source_name",
+            "started_at",
+        ),
+        Index(
+            "ix_ft_collection_runs_status_started",
+            "status",
+            "started_at",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(
+        BigInteger, primary_key=True, autoincrement=True
+    )
+    task_name: Mapped[str] = mapped_column(String(64), nullable=False)
+    source_name: Mapped[str] = mapped_column(String(64), nullable=False)
+    event_id: Mapped[str] = mapped_column(String(128), nullable=False, default="")
+    status: Mapped[str] = mapped_column(
+        String(24), nullable=False, default="running"
+    )
+    scheduled_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    started_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    fetched_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    valid_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    saved_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    skipped_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    source_time_min: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True)
+    )
+    source_time_max: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True)
+    )
+    checkpoint_before: Mapped[dict] = mapped_column(
+        JSONB, nullable=False, default=dict
+    )
+    checkpoint_after: Mapped[dict] = mapped_column(
+        JSONB, nullable=False, default=dict
+    )
+    retry_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    error_type: Mapped[str] = mapped_column(String(64), nullable=False, default="")
+    error_message: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    details: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
+    created_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )

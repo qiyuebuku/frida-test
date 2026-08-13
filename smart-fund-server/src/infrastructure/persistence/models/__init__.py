@@ -4,13 +4,18 @@
 """
 from src.infrastructure.persistence.models.base import Base
 from src.infrastructure.persistence.models.collection import (
+    CollectionRun,
     CollectionState,
+    EtfDailyShare,
+    InstrumentDisclosure,
+    InstrumentObservation,
+    InstrumentProfile,
     MacroIndicator,
     MarketCache,
     MarketFlow,
+    MarketSnapshot,
     News,
     Sentiment,
-    WatchlistData,
 )
 from src.infrastructure.persistence.models.trading import (
     Decision,
@@ -48,6 +53,23 @@ from src.infrastructure.persistence.models.knowledge import (
     KnowledgeReviewItem,
     KnowledgeVersion,
 )
+from src.infrastructure.persistence.models.agent_research import (
+    AgentCurrentResearchReport,
+    AgentInvestmentView,
+    AgentInvestmentViewRevision,
+    AgentResearchClaim,
+    AgentResearchForecast,
+    AgentResearchObservationRequirement,
+    AgentResearchOutcomeEvaluation,
+    AgentResearchOutcomeObservation,
+    AgentResearchQualityEvaluation,
+    AgentResearchReportRevision,
+    AgentResearchRun,
+    AgentRoleMemoryCase,
+    AgentRoleMemoryItem,
+    AgentRuntimeRun,
+    AgentToolInvocation,
+)
 
 __all__ = [
     "Base",
@@ -55,10 +77,15 @@ __all__ = [
     "News",
     "MarketFlow",
     "MarketCache",
+    "MarketSnapshot",
+    "EtfDailyShare",
+    "InstrumentProfile",
+    "InstrumentDisclosure",
+    "InstrumentObservation",
+    "CollectionRun",
     "Sentiment",
     "MacroIndicator",
     "CollectionState",
-    "WatchlistData",
     # trading
     "PendingDecision",
     "Decision",
@@ -93,4 +120,20 @@ __all__ = [
     "KnowledgeRetrievalLabel",
     "KnowledgeRetrievalEvalRun",
     "KnowledgeRetrievalEvalMetric",
+    # agent research
+    "AgentResearchRun",
+    "AgentCurrentResearchReport",
+    "AgentResearchReportRevision",
+    "AgentInvestmentView",
+    "AgentInvestmentViewRevision",
+    "AgentResearchClaim",
+    "AgentResearchForecast",
+    "AgentResearchObservationRequirement",
+    "AgentResearchOutcomeObservation",
+    "AgentResearchOutcomeEvaluation",
+    "AgentResearchQualityEvaluation",
+    "AgentRoleMemoryItem",
+    "AgentRoleMemoryCase",
+    "AgentRuntimeRun",
+    "AgentToolInvocation",
 ]

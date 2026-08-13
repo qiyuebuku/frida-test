@@ -39,7 +39,8 @@ def test_watchlist_create_update_disable_and_reactivate() -> None:
         "type": "stock",
         "source": "agent",
         "reason": "集成测试",
-        "interval": 3600,
+        "priority": "low",
+        "realtime_interval_seconds": 180,
         "target_days": 12,
     }
 
@@ -60,20 +61,21 @@ def test_watchlist_create_update_disable_and_reactivate() -> None:
     assert state is not None
     assert state.enabled is True
     assert state.mode == "backfill"
-    assert state.config["interval"] == 3600
+    assert state.config["priority"] == "low"
+    assert state.config["realtime_interval_seconds"] == 180
     assert state.config["target_days"] == 12
     assert state.reason == "集成测试"
 
 
 @pytest.mark.integration
-def test_watchlist_rejects_interval_below_scanner_resolution() -> None:
-    with pytest.raises(ValueError, match="大于或等于 300"):
+def test_watchlist_rejects_interval_below_collection_floor() -> None:
+    with pytest.raises(ValueError, match="大于或等于 30"):
         WatchlistService().upsert_batch(
             [
                 {
                     "code": "699999",
                     "type": "stock",
-                    "interval": 60,
+                    "realtime_interval_seconds": 15,
                 }
             ]
         )

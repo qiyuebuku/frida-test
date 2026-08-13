@@ -33,3 +33,7 @@ app.include_router(collection_router)
 # 注册高维知识索引任务路由
 from src.interfaces.tasks.knowledge_tasks import router as knowledge_router
 app.include_router(knowledge_router)
+
+# 注册 Research Agent 独立调度任务
+from src.interfaces.tasks.research_agent_tasks import router as research_agent_router
+app.include_router(research_agent_router)

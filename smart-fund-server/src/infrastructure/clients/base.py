@@ -119,6 +119,8 @@ def cached(
                 t0 = time.monotonic()
                 result = await func(self, *args, **kwargs)
                 latency = int((time.monotonic() - t0) * 1000)
+                result_status = result.get("status") if isinstance(result, dict) else None
+                is_success = result_status not in {"upstream_error", "parse_error"}
 
                 # 4. 存入 ft_raw_data（DB 写入失败不影响返回结果）
                 try:
@@ -129,7 +131,7 @@ def cached(
                         data_frequency=frequency, market=market,
                         related_codes=_extract_codes(params),
                         trade_date=_extract_trade_date(result),
-                        is_success=True,
+                        is_success=is_success,
                     )
                 except Exception as e:
                     logger.debug(f"原始数据写入失败({src}.{method_name}): {e}")
@@ -151,6 +153,9 @@ def _infer_source(class_name: str) -> str:
         "CLSClient": "cls",
         "GovClient": "gov",
         "XueqiuClient": "xueqiu",
+        "ExchangeFundClient": "exchange_fund",
+        "MarketValuationClient": "legulegu",
+        "ChinaBondClient": "chinabond",
     }
     return mapping.get(class_name, class_name.lower().replace("client", ""))
 

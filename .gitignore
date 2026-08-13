@@ -64,4 +64,8 @@ trace-*.json
 /AIClient2API/
 /artifacts/
 
+# pytest interrupted-run temporary directories
+/.pytest-tmp/
+/.pytest-tmp.*/
+
 18tv/video

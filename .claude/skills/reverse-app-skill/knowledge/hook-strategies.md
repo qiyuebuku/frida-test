@@ -175,6 +175,51 @@ db.close();
 - 不需要 OkHttp interceptor hook 成功（360加固下常失败）
 - 可以一次读取所有 cookie 字段（而非逐个从请求 header 提取）
 
+## 策略 9: 从 JSBridge 下钻到原生业务核心
+
+**适用场景**: 页面通过 JSBridge 调用原生行情、交易、媒体或设备能力，目标是摆脱页面自动化
+
+```text
+JavaScript Handler
+  -> @JavascriptInterface
+  -> 请求模型
+  -> 请求协调器
+  -> 全量/订阅请求类
+  -> 原生通信 Service
+```
+
+**执行要点**:
+
+1. 先记录 Handler 参数和回调结构；
+2. 静态追踪 Java 接口实现，不停留在 Bridge；
+3. 用构造参数、父类、常量和方法签名识别混淆类；
+4. 对候选请求和回调做低频运行时 Hook，确认真实链路；
+5. 在 App 进程内直接构造请求对象，逐步去掉 Activity 和 WebView；
+6. 还原 Service、App 阶段、登录态和线程要求；
+7. 区分全量数据、订阅确认和增量推送；
+8. 完成后按 `knowledge/runtime-core-extraction.md` 的矩阵验收。
+
+**边界**: 该策略得到的是进程内直接调用，不是独立协议 Client。仍依赖 App 类、身份和通信运行态。
+
+## 策略 10: Service-only 设备侧 Sidecar
+
+**适用场景**: 原生业务核心无法短期独立重写，但可以在无 Activity、无 WebView 的 App 进程中运行
+
+**执行要点**:
+
+- 用 App 自身 Context 启动内部 Service；
+- 对需要主线程的创建、启动和清理操作统一投递主 Looper；
+- 固定协议页或路由槽默认串行，确认支持后才并发；多个外层 HTTP/TCP 连接不能证明 App 内路由已经隔离；
+- 按 Native 请求族设置独立容量，同一路径会切换数据源时检查请求体；
+- 将必需字段与市场状态下可能为空的可选字段分开，不能因可选字段缺失一直等待总超时；
+- RPC 只绑定 loopback，并限制为已验证业务操作；
+- 超时后重建连接，不盲目复用原 Client；
+- 分别测试前台、后台、息屏、网络切换和重启；
+- 检查厂商 freezer，不能只观察 Android 标准 Doze。
+
+QueryClient、frame ID、回调收敛和并发矩阵详见
+`knowledge/native-query-routing-and-concurrency.md`。
+
 ## 选择决策树
 
 ```
@@ -200,4 +245,10 @@ db.close();
 需要提取 WebView 的 session/token？
 ├─ YES → 策略 8: WebView Cookie DB 直读
 │        （OkHttp interceptor 失败或 token 不经过 OkHttp 时的首选方案）
+│
+页面只是原生能力的 JSBridge 入口？
+├─ YES → 策略 9: 下钻并直接调用原生业务核心
+│
+需要无页面持续运行 App 原生能力？
+├─ YES → 策略 10: Service-only 设备侧 Sidecar
 ```

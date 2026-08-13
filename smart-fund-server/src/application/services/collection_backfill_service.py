@@ -52,11 +52,11 @@ AGGREGATOR_CLASSES = {
 }
 
 COLLECTION_QUEUE_BY_AGGREGATOR = {
-    "news": "collect_news",
-    "fund_flow": "collect_fund_flow",
+    "news": "collect_collection_source",
+    "fund_flow": "collect_collection_source",
     "market": "collect_market",
-    "sentiment": "collect_sentiment",
-    "macro": "collect_macro",
+    "sentiment": "collect_collection_source",
+    "macro": "collect_collection_source",
 }
 
 

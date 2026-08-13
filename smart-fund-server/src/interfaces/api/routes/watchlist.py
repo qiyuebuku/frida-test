@@ -5,6 +5,9 @@ from typing import Literal
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
+from src.application.services.market_tracking_service import (
+    MarketTrackingService,
+)
 from src.application.services.watchlist_service import WatchlistService
 from src.infrastructure.tasks.jettask_dispatcher import (
     send_watchlist_instrument_collection,
@@ -13,6 +16,7 @@ from src.infrastructure.tasks.jettask_dispatcher import (
 router = APIRouter(prefix="/api/watchlist", tags=["自选管理"])
 
 _svc = WatchlistService()
+_tracking = MarketTrackingService(watchlist_service=_svc)
 
 
 # ==================== 请求模型 ====================
@@ -25,7 +29,9 @@ class AddWatchlistRequest(BaseModel):
     source: Literal["manual", "position", "event", "agent"] = "manual"
     reason: str = ""
     target_days: int | None = Field(default=None, ge=1)
-    interval: int | None = Field(default=None, ge=60)
+    priority: Literal["critical", "standard", "low"] = "standard"
+    priority_reason: str = ""
+    realtime_interval_seconds: int | None = Field(default=None, ge=30)
 
 
 class BatchAddRequest(BaseModel):
@@ -37,7 +43,9 @@ class UpdateWatchlistRequest(BaseModel):
     enabled: bool | None = None
     name: str | None = None
     type: Literal["stock", "fund", "etf", "index"] | None = None
-    interval: int | None = Field(default=None, ge=60)
+    priority: Literal["critical", "standard", "low"] | None = None
+    priority_reason: str | None = None
+    realtime_interval_seconds: int | None = Field(default=None, ge=30)
     target_days: int | None = Field(default=None, ge=1)
     source: Literal["manual", "position", "event", "agent"] | None = None
     reason: str | None = None
@@ -71,17 +79,15 @@ async def get_watchlist(code: str):
 @router.post("/batch", summary="批量添加或重新启用自选")
 async def batch_add_watchlist(req: BatchAddRequest):
     try:
-        mutations = _svc.upsert_batch([item.model_dump() for item in req.items])
-    except ValueError as exc:
+        result = await _tracking.add_instruments(
+            [item.model_dump() for item in req.items]
+        )
+    except (RuntimeError, ValueError) as exc:
         raise HTTPException(400, str(exc)) from exc
-    collect_codes = [
-        mutation.code for mutation in mutations if mutation.should_collect_now
-    ]
-    event_ids = await send_watchlist_instrument_collection(collect_codes)
     return {
-        "total": len(mutations),
-        "items": [mutation.to_dict() for mutation in mutations],
-        "collection_event_ids": event_ids,
+        "total": len(result["items"]),
+        "items": result["items"],
+        "collection_event_ids": result["collection_event_ids"],
     }
 
 

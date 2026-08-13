@@ -2,11 +2,17 @@
 from src.infrastructure.persistence.repositories.collection_state_repository_impl import (
     CollectionStateRepositoryImpl,
 )
+from src.infrastructure.persistence.repositories.collection_observability_repository import (
+    CollectionObservabilityRepository,
+)
 from src.infrastructure.persistence.repositories.fund_limit_repository_impl import (
     FundLimitRepositoryImpl,
 )
 from src.infrastructure.persistence.repositories.industry_mapping_repository_impl import (
     IndustryMappingRepositoryImpl,
+)
+from src.infrastructure.persistence.repositories.instrument_data_repository import (
+    InstrumentDataRepository,
 )
 from src.infrastructure.persistence.repositories.macro_repository_impl import (
     MacroRepositoryImpl,
@@ -16,6 +22,11 @@ from src.infrastructure.persistence.repositories.market_cache_repository_impl im
 )
 from src.infrastructure.persistence.repositories.market_flow_repository_impl import (
     MarketFlowRepositoryImpl,
+)
+from src.infrastructure.persistence.repositories.market_observation_repository import (
+    CollectionRunRepository,
+    EtfDailyShareRepository,
+    MarketSnapshotRepository,
 )
 from src.infrastructure.persistence.repositories.news_repository_impl import (
     NewsRepositoryImpl,
@@ -32,20 +43,32 @@ from src.infrastructure.persistence.repositories.sentiment_signal_repository_imp
 from src.infrastructure.persistence.repositories.trade_repository_impl import (
     TradeRepositoryImpl,
 )
+from src.infrastructure.persistence.repositories.agent_research_repository import (
+    AgentResearchRepository,
+    ResearchPersistenceResult,
+)
 
 __all__ = [
     # collection
     "NewsRepositoryImpl",
     "MarketFlowRepositoryImpl",
     "MarketCacheRepositoryImpl",
+    "MarketSnapshotRepository",
+    "EtfDailyShareRepository",
+    "CollectionRunRepository",
     "SentimentRepositoryImpl",
     "SentimentSignalRepositoryImpl",
     "MacroRepositoryImpl",
     "CollectionStateRepositoryImpl",
+    "CollectionObservabilityRepository",
+    "InstrumentDataRepository",
     # trading
     "TradeRepositoryImpl",
     "PositionRepositoryImpl",
     "IndustryMappingRepositoryImpl",
     "FundLimitRepositoryImpl",
+    # agent research
+    "AgentResearchRepository",
+    "ResearchPersistenceResult",
     # reflection
 ]

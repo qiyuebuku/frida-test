@@ -206,6 +206,7 @@ MILVUS_URI = _resolve_local_path_setting(
     or "./data/milvus/kg_vectors.db"
 )
 MILVUS_TOKEN = os.getenv("MILVUS_TOKEN", "")
+MILVUS_CLIENT_TIMEOUT = float(os.getenv("MILVUS_CLIENT_TIMEOUT", "10"))
 MILVUS_COLLECTION = os.getenv("MILVUS_COLLECTION", "kg_evidence_chunk_vectors")
 MILVUS_CHUNK_COLLECTION = os.getenv("MILVUS_CHUNK_COLLECTION", "kg_evidence_chunks")
 MILVUS_COGNITIVE_CARD_COLLECTION = os.getenv("MILVUS_COGNITIVE_CARD_COLLECTION", "kg_cognitive_cards")

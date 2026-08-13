@@ -31,8 +31,27 @@ KG_TASK_SEND_RETRY_BASE_SECONDS = 0.5
 WATCHLIST_INSTRUMENT_COLLECTION_QUEUE = "collect_watchlist_instruments"
 WATCHLIST_INSTRUMENT_COLLECTION_TIMEOUT_SECONDS = 900
 WATCHLIST_INSTRUMENT_COLLECTION_MAX_RETRIES = 3
+COLLECTION_BACKFILL_QUEUE = "advance_collection_backfill"
 
 
+async def send_collection_backfill(
+    aggregator: str,
+    source_name: str,
+    *,
+    delay_seconds: int = 0,
+) -> list[str]:
+    """Wake one business-owned backfill checkpoint; no Schedule is created."""
+    return await _send_messages_with_retry(
+        [TaskMessage(
+            queue=COLLECTION_BACKFILL_QUEUE,
+            kwargs={"aggregator": aggregator, "source_name": source_name},
+            delay=max(0, int(delay_seconds)),
+            priority=8,
+            max_retries=3,
+            timeout=900,
+        )],
+        queue=COLLECTION_BACKFILL_QUEUE,
+    )
 async def send_kg_news_ingest(
     news_ids: list[int],
     *,
@@ -66,7 +85,11 @@ async def send_kg_news_ingest(
     )
 
 
-async def send_watchlist_instrument_collection(codes: list[str]) -> list[str]:
+async def send_watchlist_instrument_collection(
+    codes: list[str],
+    *,
+    scope: str = "bootstrap",
+) -> list[str]:
     """Immediately collect newly created or reactivated instruments."""
 
     normalized_codes = [
@@ -76,11 +99,13 @@ async def send_watchlist_instrument_collection(codes: list[str]) -> list[str]:
     ]
     if not normalized_codes:
         return []
+    if scope not in {"bootstrap", "realtime", "daily", "reference"}:
+        raise ValueError("invalid watchlist collection scope")
     return await _send_messages_with_retry(
         [
             TaskMessage(
                 queue=WATCHLIST_INSTRUMENT_COLLECTION_QUEUE,
-                kwargs={"codes": [code]},
+                kwargs={"codes": [code], "scope": scope},
                 max_retries=WATCHLIST_INSTRUMENT_COLLECTION_MAX_RETRIES,
                 timeout=WATCHLIST_INSTRUMENT_COLLECTION_TIMEOUT_SECONDS,
             )

@@ -1,4 +1,4 @@
-"""聚合基类：定时任务框架 + 源级间隔控制 + 查询/重放 API"""
+"""聚合基类：单数据源执行、断点管理与查询/重放 API。"""
 
 import json
 import logging
@@ -18,23 +18,6 @@ logger = logging.getLogger(__name__)
 # 单 source 锁的默认 TTL（秒）
 # 必须大于该 source 的最长执行时间，否则锁过期会导致并发
 DEFAULT_LOCK_TTL = 600
-
-
-def _interval_is_due(
-    now: datetime,
-    last_run_at: datetime | None,
-    interval_seconds: int,
-) -> bool:
-    """判断来源是否到期，并吸收调度与网络执行造成的秒级抖动。"""
-    if last_run_at is None:
-        return True
-    interval = max(1, int(interval_seconds))
-    if interval <= 5:
-        grace_seconds = 0
-    else:
-        grace_seconds = min(30, max(1, int(interval * 0.2)))
-    elapsed = (now - last_run_at).total_seconds()
-    return elapsed >= interval - grace_seconds
 
 
 # 应用启动时确保 ft_collection_state 表存在
@@ -146,101 +129,103 @@ class BaseAggregator:
                     await _asyncio.sleep(delay)
         raise last_err
 
-    # ==================== 定时任务入口 ====================
+    # ==================== JetTask 单源执行入口 ====================
 
-    async def tick(self) -> dict:
-        """串行遍历所有源，到期的才请求，拿到即入库
+    async def run_source(
+        self,
+        source_name: str,
+        *,
+        state_override: dict | None = None,
+        persist_checkpoint: bool = True,
+    ) -> dict:
+        """执行一个明确的数据源，不在领域层判断调度周期。
 
-        统一从 ft_collection_state 读状态（一次 DB query 拿到 cp + enabled + last_run）
-        判断是否到期 + 是否启用，避免内存状态与 DB 不同步、worker 重启失效。
-
-        流程:
-            1. checkpoint_store.get(domain, source) → 完整 state（一次 DB）
-            2. 检查 enabled（DB）+ last_run_at + interval (DB) 决定是否跳过
-            3. fetch_fn(cp) → raw
-            4. normalize_fn(raw) → items
-            5. _save(items) → saved_count
-            6. _compute_checkpoint(source, items, cp) → new_cp
-            7. checkpoint_store.update_success(...) / update_failure(...)
-
-        Returns: {sources_run, total_saved}
+        周期、启停、超时和重试全部由 JetTask 的独立 Schedule/Task 控制；
+        ``ft_collection_state`` 在这里仅保存增量游标、回填进度和执行结果。
+        同源互斥仍保留，防止手工触发与定时触发重叠写入。
         """
         from datetime import datetime, timezone
-        now_utc = datetime.now(timezone.utc)
+
+        source = next((item for item in self.sources if item.name == source_name), None)
+        if source is None:
+            available = ", ".join(item.name for item in self.sources)
+            raise ValueError(
+                f"未知采集源 [{self.data_domain}:{source_name}]，可用源: {available}"
+            )
+
+        state = state_override or checkpoint_store.get(self.data_domain, source.name)
+        if not state:
+            raise RuntimeError(
+                f"ft_collection_state 中未找到 [{self.data_domain}:{source.name}] 的记录，"
+                "请先执行: python -m src.interfaces.cli init state"
+            )
+
+        lock_name = f"{self.data_domain}:{source.name}"
+        with redis_lock.acquire(lock_name, ttl=DEFAULT_LOCK_TTL) as lock:
+            if not lock:
+                raise RuntimeError(
+                    f"[{self.data_domain}:{source.name}] 上一次执行仍持有锁"
+                )
+
+            if state_override is None:
+                state = checkpoint_store.get(self.data_domain, source.name) or state
+            cp = self._build_runtime_checkpoint(
+                state=state,
+                source=source,
+                now_utc=datetime.now(timezone.utc),
+                lock=lock,
+            )
+            checkpoint_store.mark_started(
+                task_id=f"collect_{self.data_domain}_{source.name}",
+                aggregator=self.data_domain,
+                source_name=source.name,
+                task_type="pull",
+            )
+            try:
+                raw = await self._fetch_with_retry(source, cp)
+                fetched_count = len(raw) if isinstance(raw, (list, tuple, dict)) else int(bool(raw))
+                items = source.normalize_fn(raw) if raw else []
+                saved = self._save(items) if items else 0
+                new_cp = self._compute_checkpoint(source.name, items, cp)
+                checkpoint_store.update_success(
+                    self.data_domain,
+                    source.name,
+                    new_cp if items and persist_checkpoint else None,
+                    saved or 0,
+                )
+                logger.info(
+                    "[%s:%s] 拉取 %s 条，归一化 %s 条，入库 %s 条 cp=%s",
+                    self.data_domain,
+                    source.name,
+                    fetched_count,
+                    len(items),
+                    saved or 0,
+                    new_cp,
+                )
+                return {
+                    "source_name": source.name,
+                    "fetched_count": fetched_count,
+                    "valid_count": len(items),
+                    "saved_count": saved or 0,
+                    "checkpoint_before": {
+                        key: value for key, value in cp.items() if not key.startswith("_")
+                    },
+                    "checkpoint_after": new_cp,
+                }
+            except Exception as exc:
+                err_msg = f"{type(exc).__name__}: {exc}" if str(exc) else type(exc).__name__
+                checkpoint_store.update_failure(self.data_domain, source.name, err_msg)
+                logger.warning("[%s:%s] 采集失败: %s", self.data_domain, source.name, err_msg)
+                raise
+
+    async def tick(self) -> dict:
+        """手工批量执行入口；生产调度不得调用，由 JetTask 逐源调度。"""
         sources_run = 0
         total_saved = 0
-
         for src in self.sources:
-            # ── 1. 一次 DB query 拿全部状态 ──
-            state = checkpoint_store.get(self.data_domain, src.name)
-            if not state:
-                raise RuntimeError(
-                    f"ft_collection_state 中未找到 [{self.data_domain}:{src.name}] 的记录，"
-                    f"请先执行: python -m src.interfaces.cli init state"
-                )
-
-            # ── 2. enabled 检查 ──
-            if state.get("enabled") is False:
-                continue
-
-            # ── 3. interval 检查 ──
-            if state.get("mode") == "backfill":
-                min_interval = 5  # 回填模式：最短 5 秒间隔
-            else:
-                min_interval = state.get("interval_override") or src.interval
-            last_run = state.get("last_run_at")
-            if not _interval_is_due(now_utc, last_run, min_interval):
-                continue
-
-            # ── 4. 分布式锁 ──
-            lock_name = f"{self.data_domain}:{src.name}"
-            with redis_lock.acquire(lock_name, ttl=DEFAULT_LOCK_TTL) as lock:
-                if not lock:
-                    logger.info(f"[{self.data_domain}:{src.name}] 锁被占用，跳过（可能上一轮未释放，TTL={DEFAULT_LOCK_TTL}s）")
-                    continue
-
-                # 拿到锁后再读一次 state
-                state = checkpoint_store.get(self.data_domain, src.name) or state
-                if state.get("mode") != "backfill":
-                    last_run = state.get("last_run_at")
-                    if not _interval_is_due(now_utc, last_run, min_interval):
-                        continue
-
-                cp = self._build_runtime_checkpoint(
-                    state=state,
-                    source=src,
-                    now_utc=now_utc,
-                    lock=lock,
-                )
-
-                try:
-                    # ── 5. fetch（网络异常自动重试） ──
-                    raw = await self._fetch_with_retry(src, cp)
-                    if not raw:
-                        checkpoint_store.update_success(self.data_domain, src.name, None, 0)
-                        continue
-
-                    items = src.normalize_fn(raw)
-                    if not items:
-                        checkpoint_store.update_success(self.data_domain, src.name, None, 0)
-                        continue
-
-                    saved = self._save(items)
-                    sources_run += 1
-                    total_saved += saved or 0
-
-                    # ── 6. 计算并写入新 checkpoint ──
-                    new_cp = self._compute_checkpoint(src.name, items, cp)
-                    checkpoint_store.update_success(
-                        self.data_domain, src.name, new_cp, saved or 0,
-                    )
-                    logger.info(
-                        f"[{self.data_domain}:{src.name}] normalize {len(items)} 条，入库 {saved} 条 cp={new_cp}"
-                    )
-                except Exception as e:
-                    err_msg = f"{type(e).__name__}: {e}" if str(e) else type(e).__name__
-                    logger.warning(f"[{self.data_domain}:{src.name}] 采集失败: {err_msg}")
-                    checkpoint_store.update_failure(self.data_domain, src.name, err_msg)
+            result = await self.run_source(src.name)
+            sources_run += 1
+            total_saved += int(result.get("saved_count") or 0)
         return {"sources_run": sources_run, "total_saved": total_saved}
 
     def _build_runtime_checkpoint(
@@ -271,7 +256,7 @@ class BaseAggregator:
         if last_success_at is None or not newest_time:
             return cp
 
-        effective_interval = int(state.get("interval_override") or source.interval)
+        effective_interval = int(source.interval)
         stale_after = max(effective_interval * 2, self.AUTO_CATCHUP_MIN_STALE_SECONDS)
         if (now_utc - last_success_at).total_seconds() <= stale_after:
             return cp

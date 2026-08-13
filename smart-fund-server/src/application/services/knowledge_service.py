@@ -611,7 +611,12 @@ class KnowledgeService:
         graph_index: dict[str, Any] = {}
         warnings: list[str] = []
         if "graph_adjacency" in command.index_types:
-            result["graph_adjacency"] = repository.rebuild_graph_adjacency(command.adapter_name)
+            # 旧版 kg_graph_adjacency 投影已随裸 node/edge 主链路一起移除。
+            # 保留该索引类型作为运维命令兼容标识，但不再调用不存在的仓储方法；
+            # 当前关系图的物化入口是下方独立的 graph_index。
+            warnings.append(
+                "graph_adjacency is retired; use graph_index for relation graph materialization"
+            )
         if "evidence_chunks" in command.index_types:
             result["evidence_chunks"] = repository.rebuild_evidence_chunks(command.adapter_name)
         if {"hybrid_chunks", "vector_chunks"} & set(command.index_types):
@@ -620,8 +625,11 @@ class KnowledgeService:
                 adapter_name=command.adapter_name,
                 target=command.target,
                 chunks=chunks,
-                nodes=repository.list_nodes(command.adapter_name),
-                edges=repository.list_edges(command.adapter_name),
+                # 裸 node/edge 已退出语义检索主链路；关系语义文档由
+                # Card Relation worker 独立维护，重建 Evidence 索引时不应读取
+                # 已移除的旧仓储接口。
+                nodes=[],
+                edges=[],
             )
         if "graph_index" in command.index_types:
             try:

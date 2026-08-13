@@ -43,16 +43,20 @@ smart-fund-server/
 python -m src.interfaces.cli agent check
 ```
 
-执行一次金融研究：
+执行一次结构化 Research Agent Review：
 
 ```bash
-python -m src.interfaces.cli agent run --json-output \
-  "分析存储芯片涨价如何影响手机厂商产品策略，并给出图谱证据。"
+python -m src.interfaces.cli agent run \
+  --trigger-slot intraday \
+  --reason "人工生产式复核" \
+  --run-mode debug \
+  --json-output
 ```
 
-Agent 默认只读。只有明确允许修改标的跟踪名单时才增加
-`--allow-writes`。自动任务、人工调试和历史重放统一复用
-`src.application.agents.financial_research.FinancialAgentRuntime`。
+`agent run` 不再要求人工准备上下文文件。运行时先通过远程 MCP（模型上下文协议）让服务端
+按截止时间组装市场框架、当前报告、有效观点和研究记忆，再启动模型。只有排查旧任务包时才使用
+`agent run-context CONTEXT_FILE`。CLI（命令行界面）默认不发布权威状态；自动任务、人工调试
+和历史重放统一复用 `FinancialAgentRuntime`（金融智能体运行时）。
 
 设计和实施文档统一位于工作区根目录
 `/home/yuyang/frida-test/smart-fund-server/docs`。
@@ -82,7 +86,7 @@ Agent 默认只读。只有明确允许修改标的跟踪名单时才增加
 | 服务端口 | `8900` |
 | 公网地址 | `http://119.23.227.187:8900` |
 | conda 环境 | `smart-fund` |
-| systemd 服务 | `smart-fund-api`、`smart-fund-persist`、`smart-fund-scheduler`、`smart-fund-worker`、三个 KG Worker、`smart-fund-milvus` |
+| systemd 服务 | `smart-fund-api`、`smart-fund-persist`、`smart-fund-scheduler`、采集 Worker（工作进程）、三个 KG Worker（知识图谱工作进程）、`smart-fund-etcd`、`smart-fund-milvus` |
 | 项目目录 | `/home/yuyangruan/smart-fund/smart-fund-server` |
 | 日志目录 | `/home/yuyangruan/smart-fund/logs/smart-fund-server` |
 

@@ -137,6 +137,9 @@ def _news_row(row: News) -> dict[str, Any]:
         "related_stocks": row.related_stocks,
         "published_at": row.published_at,
         "fingerprint": row.fingerprint,
+        "news_kind": row.news_kind,
+        "dedup_key": row.dedup_key,
+        "content_fingerprint": row.content_fingerprint,
         "created_at": row.created_at,
     }
 

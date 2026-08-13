@@ -13,6 +13,11 @@ class CollectionResult:
     sources_run: int
     total_saved: int
     new_ids: list[int] | None = None
+    source_name: str | None = None
+    fetched_count: int | None = None
+    valid_count: int | None = None
+    checkpoint_before: dict | None = None
+    checkpoint_after: dict | None = None
 
     def to_dict(self) -> dict:
         data = {
@@ -22,4 +27,14 @@ class CollectionResult:
         }
         if self.new_ids is not None:
             data["new_ids"] = self.new_ids
+        for key in (
+            "source_name",
+            "fetched_count",
+            "valid_count",
+            "checkpoint_before",
+            "checkpoint_after",
+        ):
+            value = getattr(self, key)
+            if value is not None:
+                data[key] = value
         return data

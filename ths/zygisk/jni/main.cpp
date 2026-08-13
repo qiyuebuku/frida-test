@@ -52,6 +52,9 @@ public:
 
     void preAppSpecialize(zygisk::AppSpecializeArgs *args) override {
         const char *name = env->GetStringUTFChars(args->nice_name, nullptr);
+        if (name && (strstr(name, "hexin") != nullptr || strstr(name, "plat.android") != nullptr)) {
+            LOGI("preAppSpecialize candidate process=%s", name);
+        }
         if (name && strcmp(name, TARGET_PKG) == 0) {
             is_target = true;
         }

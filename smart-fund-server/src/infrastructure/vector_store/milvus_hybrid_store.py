@@ -16,6 +16,7 @@ from src.infrastructure.config import settings
 logger = logging.getLogger(__name__)
 
 MILVUS_READ_AFTER_WRITE_CONSISTENCY = "Strong"
+MILVUS_TEXT_MAX_BYTES = 8192
 _EMPTY_SCOPE_WARNED: set[tuple[str, str, str]] = set()
 
 
@@ -223,7 +224,12 @@ class MilvusHybridStore:
         schema.add_field("target_type", data_type.VARCHAR, max_length=64)
         schema.add_field("source_type", data_type.VARCHAR, max_length=80)
         schema.add_field("source_id", data_type.VARCHAR, max_length=160)
-        schema.add_field("text", data_type.VARCHAR, max_length=8192, enable_analyzer=True)
+        schema.add_field(
+            "text",
+            data_type.VARCHAR,
+            max_length=MILVUS_TEXT_MAX_BYTES,
+            enable_analyzer=True,
+        )
         schema.add_field("dense_vector", data_type.FLOAT_VECTOR, dim=self.dim)
         schema.add_field("sparse_vector", data_type.SPARSE_FLOAT_VECTOR)
         schema.add_field("content_hash", data_type.VARCHAR, max_length=64)
@@ -685,7 +691,10 @@ class MilvusHybridStore:
         imports = self._load_imports()
         if self.uri.endswith(".db") or self.uri.startswith("./") or self.uri.startswith("/"):
             Path(self.uri).expanduser().resolve().parent.mkdir(parents=True, exist_ok=True)
-        kwargs = {"uri": self.uri}
+        kwargs = {
+            "uri": self.uri,
+            "timeout": settings.MILVUS_CLIENT_TIMEOUT,
+        }
         if self.token:
             kwargs["token"] = self.token
         # Use a dedicated client to avoid pymilvus reusing a stale Milvus Lite
@@ -1118,7 +1127,10 @@ def _document_rows(
                 "target_type": str(payload.get("target_type") or payload.get("document_type") or target)[:64],
                 "source_type": source_type[:80],
                 "source_id": source_id[:160],
-                "text": document.text[:8192],
+                # Milvus VARCHAR max_length 按 UTF-8 字节校验，而 Python 切片按
+                # Unicode 字符计数。中文正文必须按字节边界裁剪，否则全量重建
+                # 会在单行超过 8192 bytes 时拒绝整个 upsert batch。
+                "text": _truncate_utf8(document.text, MILVUS_TEXT_MAX_BYTES),
                 "dense_vector": vector,
                 "content_hash": _content_hash(document.text),
                 "embedding_model": embedding_model[:80],
@@ -1130,6 +1142,16 @@ def _document_rows(
             }
         )
     return rows
+
+
+def _truncate_utf8(value: str, max_bytes: int) -> str:
+    """Return a valid UTF-8 string whose encoded length does not exceed max_bytes."""
+    if max_bytes <= 0:
+        return ""
+    encoded = str(value or "").encode("utf-8")
+    if len(encoded) <= max_bytes:
+        return str(value or "")
+    return encoded[:max_bytes].decode("utf-8", errors="ignore")
 
 
 def _hit_from_entity(

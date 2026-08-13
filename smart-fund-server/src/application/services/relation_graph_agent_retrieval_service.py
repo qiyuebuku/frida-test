@@ -55,6 +55,7 @@ class RelationGraphAgentRetrievalService:
         candidate_limit: int = 32,
         time_start: datetime | None = None,
         time_end: datetime | None = None,
+        cutoff_at: datetime | None = None,
     ) -> dict[str, Any]:
         normalized_query = _required_text(query, "query")
         adapter = _required_text(adapter_name, "adapter_name")
@@ -76,18 +77,20 @@ class RelationGraphAgentRetrievalService:
             store, owns_store = await self._card_store_for_call()
             try:
                 recall_limit = min(100, candidate_limit * 2)
+                effective_time_end = _earliest(time_end, cutoff_at)
                 recalled = await store.search_cards(
                     normalized_query,
                     adapter_name=adapter,
                     target=self.target,
                     limit=recall_limit,
                     time_start=time_start,
-                    time_end=time_end,
+                    time_end=effective_time_end,
                 )
                 active_cards = await asyncio.to_thread(
                     self._repository.load_cards,
                     adapter_name=adapter,
                     card_ids=[hit.card_id for hit in recalled],
+                    cutoff_at=cutoff_at,
                 )
                 active_ids = {card.card_id for card in active_cards}
                 active_card_by_id = {
@@ -120,6 +123,7 @@ class RelationGraphAgentRetrievalService:
                     self._repository.load_fact_card_counts,
                     adapter_name=adapter,
                     fact_ids=selected_fact_ids,
+                    cutoff_at=cutoff_at,
                 )
                 snapshot = await asyncio.to_thread(
                     self._repository.load_subgraph,
@@ -131,6 +135,7 @@ class RelationGraphAgentRetrievalService:
                     relation_kinds=[],
                     decision_classes=["observed", "inferred"],
                     min_confidence=0.0,
+                    cutoff_at=cutoff_at,
                 )
                 summary_by_id = await store.get_summaries(
                     [card.card_id for card in snapshot.cards],
@@ -231,6 +236,7 @@ class RelationGraphAgentRetrievalService:
         relation_kinds: list[str] | None = None,
         decision_classes: list[str] | None = None,
         min_confidence: float = 0.0,
+        cutoff_at: datetime | None = None,
     ) -> dict[str, Any]:
         identities = _required_ids(card_ids, "card_ids", limit=30)
         adapter = _required_text(adapter_name, "adapter_name")
@@ -265,6 +271,7 @@ class RelationGraphAgentRetrievalService:
                 relation_kinds=kinds,
                 decision_classes=classes,
                 min_confidence=min_confidence,
+                cutoff_at=cutoff_at,
             )
             summaries = await self._get_summaries(
                 [card.card_id for card in snapshot.cards],
@@ -334,6 +341,7 @@ class RelationGraphAgentRetrievalService:
         community_limit: int = 30,
         relation_limit: int = 60,
         relation_kinds: list[str] | None = None,
+        cutoff_at: datetime | None = None,
     ) -> dict[str, Any]:
         identities = _required_ids(
             community_ids,
@@ -371,6 +379,7 @@ class RelationGraphAgentRetrievalService:
                 community_limit=community_limit,
                 relation_limit=relation_limit,
                 relation_kinds=kinds,
+                cutoff_at=cutoff_at,
             )
             anchor_summaries = await self._get_summaries(
                 [
@@ -424,6 +433,7 @@ class RelationGraphAgentRetrievalService:
         card_ids: list[str],
         adapter_name: str = "financial",
         incident_edge_limit: int = 40,
+        cutoff_at: datetime | None = None,
     ) -> dict[str, Any]:
         identities = _required_ids(card_ids, "card_ids", limit=30)
         adapter = _required_text(adapter_name, "adapter_name")
@@ -448,6 +458,7 @@ class RelationGraphAgentRetrievalService:
                 relation_kinds=[],
                 decision_classes=["observed", "inferred"],
                 min_confidence=0.0,
+                cutoff_at=cutoff_at,
             )
             requested = set(identities)
             cards = [
@@ -531,6 +542,7 @@ class RelationGraphAgentRetrievalService:
         *,
         edge_ids: list[str],
         adapter_name: str = "financial",
+        cutoff_at: datetime | None = None,
     ) -> dict[str, Any]:
         identities = _required_ids(edge_ids, "edge_ids", limit=50)
         adapter = _required_text(adapter_name, "adapter_name")
@@ -547,6 +559,7 @@ class RelationGraphAgentRetrievalService:
                 self._repository.load_edges,
                 adapter_name=adapter,
                 edge_ids=identities,
+                cutoff_at=cutoff_at,
             )
             endpoint_ids = _clean_values(
                 [
@@ -562,6 +575,7 @@ class RelationGraphAgentRetrievalService:
                 self._repository.load_cards,
                 adapter_name=adapter,
                 card_ids=endpoint_ids,
+                cutoff_at=cutoff_at,
             )
             summaries, focus_evidence = await self._get_card_views(
                 endpoint_ids,
@@ -611,6 +625,7 @@ class RelationGraphAgentRetrievalService:
         adapter_name: str = "financial",
         member_limit: int = 40,
         edge_limit: int = 80,
+        cutoff_at: datetime | None = None,
     ) -> dict[str, Any]:
         identities = _required_ids(
             community_ids,
@@ -635,6 +650,7 @@ class RelationGraphAgentRetrievalService:
                 self._repository.load_communities,
                 adapter_name=adapter,
                 community_ids=identities,
+                cutoff_at=cutoff_at,
             )
             selected_card_ids = _clean_values(
                 [
@@ -655,11 +671,13 @@ class RelationGraphAgentRetrievalService:
                     self._repository.load_cards,
                     adapter_name=adapter,
                     card_ids=selected_card_ids,
+                    cutoff_at=cutoff_at,
                 ),
                 asyncio.to_thread(
                     self._repository.load_edges,
                     adapter_name=adapter,
                     edge_ids=selected_edge_ids,
+                    cutoff_at=cutoff_at,
                 ),
             )
             summaries = await self._get_summaries(
@@ -1080,6 +1098,14 @@ def _bounded_float(
         raise ValueError(
             f"{name} 必须在 {minimum} 到 {maximum} 之间"
         )
+
+
+def _earliest(
+    first: datetime | None,
+    second: datetime | None,
+) -> datetime | None:
+    values = [value for value in (first, second) if value is not None]
+    return min(values) if values else None
 
 
 def _iso(value: datetime | None) -> str:

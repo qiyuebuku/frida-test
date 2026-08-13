@@ -7,6 +7,9 @@ from fastapi import APIRouter, HTTPException, Query
 from src.interfaces.api.routes import _utils
 from src.interfaces.api.routes._utils import safe_call
 from src.interfaces.api.routes._models import HOTLIST_MARKETS, HOTLIST_PLATE_TYPES
+from src.application.services.market_observability_service import (
+    MarketObservabilityService,
+)
 
 router = APIRouter()
 
@@ -42,14 +45,14 @@ async def stock_changes(
 
 @router.get("/api/market/stock_ranking", summary="个股涨跌幅排行", tags=["决策辅助"])
 async def stock_ranking(
-    sort: str = Query("rise", description="排序: rise=涨幅榜, fall=跌幅榜, volume=成交量, turnover=成交额, turnover_rate=换手率"),
-    count: int = Query(20, description="返回条数"),
+    sort: str = Query("rise", description="排序: rise=涨幅榜, fall=跌幅榜, quick=快速涨幅, turnover=成交额, large_order=大单净量"),
+    count: int = Query(20, ge=1, le=50, description="返回条数"),
 ):
-    """个股涨跌幅排行（涨幅榜/跌幅榜/成交榜/换手率榜）"""
-    valid = {"rise", "fall", "volume", "turnover", "amplitude", "turnover_rate"}
+    """从数据库最新投影读取个股排行，不在查询链路访问上游。"""
+    valid = {"rise", "fall", "quick", "turnover", "large_order"}
     if sort not in valid:
         raise HTTPException(400, f"sort 必须是 {'/'.join(sorted(valid))}")
-    return await safe_call(_utils.sina.get_stock_ranking(sort, min(count, 50)))
+    return MarketObservabilityService().stock_ranking(sort=sort, count=count)
 
 
 @router.get("/api/market/sector_ranking", summary="板块涨跌排行", tags=["决策辅助"])
@@ -108,7 +111,9 @@ async def hot_board(
         raise HTTPException(400, "board_type 必须是 concept/industry")
     if sort not in {"rise", "flow", "5day"}:
         raise HTTPException(400, "sort 必须是 rise/flow/5day")
-    return await safe_call(_utils.ths.get_hot_board(board_type, sort, min(count, 30)))
+    return await safe_call(
+        _utils.eastmoney.get_hot_board(board_type, sort, min(count, 30))
+    )
 
 
 @router.get("/api/market/currency", summary="货币风向", tags=["决策辅助"])

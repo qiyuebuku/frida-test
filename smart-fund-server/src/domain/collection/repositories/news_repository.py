@@ -51,6 +51,24 @@ class NewsRepository(ABC):
         """取最近 N 天已入库的所有标题（增量采集用，范围比 today 更广）"""
         ...
 
+    def find_existing_content_fingerprints(
+        self,
+        fingerprints: list[str],
+    ) -> set[str]:
+        """查询已落库的完整正文指纹。"""
+        ...
+
+    def find_recent(
+        self,
+        *,
+        source: str | None = None,
+        news_kind: str | None = None,
+        hours: int = 24,
+        limit: int = 100,
+    ) -> list[dict[str, Any]]:
+        """按来源和稳定内容类型读取近期新闻。"""
+        ...
+
     @abstractmethod
     def count(self) -> int:
         """全表行数(用于监控)"""

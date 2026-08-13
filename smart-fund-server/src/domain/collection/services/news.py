@@ -7,9 +7,10 @@
 
 import asyncio
 import hashlib
+import re
+import unicodedata
 import html
 import logging
-import re
 from datetime import datetime, timedelta, timezone
 
 from src.domain.collection.services.base import BaseAggregator, SourceDef
@@ -98,6 +99,125 @@ async def _fetch_gov_all_depts(gov_client, checkpoint=None) -> list:
 
 def _fingerprint(title: str, source: str) -> str:
     return hashlib.sha256(f"{title}{source}".encode()).hexdigest()
+
+
+def _discover_blocks(item: dict) -> dict[str, dict]:
+    blocks: dict[str, dict] = {}
+    for block in item.get("combination") or []:
+        if not isinstance(block, dict):
+            continue
+        for key, value in block.items():
+            if isinstance(value, dict):
+                blocks[key] = value
+    return blocks
+
+
+def _discover_stock_codes(value: object) -> list[str]:
+    codes: list[str] = []
+    if isinstance(value, dict):
+        for key, child in value.items():
+            if key in {"stockCode", "stock_code", "code"}:
+                code = str(child or "").strip()
+                if re.fullmatch(r"\d{6}", code) and code not in codes:
+                    codes.append(code)
+            else:
+                for code in _discover_stock_codes(child):
+                    if code not in codes:
+                        codes.append(code)
+    elif isinstance(value, list):
+        for child in value:
+            for code in _discover_stock_codes(child):
+                if code not in codes:
+                    codes.append(code)
+    elif isinstance(value, str):
+        for code in re.findall(r"stockCode:([0-9]{6})", value):
+            if code not in codes:
+                codes.append(code)
+    return codes
+
+
+def normalize_ths_discover(items: list[dict]) -> list[dict]:
+    """将刷新页推荐、头条、热榜话题和热榜正文统一为 ft_news。"""
+    normalized: list[dict] = []
+    now_iso = datetime.now(TZ_CST).isoformat()
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        section = str(item.get("_discover_section") or "recommend")
+        blocks = _discover_blocks(item)
+        info = item.get("info") if isinstance(item.get("info"), dict) else {}
+        author = blocks.get("author") or item.get("author") or {}
+        title_block = blocks.get("title") or {}
+        abstract = blocks.get("largeAbstract") or blocks.get("abstract") or {}
+        title = str(
+            item.get("title")
+            or title_block.get("content")
+            or item.get("description")
+            or ""
+        ).strip()
+        content = str(
+            item.get("content")
+            or abstract.get("content")
+            or item.get("description")
+            or ""
+        ).strip()
+        if not title and content:
+            title = re.sub(
+                r"<hx_stock>stockName:([^,]+),stockCode:[^<]+</hx_stock>",
+                r"\1",
+                content,
+            )
+            title = re.sub(r"<[^>]+>", "", title).strip()[:120]
+        if not title:
+            continue
+        timestamp = (
+            item.get("rtime")
+            or item.get("ctime")
+            or author.get("time")
+            or item.get("time")
+        )
+        try:
+            published_at = _ts_to_iso(float(timestamp) / (1000 if float(timestamp) > 1e12 else 1))
+        except (TypeError, ValueError, OSError):
+            published_at = now_iso
+        url = str(
+            item.get("url")
+            or item.get("jump_url")
+            or item.get("jumpUrl")
+            or info.get("jumpUrl")
+            or ""
+        )
+        source = f"ths_discover_{section}"
+        stable_id = str(
+            item.get("seq")
+            or item.get("pid")
+            or item.get("code")
+            or info.get("itemId")
+            or info.get("webrsid")
+            or title
+        )
+        summary_parts = [str(item.get("description") or "").strip()]
+        if author.get("name"):
+            summary_parts.append(f"作者：{author['name']}")
+        normalized.append(
+            {
+                "title": title,
+                "summary": "；".join(part for part in summary_parts if part),
+                "content": content,
+                "source": source,
+                "source_name": "同花顺刷新页",
+                "source_reliability": 0.72,
+                "category": _classify_by_keywords(f"{title} {content}"),
+                "url": url,
+                "tags": ["同花顺", "刷新页", section],
+                "related_stocks": _discover_stock_codes(item),
+                "published_at": published_at,
+                "fingerprint": hashlib.sha256(
+                    f"{source}:{stable_id}".encode()
+                ).hexdigest(),
+            }
+        )
+    return normalized
 
 
 def _ts_to_iso(ts: int | float) -> str:
@@ -582,6 +702,8 @@ class NewsAggregator(BaseAggregator):
         "ths":           {"target_days": 60,  "page_size": 20, "interval": 1800},    # 同花顺可翻很深
         "sina":          {"target_days": 60,  "page_size": 20, "interval": 3600},    # 新浪可翻很深
         "xueqiu":        {"target_days": 4,   "page_size": 10, "interval": 1800},    # 雪球 API 最多 1000 条/4 天
+        "ths_discover":  {"target_days": 0,   "page_size": 30, "interval": 60,
+                            "default_mode": "incremental"},
     }
     BACKFILL_SOURCES = frozenset(SOURCE_CONFIGS)
     AUTO_CATCHUP_SOURCES = BACKFILL_SOURCES
@@ -1106,6 +1228,81 @@ class NewsAggregator(BaseAggregator):
         else:
             return await clients.xueqiu.get_live_news()
 
+    async def _fetch_ths_discover(self, cp: dict) -> list:
+        """并发读取刷新页列表，只把首次出现的稳定上游 ID 交给入库链路。"""
+        from src.infrastructure import clients
+
+        results = await asyncio.gather(
+            clients.ths.get_headlines(),
+            clients.ths.get_discover_recommendations(),
+            clients.ths.get_discover_hot_topics(),
+            clients.ths.get_discover_hot_posts(page=1, page_size=30),
+            return_exceptions=True,
+        )
+        sections = ("headline", "recommend", "hot_topic", "hot_post")
+        merged: list[dict] = []
+        errors: list[str] = []
+        successful_sections = 0
+        cursor = cp.get("cursor") if isinstance(cp.get("cursor"), dict) else {}
+        previous_seen = [str(value) for value in cursor.get("seen_ids", [])]
+        seen = set(previous_seen)
+        current_ids: list[str] = []
+        for section, result in zip(sections, results):
+            if isinstance(result, Exception):
+                errors.append(f"{section}: {result}")
+                continue
+            successful_sections += 1
+            data = result.get("data", result) if isinstance(result, dict) else result
+            if isinstance(data, dict):
+                candidates = next(
+                    (
+                        data[key]
+                        for key in ("topic_list", "list", "feed", "items", "data")
+                        if isinstance(data.get(key), list)
+                    ),
+                    [],
+                )
+            else:
+                candidates = data if isinstance(data, list) else []
+            for raw in candidates:
+                if isinstance(raw, dict):
+                    info = raw.get("info") if isinstance(raw.get("info"), dict) else {}
+                    upstream_id = str(
+                        raw.get("seq")
+                        or raw.get("pid")
+                        or raw.get("code")
+                        or info.get("itemId")
+                        or info.get("webrsid")
+                        or raw.get("url")
+                        or raw.get("jump_url")
+                        or raw.get("title")
+                        or ""
+                    ).strip()
+                    if not upstream_id:
+                        upstream_id = hashlib.sha256(
+                            repr(sorted(raw.items())).encode()
+                        ).hexdigest()
+                    identity = f"{section}:{upstream_id}"
+                    current_ids.append(identity)
+                    if identity in seen:
+                        continue
+                    seen.add(identity)
+                    merged.append({**raw, "_discover_section": section})
+        # 最近出现的 ID 放在前面，并保留更长的历史窗口，防止轮播内容再次出现时
+        # 被重复入库和重复触发知识抽取。
+        cp["cursor"] = {
+            "seen_ids": list(dict.fromkeys([*current_ids, *previous_seen]))[:3000],
+        }
+        if not successful_sections:
+            raise RuntimeError("THS discover collection failed: " + "; ".join(errors))
+        if errors:
+            logger.warning("[news:ths_discover] partial failure: %s", "; ".join(errors))
+        if not merged:
+            logger.info(
+                "[news:ths_discover] 四个列表均无新增 ID，跳过归一化、入库和下游处理"
+            )
+        return merged
+
     # ==================== 源注册 ====================
 
     def _init_sources(self):
@@ -1121,6 +1318,7 @@ class NewsAggregator(BaseAggregator):
             SourceDef("ths", self._fetch_ths, 1800, normalize_ths),
             SourceDef("sina", self._fetch_sina, 3600, normalize_sina),
             SourceDef("xueqiu", self._fetch_xueqiu, 1800, normalize_xueqiu),
+            SourceDef("ths_discover", self._fetch_ths_discover, 60, normalize_ths_discover),
         ]
 
     # ==================== backfill 信号 hook ====================
@@ -1162,6 +1360,51 @@ class NewsAggregator(BaseAggregator):
             return False
         return SequenceMatcher(None, a, b).ratio() > threshold
 
+    @staticmethod
+    def _classify_news_kind(item: dict) -> str:
+        if item.get("source") == "eastmoney_report":
+            return "research_report"
+        title = unicodedata.normalize(
+            "NFKC",
+            str(item.get("title") or ""),
+        )
+        if re.search(
+            r"收评|午评|晚评|复盘|盘后|收盘综述|市场回顾|行情回顾|"
+            r"一周回顾|周度回顾|本周盘点|早报|晚报",
+            title,
+        ):
+            return "market_recap"
+        if re.search(r"盘前|开盘前|早盘展望|策略前瞻", title):
+            return "market_preview"
+        return "news"
+
+    @staticmethod
+    def _normalized_title(title: str) -> str:
+        normalized = unicodedata.normalize("NFKC", title).lower()
+        return re.sub(r"[^0-9a-z\u4e00-\u9fff]+", "", normalized)
+
+    @classmethod
+    def _dedup_key(cls, item: dict) -> str:
+        published_at = str(item.get("published_at") or "")[:10]
+        normalized_title = cls._normalized_title(
+            str(item.get("title") or "")
+        )
+        if item.get("source") == "cls_hot_article":
+            normalized_title = (
+                f"{normalized_title}:{item.get('source')}:{item.get('fingerprint')}"
+            )
+        return hashlib.sha256(
+            f"{published_at}:{normalized_title}".encode()
+        ).hexdigest()
+
+    @staticmethod
+    def _content_fingerprint(content: str) -> str | None:
+        normalized = unicodedata.normalize("NFKC", content)
+        normalized = re.sub(r"\s+", "", normalized)
+        if not normalized:
+            return None
+        return hashlib.sha256(normalized.encode()).hexdigest()
+
     def _save(self, items: list[dict]) -> int:
         """改造后: 走 NewsRepository.upsert_batch (R2.3)
 
@@ -1173,9 +1416,24 @@ class NewsAggregator(BaseAggregator):
 
         # 跨源相似度去重: 先拉今日已入库的所有标题
         existing_titles = self._query_today_titles()
-        # 批次内按 content hash 去重
+        # 批次内及历史库按完整正文指纹去重。
         seen_content_hashes: set[str] = set()
         seen_titles_in_batch: list[str] = []
+        item_content_hashes = [
+            content_hash
+            for item in items
+            if item.get("source") != "cls_hot_article"
+            if (
+                content_hash := self._content_fingerprint(
+                    str(item.get("content") or "")
+                )
+            )
+        ]
+        existing_content_hashes = (
+            self._news_repo().find_existing_content_fingerprints(
+                item_content_hashes
+            )
+        )
 
         records: list[dict] = []
         for item in items:
@@ -1183,7 +1441,10 @@ class NewsAggregator(BaseAggregator):
                 continue
             title = item["title"]
             # 热门榜来源本身表达“文章进入榜单”，即使其他来源已有同标题也需要独立保留。
-            preserve_source_record = item.get("source") == "cls_hot_article"
+            preserve_source_record = (
+                item.get("source") == "cls_hot_article"
+                or str(item.get("source") or "").startswith("ths_discover_")
+            )
             # 其他来源继续执行跨源标题相似度去重。
             is_dup = False
             if not preserve_source_record:
@@ -1201,9 +1462,16 @@ class NewsAggregator(BaseAggregator):
             seen_titles_in_batch.append(title)
             content = item.get("content", "") or ""
             summary = item.get("summary", "") or ""
-            if content.strip():
-                content_hash = hashlib.sha256(content.encode()).hexdigest()
-                if content_hash in seen_content_hashes:
+            content_hash = (
+                None
+                if preserve_source_record
+                else self._content_fingerprint(content)
+            )
+            if content_hash:
+                if (
+                    content_hash in seen_content_hashes
+                    or content_hash in existing_content_hashes
+                ):
                     continue
                 seen_content_hashes.add(content_hash)
             records.append({
@@ -1219,11 +1487,21 @@ class NewsAggregator(BaseAggregator):
                 "related_stocks": item.get("related_stocks", []),
                 "published_at": item["published_at"],
                 "fingerprint": item["fingerprint"],
+                "news_kind": self._classify_news_kind(item),
+                "dedup_key": self._dedup_key(item),
+                "content_fingerprint": content_hash,
             })
         repo = self._news_repo()
         new_ids = repo.upsert_batch_returning_ids(records)
         self.last_saved_ids.extend(new_ids)
         return len(new_ids)
+
+    def save_normalized_items(self, items: list[dict]) -> list[int]:
+        """Persist normalized news through the canonical dedup pipeline."""
+
+        self.last_saved_ids = []
+        self._save(items)
+        return list(self.last_saved_ids)
 
     # ==================== 查询 ====================
 

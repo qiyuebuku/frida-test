@@ -133,7 +133,7 @@ class AgentSettings:
                 _first(values, "SMART_FUND_AGENT_LLM_TIMEOUT", default="500")
             ),
             max_turns=int(
-                _first(values, "SMART_FUND_AGENT_MAX_TURNS", default="12")
+                _first(values, "SMART_FUND_AGENT_MAX_TURNS", default="24")
             ),
             max_input_chars=int(
                 _first(values, "SMART_FUND_AGENT_MAX_INPUT_CHARS", default="20000")
@@ -156,7 +156,7 @@ class AgentSettings:
                 values,
                 "LANGFUSE_BASE_URL",
                 "LANGFUSE_HOST",
-                default="https://cloud.langfuse.com",
+                default="",
             ).rstrip("/"),
             trace_sensitive_data=_as_bool(
                 values.get("SMART_FUND_AGENT_TRACE_SENSITIVE_DATA"),

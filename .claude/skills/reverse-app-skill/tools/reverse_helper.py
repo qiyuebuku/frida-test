@@ -13,9 +13,9 @@ import sys
 from pathlib import Path
 
 # ==================== 配置 ====================
-ADB = "/mnt/d/123pan/Downloads/一加Ace6/adb命令行/adb.exe"
-DEVICE_SERIAL = "3B15BJ00GZL00000"
-ANDROID_SDK = "/home/yuyang/android-sdk"
+ADB = os.environ.get("ADB", "adb")
+DEVICE_SERIAL = os.environ.get("ANDROID_SERIAL")
+ANDROID_SDK = os.environ.get("ANDROID_HOME", "/home/yuyang/android-sdk")
 NDK = f"{ANDROID_SDK}/ndk/27.0.12077973"
 GRADLE = "/home/yuyang/.gradle-dist/gradle-8.9/bin/gradle"
 JAVA_HOME = "/usr/lib/jvm/java-17-openjdk-amd64"
@@ -26,7 +26,10 @@ TEMPLATE_DIR = os.path.join(SKILL_DIR, "templates")
 
 def adb(*args):
     """执行 ADB 命令"""
-    cmd = [ADB, "-s", DEVICE_SERIAL] + list(args)
+    cmd = [ADB]
+    if DEVICE_SERIAL:
+        cmd.extend(["-s", DEVICE_SERIAL])
+    cmd.extend(args)
     result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
     return result.stdout.strip(), result.stderr.strip(), result.returncode
 
@@ -45,7 +48,7 @@ def check_device():
 
     # ADB 连接
     stdout, _, code = adb("devices")
-    info["adb_connected"] = DEVICE_SERIAL in stdout
+    info["adb_connected"] = "\tdevice" in stdout
 
     # Root 检测
     root_check = adb_shell("su -c 'id' 2>/dev/null")

@@ -1,13 +1,25 @@
 package com.yuyang.thshook;
 
 import android.app.Application;
+import android.app.Notification;
+import android.app.NotificationChannel;
+import android.app.NotificationManager;
+import android.app.Service;
+import android.content.Context;
+import android.os.Build;
 import android.os.Handler;
 import android.os.Looper;
+import android.os.PowerManager;
 import android.util.Log;
 
 import java.io.BufferedReader;
+import java.io.File;
+import java.io.FileInputStream;
+import java.io.FileOutputStream;
 import java.io.InputStreamReader;
 import java.io.OutputStream;
+import java.lang.reflect.Constructor;
+import java.lang.reflect.Field;
 import java.lang.reflect.Method;
 import java.lang.reflect.InvocationHandler;
 import java.lang.reflect.Proxy;
@@ -16,9 +28,20 @@ import java.net.ServerSocket;
 import java.net.Socket;
 import java.net.URL;
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.List;
+import java.util.Locale;
+import java.util.Map;
+import java.util.concurrent.ArrayBlockingQueue;
+import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ThreadPoolExecutor;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicLong;
+import java.util.concurrent.atomic.AtomicReference;
 
 import top.canyie.pine.Pine;
 import top.canyie.pine.PineConfig;
@@ -29,7 +52,43 @@ public class MainHook {
     private static final String TAG = "THSHook";
     private static volatile boolean hooksInstalled = false;
     private static volatile ClassLoader appClassLoader = null;
-
+    private static volatile Application appInstance = null;
+    private static volatile boolean webViewBridgeResolverHooked = false;
+    private static volatile boolean webViewBridgePluginCacheHooked = false;
+    private static final AtomicBoolean realTimeDataCoreHooked = new AtomicBoolean(false);
+    private static final AtomicBoolean marketProtocolBoundaryHooked = new AtomicBoolean(false);
+    private static final AtomicBoolean marketSocketIoHooked = new AtomicBoolean(false);
+    private static final AtomicBoolean stuffTableReadHooked = new AtomicBoolean(false);
+    private static final AtomicBoolean indicatorQueryManagerHooked = new AtomicBoolean(false);
+    private static final AtomicBoolean communicationKeepAliveHooked = new AtomicBoolean(false);
+    private static final Object realTimeDataRequestLock = new Object();
+    private static final Object unifiedRequestLock = new Object();
+    private static final Object marketWireFileLock = new Object();
+    private static final AtomicInteger marketWireCaptureActive = new AtomicInteger(0);
+    private static volatile String marketWireCaptureId = null;
+    private static final ConcurrentHashMap<String, Boolean> hookedBridgeMethods = new ConcurrentHashMap<>();
+    private static final AtomicBoolean proxyServerStarted = new AtomicBoolean(false);
+    private static final AtomicInteger realtimeStreamSessions = new AtomicInteger(0);
+    private static final AtomicInteger directMarketInstanceId = new AtomicInteger(10000);
+    private static final ConcurrentHashMap<Integer, CountDownLatch> directProtocolLatches =
+            new ConcurrentHashMap<>();
+    private static final ConcurrentHashMap<Integer, Object> directProtocolResponses =
+            new ConcurrentHashMap<>();
+    private static final ConcurrentHashMap<Integer, Integer> stuffTableCaptureSignatures =
+            new ConcurrentHashMap<>();
+    private static final ConcurrentHashMap<String, Boolean> hookedIndicatorClientMethods =
+            new ConcurrentHashMap<>();
+    private static final ConcurrentHashMap<String, Boolean> hookedIndicatorCallbackMethods =
+            new ConcurrentHashMap<>();
+    private static final ConcurrentHashMap<String, Boolean> hookedIndicatorModelConstructors =
+            new ConcurrentHashMap<>();
+    private static final List<String> indicatorQueryCapture =
+            java.util.Collections.synchronizedList(new ArrayList<>());
+    private static volatile long indicatorModelCaptureUntilMs = 0L;
+    private static final AtomicInteger indicatorQuerySequence = new AtomicInteger(0);
+    private static final AtomicBoolean indicatorResultShapeLogged = new AtomicBoolean(false);
+    private static final ConcurrentHashMap<Integer, String> indicatorCallbackQueryIds =
+            new ConcurrentHashMap<>();
     // OkHttpClient 捕获
     // 所有已创建的 OkHttpClient 实例
     private static final List<Object> allClients = java.util.Collections.synchronizedList(new ArrayList<>());
@@ -60,6 +119,7 @@ public class MainHook {
     private static final String HEXINV_REPORT_URL = "http://119.23.227.187:8900/api/auth/hexin-v";
     private static volatile long lastAuthReportTime = 0;
     private static final long AUTH_REPORT_INTERVAL = 60_000; // 最少间隔 60 秒
+    private static final boolean SENSITIVE_PAYLOAD_LOGGING = false;
 
     /**
      * 从 JWT token (key5) 中解码 exp 过期时间（秒级时间戳）
@@ -205,7 +265,26 @@ public class MainHook {
 
     private static String esc(String s) {
         if (s == null) return "";
-        return s.replace("\\", "\\\\").replace("\"", "\\\"");
+        StringBuilder escaped = new StringBuilder(s.length() + 16);
+        for (int i = 0; i < s.length(); i++) {
+            char value = s.charAt(i);
+            switch (value) {
+                case '\\': escaped.append("\\\\"); break;
+                case '"': escaped.append("\\\""); break;
+                case '\b': escaped.append("\\b"); break;
+                case '\f': escaped.append("\\f"); break;
+                case '\n': escaped.append("\\n"); break;
+                case '\r': escaped.append("\\r"); break;
+                case '\t': escaped.append("\\t"); break;
+                default:
+                    if (value < 0x20) {
+                        escaped.append(String.format("\\u%04x", (int) value));
+                    } else {
+                        escaped.append(value);
+                    }
+            }
+        }
+        return escaped.toString();
     }
 
     /**
@@ -343,8 +422,19 @@ public class MainHook {
         Log.i(TAG, "MainHook.entry() called");
 
         try {
-            System.load(pineSoPath);
-            Log.i(TAG, "libpine.so loaded");
+            String architecture = System.getProperty("os.arch", "");
+            String normalizedArchitecture = architecture.toLowerCase(Locale.ROOT);
+            Log.i(TAG, "Runtime architecture: " + architecture);
+            if (pineSoPath == null
+                    || normalizedArchitecture.contains("x86")
+                    || normalizedArchitecture.contains("amd64")
+                    || normalizedArchitecture.contains("i386")
+                    || normalizedArchitecture.contains("i686")) {
+                Log.i(TAG, "Using LSPosed hook bridge on " + architecture);
+            } else {
+                System.load(pineSoPath);
+                Log.i(TAG, "libpine.so loaded on " + architecture);
+            }
 
             PineConfig.libLoader = new Pine.LibLoader() {
                 @Override public void loadLib() { }
@@ -367,7 +457,14 @@ public class MainHook {
                 @Override
                 public void beforeCall(Pine.CallFrame callFrame) {
                     Application app = (Application) callFrame.thisObject;
+                    appInstance = app;
                     Log.i(TAG, "Application.onCreate: " + app.getClass().getName());
+                    hookCommunicationServiceKeepAlive(app.getClassLoader());
+                    hookRealTimeDataCore(app.getClassLoader());
+                    hookMarketProtocolBoundary(app.getClassLoader());
+                    hookMarketSocketIo();
+                    hookStuffTableReads(app.getClassLoader());
+                    hookIndicatorQueries(app.getClassLoader());
                     installAllHooks(app.getClassLoader());
                 }
             });
@@ -416,6 +513,7 @@ public class MainHook {
     }
 
     private static volatile boolean okHttpHooked = false;
+    private static volatile boolean unifiedRequestModelHooked = false;
 
     private static synchronized void installAllHooks(ClassLoader cl) {
         // 允许重入：如果 OkHttp 还没 hook 成功，用新的 classLoader 重试
@@ -445,6 +543,25 @@ public class MainHook {
                 Log.i(TAG, "injectInterceptor done ✅");
             } catch (Throwable e) {
                 Log.e(TAG, "injectInterceptor failed (will retry with next classLoader)", e);
+            }
+        }
+
+        if (!unifiedRequestModelHooked) {
+            try {
+                hookUnifiedRequestModels(cl);
+                unifiedRequestModelHooked = true;
+                Log.i(TAG, "Unified request model hook installed");
+            } catch (Throwable e) {
+                Log.w(TAG, "Unified request model hook unavailable: " + e.getMessage());
+            }
+        }
+
+        if (!indicatorQueryManagerHooked.get()) {
+            try {
+                hookIndicatorQueries(cl);
+                Log.i(TAG, "Indicator QueryClient hook installed");
+            } catch (Throwable e) {
+                Log.w(TAG, "Indicator QueryClient hook unavailable: " + e.getMessage());
             }
         }
 
@@ -487,6 +604,51 @@ public class MainHook {
         }
 
         Log.i(TAG, "=== installAllHooks complete ===");
+    }
+
+    private static void hookUnifiedRequestModels(ClassLoader cl) throws Exception {
+        Class<?> bridgeClass = cl.loadClass(
+                "com.hexin.android.base_hummer.export.component.business."
+                        + "HummerUnifiedRequestBridge");
+        Class<?> modelClass = cl.loadClass(
+                "com.hexin.android.base_hummer.export.component.business."
+                        + "HummerUnifiedRequestBridge$RequestModel");
+        Class<?> callbackClass = cl.loadClass("ld0");
+        Method init = bridgeClass.getMethod("init", modelClass, callbackClass);
+        Pine.hook(init, new MethodHook() {
+            @Override
+            public void beforeCall(Pine.CallFrame frame) {
+                Object model = frame.args != null && frame.args.length > 0
+                        ? frame.args[0]
+                        : null;
+                Log.i(TAG, "UnifiedRequest.model " + describeObjectFields(model, 12000));
+            }
+        });
+    }
+
+    private static String describeObjectFields(Object target, int maxLength) {
+        if (target == null) return "null";
+        StringBuilder result = new StringBuilder(target.getClass().getName()).append('{');
+        boolean first = true;
+        for (Class<?> type = target.getClass();
+             type != null && type != Object.class;
+             type = type.getSuperclass()) {
+            for (Field field : type.getDeclaredFields()) {
+                try {
+                    field.setAccessible(true);
+                    if (!first) result.append(", ");
+                    first = false;
+                    result.append(field.getName()).append('=').append(field.get(target));
+                    if (result.length() >= maxLength) {
+                        result.setLength(maxLength);
+                        return result.append("...[truncated]}").toString();
+                    }
+                } catch (Throwable ignored) {
+                    // A missing optional field must not break request observation.
+                }
+            }
+        }
+        return result.append('}').toString();
     }
 
     /**
@@ -619,16 +781,32 @@ public class MainHook {
 
     /**
      * 本地 HTTP 代理服务器，通过 app 的 OkHttpClient 转发请求
-     * 端口 18900
+     * 端口按 Android 用户隔离：Owner=18900、User 10=18910、User 11=18920。
      * POST /proxy  {"url":"...","method":"GET|POST","body":"...","content_type":"..."}
      * GET /domains  列出已捕获的 OkHttpClient 域名
      * GET /clients  列出所有已捕获的 OkHttpClient 数量
      */
+    private static int androidUserId() {
+        return android.os.Process.myUid() / 100000;
+    }
+
+    private static int proxyPortForCurrentUser() {
+        int userId = androidUserId();
+        if (userId <= 0) return 18900;
+        if (userId >= 10) return 18910 + ((userId - 10) * 10);
+        return 18900 + userId;
+    }
+
     private static void startProxyServer(ClassLoader cl) {
+        if (!proxyServerStarted.compareAndSet(false, true)) {
+            return;
+        }
         new Thread(() -> {
             try {
-                ServerSocket server = new ServerSocket(18900);
-                Log.i(TAG, "Proxy server started on port 18900");
+                int listenPort = proxyPortForCurrentUser();
+                ServerSocket server = new ServerSocket(listenPort);
+                Log.i(TAG, "Proxy server started on port " + listenPort
+                        + " androidUser=" + androidUserId());
 
                 while (true) {
                     try {
@@ -639,6 +817,7 @@ public class MainHook {
                     }
                 }
             } catch (Throwable e) {
+                proxyServerStarted.set(false);
                 Log.e(TAG, "Proxy server failed to start: " + e.getMessage());
             }
         }, "THSHook-Proxy").start();
@@ -653,6 +832,16 @@ public class MainHook {
             // 读取 HTTP 请求行
             String requestLine = reader.readLine();
             if (requestLine == null) { client.close(); return; }
+
+            if ("THSSTREAM/1".equals(requestLine)) {
+                client.setSoTimeout(0);
+                handleNativeRealtimeStream(
+                        client,
+                        reader,
+                        out,
+                        resolveAppClassLoader(cl));
+                return;
+            }
 
             // 读取 headers
             int contentLength = 0;
@@ -677,6 +866,85 @@ public class MainHook {
             }
 
             Log.i(TAG, "Proxy request: " + requestLine + " body=" + body.substring(0, Math.min(200, body.length())));
+
+            if (requestLine.startsWith("GET /health")) {
+                sendResponse(out, 200, "{\"ok\":true,\"mode\":\"injected_core_probe\""
+                        + ",\"build\":\"20260804-single-bridge-adaptive-v8\""
+                        + ",\"android_user_id\":" + androidUserId()
+                        + ",\"pid\":" + android.os.Process.myPid()
+                        + ",\"listen_port\":" + proxyPortForCurrentUser()
+                        + ",\"realtime_stream_sessions\":"
+                        + realtimeStreamSessions.get() + "}");
+                client.close();
+                return;
+            }
+
+            if (requestLine.startsWith("GET /native/wire-capture")) {
+                sendResponse(out, 200, readMarketWireCapture());
+                client.close();
+                return;
+            }
+
+            if (requestLine.startsWith("POST /native/table-capture/reset")) {
+                resetStuffTableCapture();
+                sendResponse(out, 200, "{\"success\":true}");
+                client.close();
+                return;
+            }
+
+            if (requestLine.startsWith("GET /native/table-capture")) {
+                sendResponse(out, 200, readStuffTableCapture());
+                client.close();
+                return;
+            }
+
+            if (requestLine.startsWith("POST /native/indicator-capture/reset")) {
+                resetIndicatorQueryCapture();
+                sendResponse(out, 200, "{\"success\":true}");
+                client.close();
+                return;
+            }
+
+            if (requestLine.startsWith("GET /native/indicator-capture")) {
+                sendResponse(out, 200, readIndicatorQueryCapture());
+                client.close();
+                return;
+            }
+
+            if (requestLine.startsWith("POST /native/hurricane")
+                    || requestLine.startsWith("POST /native/indicator-list")) {
+                ClassLoader effectiveClassLoader = resolveAppClassLoader(cl);
+                String result = callNativeHurricaneQuery(body, effectiveClassLoader);
+                sendResponse(out, 200, result);
+                client.close();
+                return;
+            }
+
+            // 无需 WebView，直接调用 App 内部的实时行情请求核心。
+            if (requestLine.startsWith("POST /native/realtime")) {
+                ClassLoader effectiveClassLoader = resolveAppClassLoader(cl);
+                String result = callNativeRealTimeData(body, effectiveClassLoader);
+                sendResponse(out, 200, result);
+                client.close();
+                return;
+            }
+
+            // 无需 WebView，直接调用 App 内部的 UnifiedRequest 核心。
+            if (requestLine.startsWith("POST /native/unified")) {
+                ClassLoader effectiveClassLoader = resolveAppClassLoader(cl);
+                String result = callNativeUnifiedRequest(body, effectiveClassLoader);
+                sendResponse(out, 200, result);
+                client.close();
+                return;
+            }
+
+            if (requestLine.startsWith("POST /native/ranking-debug")) {
+                ClassLoader effectiveClassLoader = resolveAppClassLoader(cl);
+                String result = callNativeRankingDebug(body, effectiveClassLoader);
+                sendResponse(out, 200, result);
+                client.close();
+                return;
+            }
 
             // 调试端点: GET /domains
             if (requestLine.startsWith("GET /domains")) {
@@ -963,6 +1231,28 @@ public class MainHook {
                 Method urlMethod = builderClass.getDeclaredMethod("url", String.class);
                 builder = urlMethod.invoke(builder, targetUrl);
 
+                // Hummer 发现页推荐流要求 HXJsBridge.getUserCookie()。Cookie 仅在
+                // App 进程内注入请求，不通过桥接响应、业务参数或日志向外暴露。
+                if (targetUrl.startsWith("https://recommend.10jqka.com.cn/app/discover/")) {
+                    try {
+                        Class<?> bridgeClass = resolveAppClassLoader(cl).loadClass(
+                                "com.hexin.android.base_hummer.export.component.business.HXJsBridge");
+                        Object cookieValue = bridgeClass.getDeclaredMethod("getUserCookie").invoke(null);
+                        String hummerCookie = cookieValue != null ? String.valueOf(cookieValue) : "";
+                        if (!hummerCookie.isEmpty()) {
+                            Method addHeaderMethod = builderClass.getDeclaredMethod(
+                                    "addHeader", String.class, String.class);
+                            builder = addHeaderMethod.invoke(builder, "Cookie", hummerCookie);
+                            Log.i(TAG, "Proxy injected Hummer user cookie for discover recommend");
+                        } else {
+                            Log.w(TAG, "Hummer user cookie is empty for discover recommend");
+                        }
+                    } catch (Throwable cookieError) {
+                        Log.w(TAG, "Inject Hummer user cookie failed: "
+                                + cookieError.getClass().getSimpleName());
+                    }
+                }
+
                 // 添加额外的 headers
                 if (extraHeadersJson != null && !extraHeadersJson.isEmpty()) {
                     Method addHeaderMethod = builderClass.getDeclaredMethod("addHeader", String.class, String.class);
@@ -1040,7 +1330,15 @@ public class MainHook {
 
             } catch (Throwable e) {
                 Log.e(TAG, "Proxy request failed: " + e.getMessage());
-                sendResponse(out, 500, "{\"error\":\"" + e.getMessage().replace("\"", "'") + "\"}");
+                org.json.JSONObject errorBody = new org.json.JSONObject();
+                try {
+                    errorBody.put("success", false);
+                    errorBody.put("error", String.valueOf(e.getMessage()));
+                } catch (Throwable ignored) {
+                    // String-valued JSON should not fail. Keep a valid body
+                    // when QueryParam exception text contains raw newlines.
+                }
+                sendResponse(out, 500, errorBody.toString());
             }
 
             client.close();
@@ -1061,6 +1359,2934 @@ public class MainHook {
         out.write(header.getBytes("UTF-8"));
         out.write(bodyBytes);
         out.flush();
+    }
+
+    private static void handleNativeRealtimeStream(
+            Socket socket,
+            BufferedReader reader,
+            OutputStream out,
+            ClassLoader cl) {
+        NativeRealtimeStreamSession session = new NativeRealtimeStreamSession(
+                socket,
+                reader,
+                out,
+                cl);
+        session.run();
+    }
+
+    private static final class NativeRealtimeStreamSession {
+        private final Socket socket;
+        private final BufferedReader reader;
+        private final OutputStream out;
+        private final ClassLoader classLoader;
+        private final Object writeLock = new Object();
+        private final BlockingQueue<String> writeQueue = new ArrayBlockingQueue<>(128);
+        private final ConcurrentHashMap<String, Object> realtimeSubscriptions =
+                new ConcurrentHashMap<>();
+        private final ConcurrentHashMap<String, UnifiedSubscriptionState>
+                unifiedSubscriptions =
+                new ConcurrentHashMap<>();
+        private final AtomicLong sequence = new AtomicLong(0);
+        private final AtomicBoolean closed = new AtomicBoolean(false);
+        private final AtomicBoolean sessionRegistered = new AtomicBoolean(false);
+        private final ThreadPoolExecutor requestExecutor = new ThreadPoolExecutor(
+                1,
+                1,
+                0L,
+                TimeUnit.MILLISECONDS,
+                new ArrayBlockingQueue<Runnable>(128),
+                runnable -> new Thread(runnable, "THSHook-RT-Command"),
+                new ThreadPoolExecutor.AbortPolicy());
+        private Thread writerThread;
+        private PowerManager.WakeLock wakeLock;
+
+        NativeRealtimeStreamSession(
+                Socket socket,
+                BufferedReader reader,
+                OutputStream out,
+                ClassLoader classLoader) {
+            this.socket = socket;
+            this.reader = reader;
+            this.out = out;
+            this.classLoader = classLoader;
+        }
+
+        void run() {
+            sessionRegistered.set(true);
+            int activeSessions = realtimeStreamSessions.incrementAndGet();
+            Log.i(TAG, "RT_STREAM opened activeSessions=" + activeSessions);
+            try {
+                acquireWakeLock();
+                startWriter();
+                writeLine("{\"type\":\"hello\",\"protocol\":\"THSSTREAM/1\""
+                        + ",\"android_user_id\":" + androidUserId()
+                        + ",\"pid\":" + android.os.Process.myPid() + "}");
+                String commandLine;
+                while (!closed.get() && (commandLine = reader.readLine()) != null) {
+                    handleCommand(commandLine);
+                }
+            } catch (Throwable e) {
+                if (!closed.get()) {
+                    Log.w(TAG, "Native realtime stream ended: " + e.getMessage());
+                }
+            } finally {
+                close();
+            }
+        }
+
+        private void handleCommand(String commandLine) {
+            if (commandLine == null || commandLine.trim().isEmpty()) {
+                return;
+            }
+            String subscriptionId = "";
+            String requestId = "";
+            String route = "";
+            try {
+                org.json.JSONObject command = new org.json.JSONObject(commandLine);
+                String operation = command.optString("op", "").trim();
+                subscriptionId = command.optString("subscription_id", "").trim();
+                requestId = command.optString("request_id", "").trim();
+                route = command.optString("route", "").trim();
+                Log.i(TAG, "RT_STREAM command op=" + operation
+                        + " id=" + subscriptionId
+                        + " kind=" + command.optString("kind", ""));
+                if ("ping".equals(operation)) {
+                    writeLine("{\"type\":\"pong\",\"sequence\":"
+                            + sequence.incrementAndGet() + "}");
+                    return;
+                }
+                if ("list".equals(operation)) {
+                    org.json.JSONArray values = new org.json.JSONArray();
+                    for (String value : realtimeSubscriptions.keySet()) {
+                        values.put(value);
+                    }
+                    for (String value : unifiedSubscriptions.keySet()) {
+                        values.put(value);
+                    }
+                    writeLine("{\"type\":\"subscriptions\",\"subscription_ids\":"
+                            + values.toString() + "}");
+                    return;
+                }
+                if ("unsubscribe".equals(operation)) {
+                    if (subscriptionId.isEmpty()) {
+                        throw new IllegalArgumentException("subscription_id is required");
+                    }
+                    unsubscribe(subscriptionId);
+                    writeLine("{\"type\":\"unsubscribed\",\"subscription_id\":\""
+                            + esc(subscriptionId) + "\"}");
+                    return;
+                }
+                if ("request".equals(operation)) {
+                    submitRequest(command);
+                    return;
+                }
+                if (!"subscribe".equals(operation)) {
+                    throw new IllegalArgumentException("unsupported op: " + operation);
+                }
+                String kind = command.optString("kind", "realtime").trim();
+                if ("unified".equals(kind)) {
+                    String onlineId = command.optString("online_id", "").trim();
+                    int protocolId = command.optInt("protocol_id", -1);
+                    int pageId = command.optInt("page_id", -1);
+                    int requestType = command.optInt("request_type", 262144);
+                    String requestDic = command.optString("request_dic", "");
+                    String cancelRequestDic = command.optString(
+                            "cancel_request_dic", "");
+                    if (subscriptionId.isEmpty() || onlineId.isEmpty()
+                            || protocolId < 0 || pageId < 0 || requestDic.isEmpty()) {
+                        throw new IllegalArgumentException(
+                                "subscription_id, online_id, protocol_id, page_id "
+                                        + "and request_dic are required");
+                    }
+                    subscribeUnified(
+                            subscriptionId,
+                            onlineId,
+                            protocolId,
+                            pageId,
+                            requestType,
+                            requestDic,
+                            cancelRequestDic);
+                    Log.i(TAG, "RT_STREAM subscribed unified id=" + subscriptionId
+                            + " onlineId=" + onlineId + " pageId=" + pageId);
+                    writeLine("{\"type\":\"subscribed\",\"subscription_id\":\""
+                            + esc(subscriptionId) + "\",\"kind\":\"unified\"}");
+                    return;
+                }
+                if (!"realtime".equals(kind)) {
+                    throw new IllegalArgumentException(
+                            "unsupported subscription kind: " + kind);
+                }
+                String key = command.optString("key", "").trim();
+                String requestParam = command.optString("request_param", "");
+                String requestChannel = command.optString("request_channel", "").trim();
+                if (subscriptionId.isEmpty() || key.isEmpty()
+                        || requestParam.isEmpty() || requestChannel.isEmpty()) {
+                    throw new IllegalArgumentException(
+                            "subscription_id, key, request_param and request_channel are required");
+                }
+                subscribe(subscriptionId, key, requestParam, requestChannel);
+                Log.i(TAG, "RT_STREAM subscribed id=" + subscriptionId
+                        + " key=" + key + " channel=" + requestChannel);
+                writeLine("{\"type\":\"subscribed\",\"subscription_id\":\""
+                        + esc(subscriptionId) + "\",\"key\":\"" + esc(key) + "\"}");
+            } catch (Throwable e) {
+                writeLine("{\"type\":\"error\",\"subscription_id\":\""
+                        + esc(subscriptionId) + "\",\"request_id\":\""
+                        + esc(requestId) + "\",\"route\":\""
+                        + esc(route) + "\",\"error\":\""
+                        + esc(e.getClass().getSimpleName() + ": " + String.valueOf(e.getMessage()))
+                        + "\"}");
+            }
+        }
+
+        private void submitRequest(org.json.JSONObject command) {
+            String requestId = command.optString("request_id", "").trim();
+            String route = command.optString("route", "").trim();
+            org.json.JSONObject payload = command.optJSONObject("payload");
+            if (requestId.isEmpty() || route.isEmpty() || payload == null) {
+                throw new IllegalArgumentException(
+                        "request_id, route and payload are required");
+            }
+            requestExecutor.execute(() -> {
+                try {
+                    String raw;
+                    if ("unified".equals(route)) {
+                        raw = callNativeUnifiedRequest(
+                                payload.toString(), classLoader);
+                    } else if ("hurricane".equals(route)) {
+                        raw = callNativeHurricaneQuery(
+                                payload.toString(), classLoader);
+                    } else if ("ranking".equals(route)) {
+                        raw = callNativeRankingDebug(
+                                payload.toString(), classLoader);
+                    } else if ("realtime".equals(route)) {
+                        raw = callNativeRealTimeData(
+                                payload.toString(), classLoader);
+                    } else {
+                        throw new IllegalArgumentException(
+                                "unsupported request route: " + route);
+                    }
+                    Object decoded = new org.json.JSONTokener(raw).nextValue();
+                    org.json.JSONObject response = new org.json.JSONObject();
+                    response.put("type", "response");
+                    response.put("request_id", requestId);
+                    response.put("route", route);
+                    response.put("payload", decoded);
+                    writeLine(response.toString());
+                } catch (Throwable error) {
+                    writeLine("{\"type\":\"error\",\"request_id\":\""
+                            + esc(requestId) + "\",\"route\":\""
+                            + esc(route) + "\",\"error\":\""
+                            + esc(error.getClass().getSimpleName() + ": "
+                                    + String.valueOf(error.getMessage()))
+                            + "\"}");
+                }
+            });
+        }
+
+        private void subscribe(
+                String subscriptionId,
+                String key,
+                String requestParam,
+                String requestChannel) throws Exception {
+            unsubscribe(subscriptionId);
+            CountDownLatch started = new CountDownLatch(1);
+            AtomicReference<Throwable> failure = new AtomicReference<>();
+            new Handler(Looper.getMainLooper()).post(() -> {
+                try {
+                    Object application = currentApplication();
+                    if (application == null) {
+                        throw new IllegalStateException("Application is not ready");
+                    }
+                    startLegacyCommunicationService(application, classLoader);
+                    RealtimeClassSet realtimeClasses = resolveRealtimeClassSet(classLoader);
+                    Class<?> modelClass = realtimeClasses.modelClass;
+                    Object model = newRealtimeRequestModel(
+                            modelClass, key, requestParam, requestChannel);
+                    Class<?> clientClass = realtimeClasses.clientClass;
+                    Class<?> callbackClass = realtimeClasses.callbackClass;
+                    Object nativeClient = clientClass.getConstructor(modelClass).newInstance(model);
+                    Object callback = Proxy.newProxyInstance(
+                            classLoader,
+                            new Class<?>[]{callbackClass},
+                            (proxy, method, args) -> {
+                                if (args == null || args.length != 1 || args[0] == null) {
+                                    return null;
+                                }
+                                try {
+                                    Object result = args[0];
+                                    int status = ((Number) result.getClass()
+                                            .getMethod("d").invoke(result)).intValue();
+                                    int responseType = ((Number) result.getClass()
+                                            .getMethod("b").invoke(result)).intValue();
+                                    String responseKey = String.valueOf(result.getClass()
+                                            .getMethod("c").invoke(result));
+                                    Object dataValue = result.getClass()
+                                            .getMethod("a").invoke(result);
+                                    String data = dataValue == null
+                                            ? null
+                                            : String.valueOf(dataValue);
+                                    Log.i(TAG, "RT_STREAM event id=" + subscriptionId
+                                            + " status=" + status
+                                            + " responseType=" + responseType
+                                            + " key=" + responseKey
+                                            + " bytes=" + (data == null ? 0 : data.length()));
+                                    writeLine("{\"type\":\"event\",\"subscription_id\":\""
+                                            + esc(subscriptionId)
+                                            + "\",\"topic\":\"realtime\",\"sequence\":"
+                                            + sequence.incrementAndGet()
+                                            + ",\"status\":" + status
+                                            + ",\"response_type\":" + responseType
+                                            + ",\"key\":\"" + esc(responseKey) + "\""
+                                            + ",\"data\":" + jsonValue(data)
+                                            + ",\"emitted_at\":" + System.currentTimeMillis()
+                                            + "}");
+                                } catch (Throwable callbackError) {
+                                    writeLine("{\"type\":\"error\",\"subscription_id\":\""
+                                            + esc(subscriptionId)
+                                            + "\",\"error\":\"callback: "
+                                            + esc(String.valueOf(callbackError.getMessage())) + "\"}");
+                                }
+                                return null;
+                            });
+                    clientClass.getMethod("e", callbackClass).invoke(nativeClient, callback);
+                    realtimeSubscriptions.put(subscriptionId, nativeClient);
+                    clientClass.getMethod("d").invoke(nativeClient);
+                    if (closed.get()) {
+                        Object removed = realtimeSubscriptions.remove(subscriptionId);
+                        cleanupRealTimeDataClient(removed);
+                    }
+                } catch (Throwable e) {
+                    Object failedClient = realtimeSubscriptions.remove(subscriptionId);
+                    cleanupRealTimeDataClient(failedClient);
+                    failure.set(e);
+                } finally {
+                    started.countDown();
+                }
+            });
+            if (!started.await(10, TimeUnit.SECONDS)) {
+                throw new IllegalStateException("native subscription dispatch timed out");
+            }
+            if (failure.get() != null) {
+                throw new RuntimeException(failure.get());
+            }
+        }
+
+        private void subscribeUnified(
+                String subscriptionId,
+                String onlineId,
+                int protocolId,
+                int pageId,
+                int requestType,
+                String requestDic,
+                String cancelRequestDic) throws Exception {
+            unsubscribe(subscriptionId);
+            CountDownLatch started = new CountDownLatch(1);
+            AtomicReference<Throwable> failure = new AtomicReference<>();
+            new Handler(Looper.getMainLooper()).post(() -> {
+                try {
+                    Object application = currentApplication();
+                    if (application == null) {
+                        throw new IllegalStateException("Application is not ready");
+                    }
+                    startLegacyCommunicationService(application, classLoader);
+                    Class<?> modelClass = classLoader.loadClass(
+                            "com.hexin.android.base_hummer.export.component.business."
+                                    + "HummerUnifiedRequestBridge$RequestModel");
+                    Object model = modelClass.getConstructor().newInstance();
+                    setPrivateField(model, "onlineId", onlineId);
+                    setPrivateField(model, "protocolId", protocolId);
+                    setPrivateField(model, "pageId", pageId);
+                    setPrivateField(model, "requestDic", requestDic);
+                    setPrivateField(model, "requestType", requestType);
+                    setPrivateField(model, "compressType", "");
+                    setPrivateField(model, "cancelRequestDic", cancelRequestDic);
+
+                    Class<?> callbackClass = classLoader.loadClass("ld0");
+                    Object callback = Proxy.newProxyInstance(
+                            classLoader,
+                            new Class<?>[]{callbackClass},
+                            (proxy, method, args) -> {
+                                String methodName = method.getName();
+                                if ("call".equals(methodName)) {
+                                    Object callbackValue = null;
+                                    if (args != null && args.length > 0) {
+                                        callbackValue = args[0];
+                                        if (callbackValue instanceof Object[]) {
+                                            Object[] callbackArgs = (Object[]) callbackValue;
+                                            callbackValue = callbackArgs.length > 0
+                                                    ? callbackArgs[0]
+                                                    : null;
+                                        }
+                                    }
+                                    if (callbackValue != null) {
+                                        String payload = toJson(callbackValue);
+                                        Log.i(TAG, "RT_STREAM unified event id="
+                                                + subscriptionId + " onlineId=" + onlineId
+                                                + " bytes=" + payload.length());
+                                        writeLine("{\"type\":\"event\",\"subscription_id\":\""
+                                                + esc(subscriptionId)
+                                                + "\",\"topic\":\"unified\",\"sequence\":"
+                                                + sequence.incrementAndGet()
+                                                + ",\"data\":" + payload
+                                                + ",\"emitted_at\":"
+                                                + System.currentTimeMillis() + "}");
+                                    }
+                                    return null;
+                                }
+                                if ("toString".equals(methodName)) {
+                                    return "THSHookUnifiedStreamCallback:" + subscriptionId;
+                                }
+                                if ("hashCode".equals(methodName)) {
+                                    return System.identityHashCode(proxy);
+                                }
+                                if ("equals".equals(methodName)) {
+                                    return args != null && args.length == 1
+                                            && proxy == args[0];
+                                }
+                                return defaultValue(method.getReturnType());
+                            });
+
+                    Class<?> bridgeClass = classLoader.loadClass(
+                            "com.hexin.android.base_hummer.export.component.business."
+                                    + "HummerUnifiedRequestBridge");
+                    Object bridge = bridgeClass.getConstructor().newInstance();
+                    unifiedSubscriptions.put(
+                            subscriptionId,
+                            new UnifiedSubscriptionState(bridge, callback, model));
+                    bridgeClass.getMethod("init", modelClass, callbackClass)
+                            .invoke(bridge, model, callback);
+                    if (closed.get()) {
+                        UnifiedSubscriptionState removed =
+                                unifiedSubscriptions.remove(subscriptionId);
+                        cleanupUnifiedSubscriptionState(removed);
+                    }
+                } catch (Throwable e) {
+                    UnifiedSubscriptionState failedState =
+                            unifiedSubscriptions.remove(subscriptionId);
+                    cleanupUnifiedSubscriptionState(failedState);
+                    failure.set(e);
+                } finally {
+                    started.countDown();
+                }
+            });
+            if (!started.await(10, TimeUnit.SECONDS)) {
+                throw new IllegalStateException(
+                        "native unified subscription dispatch timed out");
+            }
+            if (failure.get() != null) {
+                throw new RuntimeException(failure.get());
+            }
+        }
+
+        private void unsubscribe(String subscriptionId) {
+            Object nativeClient = realtimeSubscriptions.remove(subscriptionId);
+            cleanupRealTimeDataClient(nativeClient);
+            UnifiedSubscriptionState unifiedState =
+                    unifiedSubscriptions.remove(subscriptionId);
+            cleanupUnifiedSubscriptionState(unifiedState);
+        }
+
+        private void acquireWakeLock() throws Exception {
+            Object application = currentApplication();
+            if (!(application instanceof Context)) {
+                return;
+            }
+            PowerManager powerManager = (PowerManager) ((Context) application)
+                    .getSystemService(Context.POWER_SERVICE);
+            if (powerManager == null) {
+                return;
+            }
+            wakeLock = powerManager.newWakeLock(
+                    PowerManager.PARTIAL_WAKE_LOCK,
+                    "THSHook:realtime-stream");
+            wakeLock.acquire();
+        }
+
+        private void writeLine(String value) {
+            if (closed.get()) {
+                return;
+            }
+            if (!writeQueue.offer(value)) {
+                Log.w(TAG, "RT_STREAM output queue full; closing stream");
+                close();
+            }
+        }
+
+        private void startWriter() {
+            writerThread = new Thread(() -> {
+                try {
+                    while (!closed.get()) {
+                        String value = writeQueue.take();
+                        synchronized (writeLock) {
+                            out.write((value + "\n").getBytes("UTF-8"));
+                            out.flush();
+                        }
+                    }
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                } catch (Throwable e) {
+                    if (!closed.get()) {
+                        Log.w(TAG, "RT_STREAM writer ended: " + e.getMessage());
+                    }
+                } finally {
+                    close();
+                }
+            }, "THSHook-RT-Stream-Writer");
+            writerThread.start();
+        }
+
+        private void close() {
+            if (!closed.compareAndSet(false, true)) {
+                return;
+            }
+            if (writerThread != null && writerThread != Thread.currentThread()) {
+                writerThread.interrupt();
+            }
+            requestExecutor.shutdownNow();
+            for (Object nativeClient : realtimeSubscriptions.values()) {
+                cleanupRealTimeDataClient(nativeClient);
+            }
+            realtimeSubscriptions.clear();
+            for (UnifiedSubscriptionState state : unifiedSubscriptions.values()) {
+                cleanupUnifiedSubscriptionState(state);
+            }
+            unifiedSubscriptions.clear();
+            int activeSessions = realtimeStreamSessions.get();
+            if (sessionRegistered.compareAndSet(true, false)) {
+                activeSessions = realtimeStreamSessions.decrementAndGet();
+            }
+            Log.i(TAG, "RT_STREAM closed activeSessions=" + activeSessions);
+            if (wakeLock != null && wakeLock.isHeld()) {
+                wakeLock.release();
+            }
+            try {
+                socket.close();
+            } catch (Throwable ignored) {
+            }
+        }
+
+        private static void cleanupUnifiedSubscriptionState(
+                UnifiedSubscriptionState state) {
+            if (state != null) {
+                cleanupUnifiedRequestBridge(state.bridge);
+            }
+        }
+
+        private static final class UnifiedSubscriptionState {
+            final Object bridge;
+            final Object callback;
+            final Object model;
+
+            UnifiedSubscriptionState(Object bridge, Object callback, Object model) {
+                this.bridge = bridge;
+                this.callback = callback;
+                this.model = model;
+            }
+        }
+    }
+
+    private static String callNativeRealTimeData(String body, ClassLoader cl) {
+        String key = extractJsonString(body, "key");
+        String requestParam = extractJsonString(body, "requestParam");
+        String requestChannel = extractJsonString(body, "requestChannel");
+        if (key == null || requestParam == null || requestChannel == null) {
+            return "{\"success\":false,\"error\":\"key, requestParam and requestChannel are required\"}";
+        }
+        synchronized (realTimeDataRequestLock) {
+            return callNativeRealTimeDataLocked(key, requestParam, requestChannel, cl);
+        }
+    }
+
+    private static String callNativeRealTimeDataLocked(
+            String key,
+            String requestParam,
+            String requestChannel,
+            ClassLoader cl) {
+        AtomicReference<Object> requestClient = new AtomicReference<>();
+        AtomicReference<PowerManager.WakeLock> requestWakeLock = new AtomicReference<>();
+        beginMarketWireCapture(key);
+        try {
+            CountDownLatch latch = new CountDownLatch(1);
+            CountDownLatch requestStarted = new CountDownLatch(1);
+            AtomicReference<String> response = new AtomicReference<>();
+            AtomicReference<Throwable> startFailure = new AtomicReference<>();
+
+            new Handler(Looper.getMainLooper()).post(() -> {
+                try {
+                    Object application = currentApplication();
+                    if (application == null) {
+                        throw new IllegalStateException("Application is not ready");
+                    }
+                    Context context = (Context) application;
+                    PowerManager powerManager = (PowerManager) context.getSystemService(
+                            Context.POWER_SERVICE);
+                    PowerManager.WakeLock wakeLock = powerManager.newWakeLock(
+                            PowerManager.PARTIAL_WAKE_LOCK,
+                            "THSHook:real-time-market-data");
+                    wakeLock.acquire(40_000L);
+                    requestWakeLock.set(wakeLock);
+                    startLegacyCommunicationService(application, cl);
+
+                    RealtimeClassSet realtimeClasses = resolveRealtimeClassSet(cl);
+                    Class<?> modelClass = realtimeClasses.modelClass;
+                    Object model = newRealtimeRequestModel(
+                            modelClass, key, requestParam, requestChannel);
+                    Class<?> clientClass = realtimeClasses.clientClass;
+                    Class<?> callbackClass = realtimeClasses.callbackClass;
+                    Object client = clientClass.getConstructor(modelClass).newInstance(model);
+                    requestClient.set(client);
+
+                    Object callback = Proxy.newProxyInstance(
+                            cl,
+                            new Class<?>[]{callbackClass},
+                            (proxy, method, args) -> {
+                                if (args != null && args.length == 1 && args[0] != null) {
+                                    Object result = args[0];
+                                    int status = ((Number) result.getClass().getMethod("d").invoke(result)).intValue();
+                                    int responseType = ((Number) result.getClass().getMethod("b").invoke(result)).intValue();
+                                    String responseKey = String.valueOf(result.getClass().getMethod("c").invoke(result));
+                                    Object dataValue = result.getClass().getMethod("a").invoke(result);
+                                    String data = dataValue == null ? null : String.valueOf(dataValue);
+                                    if (responseType == 0) {
+                                        response.set("{\"success\":" + (status == 0)
+                                                + ",\"status\":" + status
+                                                + ",\"response_type\":" + responseType
+                                                + ",\"key\":\"" + esc(responseKey) + "\""
+                                                + ",\"data\":" + jsonValue(data) + "}");
+                                        latch.countDown();
+                                    } else {
+                                        Log.i(TAG, "RT_CORE incremental response ignored by one-shot endpoint key="
+                                                + key + " status=" + status);
+                                    }
+                                }
+                                return null;
+                            });
+
+                    clientClass.getMethod("e", callbackClass).invoke(client, callback);
+                    requestRealtimeSnapshot(client);
+                } catch (Throwable e) {
+                    startFailure.set(e);
+                } finally {
+                    requestStarted.countDown();
+                }
+            });
+
+            if (!requestStarted.await(10, TimeUnit.SECONDS)) {
+                return "{\"success\":false,\"error\":\"native request dispatch timed out\"}";
+            }
+            if (startFailure.get() != null) {
+                throw new RuntimeException(startFailure.get());
+            }
+
+            if (!latch.await(25, TimeUnit.SECONDS)) {
+                return "{\"success\":false,\"error\":\"native request timed out\"}";
+            }
+            return response.get() != null
+                    ? response.get()
+                    : "{\"success\":false,\"error\":\"native response missing\"}";
+        } catch (Throwable e) {
+            Throwable cause = e;
+            while (cause.getCause() != null && cause.getCause() != cause) {
+                cause = cause.getCause();
+            }
+            Log.e(TAG, "callNativeRealTimeData failed", cause);
+            return "{\"success\":false,\"error\":\"" + esc(cause.getClass().getName()
+                    + ": " + String.valueOf(cause.getMessage())) + "\"}";
+        } finally {
+            cleanupRealtimeSnapshotClient(requestClient.get());
+            PowerManager.WakeLock wakeLock = requestWakeLock.get();
+            if (wakeLock != null && wakeLock.isHeld()) {
+                wakeLock.release();
+            }
+            endMarketWireCapture();
+        }
+    }
+
+    private static void cleanupRealTimeDataClient(Object client) {
+        if (client == null) {
+            return;
+        }
+        CountDownLatch cleanupFinished = new CountDownLatch(1);
+        new Handler(Looper.getMainLooper()).post(() -> {
+            try {
+                client.getClass().getMethod("b").invoke(client);
+            } catch (Throwable e) {
+                Log.w(TAG, "RT_CORE client cleanup failed: " + e.getMessage());
+            } finally {
+                cleanupFinished.countDown();
+            }
+        });
+        try {
+            cleanupFinished.await(3, TimeUnit.SECONDS);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+        }
+    }
+
+    private static void requestRealtimeSnapshot(Object client) throws Exception {
+        // RealTimeDataRequestClient.d() starts both the one-shot total request and
+        // a persistent subscription. The HTTP endpoint only needs responseType=0;
+        // starting and immediately cancelling the subscription contaminates the
+        // next native request on older App builds. Invoke the wrapped total client
+        // directly while the streaming endpoint continues to use d().
+        Field totalClientField = client.getClass().getField("b");
+        Object totalClient = totalClientField.get(client);
+        if (totalClient == null) {
+            throw new IllegalStateException("realtime total client is missing");
+        }
+        Method requestMethod = totalClient.getClass().getMethod("request");
+        requestMethod.invoke(totalClient);
+        Log.i(TAG, "RT_CORE one-shot total.request client="
+                + System.identityHashCode(totalClient));
+    }
+
+    private static void cleanupRealtimeSnapshotClient(Object client) {
+        if (client == null) {
+            return;
+        }
+        CountDownLatch cleanupFinished = new CountDownLatch(1);
+        new Handler(Looper.getMainLooper()).post(() -> {
+            try {
+                Field totalClientField = client.getClass().getField("b");
+                Object totalClient = totalClientField.get(client);
+                Field subscriptionField = client.getClass().getField("c");
+                subscriptionField.setAccessible(true);
+                subscriptionField.set(client, null);
+                try {
+                    client.getClass().getField("d").set(client, null);
+                } catch (NoSuchFieldException ignored) {
+                    // Newer App builds may rename the callback field; unregistering
+                    // the total client is the transport-critical cleanup step.
+                }
+                try {
+                    client.getClass().getMethod("b").invoke(client);
+                } catch (java.lang.reflect.InvocationTargetException cleanupError) {
+                    // Both supported App versions unregister the total client before
+                    // touching the subscription member. The member is deliberately
+                    // null here, so a trailing NullPointerException is expected and
+                    // proves no native unsubscribe frame was emitted.
+                    Throwable cause = cleanupError.getCause();
+                    if (!(cause instanceof NullPointerException)) {
+                        throw cleanupError;
+                    }
+                }
+                Log.i(TAG, "RT_CORE one-shot total.unregister client="
+                        + System.identityHashCode(totalClient));
+            } catch (Throwable e) {
+                Log.w(TAG, "RT_CORE one-shot cleanup failed: " + e.getMessage());
+            } finally {
+                cleanupFinished.countDown();
+            }
+        });
+        try {
+            cleanupFinished.await(3, TimeUnit.SECONDS);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+        }
+    }
+
+    private static String callNativeUnifiedRequest(String body, ClassLoader cl) {
+        final org.json.JSONObject request;
+        try {
+            request = new org.json.JSONObject(body);
+        } catch (Throwable e) {
+            return "{\"success\":false,\"error\":\"request body must be valid JSON\"}";
+        }
+
+        String onlineId = request.optString("onlineId", "").trim();
+        int protocolId = request.optInt("protocolId", 0);
+        int pageId = request.optInt("pageId", 0);
+        String requestDic = request.optString("requestDic", "");
+        if (protocolId <= 0 || pageId <= 0) {
+            return "{\"success\":false,\"error\":\"protocolId and pageId are required\"}";
+        }
+
+        int requestType = request.optInt("requestType", 262144);
+        String compressType = request.optString("compressType", "");
+        String cancelRequestDic = request.optString("cancelRequestDic", "");
+        org.json.JSONObject reqAccount = request.optJSONObject("reqAccount");
+        int timeoutSeconds = Math.max(1, Math.min(request.optInt("timeoutSeconds", 25), 60));
+        synchronized (unifiedRequestLock) {
+            return callNativeUnifiedRequestLocked(
+                    onlineId,
+                    protocolId,
+                    pageId,
+                    requestDic,
+                    requestType,
+                    compressType,
+                    cancelRequestDic,
+                    reqAccount,
+                    timeoutSeconds,
+                    cl);
+        }
+    }
+
+    private static synchronized String callNativeRankingDebug(String body, ClassLoader cl) {
+        try {
+            org.json.JSONObject request = new org.json.JSONObject(body);
+            int frameId = request.optInt("frameId", 2312);
+            int pageId = request.optInt("pageId", 1282);
+            int bizType = request.optInt("bizType", 1);
+            int sortId = request.optInt("sortId", 34818);
+            int sortOrder = request.optInt("sortOrder", 0);
+            int rowCount = Math.max(1, Math.min(request.optInt("rowCount", 24), 50));
+            int timeoutSeconds = Math.max(1, Math.min(request.optInt("timeoutSeconds", 25), 60));
+            int requestType = request.optInt("requestType", 0);
+            String requestText = request.optString("requestText", "").trim();
+            if (requestText.isEmpty()) {
+                requestText = "startrow=0\r\nrowcount=" + rowCount
+                        + "\r\nmarketId=0\r\nsortorder=" + sortOrder
+                        + "\r\nsortid=" + sortId;
+            }
+            final String effectiveRequestText = requestText;
+            {
+                CountDownLatch callbackLatch = new CountDownLatch(1);
+                int instanceId = directMarketInstanceId.incrementAndGet();
+                directProtocolLatches.put(instanceId, callbackLatch);
+                List<org.json.JSONObject> events = java.util.Collections.synchronizedList(
+                        new ArrayList<>());
+                AtomicReference<Object> callbackResponse = new AtomicReference<>();
+                AtomicReference<Object> requestBuilder = new AtomicReference<>();
+                AtomicReference<Throwable> failure = new AtomicReference<>();
+                CountDownLatch started = new CountDownLatch(1);
+                new Handler(Looper.getMainLooper()).post(() -> {
+                    try {
+                        Object application = currentApplication();
+                        startLegacyCommunicationService(application, cl);
+                        Class<?> stuffBaseClass = cl.loadClass(
+                                "com.hexin.middleware.data.StuffBaseStruct");
+                        Class<?> requestFactoryClass = cl.loadClass("uzu");
+                        Object builder = requestFactoryClass.getMethod("a").invoke(null);
+                        requestBuilder.set(builder);
+                        Class<?> builderClass = builder.getClass();
+                        Method configure = findTableConfigureMethod(builderClass);
+                        Class<?> callbackClass = configure.getParameterTypes()[2];
+                        Object callback = Proxy.newProxyInstance(
+                                cl,
+                                new Class<?>[]{callbackClass},
+                                (proxy, method, args) -> {
+                                    if ("receive".equals(method.getName())
+                                            && args != null && args.length == 1
+                                            && args[0] != null) {
+                                        Object bridge = cl.loadClass(
+                                                "com.hexin.android.base_hummer.export.component.business."
+                                                        + "HummerUnifiedRequestBridge")
+                                                .getConstructor().newInstance();
+                                        Method transform = bridge.getClass().getDeclaredMethod(
+                                                "getResponseJsonObj",
+                                                stuffBaseClass,
+                                                int.class,
+                                                int.class,
+                                                String.class);
+                                        transform.setAccessible(true);
+                                        Object transformed = transform.invoke(
+                                                bridge, args[0], frameId, pageId, "");
+                                        callbackResponse.set(transformed);
+                                        callbackLatch.countDown();
+                                        return null;
+                                    }
+                                    if ("toString".equals(method.getName())) {
+                                        return "THSHookDirectTableCallback";
+                                    }
+                                    if ("hashCode".equals(method.getName())) {
+                                        return System.identityHashCode(proxy);
+                                    }
+                                    if ("equals".equals(method.getName())) {
+                                        return args != null && args.length == 1 && proxy == args[0];
+                                    }
+                                    return defaultValue(method.getReturnType());
+                                });
+                        configure.invoke(
+                                builder,
+                                frameId,
+                                pageId,
+                                callback,
+                                effectiveRequestText);
+                        if (requestType > 0) {
+                            builderClass.getMethod("d0", int.class).invoke(builder, requestType);
+                        }
+                        builderClass.getMethod("a0").invoke(builder);
+                    } catch (Throwable error) {
+                        failure.set(error);
+                    } finally {
+                        started.countDown();
+                    }
+                });
+                if (!started.await(10, TimeUnit.SECONDS)) {
+                    return "{\"success\":false,\"error\":\"ranking dispatch timed out\"}";
+                }
+                if (failure.get() != null) throw new RuntimeException(failure.get());
+                try {
+                    boolean callbackReceived = callbackLatch.await(
+                            timeoutSeconds, TimeUnit.SECONDS);
+                    org.json.JSONObject result = new org.json.JSONObject();
+                    Object routedResponse = callbackResponse.get();
+                    result.put("success", callbackReceived && routedResponse != null);
+                    result.put("frameId", frameId);
+                    result.put("pageId", pageId);
+                    result.put("instanceId", instanceId);
+                    result.put("requestText", effectiveRequestText);
+                    result.put("events", new org.json.JSONArray(events));
+                    if (routedResponse != null) {
+                        result.put("protocolResponse", new org.json.JSONObject(toJson(routedResponse)));
+                    } else {
+                        result.put("error", "protocol response timed out");
+                    }
+                    return result.toString();
+                } finally {
+                    cleanupNativeRankingBuilder(requestBuilder.get());
+                    directProtocolLatches.remove(instanceId);
+                    directProtocolResponses.remove(instanceId);
+                }
+            }
+        } catch (Throwable error) {
+            Throwable cause = error;
+            while (cause.getCause() != null && cause.getCause() != cause) {
+                cause = cause.getCause();
+            }
+            return "{\"success\":false,\"error\":\""
+                    + esc(cause.getClass().getName() + ": " + cause.getMessage()) + "\"}";
+        }
+    }
+
+    private static Object extractProtocolResponseFromHandle(
+            Object handle, org.json.JSONObject event) throws org.json.JSONException {
+        org.json.JSONObject accessors = new org.json.JSONObject();
+        Object best = null;
+        int bestScore = 0;
+        for (String methodName : new String[]{"c", "d", "e"}) {
+            try {
+                Method accessor = handle.getClass().getMethod(methodName);
+                if (accessor.getParameterTypes().length != 0) continue;
+                Object candidate = accessor.invoke(handle);
+                if (candidate == null) {
+                    accessors.put(methodName, org.json.JSONObject.NULL);
+                    continue;
+                }
+                int score = protocolPayloadScore(candidate);
+                org.json.JSONObject summary = new org.json.JSONObject();
+                summary.put("class", candidate.getClass().getName());
+                summary.put("payload_score", score);
+                accessors.put(methodName, summary);
+                if (score > bestScore) {
+                    best = candidate;
+                    bestScore = score;
+                }
+            } catch (Throwable error) {
+                accessors.put(methodName + "_error",
+                        error.getClass().getSimpleName() + ": " + error.getMessage());
+            }
+        }
+        event.put("handle_accessors", accessors);
+        event.put("payload_score", bestScore);
+        return bestScore > 0 ? best : null;
+    }
+
+    private static int protocolPayloadScore(Object value) {
+        if (value == null) return 0;
+        int score = 0;
+        try {
+            for (Class<?> type = value.getClass();
+                 type != null && type != Object.class;
+                 type = type.getSuperclass()) {
+                for (Field field : type.getDeclaredFields()) {
+                    field.setAccessible(true);
+                    Object fieldValue = field.get(value);
+                    if (fieldValue instanceof byte[] && ((byte[]) fieldValue).length > 0) {
+                        score += 100 + Math.min(((byte[]) fieldValue).length, 10000);
+                    } else if (fieldValue instanceof Map && !((Map<?, ?>) fieldValue).isEmpty()) {
+                        score += 50 + Math.min(((Map<?, ?>) fieldValue).size(), 100);
+                    } else if (fieldValue instanceof Collection
+                            && !((Collection<?>) fieldValue).isEmpty()) {
+                        score += 25 + Math.min(((Collection<?>) fieldValue).size(), 100);
+                    }
+                }
+            }
+        } catch (Throwable error) {
+            Log.w(TAG, "RT_PROTOCOL payload scoring failed: " + error.getMessage());
+        }
+        return score;
+    }
+
+    private static Object inspectProtocolObject(Object value) {
+        if (value == null) return org.json.JSONObject.NULL;
+        if (value instanceof byte[]) {
+            byte[] bytes = (byte[]) value;
+            org.json.JSONObject binary = new org.json.JSONObject();
+            try {
+                binary.put("length", bytes.length);
+                int inspectedLength = Math.min(bytes.length, 262144);
+                byte[] inspected = bytes;
+                if (inspectedLength != bytes.length) {
+                    inspected = java.util.Arrays.copyOf(bytes, inspectedLength);
+                    binary.put("truncated", true);
+                }
+                binary.put("base64", android.util.Base64.encodeToString(
+                        inspected, android.util.Base64.NO_WRAP));
+                String text = new String(inspected, "UTF-8");
+                if (isMostlyPrintable(text)) binary.put("utf8", text);
+            } catch (Throwable ignored) { }
+            return binary;
+        }
+        if (value instanceof Map) return inspectProtocolMap((Map<?, ?>) value);
+        if (value instanceof Collection) {
+            return inspectProtocolCollection((Collection<?>) value);
+        }
+        if (value instanceof Number || value instanceof Boolean
+                || value instanceof String) {
+            return value;
+        }
+        org.json.JSONObject result = new org.json.JSONObject();
+        try {
+            result.put("class", value.getClass().getName());
+            for (Class<?> type = value.getClass();
+                 type != null && type != Object.class;
+                 type = type.getSuperclass()) {
+                for (Field field : type.getDeclaredFields()) {
+                    try {
+                        field.setAccessible(true);
+                        Object fieldValue = field.get(value);
+                        if (fieldValue == null || fieldValue instanceof String
+                                || fieldValue instanceof Number
+                                || fieldValue instanceof Boolean) {
+                            result.put("field_" + field.getName(), fieldValue);
+                        } else if (fieldValue instanceof Map) {
+                            result.put("field_" + field.getName(),
+                                    inspectProtocolMap((Map<?, ?>) fieldValue));
+                        } else if (fieldValue instanceof Collection) {
+                            result.put("field_" + field.getName(),
+                                    inspectProtocolCollection((Collection<?>) fieldValue));
+                        } else if (fieldValue instanceof byte[]) {
+                            result.put("field_" + field.getName(),
+                                    inspectProtocolObject(fieldValue));
+                        } else {
+                            result.put("field_" + field.getName(), String.valueOf(fieldValue));
+                        }
+                    } catch (Throwable ignored) {
+                        // Continue inspecting other protocol fields.
+                    }
+                }
+            }
+        } catch (Throwable ignored) {
+            return String.valueOf(value);
+        }
+        return result;
+    }
+
+    private static org.json.JSONObject inspectProtocolMap(Map<?, ?> values) {
+        org.json.JSONObject result = new org.json.JSONObject();
+        try {
+            result.put("size", values.size());
+            org.json.JSONObject entries = new org.json.JSONObject();
+            int count = 0;
+            for (Map.Entry<?, ?> entry : values.entrySet()) {
+                if (count++ >= 100) {
+                    result.put("truncated", true);
+                    break;
+                }
+                entries.put(String.valueOf(entry.getKey()),
+                        inspectProtocolLeaf(entry.getValue()));
+            }
+            result.put("entries", entries);
+        } catch (Throwable error) {
+            try { result.put("error", error.getClass().getSimpleName()); }
+            catch (Throwable ignored) { }
+        }
+        return result;
+    }
+
+    private static org.json.JSONObject inspectProtocolCollection(Collection<?> values) {
+        org.json.JSONObject result = new org.json.JSONObject();
+        try {
+            result.put("size", values.size());
+            org.json.JSONArray items = new org.json.JSONArray();
+            int count = 0;
+            for (Object value : values) {
+                if (count++ >= 100) {
+                    result.put("truncated", true);
+                    break;
+                }
+                items.put(inspectProtocolLeaf(value));
+            }
+            result.put("items", items);
+        } catch (Throwable error) {
+            try { result.put("error", error.getClass().getSimpleName()); }
+            catch (Throwable ignored) { }
+        }
+        return result;
+    }
+
+    private static Object inspectProtocolLeaf(Object value) {
+        if (value == null) return org.json.JSONObject.NULL;
+        if (value instanceof String || value instanceof Number
+                || value instanceof Boolean || value instanceof byte[]) {
+            return inspectProtocolObject(value);
+        }
+        org.json.JSONObject summary = new org.json.JSONObject();
+        try {
+            summary.put("class", value.getClass().getName());
+            String text = String.valueOf(value);
+            summary.put("text", text.length() > 4096 ? text.substring(0, 4096) : text);
+        } catch (Throwable ignored) { }
+        return summary;
+    }
+
+    private static boolean isMostlyPrintable(String value) {
+        if (value == null || value.isEmpty()) return false;
+        int printable = 0;
+        int checked = Math.min(value.length(), 4096);
+        for (int i = 0; i < checked; i++) {
+            char ch = value.charAt(i);
+            if (ch == '\r' || ch == '\n' || ch == '\t'
+                    || (ch >= 0x20 && ch != 0x7f)) {
+                printable++;
+            }
+        }
+        return printable >= checked * 9 / 10;
+    }
+
+    private static String callNativeUnifiedRequestLocked(
+            String onlineId,
+            int protocolId,
+            int pageId,
+            String requestDic,
+            int requestType,
+            String compressType,
+            String cancelRequestDic,
+            org.json.JSONObject reqAccount,
+            int timeoutSeconds,
+            ClassLoader cl) {
+        AtomicReference<Object> bridgeRef = new AtomicReference<>();
+        AtomicReference<PowerManager.WakeLock> requestWakeLock = new AtomicReference<>();
+        beginMarketWireCapture(onlineId);
+        try {
+            CountDownLatch latch = new CountDownLatch(1);
+            CountDownLatch requestStarted = new CountDownLatch(1);
+            AtomicReference<Object> response = new AtomicReference<>();
+            AtomicReference<Throwable> startFailure = new AtomicReference<>();
+
+            new Handler(Looper.getMainLooper()).post(() -> {
+                try {
+                    Object application = currentApplication();
+                    if (application == null) {
+                        throw new IllegalStateException("Application is not ready");
+                    }
+                    Context context = (Context) application;
+                    PowerManager powerManager = (PowerManager) context.getSystemService(
+                            Context.POWER_SERVICE);
+                    PowerManager.WakeLock wakeLock = powerManager.newWakeLock(
+                            PowerManager.PARTIAL_WAKE_LOCK,
+                            "THSHook:unified-market-data");
+                    wakeLock.acquire((timeoutSeconds + 15L) * 1000L);
+                    requestWakeLock.set(wakeLock);
+                    startLegacyCommunicationService(application, cl);
+
+                    Class<?> modelClass = cl.loadClass(
+                            "com.hexin.android.base_hummer.export.component.business."
+                                    + "HummerUnifiedRequestBridge$RequestModel");
+                    Object model = modelClass.getConstructor().newInstance();
+                    setPrivateField(model, "onlineId", onlineId);
+                    setPrivateField(model, "protocolId", protocolId);
+                    setPrivateField(model, "pageId", pageId);
+                    setPrivateField(model, "requestDic", requestDic);
+                    setPrivateField(model, "requestType", requestType);
+                    setPrivateField(model, "compressType", compressType);
+                    setPrivateField(model, "cancelRequestDic", cancelRequestDic);
+                    if (reqAccount != null) {
+                        setPrivateField(model, "reqAccount", reqAccount);
+                    }
+
+                    Class<?> callbackClass = cl.loadClass("ld0");
+                    Object callback = Proxy.newProxyInstance(
+                            cl,
+                            new Class<?>[]{callbackClass},
+                            (proxy, method, args) -> {
+                                String methodName = method.getName();
+                                if ("call".equals(methodName)) {
+                                    Object callbackValue = null;
+                                    if (args != null && args.length > 0) {
+                                        callbackValue = args[0];
+                                        if (callbackValue instanceof Object[]) {
+                                            Object[] callbackArgs = (Object[]) callbackValue;
+                                            callbackValue = callbackArgs.length > 0
+                                                    ? callbackArgs[0]
+                                                    : null;
+                                        }
+                                    }
+                                    if (callbackValue != null) {
+                                        response.set(callbackValue);
+                                        latch.countDown();
+                                    }
+                                    return null;
+                                }
+                                if ("toString".equals(methodName)) {
+                                    return "THSHookUnifiedCallback";
+                                }
+                                if ("hashCode".equals(methodName)) {
+                                    return System.identityHashCode(proxy);
+                                }
+                                if ("equals".equals(methodName)) {
+                                    return args != null && args.length == 1 && proxy == args[0];
+                                }
+                                return defaultValue(method.getReturnType());
+                            });
+
+                    Class<?> bridgeClass = cl.loadClass(
+                            "com.hexin.android.base_hummer.export.component.business."
+                                    + "HummerUnifiedRequestBridge");
+                    Object bridge = bridgeClass.getConstructor().newInstance();
+                    bridgeRef.set(bridge);
+                    bridgeClass.getMethod("init", modelClass, callbackClass)
+                            .invoke(bridge, model, callback);
+                } catch (Throwable e) {
+                    startFailure.set(e);
+                } finally {
+                    requestStarted.countDown();
+                }
+            });
+
+            if (!requestStarted.await(10, TimeUnit.SECONDS)) {
+                return "{\"success\":false,\"error\":\"unified request dispatch timed out\"}";
+            }
+            if (startFailure.get() != null) {
+                throw new RuntimeException(startFailure.get());
+            }
+            if (!latch.await(timeoutSeconds, TimeUnit.SECONDS)) {
+                return "{\"success\":false,\"error\":\"unified request timed out\"}";
+            }
+
+            Object value = response.get();
+            if (value == null) {
+                return "{\"success\":false,\"error\":\"unified response missing\"}";
+            }
+            boolean success = unifiedResponseSucceeded(value);
+            return "{\"success\":" + success
+                    + ",\"onlineId\":\"" + esc(onlineId) + "\""
+                    + ",\"response\":" + toJson(value) + "}";
+        } catch (Throwable e) {
+            Throwable cause = e;
+            while (cause.getCause() != null && cause.getCause() != cause) {
+                cause = cause.getCause();
+            }
+            Log.e(TAG, "callNativeUnifiedRequest failed", cause);
+            return "{\"success\":false,\"error\":\"" + esc(cause.getClass().getName()
+                    + ": " + String.valueOf(cause.getMessage())) + "\"}";
+        } finally {
+            cleanupUnifiedRequestBridge(bridgeRef.get());
+            PowerManager.WakeLock wakeLock = requestWakeLock.get();
+            if (wakeLock != null && wakeLock.isHeld()) {
+                wakeLock.release();
+            }
+            endMarketWireCapture();
+        }
+    }
+
+    private static void cleanupUnifiedRequestBridge(Object bridge) {
+        if (bridge == null) {
+            return;
+        }
+        boolean requiresCancelDrain = unifiedCleanupRequiresCancelDrain(bridge);
+        if (Looper.myLooper() == Looper.getMainLooper()) {
+            removeUnifiedRequestBridgeNow(bridge);
+            return;
+        }
+        CountDownLatch cleanupFinished = new CountDownLatch(1);
+        new Handler(Looper.getMainLooper()).post(() -> {
+            try {
+                removeUnifiedRequestBridgeNow(bridge);
+            } finally {
+                cleanupFinished.countDown();
+            }
+        });
+        try {
+            cleanupFinished.await(3, TimeUnit.SECONDS);
+            boolean released = unifiedCleanupReleased(bridge);
+            if (!released) {
+                // Reflection is only an acknowledgement check. If an App
+                // version changes these fields, keep a short conservative
+                // fallback instead of immediately reusing the interface.
+                Thread.sleep(120L);
+                released = unifiedCleanupReleased(bridge);
+            }
+            if (requiresCancelDrain) {
+                // Only subscription-style requests have cancelRequestDic.
+                // removeRequest() unregisters the local callback/buffer
+                // synchronously, but its explicit cancel frame is asynchronous.
+                Thread.sleep(800L);
+            }
+            Log.i(TAG, "Unified cleanup ack released=" + released
+                    + " cancelDrain=" + requiresCancelDrain);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+        }
+    }
+
+    private static boolean unifiedCleanupRequiresCancelDrain(Object bridge) {
+        Object requestData = readFieldValue(bridge, "mRequestData");
+        Object value = invokeNoArg(requestData, "getCancelRequestDic");
+        return value != null && !String.valueOf(value).isEmpty();
+    }
+
+    private static boolean unifiedCleanupReleased(Object bridge) {
+        Object callback = readFieldValue(bridge, "mCallBack");
+        Object onlineFrames = readFieldValue(bridge, "mOnlineFrameids");
+        return callback == null
+                && (!(onlineFrames instanceof java.util.Collection)
+                    || ((java.util.Collection<?>) onlineFrames).isEmpty());
+    }
+
+    private static void removeUnifiedRequestBridgeNow(Object bridge) {
+        try {
+            Method removeRequest = bridge.getClass().getDeclaredMethod("removeRequest");
+            removeRequest.setAccessible(true);
+            removeRequest.invoke(bridge);
+        } catch (Throwable e) {
+            Log.w(TAG, "Unified request cleanup failed: " + e.getMessage());
+        }
+    }
+
+    private static void cleanupNativeRankingBuilder(Object builder) {
+        if (builder == null) {
+            return;
+        }
+        CountDownLatch cleanupFinished = new CountDownLatch(1);
+        new Handler(Looper.getMainLooper()).post(() -> {
+            try {
+                Method stopRequest = builder.getClass().getMethod("C");
+                stopRequest.invoke(builder);
+            } catch (Throwable e) {
+                Log.w(TAG, "Native ranking cleanup failed: " + e.getMessage());
+            } finally {
+                cleanupFinished.countDown();
+            }
+        });
+        try {
+            cleanupFinished.await(3, TimeUnit.SECONDS);
+            // C() unregisters the callback and sends its cancellation asynchronously.
+            // Keep the shared frame/page route idle until that cancellation has left
+            // the native channel, otherwise the next ranking request can lose its reply.
+            Thread.sleep(800L);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+        }
+    }
+
+    private static void setPrivateField(Object target, String fieldName, Object value)
+            throws Exception {
+        Class<?> type = target.getClass();
+        while (type != null) {
+            try {
+                Field field = type.getDeclaredField(fieldName);
+                field.setAccessible(true);
+                field.set(target, value);
+                return;
+            } catch (NoSuchFieldException ignored) {
+                type = type.getSuperclass();
+            }
+        }
+        throw new NoSuchFieldException(target.getClass().getName() + "." + fieldName);
+    }
+
+    private static Object newRealtimeRequestModel(
+            Class<?> modelClass,
+            String key,
+            String requestParam,
+            String requestChannel) throws Exception {
+        for (java.lang.reflect.Constructor<?> constructor : modelClass.getDeclaredConstructors()) {
+            Class<?>[] parameterTypes = constructor.getParameterTypes();
+            if (parameterTypes.length == 3
+                    && parameterTypes[0] == String.class
+                    && parameterTypes[1] == String.class
+                    && parameterTypes[2] == String.class) {
+                constructor.setAccessible(true);
+                return constructor.newInstance(key, requestParam, requestChannel);
+            }
+        }
+        throw new NoSuchMethodException(
+                modelClass.getName() + " constructors="
+                        + java.util.Arrays.toString(modelClass.getDeclaredConstructors()));
+    }
+
+    private static final class RealtimeClassSet {
+        private final Class<?> modelClass;
+        private final Class<?> clientClass;
+        private final Class<?> callbackClass;
+
+        private RealtimeClassSet(
+                Class<?> modelClass,
+                Class<?> clientClass,
+                Class<?> callbackClass) {
+            this.modelClass = modelClass;
+            this.clientClass = clientClass;
+            this.callbackClass = callbackClass;
+        }
+    }
+
+    private static RealtimeClassSet resolveRealtimeClassSet(ClassLoader classLoader)
+            throws ClassNotFoundException, NoSuchMethodException {
+        String[][] candidates = new String[][]{
+                {"as9", "zr9", "zr9$c"},
+                {"ro9", "qo9", "qo9$c"},
+        };
+        java.util.List<String> incompatible = new java.util.ArrayList<>();
+        ClassNotFoundException missingClass = null;
+        for (String[] names : candidates) {
+            try {
+                Class<?> modelClass = classLoader.loadClass(names[0]);
+                Class<?> clientClass = classLoader.loadClass(names[1]);
+                Class<?> callbackClass = classLoader.loadClass(names[2]);
+                if (!hasRealtimeRequestModelConstructor(modelClass)) {
+                    incompatible.add(names[0] + " constructors="
+                            + java.util.Arrays.toString(modelClass.getDeclaredConstructors()));
+                    continue;
+                }
+                if (!callbackClass.isInterface()) {
+                    incompatible.add(names[2] + " is not an interface");
+                    continue;
+                }
+                clientClass.getConstructor(modelClass);
+                clientClass.getMethod("e", callbackClass);
+                clientClass.getMethod("d");
+                Log.i(TAG, "RT_CORE resolved classes model=" + names[0]
+                        + " client=" + names[1] + " callback=" + names[2]);
+                return new RealtimeClassSet(modelClass, clientClass, callbackClass);
+            } catch (ClassNotFoundException e) {
+                missingClass = e;
+                incompatible.add(java.util.Arrays.toString(names) + " missing=" + e.getMessage());
+            } catch (NoSuchMethodException e) {
+                incompatible.add(java.util.Arrays.toString(names) + " incompatible=" + e.getMessage());
+            }
+        }
+        if (incompatible.isEmpty() && missingClass != null) {
+            throw missingClass;
+        }
+        throw new NoSuchMethodException(
+                "no coherent realtime class set; candidates=" + incompatible);
+    }
+
+    private static boolean hasRealtimeRequestModelConstructor(Class<?> modelClass) {
+        for (java.lang.reflect.Constructor<?> constructor : modelClass.getDeclaredConstructors()) {
+            Class<?>[] parameterTypes = constructor.getParameterTypes();
+            if (parameterTypes.length == 3
+                    && parameterTypes[0] == String.class
+                    && parameterTypes[1] == String.class
+                    && parameterTypes[2] == String.class) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private static Class<?> loadFirstAvailableClass(
+            ClassLoader classLoader, String... classNames) throws ClassNotFoundException {
+        ClassNotFoundException failure = null;
+        for (String className : classNames) {
+            try {
+                return classLoader.loadClass(className);
+            } catch (ClassNotFoundException e) {
+                failure = e;
+            }
+        }
+        throw new ClassNotFoundException(
+                "none of " + java.util.Arrays.toString(classNames) + " is available",
+                failure);
+    }
+
+    private static Method findTableConfigureMethod(Class<?> builderClass)
+            throws NoSuchMethodException {
+        java.util.List<Method> methods = new java.util.ArrayList<>();
+        methods.addAll(java.util.Arrays.asList(builderClass.getMethods()));
+        methods.addAll(java.util.Arrays.asList(builderClass.getDeclaredMethods()));
+        for (Method method : methods) {
+            Class<?>[] parameterTypes = method.getParameterTypes();
+            if ("H".equals(method.getName())
+                    && parameterTypes.length == 4
+                    && parameterTypes[0] == int.class
+                    && parameterTypes[1] == int.class
+                    && parameterTypes[2].isInterface()
+                    && parameterTypes[3] == String.class) {
+                method.setAccessible(true);
+                return method;
+            }
+        }
+        throw new NoSuchMethodException(
+                builderClass.getName() + ".H(int,int,callback,String), methods="
+                        + java.util.Arrays.toString(builderClass.getDeclaredMethods()));
+    }
+
+    private static Object defaultValue(Class<?> returnType) {
+        if (returnType == null || !returnType.isPrimitive() || returnType == Void.TYPE) {
+            return null;
+        }
+        if (returnType == Boolean.TYPE) return false;
+        if (returnType == Character.TYPE) return '\0';
+        if (returnType == Byte.TYPE) return (byte) 0;
+        if (returnType == Short.TYPE) return (short) 0;
+        if (returnType == Integer.TYPE) return 0;
+        if (returnType == Long.TYPE) return 0L;
+        if (returnType == Float.TYPE) return 0F;
+        if (returnType == Double.TYPE) return 0D;
+        return null;
+    }
+
+    private static boolean unifiedResponseSucceeded(Object value) {
+        if (!(value instanceof Map)) {
+            return true;
+        }
+        Object head = ((Map<?, ?>) value).get("head");
+        if (!(head instanceof Map)) {
+            return true;
+        }
+        Object errorCode = ((Map<?, ?>) head).get("errorCode");
+        return !(errorCode instanceof Number) || ((Number) errorCode).intValue() == 0;
+    }
+
+    private static String toJson(Object value) {
+        return toJson(value, 0);
+    }
+
+    private static String toJson(Object value, int depth) {
+        if (value == null || value == org.json.JSONObject.NULL) return "null";
+        if (depth >= 12) return org.json.JSONObject.quote(String.valueOf(value));
+        if (value instanceof Number || value instanceof Boolean) return String.valueOf(value);
+        if (value instanceof CharSequence || value instanceof Character) {
+            return org.json.JSONObject.quote(String.valueOf(value));
+        }
+        if (value instanceof Map) {
+            StringBuilder json = new StringBuilder("{");
+            boolean first = true;
+            for (Map.Entry<?, ?> entry : ((Map<?, ?>) value).entrySet()) {
+                if (!first) json.append(',');
+                first = false;
+                json.append(org.json.JSONObject.quote(String.valueOf(entry.getKey())))
+                        .append(':')
+                        .append(toJson(entry.getValue(), depth + 1));
+            }
+            return json.append('}').toString();
+        }
+        if (value instanceof Collection) {
+            StringBuilder json = new StringBuilder("[");
+            boolean first = true;
+            for (Object item : (Collection<?>) value) {
+                if (!first) json.append(',');
+                first = false;
+                json.append(toJson(item, depth + 1));
+            }
+            return json.append(']').toString();
+        }
+        if (value.getClass().isArray()) {
+            StringBuilder json = new StringBuilder("[");
+            int length = java.lang.reflect.Array.getLength(value);
+            for (int i = 0; i < length; i++) {
+                if (i > 0) json.append(',');
+                json.append(toJson(java.lang.reflect.Array.get(value, i), depth + 1));
+            }
+            return json.append(']').toString();
+        }
+        return org.json.JSONObject.quote(String.valueOf(value));
+    }
+
+    private static Object currentApplication() throws Exception {
+        if (appInstance != null) {
+            return appInstance;
+        }
+        Class<?> activityThread = Class.forName("android.app.ActivityThread");
+        Object application = activityThread.getMethod("currentApplication").invoke(null);
+        if (application instanceof Application) {
+            appInstance = (Application) application;
+        }
+        return application;
+    }
+
+    private static ClassLoader resolveAppClassLoader(ClassLoader fallback) {
+        try {
+            Object application = currentApplication();
+            if (application instanceof Application) {
+                ClassLoader current = ((Application) application).getClassLoader();
+                if (current != null) {
+                    appClassLoader = current;
+                    return current;
+                }
+            }
+        } catch (Throwable e) {
+            Log.w(TAG, "App ClassLoader is not ready: " + e.getMessage());
+        }
+        return appClassLoader != null ? appClassLoader : fallback;
+    }
+
+    private static void hookRealTimeDataCore(ClassLoader cl) {
+        if (!realTimeDataCoreHooked.compareAndSet(false, true)) {
+            return;
+        }
+        try {
+            Class<?> requestModelClass = cl.loadClass("ro9");
+            for (java.lang.reflect.Constructor<?> constructor
+                    : requestModelClass.getDeclaredConstructors()) {
+                Pine.hook(constructor, new MethodHook() {
+                    @Override public void afterCall(Pine.CallFrame callFrame) {
+                        Log.i(TAG, "RT_MODEL "
+                                + describeObjectFields(callFrame.thisObject, 20000));
+                    }
+                });
+            }
+            Class<?> totalClientClass = cl.loadClass("uo9");
+            Method totalRequest = totalClientClass.getDeclaredMethod("request");
+            Method totalReceive = totalClientClass.getDeclaredMethod(
+                    "receive", cl.loadClass("com.hexin.middleware.data.StuffBaseStruct"));
+            Pine.hook(totalRequest, new MethodHook() {
+                @Override public void beforeCall(Pine.CallFrame callFrame) {
+                    Log.i(TAG, "RT_CORE total.request client="
+                            + System.identityHashCode(callFrame.thisObject));
+                }
+            });
+            Pine.hook(totalReceive, new MethodHook() {
+                @Override public void beforeCall(Pine.CallFrame callFrame) {
+                    Log.i(TAG, "RT_CORE total.receive client="
+                            + System.identityHashCode(callFrame.thisObject));
+                }
+            });
+
+            Class<?> subscriptionClass = cl.loadClass("to9");
+            Method subscriptionRequest = subscriptionClass.getDeclaredMethod("request");
+            Method subscriptionReceive = subscriptionClass.getDeclaredMethod(
+                    "receive", cl.loadClass("com.hexin.middleware.data.StuffBaseStruct"));
+            Pine.hook(subscriptionRequest, new MethodHook() {
+                @Override public void beforeCall(Pine.CallFrame callFrame) {
+                    Log.i(TAG, "RT_CORE subscription.request client="
+                            + System.identityHashCode(callFrame.thisObject));
+                }
+            });
+            Pine.hook(subscriptionReceive, new MethodHook() {
+                @Override public void beforeCall(Pine.CallFrame callFrame) {
+                    Log.i(TAG, "RT_CORE subscription.receive client="
+                            + System.identityHashCode(callFrame.thisObject));
+                }
+            });
+            Log.i(TAG, "RT_CORE hooks installed");
+        } catch (Throwable e) {
+            realTimeDataCoreHooked.set(false);
+            Log.e(TAG, "RT_CORE hook install failed", e);
+        }
+    }
+
+    private static void hookMarketProtocolBoundary(ClassLoader cl) {
+        if (!marketProtocolBoundaryHooked.compareAndSet(false, true)) {
+            return;
+        }
+        try {
+            Class<?> builderClass = cl.loadClass("ryu");
+            Class<?> callbackClass = cl.loadClass("ivu");
+            Method configure = builderClass.getDeclaredMethod(
+                    "H", int.class, int.class, callbackClass, String.class);
+            Method configureWithoutCallback = builderClass.getDeclaredMethod(
+                    "G", int.class, int.class, int.class, String.class);
+            Method requestType = builderClass.getDeclaredMethod("d0", int.class);
+            Method dispatch = builderClass.getDeclaredMethod("a0");
+
+            Pine.hook(configure, new MethodHook() {
+                @Override public void beforeCall(Pine.CallFrame callFrame) {
+                    String payload = callFrame.args[3] == null
+                            ? "null"
+                            : redactProtocolText(String.valueOf(callFrame.args[3]));
+                    Log.i(TAG, "RT_PROTOCOL configure builder="
+                            + System.identityHashCode(callFrame.thisObject)
+                            + " frame=" + callFrame.args[0]
+                            + " page=" + callFrame.args[1]
+                            + " payload=" + payload);
+                }
+            });
+            Pine.hook(configureWithoutCallback, new MethodHook() {
+                @Override public void beforeCall(Pine.CallFrame callFrame) {
+                    directMarketInstanceId.accumulateAndGet(
+                            ((Number) callFrame.args[2]).intValue(),
+                            Math::max);
+                    String payload = callFrame.args[3] == null
+                            ? "null"
+                            : redactProtocolText(String.valueOf(callFrame.args[3]));
+                    Log.i(TAG, "RT_PROTOCOL configureDirect builder="
+                            + System.identityHashCode(callFrame.thisObject)
+                            + " frame=" + callFrame.args[0]
+                            + " page=" + callFrame.args[1]
+                            + " arg2=" + callFrame.args[2]
+                            + " payload=" + payload);
+                }
+
+                @Override public void afterCall(Pine.CallFrame callFrame) {
+                    Log.i(TAG, "RT_PROTOCOL configureDirect state="
+                            + describeObjectFields(callFrame.thisObject, 16000));
+                    if (((Number) callFrame.args[1]).intValue() == 1282) {
+                        logClassShape(callFrame.thisObject.getClass());
+                        logObjectFieldTypes(callFrame.thisObject);
+                    }
+                }
+            });
+            Pine.hook(requestType, new MethodHook() {
+                @Override public void beforeCall(Pine.CallFrame callFrame) {
+                    Log.i(TAG, "RT_PROTOCOL requestType builder="
+                            + System.identityHashCode(callFrame.thisObject)
+                            + " type=" + callFrame.args[0]);
+                }
+            });
+            Pine.hook(dispatch, new MethodHook() {
+                @Override public void beforeCall(Pine.CallFrame callFrame) {
+                    Log.i(TAG, "RT_PROTOCOL dispatch builder="
+                            + System.identityHashCode(callFrame.thisObject));
+                }
+            });
+            logClassShape(builderClass);
+            Class<?> routerClass = cl.loadClass("mzu");
+            logClassShape(routerClass);
+            hookDirectProtocolRouter(routerClass, cl.loadClass("mqu"));
+            logClassShape(cl.loadClass("qmu"));
+            logClassShape(cl.loadClass("mqu"));
+            logClassShape(cl.loadClass("pmu"));
+            Class<?> directBuilderClass = cl.loadClass("hzu");
+            logClassShape(directBuilderClass);
+            for (java.lang.reflect.Constructor<?> constructor
+                    : directBuilderClass.getDeclaredConstructors()) {
+                Pine.hook(constructor, new MethodHook() {
+                    @Override public void beforeCall(Pine.CallFrame callFrame) {
+                        Log.i(TAG, "RT_PROTOCOL hzu.constructor args="
+                                + java.util.Arrays.toString(callFrame.args));
+                    }
+                });
+            }
+            Method directComplete = directBuilderClass.getDeclaredMethod("o", int.class);
+            Pine.hook(directComplete, new MethodHook() {
+                @Override public void beforeCall(Pine.CallFrame callFrame) {
+                    Log.i(TAG, "RT_PROTOCOL hzu.complete status=" + callFrame.args[0]
+                            + " state=" + describeObjectFields(callFrame.thisObject, 20000));
+                }
+            });
+            Log.i(TAG, "RT_PROTOCOL boundary hooks installed");
+        } catch (Throwable e) {
+            marketProtocolBoundaryHooked.set(false);
+            Log.e(TAG, "RT_PROTOCOL boundary hook install failed", e);
+        }
+    }
+
+    private static void hookStuffTableReads(ClassLoader cl) {
+        if (!stuffTableReadHooked.compareAndSet(false, true)) {
+            return;
+        }
+        try {
+            Class<?> tableClass = cl.loadClass("com.hexin.middleware.data.mobile.StuffTableStruct");
+            Method getDataTable = tableClass.getDeclaredMethod("getDataTable");
+            Pine.hook(getDataTable, new MethodHook() {
+                @Override public void afterCall(Pine.CallFrame callFrame) {
+                    Object data = callFrame.getResult();
+                    if (data == null) return;
+                    appendStuffTableCapture(callFrame.thisObject, data);
+                }
+            });
+            Log.i(TAG, "TABLE_CAPTURE StuffTableStruct.getDataTable hook installed");
+        } catch (Throwable e) {
+            stuffTableReadHooked.set(false);
+            Log.e(TAG, "TABLE_CAPTURE hook install failed", e);
+        }
+    }
+
+    private static void hookIndicatorQueries(ClassLoader cl) {
+        if (!indicatorQueryManagerHooked.compareAndSet(false, true)) return;
+        try {
+            Class<?> managerClass = cl.loadClass(
+                    "com.hexin.android.biz_securities_indicator_fetcher_api.IndicatorManager");
+            Field instanceField = managerClass.getField("INSTANCE");
+            Object manager = instanceField.get(null);
+            Method getService = managerClass.getMethod("getIndicatorDataService");
+            Object service = getService.invoke(manager);
+            if (service == null) throw new IllegalStateException("IndicatorDataService is null");
+            for (String modelClassName : new String[]{
+                    "com.hexin.android.biz_securities_indicator_fetcher_model.QueryParam",
+                    "com.hexin.android.biz_securities_indicator_fetcher_model.Range",
+                    "com.hexin.android.biz_securities_indicator_fetcher_model.Indicator",
+                    "com.hexin.android.biz_securities_indicator_fetcher_model.HurricaneIndicator",
+                    "com.hexin.android.biz_securities_indicator_fetcher_model.securities_source.HurricaneSecuritiesSource",
+                    "com.hexin.android.biz_securities_indicator_fetcher_model.securities_source.HurricaneCodeSelectors"
+            }) {
+                try {
+                    logClassShape(cl.loadClass(modelClassName));
+                } catch (Throwable shapeError) {
+                    Log.w(TAG, "INDICATOR_CAPTURE class shape unavailable " + modelClassName
+                            + ": " + shapeError.getMessage());
+                }
+            }
+            for (String modelClassName : new String[]{
+                    "com.hexin.android.biz_securities_indicator_fetcher_model.QueryParam",
+                    "com.hexin.android.biz_securities_indicator_fetcher_model.securities_source.HurricaneSecuritiesSource",
+                    "com.hexin.android.biz_securities_indicator_fetcher_model.securities_source.HurricaneCodeSelectors"
+            }) {
+                hookIndicatorModelConstructors(cl, modelClassName);
+            }
+            int hooked = 0;
+            for (Method method : service.getClass().getMethods()) {
+                if (!method.getName().startsWith("obtainClient")) continue;
+                String key = method.toGenericString();
+                if (hookedIndicatorClientMethods.putIfAbsent(key, true) != null) continue;
+                Pine.hook(method, new MethodHook() {
+                    @Override public void afterCall(Pine.CallFrame callFrame) {
+                        Object client = callFrame.getResult();
+                        if (client == null) return;
+                        hookIndicatorClientClass(client.getClass());
+                        appendIndicatorCapture("client", null,
+                                "method=" + method.getName()
+                                        + " args=" + java.util.Arrays.toString(callFrame.args)
+                                        + " class=" + client.getClass().getName());
+                    }
+                });
+                hooked++;
+            }
+            Log.i(TAG, "INDICATOR_CAPTURE manager=" + service.getClass().getName()
+                    + " obtain_methods=" + hooked);
+        } catch (Throwable e) {
+            indicatorQueryManagerHooked.set(false);
+            throw new IllegalStateException("Indicator QueryClient hook failed", e);
+        }
+    }
+
+    private static String callNativeHurricaneQuery(String body, ClassLoader cl) {
+        CountDownLatch latch = new CountDownLatch(1);
+        AtomicReference<String> result = new AtomicReference<>();
+        AtomicReference<String> error = new AtomicReference<>();
+        java.util.concurrent.atomic.AtomicLong callbackVersion =
+                new java.util.concurrent.atomic.AtomicLong(0L);
+        AtomicReference<org.json.JSONObject> mergedData =
+                new AtomicReference<>(new org.json.JSONObject());
+        StringBuilder rawTables = new StringBuilder();
+        try {
+            org.json.JSONObject request = body == null || body.trim().isEmpty()
+                    ? new org.json.JSONObject() : new org.json.JSONObject(body);
+            int frameId = request.optInt("frame_id", 2312);
+            int start = request.optInt("start", 0);
+            int count = request.optInt("count", 5);
+            String sortId = request.has("sort_indicator_id")
+                    && request.isNull("sort_indicator_id")
+                    ? null
+                    : request.optString(
+                            "sort_indicator_id", "ths-hot-data-minute-attention-rate");
+            String orderName = request.has("order") && request.isNull("order")
+                    ? null : request.optString("order", "DESCENDING");
+            if ("null".equalsIgnoreCase(sortId)) {
+                sortId = "";
+            }
+            if ("null".equalsIgnoreCase(orderName)) {
+                orderName = "";
+            }
+            String httpSourceId = request.optString("http_source_id", "AStockSector");
+            java.util.List<String> hurricaneIds = jsonStringList(
+                    request.optJSONArray("hurricane_ids"), "cn_concept");
+            java.util.List<String> hurricaneIndicatorIds = jsonStringList(
+                    request.optJSONArray("hurricane_indicator_ids"), sortId);
+            java.util.List<String> mobileIndicatorIds = jsonStringList(
+                    request.optJSONArray("mobile_indicator_ids"), "34818");
+            java.util.List<String> configuredRequiredMobileIndicatorIds = jsonStringList(
+                    request.optJSONArray("required_mobile_indicator_ids"), null);
+            final java.util.List<String> requiredMobileIndicatorIds =
+                    configuredRequiredMobileIndicatorIds.isEmpty()
+                            ? mobileIndicatorIds
+                            : configuredRequiredMobileIndicatorIds;
+            java.util.List<String> configuredRequiredHurricaneIndicatorIds = jsonStringList(
+                    request.optJSONArray("required_hurricane_indicator_ids"), null);
+            final java.util.List<String> requiredHurricaneIndicatorIds =
+                    configuredRequiredHurricaneIndicatorIds.isEmpty()
+                            ? hurricaneIndicatorIds
+                            : configuredRequiredHurricaneIndicatorIds;
+            final boolean requireAllRows = "all_required_rows".equals(
+                    request.optString("completion_mode", ""));
+            long settleMs = Math.max(50L, request.optLong("settle_ms", 300L));
+
+            java.util.List<Object> explicitSecurities = new ArrayList<>();
+            org.json.JSONArray securitiesJson = request.optJSONArray("securities");
+            if (securitiesJson != null) {
+                Class<?> securityClass = cl.loadClass(
+                        "com.hexin.android.biz_quote_base_api.Security");
+                java.lang.reflect.Constructor<?> securityConstructor =
+                        securityClass.getDeclaredConstructor(
+                                String.class, String.class, String.class);
+                securityConstructor.setAccessible(true);
+                for (int i = 0; i < securitiesJson.length(); i++) {
+                    org.json.JSONObject security = securitiesJson.optJSONObject(i);
+                    if (security == null) continue;
+                    String code = security.optString("code", "");
+                    String market = security.optString("market", "");
+                    if (code.isEmpty() || market.isEmpty()) continue;
+                    explicitSecurities.add(securityConstructor.newInstance(
+                            code,
+                            market,
+                            security.optString("name", "")));
+                }
+            }
+
+            Class<?> indicatorClass = cl.loadClass(
+                    "com.hexin.android.biz_securities_indicator_fetcher_model.Indicator");
+            Class<?> hurricaneIndicatorClass = cl.loadClass(
+                    "com.hexin.android.biz_securities_indicator_fetcher_model.HurricaneIndicator");
+            Class<?> formatterClass = cl.loadClass(
+                    "com.hexin.android.biz_securities_indicator_fetcher_model.DataFormatter");
+            java.util.List<Object> indicators = new ArrayList<>();
+            java.lang.reflect.Constructor<?> indicatorConstructor = indicatorClass.getConstructor(
+                    String.class, String.class, Long.class, formatterClass);
+            for (String indicatorId : mobileIndicatorIds) {
+                indicators.add(indicatorConstructor.newInstance(
+                        indicatorId, "Mobilehq1264DataSource", null, null));
+            }
+            java.lang.reflect.Constructor<?> hurricaneIndicatorConstructor =
+                    hurricaneIndicatorClass.getConstructor(String.class, String.class,
+                            String.class, String.class, Map.class, Long.class, formatterClass);
+            for (String indicatorId : hurricaneIndicatorIds) {
+                indicators.add(hurricaneIndicatorConstructor.newInstance(
+                        indicatorId, "HurricaneDataSource", null, null, null, null, null));
+            }
+
+            Class<?> rangeClass = cl.loadClass(
+                    "com.hexin.android.biz_securities_indicator_fetcher_model.Range");
+            Object range = rangeClass.getConstructor(int.class, int.class).newInstance(start, count);
+            Class<?> hurricaneTypeClass = cl.loadClass(
+                    "com.hexin.android.biz_securities_indicator_fetcher_model.securities_source.HurricaneType");
+            Class<?> orderClass = cl.loadClass(
+                    "com.hexin.android.biz_securities_indicator_fetcher_model.Order");
+            boolean hasHurricaneType = request.has("hurricane_type");
+            String hurricaneTypeName = hasHurricaneType && !request.isNull("hurricane_type")
+                    ? request.optString("hurricane_type", "")
+                    : null;
+            Object hurricaneType;
+            if (!hasHurricaneType) {
+                hurricaneType = java.lang.Enum.valueOf(
+                        (Class) hurricaneTypeClass, "TAG");
+            } else if (hurricaneTypeName == null || hurricaneTypeName.isEmpty()
+                    || "null".equalsIgnoreCase(hurricaneTypeName)) {
+                hurricaneType = null;
+            } else {
+                hurricaneType = java.lang.Enum.valueOf(
+                        (Class) hurricaneTypeClass, hurricaneTypeName);
+            }
+            Object order = orderName == null || orderName.isEmpty()
+                    ? null : java.lang.Enum.valueOf((Class) orderClass, orderName);
+            Class<?> selectorsClass = cl.loadClass(
+                    "com.hexin.android.biz_securities_indicator_fetcher_model.securities_source.HurricaneCodeSelectors");
+            Object selectors;
+            org.json.JSONObject selectorsJson = request.optJSONObject("selectors");
+            if (selectorsJson == null || selectorsJson.length() == 0) {
+                selectors = selectorsClass.getConstructor().newInstance();
+            } else {
+                Class<?> gsonClass = cl.loadClass("com.google.gson.Gson");
+                Object gson = gsonClass.getConstructor().newInstance();
+                selectors = gsonClass.getMethod("fromJson", String.class, Class.class)
+                        .invoke(gson, selectorsJson.toString(), selectorsClass);
+                if (selectors == null) {
+                    throw new IllegalArgumentException("Unable to decode Hurricane selectors");
+                }
+                hydrateHurricaneSelectorTypes(selectors, selectorsJson);
+            }
+            Class<?> sourceClass = cl.loadClass(
+                    "com.hexin.android.biz_securities_indicator_fetcher_model.securities_source.HurricaneSecuritiesSource");
+            Object source = null;
+            if (explicitSecurities.isEmpty()) {
+                source = sourceClass.getConstructor(hurricaneTypeClass, List.class,
+                                String.class, orderClass, String.class, Long.class,
+                                String.class, selectorsClass)
+                        .newInstance(hurricaneType, hurricaneIds, sortId, order,
+                                httpSourceId, null, null, selectors);
+            }
+            Class<?> securitiesSourceClass = cl.loadClass(
+                    "com.hexin.android.biz_securities_indicator_fetcher_model.securities_source.SecuritiesSource");
+            Class<?> sortIndicatorClass = cl.loadClass(
+                    "com.hexin.android.biz_securities_indicator_fetcher_model.SortIndicator");
+            Class<?> queryParamClass = cl.loadClass(
+                    "com.hexin.android.biz_securities_indicator_fetcher_model.QueryParam");
+            Object queryParam = queryParamClass.getConstructor(List.class, List.class,
+                    sortIndicatorClass, rangeClass, securitiesSourceClass)
+                    .newInstance(explicitSecurities, indicators, null, range, source);
+
+            Class<?> managerClass = cl.loadClass(
+                    "com.hexin.android.biz_securities_indicator_fetcher_api.IndicatorManager");
+            Object manager = managerClass.getField("INSTANCE").get(null);
+            Object service = managerClass.getMethod("getIndicatorDataService").invoke(manager);
+            Method obtainClient = null;
+            for (Method candidate : service.getClass().getMethods()) {
+                if ("obtainClient".equals(candidate.getName())
+                        && candidate.getParameterTypes().length == 2
+                        && candidate.getParameterTypes()[0] == int.class) {
+                    obtainClient = candidate;
+                    break;
+                }
+            }
+            if (obtainClient == null) throw new NoSuchMethodException("obtainClient(int, Function1)");
+            Object client = obtainClient.invoke(service, frameId, null);
+            if (client == null) throw new IllegalStateException("QueryClient is null");
+            Class<?> callbackClass = cl.loadClass(
+                    "com.hexin.android.biz_securities_indicator_fetcher_api.QueryCallback");
+            Object callback = Proxy.newProxyInstance(cl, new Class[]{callbackClass},
+                    (proxy, method, args) -> {
+                        if ("onNext".equals(method.getName()) && args != null && args.length > 0) {
+                            Object table = args[0];
+                            logIndicatorResultShape(table);
+                            String tableDetail = describeObjectFields(table, 120000);
+                            synchronized (mergedData) {
+                                mergeIndicatorTableData(
+                                        mergedData.get(), indicatorTableToJson(table));
+                                if (request.optBoolean("include_raw", false)) {
+                                    if (rawTables.length() > 0) rawTables.append("\n---\n");
+                                    rawTables.append(tableDetail);
+                                }
+                                org.json.JSONObject responsePayload = new org.json.JSONObject();
+                                responsePayload.put("success", true);
+                                responsePayload.put("query", String.valueOf(queryParam));
+                                responsePayload.put("data", mergedData.get());
+                                if (request.optBoolean("include_raw", false)) {
+                                    responsePayload.put("raw_table", rawTables.toString());
+                                }
+                                result.set(responsePayload.toString());
+                            }
+                            int expectedRows = expectedIndicatorRowCount(
+                                    mergedData.get(), start, count, explicitSecurities.size());
+                            boolean complete = requireAllRows
+                                    ? containsIndicatorValuesForRows(
+                                            mergedData.get(), requiredMobileIndicatorIds,
+                                            expectedRows)
+                                            && containsIndicatorValuesForRows(
+                                            mergedData.get(), requiredHurricaneIndicatorIds,
+                                            expectedRows)
+                                    : containsIndicatorValues(
+                                            mergedData.get(), requiredMobileIndicatorIds)
+                                            && containsIndicatorValues(
+                                            mergedData.get(), requiredHurricaneIndicatorIds);
+                            if (complete) {
+                                latch.countDown();
+                            } else if (requireAllRows) {
+                                // Completion is driven by row coverage. Slow
+                                // networks keep delivering callbacks until the
+                                // request timeout instead of racing a quiet timer.
+                            } else if (!explicitSecurities.isEmpty()
+                                    && indicatorRowCount(mergedData.get())
+                                            >= explicitSecurities.size()
+                                    && containsIndicatorValues(
+                                            mergedData.get(), requiredMobileIndicatorIds)) {
+                                // Some snapshot indicators, notably speed
+                                // after market close, legitimately produce no
+                                // value while the live client keeps emitting
+                                // other updates. Once every requested security
+                                // and required field has arrived, give optional
+                                // fields one bounded final window instead of
+                                // resetting the quiet timer forever.
+                                new Handler(Looper.getMainLooper()).postDelayed(
+                                        latch::countDown, settleMs);
+                            } else {
+                                long currentVersion = callbackVersion.incrementAndGet();
+                                new Handler(Looper.getMainLooper()).postDelayed(() -> {
+                                    if (callbackVersion.get() == currentVersion
+                                            && result.get() != null) {
+                                        latch.countDown();
+                                    }
+                                }, settleMs);
+                            }
+                        } else if ("onError".equals(method.getName())) {
+                            String callbackError = args == null
+                                    ? "unknown" : java.util.Arrays.toString(args);
+                            Log.w(TAG, "INDICATOR_DIRECT onError frameId="
+                                    + frameId + " error=" + callbackError);
+                            error.set(callbackError);
+                            latch.countDown();
+                        }
+                        return null;
+                    });
+            Method query = client.getClass().getMethod("query", queryParamClass, callbackClass);
+            Handler mainHandler = new Handler(Looper.getMainLooper());
+            Object finalClient = client;
+            mainHandler.post(() -> {
+                try {
+                    query.invoke(finalClient, queryParam, callback);
+                } catch (Throwable invokeError) {
+                    error.set(String.valueOf(invokeError));
+                    latch.countDown();
+                }
+            });
+            boolean completed = latch.await(
+                    request.optLong("timeout_ms", 30000L), TimeUnit.MILLISECONDS);
+            String response;
+            if (!completed) {
+                if (requireAllRows) {
+                    org.json.JSONObject timeoutPayload = new org.json.JSONObject();
+                    timeoutPayload.put("success", false);
+                    timeoutPayload.put("error", "timeout_incomplete_rows");
+                    timeoutPayload.put("query", String.valueOf(queryParam));
+                    timeoutPayload.put("data", mergedData.get());
+                    response = timeoutPayload.toString();
+                } else {
+                    response = result.get() != null
+                            ? result.get()
+                            : "{\"success\":false,\"error\":\"timeout\",\"query\":\""
+                                    + esc(String.valueOf(queryParam)) + "\"}";
+                }
+            } else {
+                int expectedRows = expectedIndicatorRowCount(
+                        mergedData.get(), start, count, explicitSecurities.size());
+                boolean hasRequiredRows = containsIndicatorValuesForRows(
+                        mergedData.get(), requiredMobileIndicatorIds, expectedRows)
+                        && containsIndicatorValuesForRows(
+                                mergedData.get(), requiredHurricaneIndicatorIds,
+                                expectedRows);
+                if (requireAllRows && !hasRequiredRows) {
+                    org.json.JSONObject incompletePayload = new org.json.JSONObject();
+                    incompletePayload.put("success", false);
+                    incompletePayload.put(
+                            "error",
+                            error.get() == null
+                                    ? "incomplete_required_rows"
+                                    : "callback_error_incomplete_rows: " + error.get());
+                    incompletePayload.put("query", String.valueOf(queryParam));
+                    incompletePayload.put("data", mergedData.get());
+                    response = incompletePayload.toString();
+                } else {
+                    response = result.get() != null
+                            ? result.get()
+                            : "{\"success\":false,\"error\":\""
+                                    + esc(error.get()) + "\"}";
+                }
+            }
+
+            // The native page cancels its QueryClient when the page/query
+            // lifecycle ends. A bridge request must do the same before frame
+            // 2312 is reused, otherwise stale callbacks remain registered and
+            // later refreshes intermittently lose their response.
+            CountDownLatch cancelLatch = new CountDownLatch(1);
+            mainHandler.post(() -> {
+                try {
+                    finalClient.getClass().getMethod("cancel").invoke(finalClient);
+                } catch (Throwable cancelError) {
+                    Log.w(TAG, "INDICATOR_DIRECT cancel failed: "
+                            + cancelError.getMessage());
+                } finally {
+                    cancelLatch.countDown();
+                }
+            });
+            cancelLatch.await(2000L, TimeUnit.MILLISECONDS);
+            // QueryClient.cancel() only schedules the native unsubscribe work
+            // on the App side.  The main-thread invocation returning does not
+            // mean frame 2312 is reusable yet.  Without this drain window the
+            // next Unified request can install its callback while Hurricane's
+            // late cancel/callback is still in flight, causing the first
+            // request after a Hurricane query to lose its response.
+            Thread.sleep(800L);
+            return response;
+        } catch (Throwable e) {
+            Log.e(TAG, "INDICATOR_DIRECT request failed", e);
+            return "{\"success\":false,\"error\":\"" + esc(String.valueOf(e)) + "\"}";
+        }
+    }
+
+    private static java.util.List<String> jsonStringList(
+            org.json.JSONArray values, String defaultValue) {
+        java.util.List<String> result = new ArrayList<>();
+        if (values != null) {
+            for (int i = 0; i < values.length(); i++) {
+                String value = values.optString(i, null);
+                if (value != null && !value.isEmpty()) result.add(value);
+            }
+        }
+        if (values == null && defaultValue != null && !defaultValue.isEmpty()) {
+            result.add(defaultValue);
+        }
+        return result;
+    }
+
+    private static void hydrateHurricaneSelectorTypes(
+            Object selectors, org.json.JSONObject selectorsJson) throws Exception {
+        String[] groups = new String[]{"include", "exclude", "intersection"};
+        for (String group : groups) {
+            org.json.JSONArray specs = selectorsJson.optJSONArray(group);
+            if (specs == null || specs.length() == 0) continue;
+            String getterName = "get" + Character.toUpperCase(group.charAt(0))
+                    + group.substring(1);
+            Object rawItems = selectors.getClass().getMethod(getterName).invoke(selectors);
+            if (!(rawItems instanceof java.util.List)) continue;
+            java.util.List<?> items = (java.util.List<?>) rawItems;
+            for (int i = 0; i < items.size() && i < specs.length(); i++) {
+                Object selector = items.get(i);
+                org.json.JSONObject spec = specs.optJSONObject(i);
+                if (selector == null || spec == null) continue;
+                java.lang.reflect.Field typeField = null;
+                Class<?> current = selector.getClass();
+                while (current != null && typeField == null) {
+                    try {
+                        typeField = current.getDeclaredField("type");
+                    } catch (NoSuchFieldException ignored) {
+                        current = current.getSuperclass();
+                    }
+                }
+                if (typeField == null) {
+                    throw new NoSuchFieldException(
+                            selector.getClass().getName() + ".type");
+                }
+                typeField.setAccessible(true);
+                if (typeField.get(selector) != null) continue;
+                String typeName = spec.optString("type", "");
+                if (typeName.isEmpty()) continue;
+                Class<?> typeClass = typeField.getType();
+                Object typeValue;
+                if (typeClass.isEnum()) {
+                    typeValue = java.lang.Enum.valueOf((Class) typeClass, typeName);
+                } else if (typeClass == String.class) {
+                    typeValue = typeName;
+                } else {
+                    java.lang.reflect.Field constant = typeClass.getField(typeName);
+                    typeValue = constant.get(null);
+                }
+                typeField.set(selector, typeValue);
+            }
+        }
+    }
+
+    private static String indicatorTableValues(Object table) {
+        if (table == null) return "";
+        try {
+            Method getValue = table.getClass().getMethod("getValue");
+            return String.valueOf(getValue.invoke(table));
+        } catch (Throwable ignored) {
+            return String.valueOf(table);
+        }
+    }
+
+    private static void mergeIndicatorTableData(
+            org.json.JSONObject target, org.json.JSONObject incoming) {
+        int total = Math.max(target.optInt("total", 0), incoming.optInt("total", 0));
+        try {
+            target.put("total", total);
+            org.json.JSONArray currentRows = target.optJSONArray("rows");
+            if (currentRows == null) {
+                currentRows = new org.json.JSONArray();
+                target.put("rows", currentRows);
+            }
+            Map<String, org.json.JSONObject> bySecurity = new java.util.LinkedHashMap<>();
+            for (int i = 0; i < currentRows.length(); i++) {
+                org.json.JSONObject row = currentRows.optJSONObject(i);
+                if (row != null) bySecurity.put(indicatorSecurityKey(row), row);
+            }
+            org.json.JSONArray incomingRows = incoming.optJSONArray("rows");
+            if (incomingRows != null) {
+                for (int i = 0; i < incomingRows.length(); i++) {
+                    org.json.JSONObject next = incomingRows.optJSONObject(i);
+                    if (next == null) continue;
+                    String key = indicatorSecurityKey(next);
+                    org.json.JSONObject existing = bySecurity.get(key);
+                    if (existing == null) {
+                        currentRows.put(next);
+                        bySecurity.put(key, next);
+                        continue;
+                    }
+                    if (existing.isNull("name")
+                            || existing.optString("name", "").isEmpty()) {
+                        existing.put("name", next.opt("name"));
+                    }
+                    org.json.JSONObject existingIndicators = existing.optJSONObject("indicators");
+                    if (existingIndicators == null) {
+                        existingIndicators = new org.json.JSONObject();
+                        existing.put("indicators", existingIndicators);
+                    }
+                    org.json.JSONObject nextIndicators = next.optJSONObject("indicators");
+                    if (nextIndicators != null) {
+                        java.util.Iterator<String> keys = nextIndicators.keys();
+                        while (keys.hasNext()) {
+                            String indicatorId = keys.next();
+                            existingIndicators.put(indicatorId, nextIndicators.opt(indicatorId));
+                        }
+                    }
+                }
+            }
+        } catch (Throwable e) {
+            Log.w(TAG, "INDICATOR_DIRECT merge failed: " + e.getMessage());
+        }
+    }
+
+    private static String indicatorSecurityKey(org.json.JSONObject row) {
+        return row.optString("market", "") + ":" + row.optString("code", "");
+    }
+
+    private static boolean containsIndicatorValues(
+            org.json.JSONObject data, java.util.List<String> indicatorIds) {
+        if (indicatorIds == null || indicatorIds.isEmpty()) return true;
+        org.json.JSONArray rows = data.optJSONArray("rows");
+        if (rows == null || rows.length() == 0) return false;
+        for (String indicatorId : indicatorIds) {
+            boolean found = false;
+            for (int i = 0; i < rows.length(); i++) {
+                org.json.JSONObject row = rows.optJSONObject(i);
+                org.json.JSONObject indicators = row == null
+                        ? null : row.optJSONObject("indicators");
+                if (indicators != null && indicators.has(indicatorId)) {
+                    found = true;
+                    break;
+                }
+            }
+            if (!found) return false;
+        }
+        return true;
+    }
+
+    private static int expectedIndicatorRowCount(
+            org.json.JSONObject data, int start, int count, int explicitSecurityCount) {
+        if (explicitSecurityCount > 0) return explicitSecurityCount;
+        int total = data == null ? 0 : data.optInt("total", 0);
+        if (total > 0) return Math.min(count, Math.max(0, total - start));
+        return count;
+    }
+
+    private static boolean containsIndicatorValuesForRows(
+            org.json.JSONObject data,
+            java.util.List<String> indicatorIds,
+            int expectedRows) {
+        if (indicatorIds == null || indicatorIds.isEmpty()) return true;
+        org.json.JSONArray rows = data == null ? null : data.optJSONArray("rows");
+        if (rows == null || rows.length() < expectedRows) return false;
+        for (int i = 0; i < expectedRows; i++) {
+            org.json.JSONObject row = rows.optJSONObject(i);
+            org.json.JSONObject indicators = row == null
+                    ? null : row.optJSONObject("indicators");
+            if (indicators == null) return false;
+            for (String indicatorId : indicatorIds) {
+                org.json.JSONObject cell = indicators.optJSONObject(indicatorId);
+                if (cell == null || cell.isNull("content")) return false;
+                Object content = cell.opt("content");
+                if (content == null || org.json.JSONObject.NULL.equals(content)
+                        || String.valueOf(content).trim().isEmpty()) {
+                    return false;
+                }
+            }
+        }
+        return true;
+    }
+
+    private static int indicatorRowCount(org.json.JSONObject data) {
+        org.json.JSONArray rows = data == null ? null : data.optJSONArray("rows");
+        return rows == null ? 0 : rows.length();
+    }
+
+    private static void logIndicatorResultShape(Object table) {
+        if (table == null || !indicatorResultShapeLogged.compareAndSet(false, true)) return;
+        try {
+            logClassShape(table.getClass());
+            Method getValue = table.getClass().getMethod("getValue");
+            Object values = getValue.invoke(table);
+            if (values instanceof List && !((List<?>) values).isEmpty()) {
+                Object first = ((List<?>) values).get(0);
+                logClassShape(first.getClass());
+                logObjectFieldTypes(first);
+            }
+        } catch (Throwable e) {
+            Log.w(TAG, "INDICATOR_CAPTURE result shape failed: " + e.getMessage());
+        }
+    }
+
+    private static org.json.JSONObject indicatorTableToJson(Object table) {
+        org.json.JSONObject result = new org.json.JSONObject();
+        org.json.JSONArray rows = new org.json.JSONArray();
+        try {
+            Object total = invokeNoArg(table, "getSecuritiesTotalSize");
+            result.put("total", total == null ? org.json.JSONObject.NULL : total);
+            Object values = invokeNoArg(table, "getValue");
+            if (values instanceof List) {
+                for (Object securityValue : (List<?>) values) {
+                    org.json.JSONObject row = new org.json.JSONObject();
+                    Object security = invokeNoArg(securityValue, "getSecurity");
+                    row.put("code", nullableJsonValue(invokeNoArg(security, "getCode")));
+                    row.put("market", nullableJsonValue(invokeNoArg(security, "getMarket")));
+                    row.put("name", nullableJsonValue(invokeNoArg(security, "getName")));
+                    org.json.JSONObject indicatorValues = new org.json.JSONObject();
+                    Object rawValues = invokeNoArg(securityValue, "getValue");
+                    if (rawValues instanceof Map) {
+                        for (Map.Entry<?, ?> entry : ((Map<?, ?>) rawValues).entrySet()) {
+                            Object indicator = entry.getKey();
+                            Object cell = entry.getValue();
+                            Object queryId = invokeNoArg(indicator, "getQueryId");
+                            String key = queryId == null
+                                    ? String.valueOf(indicator) : String.valueOf(queryId);
+                            org.json.JSONObject cellJson = new org.json.JSONObject();
+                            Object content = invokeNoArg(cell, "getContent");
+                            if (content == null) content = readFieldValue(cell, "content");
+                            Object color = invokeNoArg(cell, "getColor");
+                            if (color == null) color = readFieldValue(cell, "color");
+                            cellJson.put("content", nullableJsonValue(content));
+                            cellJson.put("color", nullableJsonValue(color));
+                            indicatorValues.put(key, cellJson);
+                        }
+                    }
+                    row.put("indicators", indicatorValues);
+                    rows.put(row);
+                }
+            }
+        } catch (Throwable e) {
+            try {
+                result.put("serialization_error", String.valueOf(e));
+            } catch (Throwable ignored) {
+            }
+        }
+        try {
+            result.put("rows", rows);
+        } catch (Throwable ignored) {
+        }
+        return result;
+    }
+
+    private static Object nullableJsonValue(Object value) {
+        return value == null ? org.json.JSONObject.NULL : value;
+    }
+
+    private static Object invokeNoArg(Object target, String methodName) {
+        if (target == null) return null;
+        try {
+            Method method = target.getClass().getMethod(methodName);
+            method.setAccessible(true);
+            return method.invoke(target);
+        } catch (Throwable ignored) {
+            return null;
+        }
+    }
+
+    private static Object readFieldValue(Object target, String fieldName) {
+        if (target == null) return null;
+        for (Class<?> type = target.getClass(); type != null; type = type.getSuperclass()) {
+            try {
+                Field field = type.getDeclaredField(fieldName);
+                field.setAccessible(true);
+                return field.get(target);
+            } catch (Throwable ignored) {
+            }
+        }
+        return null;
+    }
+
+    private static void hookIndicatorClientClass(Class<?> clientClass) {
+        for (Method method : clientClass.getMethods()) {
+            if (!"query".equals(method.getName()) || method.getParameterTypes().length != 2) continue;
+            String key = method.toGenericString();
+            if (hookedIndicatorClientMethods.putIfAbsent(key, true) != null) continue;
+            try {
+                Pine.hook(method, new MethodHook() {
+                    @Override public void beforeCall(Pine.CallFrame callFrame) {
+                        Object queryParam = callFrame.args != null && callFrame.args.length > 0
+                                ? callFrame.args[0] : null;
+                        Object callback = callFrame.args != null && callFrame.args.length > 1
+                                ? callFrame.args[1] : null;
+                        String queryId = "iq-" + indicatorQuerySequence.incrementAndGet();
+                        if (callback != null) {
+                            indicatorCallbackQueryIds.put(System.identityHashCode(callback), queryId);
+                            hookIndicatorCallbackClass(callback.getClass());
+                        }
+                        appendIndicatorCapture("query", queryId,
+                                "client=" + clientClass.getName()
+                                        + " param=" + describeObjectFields(queryParam, 50000));
+                    }
+                });
+                Log.i(TAG, "INDICATOR_CAPTURE query hook=" + key);
+            } catch (Throwable e) {
+                hookedIndicatorClientMethods.remove(key);
+                Log.w(TAG, "INDICATOR_CAPTURE query hook failed: " + e.getMessage());
+            }
+        }
+    }
+
+    private static void hookIndicatorModelConstructors(
+            ClassLoader cl,
+            String className) {
+        try {
+            Class<?> modelClass = cl.loadClass(className);
+            for (Constructor<?> constructor : modelClass.getDeclaredConstructors()) {
+                String key = constructor.toGenericString();
+                if (hookedIndicatorModelConstructors.putIfAbsent(key, true) != null) continue;
+                constructor.setAccessible(true);
+                try {
+                    Pine.hook(constructor, new MethodHook() {
+                        @Override public void afterCall(Pine.CallFrame callFrame) {
+                            if (System.currentTimeMillis() > indicatorModelCaptureUntilMs) return;
+                            appendIndicatorCapture(
+                                    "construct",
+                                    null,
+                                    "class=" + modelClass.getName()
+                                            + " args=" + java.util.Arrays.toString(callFrame.args)
+                                            + " object=" + describeObjectFields(
+                                                    callFrame.thisObject, 50000));
+                        }
+                    });
+                } catch (Throwable e) {
+                    hookedIndicatorModelConstructors.remove(key);
+                    Log.w(TAG, "INDICATOR_CAPTURE constructor hook failed "
+                            + key + ": " + e.getMessage());
+                }
+            }
+        } catch (Throwable e) {
+            Log.w(TAG, "INDICATOR_CAPTURE constructor class unavailable "
+                    + className + ": " + e.getMessage());
+        }
+    }
+
+    private static void hookIndicatorCallbackClass(Class<?> callbackClass) {
+        for (Method method : callbackClass.getMethods()) {
+            String name = method.getName();
+            if (!("onNext".equals(name) || "onError".equals(name))) continue;
+            String key = method.toGenericString();
+            if (hookedIndicatorCallbackMethods.putIfAbsent(key, true) != null) continue;
+            try {
+                Pine.hook(method, new MethodHook() {
+                    @Override public void beforeCall(Pine.CallFrame callFrame) {
+                        String queryId = indicatorCallbackQueryIds.get(
+                                System.identityHashCode(callFrame.thisObject));
+                        StringBuilder detail = new StringBuilder("callback=")
+                                .append(callbackClass.getName()).append(" args=[");
+                        if (callFrame.args != null) {
+                            for (int i = 0; i < callFrame.args.length; i++) {
+                                if (i > 0) detail.append(", ");
+                                detail.append(describeObjectFields(callFrame.args[i], 50000));
+                            }
+                        }
+                        detail.append(']');
+                        appendIndicatorCapture(name, queryId, detail.toString());
+                    }
+                });
+            } catch (Throwable e) {
+                hookedIndicatorCallbackMethods.remove(key);
+                Log.w(TAG, "INDICATOR_CAPTURE callback hook failed: " + e.getMessage());
+            }
+        }
+    }
+
+    private static void appendIndicatorCapture(String phase, String queryId, String detail) {
+        String record = "{\"at_ms\":" + System.currentTimeMillis()
+                + ",\"phase\":\"" + esc(phase) + "\""
+                + ",\"query_id\":" + (queryId == null ? "null" : "\"" + esc(queryId) + "\"")
+                + ",\"detail\":\"" + esc(detail) + "\"}";
+        synchronized (indicatorQueryCapture) {
+            indicatorQueryCapture.add(record);
+            while (indicatorQueryCapture.size() > 500) indicatorQueryCapture.remove(0);
+        }
+        Log.i(TAG, "INDICATOR_CAPTURE " + phase + " query_id=" + queryId
+                + " bytes=" + record.length());
+    }
+
+    private static void resetIndicatorQueryCapture() {
+        synchronized (indicatorQueryCapture) {
+            indicatorQueryCapture.clear();
+        }
+        indicatorCallbackQueryIds.clear();
+        indicatorModelCaptureUntilMs = System.currentTimeMillis() + 30_000L;
+    }
+
+    private static String readIndicatorQueryCapture() {
+        StringBuilder result = new StringBuilder("{\"success\":true,\"records\":[");
+        synchronized (indicatorQueryCapture) {
+            for (int i = 0; i < indicatorQueryCapture.size(); i++) {
+                if (i > 0) result.append(',');
+                result.append(indicatorQueryCapture.get(i));
+            }
+        }
+        return result.append("]}").toString();
+    }
+
+    private static File stuffTableCaptureFile() {
+        try {
+            Object app = currentApplication();
+            if (!(app instanceof Context)) return null;
+            return new File(((Context) app).getFilesDir(), "ths_table_reads.jsonl");
+        } catch (Throwable e) {
+            return null;
+        }
+    }
+
+    private static void resetStuffTableCapture() {
+        synchronized (marketWireFileLock) {
+            stuffTableCaptureSignatures.clear();
+            File file = stuffTableCaptureFile();
+            if (file != null && file.exists() && !file.delete()) {
+                Log.w(TAG, "TABLE_CAPTURE failed to clear previous capture");
+            }
+        }
+    }
+
+    private static void appendStuffTableCapture(Object table, Object data) {
+        try {
+            String caption = "";
+            String headers = "null";
+            try {
+                Method getCaption = table.getClass().getMethod("getCaption");
+                caption = String.valueOf(getCaption.invoke(table));
+            } catch (Throwable ignored) {
+            }
+            try {
+                Method getTableHead = table.getClass().getMethod("getTableHead");
+                headers = toJson(getTableHead.invoke(table));
+            } catch (Throwable ignored) {
+            }
+            int identity = System.identityHashCode(table);
+            String payload = "{\"identity\":" + identity
+                    + ",\"caption\":\"" + esc(caption) + "\""
+                    + ",\"headers\":" + headers
+                    + ",\"data\":" + toJson(data) + "}";
+            int signature = payload.hashCode();
+            Integer previous = stuffTableCaptureSignatures.put(identity, signature);
+            if (previous != null && previous == signature) return;
+            String line = "{\"at_ms\":" + System.currentTimeMillis()
+                    + ",\"payload\":" + payload + "}\n";
+            synchronized (marketWireFileLock) {
+                File file = stuffTableCaptureFile();
+                if (file == null) return;
+                try (FileOutputStream output = new FileOutputStream(file, true)) {
+                    output.write(line.getBytes("UTF-8"));
+                }
+            }
+            Log.i(TAG, "TABLE_CAPTURE table=" + identity
+                    + " caption=" + caption + " bytes=" + line.length());
+        } catch (Throwable e) {
+            Log.w(TAG, "TABLE_CAPTURE record failed: " + e.getMessage());
+        }
+    }
+
+    private static String readStuffTableCapture() {
+        synchronized (marketWireFileLock) {
+            File file = stuffTableCaptureFile();
+            if (file == null || !file.exists()) {
+                return "{\"success\":true,\"records\":[]}";
+            }
+            StringBuilder records = new StringBuilder();
+            try (BufferedReader reader = new BufferedReader(new InputStreamReader(
+                    new FileInputStream(file), "UTF-8"))) {
+                String line;
+                boolean first = true;
+                while ((line = reader.readLine()) != null) {
+                    if (line.trim().isEmpty()) continue;
+                    if (!first) records.append(',');
+                    first = false;
+                    records.append(line);
+                }
+                return "{\"success\":true,\"records\":[" + records + "]}";
+            } catch (Throwable e) {
+                return "{\"success\":false,\"error\":\"" + esc(e.getMessage()) + "\"}";
+            }
+        }
+    }
+
+    private static void hookDirectProtocolRouter(Class<?> routerClass, Class<?> responseClass) {
+        for (String methodName : new String[]{"a", "e", "f"}) {
+            try {
+                Method route = routerClass.getDeclaredMethod(methodName, responseClass);
+                Pine.hook(route, new MethodHook() {
+                    @Override public void beforeCall(Pine.CallFrame callFrame) {
+                        if (callFrame.args == null || callFrame.args.length == 0) return;
+                        captureDirectProtocolResponse(methodName, callFrame.args[0]);
+                    }
+                });
+            } catch (Throwable e) {
+                Log.w(TAG, "RT_PROTOCOL router hook failed method=" + methodName
+                        + " error=" + e.getMessage());
+            }
+        }
+    }
+
+    private static void captureDirectProtocolResponse(String route, Object response) {
+        if (response == null || directProtocolLatches.isEmpty()) return;
+        try {
+            for (Class<?> type = response.getClass();
+                 type != null && type != Object.class;
+                 type = type.getSuperclass()) {
+                for (Field field : type.getDeclaredFields()) {
+                    if (field.getType() != int.class && field.getType() != Integer.class) continue;
+                    field.setAccessible(true);
+                    Object raw = field.get(response);
+                    if (!(raw instanceof Number)) continue;
+                    int value = ((Number) raw).intValue();
+                    CountDownLatch latch = directProtocolLatches.get(value);
+                    if (latch == null) continue;
+                    directProtocolResponses.put(value, response);
+                    Log.i(TAG, "RT_PROTOCOL routed response route=" + route
+                            + " instance=" + value + " field=" + field.getName());
+                    latch.countDown();
+                    return;
+                }
+            }
+        } catch (Throwable e) {
+            Log.w(TAG, "RT_PROTOCOL routed response capture failed: " + e.getMessage());
+        }
+    }
+
+    private static void hookMarketSocketIo() {
+        if (!marketSocketIoHooked.compareAndSet(false, true)) {
+            return;
+        }
+        try {
+            Class<?> outputClass = Class.forName("java.net.SocketOutputStream");
+            Method write = outputClass.getDeclaredMethod(
+                    "write", byte[].class, int.class, int.class);
+            Pine.hook(write, new MethodHook() {
+                @Override public void beforeCall(Pine.CallFrame callFrame) {
+                    if (marketWireCaptureActive.get() <= 0) return;
+                    Socket socket = findOwningSocket(callFrame.thisObject);
+                    if (!isTargetMarketSocket(socket)) return;
+                    byte[] bytes = (byte[]) callFrame.args[0];
+                    int offset = ((Number) callFrame.args[1]).intValue();
+                    int length = ((Number) callFrame.args[2]).intValue();
+                    appendMarketWireRecord("out", socket, bytes, offset, length);
+                }
+            });
+
+            Class<?> inputClass = Class.forName("java.net.SocketInputStream");
+            Method read = inputClass.getDeclaredMethod(
+                    "read", byte[].class, int.class, int.class);
+            Pine.hook(read, new MethodHook() {
+                @Override public void afterCall(Pine.CallFrame callFrame) {
+                    if (marketWireCaptureActive.get() <= 0) return;
+                    Object result = callFrame.getResult();
+                    if (!(result instanceof Number)) return;
+                    int length = ((Number) result).intValue();
+                    if (length <= 0) return;
+                    Socket socket = findOwningSocket(callFrame.thisObject);
+                    if (!isTargetMarketSocket(socket)) return;
+                    byte[] bytes = (byte[]) callFrame.args[0];
+                    int offset = ((Number) callFrame.args[1]).intValue();
+                    appendMarketWireRecord("in", socket, bytes, offset, length);
+                }
+            });
+            Log.i(TAG, "RT_WIRE SocketInputStream/SocketOutputStream hooks installed");
+        } catch (Throwable e) {
+            marketSocketIoHooked.set(false);
+            Log.e(TAG, "RT_WIRE socket hook install failed", e);
+        }
+    }
+
+    private static Socket findOwningSocket(Object stream) {
+        if (stream == null) return null;
+        Class<?> current = stream.getClass();
+        while (current != null) {
+            for (Field field : current.getDeclaredFields()) {
+                if (!Socket.class.isAssignableFrom(field.getType())) continue;
+                try {
+                    field.setAccessible(true);
+                    Object value = field.get(stream);
+                    if (value instanceof Socket) return (Socket) value;
+                } catch (Throwable ignored) { }
+            }
+            current = current.getSuperclass();
+        }
+        return null;
+    }
+
+    private static boolean isTargetMarketSocket(Socket socket) {
+        if (socket == null || socket.getRemoteSocketAddress() == null) return false;
+        return socket.getPort() == 9528;
+    }
+
+    private static void beginMarketWireCapture(String key) {
+        marketWireCaptureId = System.currentTimeMillis() + "-" + key;
+        marketWireCaptureActive.incrementAndGet();
+        synchronized (marketWireFileLock) {
+            File file = marketWireCaptureFile();
+            if (file != null && file.exists() && !file.delete()) {
+                Log.w(TAG, "RT_WIRE failed to clear previous capture");
+            }
+        }
+        Log.i(TAG, "RT_WIRE capture started id=" + marketWireCaptureId);
+    }
+
+    private static void endMarketWireCapture() {
+        marketWireCaptureActive.set(0);
+        Log.i(TAG, "RT_WIRE capture finished id=" + marketWireCaptureId);
+    }
+
+    private static File marketWireCaptureFile() {
+        try {
+            Object app = currentApplication();
+            if (!(app instanceof Context)) return null;
+            return new File(((Context) app).getFilesDir(), "ths_market_wire.jsonl");
+        } catch (Throwable e) {
+            return null;
+        }
+    }
+
+    private static void appendMarketWireRecord(
+            String direction,
+            Socket socket,
+            byte[] bytes,
+            int offset,
+            int length) {
+        if (bytes == null || offset < 0 || length <= 0 || offset + length > bytes.length) return;
+        try {
+            byte[] copy = new byte[length];
+            System.arraycopy(bytes, offset, copy, 0, length);
+            String encoded = android.util.Base64.encodeToString(copy, android.util.Base64.NO_WRAP);
+            String endpoint = String.valueOf(socket.getRemoteSocketAddress());
+            String line = "{\"capture_id\":\"" + esc(marketWireCaptureId)
+                    + "\",\"at_ms\":" + System.currentTimeMillis()
+                    + ",\"direction\":\"" + direction
+                    + "\",\"endpoint\":\"" + esc(endpoint)
+                    + "\",\"length\":" + length
+                    + ",\"bytes_base64\":\"" + encoded + "\"}\n";
+            synchronized (marketWireFileLock) {
+                File file = marketWireCaptureFile();
+                if (file == null) return;
+                try (FileOutputStream output = new FileOutputStream(file, true)) {
+                    output.write(line.getBytes("UTF-8"));
+                }
+            }
+            Log.i(TAG, "RT_WIRE " + direction + " endpoint=" + endpoint + " length=" + length);
+        } catch (Throwable e) {
+            Log.w(TAG, "RT_WIRE record failed: " + e.getMessage());
+        }
+    }
+
+    private static String readMarketWireCapture() {
+        synchronized (marketWireFileLock) {
+            File file = marketWireCaptureFile();
+            if (file == null || !file.exists()) {
+                return "{\"success\":true,\"capture_id\":" + jsonValue(marketWireCaptureId)
+                        + ",\"records\":[]}";
+            }
+            StringBuilder records = new StringBuilder();
+            try (BufferedReader reader = new BufferedReader(new InputStreamReader(
+                    new FileInputStream(file), "UTF-8"))) {
+                String line;
+                boolean first = true;
+                while ((line = reader.readLine()) != null) {
+                    if (line.trim().isEmpty()) continue;
+                    if (!first) records.append(',');
+                    first = false;
+                    records.append(line);
+                }
+                return "{\"success\":true,\"capture_id\":" + jsonValue(marketWireCaptureId)
+                        + ",\"records\":[" + records + "]}";
+            } catch (Throwable e) {
+                return "{\"success\":false,\"error\":\"" + esc(e.getMessage()) + "\"}";
+            }
+        }
+    }
+
+    private static String redactProtocolText(String value) {
+        if (value == null) return null;
+        return value.replaceAll("(?m)^userid=[^\\r\\n]*", "userid=<redacted>");
+    }
+
+    private static void logClassShape(Class<?> clazz) {
+        StringBuilder methods = new StringBuilder();
+        for (Method method : clazz.getDeclaredMethods()) {
+            if (methods.length() > 0) methods.append(';');
+            methods.append(method.getName()).append('(');
+            Class<?>[] params = method.getParameterTypes();
+            for (int i = 0; i < params.length; i++) {
+                if (i > 0) methods.append(',');
+                methods.append(params[i].getName());
+            }
+            methods.append("):").append(method.getReturnType().getName());
+        }
+        StringBuilder constructors = new StringBuilder();
+        for (java.lang.reflect.Constructor<?> constructor : clazz.getDeclaredConstructors()) {
+            if (constructors.length() > 0) constructors.append(';');
+            constructors.append('(');
+            Class<?>[] params = constructor.getParameterTypes();
+            for (int i = 0; i < params.length; i++) {
+                if (i > 0) constructors.append(',');
+                constructors.append(params[i].getName());
+            }
+            constructors.append(')');
+        }
+        StringBuilder fields = new StringBuilder();
+        for (Field field : clazz.getDeclaredFields()) {
+            if (fields.length() > 0) fields.append(';');
+            fields.append(field.getName()).append(':').append(field.getType().getName());
+        }
+        Log.i(TAG, "RT_PROTOCOL class=" + clazz.getName()
+                + " constructors=" + constructors
+                + " fields=" + fields
+                + " methods=" + methods);
+    }
+
+    private static void logObjectFieldTypes(Object target) {
+        if (target == null) return;
+        for (Class<?> type = target.getClass();
+             type != null && type != Object.class;
+             type = type.getSuperclass()) {
+            for (Field field : type.getDeclaredFields()) {
+                try {
+                    field.setAccessible(true);
+                    Object value = field.get(target);
+                    if (value != null) {
+                        Log.i(TAG, "RT_PROTOCOL field=" + type.getName() + "."
+                                + field.getName() + " valueClass="
+                                + value.getClass().getName());
+                        logClassShape(value.getClass());
+                    }
+                } catch (Throwable ignored) {
+                    // Diagnostic-only reflection must not affect the request.
+                }
+            }
+        }
+    }
+
+    private static void hookCommunicationServiceKeepAlive(ClassLoader cl) {
+        if (!communicationKeepAliveHooked.compareAndSet(false, true)) {
+            return;
+        }
+        try {
+            Class<?> serviceClass = cl.loadClass("com.hexin.plat.android.CommunicationService");
+            Method onCreate = serviceClass.getDeclaredMethod("onCreate");
+            Pine.hook(onCreate, new MethodHook() {
+                @Override public void afterCall(Pine.CallFrame callFrame) {
+                    try {
+                        Service service = (Service) callFrame.thisObject;
+                        String channelId = "ths_hook_market_core";
+                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                            NotificationManager manager = (NotificationManager) service.getSystemService(
+                                    Context.NOTIFICATION_SERVICE);
+                            NotificationChannel channel = new NotificationChannel(
+                                    channelId,
+                                    "Market data core",
+                                    NotificationManager.IMPORTANCE_MIN);
+                            channel.setShowBadge(false);
+                            manager.createNotificationChannel(channel);
+                        }
+                        Notification.Builder builder = Build.VERSION.SDK_INT >= Build.VERSION_CODES.O
+                                ? new Notification.Builder(service, channelId)
+                                : new Notification.Builder(service);
+                        Notification notification = builder
+                                .setContentTitle("Market data core")
+                                .setContentText("Real-time market data connection is active")
+                                .setSmallIcon(android.R.drawable.stat_notify_sync_noanim)
+                                .setOngoing(true)
+                                .build();
+                        int notificationId = proxyPortForCurrentUser();
+                        service.startForeground(notificationId, notification);
+                        Log.i(TAG, "CommunicationService promoted to foreground androidUser="
+                                + androidUserId());
+                    } catch (Throwable e) {
+                        Log.e(TAG, "CommunicationService foreground promotion failed", e);
+                    }
+                }
+            });
+            Log.i(TAG, "CommunicationService keep-alive hook installed");
+        } catch (Throwable e) {
+            communicationKeepAliveHooked.set(false);
+            Log.e(TAG, "CommunicationService keep-alive hook install failed", e);
+        }
+    }
+
+    private static void startLegacyCommunicationService(Object application, ClassLoader cl) throws Exception {
+        Class<?> contextClass = Class.forName("android.content.Context");
+        Class<?> intentClass = Class.forName("android.content.Intent");
+        Class<?> serviceClass = cl.loadClass("com.hexin.plat.android.CommunicationService");
+        Object intent = intentClass.getConstructor(contextClass, Class.class)
+                .newInstance(application, serviceClass);
+        intentClass.getMethod("putExtra", String.class, String.class).invoke(
+                intent,
+                "hexin_connect_hangqing_flag_key",
+                "hexin_connect_hangqing_flag");
+        application.getClass().getMethod("startService", intentClass).invoke(application, intent);
+        serviceClass.getMethod("activityStateChangeNotify", boolean.class).invoke(null, true);
+    }
+
+    private static String jsonValue(String value) {
+        if (value == null) return "null";
+        String trimmed = value.trim();
+        if ((trimmed.startsWith("{") && trimmed.endsWith("}"))
+                || (trimmed.startsWith("[") && trimmed.endsWith("]"))) {
+            return trimmed;
+        }
+        return "\"" + esc(value).replace("\n", "\\n").replace("\r", "\\r") + "\"";
     }
 
     private static String extractDomain(String url) {
@@ -1872,7 +5098,7 @@ public class MainHook {
                         if (key5Value.length() > 10) {
                             latestKey5 = key5Value;
                             authCaptureTime = System.currentTimeMillis();
-                            Log.i(TAG, "Auth captured from URL: key5=" + key5Value.substring(0, 20) + "...");
+                            Log.i(TAG, "Auth captured from URL: key5 len=" + key5Value.length());
                             reportAuthToServer();
                         }
                     }
@@ -1927,7 +5153,7 @@ public class MainHook {
                                     case "userId": latestUserId = value; break;
                                     case "sessionId": latestSessionId = value; break;
                                 }
-                                Log.i(TAG, key + " captured: " + (value.length() > 20 ? value.substring(0, 20) + "..." : value));
+                                Log.i(TAG, key + " captured, len=" + value.length());
                             }
                         }
                     }
@@ -1972,7 +5198,10 @@ public class MainHook {
                 httpLogCount.set(0);
                 httpLogWindowStart = now;
             }
-            boolean shouldLog = httpLogCount.incrementAndGet() <= HTTP_LOG_LIMIT;
+            boolean etfFundPoolRequest = urlStr.contains(
+                    "/quotation/fund_pool/v2/query");
+            boolean shouldLog = (SENSITIVE_PAYLOAD_LOGGING || etfFundPoolRequest)
+                && httpLogCount.incrementAndGet() <= HTTP_LOG_LIMIT;
 
             if (shouldLog) {
                 Log.i(TAG, "→ " + httpMethod + " " + urlStr);
@@ -2099,6 +5328,10 @@ public class MainHook {
                     String className = jsInterface.getClass().getName();
                     Log.i(TAG, "WebView.addJavascriptInterface: name=" + name + " class=" + className);
 
+                    if (className.contains("WebViewJavaScriptBridgePlus$")) {
+                        hookWebViewBridgeResolver(jsInterface);
+                    }
+
                     // 如果是 ClientRequestHX，深度 Hook 所有方法
                     if (className.contains("ClientRequestHX")) {
                         Log.i(TAG, "=== Detected ClientRequestHX! Deep hooking all methods ===");
@@ -2185,6 +5418,195 @@ public class MainHook {
         });
 
         Log.i(TAG, "JSBridge native hook installed");
+    }
+
+    /**
+     * 记录 WebView handler 到实际 JavaScriptInterface 实现类的运行时映射。
+     * 同花顺会通过插件 Map 动态注入行情 handler，静态 DEX 只能看到 handler 名称，
+     * 无法确认最终执行类，因此必须在 getJavaScriptInterface() 返回后观测。
+     */
+    private static synchronized void hookWebViewBridgeResolver(Object exposedJsInterface) {
+        try {
+            java.lang.reflect.Field outerField = exposedJsInterface.getClass().getDeclaredField("this$0");
+            outerField.setAccessible(true);
+            Object bridge = outerField.get(exposedJsInterface);
+            if (bridge == null) return;
+
+            Class<?> bridgeClass = bridge.getClass();
+            ClassLoader loader = bridgeClass.getClassLoader();
+            Class<?> messageClass = Class.forName(
+                    "com.hexin.android.webviewjsinterface.WebViewJavaScriptBridgePlus$MessageStruct",
+                    false,
+                    loader
+            );
+
+            if (!webViewBridgeResolverHooked) {
+                Method resolver = bridgeClass.getDeclaredMethod("getJavaScriptInterface", messageClass);
+                resolver.setAccessible(true);
+                Pine.hook(resolver, new MethodHook() {
+                    @Override
+                    public void afterCall(Pine.CallFrame frame) {
+                        try {
+                            Object message = frame.args != null && frame.args.length > 0 ? frame.args[0] : null;
+                            String handler = readStringField(message, "methodName");
+                            String onlineId = readStringField(message, "onlineId");
+                            Object implementation = frame.getResult();
+                            String implementationClass = implementation == null
+                                    ? "null"
+                                    : implementation.getClass().getName();
+                            Log.i(TAG, "JSBridge.resolve handler=" + handler
+                                    + " onlineId=" + onlineId
+                                    + " implementation=" + implementationClass);
+
+                            if (implementation != null && isTargetMarketHandler(handler)) {
+                                hookResolvedBridgeImplementation(implementation.getClass(), handler);
+                            }
+                        } catch (Throwable e) {
+                            Log.w(TAG, "JSBridge resolver log failed: " + e.getMessage());
+                        }
+                    }
+                });
+                webViewBridgeResolverHooked = true;
+                Log.i(TAG, "WebViewJavaScriptBridgePlus resolver hook installed");
+            }
+
+            if (!webViewBridgePluginCacheHooked) {
+                Method cacheMethod = bridgeClass.getDeclaredMethod("addPluginInterfacesCache", java.util.Map.class);
+                cacheMethod.setAccessible(true);
+                Pine.hook(cacheMethod, new MethodHook() {
+                    @Override
+                    public void beforeCall(Pine.CallFrame frame) {
+                        try {
+                            Object mappings = frame.args != null && frame.args.length > 0 ? frame.args[0] : null;
+                            Log.i(TAG, "JSBridge.pluginMappings " + describeBridgeMappings(mappings));
+                        } catch (Throwable e) {
+                            Log.w(TAG, "JSBridge plugin mapping log failed: " + e.getMessage());
+                        }
+                    }
+                });
+                webViewBridgePluginCacheHooked = true;
+                Log.i(TAG, "WebViewJavaScriptBridgePlus plugin cache hook installed");
+            }
+
+            java.lang.reflect.Field cacheField = bridgeClass.getDeclaredField("mPluginInterfaceMappingCache");
+            cacheField.setAccessible(true);
+            Log.i(TAG, "JSBridge.currentPluginMappings " + describeBridgeMappings(cacheField.get(bridge)));
+        } catch (Throwable e) {
+            Log.w(TAG, "WebViewJavaScriptBridgePlus resolver hook failed: "
+                    + e.getClass().getSimpleName() + ": " + e.getMessage());
+        }
+    }
+
+    private static void hookResolvedBridgeImplementation(Class<?> implementationClass, String handler) {
+        for (Class<?> current = implementationClass;
+             current != null && current != Object.class;
+             current = current.getSuperclass()) {
+            for (Method method : current.getDeclaredMethods()) {
+                if (!"onEventAction".equals(method.getName())) continue;
+
+                String hookKey = method.toGenericString();
+                if (hookedBridgeMethods.putIfAbsent(hookKey, true) != null) continue;
+
+                try {
+                    method.setAccessible(true);
+                    final String resolvedHandler = handler;
+                    Pine.hook(method, new MethodHook() {
+                        @Override
+                        public void beforeCall(Pine.CallFrame frame) {
+                            StringBuilder sb = new StringBuilder("JSBridge.dispatch handler=")
+                                    .append(resolvedHandler)
+                                    .append(" implementation=")
+                                    .append(implementationClass.getName())
+                                    .append(" method=")
+                                    .append(method.toGenericString())
+                                    .append(" args=");
+                            sb.append(describeArgs(frame.args, 6000));
+                            Log.i(TAG, sb.toString());
+                            Log.i(TAG, "JSBridge.dispatchStack " + compactStackTrace(18));
+                        }
+                    });
+                    Log.i(TAG, "JSBridge implementation hook installed: " + hookKey);
+                } catch (Throwable e) {
+                    hookedBridgeMethods.remove(hookKey);
+                    Log.w(TAG, "JSBridge implementation hook failed: " + hookKey + " " + e.getMessage());
+                }
+            }
+        }
+    }
+
+    private static boolean isTargetMarketHandler(String handler) {
+        return "UnifiedRequestBridge".equals(handler)
+                || "realDataRequest".equals(handler)
+                || "cancelRealDataRequest".equals(handler)
+                || "clearRealdataRequest".equals(handler)
+                || "hqMarketZdt".equals(handler);
+    }
+
+    private static String readStringField(Object target, String fieldName) {
+        if (target == null) return null;
+        try {
+            java.lang.reflect.Field field = target.getClass().getDeclaredField(fieldName);
+            field.setAccessible(true);
+            Object value = field.get(target);
+            return value == null ? null : String.valueOf(value);
+        } catch (Throwable ignored) {
+            return null;
+        }
+    }
+
+    private static String describeBridgeMappings(Object value) {
+        if (!(value instanceof java.util.Map)) return String.valueOf(value);
+        StringBuilder sb = new StringBuilder("{");
+        int count = 0;
+        for (Object entryObject : ((java.util.Map<?, ?>) value).entrySet()) {
+            java.util.Map.Entry<?, ?> entry = (java.util.Map.Entry<?, ?>) entryObject;
+            if (count++ > 0) sb.append(", ");
+            Object implementation = entry.getValue();
+            sb.append(entry.getKey()).append("=")
+                    .append(implementation == null ? "null" : implementation.getClass().getName());
+            if (count >= 120) {
+                sb.append(", ...");
+                break;
+            }
+        }
+        return sb.append("}").toString();
+    }
+
+    private static String describeArgs(Object[] args, int maxLength) {
+        if (args == null) return "[]";
+        StringBuilder sb = new StringBuilder("[");
+        for (int i = 0; i < args.length; i++) {
+            if (i > 0) sb.append(", ");
+            Object arg = args[i];
+            if (arg == null) {
+                sb.append("null");
+            } else if (arg instanceof android.webkit.WebView) {
+                sb.append("WebView{").append(((android.webkit.WebView) arg).getUrl()).append("}");
+            } else {
+                sb.append(arg.getClass().getSimpleName()).append("{").append(arg).append("}");
+            }
+            if (sb.length() >= maxLength) {
+                sb.setLength(maxLength);
+                sb.append("...[truncated]");
+                break;
+            }
+        }
+        return sb.append("]").toString();
+    }
+
+    private static String compactStackTrace(int maxFrames) {
+        StackTraceElement[] stack = Thread.currentThread().getStackTrace();
+        StringBuilder sb = new StringBuilder();
+        int written = 0;
+        for (StackTraceElement frame : stack) {
+            String className = frame.getClassName();
+            if (className.equals(Thread.class.getName()) || className.equals(MainHook.class.getName())) continue;
+            if (written++ > 0) sb.append(" <- ");
+            sb.append(className).append(".").append(frame.getMethodName())
+                    .append(":").append(frame.getLineNumber());
+            if (written >= maxFrames) break;
+        }
+        return sb.toString();
     }
 
     /**
@@ -3205,7 +6627,9 @@ public class MainHook {
 
                             // 打印明文输入（可能是交易参数）
                             String preview = inputStr.length() > 500 ? inputStr.substring(0, 500) + "..." : inputStr;
-                            Log.i(TAG, "  PlainText: " + preview);
+                            if (SENSITIVE_PAYLOAD_LOGGING) {
+                                Log.i(TAG, "  PlainText: " + preview);
+                            }
 
                             // 尝试从明文中提取认证参数（key3/key4/key5 等）
                             if (inputStr.contains("\"key5\"")) {
@@ -3260,7 +6684,9 @@ public class MainHook {
                             String plaintext = new String(input, offset, len, "UTF-8");
                             Log.i(TAG, "CIPHER_ENCRYPT_PARTIAL: algo=" + ctx.algorithm + " len=" + len);
                             String preview = plaintext.length() > 500 ? plaintext.substring(0, 500) + "..." : plaintext;
-                            Log.i(TAG, "  PlainText: " + preview);
+                            if (SENSITIVE_PAYLOAD_LOGGING) {
+                                Log.i(TAG, "  PlainText: " + preview);
+                            }
 
                             // 尝试从明文中提取认证参数
                             if (plaintext.contains("\"key5\"")) {
@@ -4127,7 +7553,9 @@ public class MainHook {
         java.lang.reflect.Method stringMethod = responseBody.getClass().getMethod("string");
         String responseStr = (String) stringMethod.invoke(responseBody);
 
-        Log.i(TAG, ">>> Native HTTP response: " + responseStr.substring(0, Math.min(500, responseStr.length())));
+        if (SENSITIVE_PAYLOAD_LOGGING) {
+            Log.i(TAG, ">>> Native HTTP response: " + responseStr.substring(0, Math.min(500, responseStr.length())));
+        }
 
         return responseStr;
     }
@@ -4158,7 +7586,7 @@ public class MainHook {
             String cookies = (String) getCookie.invoke(cookieManager, url);
             if (cookies != null && !cookies.isEmpty()) {
                 conn.setRequestProperty("Cookie", cookies);
-                Log.i(TAG, ">>> Added Cookie: " + cookies.substring(0, Math.min(100, cookies.length())));
+                Log.i(TAG, ">>> Added Cookie, len=" + cookies.length());
             } else {
                 Log.w(TAG, ">>> No cookies found for: " + url);
             }
@@ -4168,7 +7596,7 @@ public class MainHook {
 
         // 解析并添加自定义 Headers
         if (headerJson != null && !headerJson.isEmpty()) {
-            Log.i(TAG, ">>> Adding custom headers from: " + headerJson);
+            Log.i(TAG, ">>> Adding custom headers");
             String[] headerPairs = headerJson.replace("{", "").replace("}", "").split(",");
             for (String pair : headerPairs) {
                 int colonIdx = pair.indexOf(":");

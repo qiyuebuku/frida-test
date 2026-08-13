@@ -11,7 +11,14 @@
 #   ./deployment/deploy_113.sh --test
 #   ./deployment/deploy_113.sh --config  # 从项目根目录 .env 重建生产 EnvironmentFile
 #   ./deployment/deploy_113.sh --deps    # 更新生产 Python 依赖
+#   REMOTE_SUDO_PASSWORD=... ./deployment/deploy_113.sh --units
 #   REMOTE_SUDO_PASSWORD=... ./deployment/deploy_113.sh --migrate
+#   REMOTE_SUDO_PASSWORD=... ./deployment/deploy_113.sh --langfuse
+#   REMOTE_SUDO_PASSWORD=... ./deployment/deploy_113.sh --langfuse-upgrade
+#   ./deployment/deploy_113.sh --langfuse-status
+#   ./deployment/deploy_113.sh --langfuse-test
+#   ./deployment/deploy_113.sh --langfuse-logs web 100
+#   ./deployment/deploy_113.sh --langfuse-credentials
 
 set -euo pipefail
 
@@ -27,6 +34,12 @@ REMOTE_HOST="${REMOTE_HOST:-119.23.227.187}"
 REMOTE_PORT="${REMOTE_PORT:-1113}"
 REMOTE_USER="${REMOTE_USER:-yuyangruan}"
 REMOTE_SUDO_PASSWORD="${REMOTE_SUDO_PASSWORD:-}"
+LOCAL_PYTHON="${LOCAL_PYTHON:-python3}"
+COLLECTION_WORKER_CONCURRENCY="${COLLECTION_WORKER_CONCURRENCY:-8}"
+THS_WORKER_CONCURRENCY="${THS_WORKER_CONCURRENCY:-8}"
+THS_SECTOR_WORKER_CONCURRENCY="${THS_SECTOR_WORKER_CONCURRENCY:-4}"
+HTTP_WORKER_CONCURRENCY="${HTTP_WORKER_CONCURRENCY:-8}"
+INTERNAL_WORKER_CONCURRENCY="${INTERNAL_WORKER_CONCURRENCY:-4}"
 
 CONDA_BASE="/home/${REMOTE_USER}/anaconda3"
 CONDA_ENV="smart-fund"
@@ -44,24 +57,43 @@ DATA_DIR="${PROJECT_ROOT}/data/smart-fund-server"
 ARTIFACT_DIR="${PROJECT_ROOT}/artifacts"
 MILVUS_DATA_DIR="${DATA_DIR}/milvus-standalone"
 MILVUS_IMAGE="${MILVUS_IMAGE:-milvusdb/milvus:v2.6.20}"
+ETCD_IMAGE="${ETCD_IMAGE:-quay.io/coreos/etcd:v3.5.23}"
+LANGFUSE_WEB_PORT="${LANGFUSE_WEB_PORT:-3001}"
+LANGFUSE_WORKER_PORT="${LANGFUSE_WORKER_PORT:-3031}"
+LANGFUSE_MINIO_PORT="${LANGFUSE_MINIO_PORT:-9092}"
+LANGFUSE_RETENTION_DAYS="${LANGFUSE_RETENTION_DAYS:-90}"
+LANGFUSE_ADMIN_EMAIL="${LANGFUSE_ADMIN_EMAIL:-admin@smart-fund.local}"
+LANGFUSE_BIND_ADDRESS="${LANGFUSE_BIND_ADDRESS:-0.0.0.0}"
+LANGFUSE_PUBLIC_URL="${LANGFUSE_PUBLIC_URL:-http://${REMOTE_HOST}:${LANGFUSE_WEB_PORT}}"
+LANGFUSE_MEDIA_EXTERNAL_URL="${LANGFUSE_MEDIA_EXTERNAL_URL:-http://${REMOTE_HOST}:${LANGFUSE_MINIO_PORT}}"
 LOCAL_CAMOUFOX_CACHE="${LOCAL_CAMOUFOX_CACHE:-/home/yuyang/.cache/camoufox}"
 REMOTE_CAMOUFOX_CACHE="/home/${REMOTE_USER}/.cache/camoufox"
 
 SVC_MILVUS="smart-fund-milvus"
+SVC_ETCD="smart-fund-etcd"
 SVC_API="smart-fund-api"
 SVC_PERSIST="smart-fund-persist"
 SVC_SCHEDULER="smart-fund-scheduler"
-SVC_WORKER="smart-fund-worker"
+SVC_WORKER_THS="smart-fund-worker-ths"
+SVC_WORKER_THS_SECTOR="smart-fund-worker-ths-sector"
+SVC_WORKER_HTTP="smart-fund-worker-http"
+SVC_WORKER_INTERNAL="smart-fund-worker-internal"
+SVC_THS_STREAM="smart-fund-ths-realtime-stream"
 SVC_KG_CARD="smart-fund-kg-card"
 SVC_KG_RELATION="smart-fund-kg-relation"
 SVC_KG_GRAPH="smart-fund-kg-graph"
 TARGET="smart-fund-collector.target"
 SERVICES=(
+    "${SVC_ETCD}"
     "${SVC_MILVUS}"
     "${SVC_API}"
     "${SVC_PERSIST}"
     "${SVC_SCHEDULER}"
-    "${SVC_WORKER}"
+    "${SVC_WORKER_THS}"
+    "${SVC_WORKER_THS_SECTOR}"
+    "${SVC_WORKER_HTTP}"
+    "${SVC_WORKER_INTERNAL}"
+    "${SVC_THS_STREAM}"
     "${SVC_KG_CARD}"
     "${SVC_KG_RELATION}"
     "${SVC_KG_GRAPH}"
@@ -70,9 +102,14 @@ SERVICES=(
 LOCAL_WORKSPACE_ROOT="$(cd "${LOCAL_SERVER_DIR}/.." && pwd)"
 LOCAL_SKILLS_DIR="${LOCAL_WORKSPACE_ROOT}/.claude/skills"
 LOCAL_FUND_TRADE_DIR="${LOCAL_SKILLS_DIR}/fund-trade"
+LOCAL_LANGFUSE_DEPLOY_DIR="${LOCAL_SERVER_DIR}/deployment/langfuse"
 LOCAL_ENV_FILE="${LOCAL_SERVER_DIR}/.env"
 LOCAL_AICLIENT2API_ENV="${LOCAL_AICLIENT2API_ENV:-/home/yuyang/frida-test/AIClient2API/.deployment.local.env}"
 JETTASK_WHEEL="/home/yuyang/easy-task/backend/jettask-rs/bindings/python/dist/jettask_python-0.1.0-py3-none-any.whl"
+REMOTE_LANGFUSE_DEPLOY_DIR="${SERVER_DIR}/deployment/langfuse"
+LANGFUSE_ENV_FILE="${CONFIG_DIR}/langfuse.env"
+LANGFUSE_COMPOSE_PROJECT="smart-fund-langfuse"
+REMOTE_FRP_DIR="/home/${REMOTE_USER}/frp_0.52.3_linux_amd64"
 
 SSH_KEY="${SSH_KEY:-/mnt/c/Users/阮雨阳/.ssh/id_rsa}"
 SSH_KEY_TMP="/tmp/deploy_key_smart_fund_113"
@@ -171,11 +208,31 @@ sync_code() {
     echo "代码同步完成"
 }
 
+sync_langfuse_files() {
+    echo "同步 Langfuse 部署与健康检查文件..."
+    ssh_cmd "mkdir -p '${REMOTE_LANGFUSE_DEPLOY_DIR}' \
+        '${SERVER_DIR}/src/infrastructure/agent_runtime' \
+        '${SERVER_DIR}/src/interfaces/cli'"
+    rsync -az --delete \
+        -e "ssh ${SSH_OPTS[*]}" \
+        "${LOCAL_LANGFUSE_DEPLOY_DIR}/" \
+        "${REMOTE_USER}@${REMOTE_HOST}:${REMOTE_LANGFUSE_DEPLOY_DIR}/"
+    rsync -az \
+        -e "ssh ${SSH_OPTS[*]}" \
+        "${LOCAL_SERVER_DIR}/src/infrastructure/agent_runtime/langfuse_health.py" \
+        "${REMOTE_USER}@${REMOTE_HOST}:${SERVER_DIR}/src/infrastructure/agent_runtime/"
+    rsync -az \
+        -e "ssh ${SSH_OPTS[*]}" \
+        "${LOCAL_SERVER_DIR}/src/interfaces/cli/agent.py" \
+        "${REMOTE_USER}@${REMOTE_HOST}:${SERVER_DIR}/src/interfaces/cli/"
+    echo "Langfuse 部署文件同步完成"
+}
+
 set_env_value() {
     local file="$1"
     local key="$2"
     local value="$3"
-    python - "${file}" "${key}" "${value}" <<'PY'
+    "${LOCAL_PYTHON}" - "${file}" "${key}" "${value}" <<'PY'
 from pathlib import Path
 import sys
 
@@ -197,7 +254,7 @@ PY
 remove_env_value() {
     local file="$1"
     local key="$2"
-    python - "${file}" "${key}" <<'PY'
+    "${LOCAL_PYTHON}" - "${file}" "${key}" <<'PY'
 from pathlib import Path
 import sys
 
@@ -216,7 +273,7 @@ copy_env_value() {
     local target_file="$2"
     local source_key="$3"
     local target_key="$4"
-    python - "${source_file}" "${target_file}" "${source_key}" "${target_key}" <<'PY'
+    "${LOCAL_PYTHON}" - "${source_file}" "${target_file}" "${source_key}" "${target_key}" <<'PY'
 from pathlib import Path
 import sys
 
@@ -258,19 +315,39 @@ install_production_config() {
     fi
 
     echo "生成生产 EnvironmentFile..."
-    local plain_env systemd_env
+    local plain_env redis_password redis_url systemd_env
     plain_env="$(mktemp)"
     systemd_env="$(mktemp)"
     cp "${LOCAL_ENV_FILE}" "${plain_env}"
 
+    redis_password="$(
+        ssh_cmd "if [[ -r '${CONFIG_DIR}/redis-access.secret' ]]; then cat '${CONFIG_DIR}/redis-access.secret'; fi"
+    )"
+    redis_url="redis://127.0.0.1:6379/0"
+    if [[ -n "${redis_password}" ]]; then
+        redis_url="redis://:${redis_password}@127.0.0.1:6379/0"
+    fi
+
     set_env_value "${plain_env}" "DB_HOST" "10.168.1.113"
     set_env_value "${plain_env}" "DB_PORT" "5432"
     remove_env_value "${plain_env}" "PG_URL"
-    set_env_value "${plain_env}" "REDIS_URL" "redis://127.0.0.1:6379/0"
+    set_env_value "${plain_env}" "REDIS_URL" "${redis_url}"
     set_env_value "${plain_env}" "JETTASK_PREFIX" "fund_aggregator_prod"
     set_env_value "${plain_env}" "SERVER_HOST" "0.0.0.0"
     set_env_value "${plain_env}" "SERVER_PORT" "8900"
     set_env_value "${plain_env}" "SERVICE_BASE_URL" "http://127.0.0.1:8900"
+    set_env_value "${plain_env}" "THS_NATIVE_BRIDGE_URL" "http://127.0.0.1:49350"
+    remove_env_value "${plain_env}" "THS_NATIVE_BRIDGE_ROUTES"
+    set_env_value "${plain_env}" "THS_APP_HTTP_BRIDGE_URL" "http://127.0.0.1:49350"
+    set_env_value "${plain_env}" "THS_NATIVE_LOAD_BALANCED" "1"
+    set_env_value "${plain_env}" "THS_APP_HTTP_MAX_CONCURRENCY" "8"
+    set_env_value "${plain_env}" "THS_NATIVE_COMMAND_STREAM_ENABLED" "0"
+    set_env_value "${plain_env}" "THS_NATIVE_COMMAND_HOST" "127.0.0.1"
+    set_env_value "${plain_env}" "THS_NATIVE_COMMAND_PORT" "49302"
+    set_env_value "${plain_env}" "THS_NATIVE_STREAM_PORT" "49352"
+    set_env_value "${plain_env}" "THS_APP_GLOBAL_PUSH_ENABLED" "true"
+    set_env_value "${plain_env}" "THS_NATIVE_SECTOR_MAX_CONCURRENCY" "8"
+    set_env_value "${plain_env}" "COLLECTION_WORKER_CONCURRENCY" "8"
     set_env_value "${plain_env}" "SMART_FUND_MCP_TARGET" "prod"
     set_env_value "${plain_env}" "SMART_FUND_MCP_ADAPTER_NAME" "financial"
     set_env_value "${plain_env}" "SMART_FUND_MCP_PUBLIC_URL" "http://119.23.227.187:8900/mcp"
@@ -299,7 +376,7 @@ install_production_config() {
     set_env_value "${plain_env}" "SKILL_DIR" "${FUND_TRADE_DIR}"
     set_env_value "${plain_env}" "SKILLS_DIR" "${REMOTE_SKILLS_DIR}"
 
-    python - "${plain_env}" "${systemd_env}" <<'PY'
+    "${LOCAL_PYTHON}" - "${plain_env}" "${systemd_env}" <<'PY'
 from pathlib import Path
 import shlex
 import sys
@@ -324,23 +401,34 @@ PY
     scp "${SCP_OPTS[@]}" "${systemd_env}" \
         "${REMOTE_USER}@${REMOTE_HOST}:/tmp/smart-fund-server.env"
     ssh_cmd "install -m 600 /tmp/smart-fund-server.env '${ENV_FILE}' && rm -f /tmp/smart-fund-server.env"
+    if ssh_cmd "test -s '${LANGFUSE_ENV_FILE}'"; then
+        configure_langfuse_client_env
+    fi
     rm -f "${plain_env}" "${systemd_env}"
     echo "生产配置已安装到 ${ENV_FILE}"
 }
 
 apply_schema_migrations() {
     echo "执行幂等数据库迁移..."
-    local database_name
-    local remote_migration="/tmp/20260729_watchlist_tracking.sql"
+    local database_name jettask_database_name
+    local remote_migration="/tmp/smart-fund-server-migrations.sql"
+    local remote_jettask_migration="/tmp/smart-fund-jettask-migrations.sql"
     database_name="$(
         ssh_cmd "cd '${SERVER_DIR}' && set -a && . '${ENV_FILE}' && set +a && \
             '${PYTHON}' -c 'from src.infrastructure.config.settings import DB_CONFIG; print(DB_CONFIG[\"dbname\"])'"
     )"
-    ssh_cmd "install -m 644 \
-        '${SERVER_DIR}/schema/migrations/20260729_watchlist_tracking.sql' \
-        '${remote_migration}'"
+    jettask_database_name="$(
+        ssh_cmd "cd '${SERVER_DIR}' && set -a && . '${ENV_FILE}' && set +a && \
+            '${PYTHON}' -c 'from src.infrastructure.config.settings import JETTASK_DB_NAME; print(JETTASK_DB_NAME)'"
+    )"
+    ssh_cmd "cat '${SERVER_DIR}'/schema/migrations/*.sql \
+        > '${remote_migration}' && chmod 644 '${remote_migration}'"
     sudo_cmd "sudo -u postgres psql -v ON_ERROR_STOP=1 -d '${database_name}' \
         -f '${remote_migration}' && rm -f '${remote_migration}'"
+    ssh_cmd "cat '${SERVER_DIR}'/schema/jettask_migrations/*.sql \
+        > '${remote_jettask_migration}' && chmod 644 '${remote_jettask_migration}'"
+    sudo_cmd "sudo -u postgres psql -v ON_ERROR_STOP=1 -d '${jettask_database_name}' \
+        -f '${remote_jettask_migration}' && rm -f '${remote_jettask_migration}'"
     echo "数据库迁移完成"
 }
 
@@ -352,7 +440,8 @@ install_redis() {
         sudo_cmd "apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y redis-server tmux curl"
     fi
     sudo_cmd "systemctl enable --now redis-server"
-    ssh_cmd "redis-cli -h 127.0.0.1 ping | grep -q PONG"
+    ssh_cmd "REDISCLI_AUTH=\"\$(cat '${CONFIG_DIR}/redis-access.secret' 2>/dev/null || true)\" \
+        redis-cli -h 127.0.0.1 ping | grep -q PONG"
     echo "系统依赖与 Redis 可用"
 }
 
@@ -384,13 +473,18 @@ install_dependencies() {
     fi
 
     ssh_cmd "'${PYTHON}' -m pip install --upgrade pip wheel 'setuptools<81'"
-    ssh_cmd "'${PYTHON}' -m pip install '${ARTIFACT_DIR}/jettask_python-0.1.0-py3-none-any.whl'"
+    # 本地 wheel 处于开发版本，文件名版本号可能不变；必须强制覆盖旧 Python/Rust 协议实现。
+    ssh_cmd "'${PYTHON}' -m pip install --force-reinstall --no-deps \
+        '${ARTIFACT_DIR}/jettask_python-0.1.0-py3-none-any.whl'"
     ssh_cmd "'${PYTHON}' -m pip install \
         'fastapi>=0.100' 'uvicorn[standard]' psycopg2-binary 'sqlalchemy>=2.0' \
-        asyncpg httpx redis pydantic pydantic-settings click prometheus-client \
+        asyncpg httpx redis 'pydantic>=2.12,<2.13' pydantic-settings click prometheus-client \
         'pymilvus[milvus_lite]>=2.6,<3' 'milvus-lite>=2.5,<3' \
-        'langfuse>=3.0' 'mcp>=1.27,<2' \
+        'langfuse>=4.7,<5' 'mcp>=1.27,<2' \
+        'openai-agents>=0.17,<0.18' 'openai>=2.37,<2.41' \
+        'openinference-instrumentation-openai-agents>=1.5,<2' \
         'networkx>=3.0' 'graspologic-native>=1.2,<2' 'setuptools<81' \
+        'exchange-calendars>=4.11,<5' \
         akshare curl_cffi PyYAML 'camoufox==0.4.11' html2text beautifulsoup4 lxml"
     if ! camoufox_binary_ready; then
         ssh_cmd "'${PYTHON}' -m camoufox fetch" || true
@@ -401,7 +495,7 @@ install_dependencies() {
     camoufox_binary_ready
 
     ssh_cmd "cd '${SERVER_DIR}' && '${PYTHON}' -c \
-        'import fastapi, jettask, redis, sqlalchemy, pymilvus, akshare, camoufox, mcp; print(\"imports ok\")'"
+        'import fastapi, jettask, redis, sqlalchemy, pymilvus, akshare, camoufox, mcp, exchange_calendars, agents, openai, openinference.instrumentation.openai_agents; print(\"imports ok\")'"
     echo "Python 依赖安装完成"
 }
 
@@ -414,12 +508,64 @@ install_units() {
 listen-client-urls: http://0.0.0.0:2379
 advertise-client-urls: http://0.0.0.0:2379
 quota-backend-bytes: 4294967296
+# The embedded server and Milvus components start in the same process.  Do not
+# advance the first election tick: on a loaded host the default can elect and
+# immediately replace a leader while MixCoord is obtaining its first session
+# ID, which makes Milvus panic with "etcdserver: leader changed".
+heartbeat-interval: 500
+election-timeout: 5000
+initial-election-tick-advance: false
 auto-compaction-mode: revision
 auto-compaction-retention: "1000"
 EOF
 
     cat > "${unit_dir}/milvus-user.yaml" <<EOF
-# Production overrides for Smart Fund Milvus Standalone.
+# Production overrides for Smart Fund Milvus Standalone.  Metadata is served
+# by the separately supervised etcd process so Milvus cannot race its own
+# embedded etcd leader election during startup.
+etcd:
+  endpoints: localhost:2379
+  use:
+    embed: false
+EOF
+
+    cat > "${unit_dir}/${SVC_ETCD}.service" <<EOF
+[Unit]
+Description=Smart Fund etcd for Milvus metadata
+Wants=network-online.target docker.service
+After=network-online.target docker.service
+PartOf=${TARGET}
+
+[Service]
+Type=simple
+User=${REMOTE_USER}
+Group=${REMOTE_USER}
+Environment=DOCKER_CONFIG=${CONFIG_DIR}/docker-no-credential
+ExecStartPre=-/usr/bin/docker rm -f ${SVC_ETCD}
+ExecStart=/usr/bin/docker run --rm --name ${SVC_ETCD} --network host \
+    -v ${MILVUS_DATA_DIR}/volumes/milvus/etcd:/etcd-data \
+    ${ETCD_IMAGE} /usr/local/bin/etcd \
+    --name default --data-dir /etcd-data \
+    --listen-client-urls http://0.0.0.0:2379 \
+    --advertise-client-urls http://127.0.0.1:2379 \
+    --listen-peer-urls http://localhost:2380 \
+    --initial-advertise-peer-urls http://localhost:2380 \
+    --initial-cluster default=http://localhost:2380 \
+    --initial-cluster-state existing \
+    --heartbeat-interval 500 --election-timeout 5000 \
+    --initial-election-tick-advance=false
+ExecStartPost=/bin/bash -c 'for i in {1..60}; do /usr/bin/curl --fail --silent --max-time 2 http://127.0.0.1:2379/health >/dev/null && exit 0; sleep 1; done; exit 1'
+ExecStop=/usr/bin/docker stop -t 60 ${SVC_ETCD}
+Restart=always
+RestartSec=10
+TimeoutStartSec=90
+TimeoutStopSec=90
+KillSignal=SIGTERM
+StandardOutput=append:${LOG_DIR}/etcd.log
+StandardError=append:${LOG_DIR}/etcd.log
+
+[Install]
+WantedBy=${TARGET}
 EOF
 
     cat > "${unit_dir}/smart-fund-milvus-prestart.sh" <<'EOF'
@@ -429,35 +575,10 @@ set -euo pipefail
 container_name="${1:?container name is required}"
 image="${2:?Milvus image is required}"
 
-# `docker rm -f` can return before a detached Milvus process releases the
-# embedded-etcd file lock. Remove the named container first, then terminate
-# only stale Milvus processes that remain before the new container starts.
+# Only remove the named production container. Never scan or signal Milvus
+# processes globally: recovery/maintenance instances may intentionally run on
+# the same host and must not be terminated by a production restart.
 /usr/bin/docker rm -f "${container_name}" >/dev/null 2>&1 || true
-
-/usr/bin/docker run --rm --pid=host --privileged \
-    --entrypoint /bin/sh "${image}" -c '
-        list_milvus_pids() {
-            for proc in /proc/[0-9]*; do
-                [ -r "${proc}/comm" ] || continue
-                [ "$(cat "${proc}/comm")" = "milvus" ] || continue
-                printf "%s\n" "${proc#/proc/}"
-            done
-        }
-
-        pids="$(list_milvus_pids)"
-        [ -z "${pids}" ] && exit 0
-        kill -TERM ${pids} 2>/dev/null || true
-        for _ in $(seq 1 30); do
-            [ -z "$(list_milvus_pids)" ] && exit 0
-            sleep 1
-        done
-
-        pids="$(list_milvus_pids)"
-        [ -z "${pids}" ] && exit 0
-        kill -KILL ${pids} 2>/dev/null || true
-        sleep 2
-        [ -z "$(list_milvus_pids)" ]
-    '
 EOF
 
     cat > "${unit_dir}/smart-fund-milvus-wait-ready.sh" <<'EOF'
@@ -479,8 +600,8 @@ EOF
     cat > "${unit_dir}/${SVC_MILVUS}.service" <<EOF
 [Unit]
 Description=Smart Fund Milvus Standalone
-Wants=network-online.target docker.service
-After=network-online.target docker.service
+Wants=network-online.target docker.service ${SVC_ETCD}.service
+After=network-online.target docker.service ${SVC_ETCD}.service
 PartOf=${TARGET}
 
 [Service]
@@ -489,7 +610,7 @@ User=${REMOTE_USER}
 Group=${REMOTE_USER}
 Environment=DOCKER_CONFIG=${CONFIG_DIR}/docker-no-credential
 ExecStartPre=${CONFIG_DIR}/smart-fund-milvus-prestart.sh ${SVC_MILVUS} ${MILVUS_IMAGE}
-ExecStart=/usr/bin/docker run --rm --name ${SVC_MILVUS} --security-opt seccomp:unconfined -e ETCD_USE_EMBED=true -e ETCD_DATA_DIR=/var/lib/milvus/etcd -e ETCD_CONFIG_PATH=/milvus/configs/embedEtcd.yaml -e COMMON_STORAGETYPE=local -e DEPLOY_MODE=STANDALONE -v ${MILVUS_DATA_DIR}/volumes/milvus:/var/lib/milvus -v ${CONFIG_DIR}/milvus-embed-etcd.yaml:/milvus/configs/embedEtcd.yaml:ro -v ${CONFIG_DIR}/milvus-user.yaml:/milvus/configs/user.yaml:ro -p 19530:19530 -p 127.0.0.1:9091:9091 ${MILVUS_IMAGE} milvus run standalone
+ExecStart=/usr/bin/docker run --rm --name ${SVC_MILVUS} --network host --security-opt seccomp:unconfined -e ETCD_USE_EMBED=false -e COMMON_STORAGETYPE=local -e DEPLOY_MODE=STANDALONE -v ${MILVUS_DATA_DIR}/volumes/milvus:/var/lib/milvus -v ${CONFIG_DIR}/milvus-user.yaml:/milvus/configs/user.yaml:ro ${MILVUS_IMAGE} milvus run standalone
 ExecStartPost=${CONFIG_DIR}/smart-fund-milvus-wait-ready.sh
 ExecStop=/usr/bin/docker stop -t 60 ${SVC_MILVUS}
 Restart=always
@@ -585,9 +706,17 @@ StandardError=append:${LOG_DIR}/scheduler.log
 WantedBy=${TARGET}
 EOF
 
-    cat > "${unit_dir}/${SVC_WORKER}.service" <<EOF
+    local worker_name worker_group worker_concurrency
+    for worker_group in ths ths-sector http internal; do
+        case "${worker_group}" in
+            ths) worker_name="${SVC_WORKER_THS}"; worker_concurrency="${THS_WORKER_CONCURRENCY}" ;;
+            ths-sector) worker_name="${SVC_WORKER_THS_SECTOR}"; worker_concurrency="${THS_SECTOR_WORKER_CONCURRENCY}" ;;
+            http) worker_name="${SVC_WORKER_HTTP}"; worker_concurrency="${HTTP_WORKER_CONCURRENCY}" ;;
+            internal) worker_name="${SVC_WORKER_INTERNAL}"; worker_concurrency="${INTERNAL_WORKER_CONCURRENCY}" ;;
+        esac
+    cat > "${unit_dir}/${worker_name}.service" <<EOF
 [Unit]
-Description=Smart Fund Collection Worker
+Description=Smart Fund Collection Worker (${worker_group})
 Wants=network-online.target ${SVC_API}.service ${SVC_PERSIST}.service redis-server.service
 After=network-online.target ${SVC_API}.service ${SVC_PERSIST}.service redis-server.service
 PartOf=${TARGET}
@@ -599,14 +728,44 @@ Group=${REMOTE_USER}
 WorkingDirectory=${SERVER_DIR}
 EnvironmentFile=${ENV_FILE}
 Environment=PYTHONUNBUFFERED=1
-ExecStart=${PYTHON} -m src.interfaces.cli worker -c 1
+ExecStart=${PYTHON} -m src.interfaces.cli worker --group ${worker_group} -c ${worker_concurrency}
 Restart=always
 RestartSec=5
 TimeoutStopSec=60
 KillSignal=SIGTERM
 UMask=0027
-StandardOutput=append:${LOG_DIR}/worker.log
-StandardError=append:${LOG_DIR}/worker.log
+StandardOutput=append:${LOG_DIR}/worker-${worker_group}.log
+StandardError=append:${LOG_DIR}/worker-${worker_group}.log
+
+[Install]
+WantedBy=${TARGET}
+EOF
+    done
+
+    cat > "${unit_dir}/${SVC_THS_STREAM}.service" <<EOF
+[Unit]
+Description=Smart Fund THS Native Realtime Stream
+Wants=network-online.target postgresql.service ths-collector-bridge.service
+After=network-online.target postgresql.service ths-collector-bridge.service
+PartOf=${TARGET}
+
+[Service]
+Type=simple
+User=${REMOTE_USER}
+Group=${REMOTE_USER}
+WorkingDirectory=${SERVER_DIR}
+EnvironmentFile=${ENV_FILE}
+Environment=PYTHONUNBUFFERED=1
+ExecStart=${PYTHON} -m src.interfaces.cli ths-realtime-stream
+ExecStartPre=/bin/bash -c 'for i in {1..45}; do /usr/bin/curl --fail --silent --max-time 3 http://127.0.0.1:49301/health >/dev/null && exit 0; sleep 1; done; exit 1'
+ExecStartPost=/bin/bash -c 'for i in {1..45}; do (exec 3<>/dev/tcp/127.0.0.1/49302) 2>/dev/null && exit 0; sleep 1; done; exit 1'
+Restart=always
+RestartSec=5
+TimeoutStopSec=60
+KillSignal=SIGTERM
+UMask=0027
+StandardOutput=append:${LOG_DIR}/ths-realtime-stream.log
+StandardError=append:${LOG_DIR}/ths-realtime-stream.log
 
 [Install]
 WantedBy=${TARGET}
@@ -696,7 +855,7 @@ EOF
     cat > "${unit_dir}/${TARGET}" <<EOF
 [Unit]
 Description=Smart Fund Collection Stack
-Wants=${SVC_MILVUS}.service ${SVC_API}.service ${SVC_PERSIST}.service ${SVC_SCHEDULER}.service ${SVC_WORKER}.service ${SVC_KG_CARD}.service ${SVC_KG_RELATION}.service ${SVC_KG_GRAPH}.service
+Wants=${SVC_ETCD}.service ${SVC_MILVUS}.service ${SVC_API}.service ${SVC_PERSIST}.service ${SVC_SCHEDULER}.service ${SVC_WORKER_THS}.service ${SVC_WORKER_HTTP}.service ${SVC_WORKER_INTERNAL}.service ${SVC_THS_STREAM}.service ${SVC_KG_CARD}.service ${SVC_KG_RELATION}.service ${SVC_KG_GRAPH}.service
 After=network-online.target
 
 [Install]
@@ -729,11 +888,20 @@ EOF
 
     sudo_cmd "systemctl disable --now smart-fund-server.service 2>/dev/null || true
 rm -f /etc/systemd/system/smart-fund-server.service
+if [[ -d '${MILVUS_DATA_DIR}/volumes/milvus/etcd' && ! -e '${MILVUS_DATA_DIR}/volumes/milvus/etcd.before-external-service' ]]; then
+    cp -a '${MILVUS_DATA_DIR}/volumes/milvus/etcd' '${MILVUS_DATA_DIR}/volumes/milvus/etcd.before-external-service'
+fi
+install -m 644 /tmp/${SVC_ETCD}.service /etc/systemd/system/${SVC_ETCD}.service
 install -m 644 /tmp/${SVC_MILVUS}.service /etc/systemd/system/${SVC_MILVUS}.service
 install -m 644 /tmp/${SVC_API}.service /etc/systemd/system/${SVC_API}.service
 install -m 644 /tmp/${SVC_PERSIST}.service /etc/systemd/system/${SVC_PERSIST}.service
 install -m 644 /tmp/${SVC_SCHEDULER}.service /etc/systemd/system/${SVC_SCHEDULER}.service
-install -m 644 /tmp/${SVC_WORKER}.service /etc/systemd/system/${SVC_WORKER}.service
+systemctl disable --now smart-fund-worker.service 2>/dev/null || true
+rm -f /etc/systemd/system/smart-fund-worker.service
+install -m 644 /tmp/${SVC_WORKER_THS}.service /etc/systemd/system/${SVC_WORKER_THS}.service
+install -m 644 /tmp/${SVC_WORKER_HTTP}.service /etc/systemd/system/${SVC_WORKER_HTTP}.service
+install -m 644 /tmp/${SVC_WORKER_INTERNAL}.service /etc/systemd/system/${SVC_WORKER_INTERNAL}.service
+install -m 644 /tmp/${SVC_THS_STREAM}.service /etc/systemd/system/${SVC_THS_STREAM}.service
 install -m 644 /tmp/${SVC_KG_CARD}.service /etc/systemd/system/${SVC_KG_CARD}.service
 install -m 644 /tmp/${SVC_KG_RELATION}.service /etc/systemd/system/${SVC_KG_RELATION}.service
 install -m 644 /tmp/${SVC_KG_GRAPH}.service /etc/systemd/system/${SVC_KG_GRAPH}.service
@@ -746,15 +914,18 @@ install -m 755 /tmp/smart-fund-milvus-wait-ready.sh '${CONFIG_DIR}/smart-fund-mi
 mkdir -p '${CONFIG_DIR}/docker-no-credential'
 printf '{}\n' > '${CONFIG_DIR}/docker-no-credential/config.json'
 chown -R ${REMOTE_USER}:${REMOTE_USER} '${CONFIG_DIR}/docker-no-credential'
-rm -f /tmp/${SVC_MILVUS}.service /tmp/${SVC_API}.service /tmp/${SVC_PERSIST}.service \
-    /tmp/${SVC_SCHEDULER}.service /tmp/${SVC_WORKER}.service \
+rm -f /tmp/${SVC_ETCD}.service /tmp/${SVC_MILVUS}.service /tmp/${SVC_API}.service /tmp/${SVC_PERSIST}.service \
+    /tmp/${SVC_SCHEDULER}.service /tmp/${SVC_WORKER_THS}.service \
+    /tmp/${SVC_WORKER_HTTP}.service /tmp/${SVC_WORKER_INTERNAL}.service /tmp/${SVC_THS_STREAM}.service \
     /tmp/${SVC_KG_CARD}.service /tmp/${SVC_KG_RELATION}.service \
     /tmp/${SVC_KG_GRAPH}.service \
     /tmp/${TARGET} /tmp/smart-fund-server.logrotate \
     /tmp/milvus-embed-etcd.yaml /tmp/milvus-user.yaml \
     /tmp/smart-fund-milvus-prestart.sh /tmp/smart-fund-milvus-wait-ready.sh
-touch '${LOG_DIR}/milvus.log' '${LOG_DIR}/api.log' '${LOG_DIR}/persist.log' \
-    '${LOG_DIR}/scheduler.log' '${LOG_DIR}/worker.log' \
+touch '${LOG_DIR}/etcd.log' '${LOG_DIR}/milvus.log' '${LOG_DIR}/api.log' '${LOG_DIR}/persist.log' \
+    '${LOG_DIR}/scheduler.log' '${LOG_DIR}/worker-ths.log' \
+    '${LOG_DIR}/worker-http.log' '${LOG_DIR}/worker-internal.log' \
+    '${LOG_DIR}/ths-realtime-stream.log' \
     '${LOG_DIR}/kg-card.log' '${LOG_DIR}/kg-relation.log' \
     '${LOG_DIR}/kg-graph.log'
 chown ${REMOTE_USER}:${REMOTE_USER} '${LOG_DIR}'/*.log
@@ -777,6 +948,20 @@ wait_for_api() {
     return 1
 }
 
+wait_for_ths_command_broker() {
+    local attempt
+    for attempt in $(seq 1 45); do
+        if ssh_cmd "/bin/bash -c '(exec 3<>/dev/tcp/127.0.0.1/49302) 2>/dev/null'"; then
+            return 0
+        fi
+        sleep 1
+    done
+    echo "同花顺原生指令代理未在预期时间内监听 49302" >&2
+    ssh_cmd "systemctl status '${SVC_THS_STREAM}.service' --no-pager -l || true"
+    ssh_cmd "tail -120 '${LOG_DIR}/ths-realtime-stream.log' 2>/dev/null || true"
+    return 1
+}
+
 wait_for_milvus() {
     local attempt
     for attempt in $(seq 1 150); do
@@ -790,6 +975,11 @@ wait_for_milvus() {
     return 1
 }
 
+register_schedules() {
+    ssh_cmd "cd '${SERVER_DIR}' && set -a && . '${ENV_FILE}' && set +a && \
+        '${PYTHON}' -m src.interfaces.cli init schedules"
+}
+
 initialize_runtime() {
     echo "按顺序初始化运行时..."
     sudo_cmd "systemctl start ${SVC_MILVUS}.service"
@@ -801,8 +991,7 @@ initialize_runtime() {
 
     ssh_cmd "cd '${SERVER_DIR}' && set -a && . '${ENV_FILE}' && set +a && \
         '${PYTHON}' -m src.interfaces.cli init state"
-    ssh_cmd "cd '${SERVER_DIR}' && set -a && . '${ENV_FILE}' && set +a && \
-        '${PYTHON}' -m src.interfaces.cli init schedules"
+    register_schedules
     ssh_cmd "cd '${SERVER_DIR}' && set -a && . '${ENV_FILE}' && set +a && \
         '${PYTHON}' - <<'PY'
 from src.interfaces.tasks import app
@@ -813,7 +1002,9 @@ app.close()
 PY"
 
     sudo_cmd "systemctl start ${SVC_SCHEDULER}.service"
-    sudo_cmd "systemctl start ${SVC_WORKER}.service"
+    sudo_cmd "systemctl start ${SVC_WORKER_THS}.service ${SVC_WORKER_HTTP}.service ${SVC_WORKER_INTERNAL}.service"
+    sudo_cmd "systemctl start ${SVC_THS_STREAM}.service"
+    wait_for_ths_command_broker
     sudo_cmd "systemctl start ${SVC_KG_CARD}.service"
     sudo_cmd "systemctl start ${SVC_KG_RELATION}.service"
     sudo_cmd "systemctl start ${SVC_KG_GRAPH}.service"
@@ -830,10 +1021,14 @@ restart_all() {
     wait_for_milvus
     sudo_cmd "systemctl restart ${SVC_API}.service"
     wait_for_api
+    sudo_cmd "systemctl stop ${SVC_SCHEDULER}.service"
     sudo_cmd "systemctl restart ${SVC_PERSIST}.service"
     sleep 2
-    sudo_cmd "systemctl restart ${SVC_SCHEDULER}.service"
-    sudo_cmd "systemctl restart ${SVC_WORKER}.service"
+    register_schedules
+    sudo_cmd "systemctl start ${SVC_SCHEDULER}.service"
+    sudo_cmd "systemctl restart ${SVC_WORKER_THS}.service ${SVC_WORKER_HTTP}.service ${SVC_WORKER_INTERNAL}.service"
+    sudo_cmd "systemctl restart ${SVC_THS_STREAM}.service"
+    wait_for_ths_command_broker
     sudo_cmd "systemctl restart ${SVC_KG_CARD}.service"
     sudo_cmd "systemctl restart ${SVC_KG_RELATION}.service"
     sudo_cmd "systemctl restart ${SVC_KG_GRAPH}.service"
@@ -848,12 +1043,12 @@ show_status() {
 }
 
 show_logs() {
-    local service="${1:-worker}"
+    local service="${1:-worker-ths}"
     local lines="${2:-100}"
     case "${service}" in
-        milvus|api|persist|scheduler|worker|kg-card|kg-relation|kg-graph) ;;
+        milvus|api|persist|scheduler|worker-ths|worker-http|worker-internal|ths-realtime-stream|kg-card|kg-relation|kg-graph) ;;
         *)
-            echo "日志服务必须是 milvus|api|persist|scheduler|worker|kg-card|kg-relation|kg-graph" >&2
+            echo "日志服务必须是 milvus|api|persist|scheduler|worker-ths|worker-http|worker-internal|ths-realtime-stream|kg-card|kg-relation|kg-graph" >&2
             exit 1
             ;;
     esac
@@ -876,7 +1071,8 @@ remote_test() {
     ssh_cmd "curl --fail --silent http://127.0.0.1:8900/api/spy/status >/tmp/smart-fund-spy-health.json"
     ssh_cmd "'${PYTHON}' -c \
         'import json; d=json.load(open(\"/tmp/smart-fund-spy-health.json\")); assert d.get(\"available\") is True and d.get(\"started\") is True; print(\"browser spy: ok\")'"
-    ssh_cmd "redis-cli -h 127.0.0.1 ping | grep -q PONG"
+    ssh_cmd "REDISCLI_AUTH=\"\$(cat '${CONFIG_DIR}/redis-access.secret' 2>/dev/null || true)\" \
+        redis-cli -h 127.0.0.1 ping | grep -q PONG"
     echo "redis: ok"
     ssh_cmd "pg_isready -h 10.168.1.113 -p 5432"
     ssh_cmd "curl --fail --silent --max-time 5 http://127.0.0.1:9091/healthz >/dev/null"
@@ -923,6 +1119,168 @@ cleanup_legacy_server_dir() {
     echo "旧服务目录已清理: ${LEGACY_SERVER_DIR}"
 }
 
+langfuse_compose() {
+    local arguments="$*"
+    ssh_cmd "DOCKER_CONFIG='${CONFIG_DIR}/docker-no-credential' COMPOSE_PARALLEL_LIMIT=2 \
+        docker compose --project-name '${LANGFUSE_COMPOSE_PROJECT}' \
+        --env-file '${LANGFUSE_ENV_FILE}' \
+        --file '${REMOTE_LANGFUSE_DEPLOY_DIR}/docker-compose.yml' \
+        ${arguments}"
+}
+
+bootstrap_langfuse_env() {
+    local quoted_bind_address quoted_email quoted_media_url quoted_public_url
+    printf -v quoted_email '%q' "${LANGFUSE_ADMIN_EMAIL}"
+    printf -v quoted_bind_address '%q' "${LANGFUSE_BIND_ADDRESS}"
+    printf -v quoted_public_url '%q' "${LANGFUSE_PUBLIC_URL}"
+    printf -v quoted_media_url '%q' "${LANGFUSE_MEDIA_EXTERNAL_URL}"
+    ssh_cmd "bash '${REMOTE_LANGFUSE_DEPLOY_DIR}/bootstrap_env.sh' \
+        '${LANGFUSE_ENV_FILE}' \
+        '${LANGFUSE_WEB_PORT}' \
+        '${LANGFUSE_WORKER_PORT}' \
+        '${LANGFUSE_MINIO_PORT}' \
+        '${LANGFUSE_RETENTION_DAYS}' \
+        ${quoted_email} \
+        ${quoted_bind_address} \
+        ${quoted_public_url} \
+        ${quoted_media_url}"
+}
+
+configure_langfuse_client_env() {
+    ssh_cmd "'${PYTHON}' '${REMOTE_LANGFUSE_DEPLOY_DIR}/configure_client_env.py' \
+        --langfuse-env '${LANGFUSE_ENV_FILE}' \
+        --client-env '${ENV_FILE}' \
+        --base-url 'http://127.0.0.1:${LANGFUSE_WEB_PORT}'"
+    echo "Smart Fund 已切换到自建 Langfuse"
+}
+
+wait_for_langfuse() {
+    local attempt
+    for attempt in $(seq 1 120); do
+        if ssh_cmd "curl --fail --silent --max-time 3 \
+            'http://127.0.0.1:${LANGFUSE_WEB_PORT}/api/public/health?failIfDatabaseUnavailable=true' \
+            >/dev/null" \
+            && ssh_cmd "curl --fail --silent --max-time 3 \
+            'http://127.0.0.1:${LANGFUSE_WORKER_PORT}/api/health' >/dev/null"; then
+            return 0
+        fi
+        sleep 2
+    done
+    echo "Langfuse 未在预期时间内就绪" >&2
+    langfuse_compose "ps" || true
+    langfuse_compose "logs --tail 120 langfuse-web langfuse-worker" || true
+    return 1
+}
+
+install_langfuse_frp() {
+    echo "安装 Langfuse 公网 FRP 映射..."
+    ssh_cmd "install -m 600 \
+        '${REMOTE_LANGFUSE_DEPLOY_DIR}/frpc_langfuse.toml' \
+        '${REMOTE_FRP_DIR}/frpc_langfuse.toml'"
+    scp "${SCP_OPTS[@]}" \
+        "${LOCAL_LANGFUSE_DEPLOY_DIR}/frpc_langfuse.conf" \
+        "${REMOTE_USER}@${REMOTE_HOST}:/tmp/frpc_langfuse.conf"
+    sudo_cmd "install -m 644 /tmp/frpc_langfuse.conf \
+        /etc/supervisor/conf.d/frpc_langfuse.conf && \
+        rm -f /tmp/frpc_langfuse.conf && \
+        supervisorctl reread && \
+        supervisorctl update && \
+        supervisorctl restart frpc_langfuse"
+    echo "Langfuse 公网 FRP 映射已启动"
+}
+
+restart_langfuse_clients() {
+    echo "重启读取 Langfuse 配置的 Smart Fund 服务..."
+    sudo_cmd "systemctl try-restart \
+        ${SVC_API}.service \
+        ${SVC_PERSIST}.service \
+        ${SVC_SCHEDULER}.service \
+        ${SVC_WORKER_THS}.service \
+        ${SVC_WORKER_THS_SECTOR}.service \
+        ${SVC_WORKER_HTTP}.service \
+        ${SVC_WORKER_INTERNAL}.service \
+        ${SVC_THS_STREAM}.service \
+        ${SVC_KG_CARD}.service \
+        ${SVC_KG_RELATION}.service \
+        ${SVC_KG_GRAPH}.service"
+    wait_for_api
+}
+
+test_langfuse() {
+    echo "执行 Langfuse 服务、认证与真实 OTLP 写入检查..."
+    wait_for_langfuse
+    ssh_cmd "cd '${SERVER_DIR}' && set -a && . '${ENV_FILE}' && set +a && \
+        '${PYTHON}' - <<'PY'
+import asyncio
+import json
+
+from src.infrastructure.agent_runtime.config import AgentSettings
+from src.infrastructure.agent_runtime.langfuse_health import check_langfuse_health
+
+result = asyncio.run(check_langfuse_health(AgentSettings.from_env()))
+print(json.dumps(result.as_dict(), ensure_ascii=False, indent=2))
+if not result.writable:
+    raise SystemExit(f'Langfuse is not writable: {result.status}')
+PY"
+    echo "Langfuse 健康检查通过"
+}
+
+deploy_langfuse() {
+    sync_langfuse_files
+    bootstrap_langfuse_env
+    langfuse_compose "config --quiet"
+    echo "拉取并启动 Langfuse v4..."
+    langfuse_compose "up -d --pull missing --remove-orphans"
+    wait_for_langfuse
+    install_langfuse_frp
+    configure_langfuse_client_env
+    restart_langfuse_clients
+    test_langfuse
+}
+
+upgrade_langfuse() {
+    sync_langfuse_files
+    bootstrap_langfuse_env
+    langfuse_compose "config --quiet"
+    echo "拉取 Langfuse v4 最新镜像..."
+    langfuse_compose "pull"
+    langfuse_compose "up -d --pull never --remove-orphans"
+    wait_for_langfuse
+    install_langfuse_frp
+    configure_langfuse_client_env
+    restart_langfuse_clients
+    test_langfuse
+}
+
+show_langfuse_status() {
+    langfuse_compose "ps"
+    ssh_cmd "curl --silent --show-error --max-time 5 \
+        'http://127.0.0.1:${LANGFUSE_WEB_PORT}/api/public/health?failIfDatabaseUnavailable=true'"
+    echo
+    ssh_cmd "curl --silent --show-error --max-time 5 \
+        'http://127.0.0.1:${LANGFUSE_WORKER_PORT}/api/health'"
+    echo
+}
+
+show_langfuse_logs() {
+    local service="${1:-web}"
+    local lines="${2:-100}"
+    case "${service}" in
+        web) service="langfuse-web" ;;
+        worker) service="langfuse-worker" ;;
+        postgres|redis|clickhouse|minio) ;;
+        *)
+            echo "Langfuse 日志服务必须是 web|worker|postgres|redis|clickhouse|minio" >&2
+            exit 1
+            ;;
+    esac
+    langfuse_compose "logs --tail '${lines}' '${service}'"
+}
+
+show_langfuse_credentials() {
+    ssh_cmd "awk -F= '/^LANGFUSE_INIT_USER_(EMAIL|PASSWORD)=/ {print}' '${LANGFUSE_ENV_FILE}'"
+}
+
 init_deploy() {
     sync_code
     install_production_config
@@ -952,7 +1310,7 @@ main() {
             show_status
             ;;
         --logs)
-            show_logs "${2:-worker}" "${3:-100}"
+            show_logs "${2:-worker-ths}" "${3:-100}"
             ;;
         --test)
             remote_test
@@ -965,8 +1323,30 @@ main() {
             ensure_remote_dirs
             install_dependencies
             ;;
+        --units)
+            ensure_remote_dirs
+            install_units
+            ;;
         --migrate)
             apply_schema_migrations
+            ;;
+        --langfuse)
+            deploy_langfuse
+            ;;
+        --langfuse-upgrade)
+            upgrade_langfuse
+            ;;
+        --langfuse-status)
+            show_langfuse_status
+            ;;
+        --langfuse-test)
+            test_langfuse
+            ;;
+        --langfuse-logs)
+            show_langfuse_logs "${2:-web}" "${3:-100}"
+            ;;
+        --langfuse-credentials)
+            show_langfuse_credentials
             ;;
         "")
             sync_code

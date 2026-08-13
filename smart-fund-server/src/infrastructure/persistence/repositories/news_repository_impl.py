@@ -21,9 +21,12 @@ class NewsRepositoryImpl(NewsRepository):
         if not items:
             return []
         with get_session() as s:
-            stmt = pg_insert(News).values(items).on_conflict_do_nothing(
-                index_elements=["fingerprint"]
-            ).returning(News.id)
+            stmt = (
+                pg_insert(News)
+                .values(items)
+                .on_conflict_do_nothing()
+                .returning(News.id)
+            )
             result = s.execute(stmt)
             return [int(row[0]) for row in result.fetchall()]
 
@@ -84,6 +87,61 @@ class NewsRepositoryImpl(NewsRepository):
                 select(News.title).where(News.published_at >= since)
             ).all()
             return list(rows)
+
+    def find_existing_content_fingerprints(
+        self,
+        fingerprints: list[str],
+    ) -> set[str]:
+        if not fingerprints:
+            return set()
+        with get_session() as s:
+            rows = s.scalars(
+                select(News.content_fingerprint).where(
+                    News.content_fingerprint.in_(fingerprints)
+                )
+            ).all()
+            return {str(item) for item in rows if item}
+
+    def find_recent(
+        self,
+        *,
+        source: str | None = None,
+        news_kind: str | None = None,
+        hours: int = 24,
+        limit: int = 100,
+    ) -> list[dict]:
+        since = datetime.now(timezone.utc) - timedelta(
+            hours=max(1, min(int(hours), 24 * 30))
+        )
+        with get_session() as session:
+            statement = select(News).where(News.created_at >= since)
+            if source:
+                statement = statement.where(News.source == source)
+            if news_kind:
+                statement = statement.where(News.news_kind == news_kind)
+            rows = session.scalars(
+                statement.order_by(News.published_at.desc()).limit(
+                    max(1, min(int(limit), 500))
+                )
+            ).all()
+            return [
+                {
+                    "id": row.id,
+                    "title": row.title,
+                    "content": row.content,
+                    "summary": row.summary,
+                    "source": row.source,
+                    "source_name": row.source_name,
+                    "category": row.category,
+                    "news_kind": row.news_kind,
+                    "url": row.url,
+                    "tags": row.tags,
+                    "related_stocks": row.related_stocks,
+                    "published_at": row.published_at,
+                    "created_at": row.created_at,
+                }
+                for row in rows
+            ]
 
     def count(self) -> int:
         from sqlalchemy import func

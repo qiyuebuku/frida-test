@@ -70,8 +70,8 @@ async def test_watchlist_dispatch_isolated_per_instrument(monkeypatch) -> None:
         "collect_watchlist_instruments",
     ]
     assert [message.kwargs for message in sent] == [
-        {"codes": ["sh600036"]},
-        {"codes": ["159915"]},
+        {"codes": ["sh600036"], "scope": "bootstrap"},
+        {"codes": ["159915"], "scope": "bootstrap"},
     ]
 
 

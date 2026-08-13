@@ -15,6 +15,7 @@ from src.infrastructure.vector_store.milvus_hybrid_store import (
     MilvusHybridDocument,
     MilvusHybridStore,
     MilvusTypedHybridStore,
+    _document_rows,
     _is_transient_milvus_connection_error,
 )
 
@@ -43,6 +44,23 @@ def test_replace_documents_refuses_invalid_vector_before_delete() -> None:
             vectors=[[1.0, float("nan"), 3.0]],
             embedding_model="test-embedding",
         )
+
+
+def test_document_rows_limit_multibyte_text_by_utf8_bytes() -> None:
+    original = "中" * 3000
+
+    rows = _document_rows(
+        adapter_name="financial",
+        target="prod",
+        documents=[MilvusHybridDocument(chunk_id="doc-1", text=original)],
+        vectors=[[0.1, 0.2, 0.3]],
+        embedding_model="test-embedding",
+    )
+
+    stored = rows[0]["text"]
+    assert len(stored.encode("utf-8")) <= 8192
+    assert original.startswith(stored)
+    assert rows[0]["content_hash"] != ""
 
 
 def test_hybrid_search_returns_empty_before_bm25_when_scope_has_no_rows() -> None:

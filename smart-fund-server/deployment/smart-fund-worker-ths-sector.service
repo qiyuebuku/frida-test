@@ -1,0 +1,24 @@
+[Unit]
+Description=Smart Fund Collection Worker (ths-sector)
+Wants=network-online.target smart-fund-api.service smart-fund-persist.service redis-server.service
+After=network-online.target smart-fund-api.service smart-fund-persist.service redis-server.service
+PartOf=smart-fund-collector.target
+
+[Service]
+Type=simple
+User=yuyangruan
+Group=yuyangruan
+WorkingDirectory=/home/yuyangruan/smart-fund/smart-fund-server
+EnvironmentFile=/home/yuyangruan/smart-fund/config/smart-fund-server.env
+Environment=PYTHONUNBUFFERED=1
+ExecStart=/home/yuyangruan/anaconda3/envs/smart-fund/bin/python -m src.interfaces.cli worker --group ths-sector -c 4
+Restart=always
+RestartSec=5
+TimeoutStopSec=60
+KillSignal=SIGTERM
+UMask=0027
+StandardOutput=append:/home/yuyangruan/smart-fund/logs/smart-fund-server/worker-ths-sector.log
+StandardError=append:/home/yuyangruan/smart-fund/logs/smart-fund-server/worker-ths-sector.log
+
+[Install]
+WantedBy=smart-fund-collector.target

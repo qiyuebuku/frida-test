@@ -2,7 +2,8 @@
 
 数据源: 北向资金(EM)、板块资金流(Sina)、个股主力资金(Tencent)、
         龙虎榜(EM+THS)、自选标的(THS+Tencent+Sina+EM)
-目标表: ft_market_flow（全市场数据）+ ft_watchlist_data（自选标的数据）
+目标表: ft_market_flow（全市场资金数据）+ ft_market_snapshots（行情与时间序列）
+        + ft_instrument_profiles/disclosures/observations（非行情标的数据）
 
 DATA_TYPE 注册表
 ================
@@ -11,7 +12,7 @@ ft_market_flow 的 data_type：
   sector_flow     板块资金流        源: sector_flow_sina   客户端: sina.get_sector_money_flow
   dragon_tiger    龙虎榜            源: dragon_tiger_em/ths 客户端: eastmoney.get_dragon_tiger / ths.get_ths_dragon_tiger
 
-ft_watchlist_data 的 data_type（源: watchlist_data）：
+Watchlist 采集维度（行情类写入 ft_market_snapshots，其余按语义拆分到标的事实表）：
   基金维度（20个）：
     nav             净值走势        ths.get_nav_trend                高频
     realtime        实时估值        ths.get_realtime_trend           高频
@@ -49,12 +50,16 @@ ft_watchlist_data 的 data_type（源: watchlist_data）：
     research        全市场研报      eastmoney.get_research_reports（低频，code='_market'）
 """
 
-import json
 import logging
+from dataclasses import dataclass, field
 from datetime import datetime, date, timezone
 
 from src.domain.collection.services.base import BaseAggregator, SourceDef
 from src.domain.collection.watchlist_instrument import is_exchange_traded_fund
+from src.domain.collection.watchlist_snapshot_projection import (
+    MARKET_SNAPSHOT_DATA_TYPES,
+    project_watchlist_market_snapshots,
+)
 from src.infrastructure.time_utils import app_today, app_today_iso
 
 logger = logging.getLogger(__name__)
@@ -97,7 +102,12 @@ def normalize_northbound(raw) -> list[dict]:
             "data_type": "northbound",
             "trade_date": trade_date,
             "data": {
-                "net_flow": item.get("DEAL_AMT"),
+                # RPT_MUTUAL_DEAL_HISTORY.DEAL_AMT 是成交额，不是净买入。
+                # 方向性字段在当前公开口径中不可用，必须保留为 null。
+                "turnover": item.get("DEAL_AMT"),
+                "net_flow": None,
+                "directional_flow_available": False,
+                "value_semantics": "northbound_turnover",
                 "mutual_type": item.get("MUTUAL_TYPE"),
                 "raw": {k: v for k, v in item.items() if v is not None},
             },
@@ -249,9 +259,79 @@ FUND_DIMENSIONS_LOW = [
     "position_detail",   # 完整持仓明细（季度）
     "trade_rule",        # 交易费率（极低变化频率）
 ]
+WATCHLIST_REALTIME_DIMENSIONS = {
+    "quote",
+    "realtime",
+    "minute_data",
+    "stock_flow",
+}
+WATCHLIST_DAILY_DIMENSIONS = {
+    "nav",
+    "nav_technical",
+    "performance",
+    "flow_trend",
+    "flow_trend_summary",
+    "periodic_rate",
+    "profit_contribution",
+    "nav_sina",
+    "kline",
+    "valuation",
+}
+WATCHLIST_REFERENCE_DIMENSIONS = {
+    "holdings",
+    "scale",
+    "holder_ratio",
+    "dividend",
+    "year_return",
+    "max_drawdown",
+    "holding_overview",
+    "fund_detail",
+    "style_preference",
+    "asset_allocation",
+    "position_detail",
+    "trade_rule",
+    "guba_posts",
+    "manager_info",
+    "hk_quote",
+    "us_quote",
+    "hk_us_kline",
+    "plates",
+}
 
 # 标的级并发上限（防止同花顺/腾讯限流）
 _WATCHLIST_CONCURRENCY = 8
+
+
+@dataclass
+class WatchlistInstrumentFetchResult:
+    """One instrument's provider outcomes before persistence."""
+
+    code: str
+    rows: list[dict] = field(default_factory=list)
+    successful_dimensions: set[str] = field(default_factory=set)
+    failed_dimensions: dict[str, str] = field(default_factory=dict)
+
+    @property
+    def outcome(self) -> str:
+        if self.rows:
+            return "partial_success" if self.failed_dimensions else "collected"
+        if self.successful_dimensions:
+            return (
+                "partial_no_new_data"
+                if self.failed_dimensions
+                else "no_new_data"
+            )
+        return "failed"
+
+
+@dataclass
+class WatchlistFetchBatch:
+    """Watchlist rows plus per-instrument collection diagnostics."""
+
+    rows: list[dict] = field(default_factory=list)
+    instruments: dict[str, WatchlistInstrumentFetchResult] = field(
+        default_factory=dict
+    )
 
 
 def _is_exchange_traded(code: str) -> bool:
@@ -265,12 +345,22 @@ def _is_exchange_traded(code: str) -> bool:
     return is_exchange_traded_fund(code)
 
 
-def _expand_timeseries(code: str, dim: str, data, today: date, since: str = None) -> list[dict]:
+def _expand_timeseries(
+    code: str,
+    dim: str,
+    data,
+    today: date,
+    since: str = None,
+    *,
+    include_since: bool = False,
+) -> list[dict]:
     """把时序维度的原始返回按日期展开为多行。非时序维度返回 [(今日快照)]。
 
     Args:
-        since: 增量截止日期（ISO 格式），只保留 > since 的时序记录。
+        since: 增量截止日期（ISO 格式），默认只保留 > since 的时序记录。
                None 表示全量（首次回填）。
+        include_since: 是否保留日期等于 since 的记录。日频刷新使用该参数
+                       覆盖更新当日数据，避免把“已有当日数据”误判为采集失败。
 
     时序展开规则：
       - nav:        同花顺字符串 "YYYYMMDD;累计净值;单位净值;涨跌幅;...|..." → 每天一行
@@ -281,6 +371,11 @@ def _expand_timeseries(code: str, dim: str, data, today: date, since: str = None
     rows: list[dict] = []
     from datetime import timedelta
     earliest = (today - timedelta(days=365)).isoformat()
+
+    def collected(value: str) -> bool:
+        if not since:
+            return False
+        return value < since if include_since else value <= since
 
     # ── nav: 字符串按 | 分隔，每行按 ; 分隔 ──
     if dim == "nav" and isinstance(data, str) and data:
@@ -294,7 +389,7 @@ def _expand_timeseries(code: str, dim: str, data, today: date, since: str = None
             trade_date = f"{raw_date[:4]}-{raw_date[4:6]}-{raw_date[6:]}"
             if trade_date < earliest:
                 continue
-            if since and trade_date <= since:
+            if collected(trade_date):
                 continue
 
             def _f(i):
@@ -326,7 +421,7 @@ def _expand_timeseries(code: str, dim: str, data, today: date, since: str = None
             d = (bar.get("date") or "")[:10]
             if not d or d < earliest:
                 continue
-            if since and d <= since:
+            if collected(d):
                 continue
             rows.append({
                 "code": code, "data_type": "kline", "trade_date": d,
@@ -346,7 +441,7 @@ def _expand_timeseries(code: str, dim: str, data, today: date, since: str = None
                 h_date = (h.get("date") or "")[:10]
                 if not h_date or h_date < earliest:
                     continue
-                if since and h_date <= since:
+                if collected(h_date):
                     continue
                 if h_date == today_str:
                     continue
@@ -404,7 +499,7 @@ def _expand_timeseries(code: str, dim: str, data, today: date, since: str = None
         if isinstance(gmbd, dict) and gmbd:
             for d_key, info in gmbd.items():
                 trade_date = d_key[:10]
-                if since and trade_date <= since:
+                if collected(trade_date):
                     continue
                 rows.append({
                     "code": code, "data_type": "scale", "trade_date": trade_date,
@@ -420,7 +515,7 @@ def _expand_timeseries(code: str, dim: str, data, today: date, since: str = None
             trade_date = (item.get("date") or "")[:10]
             if not trade_date:
                 continue
-            if since and trade_date <= since:
+            if collected(trade_date):
                 continue
             rows.append({
                 "code": code, "data_type": "holder_ratio", "trade_date": trade_date,
@@ -438,7 +533,7 @@ def _expand_timeseries(code: str, dim: str, data, today: date, since: str = None
                 trade_date = (item.get("payDate") or "")[:10]
                 if not trade_date:
                     continue
-                if since and trade_date <= since:
+                if collected(trade_date):
                     continue
                 rows.append({
                     "code": code, "data_type": "dividend", "trade_date": trade_date,
@@ -458,7 +553,7 @@ def _expand_timeseries(code: str, dim: str, data, today: date, since: str = None
                 trade_date = (item.get("date") or "")[:10]
                 if not trade_date:
                     continue
-                if since and trade_date <= since:
+                if collected(trade_date):
                     continue
                 rows.append({
                     "code": code, "data_type": "flow_trend", "trade_date": trade_date,
@@ -483,7 +578,7 @@ def _expand_timeseries(code: str, dim: str, data, today: date, since: str = None
             year_match = time_str[:4]
             if year_match.isdigit():
                 trade_date = f"{year_match}-12-31"
-                if since and trade_date <= since:
+                if collected(trade_date):
                     continue
                 rows.append({
                     "code": code, "data_type": "year_return", "trade_date": trade_date,
@@ -499,7 +594,7 @@ def _expand_timeseries(code: str, dim: str, data, today: date, since: str = None
             d = (item.get("date") or "")[:10]
             if not d or d < earliest:
                 continue
-            if since and d <= since:
+            if collected(d):
                 continue
             rows.append({
                 "code": code, "data_type": "nav_sina", "trade_date": d,
@@ -518,7 +613,7 @@ def _expand_timeseries(code: str, dim: str, data, today: date, since: str = None
                 trade_date = f"{time_str[:4]}-{_q_map.get(time_str[-1], '12-31')}"
             else:
                 continue
-            if since and trade_date <= since:
+            if collected(trade_date):
                 continue
             rows.append({
                 "code": code, "data_type": "asset_allocation", "trade_date": trade_date,
@@ -551,7 +646,7 @@ def _expand_timeseries(code: str, dim: str, data, today: date, since: str = None
                 d = raw_date[:10]
             if not d or d < earliest:
                 continue
-            if since and d <= since:
+            if collected(d):
                 continue
             rows.append({
                 "code": code, "data_type": "periodic_rate", "trade_date": d,
@@ -567,7 +662,7 @@ def _expand_timeseries(code: str, dim: str, data, today: date, since: str = None
             d = (item.get("date") or "")[:10]
             if not d or d < earliest:
                 continue
-            if since and d <= since:
+            if collected(d):
                 continue
             rows.append({
                 "code": code, "data_type": "valuation", "trade_date": d,
@@ -592,7 +687,7 @@ def _expand_timeseries(code: str, dim: str, data, today: date, since: str = None
                 d = (bar.get("date") or "")[:10]
                 if not d or d < earliest:
                     continue
-                if since and d <= since:
+                if collected(d):
                     continue
                 date_bars.setdefault(d, []).append({**bar, "tc_code": tc_code, "period": period})
         for d in sorted(date_bars):
@@ -628,13 +723,17 @@ def _watchlist_collection_plan(
     *,
     today: date,
     force: bool,
+    scope: str = "bootstrap",
 ) -> dict | None:
     """Build a due/retention plan from the instrument's own checkpoint."""
 
     config = item.get("config") or {}
     mode = str(item.get("mode") or "incremental")
     last_run_at = item.get("last_run_at")
-    interval = max(1, int(config.get("interval") or 180))
+    interval = max(
+        30,
+        int(config.get("realtime_interval_seconds") or 60),
+    )
     if not force and mode != "backfill" and last_run_at is not None:
         now = datetime.now(timezone.utc)
         if last_run_at.tzinfo is None:
@@ -664,15 +763,95 @@ def _watchlist_collection_plan(
         flow_days = min(max(gap, 3), 20)
         since = newest_date.isoformat()
 
+    cursor = item.get("cursor") or {}
+    daily_last_success = _cursor_date(cursor.get("daily_last_success_date"))
+    reference_last_success = _cursor_date(
+        cursor.get("reference_last_success_date")
+    )
+    collect_daily = daily_last_success != today
+    collect_low = (
+        reference_last_success is None
+        or (today - reference_last_success).days >= 7
+    )
+    if scope == "realtime":
+        collect_daily = False
+        collect_low = False
+    elif scope == "daily":
+        collect_daily = True
+        collect_low = False
+    elif scope == "reference":
+        collect_daily = False
+        collect_low = True
+    elif scope != "bootstrap":
+        raise ValueError(f"不支持的 watchlist collection scope: {scope}")
     return {
         "gap": gap,
         "nav_period": nav_period,
         "kline_len": kline_len,
         "flow_days": flow_days,
         "since": since,
-        "collect_daily": gap is None or gap > 1,
-        "collect_low": gap is None or gap > 7,
+        "collect_daily": collect_daily,
+        "collect_low": collect_low,
+        "collect_realtime": scope in {"realtime", "bootstrap"},
     }
+
+
+def _cursor_date(value) -> date | None:
+    if isinstance(value, datetime):
+        return value.date()
+    if isinstance(value, date):
+        return value
+    if isinstance(value, str) and value:
+        try:
+            return date.fromisoformat(value[:10])
+        except ValueError:
+            return None
+    return None
+
+
+def _mark_watchlist_no_new_data_success(
+    *,
+    code: str,
+    item: dict,
+    plan: dict,
+    scope: str,
+    successful_dimensions: set[str],
+) -> None:
+    """Clear stale failures when providers responded but had no newer row."""
+
+    from src.infrastructure.db import checkpoint_store
+
+    cursor = dict(item.get("cursor") or {})
+    today = app_today_iso()
+    if (
+        plan.get("collect_daily")
+        and successful_dimensions & WATCHLIST_DAILY_DIMENSIONS
+    ):
+        cursor["daily_last_success_date"] = today
+    if (
+        plan.get("collect_low")
+        and successful_dimensions & WATCHLIST_REFERENCE_DIMENSIONS
+    ):
+        cursor["reference_last_success_date"] = today
+    checkpoint_store.update_success(
+        "watchlist",
+        code,
+        {
+            "mode": item.get("mode") or "incremental",
+            "target_time": item.get("target_time"),
+            "newest_time": item.get("newest_time"),
+            "oldest_time": item.get("oldest_time"),
+            "backfill_status": item.get("backfill_status"),
+            "cursor": cursor,
+        },
+        saved_count=0,
+    )
+    logger.info(
+        "[watchlist:%s] 来源响应正常但没有新增数据 scope=%s dimensions=%s",
+        code,
+        scope,
+        sorted(successful_dimensions),
+    )
 
 
 async def _fetch_watchlist_data(
@@ -684,7 +863,8 @@ async def _fetch_watchlist_data(
     *,
     codes: list[str] | None = None,
     force: bool = False,
-) -> list[dict]:
+    scope: str = "bootstrap",
+) -> WatchlistFetchBatch:
     """遍历 watchlist，按 type 采集各维度数据
 
     增量策略（基于每个标的自己的 checkpoint）：
@@ -697,8 +877,9 @@ async def _fetch_watchlist_data(
         - 标的级并发，最多 _WATCHLIST_CONCURRENCY 只同时采集
         - 每只标的内部各维度仍 asyncio.gather 并发
 
-    返回 [{"code", "data_type", "trade_date", "data"}, ...]
-    直接写入 ft_watchlist_data（不走 ft_market_flow）。
+    返回 WatchlistFetchBatch：
+        - rows 在保存阶段按数据性质路由到市场快照或三类标的事实表
+        - instruments 区分有新增、无新增和真实失败
     """
     import asyncio as _asyncio
     from src.infrastructure.db import checkpoint_store
@@ -709,7 +890,7 @@ async def _fetch_watchlist_data(
 
     all_items = checkpoint_store.list_all("watchlist")
     if not all_items:
-        return []
+        return WatchlistFetchBatch()
 
     requested_codes = {
         str(code).strip().lower() for code in (codes or []) if str(code).strip()
@@ -721,7 +902,12 @@ async def _fetch_watchlist_data(
             continue
         if requested_codes and code not in requested_codes:
             continue
-        plan = _watchlist_collection_plan(item, today=today, force=force)
+        plan = _watchlist_collection_plan(
+            item,
+            today=today,
+            force=force,
+            scope=scope,
+        )
         if plan is not None:
             due_items.append((item, plan))
     if requested_codes:
@@ -733,7 +919,7 @@ async def _fetch_watchlist_data(
         if missing:
             logger.warning("[watchlist] 请求的标的不存在、已停用或未到期: %s", sorted(missing))
     if not due_items:
-        return []
+        return WatchlistFetchBatch()
 
     total = len(due_items)
     logger.info(
@@ -744,11 +930,15 @@ async def _fetch_watchlist_data(
     )
 
     results = []
+    instrument_results: dict[str, WatchlistInstrumentFetchResult] = {}
     t0 = _time.time()
     sem = _asyncio.Semaphore(_WATCHLIST_CONCURRENCY)
     completed_count = [0]  # 用列表实现闭包内可变计数器
 
-    async def _collect_one(item, plan: dict) -> list[dict]:
+    async def _collect_one(
+        item,
+        plan: dict,
+    ) -> WatchlistInstrumentFetchResult:
         code = item["source_name"]
         config = item.get("config", {})
         item_type = config.get("type", "fund")
@@ -758,20 +948,82 @@ async def _fetch_watchlist_data(
         since = plan["since"]
         collect_daily = plan["collect_daily"]
         collect_low = plan["collect_low"]
-        code_results = []
-        collection_error = False
+        collect_realtime = plan["collect_realtime"]
+        result = WatchlistInstrumentFetchResult(code=code)
+
+        def consume_dimension(dim: str, raw):
+            if isinstance(raw, Exception):
+                result.failed_dimensions[dim] = (
+                    f"{type(raw).__name__}: {raw}"
+                )
+                logger.debug("[watchlist:%s] %s 失败: %s", code, dim, raw)
+                return None
+            if (
+                isinstance(raw, dict)
+                and raw.get("status_code") not in (None, 0, 200)
+            ):
+                message = (
+                    raw.get("msg")
+                    or raw.get("status_msg")
+                    or raw.get("message")
+                    or f"status_code={raw.get('status_code')}"
+                )
+                result.failed_dimensions[dim] = str(message)
+                logger.debug(
+                    "[watchlist:%s] %s 返回失败状态: %s",
+                    code,
+                    dim,
+                    message,
+                )
+                return None
+            if (
+                isinstance(raw, dict)
+                and raw.get("status")
+                in {"upstream_error", "parse_error", "error"}
+            ):
+                message = raw.get("message") or raw.get("status")
+                result.failed_dimensions[dim] = str(message)
+                logger.debug(
+                    "[watchlist:%s] %s 返回失败状态: %s",
+                    code,
+                    dim,
+                    message,
+                )
+                return None
+
+            result.successful_dimensions.add(dim)
+            data = raw.get("data", raw) if isinstance(raw, dict) else raw
+            result.rows.extend(
+                _expand_timeseries(
+                    code,
+                    dim,
+                    data,
+                    today,
+                    since,
+                    include_since=scope == "daily",
+                )
+            )
+            return data
 
         async with sem:
             try:
                 if item_type == "fund":
                     from datetime import timedelta as _td
                     dim_tasks = {}
-                    # ── 高频（每次都采） ──
-                    dim_tasks["nav"]          = ths_client.get_nav_trend(code, period=nav_period)
-                    dim_tasks["realtime"]     = ths_client.get_realtime_trend(code)
-                    dim_tasks["nav_technical"] = ths_client.get_nav_technical(code)
+                    # ── 高频（盘中估值） ──
+                    if collect_realtime:
+                        dim_tasks["realtime"] = (
+                            ths_client.get_realtime_trend(code)
+                        )
                     # ── 日频（每天最多采 1 次） ──
                     if collect_daily:
+                        dim_tasks["nav"] = ths_client.get_nav_trend(
+                            code,
+                            period=nav_period,
+                        )
+                        dim_tasks["nav_technical"] = (
+                            ths_client.get_nav_technical(code)
+                        )
                         dim_tasks["performance"]       = ths_client.get_performance_rank(code)
                         dim_tasks["flow_trend"]        = ths_client.get_fund_flow_trend(code)
                         dim_tasks["periodic_rate"]     = ths_client.get_periodic_rate(code)
@@ -807,15 +1059,11 @@ async def _fetch_watchlist_data(
                     fund_detail_data = None
                     holdings_data = None
                     for dim, raw in zip(keys, raw_results):
-                        if isinstance(raw, Exception):
-                            logger.debug(f"[watchlist:{code}] {dim} 失败: {raw}")
-                            continue
-                        data = raw.get("data", raw) if isinstance(raw, dict) else raw
+                        data = consume_dimension(dim, raw)
                         if dim == "fund_detail":
                             fund_detail_data = data
                         if dim == "holdings":
                             holdings_data = data
-                        code_results.extend(_expand_timeseries(code, dim, data, today, since))
 
                     # 二阶段（低频）：依赖第一阶段结果的请求
                     if collect_low:
@@ -855,68 +1103,115 @@ async def _fetch_watchlist_data(
                             all_kline_sources = []
                             for p2_key, raw in zip(p2_keys, p2_results):
                                 if isinstance(raw, Exception):
-                                    logger.debug(f"[watchlist:{code}] {p2_key} 失败: {raw}")
+                                    result.failed_dimensions[p2_key] = (
+                                        f"{type(raw).__name__}: {raw}"
+                                    )
+                                    logger.debug(
+                                        "[watchlist:%s] %s 失败: %s",
+                                        code,
+                                        p2_key,
+                                        raw,
+                                    )
                                     continue
                                 data = raw.get("data", raw) if isinstance(raw, dict) else raw
 
                                 if p2_key.startswith("manager_info:"):
+                                    result.successful_dimensions.add(
+                                        "manager_info"
+                                    )
                                     if isinstance(data, list):
                                         all_managers.extend(data)
                                     elif data:
                                         all_managers.append(data)
                                 elif p2_key in ("hk_quote", "us_quote"):
-                                    code_results.extend(
-                                        _expand_timeseries(code, p2_key, data, today, since)
+                                    result.successful_dimensions.add(p2_key)
+                                    result.rows.extend(
+                                        _expand_timeseries(
+                                            code,
+                                            p2_key,
+                                            data,
+                                            today,
+                                            since,
+                                            include_since=scope == "daily",
+                                        )
                                     )
                                 elif p2_key.startswith("hk_us_kline:"):
+                                    result.successful_dimensions.add(
+                                        "hk_us_kline"
+                                    )
                                     if isinstance(data, dict):
                                         all_kline_sources.append(data)
 
                             if all_managers:
-                                code_results.extend(
-                                    _expand_timeseries(code, "manager_info", all_managers, today, since)
+                                result.rows.extend(
+                                    _expand_timeseries(
+                                        code,
+                                        "manager_info",
+                                        all_managers,
+                                        today,
+                                        since,
+                                        include_since=scope == "daily",
+                                    )
                                 )
                             if all_kline_sources:
-                                code_results.extend(
-                                    _expand_timeseries(code, "hk_us_kline", all_kline_sources, today, since)
+                                result.rows.extend(
+                                    _expand_timeseries(
+                                        code,
+                                        "hk_us_kline",
+                                        all_kline_sources,
+                                        today,
+                                        since,
+                                        include_since=scope == "daily",
+                                    )
                                 )
 
-                    # 场内基金追加个股维度（高频：每次都采）
+                    # 场内基金追加交易所行情维度
                     if _is_exchange_traded(code):
                         # 深交所：15xxxx ETF / 16xxxx LOF → sz
                         # 上交所：510~518xxx ETF → sh
                         prefix = "sz" if code.startswith(("15", "16")) else "sh"
                         full_code = f"{prefix}{code}"
-                        stock_tasks = {
-                            "stock_flow":  tencent_client.get_stock_fund_flow(full_code, history_days=flow_days),
-                            "quote":       tencent_client.get_stock_quote([full_code]),
-                            "minute_data": tencent_client.get_minute_data(full_code),
-                        }
-                        if sina_client:
+                        stock_tasks = {}
+                        if collect_realtime:
+                            stock_tasks.update({
+                                "stock_flow": tencent_client.get_stock_fund_flow(
+                                    full_code,
+                                    history_days=flow_days,
+                                ),
+                                "quote": tencent_client.get_stock_quote(
+                                    [full_code]
+                                ),
+                                "minute_data": tencent_client.get_minute_data(
+                                    full_code
+                                ),
+                            })
+                        if collect_daily and sina_client:
                             stock_tasks["kline"] = sina_client.get_kline(full_code, scale=240, datalen=kline_len)
 
                         stock_keys = list(stock_tasks.keys())
                         stock_results = await _asyncio.gather(*stock_tasks.values(), return_exceptions=True)
                         for dim, raw in zip(stock_keys, stock_results):
-                            if isinstance(raw, Exception):
-                                logger.debug(f"[watchlist:{code}] {dim} 失败: {raw}")
-                                continue
-                            data = raw.get("data", raw) if isinstance(raw, dict) else raw
-                            code_results.extend(_expand_timeseries(code, dim, data, today, since))
+                            consume_dimension(dim, raw)
 
                 elif item_type == "stock":
-                    stock_tasks = {
-                        "stock_flow":  tencent_client.get_stock_fund_flow(code, history_days=flow_days),
-                        "quote":       tencent_client.get_stock_quote([code]),
-                        "minute_data": tencent_client.get_minute_data(code),
-                    }
-                    if sina_client:
+                    stock_tasks = {}
+                    if collect_realtime:
+                        stock_tasks.update({
+                            "stock_flow": tencent_client.get_stock_fund_flow(
+                                code,
+                                history_days=flow_days,
+                            ),
+                            "quote": tencent_client.get_stock_quote([code]),
+                            "minute_data": tencent_client.get_minute_data(code),
+                        })
+                    if collect_daily and sina_client:
                         stock_tasks["kline"] = sina_client.get_kline(code, scale=240, datalen=kline_len)
-                    if em_client:
+                    if collect_daily and em_client:
                         pure_code = code[2:] if code[:2] in ("sh", "sz", "bj") else code
                         stock_tasks["valuation"] = em_client.get_stock_valuation_history(pure_code, years=1)
-                        if collect_low:
-                            stock_tasks["guba_posts"] = em_client.get_guba_posts(pure_code)
+                    if collect_low and em_client:
+                        pure_code = code[2:] if code[:2] in ("sh", "sz", "bj") else code
+                        stock_tasks["guba_posts"] = em_client.get_guba_posts(pure_code)
                     # 个股所属板块（低频）
                     if collect_low:
                         stock_tasks["plates"] = tencent_client.get_stock_plates(code)
@@ -924,18 +1219,16 @@ async def _fetch_watchlist_data(
                     stock_keys = list(stock_tasks.keys())
                     stock_results = await _asyncio.gather(*stock_tasks.values(), return_exceptions=True)
                     for dim, raw in zip(stock_keys, stock_results):
-                        if isinstance(raw, Exception):
-                            logger.debug(f"[watchlist:{code}] {dim} 失败: {raw}")
-                            continue
-                        data = raw.get("data", raw) if isinstance(raw, dict) else raw
-                        code_results.extend(_expand_timeseries(code, dim, data, today, since))
+                        consume_dimension(dim, raw)
 
                 elif item_type == "index":
-                    index_tasks = {
-                        "quote": tencent_client.get_stock_quote([code]),
-                        "minute_data": tencent_client.get_minute_data(code),
-                    }
-                    if sina_client:
+                    index_tasks = {}
+                    if collect_realtime:
+                        index_tasks.update({
+                            "quote": tencent_client.get_stock_quote([code]),
+                            "minute_data": tencent_client.get_minute_data(code),
+                        })
+                    if collect_daily and sina_client:
                         index_tasks["kline"] = sina_client.get_kline(
                             code,
                             scale=240,
@@ -947,31 +1240,36 @@ async def _fetch_watchlist_data(
                         return_exceptions=True,
                     )
                     for dim, raw in zip(index_keys, index_results):
-                        if isinstance(raw, Exception):
-                            logger.debug(f"[watchlist:{code}] {dim} 失败: {raw}")
-                            continue
-                        data = raw.get("data", raw) if isinstance(raw, dict) else raw
-                        code_results.extend(
-                            _expand_timeseries(code, dim, data, today, since)
-                        )
+                        consume_dimension(dim, raw)
 
                 else:
                     raise ValueError(f"不支持的 watchlist type: {item_type!r}")
 
             except Exception as e:
-                collection_error = True
-                logger.warning(f"[watchlist:{code}] 采集异常: {e}")
-                checkpoint_store.update_failure(
-                    "watchlist",
-                    code,
-                    f"{type(e).__name__}: {e}",
+                result.failed_dimensions["instrument"] = (
+                    f"{type(e).__name__}: {e}"
                 )
+                logger.warning(f"[watchlist:{code}] 采集异常: {e}")
 
-        if not code_results and not collection_error:
+        if result.outcome == "failed":
             checkpoint_store.update_failure(
                 "watchlist",
                 code,
-                "所有采集维度均未返回可用数据",
+                "; ".join(
+                    f"{dim}={message}"
+                    for dim, message in sorted(
+                        result.failed_dimensions.items()
+                    )
+                )
+                or "所有采集维度均未返回有效响应",
+            )
+        elif not result.rows:
+            _mark_watchlist_no_new_data_success(
+                code=code,
+                item=item,
+                plan=plan,
+                scope=scope,
+                successful_dimensions=result.successful_dimensions,
             )
 
         # 实时进度（在 sem 释放后更新，避免被锁影响日志顺序）
@@ -983,10 +1281,11 @@ async def _fetch_watchlist_data(
             elapsed = _time.time() - t0
             logger.info(
                 f"[watchlist] 进度 {idx}/{total} ({idx*100//total}%), "
-                f"本只 {len(code_results)} 条, 耗时 {elapsed:.0f}s"
+                f"本只 {len(result.rows)} 条, outcome={result.outcome}, "
+                f"耗时 {elapsed:.0f}s"
             )
 
-        return code_results
+        return result
 
     # 并发采集所有标的
     all_code_results = await _asyncio.gather(
@@ -994,8 +1293,9 @@ async def _fetch_watchlist_data(
         return_exceptions=True,
     )
     for r in all_code_results:
-        if isinstance(r, list):
-            results.extend(r)
+        if isinstance(r, WatchlistInstrumentFetchResult):
+            instrument_results[r.code] = r
+            results.extend(r.rows)
         elif isinstance(r, Exception):
             logger.warning(f"[watchlist] 标的采集异常: {r}")
 
@@ -1049,11 +1349,14 @@ async def _fetch_watchlist_data(
             f"总耗时 {elapsed_total:.0f}s"
         )
 
-    return results
+    return WatchlistFetchBatch(
+        rows=results,
+        instruments=instrument_results,
+    )
 
 
 def _normalize_watchlist_data(raw_items: list) -> list[dict]:
-    """watchlist 数据不需要额外 normalize，直接透传"""
+    """Watchlist 采集结果不做内容变换，存储层负责按数据性质路由。"""
     return raw_items if isinstance(raw_items, list) else []
 
 
@@ -1153,10 +1456,8 @@ class FundFlowAggregator(BaseAggregator):
     # 完整映射见文件顶部 DATA_TYPE 注册表
     SOURCE_CONFIGS = {
         "northbound":       {"target_days": 60, "page_size": 60, "interval": 180},           # → data_type: northbound
-        "sector_flow_sina": {"target_days": 0, "page_size": 50, "interval": 180, "default_mode": "incremental"},   # → data_type: sector_flow
         "dragon_tiger_em":  {"target_days": 0, "page_size": 50, "interval": 21600, "default_mode": "incremental"}, # → data_type: dragon_tiger
         "dragon_tiger_ths": {"target_days": 0, "page_size": 50, "interval": 21600, "default_mode": "incremental"}, # → data_type: dragon_tiger
-        "watchlist_data":   {"target_days": 0, "interval": 60, "default_mode": "incremental"},                     # → 每分钟扫描各标的独立 interval
     }
     BACKFILL_SOURCES = frozenset({"northbound"})
     AUTO_CATCHUP_SOURCES = BACKFILL_SOURCES
@@ -1186,14 +1487,6 @@ class FundFlowAggregator(BaseAggregator):
                 180,
                 normalize_northbound,
             ),
-            # 板块资金流（新浪，含超大/大/中/小单分项）— 3 分钟
-            # 新浪接口只有当前快照，无历史端点，靠 cron 持续累积
-            SourceDef(
-                "sector_flow_sina",
-                lambda cp: clients.sina.get_sector_money_flow(),
-                180,
-                normalize_sector_flow_sina,
-            ),
             # 龙虎榜 — 东方财富，盘后（6 小时间隔）
             SourceDef(
                 "dragon_tiger_em",
@@ -1208,15 +1501,6 @@ class FundFlowAggregator(BaseAggregator):
                 21600,
                 normalize_dragon_tiger_ths,
             ),
-            # 自选标的数据采集 — 每分钟扫描，标的自身 interval 决定是否到期
-            SourceDef(
-                "watchlist_data",
-                lambda cp: _fetch_watchlist_data(
-                    clients.ths, clients.tencent, clients.sina, clients.eastmoney, cp,
-                ),
-                60,
-                _normalize_watchlist_data,
-            ),
         ]
 
     # checkpoint 现在统一由 base.py 的 checkpoint_store 管理
@@ -1226,11 +1510,12 @@ class FundFlowAggregator(BaseAggregator):
     # ==================== 入库 ====================
 
     def _save(self, items: list[dict]) -> int:
-        """路由写入：有 code 字段 → ft_watchlist_data，否则 → ft_market_flow"""
+        """按事实性质路由到资金、行情快照或标的资料表。"""
         if not items:
             return 0
 
         watchlist_items = []
+        snapshot_source_items = []
         market_items = []
 
         for item in items:
@@ -1239,13 +1524,16 @@ class FundFlowAggregator(BaseAggregator):
                 continue
 
             if item.get("code"):
-                # watchlist 数据 → ft_watchlist_data
-                watchlist_items.append({
+                target = {
                     "code": item["code"],
                     "data_type": item["data_type"],
                     "trade_date": item.get("trade_date"),
                     "data": data,
-                })
+                }
+                if item["data_type"] in MARKET_SNAPSHOT_DATA_TYPES:
+                    snapshot_source_items.append(target)
+                else:
+                    watchlist_items.append(target)
             else:
                 # 全市场数据 → ft_market_flow
                 if not item.get("data_type") or not item.get("trade_date"):
@@ -1261,13 +1549,23 @@ class FundFlowAggregator(BaseAggregator):
         if market_items:
             from src.infrastructure.persistence.repositories import MarketFlowRepositoryImpl
             saved += MarketFlowRepositoryImpl().upsert_batch(market_items)
+        if snapshot_source_items:
+            from src.infrastructure.persistence.repositories import (
+                MarketSnapshotRepository,
+            )
+            saved += MarketSnapshotRepository().upsert_batch(
+                project_watchlist_market_snapshots(snapshot_source_items)
+            )
         if watchlist_items:
-            from src.infrastructure.persistence.repositories.watchlist_data_repository_impl import WatchlistDataRepositoryImpl
+            from src.infrastructure.persistence.repositories import InstrumentDataRepository
             t0 = _time.time()
             logger.info(f"[watchlist] 开始入库 {len(watchlist_items)} 条")
-            saved += WatchlistDataRepositoryImpl().save_batch(watchlist_items)
-            self._update_watchlist_item_checkpoints(watchlist_items)
+            saved += InstrumentDataRepository().save_batch(watchlist_items)
             logger.info(f"[watchlist] 入库完成，耗时 {_time.time()-t0:.1f}s")
+
+        persisted_watchlist_items = watchlist_items + snapshot_source_items
+        if persisted_watchlist_items:
+            self._update_watchlist_item_checkpoints(persisted_watchlist_items)
 
         return saved
 
@@ -1305,13 +1603,22 @@ class FundFlowAggregator(BaseAggregator):
                 if state.get("newest_time")
                 else dates
             )
+            cursor = dict(state.get("cursor") or {})
+            data_types = {
+                str(item.get("data_type") or "") for item in code_items
+            }
+            today = app_today_iso()
+            if data_types & WATCHLIST_DAILY_DIMENSIONS:
+                cursor["daily_last_success_date"] = today
+            if data_types & WATCHLIST_REFERENCE_DIMENSIONS:
+                cursor["reference_last_success_date"] = today
             checkpoint = {
                 "mode": "incremental",
                 "target_time": state.get("target_time"),
                 "newest_time": newest,
                 "oldest_time": oldest,
                 "backfill_status": state.get("backfill_status"),
-                "cursor": None,
+                "cursor": cursor,
             }
             if state.get("mode") == "backfill":
                 target = str(state.get("target_time") or "")[:10]
@@ -1330,12 +1637,13 @@ class FundFlowAggregator(BaseAggregator):
         codes: list[str],
         *,
         force: bool = True,
+        scope: str = "bootstrap",
     ) -> dict:
         """Collect selected instruments through the same production pipeline."""
 
         from src.infrastructure import clients
 
-        raw = await _fetch_watchlist_data(
+        batch = await _fetch_watchlist_data(
             clients.ths,
             clients.tencent,
             clients.sina,
@@ -1343,19 +1651,46 @@ class FundFlowAggregator(BaseAggregator):
             {},
             codes=codes,
             force=force,
+            scope=scope,
         )
-        saved = self._save(raw)
+        saved = self._save(batch.rows)
+        outcomes = {
+            code: result.outcome
+            for code, result in batch.instruments.items()
+        }
         collected_codes = sorted(
-            {
-                str(item.get("code") or "")
-                for item in raw
-                if item.get("code") and item.get("code") != "_market"
-            }
+            code
+            for code, outcome in outcomes.items()
+            if outcome in {"collected", "partial_success"}
         )
+        no_new_data_codes = sorted(
+            code
+            for code, outcome in outcomes.items()
+            if outcome in {"no_new_data", "partial_no_new_data"}
+        )
+        failed_codes = sorted(
+            code for code, outcome in outcomes.items()
+            if outcome == "failed"
+        )
+        diagnostics = {
+            code: {
+                "outcome": result.outcome,
+                "successful_dimensions": sorted(
+                    result.successful_dimensions
+                ),
+                "failed_dimensions": result.failed_dimensions,
+                "rows": len(result.rows),
+            }
+            for code, result in batch.instruments.items()
+        }
         return {
             "requested_codes": list(dict.fromkeys(codes)),
             "collected_codes": collected_codes,
-            "rows": len(raw),
+            "no_new_data_codes": no_new_data_codes,
+            "failed_codes": failed_codes,
+            "outcomes": outcomes,
+            "diagnostics": diagnostics,
+            "rows": len(batch.rows),
             "saved": saved,
         }
 

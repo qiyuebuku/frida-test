@@ -6,13 +6,14 @@
     python -m src.interfaces.cli scheduler
     python -m src.interfaces.cli persist
     python -m src.interfaces.cli agent check
-    python -m src.interfaces.cli agent run "研究问题"
+    python -m src.interfaces.cli agent run research-context.json --json-output
     python -m src.interfaces.cli trigger [queue...]
     python -m src.interfaces.cli init db [--target prod|test]
     python -m src.interfaces.cli init state [--reset]
     python -m src.interfaces.cli init schedules
     python -m src.interfaces.cli init all
 """
+import asyncio
 import sys
 from pathlib import Path
 
@@ -20,11 +21,99 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
 
 import click
 
-from src.application.services.collection_backfill_service import (
-    CollectionBackfillError,
-    CollectionBackfillService,
-)
 from src.infrastructure.observability import configure_logging
+
+
+COLLECTION_WORKER_TASKS = (
+    "collect_collection_source",
+    "advance_collection_backfill",
+    "scan_watchlist_instruments",
+    "scan_watchlist_daily",
+    "scan_watchlist_reference",
+    "collect_watchlist_instruments",
+    "collect_market_breadth_snapshot",
+    "collect_stock_rankings",
+    "collect_stock_dynamic_groups",
+    "collect_stock_change_events",
+    "collect_ths_market_events",
+    "collect_ths_market_context",
+    "collect_ths_market_profile",
+    "collect_market_boundary_snapshot",
+    "collect_sector_market_snapshot",
+    "collect_sector_fund_flow_snapshot",
+    "collect_ths_sector_fragment_v2",
+    "collect_ths_sector_reference_snapshot_v2",
+    "collect_ths_sector_signal_fragment_v2",
+    "collect_cross_market_snapshot",
+    "collect_etf_estimated_net_inflow",
+    "collect_ths_etf_zone",
+    "collect_ths_futures_zone",
+    "collect_ths_futures_fragment",
+    "collect_ths_futures_cycle",
+    "collect_ths_gold_zone",
+    "collect_ths_us_overview",
+    "collect_ths_us_sectors",
+    "collect_ths_us_stock_rankings",
+    "collect_ths_us_etf_sectors",
+    "collect_etf_daily_shares",
+    "collect_pboc_rate_liquidity",
+    "collect_ths_index_sentiment",
+    "collect_market_daily_bars",
+    "collect_market_reference_data",
+    "collect_market_daily_catchup",
+    "collect_market_valuation",
+    "collect_bond_index",
+    "materialize_sentiment_signal",
+)
+
+COLLECTION_WORKER_GROUPS = {
+    # Dedicated latency-sensitive lane. A JetTask queue must have exactly one
+    # worker-pool owner: registering the same queue in multiple pools lets one
+    # process reserve messages that the other pool can no longer execute in
+    # time, producing an ever-growing stale snapshot backlog.
+    "ths-sector": (
+        "collect_ths_sector_fragment_v2",
+        "collect_ths_sector_reference_snapshot_v2",
+        "collect_ths_sector_signal_fragment_v2",
+    ),
+    "ths": (
+        "collect_stock_rankings",
+        "collect_stock_dynamic_groups",
+        "collect_ths_market_events",
+        "collect_ths_market_context",
+        "collect_ths_market_profile",
+        "collect_etf_estimated_net_inflow",
+        "collect_ths_etf_zone",
+        "collect_ths_futures_zone",
+        "collect_ths_futures_fragment",
+        "collect_ths_futures_cycle",
+        "collect_ths_gold_zone",
+        "collect_ths_us_overview",
+        "collect_ths_us_sectors",
+        "collect_ths_us_stock_rankings",
+        "collect_ths_us_etf_sectors",
+        "collect_ths_index_sentiment",
+    ),
+    "http": (
+        "collect_collection_source",
+        "advance_collection_backfill",
+        "collect_pboc_rate_liquidity",
+        "collect_market_daily_bars",
+        "collect_market_reference_data",
+        "collect_market_valuation",
+        "collect_bond_index",
+        "collect_etf_daily_shares",
+    ),
+    "internal": (
+        "scan_watchlist_instruments",
+        "scan_watchlist_daily",
+        "scan_watchlist_reference",
+        "collect_watchlist_instruments",
+        "collect_market_daily_catchup",
+        "run_research_agent",
+        "evaluate_research_outcomes",
+    ),
+}
 
 
 @click.group()
@@ -100,8 +189,19 @@ def _ensure_jettask_partitions(db_url: str, *, months_back: int = 3, months_ahea
 
 @cli.command()
 @click.option("-c", "--concurrency", type=int, default=1, help="并发数")
+@click.option(
+    "--group",
+    "worker_group",
+    type=click.Choice(sorted(COLLECTION_WORKER_GROUPS)),
+    default=None,
+    help="按采集通道启动隔离 Worker 池",
+)
 @click.argument("tasks", nargs=-1)
-def worker(concurrency: int, tasks: tuple[str, ...]):
+def worker(
+    concurrency: int,
+    worker_group: str | None,
+    tasks: tuple[str, ...],
+):
     """启动 jettask Worker
 
     不传 TASKS 则消费全部任务，传则只消费指定的：
@@ -111,21 +211,34 @@ def worker(concurrency: int, tasks: tuple[str, ...]):
       worker collect_news collect_fund_flow   # 只跑这两个
     """
     from src.interfaces.tasks import app
+    from src.infrastructure.persistence.repositories import (
+        CollectionRunRepository,
+    )
 
-    ALL_TASKS = [
-        "collect_news",
-        "collect_fund_flow",
-        "collect_watchlist_instruments",
-        "collect_market",
-        "collect_macro",
-        "collect_sentiment",
-        "materialize_sentiment_signal",
-    ]
-    task_names = list(tasks) if tasks else ALL_TASKS
+    if worker_group and tasks:
+        raise click.UsageError("--group 与显式 TASKS 不能同时使用")
+    task_names = (
+        list(COLLECTION_WORKER_GROUPS[worker_group])
+        if worker_group
+        else (list(tasks) if tasks else list(COLLECTION_WORKER_TASKS))
+    )
 
-    click.echo(f"🚀 启动 Worker（并发={concurrency}）")
+    interrupted = CollectionRunRepository().finish_interrupted_running()
+    if interrupted:
+        click.echo(f"已关闭上次 Worker 中断遗留的运行记录: {interrupted} 条")
+    click.echo(
+        f"🚀 启动 Worker（通道={worker_group or 'all'}，并发={concurrency}）"
+    )
     click.echo(f"   任务: {', '.join(task_names)}")
-    app.start_worker(task_names=task_names, concurrency=concurrency, prefetch=100)
+    # Keep the reservation window proportional to executable capacity.  A
+    # fixed prefetch=100 let one process claim hours of periodic snapshots;
+    # after a restart Jettask reclaimed those stale PEL entries before current
+    # futures/ETF tasks and all eight slots starved on obsolete work.
+    app.start_worker(
+        task_names=task_names,
+        concurrency=concurrency,
+        prefetch=max(concurrency * 2, 4),
+    )
 
 
 @cli.command("knowledge-worker")
@@ -191,6 +304,7 @@ def _run_api_server(host: str, port: int, reload: bool) -> None:
 
     click.echo(f"🌐 启动 API 服务  http://{host}:{port}")
     click.echo("   API 文档: /docs")
+    click.echo("   Market Data Observatory: /market-dashboard")
     click.echo("   Graph Community Explorer: /api/kg/graph-viewer")
     click.echo("   Relation Graph MCP: /mcp")
     click.echo("   Browser Spy: /api/spy/status")
@@ -220,70 +334,88 @@ def llm_proxy(host: str | None, port: int | None, reload: bool):
     _run_api_server(host or SERVER_HOST, port or SERVER_PORT, reload)
 
 
+@cli.command("ths-realtime-stream")
+@click.option("--host", default=None, help="ADB 转发监听地址")
+@click.option("--port", default=None, type=int, help="ADB 转发监听端口")
+def ths_realtime_stream(host: str | None, port: int | None):
+    """维护一个同花顺 App 会话中的多路实时订阅并异步入库。"""
+    import asyncio
+    import signal
+
+    from src.application.services.ths_realtime_stream_service import (
+        THSRealtimeStreamService,
+    )
+
+    async def run() -> None:
+        service = THSRealtimeStreamService(host=host, port=port)
+        stop_event = asyncio.Event()
+        loop = asyncio.get_running_loop()
+        for name in ("SIGINT", "SIGTERM"):
+            value = getattr(signal, name, None)
+            if value is not None:
+                loop.add_signal_handler(value, stop_event.set)
+        service_task = asyncio.create_task(
+            service.run(),
+            name="ths-realtime-stream",
+        )
+        stop_task = asyncio.create_task(
+            stop_event.wait(),
+            name="ths-realtime-stream-stop",
+        )
+        done, _pending = await asyncio.wait(
+            {service_task, stop_task},
+            return_when=asyncio.FIRST_COMPLETED,
+        )
+        if stop_task in done:
+            await service.stop()
+        else:
+            stop_task.cancel()
+        await service_task
+
+    click.echo("启动同花顺单 App 多路实时订阅")
+    asyncio.run(run())
+
+
 # ==================== 数据审计 ====================
 
 
 @cli.command("data-types")
 def data_types():
     """查看所有 data_type 及其在 DB 中的数据量"""
-    from sqlalchemy import text
+    from sqlalchemy import func, select
     from src.infrastructure.connections import get_session
+    from src.infrastructure.persistence.models.collection import (
+        InstrumentDisclosure,
+        InstrumentObservation,
+        InstrumentProfile,
+        MarketFlow,
+    )
 
     with get_session() as s:
         click.echo("═══ ft_market_flow ═══")
-        rows = s.execute(text(
-            "SELECT data_type, count(*), min(trade_date), max(trade_date) "
-            "FROM ft_market_flow GROUP BY data_type ORDER BY data_type"
-        )).fetchall()
+        rows = s.execute(
+            select(MarketFlow.data_type, func.count(), func.min(MarketFlow.trade_date), func.max(MarketFlow.trade_date))
+            .group_by(MarketFlow.data_type).order_by(MarketFlow.data_type)
+        ).all()
         for r in rows:
             click.echo(f"  {r[0]:25} {r[1]:>6} 条  {r[2]} ~ {r[3]}")
 
-        click.echo("\n═══ ft_watchlist_data ═══")
-        rows = s.execute(text(
-            "SELECT data_type, count(*), count(DISTINCT code) "
-            "FROM ft_watchlist_data GROUP BY data_type ORDER BY data_type"
-        )).fetchall()
-        for r in rows:
-            click.echo(f"  {r[0]:25} {r[1]:>6} 条  {r[2]} 只标的")
-
-        codes = s.execute(text("SELECT count(DISTINCT code) FROM ft_watchlist_data")).scalar()
-        click.echo(f"\n  覆盖标的: {codes}")
+        for model in (InstrumentProfile, InstrumentDisclosure, InstrumentObservation):
+            click.echo(f"\n═══ {model.__tablename__} ═══")
+            rows = s.execute(
+                select(model.data_type, func.count(), func.count(func.distinct(model.code)))
+                .group_by(model.data_type).order_by(model.data_type)
+            ).all()
+            for r in rows:
+                click.echo(f"  {r[0]:25} {r[1]:>6} 条  {r[2]} 只标的")
 
 
 # ==================== 手动触发 ====================
 
 
-QUEUE_TO_COLLECTION_AGGREGATOR = {
-    "collect_news": "news",
-    "collect_fund_flow": "fund_flow",
-    "collect_market": "market",
-    "collect_sentiment": "sentiment",
-    "collect_macro": "macro",
-}
-
-
 def _reset_collection_intervals_for_trigger(target_queues: list[str]) -> int:
-    """手动触发采集任务时清空 last_run_at，避免消息被 source interval 跳过。"""
-    aggregators = {
-        QUEUE_TO_COLLECTION_AGGREGATOR[queue]
-        for queue in target_queues
-        if queue in QUEUE_TO_COLLECTION_AGGREGATOR
-    }
-    if not aggregators:
-        return 0
-
-    from sqlalchemy import func, update
-
-    from src.infrastructure.connections import get_session
-    from src.infrastructure.persistence.models.collection import CollectionState
-
-    with get_session() as session:
-        result = session.execute(
-            update(CollectionState)
-            .where(CollectionState.aggregator.in_(aggregators))
-            .values(last_run_at=None, updated_at=func.now())
-        )
-        return int(result.rowcount or 0)
+    """采集周期已迁移到 JetTask；手工触发不再修改 checkpoint 状态。"""
+    return 0
 
 
 @cli.command()
@@ -368,6 +500,11 @@ def collection():
 )
 def collection_backfill_sources(aggregator: str | None):
     """列出各 source 的历史回填能力和当前状态。"""
+    from src.application.services.collection_backfill_service import (
+        CollectionBackfillError,
+        CollectionBackfillService,
+    )
+
     service = CollectionBackfillService()
     try:
         rows = service.list_capabilities(aggregator)
@@ -404,18 +541,34 @@ def collection_backfill(
     dry_run: bool,
 ):
     """将单个支持历史接口的 source 切换到受控回填模式。"""
-    service = CollectionBackfillService()
+    from src.application.services.collection_backfill_service import (
+        CollectionBackfillError,
+        CollectionBackfillService,
+    )
+    from src.application.services.collection_backfill_chain_service import (
+        CollectionBackfillChainService,
+    )
+
     try:
-        result = service.prepare(
-            aggregator=aggregator,
-            source_name=source_name,
-            start_date=start_date,
-            dry_run=dry_run,
-        )
+        if dry_run:
+            result = CollectionBackfillService().prepare(
+                aggregator=aggregator,
+                source_name=source_name,
+                start_date=start_date,
+                dry_run=True,
+            )
+        else:
+            data = asyncio.run(CollectionBackfillChainService().start(
+                aggregator=aggregator,
+                source_name=source_name,
+                start_date=start_date,
+            ))
+            result = None
     except CollectionBackfillError as exc:
         raise click.ClickException(str(exc)) from exc
 
-    data = result.to_dict()
+    if result is not None:
+        data = result.to_dict()
     click.echo(f"status={data['status']} changed={data['changed']} dry_run={data['dry_run']}")
     click.echo(
         f"source={data['aggregator']}:{data['source_name']} "
@@ -430,7 +583,7 @@ def collection_backfill(
         click.echo(f"warning={data['warning']}", err=True)
     if data["changed"] and not dry_run:
         click.echo(
-            f"已设置 last_run_at=NULL；下一次 {data['queue']} 调度会立即执行该 source 的历史回填"
+            "已启动独立链式回填；完成后自动停止投递，长期 Schedule 不参与回填"
         )
 
 
@@ -440,6 +593,11 @@ AGGREGATORS = [
     ("news", "src.domain.collection.services.news", "NewsAggregator"),
     ("fund_flow", "src.domain.collection.services.fund_flow", "FundFlowAggregator"),
     ("market", "src.domain.collection.services.market", "MarketAggregator"),
+    (
+        "market_observation",
+        "src.application.services.market_observation_service",
+        "MarketObservationService",
+    ),
     ("sentiment", "src.domain.collection.services.sentiment", "SentimentAggregator"),
     ("macro", "src.domain.collection.services.macro", "MacroAggregator"),
 ]
@@ -506,14 +664,50 @@ def init_state(reset: bool):
 @init.command("schedules")
 def init_schedules():
     """注册定时调度到 jettask scheduler（需要 Persist 在跑）"""
-    from src.interfaces.cli.schedules import SCHEDULES
-    from src.interfaces.tasks import app
+    from src.interfaces.cli.schedules import (
+        SCHEDULES,
+        RETIRED_REDUNDANT_MARKET_SCHEDULE_NAMES,
+        THS_LEGACY_FUTURES_SCHEDULE_NAMES,
+        THS_LEGACY_SECTOR_SCHEDULE_NAMES,
+    )
+    # Schedule registration only needs the command publisher. Importing
+    # ``src.interfaces.tasks`` eagerly initializes every market client and raw
+    # data partition, which can block indefinitely when an App bridge is busy.
+    # Keep this control-plane command independent from worker business startup.
+    from jettask import Jettask
+    from src.infrastructure.config.settings import JETTASK_PREFIX, REDIS_URL
+
+    app = Jettask(redis_url=REDIS_URL, prefix=JETTASK_PREFIX)
 
     click.echo(f"注册 {len(SCHEDULES)} 个调度:")
     for s in SCHEDULES:
         click.echo(f"  - {s.name}")
     try:
-        app.schedule_delete(["collect_fund_flow_5min"])
+        schedule_names = [schedule.name for schedule in SCHEDULES]
+        deleted = app.schedule_delete(
+            [
+                *schedule_names,
+                "collect_news_3min",
+                "collect_market_valuation_after_close",
+                "collect_bond_index_after_close",
+                "collect_fund_flow_5min",
+                "collect_market_1min",
+                "collect_ths_sector_core_60s",
+                "collect_stock_rankings_30s",
+                "collect_stock_dynamic_groups_60s",
+                "collect_ths_us_market_zone_120s",
+                "collect_ths_us_stock_rankings_180s",
+                "collect_ths_us_stock_rankings_60s",
+                "collect_ths_us_etf_sectors_300s",
+                "collect_ths_etf_zone_60s",
+                "collect_ths_futures_zone_60s",
+                "collect_ths_futures_zone_120s",
+                *THS_LEGACY_FUTURES_SCHEDULE_NAMES,
+                *THS_LEGACY_SECTOR_SCHEDULE_NAMES,
+                *RETIRED_REDUNDANT_MARKET_SCHEDULE_NAMES,
+            ]
+        )
+        click.echo(f"  已删除 {deleted} 个旧调度定义")
         count = app.schedule_register(SCHEDULES)
     except RuntimeError as exc:
         if "command result polling timeout" in str(exc):

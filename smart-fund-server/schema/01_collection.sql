@@ -216,6 +216,9 @@ CREATE TABLE public.ft_news (
     related_stocks jsonb DEFAULT '[]'::jsonb,
     published_at timestamp with time zone NOT NULL,
     fingerprint character varying(64) NOT NULL,
+    news_kind character varying(24) DEFAULT 'news'::character varying NOT NULL,
+    dedup_key character varying(64) NOT NULL,
+    content_fingerprint character varying(64),
     created_at timestamp with time zone DEFAULT now(),
     summary text DEFAULT ''::text,
     event_extracted boolean DEFAULT false
@@ -316,47 +319,104 @@ ALTER TABLE ONLY public.ft_news ALTER COLUMN id SET DEFAULT nextval('public.ft_n
 
 ALTER TABLE ONLY public.ft_sentiment ALTER COLUMN id SET DEFAULT nextval('public.ft_sentiment_id_seq'::regclass);
 
--- TABLE: ft_watchlist_data
---
--- Name: ft_watchlist_data; Type: TABLE; Schema: public; Owner: -
---
+-- Non-market facts for tracked instruments, split by update semantics.
+CREATE TABLE public.ft_instrument_profiles (
+    id bigserial PRIMARY KEY, code varchar(32) NOT NULL, data_type varchar(32) NOT NULL,
+    provider varchar(32) NOT NULL, observed_at timestamptz, fetched_at timestamptz NOT NULL,
+    data jsonb NOT NULL, created_at timestamptz DEFAULT now(), updated_at timestamptz DEFAULT now(),
+    CONSTRAINT uq_ft_instrument_profiles_identity UNIQUE (code, data_type, provider)
+);
+CREATE TABLE public.ft_instrument_disclosures (
+    id bigserial PRIMARY KEY, code varchar(32) NOT NULL, data_type varchar(32) NOT NULL,
+    provider varchar(32) NOT NULL, report_date date NOT NULL, observed_at timestamptz,
+    fetched_at timestamptz NOT NULL, payload_hash varchar(64) NOT NULL, data jsonb NOT NULL,
+    created_at timestamptz DEFAULT now(), updated_at timestamptz DEFAULT now(),
+    CONSTRAINT uq_ft_instrument_disclosures_identity UNIQUE (code, data_type, provider, report_date)
+);
+CREATE TABLE public.ft_instrument_observations (
+    id bigserial PRIMARY KEY, code varchar(32) NOT NULL, data_type varchar(32) NOT NULL,
+    provider varchar(32) NOT NULL, observation_date date NOT NULL, observed_at timestamptz,
+    fetched_at timestamptz NOT NULL, payload_hash varchar(64) NOT NULL, data jsonb NOT NULL,
+    created_at timestamptz DEFAULT now(), updated_at timestamptz DEFAULT now(),
+    CONSTRAINT uq_ft_instrument_observations_identity UNIQUE (code, data_type, provider, observation_date)
+);
 
-CREATE TABLE public.ft_watchlist_data (
-    id integer NOT NULL,
-    code character varying(16) NOT NULL,
+-- TABLE: ft_market_snapshots
+-- 盘中公共市场与标的历史快照；同一交易日不同时间桶不会互相覆盖。
+
+CREATE TABLE public.ft_market_snapshots (
+    id bigserial NOT NULL,
     data_type character varying(32) NOT NULL,
-    trade_date date,
+    subject_type character varying(16) NOT NULL,
+    subject_id character varying(128) NOT NULL,
+    market character varying(16) NOT NULL,
+    provider character varying(32) NOT NULL,
+    trade_date date NOT NULL,
+    observed_at timestamp with time zone,
+    fetched_at timestamp with time zone NOT NULL,
+    bucket_at timestamp with time zone NOT NULL,
+    freshness_status character varying(16) NOT NULL DEFAULT 'unknown',
+    source_latency_seconds double precision,
+    payload_hash character varying(64) NOT NULL,
     data jsonb NOT NULL,
     created_at timestamp with time zone DEFAULT now(),
     updated_at timestamp with time zone DEFAULT now()
 );
 
--- SEQUENCE: ft_watchlist_data_id_seq
---
--- Name: ft_watchlist_data_id_seq; Type: SEQUENCE; Schema: public; Owner: -
---
+COMMENT ON TABLE public.ft_market_snapshots IS '盘中公共市场与标的历史快照';
+COMMENT ON COLUMN public.ft_market_snapshots.observed_at IS '来源声明的数据时间；未知时为空';
+COMMENT ON COLUMN public.ft_market_snapshots.fetched_at IS '本系统完成抓取时间';
+COMMENT ON COLUMN public.ft_market_snapshots.bucket_at IS '按任务频率归一后的幂等时间桶';
 
-CREATE SEQUENCE public.ft_watchlist_data_id_seq
-    AS integer
-    START WITH 1
-    INCREMENT BY 1
-    NO MINVALUE
-    NO MAXVALUE
-    CACHE 1;
+-- TABLE: ft_etf_daily_shares
+-- 沪深交易所官方 ETF 日级份额。
 
--- SEQUENCE OWNED BY: ft_watchlist_data_id_seq
---
--- Name: ft_watchlist_data_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: -
---
+CREATE TABLE public.ft_etf_daily_shares (
+    id bigserial NOT NULL,
+    exchange character varying(8) NOT NULL,
+    code character varying(16) NOT NULL,
+    name character varying(128) NOT NULL DEFAULT '',
+    trade_date date NOT NULL,
+    shares numeric(30,4) NOT NULL,
+    share_unit character varying(16) NOT NULL,
+    provider character varying(32) NOT NULL,
+    observed_at timestamp with time zone,
+    fetched_at timestamp with time zone NOT NULL,
+    data jsonb NOT NULL DEFAULT '{}'::jsonb,
+    created_at timestamp with time zone DEFAULT now(),
+    updated_at timestamp with time zone DEFAULT now()
+);
 
-ALTER SEQUENCE public.ft_watchlist_data_id_seq OWNED BY public.ft_watchlist_data.id;
+COMMENT ON TABLE public.ft_etf_daily_shares IS '沪深交易所官方 ETF 日级份额';
 
--- DEFAULT: ft_watchlist_data id
---
--- Name: ft_watchlist_data id; Type: DEFAULT; Schema: public; Owner: -
---
+-- TABLE: ft_collection_runs
+-- 每次采集执行的历史审计，ft_collection_state 继续保存最新断点。
 
-ALTER TABLE ONLY public.ft_watchlist_data ALTER COLUMN id SET DEFAULT nextval('public.ft_watchlist_data_id_seq'::regclass);
+CREATE TABLE public.ft_collection_runs (
+    id bigserial NOT NULL,
+    task_name character varying(64) NOT NULL,
+    source_name character varying(64) NOT NULL,
+    event_id character varying(128) NOT NULL DEFAULT '',
+    status character varying(24) NOT NULL DEFAULT 'running',
+    scheduled_at timestamp with time zone,
+    started_at timestamp with time zone NOT NULL DEFAULT now(),
+    finished_at timestamp with time zone,
+    fetched_count integer NOT NULL DEFAULT 0,
+    valid_count integer NOT NULL DEFAULT 0,
+    saved_count integer NOT NULL DEFAULT 0,
+    skipped_count integer NOT NULL DEFAULT 0,
+    source_time_min timestamp with time zone,
+    source_time_max timestamp with time zone,
+    checkpoint_before jsonb NOT NULL DEFAULT '{}'::jsonb,
+    checkpoint_after jsonb NOT NULL DEFAULT '{}'::jsonb,
+    retry_count integer NOT NULL DEFAULT 0,
+    error_type character varying(64) NOT NULL DEFAULT '',
+    error_message text NOT NULL DEFAULT '',
+    details jsonb NOT NULL DEFAULT '{}'::jsonb,
+    created_at timestamp with time zone DEFAULT now()
+);
+
+COMMENT ON TABLE public.ft_collection_runs IS '采集任务每次真实执行的历史审计';
 
 -- TABLE: ft_sentiment_signal
 -- L2 情绪派生信号日度快照，每日收盘后由 SentimentAggregator.materialize_snapshot 写入

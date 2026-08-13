@@ -1,0 +1,29 @@
+{
+  "protocol": "THSSTREAM/1",
+  "subscriptions": {
+    "example_market": {
+      "status": 0,
+      "response_type": 0,
+      "data": {
+        "value": 1
+      }
+    }
+  },
+  "routes": {
+    "unified": [
+      {
+        "match": {
+          "onlineId": "example"
+        },
+        "response": {
+          "success": true,
+          "response": {
+            "head": {
+              "errorCode": 0
+            }
+          }
+        }
+      }
+    ]
+  }
+}

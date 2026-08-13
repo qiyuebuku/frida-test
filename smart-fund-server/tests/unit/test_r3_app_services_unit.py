@@ -30,10 +30,7 @@ def test_r3_5_app_services_method_signatures():
         CollectionAppService,
     )
 
-    for name in [
-        "run_news_collection", "run_fund_flow_collection",
-        "run_market_collection", "run_sentiment_collection", "run_macro_collection",
-    ]:
+    for name in ["run_collection_source", "run_market_collection"]:
         m = getattr(CollectionAppService, name, None)
         assert m is not None, f"CollectionAppService 缺 {name}"
         assert inspect.iscoroutinefunction(m), f"{name} 应是 async"

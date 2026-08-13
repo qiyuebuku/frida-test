@@ -27,7 +27,19 @@ def build_stock_basics_records_from_sources(
     candidates: list[dict[str, Any]] = []
     candidates.extend(_stocks_from_ft_news(target=target, codes=wanted_codes, limit=limit))
     candidates.extend(_stocks_from_json_table(target=target, table="ft_sentiment", codes=wanted_codes, limit=limit))
-    candidates.extend(_stocks_from_json_table(target=target, table="ft_watchlist_data", codes=wanted_codes, limit=limit))
+    for table in (
+        "ft_instrument_profiles",
+        "ft_instrument_disclosures",
+        "ft_instrument_observations",
+    ):
+        candidates.extend(
+            _stocks_from_json_table(
+                target=target,
+                table=table,
+                codes=wanted_codes,
+                limit=limit,
+            )
+        )
     return [_stock_record(stock) for stock in _dedupe_stocks(candidates, wanted_codes)]
 
 

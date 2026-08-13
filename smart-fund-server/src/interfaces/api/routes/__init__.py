@@ -9,6 +9,7 @@ from src.interfaces.api.routes import (
     knowledge,
     llm_proxy,
     market,
+    market_observability,
     skill,
     strategy,
     task,
@@ -19,6 +20,7 @@ from src.interfaces.api.routes import (
 router = APIRouter()
 router.include_router(fund_query.router)
 router.include_router(market.router)
+router.include_router(market_observability.router)
 router.include_router(trade.router)
 router.include_router(strategy.router)
 router.include_router(task.router)

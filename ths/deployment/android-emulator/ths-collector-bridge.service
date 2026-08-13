@@ -1,0 +1,29 @@
+[Unit]
+Description=THS App Hook and Native Market Data Bridge
+After=network-online.target ths-android-emulator.service
+Wants=network-online.target
+Requires=ths-android-emulator.service
+
+[Service]
+Type=simple
+User=yuyangruan
+Group=yuyangruan
+Environment=HOME=/home/yuyangruan
+Environment=ANDROID_SDK_ROOT=/home/yuyangruan/android-sdk
+Environment=THS_ANDROID_SERIAL=emulator-5554
+Environment=THS_EXPECTED_APP_VERSION_CODE=5235
+Environment=THS_EXPECTED_APP_SHA256=03f8d87002b307728d372ddb1978a43732814183073cbc63f0a95bf6a7293eb3
+Environment=THS_HOST_PORT=49300
+Environment=THS_DEVICE_PORT=18900
+Environment=THS_PROXY_PORT=49301
+ExecStart=/home/yuyangruan/android-runtime/bin/ths-collector-bridge.sh
+ExecStartPost=/bin/bash -c 'for i in {1..45}; do /usr/bin/curl --fail --silent --max-time 3 http://127.0.0.1:49301/health >/dev/null && exit 0; sleep 1; done; exit 1'
+Restart=always
+RestartSec=5
+TimeoutStartSec=330
+TimeoutStopSec=30
+StandardOutput=append:/home/yuyangruan/android-runtime/logs/collector-bridge.log
+StandardError=append:/home/yuyangruan/android-runtime/logs/collector-bridge.log
+
+[Install]
+WantedBy=multi-user.target

@@ -1,56 +1,6 @@
 ---
-name: reverse-app
-display_name: Android 逆向工程
-icon: bug_report
-description: Zygisk + Pine ART Hook 渐进式逆向框架，支持 360/梆梆/腾讯乐固等主流加固
-category: security
-commands:
-  - id: init
-    name: 初始化逆向项目
-    description: 从模板创建新 App 的 Zygisk Hook 项目骨架
-    input: text
-    executor: claude
-    estimated_time: 60
-    args:
-      - name: package_name
-        description: 目标 App 包名（如 com.example.app）
-        required: true
-      - name: tag
-        description: 项目简称（用于目录名和 TAG，如 ths/qidian）
-        required: true
-
-  - id: analyze
-    name: APK 静态分析
-    description: 解包 APK → 识别加固 → jadx 反编译 → 字符串搜索 → 输出分析报告
-    input: text
-    executor: claude
-    estimated_time: 120
-    args:
-      - name: apk_path
-        description: APK 文件路径
-        required: true
-
-  - id: build-deploy
-    name: 编译部署
-    description: 编译 Java Hook + Zygisk C++ → 推送到手机 → 重启 App → 观察日志
-    input: text
-    executor: claude
-    estimated_time: 120
-    args:
-      - name: app_dir
-        description: 项目目录名（如 ths/qidian）
-        required: true
-
-  - id: log
-    name: 日志监控
-    description: 启动 logcat 过滤并实时分析 Hook 输出
-    input: text
-    executor: claude
-    estimated_time: 60
-    args:
-      - name: tag
-        description: logcat 过滤 TAG（如 THSHook/QDHook）
-        required: true
+name: reverse-app-skill
+description: Android App 渐进式逆向与运行时业务核心提取。用于 Zygisk/Pine/LSPosed 注入、加固识别、HTTP/JSBridge/原生长连接追踪、App 内部方法调用、无界面运行、设备侧 RPC、订阅事件流采集、服务器 Android Sidecar、反检测和逆向结果验收。
 ---
 
 # Reverse App Skill — Android 逆向工程通用 Skill
@@ -76,8 +26,8 @@ commands:
 - **Root 方案**: SuKiSU Ultra + Zygisk
 - **Hook 框架**: Pine ART Hook（top.canyie.pine:core:0.3.0）
 - **开发环境**: WSL2 (Linux)
-- **手机**: 一加 Ace6（3B15BJ00GZL00000）
-- **ADB**: `/mnt/d/123pan/Downloads/一加Ace6/adb命令行/adb.exe -s 3B15BJ00GZL00000`
+- **手机**: 已 Root Android 真机；使用 `$ADB devices` 动态确认设备
+- **ADB**: 通过环境变量 `$ADB` 指向当前可用的 adb，不在 Skill 中固定设备序列号
 - **Android SDK**: `/home/yuyang/android-sdk`
 - **NDK**: `/home/yuyang/android-sdk/ndk/27.0.12077973`
 - **Gradle**: `/home/yuyang/.gradle-dist/gradle-8.9/bin/gradle`
@@ -222,6 +172,21 @@ grep "Stack:" /tmp/hook.log       # 调用栈
    → App 存活 → "再加 Cipher Hook"
    → App 崩溃 → "Cipher Hook 有问题，回退分析"
 ```
+
+### 开始前先定义交付层级
+
+每次逆向必须先区分“页面自动化”“App 进程内直接调用”和“完全独立协议 Client”。如果目标是
+脱离页面调用原生业务能力，先阅读 `knowledge/runtime-core-extraction.md`；如果目标 App 是
+同花顺，再同时阅读 `knowledge/case-ths.md`。不得把无页面的 App 进程内调用描述成完全脱离 App。
+
+发现阶段优先使用功能和账号状态完整的真机；服务器模拟器只承接已经确认的最小业务核心。遇到
+`subscribe/unsubscribe`、`max_msg_num` 或固定 frame/page 的原生协议时，必须按订阅缓冲区处理，
+连续请求比较集合差异，并在正式系统中采用稳定事件 ID、周期轮询和事件级幂等入库。详细流程见
+`knowledge/runtime-core-extraction.md` 的“真机发现与服务器运行分工”和“订阅缓冲区与事件采集”。
+
+遇到 QueryClient、固定 frame/page、回调错配、并发后超时或“直连快、代理慢”时，先阅读
+`knowledge/native-query-routing-and-concurrency.md`。必须先确定身份域、路由槽、完成条件和取消语义，
+不能通过增加线程、HTTP/TCP 连接、App 或模拟器猜测并发能力。
 
 ---
 
@@ -481,6 +446,10 @@ Object emptyInterceptor = Proxy.newProxyInstance(cl,
 
 **同样遵循最小步骤原则**：每次只新增一个功能点，验证后再继续。
 
+如果页面只是 JSBridge 适配层，继续沿 Bridge 实现追踪到请求模型、协调器、通信类和 Service，
+再构造最小进程内调用。不要把“成功复现 Bridge 请求”当作业务核心已经提取。具体流程和验收矩阵
+见 `knowledge/runtime-core-extraction.md`。
+
 ### Phase 5.1: WebView Cookie DB 读取（认证参数提取的备选方案）
 
 当目标数据需要 WebView 的 session/token（如 hexin-v、CSRF token 等），且 OkHttp interceptor 方案不可靠时（360 加固下常见），可以直接读取 WebView 的 Cookie 数据库：
@@ -711,8 +680,11 @@ $NDK/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android26-clang++ \
 
 ### 部署到手机
 
+部署 APK 之前必须先阅读 `knowledge/apk-signing-deployment.md`。如果设备上已经安装同包名 Hook，必须先比较已安装 APK、计划使用的私钥和待安装 APK 的证书 SHA-256。禁止直接使用当前机器默认 debug 签名覆盖生产，也禁止在 `adb install -r` 签名冲突后自动卸载。
+
 ```bash
-ADB="/mnt/d/123pan/Downloads/一加Ace6/adb命令行/adb.exe -s 3B15BJ00GZL00000"
+ADB="${ADB:-adb}"
+# 多设备时另行设置 ANDROID_SERIAL，并由 adb 自动使用该环境变量。
 
 # 推送 DEX 和 SO 到 Magisk 模块目录（需要 root）
 # 先 adb shell，再 su，再执行 cp 命令
@@ -748,6 +720,9 @@ knowledge/
 ├── case-ths.md               # 案例：同花顺（360加固+基金交易）
 ├── case-wechat.md            # 案例：微信（WCDB数据库解密）
 ├── autojs-guide.md           # AutoJS 自动化指南（UI 操作脚本化）
+├── runtime-core-extraction.md # 原生业务核心提取、无界面运行和后台稳定性验收
+├── native-query-routing-and-concurrency.md # QueryClient 身份域、回调收敛和并发实验矩阵
+├── apk-signing-deployment.md # Hook APK 签名检查、安全覆盖与受控重装
 └── static-analysis-guide.md  # DEX 静态分析指南（jadx 使用方法论）
 ```
 
@@ -760,6 +735,10 @@ knowledge/
 3. **记录踩坑**：任何花费超过 10 分钟排查的问题
 4. **新增案例**：创建 `case-<app_name>.md`，记录完整的逆向过程
 5. **更新反检测知识**：如果遇到新的检测机制或绕过方法
+6. **标记完成层级**：明确是页面自动化、进程内调用还是独立协议 Client
+7. **补齐运行态验收**：记录冷启动、连续请求、息屏、重连和设备重启结果
+8. **固化生产签名**：记录证书指纹和私钥的受控来源，部署前自动比较，禁止签名冲突后直接卸载
+9. **记录并发身份域**：明确连接、App 进程、Manager、Client、frame/page 和回调槽的共享范围
 
 格式要求：每个知识条目必须包含：
 - **现象**：遇到了什么问题/发现

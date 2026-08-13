@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta, timezone
 from typing import Any
 
 from sqlalchemy import case, delete, func, select
@@ -17,9 +17,16 @@ from src.infrastructure.persistence.models.collection import CollectionState
 AGGREGATOR = "watchlist"
 MAX_ACTIVE_INSTRUMENTS = 500
 DEFAULT_CONFIG = {
-    "interval": 180,
+    "priority": "standard",
+    "realtime_interval_seconds": 60,
     "target_days": 10,
 }
+PRIORITY_INTERVAL_SECONDS = {
+    "critical": 30,
+    "standard": 60,
+    "low": 180,
+}
+VALID_PRIORITIES = frozenset(PRIORITY_INTERVAL_SECONDS)
 
 
 @dataclass(frozen=True)
@@ -150,6 +157,20 @@ class WatchlistService:
             ).first()
             return _row_to_item(row) if row else None
 
+    def list_due_realtime(
+        self,
+        *,
+        now: datetime | None = None,
+    ) -> list[WatchlistItem]:
+        """Return enabled instruments whose real-time collection is due."""
+
+        current = now or datetime.now(timezone.utc)
+        return [
+            item
+            for item in self.list_all(enabled_only=True)
+            if _is_realtime_due(item, current)
+        ]
+
     def upsert_batch(self, items: list[dict[str, Any]]) -> list[WatchlistMutation]:
         """Create, update, or reactivate tracked instruments in one statement."""
 
@@ -187,7 +208,11 @@ class WatchlistService:
             mutations: list[WatchlistMutation] = []
             for item in normalized_items:
                 old = existing.get(item["code"])
-                status = _mutation_status(old, item["config"], item["interval"])
+                status = _mutation_status(
+                    old,
+                    item["config"],
+                    item["realtime_interval_seconds"],
+                )
                 mutations.append(
                     WatchlistMutation(
                         code=item["code"],
@@ -202,7 +227,7 @@ class WatchlistService:
                         "mode": "backfill",
                         "target_time": item["target_time"],
                         "enabled": True,
-                        "interval_override": item["interval"],
+                        "interval_override": item["realtime_interval_seconds"],
                         "config": item["config"],
                     }
                 )
@@ -252,7 +277,8 @@ class WatchlistService:
         type: str = "stock",
         source: str = "manual",
         target_days: int | None = None,
-        interval: int | None = None,
+        priority: str | None = None,
+        realtime_interval_seconds: int | None = None,
         reason: str = "",
     ) -> bool:
         """Compatibility wrapper. True means a new or reactivated instrument."""
@@ -265,7 +291,8 @@ class WatchlistService:
                     "type": type,
                     "source": source,
                     "target_days": target_days,
-                    "interval": interval,
+                    "priority": priority,
+                    "realtime_interval_seconds": realtime_interval_seconds,
                     "reason": reason,
                 }
             ]
@@ -349,7 +376,9 @@ class WatchlistService:
                 self._validate_update(row=row, config=config, kwargs=kwargs)
                 for key in (
                     "name",
-                    "interval",
+                    "priority",
+                    "priority_reason",
+                    "realtime_interval_seconds",
                     "target_days",
                     "source",
                     "reason",
@@ -371,16 +400,21 @@ class WatchlistService:
                     else bool(row.enabled)
                 )
                 reactivated = bool(enabled and row.enabled is False)
-                interval = _positive_int(
-                    config.get("interval", DEFAULT_CONFIG["interval"]),
-                    "interval",
-                    minimum=60,
+                priority = _normalize_priority(
+                    config.get("priority", DEFAULT_CONFIG["priority"])
+                )
+                realtime_interval_seconds = _resolve_realtime_interval(
+                    priority=priority,
+                    value=config.get("realtime_interval_seconds"),
                 )
                 target_days = _positive_int(
                     config.get("target_days", DEFAULT_CONFIG["target_days"]),
                     "target_days",
                 )
-                config["interval"] = interval
+                config["priority"] = priority
+                config["realtime_interval_seconds"] = (
+                    realtime_interval_seconds
+                )
                 config["target_days"] = target_days
                 values.append(
                     {
@@ -388,7 +422,7 @@ class WatchlistService:
                         "source_name": code,
                         "config": config,
                         "enabled": enabled,
-                        "interval_override": interval,
+                        "interval_override": realtime_interval_seconds,
                         "mode": "backfill" if reactivated else row.mode,
                         "target_time": (
                             (date.today() - timedelta(days=target_days)).isoformat()
@@ -484,6 +518,7 @@ class WatchlistService:
                     "name": position.fund_name or "",
                     "type": "fund",
                     "source": "position",
+                    "priority": "critical",
                     "reason": "当前持仓需要持续跟踪",
                 }
                 for position in positions
@@ -503,8 +538,16 @@ class WatchlistService:
         config: dict[str, Any],
         kwargs: dict[str, Any],
     ) -> None:
-        if "interval" in kwargs:
-            _positive_int(kwargs["interval"], "interval", minimum=60)
+        if "priority" in kwargs:
+            kwargs["priority"] = _normalize_priority(kwargs["priority"])
+            if not str(kwargs.get("priority_reason") or "").strip():
+                raise ValueError("调整 priority 时必须提供 priority_reason")
+        if "realtime_interval_seconds" in kwargs:
+            _positive_int(
+                kwargs["realtime_interval_seconds"],
+                "realtime_interval_seconds",
+                minimum=30,
+            )
         if "target_days" in kwargs:
             _positive_int(kwargs["target_days"], "target_days")
         if "source" in kwargs:
@@ -541,12 +584,12 @@ class WatchlistService:
                 else DEFAULT_CONFIG["target_days"],
                 "target_days",
             )
-            interval = _positive_int(
-                raw.get("interval")
-                if raw.get("interval") is not None
-                else DEFAULT_CONFIG["interval"],
-                "interval",
-                minimum=60,
+            priority = _normalize_priority(
+                raw.get("priority") or DEFAULT_CONFIG["priority"]
+            )
+            realtime_interval_seconds = _resolve_realtime_interval(
+                priority=priority,
+                value=raw.get("realtime_interval_seconds"),
             )
             source = str(raw.get("source") or "manual").strip().lower()
             if source not in {"manual", "position", "event", "agent"}:
@@ -556,7 +599,16 @@ class WatchlistService:
                 "type": identity.instrument_type,
                 "source": source,
                 "reason": str(raw.get("reason") or "").strip(),
-                "interval": interval,
+                "priority": priority,
+                "priority_reason": str(
+                    raw.get("priority_reason")
+                    or (
+                        "当前持仓自动提升"
+                        if source == "position"
+                        else "默认跟踪优先级"
+                    )
+                ).strip(),
+                "realtime_interval_seconds": realtime_interval_seconds,
                 "target_days": target_days,
                 "exchange_traded": identity.exchange_traded,
             }
@@ -564,7 +616,7 @@ class WatchlistService:
                 {
                     "code": identity.code,
                     "config": config,
-                    "interval": interval,
+                    "realtime_interval_seconds": realtime_interval_seconds,
                     "target_time": (
                         date.today() - timedelta(days=target_days)
                     ).isoformat(),
@@ -576,13 +628,16 @@ class WatchlistService:
 def _mutation_status(
     row: CollectionState | None,
     config: dict[str, Any],
-    interval: int,
+    realtime_interval_seconds: int,
 ) -> str:
     if row is None:
         return "created"
     if row.enabled is False:
         return "reactivated"
-    if dict(row.config or {}) != config or row.interval_override != interval:
+    if (
+        dict(row.config or {}) != config
+        or row.interval_override != realtime_interval_seconds
+    ):
         return "updated"
     return "unchanged"
 
@@ -595,3 +650,38 @@ def _positive_int(value: Any, field: str, *, minimum: int = 1) -> int:
     if result < minimum:
         raise ValueError(f"{field} 必须大于或等于 {minimum}")
     return result
+
+
+def _normalize_priority(value: Any) -> str:
+    priority = str(value or "").strip().lower()
+    if priority not in VALID_PRIORITIES:
+        raise ValueError("priority 必须是 critical、standard 或 low")
+    return priority
+
+
+def _resolve_realtime_interval(*, priority: str, value: Any) -> int:
+    if value is None:
+        return PRIORITY_INTERVAL_SECONDS[priority]
+    return _positive_int(
+        value,
+        "realtime_interval_seconds",
+        minimum=30,
+    )
+
+
+def _is_realtime_due(item: WatchlistItem, now: datetime) -> bool:
+    if not item.enabled:
+        return False
+    if item.last_run_at is None:
+        return True
+    last_run_at = item.last_run_at
+    if last_run_at.tzinfo is None:
+        last_run_at = last_run_at.replace(tzinfo=timezone.utc)
+    priority = _normalize_priority(
+        (item.config or {}).get("priority") or DEFAULT_CONFIG["priority"]
+    )
+    interval = _resolve_realtime_interval(
+        priority=priority,
+        value=(item.config or {}).get("realtime_interval_seconds"),
+    )
+    return (now - last_run_at.astimezone(timezone.utc)).total_seconds() >= interval

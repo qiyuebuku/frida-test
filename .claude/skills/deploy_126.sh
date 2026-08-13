@@ -11,6 +11,7 @@
 #   ./deploy.sh --test       # 远程健康检查
 #   ./deploy.sh --router     # 只部署/重启 smart-router
 #   ./deploy.sh --milvus-tunnel  # 部署生产 Milvus 19530 FRP 映射
+#   ./deploy.sh --langfuse-tunnel  # 部署 Langfuse 3001/9092 FRP 映射
 
 set -e
 
@@ -46,6 +47,14 @@ MILVUS_PUBLIC_PORT="${MILVUS_PUBLIC_PORT:-19530}"
 MILVUS_FRP_NAME="smart_fund_milvus_${MILVUS_PUBLIC_PORT}"
 MILVUS_FRP_CONFIG="${FRP_DIR}/frpc_${MILVUS_FRP_NAME}.toml"
 MILVUS_SUPERVISOR_CONFIG="/etc/supervisor/conf.d/frpc_${MILVUS_FRP_NAME}.conf"
+LANGFUSE_INTERNAL_HOST="${LANGFUSE_INTERNAL_HOST:-10.168.1.113}"
+LANGFUSE_WEB_INTERNAL_PORT="${LANGFUSE_WEB_INTERNAL_PORT:-3001}"
+LANGFUSE_WEB_PUBLIC_PORT="${LANGFUSE_WEB_PUBLIC_PORT:-3001}"
+LANGFUSE_MINIO_INTERNAL_PORT="${LANGFUSE_MINIO_INTERNAL_PORT:-9092}"
+LANGFUSE_MINIO_PUBLIC_PORT="${LANGFUSE_MINIO_PUBLIC_PORT:-9092}"
+LANGFUSE_FRP_NAME="smart_fund_langfuse"
+LANGFUSE_FRP_CONFIG="${FRP_DIR}/frpc_${LANGFUSE_FRP_NAME}.toml"
+LANGFUSE_SUPERVISOR_CONFIG="/etc/supervisor/conf.d/frpc_${LANGFUSE_FRP_NAME}.conf"
 
 # SSH key（WSL2 路径）
 SSH_KEY="/mnt/c/Users/阮雨阳/.ssh/id_rsa"
@@ -220,6 +229,78 @@ EOF"
     return 1
 }
 
+# ==================== Langfuse FRP 映射 ====================
+install_langfuse_tunnel() {
+    echo "📦 部署 Langfuse FRP 映射..."
+
+    ssh_cmd "test -x '${FRP_DIR}/frpc'"
+    ssh_cmd "timeout 5 bash -lc '</dev/tcp/${LANGFUSE_INTERNAL_HOST}/${LANGFUSE_WEB_INTERNAL_PORT}'"
+    ssh_cmd "timeout 5 bash -lc '</dev/tcp/${LANGFUSE_INTERNAL_HOST}/${LANGFUSE_MINIO_INTERNAL_PORT}'"
+
+    ssh_cmd "cat > '/tmp/frpc_${LANGFUSE_FRP_NAME}.toml' <<'EOF'
+serverAddr = \"${FRP_SERVER_ADDR}\"
+serverPort = ${FRP_SERVER_PORT}
+
+[[proxies]]
+name = \"${LANGFUSE_FRP_NAME}_web\"
+type = \"tcp\"
+localIP = \"${LANGFUSE_INTERNAL_HOST}\"
+localPort = ${LANGFUSE_WEB_INTERNAL_PORT}
+remotePort = ${LANGFUSE_WEB_PUBLIC_PORT}
+transport.useEncryption = true
+transport.useCompression = true
+
+[[proxies]]
+name = \"${LANGFUSE_FRP_NAME}_minio\"
+type = \"tcp\"
+localIP = \"${LANGFUSE_INTERNAL_HOST}\"
+localPort = ${LANGFUSE_MINIO_INTERNAL_PORT}
+remotePort = ${LANGFUSE_MINIO_PUBLIC_PORT}
+transport.useEncryption = true
+transport.useCompression = true
+EOF
+
+cat > '/tmp/frpc_${LANGFUSE_FRP_NAME}.conf' <<'EOF'
+[program:${LANGFUSE_FRP_NAME}]
+command=${FRP_DIR}/frpc -c ${LANGFUSE_FRP_CONFIG}
+directory=${FRP_DIR}
+autostart=true
+autorestart=true
+startsecs=3
+startretries=10
+stderr_logfile=/var/log/frpc_${LANGFUSE_FRP_NAME}.err.log
+stdout_logfile=/var/log/frpc_${LANGFUSE_FRP_NAME}.out.log
+user=${REMOTE_USER}
+EOF"
+
+    sudo_cmd "install -o '${REMOTE_USER}' -g '${REMOTE_USER}' -m 600 \
+        '/tmp/frpc_${LANGFUSE_FRP_NAME}.toml' '${LANGFUSE_FRP_CONFIG}'"
+    sudo_cmd "install -m 644 '/tmp/frpc_${LANGFUSE_FRP_NAME}.conf' '${LANGFUSE_SUPERVISOR_CONFIG}'"
+    sudo_cmd "supervisorctl reread"
+    sudo_cmd "supervisorctl update"
+    sudo_cmd "supervisorctl restart '${LANGFUSE_FRP_NAME}'"
+    sudo_cmd "supervisorctl status '${LANGFUSE_FRP_NAME}' | grep -q RUNNING"
+
+    local attempt
+    for attempt in $(seq 1 15); do
+        if curl --fail --silent --max-time 5 \
+            "http://${REMOTE_HOST}:${LANGFUSE_WEB_PUBLIC_PORT}/api/public/health" \
+            >/dev/null \
+            && curl --fail --silent --max-time 5 \
+            "http://${REMOTE_HOST}:${LANGFUSE_MINIO_PUBLIC_PORT}/minio/health/live" \
+            >/dev/null; then
+            echo "✅ Langfuse 公网映射已就绪:"
+            echo "   Web:   http://${REMOTE_HOST}:${LANGFUSE_WEB_PUBLIC_PORT}"
+            echo "   MinIO: http://${REMOTE_HOST}:${LANGFUSE_MINIO_PUBLIC_PORT}"
+            return 0
+        fi
+        sleep 2
+    done
+    echo "❌ FRP 已启动，但 Langfuse 公网端口不可达" >&2
+    sudo_cmd "tail -50 /var/log/frpc_${LANGFUSE_FRP_NAME}.err.log" || true
+    return 1
+}
+
 # ==================== 重启所有服务 ====================
 restart_all() {
     restart_server
@@ -270,6 +351,15 @@ remote_test() {
     sudo_cmd "supervisorctl status '${MILVUS_FRP_NAME}'"
     timeout 5 bash -lc "</dev/tcp/${REMOTE_HOST}/${MILVUS_PUBLIC_PORT}"
     echo "Milvus TCP: ${REMOTE_HOST}:${MILVUS_PUBLIC_PORT}"
+    echo ""
+    echo "--- Langfuse FRP ---"
+    sudo_cmd "supervisorctl status '${LANGFUSE_FRP_NAME}'"
+    curl --fail --silent --max-time 5 \
+        "http://${REMOTE_HOST}:${LANGFUSE_WEB_PUBLIC_PORT}/api/public/health"
+    echo ""
+    curl --fail --silent --max-time 5 \
+        "http://${REMOTE_HOST}:${LANGFUSE_MINIO_PUBLIC_PORT}/minio/health/live"
+    echo "Langfuse: http://${REMOTE_HOST}:${LANGFUSE_WEB_PUBLIC_PORT}"
     echo ""
 }
 
@@ -335,6 +425,7 @@ SVCEOF"
     # 9. 启动所有服务
     restart_all
     install_milvus_tunnel
+    install_langfuse_tunnel
 
     echo ""
     echo "🎉 首次部署完成！"
@@ -379,6 +470,9 @@ main() {
             ;;
         --milvus-tunnel)
             install_milvus_tunnel
+            ;;
+        --langfuse-tunnel)
+            install_langfuse_tunnel
             ;;
         *)
             sync_code

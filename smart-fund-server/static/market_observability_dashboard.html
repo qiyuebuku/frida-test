@@ -1,0 +1,627 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Market Data Observatory</title>
+  <link rel="stylesheet" href="/static/market_observability_dashboard.css?v=20260807-78">
+</head>
+<body>
+  <div class="app-shell">
+    <header class="topbar">
+      <div class="brand-block">
+        <span class="brand-mark" aria-hidden="true">
+          <i></i><i></i><i></i><i></i>
+        </span>
+        <div>
+          <h1>Market Data Observatory</h1>
+          <p>行情采集与数据新鲜度看板</p>
+        </div>
+      </div>
+      <div class="topbar-actions">
+        <a class="graph-link" href="/api/kg/graph-viewer" title="打开 Graph Community Explorer">关系图谱</a>
+        <span id="connection-state" class="connection-state loading">
+          <i aria-hidden="true"></i>
+          <span>正在读取</span>
+        </span>
+      </div>
+    </header>
+
+    <nav class="controlbar" aria-label="看板视图">
+      <div class="view-tabs">
+        <button class="view-tab active" type="button" data-view="overview">市场总览</button>
+        <button class="view-tab" type="button" data-view="sectors">板块市场</button>
+        <button class="view-tab" type="button" data-view="stocks">个股市场</button>
+        <button class="view-tab" type="button" data-view="etf">ETF</button>
+        <button class="view-tab" type="button" data-view="futures">期货</button>
+        <button class="view-tab" type="button" data-view="gold">黄金</button>
+        <button class="view-tab" type="button" data-view="us">美股</button>
+        <button class="view-tab" type="button" data-view="runs">采集观测</button>
+        <button class="view-tab" type="button" data-view="watchlist">跟踪标的</button>
+        <button class="view-tab" type="button" data-view="assets">数据资产</button>
+      </div>
+      <div class="control-actions">
+        <label class="select-control">
+          <span>统计窗口</span>
+          <select id="window-hours">
+            <option value="1">最近 1 小时</option>
+            <option value="6">最近 6 小时</option>
+            <option value="24" selected>最近 24 小时</option>
+            <option value="72">最近 3 天</option>
+            <option value="168">最近 7 天</option>
+          </select>
+        </label>
+        <label class="toggle-control">
+          <input id="auto-refresh" type="checkbox" checked>
+          <span aria-hidden="true"></span>
+          <b>自动刷新</b>
+        </label>
+        <button id="refresh-button" class="icon-button" type="button" title="立即刷新">
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <path d="M20 11a8 8 0 1 0-2.3 5.7"></path>
+            <path d="M20 4v7h-7"></path>
+          </svg>
+        </button>
+      </div>
+    </nav>
+
+    <main>
+      <section class="metric-strip" aria-label="采集概况">
+        <div>
+          <span>窗口内快照</span>
+          <strong id="metric-snapshots">—</strong>
+          <small id="metric-subjects">— 个对象</small>
+        </div>
+        <div>
+          <span>最新快照</span>
+          <strong id="metric-latest">—</strong>
+          <small id="metric-latest-detail">等待数据</small>
+        </div>
+        <div>
+          <span>实时口径</span>
+          <strong id="metric-realtime">—</strong>
+          <small id="metric-delayed">— 延时</small>
+        </div>
+        <div>
+          <span>采集执行</span>
+          <strong id="metric-runs">—</strong>
+          <small id="metric-failures">— 失败</small>
+        </div>
+        <div>
+          <span>跟踪标的</span>
+          <strong id="metric-watchlist">—</strong>
+          <small>启用中</small>
+        </div>
+        <div>
+          <span>ETF 份额</span>
+          <strong id="metric-etf-date">—</strong>
+          <small id="metric-etf-count">— 只基金</small>
+        </div>
+      </section>
+
+      <section id="view-overview" class="view-panel active market-home">
+        <section class="data-section market-headline-section">
+          <header class="section-header">
+            <div>
+              <span class="section-kicker">A-SHARE MARKET</span>
+              <h2>A 股市场</h2>
+            </div>
+            <span id="breadth-freshness" class="status-badge neutral">暂无数据</span>
+          </header>
+          <div id="index-strip" class="index-strip"></div>
+          <div class="breadth-summary-row">
+            <div class="breadth-balance compact-breadth">
+              <div class="balance-labels">
+                <span>上涨 <b id="breadth-up">—</b></span>
+                <span>平盘 <b id="breadth-flat">—</b></span>
+                <span>下跌 <b id="breadth-down">—</b></span>
+              </div>
+              <div class="balance-track" aria-label="市场上涨下跌家数比例">
+                <i id="breadth-up-bar"></i><i id="breadth-flat-bar"></i><i id="breadth-down-bar"></i>
+              </div>
+            </div>
+            <div class="turnover-line">
+              <div><span>A 股成交额</span><small id="breadth-turnover-comparison-label">暂无上一交易日分时数据</small></div>
+              <div class="turnover-values"><strong id="breadth-turnover">—</strong><small id="breadth-turnover-comparison">—</small></div>
+            </div>
+          </div>
+        </section>
+
+        <section class="comparison-grid" aria-label="市场对比指标">
+          <div class="comparison-item"><span>涨跌停对比</span><strong id="compare-limit">—</strong><small id="compare-limit-detail">—</small></div>
+          <div class="comparison-item"><span>昨日涨停表现</span><strong id="compare-yesterday-limit">—</strong><small id="compare-yesterday-detail">—</small></div>
+          <div class="comparison-item"><span>大小盘对比</span><strong id="compare-cap">—</strong><small id="compare-cap-detail">—</small></div>
+        </section>
+
+        <section class="data-section dashboard-card overview-stock-ranking-card">
+          <header class="card-heading"><h2>股票排行</h2><span id="overview-stock-ranking-updated">—</span></header>
+          <div class="segmented-control overview-stock-ranking-tabs" data-control="stock-ranking-overview">
+            <button class="active" data-value="rise" type="button">涨幅榜</button><button data-value="fall" type="button">跌幅榜</button><button data-value="quick" type="button">快速涨幅</button><button data-value="turnover" type="button">成交额</button><button data-value="large_order" type="button">大单净量</button>
+          </div>
+          <div class="ranking-table-wrap overview-stock-ranking-wrap"><table class="ranking-table"><thead><tr><th>股票名称（代码）</th><th>最新</th><th id="overview-stock-ranking-metric">涨幅</th><th>行业板块</th></tr></thead><tbody id="overview-stock-ranking-body"></tbody></table></div>
+          <div class="overview-stock-ranking-more"><button type="button" data-open-view="stocks">查看更多 ›</button></div>
+        </section>
+
+        <div class="market-card-grid">
+          <section class="data-section dashboard-card anomaly-card">
+            <header class="card-heading"><h2>异动</h2><span id="anomaly-updated">—</span></header>
+            <div class="segmented-control" data-control="anomaly"><button class="active" data-value="market_anomaly" type="button">大盘异动</button><button data-value="call_auction" type="button">竞价异动</button></div>
+            <div id="anomaly-summary" class="chart-summary">等待交易时段数据</div>
+            <div class="chart-shell dashboard-chart"><canvas id="anomaly-chart" aria-label="市场异动时间轴"></canvas><div id="anomaly-empty" class="chart-empty">暂无异动时间序列</div></div>
+            <div id="anomaly-facts" class="mini-fact-row"></div>
+          </section>
+
+          <section class="data-section dashboard-card flow-card">
+            <header class="card-heading"><h2>资金流向</h2><span id="flow-updated">—</span></header>
+            <div class="segmented-control" data-control="capital-flow"><button class="active" data-value="etf" type="button">ETF资金</button><button data-value="northbound" type="button">北向资金</button><button data-value="market" type="button">大盘资金</button></div>
+            <div id="capital-flow-summary" class="chart-summary emphasis">—</div>
+            <div id="capital-flow-facts" class="mini-fact-row"></div>
+            <div class="chart-shell dashboard-chart"><canvas id="capital-flow-chart" aria-label="资金流向趋势"></canvas><div id="capital-flow-empty" class="chart-empty">暂无资金时间序列</div></div>
+          </section>
+
+          <section class="data-section dashboard-card sentiment-card">
+            <header class="card-heading"><h2>市场情绪</h2><span id="sentiment-updated">—</span></header>
+            <div class="segmented-control" data-control="sentiment"><button class="active" data-value="market" type="button">大盘</button><button data-value="sh50" type="button">上证50</button><button data-value="growth" type="button">创成长</button></div>
+            <div id="sentiment-summary" class="chart-summary emphasis">—</div>
+            <div class="chart-shell dashboard-chart"><canvas id="sentiment-chart" aria-label="市场情绪趋势"></canvas><div id="sentiment-empty" class="chart-empty">暂无情绪时间序列</div></div>
+          </section>
+
+          <section class="data-section dashboard-card global-card">
+            <header class="card-heading"><h2>全球市场联动</h2><span id="global-updated">—</span></header>
+            <div class="segmented-control" data-control="global"><button class="active" data-value="a50" type="button">A50期指</button><button data-value="dow" type="button">道琼斯期指</button></div>
+            <div id="global-summary" class="chart-summary emphasis">—</div>
+            <div class="chart-shell dashboard-chart"><canvas id="global-chart" aria-label="全球市场联动趋势"></canvas><div id="global-empty" class="chart-empty">暂无跨市场时间序列</div></div>
+          </section>
+
+          <section class="data-section dashboard-card currency-card">
+            <header class="card-heading"><h2>货币风向</h2><span id="currency-updated">—</span></header>
+            <div class="segmented-control" data-control="currency"><button class="active" data-value="repo" type="button">逆回购</button><button data-value="usd_cny" type="button">美元/人民币</button></div>
+            <div id="currency-summary" class="chart-summary emphasis">—</div>
+            <div class="chart-shell dashboard-chart"><canvas id="currency-chart" aria-label="货币风向趋势"></canvas><div id="currency-empty" class="chart-empty">暂无货币时间序列</div></div>
+          </section>
+
+          <section class="data-section dashboard-card valuation-card">
+            <header class="card-heading"><h2>市场估值</h2><span id="valuation-updated">—</span></header>
+            <div class="segmented-control" data-control="valuation"><button class="active" data-value="sh" type="button">上证指数</button><button data-value="sz" type="button">深证成指</button></div>
+            <div class="valuation-metric-control segmented-control" data-control="valuation-metric"><button class="active" data-value="pe" type="button">市盈率（TTM）</button><button data-value="pb" type="button">市净率</button></div>
+            <div id="valuation-summary" class="chart-summary emphasis">—</div>
+            <div class="chart-shell dashboard-chart"><canvas id="valuation-chart" aria-label="市场估值趋势"></canvas><div id="valuation-empty" class="chart-empty">暂无估值时间序列</div></div>
+          </section>
+
+          <section class="data-section dashboard-card bond-card">
+            <header class="card-heading"><h2>债市风向</h2><span id="bond-updated">—</span></header>
+            <div class="segmented-control" data-control="bond"><button class="active" data-value="long" type="button">长期国债</button><button data-value="short" type="button">短期国债</button></div>
+            <div id="bond-summary" class="chart-summary emphasis">—</div>
+            <div class="chart-shell dashboard-chart"><canvas id="bond-chart" aria-label="债市价格趋势"></canvas><div id="bond-empty" class="chart-empty">暂无债券时间序列</div></div>
+          </section>
+        </div>
+
+      </section>
+
+      <section id="view-stocks" class="view-panel stock-market-view">
+        <header class="sector-page-header stock-page-header">
+          <div>
+            <span class="section-kicker">THS STOCK MARKET</span>
+            <h2>个股市场</h2>
+            <p>同花顺动态选股分组与全市场股票排行，全部读取后台采集快照</p>
+          </div>
+          <span id="stock-page-freshness" class="status-badge neutral">等待数据</span>
+        </header>
+
+        <section class="data-section dashboard-card stock-dynamic-card">
+          <header class="card-heading">
+            <div>
+              <h2>个股动态分组</h2>
+              <p id="stock-dynamic-subtitle" class="card-subtitle">读取同花顺动态选股结果</p>
+            </div>
+            <span id="stock-dynamic-updated">—</span>
+          </header>
+          <div id="stock-dynamic-tabs" class="segmented-control dynamic-group-tabs" data-control="stock-dynamic"></div>
+          <div id="stock-dynamic-context" class="dynamic-group-context"></div>
+          <div class="ranking-table-wrap dynamic-group-table-wrap">
+            <table class="ranking-table">
+              <thead><tr><th>排名</th><th>股票名称（代码）</th><th>最新</th><th>涨幅</th><th>涨速</th></tr></thead>
+              <tbody id="stock-dynamic-body"></tbody>
+            </table>
+          </div>
+        </section>
+
+        <section class="data-section dashboard-card stock-ranking-card">
+          <header class="card-heading"><h2>股票排行</h2><span id="stock-ranking-updated">—</span></header>
+          <div class="segmented-control" data-control="stock-ranking">
+            <button class="active" data-value="rise" type="button">涨幅榜</button><button data-value="fall" type="button">跌幅榜</button><button data-value="quick" type="button">快速涨幅</button><button data-value="turnover" type="button">成交额</button><button data-value="large_order" type="button">大单净量</button><button data-value="volume_ratio" type="button">量比榜</button><button data-value="turnover_rate" type="button">换手率</button><button data-value="main_net_inflow" type="button">主力净流入</button><button data-value="amplitude" type="button">振幅榜</button>
+          </div>
+          <div class="ranking-table-wrap stock-page-ranking-wrap"><table class="ranking-table"><thead><tr><th>股票名称（代码）</th><th>最新</th><th id="stock-ranking-metric">涨幅</th><th>行业板块</th></tr></thead><tbody id="stock-ranking-body"></tbody></table></div>
+        </section>
+      </section>
+
+      <section id="view-sectors" class="view-panel sector-market-view">
+        <header class="sector-page-header">
+          <div>
+            <span class="section-kicker">THS SECTOR MARKET</span>
+            <h2>板块市场</h2>
+            <p>客观行情与资金事实、同花顺来源派生信号分层展示</p>
+          </div>
+          <span id="sector-freshness" class="status-badge neutral">尚未读取</span>
+        </header>
+
+        <section class="sector-band">
+          <header class="card-heading"><h2>热门板块</h2><span>同花顺热度信号</span></header>
+          <div class="segmented-control" data-sector-control="hot"><button class="active" data-value="concept" type="button">概念板块</button><button data-value="industry" type="button">行业板块</button><button data-value="index" type="button">指数板块</button></div>
+          <div class="sector-hot-head"><span>排名</span><span>板块名称</span><span>涨幅</span><span>热度</span></div>
+          <div id="sector-hot-grid" class="sector-hot-list"></div>
+        </section>
+
+        <section id="sector-detail-panel" class="sector-band sector-detail-panel" hidden>
+          <header class="card-heading">
+            <div>
+              <h2 id="sector-detail-title">板块资料</h2>
+              <span id="sector-detail-meta">点击任一板块查看原生成分股与关联 ETF</span>
+            </div>
+          </header>
+          <div class="table-scroll">
+            <table class="ranking-table">
+              <thead><tr><th>排名</th><th>股票名称（代码）</th><th>最新</th><th>涨跌幅</th><th>涨速</th><th>换手率</th></tr></thead>
+              <tbody id="sector-constituent-body"></tbody>
+            </table>
+          </div>
+        </section>
+
+        <section class="sector-band">
+          <header class="card-heading"><h2>板块统计</h2><span>市场事实</span></header>
+          <div class="segmented-control" data-sector-control="rankingType"><button class="active" data-value="all" type="button">全部</button><button data-value="industry" type="button">行业</button><button data-value="concept" type="button">概念</button><button data-value="style" type="button">风格</button><button data-value="region" type="button">地域</button></div>
+          <div class="sector-stat-metrics segmented-control" data-sector-control="ranking"><button class="active" data-value="change" type="button">涨幅 <i>▼</i></button><button data-value="speed" type="button">涨速 <i>◆</i></button><button data-value="volume_ratio" type="button">量比 <i>◆</i></button><button data-value="limit_up_count" type="button">涨停数 <i>◆</i></button></div>
+          <div id="sector-ranking-grid" class="sector-stat-grid"></div>
+        </section>
+
+        <section class="sector-band">
+          <header class="card-heading"><h2>板块资金</h2><span>主力净流入事实</span></header>
+          <div class="segmented-control" data-sector-control="flow"><button class="active" data-value="industry" type="button">行业</button><button data-value="concept" type="button">概念</button><button data-value="region" type="button">地域</button></div>
+          <div id="sector-flow-bars" class="sector-bar-list"></div>
+        </section>
+
+        <section class="sector-band">
+        <header class="card-heading"><h2>热点轮动</h2><span id="sector-rotation-context">概念板块 · 涨跌幅</span></header>
+        <div class="sector-control-row">
+          <span class="sector-control-label">板块分类</span>
+          <div class="segmented-control" data-sector-control="rotationType"><button class="active" data-value="concept" type="button">概念板块</button><button data-value="industry" type="button">行业板块</button></div>
+        </div>
+        <div class="sector-control-row">
+          <span class="sector-control-label">轮动指标</span>
+          <div class="segmented-control" data-sector-control="rotation"><button class="active" data-value="change" type="button">涨跌幅</button><button data-value="main_net_inflow" type="button">主力净流入</button><button data-value="five_day_change" type="button">五日涨幅</button><button data-value="rise_rate" type="button">上涨率</button><button data-value="limit_up_count" type="button">涨停家数</button></div>
+        </div>
+        <div class="table-scroll sector-rotation-scroll"><table class="ranking-table sector-rotation-table"><thead id="sector-rotation-head"></thead><tbody id="sector-rotation-body"></tbody></table></div>
+        </section>
+
+        <section class="sector-signal-grid">
+          <section class="sector-band">
+            <header class="card-heading"><h2>行业机会</h2><span>黑盒机会信号</span></header>
+            <div id="sector-opportunity-list" class="sector-signal-list"></div>
+          </section>
+          <section class="sector-band">
+            <header class="card-heading"><h2>板块景气度</h2><span>来源百分位</span></header>
+            <div id="sector-prosperity-list" class="sector-signal-list"></div>
+          </section>
+        </section>
+
+        <section class="sector-band commodity-linkage-band">
+          <header class="card-heading"><h2>商品联动</h2><span>商品价格与板块、ETF联动</span></header>
+          <div class="segmented-control" data-sector-control="commodity"><button class="active" data-value="futures" type="button">期股联动</button><button data-value="spot" type="button">现货联动</button><button data-value="industry" type="button">产业联动</button></div>
+          <div class="table-scroll"><table class="ranking-table commodity-linkage-table"><thead><tr><th>商品</th><th>涨幅</th><th>影响板块 / ETF</th><th>关联涨幅</th></tr></thead><tbody id="sector-commodity-body"></tbody></table></div>
+        </section>
+      </section>
+
+      <section id="view-us" class="view-panel us-market-view">
+        <header class="us-market-header">
+          <div><span class="section-kicker">U.S. MARKET</span><h2>美股市场</h2><p>同花顺 App 原生行情 · 证券级长连接实时更新</p></div>
+          <div class="us-market-time"><span id="us-market-status" class="status-badge neutral">正在读取</span><small id="us-market-updated">—</small></div>
+        </header>
+
+        <section class="us-section">
+          <header class="card-heading"><h2>美股指数</h2><span>8 个核心指数</span></header>
+          <div id="us-index-grid" class="us-index-grid"></div>
+        </section>
+
+        <section class="us-section">
+          <header class="card-heading"><h2>涨跌统计</h2><div class="segmented-control" data-us-control="breadth"><button class="active" data-value="today" type="button">当日</button><button data-value="month" type="button">近一月</button></div></header>
+          <div id="us-breadth-chart" class="us-breadth-chart"></div>
+          <div id="us-breadth-balance" class="us-breadth-balance"></div>
+        </section>
+
+        <div class="us-sector-pair">
+          <section class="us-section"><header class="card-heading"><h2>行业板块</h2><span id="us-industry-context">当日涨幅</span></header><div class="segmented-control us-period-tabs" data-us-control="industryPeriod"><button class="active" data-value="current" type="button">当日</button><button data-value="five_day" type="button">近5日</button><button data-value="one_month" type="button">近1月</button><button data-value="three_month" type="button">近3月</button></div><div id="us-industry-grid" class="us-sector-grid"></div></section>
+          <section class="us-section"><header class="card-heading"><h2>概念板块</h2><span id="us-concept-context">当日涨幅</span></header><div class="segmented-control us-period-tabs" data-us-control="conceptPeriod"><button class="active" data-value="current" type="button">当日</button><button data-value="five_day" type="button">近5日</button><button data-value="one_month" type="button">近1月</button><button data-value="three_month" type="button">近3月</button></div><div id="us-concept-grid" class="us-sector-grid"></div></section>
+        </div>
+
+        <section class="us-section">
+          <header class="card-heading"><h2>ETF 板块</h2><span>同花顺动态分类</span></header>
+          <div id="us-etf-grid" class="us-etf-grid"></div>
+        </section>
+
+        <section class="us-section us-ranking-section">
+          <header class="card-heading"><h2>股票排行</h2><div class="segmented-control" data-us-control="rankingSession"><button class="active" data-value="auto" type="button">自动</button><button data-value="pre_market" type="button">盘前</button><button data-value="regular" type="button">盘中</button><button data-value="after_hours" type="button">盘后</button></div><span id="us-ranking-updated">—</span></header>
+          <div id="us-ranking-tabs" class="segmented-control us-ranking-tabs" data-us-control="ranking">
+            <button class="active" data-value="all" type="button">全部</button><button data-value="us24hremen" type="button">24H最热</button><button data-value="zhonggaigu" type="button">中概股</button><button data-value="djg" type="button">低价股</button><button data-value="redianmeigu" type="button">热点美股</button><button data-value="ssxg" type="button">上市新股</button><button data-value="redianetf" type="button">热门ETF</button>
+          </div>
+          <div class="table-scroll"><table class="ranking-table us-ranking-table"><thead><tr><th>名称 / 代码</th><th id="us-ranking-latest-head">最新</th><th id="us-ranking-rate-head">涨幅</th><th id="us-ranking-change-head">涨跌</th><th>涨速</th><th>成交额</th></tr></thead><tbody id="us-ranking-body"></tbody></table></div>
+        </section>
+      </section>
+
+      <section id="view-etf" class="view-panel etf-market-view">
+        <header class="etf-market-header">
+          <div><span class="section-kicker">THS ETF MARKET</span><h2>ETF 市场</h2><p>同花顺 App 原生分类榜单 · 点击指标切换升降序</p></div>
+          <div class="etf-market-time"><span id="etf-market-status" class="status-badge neutral">等待读取</span><small id="etf-market-updated">—</small></div>
+        </header>
+
+        <section class="etf-market-overview">
+          <div class="etf-breadth-labels"><b class="down">跌 <span id="etf-down-count">—</span></b><span>平 <b id="etf-flat-count">—</b></span><b class="up">涨 <span id="etf-up-count">—</span></b></div>
+          <div class="etf-breadth-track"><i id="etf-down-bar"></i><i id="etf-flat-bar"></i><i id="etf-up-bar"></i></div>
+          <div class="etf-turnover-summary"><span>实时成交额 <strong id="etf-total-turnover">—</strong></span><span>较昨日 <b id="etf-turnover-change">—</b></span></div>
+        </section>
+
+        <section class="etf-section etf-hot-section">
+          <header class="etf-section-heading"><div><h2>选热门 ETF</h2><p>同花顺热度榜与热门标的映射</p></div><span>热度实时变化</span></header>
+          <div class="segmented-control etf-hot-tabs" data-etf-hot><button class="active" data-value="etf" type="button">ETF 热榜</button><button data-value="a" type="button">热门 A 股</button><button data-value="concept" type="button">热门概念</button><button data-value="industry" type="button">热门行业</button><button data-value="hk" type="button">热门港股</button></div>
+          <div id="etf-hot-grid" class="etf-hot-grid"></div>
+        </section>
+
+        <section class="etf-section etf-ranking-section">
+          <header class="etf-section-heading"><div><h2>ETF 排行榜</h2><p id="etf-ranking-context">全部 · 涨幅榜</p></div><span id="etf-ranking-count">—</span></header>
+          <div class="segmented-control etf-ranking-category" data-etf-ranking-category><button class="active" data-value="all" type="button">全部</button><button data-value="t0" type="button">T+0</button><button data-value="industry" type="button">行业主题</button><button data-value="index" type="button">宽基</button><button disabled title="等待同花顺原生分类字段" type="button">跨境</button><button disabled title="等待同花顺原生分类字段" type="button">风格策略</button></div>
+          <div class="segmented-control etf-ranking-metric" data-etf-ranking-metric><button class="active" data-value="change_pct" type="button">涨幅榜</button><button disabled title="等待 Fuyao 动态鉴权" type="button">资金榜</button><button disabled title="等待 Fuyao 动态鉴权" type="button">折价榜</button><button disabled title="等待 Fuyao 动态鉴权" type="button">热度榜</button><button disabled title="等待 Fuyao 动态鉴权" type="button">趋势榜</button><button data-value="turnover_yuan" type="button">成交榜</button><button data-value="scale_yuan" type="button">规模榜</button><button data-value="change_speed_pct" type="button">涨速榜</button></div>
+          <div class="etf-ranking-filters" data-etf-ranking-filter><button data-value="index" type="button"><i></i>跟踪指数过滤</button><button class="active" data-value="track" type="button"><i></i>赛道过滤</button><small>与同花顺 App 当前筛选口径一致</small></div>
+          <div class="table-scroll"><table class="ranking-table etf-ranking-table"><thead><tr><th>ETF 名称 / 代码</th><th>最新价</th><th>涨幅</th><th>涨速</th><th>成交额</th><th>规模</th></tr></thead><tbody id="etf-ranking-body"></tbody></table></div>
+        </section>
+
+        <section class="etf-section etf-flow-section">
+          <header class="etf-section-heading"><div><h2>实时 ETF 资金流向</h2><p>同花顺预估申购净流入分钟线</p></div><span id="etf-flow-updated">—</span></header>
+          <div id="etf-flow-summary" class="etf-flow-summary">等待资金流向数据</div>
+          <div id="etf-flow-chart" class="etf-flow-chart"></div>
+        </section>
+
+        <section class="etf-section" data-etf-category="industry">
+          <header class="etf-section-heading"><div><h2>行业主题</h2><p>紧跟热点，抓准投资机会</p></div><span>相同跟踪指数仅显示 1 只 ETF</span></header>
+          <div class="segmented-control etf-sort-control" data-etf-sort="industry"><button class="active" data-value="change_pct" type="button">涨幅 <i>▼</i></button><button data-value="change_speed_pct" type="button">涨速 <i>◆</i></button><button data-value="turnover_yuan" type="button">成交额 <i>◆</i></button></div>
+          <div id="etf-industry-grid" class="etf-card-grid"></div>
+        </section>
+
+        <section class="etf-section" data-etf-category="index">
+          <header class="etf-section-heading"><div><h2>宽基指数</h2><p>覆盖大、中、小市值及综合指数</p></div><span>相同跟踪指数仅显示 1 只 ETF</span></header>
+          <div class="segmented-control etf-sort-control" data-etf-sort="index"><button class="active" data-value="change_pct" type="button">涨幅 <i>▼</i></button><button data-value="change_speed_pct" type="button">涨速 <i>◆</i></button><button data-value="turnover_yuan" type="button">成交额 <i>◆</i></button></div>
+          <div id="etf-index-grid" class="etf-card-grid"></div>
+        </section>
+
+        <section class="etf-section" data-etf-category="t0">
+          <header class="etf-section-heading"><div><h2>T+0 精选</h2><p>低位布局，静待反弹</p></div><span>支持日内回转交易</span></header>
+          <div class="segmented-control etf-sort-control" data-etf-sort="t0"><button class="active" data-value="change_pct" type="button">涨幅 <i>▼</i></button><button data-value="change_speed_pct" type="button">涨速 <i>◆</i></button><button data-value="turnover_yuan" type="button">成交额 <i>◆</i></button></div>
+          <div id="etf-t0-grid" class="etf-card-grid"></div>
+        </section>
+      </section>
+      <section id="view-futures" class="view-panel futures-market-view">
+        <header class="futures-market-header">
+          <div><span class="section-kicker">FUTURES MARKET</span><h2>期货综合</h2><p>同花顺 App 期货行情、资金与主力合约</p></div>
+          <div class="futures-market-meta"><span id="futures-market-status" class="status-badge neutral">等待读取</span><small id="futures-market-source-time">来源 —</small><small id="futures-market-updated">采集 —</small><strong id="futures-market-net-flow">市场资金净流入 —</strong></div>
+        </header>
+
+        <section class="futures-section">
+          <header class="futures-section-heading"><div><h2>热门主连</h2><p>国内访问最多</p></div><span>固定展示六个</span></header>
+          <div id="futures-hot-grid" class="futures-hot-grid"></div>
+        </section>
+
+        <section class="futures-section">
+          <header class="futures-section-heading"><div><h2>期货指数</h2><p>商品、产业、外汇与原油</p></div><span>同花顺完整 10 项</span></header>
+          <div id="futures-index-grid" class="futures-index-grid"></div>
+        </section>
+
+        <section class="futures-section">
+          <header class="futures-section-heading"><div><h2>品种资金流向（亿）</h2><p>净流入与净流出</p></div><span id="futures-flow-updated">—</span></header>
+          <div id="futures-flow-chart" class="futures-flow-chart"></div>
+        </section>
+
+        <section class="futures-section futures-ranking-section">
+          <header class="futures-section-heading"><div><h2>主力合约排行</h2><p id="futures-ranking-context">全部 · 涨幅降序</p></div><span id="futures-ranking-count">—</span></header>
+          <div class="segmented-control futures-ranking-groups" data-futures-ranking>
+            <button class="active" data-value="all" type="button">全部</button><button data-value="night" type="button">夜盘</button><button data-value="energy_chemical" type="button">能源化工</button><button data-value="nonferrous" type="button">有色金属</button><button data-value="precious" type="button">贵金属</button><button data-value="ferrous" type="button">黑色金属</button><button data-value="agriculture" type="button">农产品</button><button data-value="financial" type="button">金融</button><button data-value="shfe" type="button">上期所</button><button data-value="dce" type="button">大商所</button><button data-value="czce" type="button">郑商所</button><button data-value="ine" type="button">上期能源</button><button data-value="gfex" type="button">广期所</button><button data-value="cffex" type="button">中金所</button>
+          </div>
+          <div class="table-scroll"><table class="ranking-table futures-ranking-table"><thead><tr><th>合约</th><th data-futures-sort="latest">最新 ↕</th><th class="active-sort" data-futures-sort="change_pct">涨幅 ▼</th><th data-futures-sort="change">涨跌 ↕</th><th data-futures-sort="volume">成交量 ↕</th><th data-futures-sort="open_interest">持仓量 ↕</th></tr></thead><tbody id="futures-ranking-body"></tbody></table></div>
+          <button id="futures-load-more" class="futures-load-more" type="button">加载更多</button>
+        </section>
+      </section>
+      <section id="view-gold" class="view-panel gold-market-view">
+        <header class="gold-market-header">
+          <div><span class="section-kicker">GOLD MARKET</span><h2>黄金市场</h2><p>同花顺行情、资金、事件与宏观数据</p></div>
+          <div class="gold-market-time"><span id="gold-market-status" class="status-badge neutral">等待读取</span><small id="gold-market-updated">—</small></div>
+        </header>
+
+        <section class="gold-section"><header class="card-heading"><h2>黄金实时行情</h2><span>国内现货 · 国际现货 · 期货 · 外汇 · 关联资产</span></header><div id="gold-quote-grid" class="gold-quote-grid"></div><div id="gold-secondary-strip" class="gold-secondary-strip gold-market-matrix"></div></section>
+
+        <section class="gold-section"><header class="card-heading"><h2>黄金投资机会</h2><span id="gold-opportunity-context">黄金 ETF</span></header>
+          <div class="segmented-control" data-gold-control="opportunity"><button class="active" data-value="etf" type="button">ETF</button><button data-value="stock" type="button">股票</button><button data-value="fund" type="button">基金</button><button data-value="futures" type="button">期货</button></div>
+          <div id="gold-opportunity-sort" class="gold-opportunity-sort"></div><div id="gold-opportunity-body" class="gold-opportunity-grid"></div>
+        </section>
+
+        <div class="gold-two-column">
+          <section class="gold-section"><header class="card-heading"><h2>银行黄金</h2><span>积存金与贵金属报价</span></header><div id="gold-bank-body" class="gold-list"></div></section>
+          <section class="gold-section gold-spread-section"><header class="card-heading"><h2>金价及价差</h2><span>查看历史价差 ›</span></header><div class="gold-spread-tabs" data-gold-control="spread"><button class="active" data-value="spot" type="button"><b>国内外现货价差</b><small id="gold-spot-spread-label">—</small></button><button data-value="futures" type="button"><b>国内外期货价差</b><small id="gold-futures-spread-label">—</small></button></div><div id="gold-spread-summary" class="gold-spread-legend"></div><div id="gold-spread-chart" class="gold-chart gold-spread-chart"></div><p id="gold-spread-explanation" class="gold-spread-explanation"></p></section>
+        </div>
+        <div class="gold-two-column">
+          <section class="gold-section gold-capital-section"><header class="card-heading"><h2>黄金ETF聪明资金</h2><span>更多 ›</span></header><div class="gold-capital-tabs" data-gold-control="capital"><button class="active" data-value="domestic" type="button"><b>中国市场</b><small id="gold-capital-domestic-latest">—</small></button><button data-value="international" type="button"><b>美国市场</b><small id="gold-capital-international-latest">—</small></button></div><div id="gold-capital-summary" class="gold-capital-summary"></div><div id="gold-capital-legend" class="gold-spread-legend"></div><div id="gold-capital-chart" class="gold-chart gold-capital-chart"></div><p id="gold-capital-explanation" class="gold-spread-explanation"></p></section>
+          <section class="gold-section gold-ai-section"><header class="card-heading"><h2>黄金AI要点事件汇总</h2><button id="gold-ai-more" class="gold-ai-more" type="button">查看更多 ›</button></header><div id="gold-ai-overview" class="gold-ai-overview"></div><div id="gold-news-list" class="gold-news-list gold-ai-timeline"></div></section>
+        </div>
+
+        <section class="gold-section"><header class="card-heading"><h2>全球官方黄金储备</h2><span class="gold-reserve-tag">跟着央妈买黄金</span></header><div id="gold-reserve-tabs" class="segmented-control gold-scroll-tabs"></div><div id="gold-reserve-summary" class="gold-reserve-summary"></div><div id="gold-reserve-legend" class="gold-spread-legend"></div><div id="gold-reserve-chart" class="gold-chart gold-chart-large gold-reserve-chart"></div><p id="gold-reserve-explanation" class="gold-spread-explanation"></p></section>
+
+        <section class="gold-section"><header class="card-heading"><h2>线下金价 <small>单位:元/克</small></h2><span id="gold-offline-context">金店首饰金</span></header><div class="segmented-control" data-gold-control="offline"><button class="active" data-value="jewelry" type="button">金店首饰金</button><button data-value="goldBar" type="button">金店金条</button><button data-value="bank" type="button">银行金条</button><button data-value="recycle" type="button">回收</button></div><div id="gold-offline-ref" class="gold-offline-ref"></div><div id="gold-offline-body" class="gold-offline-table-wrap"></div></section>
+
+        <div class="gold-two-column">
+          <section class="gold-section"><header class="card-heading"><h2>金银相关性分析</h2><span>更多 ›</span></header><div id="gold-silver-correlation-chart" class="gold-chart gold-silver-correlation-chart"></div><p id="gold-silver-correlation-explanation" class="gold-spread-explanation"></p></section>
+          <section class="gold-section"><header class="card-heading"><h2>AU9999和黄金股指数相关性分析</h2><span>更多 ›</span></header><div id="gold-stock-correlation-chart" class="gold-chart gold-silver-correlation-chart"></div><p id="gold-stock-correlation-explanation" class="gold-spread-explanation"></p></section>
+        </div>
+        <div class="gold-two-column">
+          <section class="gold-section"><header class="card-heading"><h2>金价波动季节性规律</h2><span class="gold-reserve-tag">季节性规律怎么用</span></header><div class="segmented-control gold-seasonality-tabs" data-gold-control="seasonality"><button class="active" data-value="spot" type="button">黄金9999<small id="gold-seasonality-spot-latest">—</small></button><button data-value="futures" type="button">沪金主连<small id="gold-seasonality-futures-latest">—</small></button></div><div id="gold-seasonality-legend" class="gold-spread-legend"></div><div id="gold-seasonality-chart" class="gold-chart gold-seasonality-chart"></div><p id="gold-seasonality-explanation" class="gold-spread-explanation"></p></section>
+          <section class="gold-section"><header class="card-heading"><h2>金银比</h2><span class="gold-reserve-tag">金银比怎么用</span></header><div class="segmented-control gold-ratio-tabs" data-gold-control="ratio"><button class="active" data-value="spot" type="button">现货金银比<small id="gold-ratio-spot-latest">—</small></button><button data-value="futures" type="button">期货金银比<small id="gold-ratio-futures-latest">—</small></button></div><div id="gold-ratio-legend" class="gold-spread-legend"></div><div id="gold-ratio-chart" class="gold-chart gold-ratio-chart"></div><p id="gold-ratio-explanation" class="gold-spread-explanation"></p></section>
+        </div>
+        <p class="gold-risk-note">风险提示：市场数据仅供研究与展示，不构成任何投资建议。贵金属价格波动较大，请注意风险。</p>
+      </section>
+
+      <section id="view-runs" class="view-panel">
+        <div class="task-observability-intro">
+          <div><span>COLLECTION OBSERVABILITY</span><h2>采集任务观测</h2><p>按数据来源和业务页面查看系统应该采什么，以及当前是否按预期更新。</p></div>
+          <div id="task-health-summary" class="task-health-summary"></div>
+        </div>
+        <div class="table-toolbar">
+          <label class="search-control">
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <circle cx="11" cy="11" r="7"></circle>
+              <path d="m20 20-4-4"></path>
+            </svg>
+            <input id="run-search" type="search" placeholder="搜索任务、来源或页面模块">
+          </label>
+          <label class="select-control"><span>来源</span><select id="run-source-filter"><option value="">全部来源</option></select></label>
+          <label class="select-control"><span>页面模块</span><select id="run-module-filter"><option value="">全部模块</option></select></label>
+          <label class="select-control"><span>采集方式</span><select id="run-channel-filter"><option value="">全部方式</option></select></label>
+          <label class="select-control"><span>设定周期</span><select id="run-period-filter"><option value="">全部周期</option></select></label>
+          <div class="select-control"><span>状态</span><details id="run-status-filter" class="multi-select-control">
+            <summary id="run-status-label">全部状态</summary>
+            <div class="multi-select-menu">
+              <label><input type="checkbox" value="success">成功</label>
+              <label><input type="checkbox" value="partial_success">部分成功</label>
+              <label><input type="checkbox" value="running">运行中</label>
+              <label><input type="checkbox" value="delayed">延迟</label>
+              <label><input type="checkbox" value="failed">失败</label>
+              <label><input type="checkbox" value="skipped">跳过</label>
+              <label><input type="checkbox" value="pending">等待首次执行</label>
+            </div>
+          </details></div>
+          <div class="task-fold-actions" aria-label="任务分组折叠控制">
+            <button id="run-expand-all" type="button">一键展开</button>
+            <button id="run-collapse-all" type="button">一键收起</button>
+          </div>
+          <span id="run-count" class="table-count">0 个任务源</span>
+        </div>
+        <div class="table-scroll">
+          <table>
+            <thead>
+              <tr>
+                <th>来源 / 页面</th>
+                <th>任务</th>
+                <th>采集方式</th>
+                <th>设定周期</th>
+                <th>最后数据时间</th>
+                <th>最后执行时间</th>
+                <th>耗时</th>
+                <th>状态</th>
+              </tr>
+            </thead>
+            <tbody id="run-table-body"></tbody>
+          </table>
+        </div>
+      </section>
+
+      <section id="view-watchlist" class="view-panel">
+        <div class="table-toolbar">
+          <label class="search-control">
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <circle cx="11" cy="11" r="7"></circle>
+              <path d="m20 20-4-4"></path>
+            </svg>
+            <input id="watchlist-search" type="search" placeholder="搜索代码或名称">
+          </label>
+          <span id="watchlist-count" class="table-count">0 个标的</span>
+        </div>
+        <div class="table-scroll">
+          <table>
+            <thead>
+              <tr>
+                <th>标的</th>
+                <th>类型</th>
+                <th>优先级</th>
+                <th>采集间隔</th>
+                <th>最新行情类型</th>
+                <th>最后成功</th>
+                <th>状态</th>
+              </tr>
+            </thead>
+            <tbody id="watchlist-table-body"></tbody>
+          </table>
+        </div>
+      </section>
+
+      <section id="view-assets" class="view-panel">
+        <div class="asset-summary">
+          <div>
+            <span>数据域</span>
+            <strong id="asset-domain-count">—</strong>
+          </div>
+          <div>
+            <span>可用数据域</span>
+            <strong id="asset-available-count">—</strong>
+          </div>
+          <div>
+            <span>持久化记录</span>
+            <strong id="asset-total-records">—</strong>
+          </div>
+        </div>
+        <div id="asset-inventory" class="asset-inventory"></div>
+        <div class="table-toolbar asset-toolbar">
+          <label class="select-control">
+            <span>数据域</span>
+            <select id="asset-domain-filter"></select>
+          </label>
+          <label class="select-control">
+            <span>分类</span>
+            <select id="asset-group-filter">
+              <option value="">全部分类</option>
+            </select>
+          </label>
+          <label class="search-control">
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <circle cx="11" cy="11" r="7"></circle>
+              <path d="m20 20-4-4"></path>
+            </svg>
+            <input id="asset-search" type="search" placeholder="搜索代码、名称、来源或类型">
+          </label>
+          <span id="asset-record-count" class="table-count">0 条</span>
+        </div>
+        <div class="table-scroll">
+          <table>
+            <thead>
+              <tr>
+                <th>分类</th>
+                <th>对象</th>
+                <th>时间</th>
+                <th>内容摘要</th>
+                <th>数据</th>
+              </tr>
+            </thead>
+            <tbody id="asset-table-body"></tbody>
+          </table>
+        </div>
+        <div class="pagination">
+          <button id="asset-prev" type="button">上一页</button>
+          <span id="asset-page-state">—</span>
+          <button id="asset-next" type="button">下一页</button>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <dialog id="record-dialog" class="record-dialog">
+    <header>
+      <div>
+        <span id="dialog-kicker" class="section-kicker">SNAPSHOT</span>
+        <h2 id="dialog-title">数据详情</h2>
+      </div>
+      <button id="dialog-close" class="icon-button" type="button" title="关闭">
+        <svg viewBox="0 0 24 24" aria-hidden="true">
+          <path d="M5 5l14 14M19 5 5 19"></path>
+        </svg>
+      </button>
+    </header>
+    <pre id="dialog-content"></pre>
+  </dialog>
+
+  <div id="toast" class="toast" role="status" aria-live="polite"></div>
+  <script src="/static/market_observability_dashboard.js?v=20260808-6"></script>
+</body>
+</html>

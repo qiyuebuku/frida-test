@@ -4,7 +4,10 @@ import re
 import asyncio
 from datetime import datetime, timedelta
 
+import akshare as ak
+
 from src.infrastructure.clients.base import BaseClient, cached
+from src.infrastructure.clients.market_contracts import market_error, market_result
 
 
 class PBOCClient(BaseClient):
@@ -140,10 +143,118 @@ class PBOCClient(BaseClient):
         days: 返回近 N 个交易日
         """
         if tab == "usdcny":
-            return await self._get_usdcny_kline(days)
+            raw = await self._get_usdcny_kline(days)
         elif tab == "shibor":
-            return await self._get_shibor_trend(days)
-        return {"status_code": -1, "msg": f"未知tab: {tab}"}
+            raw = await self._get_shibor_trend(days)
+        else:
+            raise ValueError(f"unknown tab: {tab}")
+        if raw.get("status_code") != 0:
+            return market_error(
+                provider="pboc",
+                market="cn",
+                error=raw.get("msg", "currency data unavailable"),
+            )
+        data = raw.get("data") or {}
+        data.pop("signals", None)
+        latest = data.get("latest") or {}
+        source_time = latest.get("date")
+        return market_result(
+            provider="pboc",
+            market="cn",
+            data=data,
+            source_time=source_time,
+            trade_date=source_time,
+            timezone_name="Asia/Shanghai",
+        )
+
+    async def get_interest_rates(self, days: int = 60) -> dict:
+        """获取 Shibor 和 LPR 原始利率序列，不生成流动性判断。"""
+        raw = await self._get_shibor_trend(days)
+        if raw.get("status_code") != 0:
+            return market_error(
+                provider="pboc",
+                market="cn",
+                error=raw.get("msg", "interest rates unavailable"),
+            )
+        data = raw.get("data") or {}
+        data.pop("signals", None)
+        latest_dates = [
+            item.get("date")
+            for series in (data.get("shibor") or {}).values()
+            for item in series[:1]
+            if item.get("date")
+        ]
+        latest_dates.extend(
+            item.get("date") for item in (data.get("lpr") or [])[:1] if item.get("date")
+        )
+        trade_date = max(latest_dates) if latest_dates else None
+        return market_result(
+            provider="pboc",
+            market="cn",
+            data={
+                "shibor": data.get("shibor") or {},
+                "lpr": data.get("lpr") or [],
+                "rate_unit": "percent",
+            },
+            source_time=trade_date,
+            trade_date=trade_date,
+            timezone_name="Asia/Shanghai",
+            provider_metadata={
+                "shibor_source": "eastmoney_chinamoney_mirror",
+                "lpr_source": "eastmoney_pboc_mirror",
+            },
+        )
+
+    async def get_government_bond_yields(
+        self,
+        start_date: str = "19901219",
+        limit: int = 250,
+    ) -> dict:
+        """获取中美国债收益率，不使用国债 ETF 作为代理。"""
+        try:
+            frame = await asyncio.to_thread(ak.bond_zh_us_rate, start_date=start_date)
+            if limit > 0:
+                frame = frame.tail(limit)
+            rows = []
+            column_map = {
+                "中国国债收益率2年": ("cn", "2y"),
+                "中国国债收益率5年": ("cn", "5y"),
+                "中国国债收益率10年": ("cn", "10y"),
+                "中国国债收益率30年": ("cn", "30y"),
+                "美国国债收益率2年": ("us", "2y"),
+                "美国国债收益率5年": ("us", "5y"),
+                "美国国债收益率10年": ("us", "10y"),
+                "美国国债收益率30年": ("us", "30y"),
+            }
+            for row in frame.to_dict("records"):
+                observed_date = row.get("日期")
+                for column, (market, tenor) in column_map.items():
+                    value = row.get(column)
+                    if value is None or value != value:
+                        continue
+                    rows.append(
+                        {
+                            "date": observed_date,
+                            "market": market,
+                            "tenor": tenor,
+                            "yield": value,
+                            "unit": "percent",
+                            "instrument_type": "government_bond_yield",
+                        }
+                    )
+            return market_result(
+                provider="chinamoney",
+                market="global",
+                data={"count": len(rows), "yields": rows},
+                trade_date=rows[-1]["date"] if rows else None,
+                timezone_name="source_market",
+                provider_metadata={
+                    "contains_proxy_etf": False,
+                    "source_adapter": "akshare.bond_zh_us_rate",
+                },
+            )
+        except Exception as exc:
+            return market_error(provider="chinamoney", market="global", error=exc)
 
     async def _get_usdcny_kline(self, days: int = 120) -> dict:
         """美元/人民币中间价 (CFETS) + 离岸人民币 (push2his) 双数据源"""
@@ -177,23 +288,6 @@ class PBOCClient(BaseClient):
         year_high = max(closes[-250:]) if len(closes) >= 20 else max(closes)
         year_low = min(closes[-250:]) if len(closes) >= 20 else min(closes)
 
-        signals = []
-        if ma5 and ma20:
-            if latest["close"] > ma20:
-                signals.append("汇率在20日均线上方，美元短期偏强")
-            else:
-                signals.append("汇率在20日均线下方，人民币短期偏强")
-        if ma5 and ma20 and ma60:
-            if ma5 > ma20 > ma60:
-                signals.append("均线多头排列，美元趋势走强（人民币贬值压力）")
-            elif ma5 < ma20 < ma60:
-                signals.append("均线空头排列，美元趋势走弱（人民币升值方向）")
-        if chg_30d is not None:
-            if chg_30d > 1:
-                signals.append(f"近30日人民币贬值 {chg_30d:.2f}%，注意汇率风险")
-            elif chg_30d < -1:
-                signals.append(f"近30日人民币升值 {abs(chg_30d):.2f}%，有利于进口型基金")
-
         return {
             "status_code": 0,
             "data": {
@@ -204,7 +298,6 @@ class PBOCClient(BaseClient):
                 "ma5": ma5, "ma20": ma20, "ma60": ma60,
                 "chg30d": chg_30d, "chg60d": chg_60d,
                 "yearHigh": year_high, "yearLow": year_low,
-                "signals": signals,
                 "items": items[-days:],
             },
         }
@@ -404,41 +497,12 @@ class PBOCClient(BaseClient):
             _fetch_shibor(), _fetch_lpr(), return_exceptions=True,
         )
 
-        result = {"tab": "shibor", "shibor": {}, "lpr": [], "signals": []}
+        result = {"tab": "shibor", "shibor": {}, "lpr": []}
 
         if isinstance(shibor_raw, dict):
             result["shibor"] = shibor_raw
-            # 生成信号
-            overnight = shibor_raw.get("隔夜", [])
-            if overnight:
-                latest_rate = overnight[0].get("rate")
-                if latest_rate is not None:
-                    if latest_rate < 1.5:
-                        result["signals"].append(f"Shibor隔夜 {latest_rate}%，资金面宽松")
-                    elif latest_rate > 2.5:
-                        result["signals"].append(f"Shibor隔夜 {latest_rate}%，资金面偏紧")
-                    else:
-                        result["signals"].append(f"Shibor隔夜 {latest_rate}%，资金面适中")
-                # 近5日趋势
-                if len(overnight) >= 5:
-                    avg_recent = sum(r["rate"] for r in overnight[:5]) / 5
-                    avg_prev = sum(r["rate"] for r in overnight[5:10]) / min(5, len(overnight[5:10])) if len(overnight) >= 6 else avg_recent
-                    if avg_recent > avg_prev * 1.1:
-                        result["signals"].append("近5日Shibor隔夜利率上升，流动性收紧信号")
-                    elif avg_recent < avg_prev * 0.9:
-                        result["signals"].append("近5日Shibor隔夜利率下降，流动性宽松信号")
-
         if isinstance(lpr_raw, list):
             result["lpr"] = lpr_raw
-            if len(lpr_raw) >= 2:
-                curr, prev = lpr_raw[0], lpr_raw[1]
-                if curr.get("lpr1y") and prev.get("lpr1y"):
-                    if curr["lpr1y"] < prev["lpr1y"]:
-                        result["signals"].append(f"LPR 1年期从 {prev['lpr1y']}% 降至 {curr['lpr1y']}%，货币政策偏宽松")
-                    elif curr["lpr1y"] > prev["lpr1y"]:
-                        result["signals"].append(f"LPR 1年期从 {prev['lpr1y']}% 升至 {curr['lpr1y']}%，货币政策偏紧缩")
-                    else:
-                        result["signals"].append(f"LPR 1年期维持 {curr['lpr1y']}% 不变")
 
         return {"status_code": 0, "data": result}
 

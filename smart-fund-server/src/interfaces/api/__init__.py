@@ -12,6 +12,7 @@ from fastapi.staticfiles import StaticFiles
 from src.common.exceptions import AppException
 from src.infrastructure.tools import skill_registry as sr
 from src.interfaces.api.middleware.error_handler import app_exception_handler
+from src.interfaces.api.middleware.compression import CompressionMiddleware
 from src.interfaces.api.routes import router, start_auth_auto_refresh
 from src.infrastructure.clients import init_clients, close_clients
 
@@ -70,6 +71,12 @@ def create_app() -> FastAPI:
         allow_credentials=True,
         allow_methods=["*"],
         allow_headers=["*"],
+    )
+    app.add_middleware(
+        CompressionMiddleware,
+        minimum_size=1024,
+        zstd_level=3,
+        gzip_level=6,
     )
 
     # --- exception handlers ---

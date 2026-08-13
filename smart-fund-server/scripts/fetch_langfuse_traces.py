@@ -1,11 +1,10 @@
 #!/usr/bin/env python3
-"""Download full Langfuse traces without the UI export truncation.
+"""从自建 Langfuse v4 下载完整观测记录并按 Trace（链路）重建 JSON。
 
-Default behavior:
-  1. Load Langfuse credentials from .env.
-  2. Find the latest trace matching --name.
-  3. Use its sessionId to fetch every trace in that session.
-  4. Fetch each trace with full IO/metadata/observations and write JSON files.
+Langfuse v4 不再提供旧版 ``/api/public/traces`` 导出接口。本脚本使用
+``/api/public/v2/observations``，按 ``traceId`` 聚合 Observation（观测记录）。
+为避免扫描整个 ClickHouse，按名称或 Session（会话）查询默认只看最近 7 天；
+可以通过 ``--from-timestamp`` 和 ``--to-timestamp`` 调整时间范围。
 """
 
 from __future__ import annotations
@@ -19,16 +18,17 @@ import sys
 import urllib.parse
 import urllib.request
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
 
 DEFAULT_TRACE_NAME = "kg.write_path_demo"
-DEFAULT_FULL_FIELDS = "core,io,scores,observations,metrics"
-DEFAULT_LIST_FIELDS = "core,metrics"
+DEFAULT_FULL_FIELDS = "core,basic,time,io,metadata,model,usage,prompt,metrics,trace_context"
+DEFAULT_LIST_FIELDS = "core,basic,time,trace_context"
 DEFAULT_PAGE_SIZE = 100
 DEFAULT_TIMEOUT_SECONDS = 60
+DEFAULT_LOOKBACK_DAYS = 7
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_ENV_FILE = PROJECT_ROOT / ".env"
@@ -52,56 +52,38 @@ class LangfuseClient:
     def __init__(self, *, host: str, public_key: str, secret_key: str, timeout: int = DEFAULT_TIMEOUT_SECONDS):
         self._host = host.rstrip("/")
         self._timeout = timeout
-        token = base64.b64encode(f"{public_key}:{secret_key}".encode("utf-8")).decode("ascii")
-        self._headers = {
-            "Authorization": f"Basic {token}",
-            "Accept": "application/json",
-        }
+        token = base64.b64encode(f"{public_key}:{secret_key}".encode()).decode("ascii")
+        self._headers = {"Authorization": f"Basic {token}", "Accept": "application/json"}
 
-    def list_traces(
+    def list_observations(
         self,
         *,
-        page: int,
-        limit: int,
-        order_by: str = "timestamp.desc",
+        cursor: str | None = None,
+        limit: int = DEFAULT_PAGE_SIZE,
         fields: str = DEFAULT_LIST_FIELDS,
-        name: str | None = None,
-        session_id: str | None = None,
-        tags: list[str] | None = None,
-        from_timestamp: str | None = None,
-        to_timestamp: str | None = None,
+        trace_id: str | None = None,
+        from_start_time: str | None = None,
+        to_start_time: str | None = None,
     ) -> dict[str, Any]:
-        params: dict[str, Any] = {
-            "page": page,
-            "limit": limit,
-            "orderBy": order_by,
-            "fields": fields,
-        }
-        if name:
-            params["name"] = name
-        if session_id:
-            params["sessionId"] = session_id
-        if tags:
-            params["tags"] = tags
-        if from_timestamp:
-            params["fromTimestamp"] = from_timestamp
-        if to_timestamp:
-            params["toTimestamp"] = to_timestamp
-        return self._get_json("/api/public/traces", params)
-
-    def get_trace(self, trace_id: str, *, fields: str = DEFAULT_FULL_FIELDS) -> dict[str, Any]:
-        return self._get_json(f"/api/public/traces/{urllib.parse.quote(trace_id)}", {"fields": fields})
+        params: dict[str, Any] = {"limit": limit, "fields": fields}
+        if cursor:
+            params["cursor"] = cursor
+        if trace_id:
+            params["traceId"] = trace_id
+        if from_start_time:
+            params["fromStartTime"] = from_start_time
+        if to_start_time:
+            params["toStartTime"] = to_start_time
+        return self._get_json("/api/public/v2/observations", params)
 
     def _get_json(self, path: str, params: dict[str, Any]) -> dict[str, Any]:
         query = urllib.parse.urlencode(params, doseq=True)
-        url = f"{self._host}{path}"
-        if query:
-            url = f"{url}?{query}"
+        url = f"{self._host}{path}?{query}"
         request = urllib.request.Request(url, headers=self._headers)
         try:
             with urllib.request.urlopen(request, timeout=self._timeout) as response:
                 payload = response.read()
-        except Exception as exc:  # noqa: BLE001 - CLI should surface the original request failure.
+        except Exception as exc:  # noqa: BLE001
             raise LangfuseApiError(f"Langfuse request failed: {url}: {exc}") from exc
         try:
             data = json.loads(payload)
@@ -120,20 +102,18 @@ def load_env_file(path: Path) -> None:
         if not line or line.startswith("#") or "=" not in line:
             continue
         key, value = line.split("=", 1)
-        key = key.strip()
-        value = value.strip().strip('"').strip("'")
-        os.environ.setdefault(key, value)
+        os.environ.setdefault(key.strip(), value.strip().strip('"').strip("'"))
 
 
 def client_from_env(*, env_file: Path, timeout: int = DEFAULT_TIMEOUT_SECONDS) -> LangfuseClient:
     load_env_file(env_file)
-    host = os.environ.get("LANGFUSE_HOST") or os.environ.get("LANGFUSE_BASE_URL")
+    host = os.environ.get("LANGFUSE_BASE_URL") or os.environ.get("LANGFUSE_HOST")
     public_key = os.environ.get("LANGFUSE_PUBLIC_KEY")
     secret_key = os.environ.get("LANGFUSE_SECRET_KEY")
     missing = [
         name
         for name, value in {
-            "LANGFUSE_HOST or LANGFUSE_BASE_URL": host,
+            "LANGFUSE_BASE_URL or LANGFUSE_HOST": host,
             "LANGFUSE_PUBLIC_KEY": public_key,
             "LANGFUSE_SECRET_KEY": secret_key,
         }.items()
@@ -144,6 +124,85 @@ def client_from_env(*, env_file: Path, timeout: int = DEFAULT_TIMEOUT_SECONDS) -
     return LangfuseClient(host=str(host), public_key=str(public_key), secret_key=str(secret_key), timeout=timeout)
 
 
+def _bounded_time_range(
+    from_timestamp: str | None,
+    to_timestamp: str | None,
+) -> tuple[str, str]:
+    now = datetime.now(timezone.utc)
+    upper = to_timestamp or now.isoformat()
+    if from_timestamp:
+        lower = from_timestamp
+    else:
+        try:
+            upper_dt = datetime.fromisoformat(upper.replace("Z", "+00:00"))
+        except ValueError as exc:
+            raise SystemExit(f"Invalid --to-timestamp: {upper}") from exc
+        lower = (upper_dt - timedelta(days=DEFAULT_LOOKBACK_DAYS)).isoformat()
+    return lower, upper
+
+
+def _all_observations(
+    client: Any,
+    *,
+    fields: str,
+    page_size: int,
+    trace_id: str | None = None,
+    from_timestamp: str | None = None,
+    to_timestamp: str | None = None,
+) -> list[dict[str, Any]]:
+    observations: list[dict[str, Any]] = []
+    cursor: str | None = None
+    while True:
+        response = client.list_observations(
+            cursor=cursor,
+            limit=page_size,
+            fields=fields,
+            trace_id=trace_id,
+            from_start_time=from_timestamp,
+            to_start_time=to_timestamp,
+        )
+        observations.extend(_items(response))
+        meta = response.get("meta") if isinstance(response.get("meta"), dict) else {}
+        next_cursor = meta.get("cursor")
+        if not next_cursor or next_cursor == cursor:
+            break
+        cursor = str(next_cursor)
+    return observations
+
+
+def _matches(observation: dict[str, Any], *, name: str | None, session_id: str | None, tags: list[str] | None) -> bool:
+    if name and observation.get("traceName") != name:
+        return False
+    if session_id and observation.get("sessionId") != session_id:
+        return False
+    actual_tags = set(observation.get("tags") or [])
+    return not tags or set(tags).issubset(actual_tags)
+
+
+def _group_traces(observations: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    grouped: dict[str, list[dict[str, Any]]] = {}
+    for observation in observations:
+        trace_id = str(observation.get("traceId") or "")
+        if trace_id:
+            grouped.setdefault(trace_id, []).append(observation)
+    traces = [_build_trace(trace_id, items) for trace_id, items in grouped.items()]
+    return sorted(traces, key=lambda item: str(item.get("timestamp") or ""))
+
+
+def _build_trace(trace_id: str, observations: list[dict[str, Any]]) -> dict[str, Any]:
+    ordered = sorted(observations, key=lambda item: str(item.get("startTime") or ""))
+    root = next((item for item in ordered if item.get("isRootObservation")), ordered[0])
+    tags = sorted({str(tag) for item in ordered for tag in (item.get("tags") or [])})
+    return {
+        "id": trace_id,
+        "name": root.get("traceName"),
+        "timestamp": min((str(item.get("startTime")) for item in ordered if item.get("startTime")), default=""),
+        "sessionId": root.get("sessionId"),
+        "tags": tags,
+        "observations": ordered,
+    }
+
+
 def latest_trace(
     client: Any,
     *,
@@ -151,22 +210,18 @@ def latest_trace(
     tags: list[str] | None = None,
     from_timestamp: str | None = None,
     to_timestamp: str | None = None,
+    page_size: int = DEFAULT_PAGE_SIZE,
 ) -> dict[str, Any]:
-    page = client.list_traces(
-        page=1,
-        limit=10,
-        order_by="timestamp.desc",
-        fields=DEFAULT_LIST_FIELDS,
-        name=name,
-        tags=tags,
-        from_timestamp=from_timestamp,
-        to_timestamp=to_timestamp,
+    lower, upper = _bounded_time_range(from_timestamp, to_timestamp)
+    observations = _all_observations(
+        client, fields=DEFAULT_LIST_FIELDS, page_size=page_size,
+        from_timestamp=lower, to_timestamp=upper,
     )
-    traces = _trace_items(page)
+    matches = [item for item in observations if _matches(item, name=name, session_id=None, tags=tags)]
+    traces = _group_traces(matches)
     if not traces:
-        suffix = f" name={name!r}" if name else ""
-        raise SystemExit(f"No Langfuse traces found{suffix}")
-    return traces[0]
+        raise SystemExit(f"No Langfuse traces found name={name!r} between {lower} and {upper}")
+    return traces[-1]
 
 
 def list_session_traces(
@@ -175,70 +230,60 @@ def list_session_traces(
     session_id: str,
     page_size: int = DEFAULT_PAGE_SIZE,
     fields: str = DEFAULT_LIST_FIELDS,
+    from_timestamp: str | None = None,
+    to_timestamp: str | None = None,
 ) -> list[dict[str, Any]]:
-    traces: list[dict[str, Any]] = []
-    page = 1
-    while True:
-        response = client.list_traces(
-            page=page,
-            limit=page_size,
-            order_by="timestamp.asc",
-            fields=fields,
-            session_id=session_id,
-        )
-        traces.extend(_trace_items(response))
-        meta = response.get("meta") if isinstance(response.get("meta"), dict) else {}
-        total_pages = int(meta.get("totalPages") or page)
-        if page >= total_pages:
-            break
-        page += 1
-    return traces
+    lower, upper = _bounded_time_range(from_timestamp, to_timestamp)
+    observations = _all_observations(
+        client, fields=fields, page_size=page_size,
+        from_timestamp=lower, to_timestamp=upper,
+    )
+    return _group_traces([
+        item for item in observations
+        if _matches(item, name=None, session_id=session_id, tags=None)
+    ])
+
+
+def _get_full_trace(client: Any, *, trace_id: str, fields: str, page_size: int) -> dict[str, Any]:
+    observations = _all_observations(client, fields=fields, page_size=page_size, trace_id=trace_id)
+    if not observations:
+        raise SystemExit(f"No Langfuse observations found for traceId={trace_id!r}")
+    return _build_trace(trace_id, observations)
 
 
 def download_latest_session(
-    client: Any,
-    *,
-    out_dir: Path,
-    name: str | None = DEFAULT_TRACE_NAME,
-    fields: str = DEFAULT_FULL_FIELDS,
-    page_size: int = DEFAULT_PAGE_SIZE,
-    tags: list[str] | None = None,
-    from_timestamp: str | None = None,
+    client: Any, *, out_dir: Path, name: str | None = DEFAULT_TRACE_NAME,
+    fields: str = DEFAULT_FULL_FIELDS, page_size: int = DEFAULT_PAGE_SIZE,
+    tags: list[str] | None = None, from_timestamp: str | None = None,
     to_timestamp: str | None = None,
 ) -> DownloadResult:
     trace = latest_trace(
-        client,
-        name=name,
-        tags=tags,
-        from_timestamp=from_timestamp,
-        to_timestamp=to_timestamp,
+        client, name=name, tags=tags, from_timestamp=from_timestamp,
+        to_timestamp=to_timestamp, page_size=page_size,
     )
     session_id = str(trace.get("sessionId") or "")
     if not session_id:
         raise SystemExit(f"Latest trace has no sessionId: {trace.get('id')}")
     return download_session(
-        client,
-        session_id=session_id,
-        out_dir=out_dir,
-        fields=fields,
-        page_size=page_size,
-        latest_trace_id=str(trace.get("id") or ""),
+        client, session_id=session_id, out_dir=out_dir, fields=fields,
+        page_size=page_size, latest_trace_id=str(trace.get("id") or ""),
+        from_timestamp=from_timestamp, to_timestamp=to_timestamp,
     )
 
 
 def download_session(
-    client: Any,
-    *,
-    session_id: str,
-    out_dir: Path,
-    fields: str = DEFAULT_FULL_FIELDS,
-    page_size: int = DEFAULT_PAGE_SIZE,
-    latest_trace_id: str = "",
+    client: Any, *, session_id: str, out_dir: Path,
+    fields: str = DEFAULT_FULL_FIELDS, page_size: int = DEFAULT_PAGE_SIZE,
+    latest_trace_id: str = "", from_timestamp: str | None = None,
+    to_timestamp: str | None = None,
 ) -> DownloadResult:
-    traces = list_session_traces(client, session_id=session_id, page_size=page_size)
+    traces = list_session_traces(
+        client, session_id=session_id, page_size=page_size,
+        from_timestamp=from_timestamp, to_timestamp=to_timestamp,
+    )
     if not traces:
         raise SystemExit(f"No Langfuse traces found for sessionId={session_id!r}")
-    latest = latest_trace_id or str(max(traces, key=lambda item: str(item.get("timestamp") or "")).get("id") or "")
+    latest = latest_trace_id or str(traces[-1].get("id") or "")
     session_dir = out_dir / f"session-{_safe_filename(session_id)}"
     session_dir.mkdir(parents=True, exist_ok=True)
     manifest_traces: list[dict[str, Any]] = []
@@ -246,40 +291,31 @@ def download_session(
         trace_id = str(trace.get("id") or "")
         if not trace_id:
             continue
-        full_trace = client.get_trace(trace_id, fields=fields)
+        full_trace = _get_full_trace(client, trace_id=trace_id, fields=fields, page_size=page_size)
         trace_file = session_dir / f"trace-{_safe_filename(trace_id)}-full.json"
         trace_file.write_text(json.dumps(full_trace, ensure_ascii=False, indent=2))
-        manifest_traces.append(
-            {
-                "trace_id": trace_id,
-                "name": trace.get("name"),
-                "timestamp": trace.get("timestamp"),
-                "file": trace_file.name,
-                "summary": summarize_trace(full_trace),
-            }
-        )
+        manifest_traces.append({
+            "trace_id": trace_id, "name": trace.get("name"),
+            "timestamp": trace.get("timestamp"), "file": trace_file.name,
+            "summary": summarize_trace(full_trace),
+        })
     manifest = {
         "generated_at": datetime.now(timezone.utc).isoformat(),
-        "session_id": session_id,
-        "latest_trace_id": latest,
-        "trace_count": len(manifest_traces),
-        "fields": fields,
+        "session_id": session_id, "latest_trace_id": latest,
+        "trace_count": len(manifest_traces), "fields": fields,
         "traces": manifest_traces,
     }
     manifest_path = session_dir / "manifest.json"
     manifest_path.write_text(json.dumps(manifest, ensure_ascii=False, indent=2))
-    return DownloadResult(
-        session_id=session_id,
-        latest_trace_id=latest,
-        output_dir=session_dir,
-        trace_count=len(manifest_traces),
-        manifest_path=manifest_path,
-    )
+    return DownloadResult(session_id, latest, session_dir, len(manifest_traces), manifest_path)
 
 
-def download_trace(client: Any, *, trace_id: str, out_dir: Path, fields: str = DEFAULT_FULL_FIELDS) -> Path:
+def download_trace(
+    client: Any, *, trace_id: str, out_dir: Path,
+    fields: str = DEFAULT_FULL_FIELDS, page_size: int = DEFAULT_PAGE_SIZE,
+) -> Path:
     out_dir.mkdir(parents=True, exist_ok=True)
-    full_trace = client.get_trace(trace_id, fields=fields)
+    full_trace = _get_full_trace(client, trace_id=trace_id, fields=fields, page_size=page_size)
     trace_file = out_dir / f"trace-{_safe_filename(trace_id)}-full.json"
     trace_file.write_text(json.dumps(full_trace, ensure_ascii=False, indent=2))
     return trace_file
@@ -287,42 +323,29 @@ def download_trace(client: Any, *, trace_id: str, out_dir: Path, fields: str = D
 
 def summarize_trace(trace: dict[str, Any]) -> dict[str, Any]:
     observations = trace.get("observations") if isinstance(trace.get("observations"), list) else []
-    usage = {
-        "input_tokens": 0,
-        "prompt_cache_hit_tokens": 0,
-        "prompt_cache_miss_tokens": 0,
-        "output_tokens": 0,
-        "reasoning_tokens": 0,
-        "total_tokens": 0,
-    }
+    usage = {"input_tokens": 0, "output_tokens": 0, "total_tokens": 0}
     observations_with_io = 0
     for observation in observations:
         if not isinstance(observation, dict):
             continue
-        if "input" in observation or "output" in observation or "metadata" in observation:
+        if any(key in observation for key in ("input", "output", "metadata")):
             observations_with_io += 1
-        details = observation.get("providedUsageDetails") or observation.get("usageDetails")
+        details = observation.get("usageDetails") or observation.get("providedUsageDetails")
         if not isinstance(details, dict):
             continue
-        for key in usage:
-            usage[key] += int(details.get(key) or 0)
-    usage["non_cached_tokens"] = (
-        usage["prompt_cache_miss_tokens"] + usage["output_tokens"] + usage["reasoning_tokens"]
-    )
+        usage["input_tokens"] += int(details.get("input") or details.get("input_tokens") or 0)
+        usage["output_tokens"] += int(details.get("output") or details.get("output_tokens") or 0)
+        usage["total_tokens"] += int(details.get("total") or details.get("total_tokens") or 0)
     return {
-        "name": trace.get("name"),
-        "timestamp": trace.get("timestamp"),
+        "name": trace.get("name"), "timestamp": trace.get("timestamp"),
         "observation_count": len(observations),
-        "observations_with_io_metadata": observations_with_io,
-        "usage": usage,
+        "observations_with_io_metadata": observations_with_io, "usage": usage,
     }
 
 
-def _trace_items(response: dict[str, Any]) -> list[dict[str, Any]]:
+def _items(response: dict[str, Any]) -> list[dict[str, Any]]:
     data = response.get("data")
-    if not isinstance(data, list):
-        return []
-    return [item for item in data if isinstance(item, dict)]
+    return [item for item in data if isinstance(item, dict)] if isinstance(data, list) else []
 
 
 def _safe_filename(value: str) -> str:
@@ -330,19 +353,19 @@ def _safe_filename(value: str) -> str:
 
 
 def parse_args(argv: list[str]) -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Download full Langfuse traces by trace id or latest session.")
+    parser = argparse.ArgumentParser(description="从自建 Langfuse v4 下载观测记录并重建 Trace（链路）。")
     mode = parser.add_mutually_exclusive_group()
-    mode.add_argument("--trace-id", help="Download one full trace by id.")
-    mode.add_argument("--session-id", help="Download all traces in a session.")
-    parser.add_argument("--name", default=DEFAULT_TRACE_NAME, help=f"Trace name for latest-session lookup. Default: {DEFAULT_TRACE_NAME}")
-    parser.add_argument("--tag", dest="tags", action="append", help="Require tag when selecting the latest trace. Can be repeated.")
-    parser.add_argument("--from-timestamp", help="ISO timestamp lower bound for latest trace lookup.")
-    parser.add_argument("--to-timestamp", help="ISO timestamp upper bound for latest trace lookup.")
-    parser.add_argument("--fields", default=DEFAULT_FULL_FIELDS, help=f"Fields passed to trace get. Default: {DEFAULT_FULL_FIELDS}")
-    parser.add_argument("--page-size", type=int, default=DEFAULT_PAGE_SIZE, help="Trace list page size.")
-    parser.add_argument("--env-file", type=Path, default=DEFAULT_ENV_FILE, help="Path to .env containing Langfuse credentials.")
-    parser.add_argument("--out-dir", type=Path, default=DEFAULT_OUT_DIR, help="Output directory.")
-    parser.add_argument("--timeout", type=int, default=DEFAULT_TIMEOUT_SECONDS, help="HTTP timeout seconds.")
+    mode.add_argument("--trace-id", help="按 ID 下载一条完整 Trace（链路）。")
+    mode.add_argument("--session-id", help="下载一个 Session（会话）中的全部 Trace（链路）。")
+    parser.add_argument("--name", default=DEFAULT_TRACE_NAME, help="查找最新 Session（会话）时使用的 Trace 名称。")
+    parser.add_argument("--tag", dest="tags", action="append", help="筛选最新 Trace 时必须包含的标签；可以重复。")
+    parser.add_argument("--from-timestamp", help="ISO 起始时间；不传时默认最近 7 天。")
+    parser.add_argument("--to-timestamp", help="ISO 结束时间；不传时默认当前时间。")
+    parser.add_argument("--fields", default=DEFAULT_FULL_FIELDS, help="Observations API v2 字段组。")
+    parser.add_argument("--page-size", type=int, default=DEFAULT_PAGE_SIZE, choices=range(1, 1001), metavar="1..1000")
+    parser.add_argument("--env-file", type=Path, default=DEFAULT_ENV_FILE)
+    parser.add_argument("--out-dir", type=Path, default=DEFAULT_OUT_DIR)
+    parser.add_argument("--timeout", type=int, default=DEFAULT_TIMEOUT_SECONDS)
     return parser.parse_args(argv)
 
 
@@ -350,27 +373,23 @@ def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv or sys.argv[1:])
     client = client_from_env(env_file=args.env_file, timeout=args.timeout)
     if args.trace_id:
-        trace_file = download_trace(client, trace_id=args.trace_id, out_dir=args.out_dir, fields=args.fields)
+        trace_file = download_trace(
+            client, trace_id=args.trace_id, out_dir=args.out_dir,
+            fields=args.fields, page_size=args.page_size,
+        )
         print(f"[langfuse] downloaded trace: {trace_file}")
         return 0
     if args.session_id:
         result = download_session(
-            client,
-            session_id=args.session_id,
-            out_dir=args.out_dir,
-            fields=args.fields,
-            page_size=args.page_size,
+            client, session_id=args.session_id, out_dir=args.out_dir,
+            fields=args.fields, page_size=args.page_size,
+            from_timestamp=args.from_timestamp, to_timestamp=args.to_timestamp,
         )
     else:
         result = download_latest_session(
-            client,
-            out_dir=args.out_dir,
-            name=args.name,
-            fields=args.fields,
-            page_size=args.page_size,
-            tags=args.tags,
-            from_timestamp=args.from_timestamp,
-            to_timestamp=args.to_timestamp,
+            client, out_dir=args.out_dir, name=args.name, fields=args.fields,
+            page_size=args.page_size, tags=args.tags,
+            from_timestamp=args.from_timestamp, to_timestamp=args.to_timestamp,
         )
     print(f"[langfuse] session_id: {result.session_id}")
     print(f"[langfuse] latest_trace_id: {result.latest_trace_id}")

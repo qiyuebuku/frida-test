@@ -63,7 +63,7 @@ def test_watchlist_plan_first_collection_is_full_backfill() -> None:
             "mode": "backfill",
             "newest_time": None,
             "last_run_at": None,
-            "config": {"interval": 3600},
+            "config": {"realtime_interval_seconds": 60},
         },
         today=date(2026, 7, 29),
         force=False,
@@ -79,8 +79,8 @@ def test_watchlist_plan_honors_instrument_interval() -> None:
     item = {
         "mode": "incremental",
         "newest_time": "2026-07-29",
-        "last_run_at": datetime.now(timezone.utc) - timedelta(minutes=5),
-        "config": {"interval": 1800},
+        "last_run_at": datetime.now(timezone.utc) - timedelta(seconds=30),
+        "config": {"realtime_interval_seconds": 180},
     }
 
     assert (
@@ -123,22 +123,26 @@ def test_resolve_tracked_codes_rejects_multiple_prefixed_matches() -> None:
         )
 
 
-def test_realtime_dimensions_cap_freshness_at_three_minutes() -> None:
+def test_realtime_dimensions_follow_priority_freshness_budget() -> None:
     assert _freshness_seconds(
         configured_interval=1800,
         expected_types={"quote", "kline"},
-    ) == 180
+        priority="standard",
+    ) == 1800
     assert _freshness_seconds(
         configured_interval=60,
         expected_types={"quote"},
-    ) == 60
+        priority="standard",
+    ) == 120
     assert _freshness_seconds(
         configured_interval=1800,
         expected_types={"nav", "kline"},
+        priority="standard",
     ) == 1800
     assert _freshness_seconds(
         configured_interval=180,
         expected_types={"nav", "kline"},
+        priority="standard",
     ) == 1800
 
 
@@ -179,12 +183,15 @@ async def test_index_collection_uses_quote_minute_and_kline(
                 "mode": "backfill",
                 "newest_time": None,
                 "last_run_at": None,
-                "config": {"type": "index", "interval": 1800},
+                "config": {
+                    "type": "index",
+                    "realtime_interval_seconds": 60,
+                },
             }
         ],
     )
 
-    rows = await _fetch_watchlist_data(
+    batch = await _fetch_watchlist_data(
         object(),
         FakeTencent(),
         FakeSina(),
@@ -193,12 +200,132 @@ async def test_index_collection_uses_quote_minute_and_kline(
         force=True,
     )
 
-    assert {row["data_type"] for row in rows} == {
+    assert {row["data_type"] for row in batch.rows} == {
         "quote",
         "minute_data",
         "kline",
     }
-    assert {row["code"] for row in rows} == {"sh000001"}
+    assert {row["code"] for row in batch.rows} == {"sh000001"}
+    assert batch.instruments["sh000001"].outcome == "collected"
+
+
+@pytest.mark.asyncio
+async def test_daily_collection_treats_stale_valid_bar_as_no_new_data(
+    monkeypatch,
+) -> None:
+    successes: list[tuple[str, str, dict, int]] = []
+    failures: list[tuple[str, str, str]] = []
+
+    class FakeSina:
+        async def get_kline(self, code, *, scale, datalen):
+            return {
+                "status_code": 0,
+                "data": {
+                    "bars": [
+                        {
+                            "date": "2026-07-28",
+                            "open": 3790,
+                            "close": 3800,
+                        }
+                    ]
+                },
+            }
+
+    monkeypatch.setattr(
+        "src.infrastructure.db.checkpoint_store.list_all",
+        lambda aggregator: [
+            {
+                "source_name": "sh000001",
+                "enabled": True,
+                "mode": "incremental",
+                "newest_time": "2026-07-29",
+                "oldest_time": "2026-01-01",
+                "target_time": None,
+                "backfill_status": None,
+                "last_run_at": None,
+                "cursor": {},
+                "config": {"type": "index"},
+            }
+        ],
+    )
+    monkeypatch.setattr(
+        "src.infrastructure.db.checkpoint_store.update_success",
+        lambda aggregator, source, checkpoint, saved_count=0: successes.append(
+            (aggregator, source, checkpoint, saved_count)
+        ),
+    )
+    monkeypatch.setattr(
+        "src.infrastructure.db.checkpoint_store.update_failure",
+        lambda aggregator, source, error: failures.append(
+            (aggregator, source, error)
+        ),
+    )
+
+    batch = await _fetch_watchlist_data(
+        object(),
+        object(),
+        FakeSina(),
+        None,
+        codes=["sh000001"],
+        force=True,
+        scope="daily",
+    )
+
+    result = batch.instruments["sh000001"]
+    assert result.outcome == "no_new_data"
+    assert result.rows == []
+    assert result.successful_dimensions == {"kline"}
+    assert failures == []
+    assert successes[0][0:2] == ("watchlist", "sh000001")
+    assert successes[0][2]["newest_time"] == "2026-07-29"
+    assert successes[0][2]["cursor"]["daily_last_success_date"]
+
+
+@pytest.mark.asyncio
+async def test_daily_collection_keeps_real_provider_failure_visible(
+    monkeypatch,
+) -> None:
+    failures: list[tuple[str, str, str]] = []
+
+    class FakeSina:
+        async def get_kline(self, code, *, scale, datalen):
+            raise RuntimeError("upstream unavailable")
+
+    monkeypatch.setattr(
+        "src.infrastructure.db.checkpoint_store.list_all",
+        lambda aggregator: [
+            {
+                "source_name": "sh000001",
+                "enabled": True,
+                "mode": "incremental",
+                "newest_time": "2026-07-29",
+                "last_run_at": None,
+                "cursor": {},
+                "config": {"type": "index"},
+            }
+        ],
+    )
+    monkeypatch.setattr(
+        "src.infrastructure.db.checkpoint_store.update_failure",
+        lambda aggregator, source, error: failures.append(
+            (aggregator, source, error)
+        ),
+    )
+
+    batch = await _fetch_watchlist_data(
+        object(),
+        object(),
+        FakeSina(),
+        None,
+        codes=["sh000001"],
+        force=True,
+        scope="daily",
+    )
+
+    result = batch.instruments["sh000001"]
+    assert result.outcome == "failed"
+    assert "upstream unavailable" in result.failed_dimensions["kline"]
+    assert failures and failures[0][0:2] == ("watchlist", "sh000001")
 
 
 class _FakeWatchlist:
@@ -226,6 +353,9 @@ async def test_market_tracking_dispatches_only_new_or_reactivated(
 ) -> None:
     dispatched: list[list[str]] = []
 
+    async def resolve_fund(code: str) -> dict[str, str]:
+        return {"code": code, "name": f"基金{code}"}
+
     async def fake_dispatch(codes):
         dispatched.append(list(codes))
         return [f"event:{code}" for code in codes]
@@ -238,6 +368,7 @@ async def test_market_tracking_dispatches_only_new_or_reactivated(
     service = MarketTrackingService(
         watchlist_service=_FakeWatchlist(),
         data_repository=_FakeDataRepository(),
+        fund_identity_resolver=resolve_fund,
     )
 
     result = await service.add_instruments(
@@ -253,6 +384,78 @@ async def test_market_tracking_dispatches_only_new_or_reactivated(
         "event:sh600036",
         "event:159915",
     ]
+
+
+@pytest.mark.asyncio
+async def test_market_tracking_rejects_mismatched_fund_name() -> None:
+    async def resolve_fund(_code: str) -> dict[str, str]:
+        return {"code": "960015", "name": "汇添富医药保健混合O"}
+
+    service = MarketTrackingService(
+        watchlist_service=_FakeWatchlist(),
+        data_repository=_FakeDataRepository(),
+        fund_identity_resolver=resolve_fund,
+    )
+
+    with pytest.raises(
+        ValueError,
+        match="960015 实际为“汇添富医药保健混合O”",
+    ):
+        await service.add_instruments(
+            [
+                {
+                    "code": "960015",
+                    "name": "华泰柏瑞亚洲领导企业QDII",
+                    "type": "fund",
+                    "reason": "QDII 跟踪",
+                }
+            ]
+        )
+
+
+@pytest.mark.asyncio
+async def test_market_tracking_accepts_equivalent_fund_alias(
+    monkeypatch,
+) -> None:
+    received: list[dict] = []
+
+    class CapturingWatchlist:
+        def upsert_batch(self, items):
+            received.extend(items)
+            return [WatchlistMutation("460010", "unchanged", "fund")]
+
+    async def resolve_fund(_code: str) -> dict[str, str]:
+        return {
+            "code": "460010",
+            "name": "华泰柏瑞亚洲领导企业混合(QDII)",
+        }
+
+    async def fake_dispatch(_codes):
+        return []
+
+    monkeypatch.setattr(
+        "src.application.services.market_tracking_service."
+        "send_watchlist_instrument_collection",
+        fake_dispatch,
+    )
+    service = MarketTrackingService(
+        watchlist_service=CapturingWatchlist(),
+        data_repository=_FakeDataRepository(),
+        fund_identity_resolver=resolve_fund,
+    )
+
+    await service.add_instruments(
+        [
+            {
+                "code": "460010",
+                "name": "华泰柏瑞亚洲领导企业QDII",
+                "type": "fund",
+                "reason": "QDII 跟踪",
+            }
+        ]
+    )
+
+    assert received[0]["name"] == "华泰柏瑞亚洲领导企业混合(QDII)"
 
 
 @pytest.mark.asyncio
@@ -277,7 +480,10 @@ async def test_market_tracking_reactivation_collects_immediately(
 
     result = await service.update_watchlist(
         [
-            {"code": "sh600036", "interval": 3600},
+            {
+                "code": "sh600036",
+                "realtime_interval_seconds": 180,
+            },
             {"code": "159915", "enabled": True},
         ]
     )
@@ -304,7 +510,11 @@ def _watchlist_item(
         newest_time="2026-07-30",
         oldest_time="2026-07-01",
         backfill_status="done",
-        config={"interval": 1800, "type": "stock"},
+        config={
+            "priority": "standard",
+            "realtime_interval_seconds": 60,
+            "type": "stock",
+        },
         total_runs=1,
         total_saved=1,
         last_run_at=last_run_at,
@@ -334,6 +544,31 @@ class _ReadableDataRepository:
             for row in self.rows
             if row["code"] in codes and row["data_type"] in data_types
         ]
+
+
+class _FakeSnapshotRepository:
+    def __init__(self, source=None):
+        self.source = source
+
+    def query_latest(self, *, subject_ids, data_types):
+        rows = self.source.rows if self.source is not None else []
+        return [
+            {
+                "id": index,
+                "subject_id": row["code"],
+                "data_type": row["data_type"],
+                "trade_date": row.get("trade_date"),
+                "data": row.get("data"),
+                "observed_at": row.get("updated_at"),
+                "fetched_at": row.get("updated_at"),
+                "freshness_status": "realtime",
+            }
+            for index, row in enumerate(rows, start=1)
+            if row["code"] in subject_ids and row["data_type"] in data_types
+        ]
+
+    def query_history(self, **_kwargs):
+        return []
 
 
 @pytest.mark.asyncio
@@ -367,6 +602,7 @@ async def test_market_open_returns_fresh_data_without_refresh(
     result = await MarketTrackingService(
         watchlist_service=watchlist,
         data_repository=repository,
+        snapshot_repository=_FakeSnapshotRepository(repository),
     ).open_instruments(codes=["600036"], data_types=["quote"])
 
     instrument = result["instruments"][0]
@@ -383,7 +619,11 @@ async def test_market_open_does_not_refresh_unsupported_data_type(
     fund = _watchlist_item(last_success_at=now, last_run_at=now)
     fund.code = "000083"
     fund.type = "fund"
-    fund.config = {"interval": 1800, "type": "fund"}
+    fund.config = {
+        "priority": "standard",
+        "realtime_interval_seconds": 60,
+        "type": "fund",
+    }
     watchlist = _ReadableWatchlist(fund)
 
     async def fail_dispatch(_codes):
@@ -397,6 +637,7 @@ async def test_market_open_does_not_refresh_unsupported_data_type(
     result = await MarketTrackingService(
         watchlist_service=watchlist,
         data_repository=_ReadableDataRepository([]),
+        snapshot_repository=_FakeSnapshotRepository(),
     ).open_instruments(codes=["000083"], data_types=["quote"])
 
     freshness = result["instruments"][0]["freshness"]
@@ -427,8 +668,9 @@ async def test_market_open_waits_for_stale_data_refresh(
         ]
     )
 
-    async def refresh(codes):
+    async def refresh(codes, *, scope):
         assert codes == ["sh600036"]
+        assert scope == "realtime"
         repository.rows = [
             {
                 "code": "sh600036",
@@ -452,6 +694,7 @@ async def test_market_open_waits_for_stale_data_refresh(
     result = await MarketTrackingService(
         watchlist_service=watchlist,
         data_repository=repository,
+        snapshot_repository=_FakeSnapshotRepository(repository),
         refresh_poll_seconds=0.001,
     ).open_instruments(codes=["600036"], data_types=["quote"])
 
@@ -476,7 +719,8 @@ async def test_market_open_refreshes_missing_supported_dimension(
     )
     repository = _ReadableDataRepository([])
 
-    async def refresh(_codes):
+    async def refresh(_codes, *, scope):
+        assert scope == "realtime"
         repository.rows = [
             {
                 "code": "sh600036",
@@ -500,6 +744,7 @@ async def test_market_open_refreshes_missing_supported_dimension(
     result = await MarketTrackingService(
         watchlist_service=watchlist,
         data_repository=repository,
+        snapshot_repository=_FakeSnapshotRepository(repository),
         refresh_poll_seconds=0.001,
     ).open_instruments(codes=["600036"], data_types=["quote"])
 
@@ -529,7 +774,8 @@ async def test_market_open_timeout_returns_pre_refresh_snapshot(
         ]
     )
 
-    async def dispatch(_codes):
+    async def dispatch(_codes, *, scope):
+        assert scope == "realtime"
         return ["event:slow"]
 
     monkeypatch.setattr(
@@ -540,6 +786,7 @@ async def test_market_open_timeout_returns_pre_refresh_snapshot(
     result = await MarketTrackingService(
         watchlist_service=watchlist,
         data_repository=repository,
+        snapshot_repository=_FakeSnapshotRepository(repository),
         refresh_wait_seconds=0.01,
         refresh_poll_seconds=0.001,
     ).open_instruments(codes=["600036"], data_types=["quote"])
@@ -573,7 +820,8 @@ async def test_market_open_failure_returns_pre_refresh_snapshot(
         ]
     )
 
-    async def dispatch(_codes):
+    async def dispatch(_codes, *, scope):
+        assert scope == "realtime"
         watchlist.item = _watchlist_item(
             last_success_at=old_time,
             last_run_at=failed_time,
@@ -589,6 +837,7 @@ async def test_market_open_failure_returns_pre_refresh_snapshot(
     result = await MarketTrackingService(
         watchlist_service=watchlist,
         data_repository=repository,
+        snapshot_repository=_FakeSnapshotRepository(repository),
         refresh_poll_seconds=0.001,
     ).open_instruments(codes=["600036"], data_types=["quote"])
 
