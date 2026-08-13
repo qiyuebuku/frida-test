@@ -64,6 +64,16 @@ trace-*.json
 /AIClient2API/
 /artifacts/
 
+# 本地逆向、采集与构建产物
+/androguard.db
+/*.jpg
+/头脑风暴
+/smart-fund-server/androguard.db
+/smart-fund-server/.tmp/
+/smart-fund-server/artifacts/
+/ths/.gradle/
+/ths/zygisk/magisk/dex/
+
 # pytest interrupted-run temporary directories
 /.pytest-tmp/
 /.pytest-tmp.*/
