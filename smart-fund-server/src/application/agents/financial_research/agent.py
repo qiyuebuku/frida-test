@@ -11,7 +11,6 @@ from datetime import timedelta
 from agents import (
     Agent,
     FunctionTool,
-    ModelSettings,
     RunContextWrapper,
     ToolsToFinalOutputResult,
 )
@@ -33,6 +32,9 @@ from src.application.agents.financial_research.schemas import (
     ResearchConclusionDraft,
     ResearchReportDraft,
     ResearchRunStatus,
+)
+from src.application.agents.financial_research.model_settings import (
+    research_model_settings,
 )
 from src.application.services.market_evidence_locator import (
     LOCATOR_PREFIX,
@@ -432,6 +434,7 @@ def _normalize_provider_proposal(value: object) -> object:
                 claim["claim_type"] = "inference"
 
     repair_claims(normalized)
+    _remove_unknown_evidence_plan_hypothesis_ids(normalized)
     for revision in normalized.get("view_revisions") or []:
         if not isinstance(revision, dict):
             continue
@@ -472,6 +475,33 @@ def _normalize_provider_proposal(value: object) -> object:
             if isinstance(link, dict) and isinstance(link.get("evidence"), list):
                 link["evidence"] = link["evidence"][:12]
     return normalized
+
+
+def _remove_unknown_evidence_plan_hypothesis_ids(payload: dict) -> None:
+    """Drop provider-invented IDs when a plan also names real hypotheses.
+
+    This is referential-integrity normalization, not research judgment.  A plan
+    containing only unknown IDs remains untouched so validation still asks the
+    model to repair the missing semantic association.
+    """
+
+    valid_ids = {
+        str(item.get("hypothesis_id"))
+        for item in payload.get("hypotheses") or []
+        if isinstance(item, dict) and item.get("hypothesis_id")
+    }
+    if not valid_ids:
+        return
+    for plan in payload.get("evidence_plan") or []:
+        if not isinstance(plan, dict) or not isinstance(plan.get("hypothesis_ids"), list):
+            continue
+        known = [
+            hypothesis_id
+            for hypothesis_id in plan["hypothesis_ids"]
+            if str(hypothesis_id) in valid_ids
+        ]
+        if known:
+            plan["hypothesis_ids"] = known
 
 
 def _bind_task_inputs(value: object, wrapper: RunContextWrapper[AgentRunContext]) -> object:
@@ -1647,13 +1677,13 @@ def create_financial_research_agent(
         name="Research Agent｜研究智能体",
         instructions=load_financial_research_instructions(),
         model=model,
-        model_settings=ModelSettings(
+        model_settings=research_model_settings(
+            model=model,
+            reasoning_effort="max",
             parallel_tool_calls=True,
-            include_usage=True,
             tool_choice="required",
         ),
         tools=[
-            checkpoint_research_working_memory,
             run_evidence_reopen,
             submit_research_conclusion,
             submit_investment_view_revision,

@@ -223,6 +223,7 @@ def _empty_run_state(claims: RunAuthorizationClaims) -> dict[str, Any]:
 
 def _extract_opened_evidence(tool_name: str, value: Any) -> list[str]:
     key_by_tool = {
+        "market_frame_open": {"evidence_locator", "evidence_locators"},
         "market_dimension_open": {"evidence_locator"},
         "market_change_brief_open": {
             "evidence_locator",

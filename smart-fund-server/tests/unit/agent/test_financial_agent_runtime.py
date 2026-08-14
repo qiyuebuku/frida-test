@@ -46,6 +46,9 @@ from src.application.agents.financial_research.instructions import (
     build_run_input,
     load_financial_research_instructions,
 )
+from src.application.agents.financial_research.model_settings import (
+    research_model_settings,
+)
 from src.application.agents.financial_research.outcome_evaluator import (
     ResearchOutcomeEvaluator,
 )
@@ -192,6 +195,39 @@ def test_submission_repair_merges_omitted_fields_and_honours_explicit_deletion()
         "view_revisions": [],
         "market_structure": {"breadth": "broad", "volume": "weak"},
     }
+
+
+def test_glm53_role_settings_use_supported_reasoning_effort() -> None:
+    main = research_model_settings(
+        model="glm-5.3",
+        reasoning_effort="max",
+        parallel_tool_calls=True,
+        tool_choice="required",
+    )
+    compactor = research_model_settings(
+        model="glm-5.3",
+        reasoning_effort="low",
+        parallel_tool_calls=False,
+    )
+
+    assert main.extra_body == {
+        "thinking": {"type": "enabled"},
+        "reasoning_effort": "max",
+    }
+    assert compactor.extra_body == {
+        "thinking": {"type": "enabled"},
+        "reasoning_effort": "low",
+    }
+
+
+def test_non_glm53_role_settings_keep_provider_reasoning_defaults() -> None:
+    settings = research_model_settings(
+        model="glm-5.2",
+        reasoning_effort="max",
+        parallel_tool_calls=True,
+    )
+
+    assert settings.extra_body is None
 
 
 @pytest.mark.asyncio
@@ -586,6 +622,24 @@ def test_submit_boundary_repairs_program_derivable_roles_and_claim_semantics() -
     assert normalized["hypotheses"][0]["role"] == "primary"
     assert normalized["hypotheses"][1]["role"] == "data_quality"
     assert normalized["claims"][0]["claim_type"] == "inference"
+
+
+def test_submit_boundary_removes_only_mixed_unknown_hypothesis_ids() -> None:
+    normalized = _normalize_provider_proposal({
+        "hypotheses": [
+            {"hypothesis_id": "h-main"},
+            {"hypothesis_id": "h-alt"},
+        ],
+        "evidence_plan": [
+            {"hypothesis_ids": ["h-main", "h-invented"]},
+            {"hypothesis_ids": ["h-invented-only"]},
+        ],
+    })
+
+    assert normalized["evidence_plan"][0]["hypothesis_ids"] == ["h-main"]
+    assert normalized["evidence_plan"][1]["hypothesis_ids"] == [
+        "h-invented-only"
+    ]
 
 
 def test_submit_boundary_normalizes_provider_hypothesis_status_aliases() -> None:
@@ -1556,9 +1610,10 @@ def test_semantic_excerpt_keeps_late_cited_fact_instead_of_first_rows() -> None:
         serialized,
         references=["canonical-m83"],
         canonical_to_alias={"canonical-m83": "market_ref:M83"},
+        max_chars=1000,
     )
 
-    assert "reference=canonical-m83" in excerpt
+    assert "reference_alias=market_ref:M83" in excerpt
     assert '"name":"row-83"' in excerpt
     assert '"change_percent":83' in excerpt
     assert '"name":"row-1"' not in excerpt
@@ -1580,6 +1635,26 @@ def test_semantic_excerpt_keeps_table_values_that_precede_overview_locator() -> 
 
     assert '"code":"HXC","change_pct":"-1.84%"' in excerpt
     assert '"indices_evidence_locator":"market_ref:M157"' in excerpt
+
+
+def test_semantic_excerpt_keeps_complete_bounded_analogue_result() -> None:
+    serialized = json.dumps({
+        "calibration_readout": {
+            "absolute_return": {
+                "development_median_return_pct": 1.2,
+                "holdout_median_return_pct": -0.4,
+            },
+        },
+        "analysis_evidence_locator": "market_ref:M52",
+    })
+
+    excerpt = _semantic_evidence_excerpt(
+        serialized,
+        references=["market:canonical:M52"],
+        canonical_to_alias={"market:canonical:M52": "market_ref:M52"},
+    )
+
+    assert excerpt == serialized
 
 
 def test_directional_forecast_rejects_temporally_unstable_calibration() -> None:

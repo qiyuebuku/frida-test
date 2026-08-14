@@ -1035,10 +1035,16 @@ def _semantic_evidence_excerpt(
     *,
     references: list[str],
     canonical_to_alias: dict[str, str],
-    max_chars: int = 6000,
+    max_chars: int = 15000,
 ) -> str:
     """Keep the cited rows, not merely the first rows of a large tool result."""
 
+    # A projected tool result that already fits the audit budget is the most
+    # faithful evidence. Slicing around a locator placed at the end of an
+    # analogue result previously removed its development/holdout calibration
+    # fields even though the complete model-facing result was only a few KB.
+    if len(serialized) <= max_chars:
+        return serialized
     if not references:
         return serialized[:max_chars]
     chunks: list[str] = []
@@ -1054,11 +1060,16 @@ def _semantic_evidence_excerpt(
         # A tiny backward window made those values visible to Research but
         # invisible to the semantic evaluator, producing false "unverifiable"
         # defects. Keep a symmetric neighbourhood around the cited locator.
-        start = max(0, index - 1800)
-        chunk = serialized[start : min(len(serialized), index + 1400)]
-        labelled = f"reference={reference}\n{chunk}"
-        if len(labelled) > remaining:
-            labelled = labelled[:remaining]
+        # The canonical reversible locator is already present in the sibling
+        # ``references`` field and can be hundreds of characters long. Repeat
+        # only its short run alias here so audit budget is spent on facts.
+        label = f"reference_alias={token}\n"
+        available = max(remaining - len(label), 0)
+        before = min(1800, int(available * 0.7))
+        after = max(available - before, 0)
+        start = max(0, index - before)
+        chunk = serialized[start : min(len(serialized), index + after)]
+        labelled = f"{label}{chunk}"
         chunks.append(labelled)
         remaining -= len(labelled)
         if remaining <= 0:

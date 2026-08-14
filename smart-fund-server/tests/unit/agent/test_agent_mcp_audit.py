@@ -27,6 +27,24 @@ def test_evidence_ledger_records_only_opened_evidence_contracts() -> None:
         ]}},
     ) == ["market:v1:us-indices", "market:v1:us-breadth"]
     assert _extract_opened_evidence(
+        "market_frame_open",
+        {
+            "indices": [{
+                "evidence_locator": "market:v1:frame-index",
+            }],
+            "breadth": {
+                "evidence_locator": "market:v1:frame-breadth",
+            },
+            "capital": {
+                "evidence_locator": "market:v1:frame-capital",
+            },
+        },
+    ) == [
+        "market:v1:frame-index",
+        "market:v1:frame-breadth",
+        "market:v1:frame-capital",
+    ]
+    assert _extract_opened_evidence(
         "market_change_brief_open",
         {
             "significant_changes": [

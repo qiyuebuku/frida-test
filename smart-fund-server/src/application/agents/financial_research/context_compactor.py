@@ -4,7 +4,11 @@ from __future__ import annotations
 
 import re
 
-from agents import Agent, ModelSettings
+from agents import Agent
+
+from src.application.agents.financial_research.model_settings import (
+    research_model_settings,
+)
 
 
 _REQUIRED_SECTIONS = (
@@ -29,9 +33,10 @@ def create_context_compactor_agent(*, model: str) -> Agent:
         name="Research Context Compactor｜研究上下文压缩智能体",
         instructions=_INSTRUCTIONS,
         model=model,
-        model_settings=ModelSettings(
+        model_settings=research_model_settings(
+            model=model,
+            reasoning_effort="low",
             parallel_tool_calls=False,
-            include_usage=True,
         ),
         tools=[],
     )

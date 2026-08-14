@@ -6,10 +6,13 @@ import json
 import logging
 from typing import Literal
 
-from agents import Agent, FunctionTool, ModelSettings, ToolsToFinalOutputResult
+from agents import Agent, FunctionTool, ToolsToFinalOutputResult
 from pydantic import Field
 
 from src.application.agents.financial_research.schemas import ResearchContract
+from src.application.agents.financial_research.model_settings import (
+    research_model_settings,
+)
 
 
 SEMANTIC_EVALUATOR_VERSION = "research-semantic-v1"
@@ -104,9 +107,10 @@ def create_semantic_evaluator_agent(*, model: str) -> Agent:
         name="Research Quality Evaluator｜研究质量评测智能体",
         instructions=_INSTRUCTIONS,
         model=model,
-        model_settings=ModelSettings(
+        model_settings=research_model_settings(
+            model=model,
+            reasoning_effort="max",
             parallel_tool_calls=False,
-            include_usage=True,
             tool_choice="required",
         ),
         tools=[submit_semantic_evaluation],
