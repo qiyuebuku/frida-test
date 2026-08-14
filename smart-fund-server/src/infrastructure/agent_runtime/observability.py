@@ -594,29 +594,6 @@ class AgentAuditHooks(RunHooksBase[AgentRunContext, Any]):
         )
 
     async def on_tool_start(self, context, agent, tool) -> None:
-        research_context = context.context.research_context
-        evidence_tool_calls = sum(
-            item.name not in _SUBMIT_TOOLS
-            for item in context.context.tool_invocations
-        )
-        if (
-            research_context is not None
-            and tool.name not in _SUBMIT_TOOLS
-            and evidence_tool_calls >= research_context.trigger.max_tool_calls
-        ):
-            # Tool visibility is calculated before a parallel batch starts, so
-            # several calls can legitimately cross the soft limit together.
-            # Killing the whole run here would discard successful sibling reads
-            # and the complete research state. Hide reads on the next turn and
-            # let the Agent submit from what it has already learned.
-            logger.warning(
-                "research_tool_soft_budget_exceeded run_id=%s tool=%s "
-                "completed_evidence_calls=%s configured_limit=%s",
-                context.context.run_id,
-                tool.name,
-                evidence_tool_calls,
-                research_context.trigger.max_tool_calls,
-            )
         call_id = str(getattr(context, "tool_call_id", "") or "")
         invocation = ToolInvocation(
             name=str(getattr(context, "tool_name", "") or tool.name),

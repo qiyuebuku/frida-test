@@ -90,12 +90,16 @@ class FinancialAgentRuntime:
         self._openai_client = AsyncOpenAI(
             api_key=self.settings.llm_api_key,
             base_url=self.settings.llm_base_url,
-            timeout=self.settings.llm_timeout,
+            # A single Responses request must not consume the complete run
+            # deadline. GLM max reasoning has legitimately taken about four
+            # minutes in regression runs, so keep that headroom but bound each
+            # attempt and its retry chain independently.
+            timeout=min(self.settings.llm_timeout, 300.0),
             # One Research run commonly contains dozens of model turns.  A
             # short proxy/network flap must not discard all evidence already
             # gathered in the run.  The OpenAI client retries only idempotent
             # response creation failures and applies bounded backoff.
-            max_retries=5,
+            max_retries=2,
         )
         self._model_provider = OpenAIProvider(
             openai_client=self._openai_client,
@@ -621,22 +625,6 @@ class FinancialAgentRuntime:
             raise TypeError(
                 "Research Agent returned an unexpected output type: "
                 f"{type(output).__name__}"
-            )
-        evidence_tool_calls = sum(
-            item.name
-            not in {
-                "submit_research_conclusion",
-                "submit_investment_view_revision",
-            }
-            for item in context.tool_invocations
-        )
-        if evidence_tool_calls > context_pack.trigger.max_tool_calls:
-            logger.warning(
-                "research_parallel_batch_exceeded_soft_budget run_id=%s "
-                "evidence_tool_calls=%s configured_limit=%s",
-                run_id,
-                evidence_tool_calls,
-                context_pack.trigger.max_tool_calls,
             )
         validate_research_result(output, context)
         output = CurrentResearchReportProposal.model_validate(
@@ -1262,12 +1250,7 @@ def _apply_research_budget_guard(
         completed_names.intersection(group)
         for group in _DECISION_COVERAGE_TOOL_GROUPS
     )
-    max_tool_calls = (
-        context.research_context.trigger.max_tool_calls
-        if context.research_context is not None
-        else 40
-    )
-    remaining = max(max_tool_calls - evidence_calls, 0)
+    completed_capabilities = "、".join(sorted(completed_names))
     last_search_index = max(
         (index for index, item in enumerate(completed) if item.name == "external_web_search"),
         default=-1,
@@ -1344,9 +1327,11 @@ def _apply_research_budget_guard(
             else ""
         )
         reminder_text = (
-            "运行预算提醒：你已经完成了市场概览、候选比较、精确证据与"
+            "研究收敛提醒：你已经完成了市场概览、候选比较、精确证据与"
             "历史或来源验证，当前已有形成决定所需的多层证据。"
-            f"已完成 {evidence_calls} 次证据工具调用，最多还可调用 {remaining} 次。"
+            f"本轮已经完成的工具能力：{completed_capabilities}。"
+            "不要用相同参数重复调用这些能力；只有刷新实时数据、修正失败参数或"
+            "下钻不同对象/字段时才再次调用。"
             "不要开启新主题、Community（社区）或无明确问题的搜索。"
             f"{memory_instruction}"
             f"{unresolved_source_instruction}"

@@ -1092,6 +1092,9 @@ def test_research_budget_guard_requests_convergence_after_broad_coverage() -> No
     assert "不要开启新主题" in filtered.input[-1]["content"]
     assert "role_memory_search" in filtered.input[-1]["content"]
     assert "立即打开 Evidence Ledger" in filtered.input[-1]["content"]
+    assert "本轮已经完成的工具能力" in filtered.input[-1]["content"]
+    assert "market_change_brief_open" in filtered.input[-1]["content"]
+    assert "最多还可调用" not in filtered.input[-1]["content"]
     assert filtered.instructions == "研究指令"
 
 
@@ -1273,7 +1276,7 @@ def test_financial_tool_filter_exposes_quality_feedback_before_new_research() ->
     assert financial_tool_filter(filter_context, quality_open) is True
 
 
-def test_financial_tool_filter_hides_reads_after_run_budget_is_exhausted() -> None:
+def test_financial_tool_filter_keeps_reads_visible_past_legacy_run_budget() -> None:
     context = _context()
     context.research_context.trigger.max_tool_calls = 1
     context.tool_invocations.append(
@@ -1304,7 +1307,7 @@ def test_financial_tool_filter_hides_reads_after_run_budget_is_exhausted() -> No
     ) is True
 
 
-def test_financial_tool_filter_forces_ledger_after_bounded_recovery_reads() -> None:
+def test_financial_tool_filter_keeps_recovery_reads_visible_past_legacy_budget() -> None:
     context = _context()
     context.research_context.trigger.max_tool_calls = 1
     context.tool_invocations.extend(

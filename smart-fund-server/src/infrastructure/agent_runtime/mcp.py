@@ -274,21 +274,6 @@ class ResearchMCPServerStreamableHttp(MCPServerStreamableHttp):
                 self._run_context,
                 tool_name=tool_name,
             )
-        if self._research_read_budget_exhausted(tool_name):
-            return CallToolResult(
-                content=[TextContent(
-                    type="text",
-                    text=json.dumps({
-                        "status": "budget_exhausted",
-                        "tool": tool_name,
-                        "instruction": (
-                            "研究读取预算已经用尽。工具仍然可见，但本次不再执行新的远程读取；"
-                            "请使用已打开证据、run_evidence_reopen 或提交当前结论。"
-                        ),
-                    }, ensure_ascii=False, separators=(",", ":")),
-                )],
-                isError=False,
-            )
         cache_key = _read_call_key(tool_name, arguments)
         semantic_group = _semantic_read_group(tool_name)
         if semantic_group is not None:
@@ -328,23 +313,6 @@ class ResearchMCPServerStreamableHttp(MCPServerStreamableHttp):
             result,
             self._run_context,
             tool_name=tool_name,
-        )
-
-    def _research_read_budget_exhausted(self, tool_name: str) -> bool:
-        if self._run_context is None or self._run_context.research_context is None:
-            return False
-        if tool_name == "agent_evidence_ledger_open":
-            return False
-        completed_remote_reads = sum(
-            invocation.name in RESEARCH_READ_TOOLS
-            and invocation.name != "agent_evidence_ledger_open"
-            and invocation.finished_at is not None
-            and invocation.result is not None
-            for invocation in self._run_context.tool_invocations
-        )
-        return (
-            completed_remote_reads
-            >= self._run_context.research_context.trigger.max_tool_calls
         )
 
     async def _call_tool_isolated(
