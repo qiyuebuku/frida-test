@@ -75,6 +75,8 @@ _COMPACTION_RETAIN_RATIO = float(
 _COMPACTION_MIN_GROWTH_RATIO = float(
     os.getenv("SMART_FUND_RESEARCH_COMPACTION_MIN_GROWTH_RATIO", "0.08")
 )
+_REPEATED_COMPACTION_RATIO = 0.90
+_POST_LEDGER_COMPACTION_RATIO = 0.95
 
 
 class FinancialAgentRuntime:
@@ -179,7 +181,8 @@ class FinancialAgentRuntime:
         )
         active = ModelInputData(input=active_input, instructions=guarded.instructions)
         before_tokens = _estimate_model_input_tokens(active)
-        threshold = int(_MODEL_CONTEXT_WINDOW_TOKENS * _EXPLORATION_COMPACTION_RATIO)
+        threshold_ratio = _compaction_threshold_ratio(context)
+        threshold = int(_MODEL_CONTEXT_WINDOW_TOKENS * threshold_ratio)
         if before_tokens < threshold:
             return active
         if (
@@ -1618,6 +1621,21 @@ def _estimate_model_input_tokens(model_input: ModelInputData) -> int:
         "instructions": model_input.instructions,
         "input": model_input.input,
     })
+
+
+def _compaction_threshold_ratio(context: AgentRunContext) -> float:
+    """Reserve more runway after replacement and protect final evidence audit."""
+
+    ratio = _EXPLORATION_COMPACTION_RATIO
+    if context.surface_generation > 0:
+        ratio = max(ratio, _REPEATED_COMPACTION_RATIO)
+    if any(
+        invocation.name == "agent_evidence_ledger_open"
+        and invocation.finished_at is not None
+        for invocation in context.tool_invocations
+    ):
+        ratio = max(ratio, _POST_LEDGER_COMPACTION_RATIO)
+    return ratio
 
 
 _NOTEBOOK_RESULT_PRIORITY = {

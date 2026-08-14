@@ -60,6 +60,7 @@ from src.application.agents.financial_research.runtime import (
     FinancialAgentRuntime,
     _apply_research_budget_guard,
     _collect_semantic_audit_references,
+    _compaction_threshold_ratio,
     _compacted_research_notebook_input,
     _decode_notebook_result,
     _expand_evidence_aliases,
@@ -369,6 +370,26 @@ def test_surface_keeps_checkpoint_selected_hot_call_result_pairs() -> None:
     assert hot == raw[1:3]
     assert surface[1:3] == raw[1:3]
     assert surface[3:] == raw[3:]
+
+
+def test_compaction_threshold_reserves_runway_after_first_replacement() -> None:
+    context = _context()
+    initial = _compaction_threshold_ratio(context)
+
+    context.surface_generation = 1
+
+    assert initial < 0.90
+    assert _compaction_threshold_ratio(context) == 0.90
+
+
+def test_compaction_threshold_protects_post_ledger_submission() -> None:
+    context = _context()
+    context.surface_generation = 1
+    context.tool_invocations.append(
+        _finished_invocation("agent_evidence_ledger_open", 1)
+    )
+
+    assert _compaction_threshold_ratio(context) == 0.95
 
 
 def test_compacted_notebook_keeps_current_market_results_with_many_analogues() -> None:
