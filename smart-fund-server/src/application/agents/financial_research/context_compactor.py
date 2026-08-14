@@ -1,79 +1,30 @@
-"""LLM-assisted, reversible context compaction for long Research runs."""
+"""Plain-text semantic checkpoints for Research context surface replacement."""
 
 from __future__ import annotations
 
-import json
-import logging
-from typing import Annotated, Literal
+import re
 
-from agents import Agent, FunctionTool, ModelSettings, ToolsToFinalOutputResult
-from pydantic import Field
-
-from src.application.agents.financial_research.schemas import ResearchContract
+from agents import Agent, ModelSettings
 
 
-logger = logging.getLogger(__name__)
-
-CompactText = Annotated[str, Field(min_length=1, max_length=500)]
-
-
-class CompressedEvidenceItem(ResearchContract):
-    finding: str = Field(min_length=1, max_length=600)
-    evidence_refs: list[str] = Field(min_length=1, max_length=12)
-    role: Literal["supports", "contradicts", "context", "data_quality"]
-    caveat: str | None = Field(default=None, max_length=400)
-
-
-class ResearchContextSummary(ResearchContract):
-    phase: Literal["exploration", "verification", "final_synthesis"]
-    research_goal: str = Field(min_length=1, max_length=600)
-    completed_work: list[CompactText] = Field(min_length=1, max_length=20)
-    immediate_next_action: str = Field(min_length=1, max_length=600)
-    hot_evidence_refs: list[str] = Field(default_factory=list, max_length=12)
-    current_assessment: str = Field(min_length=1, max_length=1200)
-    candidate_hypotheses: list[CompactText] = Field(default_factory=list, max_length=10)
-    rejected_or_weakened_hypotheses: list[CompactText] = Field(
-        default_factory=list,
-        max_length=12,
-    )
-    key_evidence: list[CompressedEvidenceItem] = Field(
-        default_factory=list,
-        max_length=40,
-    )
-    strongest_counterevidence: list[CompressedEvidenceItem] = Field(
-        default_factory=list,
-        max_length=16,
-    )
-    unresolved_questions: list[CompactText] = Field(default_factory=list, max_length=12)
-    discarded_paths: list[CompactText] = Field(default_factory=list, max_length=12)
-    next_steps: list[CompactText] = Field(default_factory=list, max_length=10)
-
-
-async def _submit_context_summary(_wrapper, raw_arguments: str) -> str:
-    try:
-        summary = ResearchContextSummary.model_validate_json(raw_arguments)
-        serialized = summary.model_dump_json()
-        if len(serialized) > 5_000:
-            raise ValueError(
-                f"摘要共 {len(serialized)} 字符，超过 5000 字符上限；"
-                "删除过程复述，只保留继续工作必需的信息"
-            )
-        return serialized
-    except (ValueError, TypeError, json.JSONDecodeError) as error:
-        logger.warning("research_context_summary_validation_error: %s", error)
-        return f"研究上下文摘要校验失败，请修正全部字段后重试：{error}"
-
-
-submit_context_summary = FunctionTool(
-    name="submit_context_summary",
-    description="提交可恢复的 Research 研究主线摘要；事实必须关联已有 run_evidence 引用。",
-    params_json_schema=ResearchContextSummary.model_json_schema(),
-    on_invoke_tool=_submit_context_summary,
-    strict_json_schema=True,
+_REQUIRED_SECTIONS = (
+    "研究目标与用户意图",
+    "当前判断",
+    "候选假设",
+    "已削弱或排除的解释",
+    "已完成验证",
+    "关键证据索引",
+    "最强反证索引",
+    "未解决问题",
+    "当前工作",
+    "下一步",
+    "关键限制",
 )
 
 
 def create_context_compactor_agent(*, model: str) -> Agent:
+    """Create a one-shot, tool-free semantic checkpoint writer."""
+
     return Agent(
         name="Research Context Compactor｜研究上下文压缩智能体",
         instructions=_INSTRUCTIONS,
@@ -81,51 +32,73 @@ def create_context_compactor_agent(*, model: str) -> Agent:
         model_settings=ModelSettings(
             parallel_tool_calls=False,
             include_usage=True,
-            tool_choice="required",
         ),
-        tools=[submit_context_summary],
-        tool_use_behavior=_summary_is_final,
-        reset_tool_choice=False,
+        tools=[],
     )
 
 
-def _summary_is_final(_context, tool_results: list) -> ToolsToFinalOutputResult:
-    for result in tool_results:
-        if result.tool.name != "submit_context_summary":
-            continue
-        text = str(result.output)
-        if text.startswith("研究上下文摘要校验失败"):
-            continue
-        try:
-            ResearchContextSummary.model_validate_json(text)
-        except (ValueError, TypeError):
-            continue
-        return ToolsToFinalOutputResult(is_final_output=True, final_output=text)
-    return ToolsToFinalOutputResult(is_final_output=False, final_output=None)
+def validate_context_checkpoint(value: object) -> str:
+    """Validate a terse Markdown checkpoint returned by the compactor."""
+
+    if not isinstance(value, str):
+        raise TypeError("context compactor must return Markdown text")
+    text = value.strip()
+    if len(text) > 4_500:
+        raise ValueError(f"context checkpoint exceeds 4500 characters: {len(text)}")
+    if re.search(r"run_evidence:E\d+\s*[-—~至]\s*(?:E)?\d+", text):
+        raise ValueError("context checkpoint must list recovery references individually")
+    missing = [
+        section
+        for section in _REQUIRED_SECTIONS
+        if re.search(rf"(?m)^##\s+{re.escape(section)}\s*$", text) is None
+    ]
+    if missing:
+        raise ValueError("context checkpoint missing sections: " + ", ".join(missing))
+    return text
+
+
+def frame_context_checkpoint(checkpoint: str, *, generation: int) -> str:
+    """Frame a model-visible replacement checkpoint as established context."""
+
+    return (
+        "以下是 Runtime 生成的研究上下文检查点，替代更早的一段历史。"
+        "把它视为已经完成的背景并直接继续，不要复述检查点，也不要重新执行其中"
+        "已经完成的工作。检查点中的事实只是导航；写入正式报告前，必须使用"
+        "近期保留的原始工具结果，或调用 run_evidence_reopen 恢复对应证据。\n\n"
+        f"<research-context-checkpoint generation=\"{generation}\">\n"
+        f"{checkpoint}\n"
+        "</research-context-checkpoint>"
+    )
 
 
 _INSTRUCTIONS = """
-你是 Research Agent（研究智能体）的上下文压缩器。你的任务不是重新研究、形成新观点，
-而是把输入中的 Research Notebook（研究笔记）压缩成一份能让主智能体无缝继续工作的
-研究主线摘要。
+你是金融 Research Agent（研究智能体）的上下文压缩器。输入包含一段即将退出模型
+活动上下文的真实历史，以及其中工具结果对应的可恢复 run_evidence:E* 索引。
 
-必须遵守：
-1. 只使用输入中已经存在的内容，不补充常识、背景或新结论。
-2. 每条事实性 key_evidence 或 strongest_counterevidence 都必须关联真实存在的
-   run_evidence:E*；禁止编造引用编号。
-3. 数字、日期、对象和因果关系只在确有必要时写入。摘要不是正式证据；除继续原样保留
-   的 hot_evidence_refs 外，主智能体在最终引用前必须通过 run_evidence_reopen 恢复原始结果。
-   但如果下一步紧接着就需要逐字核验某条 retained_results（已保留结果），必须把对应
-   run_evidence:E* 放入 hot_evidence_refs；Runtime 会把该原文继续留在活动上下文，
-   避免“刚压缩就重新打开”。只选立即下一步真正需要的最小集合。
-4. 保留研究目标、当前主判断、竞争假设、最强反证、已排除路径、未解决问题和下一步。
-   如果输入中已经打开 Evidence Ledger（证据账本），phase 必须是 final_synthesis，
-   completed_work 要明确列出已经完成的入口、比较、历史验证和来源验证，
-   immediate_next_action 只能是恢复最终采用证据、补一个明确缺口或提交，不能重新开始研究。
-5. 不要把 recent_working_notes 中的模型判断冒充事实。工具结果与工作记忆冲突时，明确
-   标注冲突，不替主智能体裁决。
-6. 删除寒暄、重复过程、工具协议字段和对最终判断没有帮助的导航信息。
-7. 必须调用 submit_context_summary；不要输出自然语言答案。
-8. 整份摘要必须少于 5000 字符。不要把工具结果逐条复述进摘要；数字和原文应交给
-   hot_evidence_refs 或可恢复引用保存，摘要只保存判断结构和继续工作的最小信息。
+你的任务是生成一个极简 Markdown 检查点，让主智能体在保留的近期原文之后无缝继续。
+你不是研究员，不得形成新观点、补充常识、修改事实或替主智能体完成下一步。
+
+必须严格输出以下章节，章节名和顺序不得改变；每节使用短项目符号，没有内容写“无”：
+
+## 研究目标与用户意图
+## 当前判断
+## 候选假设
+## 已削弱或排除的解释
+## 已完成验证
+## 关键证据索引
+## 最强反证索引
+## 未解决问题
+## 当前工作
+## 下一步
+## 关键限制
+
+规则：
+1. 总长度不得超过 4500 字符，优先控制在 2500 字符以内。
+2. 只保存继续研究不可缺少的状态，不复述工具结果、协议字段、长数字列表或过程寒暄。
+3. 事实导航必须带输入中真实存在的 run_evidence:E*；不得创造编号，也不得用
+   E1-E4 之类范围缩写，逐个列出实际需要恢复的编号。
+4. 明确保留主假设、直接反证、已经放弃的路径、唯一紧接着要做的动作。
+5. 如果输入包含上一代 research-context-checkpoint，合并仍有效内容、删除过时内容，
+   只输出一份新的检查点，不复制旧检查点全文。
+6. 输出纯 Markdown，不输出 JSON，不调用工具，不解释压缩过程。
 """.strip()

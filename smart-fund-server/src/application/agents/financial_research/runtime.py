@@ -27,8 +27,9 @@ from src.application.agents.financial_research.agent import (
 from src.application.agents.financial_research.audit import validate_research_result
 from src.application.agents.financial_research.context import AgentRunContext
 from src.application.agents.financial_research.context_compactor import (
-    ResearchContextSummary,
     create_context_compactor_agent,
+    frame_context_checkpoint,
+    validate_context_checkpoint,
 )
 from src.application.agents.financial_research.instructions import build_run_input
 from src.application.agents.financial_research.schemas import (
@@ -66,6 +67,12 @@ _RUN_AUTHORIZATION_TTL_FLOOR_SECONDS = 6 * 60 * 60
 _MODEL_CONTEXT_WINDOW_TOKENS = 128_000
 _EXPLORATION_COMPACTION_RATIO = float(
     os.getenv("SMART_FUND_RESEARCH_COMPACTION_RATIO", "0.80")
+)
+_COMPACTION_RETAIN_RATIO = float(
+    os.getenv("SMART_FUND_RESEARCH_COMPACTION_RETAIN_RATIO", "0.16")
+)
+_COMPACTION_MIN_GROWTH_RATIO = float(
+    os.getenv("SMART_FUND_RESEARCH_COMPACTION_MIN_GROWTH_RATIO", "0.08")
 )
 
 
@@ -151,124 +158,156 @@ class FinancialAgentRuntime:
         *,
         hooks: AgentAuditHooks,
     ) -> ModelInputData:
-        """Apply the run budget policy and replace long history with an LLM summary.
+        """Project full SDK history onto a capacity-bounded model surface."""
 
-        Context compaction is deliberately fail-closed: a failed semantic summary
-        is retried by the SDK and then fails the run.  We never substitute the old
-        rule-built notebook as model context because that changes the meaning of
-        the compaction policy without making the degradation visible.
-        """
-
-        deterministic = _apply_research_budget_guard(data)
+        guarded = _apply_research_budget_guard(data)
         context = data.context
-        notebook = _research_notebook_payload(deterministic.input)
-        if notebook is None or not context.notebook_compacted:
-            return deterministic
+        raw_input = list(data.model_data.input)
+        transient = guarded.input[len(raw_input):]
+        active_input = _research_surface_input(
+            raw_input=raw_input,
+            checkpoint=context.surface_checkpoint,
+            shadowed_item_count=context.surface_shadowed_item_count,
+            generation=context.surface_generation,
+            transient=transient,
+        )
+        active = ModelInputData(input=active_input, instructions=guarded.instructions)
+        before_tokens = _estimate_model_input_tokens(active)
+        threshold = int(_MODEL_CONTEXT_WINDOW_TOKENS * _EXPLORATION_COMPACTION_RATIO)
+        if before_tokens < threshold:
+            return active
+        if (
+            context.surface_generation > 0
+            and before_tokens - context.surface_last_after_tokens
+            < int(_MODEL_CONTEXT_WINDOW_TOKENS * _COMPACTION_MIN_GROWTH_RATIO)
+        ):
+            logger.info(
+                "research_context_pressure_in_hysteresis run_id=%s generation=%s "
+                "before=%s previous_after=%s",
+                context.run_id,
+                context.surface_generation,
+                before_tokens,
+                context.surface_last_after_tokens,
+            )
+            return active
 
-        serialized_notebook = json.dumps(
-            notebook,
-            ensure_ascii=False,
-            separators=(",", ":"),
-            default=str,
+        retain_tokens = int(_MODEL_CONTEXT_WINDOW_TOKENS * _COMPACTION_RETAIN_RATIO)
+        selection = _select_surface_replacement(
+            raw_input=raw_input,
+            checkpoint=context.surface_checkpoint,
+            shadowed_item_count=context.surface_shadowed_item_count,
+            generation=context.surface_generation,
+            retain_tokens=retain_tokens,
         )
-        fingerprint = hashlib.sha256(serialized_notebook.encode()).hexdigest()[:16]
-        if context.context_summary is not None:
-            summary = ResearchContextSummary.model_validate(context.context_summary)
-            compacted = _llm_summary_model_input(
-                deterministic=deterministic,
-                notebook=notebook,
-                summary=summary,
-                fingerprint=context.context_summary_fingerprint or fingerprint,
-                recent_invocations=context.tool_invocations[
-                    context.context_summary_source_operation_count:
-                ],
+        if selection is None:
+            logger.warning(
+                "research_context_pressure_without_safe_range run_id=%s tokens=%s",
+                context.run_id,
+                before_tokens,
             )
-            compacted_tokens = _estimate_model_input_tokens(compacted)
-            threshold = int(
-                _MODEL_CONTEXT_WINDOW_TOKENS * _EXPLORATION_COMPACTION_RATIO
-            )
-            delta_tokens = _estimate_input_tokens([
-                invocation.result
-                for invocation in context.tool_invocations[
-                    context.context_summary_source_operation_count:
-                ]
-                if invocation.finished_at is not None
-            ])
-            # Reuse the semantic checkpoint until genuinely new work makes the
-            # active compacted context approach capacity. A phase change alone
-            # must never cause another compression cycle.
-            if compacted_tokens + 16_000 < threshold or delta_tokens < 8_000:
-                return compacted
-        else:
-            hooks.record_research_notebook(
-                run_id=context.run_id,
-                notebook=notebook,
-            )
-        summary = await self._generate_context_summary(
-            notebook=notebook,
-            fingerprint=fingerprint,
-            run_id=context.run_id,
-        )
-        _validate_context_summary_refs(summary, notebook)
-        context.context_summary = summary.model_dump(mode="json")
-        context.context_summary_fingerprint = fingerprint
-        context.context_summary_source_operation_count = len(context.tool_invocations)
+            return active
 
-        compacted = _llm_summary_model_input(
-            deterministic=deterministic,
-            notebook=notebook,
-            summary=summary,
-            fingerprint=context.context_summary_fingerprint or fingerprint,
-            recent_invocations=context.tool_invocations[
-                context.context_summary_source_operation_count:
-            ],
+        source_items, retained_items, new_shadowed_count = selection
+        fingerprint = hashlib.sha256(
+            json.dumps(source_items, ensure_ascii=False, default=str).encode()
+        ).hexdigest()[:16]
+        evidence_index = _surface_evidence_index(
+            context.tool_invocations,
+            source_items,
         )
-        original_tokens = _estimate_model_input_tokens(deterministic)
-        compacted_tokens = _estimate_model_input_tokens(compacted)
-        if compacted_tokens > int(original_tokens * 0.85):
-            compacted = _llm_summary_model_input(
-                deterministic=deterministic,
-                notebook=notebook,
-                summary=summary,
+        try:
+            checkpoint = await self._generate_context_checkpoint(
+                source_items=source_items,
+                evidence_index=evidence_index,
                 fingerprint=fingerprint,
-                recent_invocations=[],
-                hot_evidence_char_budget=0,
+                run_id=context.run_id,
+                generation=context.surface_generation + 1,
             )
-            compacted_tokens = _estimate_model_input_tokens(compacted)
-        if compacted_tokens > int(original_tokens * 0.85):
-            raise RuntimeError(
-                "LLM context summary did not reduce active context by at least 15%: "
-                f"before={original_tokens}, after={compacted_tokens}"
+        except Exception as error:  # noqa: BLE001
+            logger.warning(
+                "research_context_checkpoint_failed run_id=%s error=%s",
+                context.run_id,
+                error,
             )
+            return active
+        generation = context.surface_generation + 1
+        compacted = ModelInputData(
+            input=[
+                _surface_checkpoint_item(checkpoint, generation=generation),
+                *retained_items,
+                *transient,
+            ],
+            instructions=guarded.instructions,
+        )
+        after_tokens = _estimate_model_input_tokens(compacted)
+        source_tokens = _estimate_input_tokens(source_items)
+        checkpoint_tokens = _estimate_input_tokens(checkpoint)
+        if checkpoint_tokens >= source_tokens:
+            logger.warning(
+                "research_context_checkpoint_exceeds_source run_id=%s "
+                "checkpoint=%s source=%s",
+                context.run_id,
+                checkpoint_tokens,
+                source_tokens,
+            )
+            return active
+        if after_tokens >= before_tokens:
+            logger.warning(
+                "research_context_checkpoint_not_smaller run_id=%s before=%s after=%s",
+                context.run_id,
+                before_tokens,
+                after_tokens,
+            )
+            return active
+        if after_tokens >= threshold:
+            logger.warning(
+                "research_context_still_pressured run_id=%s after=%s threshold=%s; "
+                "preserving balanced recent tail",
+                context.run_id,
+                after_tokens,
+                threshold,
+            )
+        context.surface_checkpoint = checkpoint
+        context.surface_shadowed_item_count = new_shadowed_count
+        context.surface_generation = generation
+        context.surface_last_before_tokens = before_tokens
+        context.surface_last_after_tokens = after_tokens
+        hooks.record_context_surface(
+            run_id=context.run_id,
+            generation=generation,
+            checkpoint=checkpoint,
+            evidence_index=evidence_index,
+            before_tokens=before_tokens,
+            after_tokens=after_tokens,
+            shadowed_item_count=len(source_items),
+            retained_item_count=len(retained_items),
+            source_fingerprint=fingerprint,
+        )
         logger.info(
-            "research_context_compacted: before=%s after=%s reduction=%.1f%%",
-            original_tokens,
-            compacted_tokens,
-            100 * (original_tokens - compacted_tokens) / max(original_tokens, 1),
+            "research_surface_replaced: generation=%s before=%s after=%s "
+            "reduction=%.1f%% shadowed_items=%s retained_items=%s",
+            generation,
+            before_tokens,
+            after_tokens,
+            100 * (before_tokens - after_tokens) / max(before_tokens, 1),
+            len(source_items),
+            len(retained_items),
         )
         return compacted
 
-    async def _generate_context_summary(
+    async def _generate_context_checkpoint(
         self,
         *,
-        notebook: dict,
+        source_items: list,
+        evidence_index: list[dict],
         fingerprint: str,
         run_id: str,
-    ) -> ResearchContextSummary:
+        generation: int,
+    ) -> str:
         compactor_input = {
-            "task": (
-                "压缩研究主线。所有事实都只是导航摘要，主智能体引用前必须"
-                "通过 run_evidence_reopen 恢复原始结果。"
-            ),
-            "research_notebook": notebook,
-            "runtime_phase": (
-                "final_synthesis"
-                if any(
-                    item.get("tool") == "agent_evidence_ledger_open"
-                    for item in notebook.get("completed_operations") or []
-                )
-                else "exploration_or_verification"
-            ),
+            "task": "把 shadowed_history 压缩为可继续研究的 Markdown 检查点。",
+            "prior_and_shadowed_history": source_items,
+            "recoverable_evidence_index": evidence_index,
         }
         run_config = RunConfig(
             model_provider=self._model_provider,
@@ -282,21 +321,17 @@ class FinancialAgentRuntime:
                 as_type="generation",
                 input={
                     "run_id": run_id,
-                    "notebook_fingerprint": fingerprint,
-                    "source_chars": len(
-                        json.dumps(notebook, ensure_ascii=False, default=str)
-                    ),
-                    "retained_result_count": len(
-                        notebook.get("retained_results") or []
-                    ),
-                    "omitted_result_count": len(
-                        notebook.get("omitted_results") or []
-                    ),
+                    "surface_generation": generation,
+                    "source_fingerprint": fingerprint,
+                    "source_item_count": len(source_items),
+                    "source_tokens_estimated": _estimate_input_tokens(source_items),
+                    "evidence_index": evidence_index,
                 },
                 metadata={
                     "run_id": run_id,
-                    "notebook_fingerprint": fingerprint,
-                    "compression_mode": "llm",
+                    "source_fingerprint": fingerprint,
+                    "surface_generation": generation,
+                    "compression_mode": "surface_replacement",
                 },
                 model=self.settings.model,
             )
@@ -304,30 +339,57 @@ class FinancialAgentRuntime:
             else _null_context()
         )
         with observation as current_observation:
-            result = await Runner.run(
-                self._context_compactor,
-                json.dumps(compactor_input, ensure_ascii=False, default=str),
-                max_turns=3,
-                run_config=run_config,
-            )
-            summary = result.final_output
-            if isinstance(summary, str):
-                summary = ResearchContextSummary.model_validate_json(summary)
-            if not isinstance(summary, ResearchContextSummary):
-                raise TypeError("context compactor returned an unexpected output type")
-            if compactor_input["runtime_phase"] == "final_synthesis":
-                summary = summary.model_copy(update={"phase": "final_synthesis"})
+            validation_error = ""
+            result = None
+            checkpoint = ""
+            for _attempt in range(3):
+                payload = dict(compactor_input)
+                if validation_error:
+                    payload["previous_output_error"] = validation_error
+                try:
+                    result = await Runner.run(
+                        self._context_compactor,
+                        json.dumps(payload, ensure_ascii=False, default=str),
+                        max_turns=1,
+                        run_config=run_config,
+                    )
+                    checkpoint = validate_context_checkpoint(result.final_output)
+                    referenced = set(re.findall(r"run_evidence:E\d+", checkpoint))
+                    valid_references = {
+                        str(item["evidence_ref"])
+                        for item in evidence_index
+                        if item.get("evidence_ref")
+                    }
+                    invented = referenced - valid_references
+                    if invented:
+                        raise ValueError(
+                            "context checkpoint invented recovery references: "
+                            + ", ".join(sorted(invented))
+                        )
+                    break
+                except Exception as error:  # noqa: BLE001
+                    validation_error = str(error)
+            if not checkpoint:
+                raise RuntimeError(
+                    "context compactor failed to produce a valid checkpoint: "
+                    + validation_error
+                )
             if current_observation is not None:
                 current_observation.update(
-                    output=summary.model_dump(mode="json"),
+                    output={
+                        "surface_generation": generation,
+                        "checkpoint": checkpoint,
+                        "checkpoint_chars": len(checkpoint),
+                        "checkpoint_tokens_estimated": _estimate_input_tokens(checkpoint),
+                    },
                     usage_details=_langfuse_usage_details(
-                        result.context_wrapper.usage
+                        result.context_wrapper.usage  # type: ignore[union-attr]
                     ),
                     status_message="completed",
                 )
         if self._langfuse is not None:
             self._langfuse.flush()
-        return summary
+        return checkpoint
 
     async def run(
         self,
@@ -1194,29 +1256,6 @@ def _apply_research_budget_guard(
         default=-1,
     )
     has_unresolved_external_search = last_search_index > last_read_index
-    estimated_input_tokens = _estimate_input_tokens({
-        "instructions": data.model_data.instructions,
-        "input": data.model_data.input,
-    })
-    exploration_compaction_threshold = int(
-        _MODEL_CONTEXT_WINDOW_TOKENS * _EXPLORATION_COMPACTION_RATIO
-    )
-    # Predict the next model turn instead of waiting for the current prompt to
-    # hit the limit. Recent tool-result growth approximates the next batch;
-    # reserve additional room for the large structured Proposal. Business
-    # milestones such as opening the evidence ledger never trigger compaction.
-    recent_growth_tokens = _estimate_input_tokens([
-        invocation.result
-        for invocation in completed[-6:]
-        if invocation.result is not None
-    ])
-    projected_next_turn_tokens = (
-        estimated_input_tokens + max(recent_growth_tokens, 4_000) + 16_000
-    )
-    should_compact = bool(
-        context.working_memory is not None
-        and projected_next_turn_tokens >= exploration_compaction_threshold
-    )
     if "agent_evidence_ledger_open" in completed_names:
         reminder_text = (
             "提交前结构审计：Evidence Ledger（证据账本）已经打开，现在不要再"
@@ -1299,50 +1338,12 @@ def _apply_research_budget_guard(
             "维度改报 insufficient_evidence（证据不足）。不得为了"
             "满足格式而虚构因果链、趋势或确定性。"
         )
-    elif (
-        projected_next_turn_tokens >= exploration_compaction_threshold
-        and context.working_memory is None
-    ):
-        # The semantic checkpoint is authored by the Research Agent because
-        # Runtime cannot infer which hypotheses and unresolved questions still
-        # matter. Ask only when capacity requires it, never at a fixed phase.
-        reminder_text = (
-            "活动上下文即将接近容量阈值。继续调用其他研究工具前，先调用 "
-            "checkpoint_research_working_memory（研究工作记忆检查点），保存当前"
-            "目标、候选与被削弱假设、已回答问题、剩余问题、丢弃路径和紧接着"
-            "要做的一步。这里只保存研究状态，不要复制工具原文或大量数字。"
-        )
-    elif (
-        projected_next_turn_tokens >= exploration_compaction_threshold
-        and context.working_memory is not None
-    ):
-        # Long raw tool transcripts dilute attention well before final
-        # synthesis. Rebuild a deterministic notebook from trusted invocation
-        # state while keeping all tools available for autonomous exploration.
-        should_compact = True
-        reminder_text = (
-            "运行时已将冗长工具消息压缩为 Research Notebook（研究笔记）。"
-            "其中保留了当前研究实际打开的证据和调用参数；未保留的导航结果"
-            "不得引用。继续按当前问题自主探索，不要因为发生压缩就提前提交，"
-            "也不要重复 completed_operations（已完成操作）中参数相同且结果可用"
-            "的调用。recent_working_notes（最近工作笔记）用于延续你压缩前的计划，"
-            "但不是事实证据；继续前先据此恢复当前候选、已排除解释和唯一剩余缺口。"
-        )
     else:
         return data.model_data
     reminder = {
         "role": "user",
         "content": reminder_text,
     }
-    model_input = data.model_data.input
-    if should_compact:
-        context.notebook_compacted = True
-        model_input = _compacted_research_notebook_input(
-            original_input=data.model_data.input,
-            invocations=completed,
-            working_memory=context.working_memory,
-            working_memory_revision=context.working_memory_revision,
-        )
     if "agent_evidence_ledger_open" in completed_names:
         reminder["content"] = (
             "证据账本已经打开。优先做最终事实审计和提交；如果发现会改变结论的"
@@ -1376,7 +1377,7 @@ def _apply_research_budget_guard(
             + reminder_text
         )
     return ModelInputData(
-        input=[*model_input, reminder],
+        input=[*data.model_data.input, reminder],
         instructions=data.model_data.instructions,
     )
 
@@ -1397,156 +1398,154 @@ def _estimate_input_tokens(value) -> int:
     return max(1, (ascii_chars + 3) // 4 + non_ascii_chars + len(serialized) // 100)
 
 
-def _research_notebook_payload(input_items: list) -> dict | None:
-    for item in input_items:
-        if not isinstance(item, dict):
-            continue
-        content = item.get("content")
-        if not isinstance(content, str):
-            continue
-        try:
-            decoded = json.loads(content)
-        except json.JSONDecodeError:
-            continue
-        notebook = decoded.get("research_notebook") if isinstance(decoded, dict) else None
-        if isinstance(notebook, dict):
-            return notebook
-    return None
-
-
-def _validate_context_summary_refs(
-    summary: ResearchContextSummary,
-    notebook: dict,
-) -> None:
-    valid_refs = {
-        str(item.get("evidence_ref"))
-        for item in notebook.get("completed_operations") or []
-        if item.get("evidence_ref")
+def _surface_checkpoint_item(checkpoint: str, *, generation: int) -> dict[str, str]:
+    return {
+        "role": "user",
+        "content": frame_context_checkpoint(checkpoint, generation=generation),
     }
-    serialized = json.dumps(summary.model_dump(mode="json"), ensure_ascii=False)
-    referenced = set(re.findall(r"run_evidence:E\d+", serialized))
-    invalid = referenced - valid_refs
-    if invalid:
-        raise ValueError(
-            "LLM context summary invented evidence references: "
-            + ", ".join(sorted(invalid))
-        )
-    for evidence in [*summary.key_evidence, *summary.strongest_counterevidence]:
-        if not evidence.evidence_refs:
-            raise ValueError("LLM context summary evidence item has no recovery reference")
-        invalid_item = set(evidence.evidence_refs) - valid_refs
-        if invalid_item:
-            raise ValueError(
-                "LLM context summary evidence item references unknown source: "
-                + ", ".join(sorted(invalid_item))
-            )
-    retained_refs = {
-        str(item.get("evidence_ref"))
-        for item in notebook.get("retained_results") or []
-        if item.get("evidence_ref")
-    }
-    invalid_hot = set(summary.hot_evidence_refs) - retained_refs
-    if invalid_hot:
-        raise ValueError(
-            "LLM context summary selected non-retained hot evidence: "
-            + ", ".join(sorted(invalid_hot))
-        )
 
 
-def _llm_summary_model_input(
+def _research_surface_input(
     *,
-    deterministic: ModelInputData,
-    notebook: dict,
-    summary: ResearchContextSummary,
-    fingerprint: str,
-    recent_invocations: list | None = None,
-    hot_evidence_char_budget: int = 8_000,
-) -> ModelInputData:
-    """Project an LLM summary plus a complete reversible evidence index."""
+    raw_input: list,
+    checkpoint: str | None,
+    shadowed_item_count: int,
+    generation: int,
+    transient: list,
+) -> list:
+    """Build the replaceable model surface from the append-only SDK history."""
 
-    evidence_index = [
-        {
-            "order": item.get("order"),
-            "evidence_ref": item.get("evidence_ref"),
-            "tool": item.get("tool"),
-            "source_preserved": True,
-        }
-        for item in notebook.get("completed_operations") or []
-    ]
-    retained_by_ref = {
-        str(item.get("evidence_ref")): item
-        for item in notebook.get("retained_results") or []
-        if item.get("evidence_ref")
-    }
-    hot_evidence = []
-    hot_evidence_chars = 0
-    for evidence_ref in summary.hot_evidence_refs:
-        item = retained_by_ref.get(evidence_ref)
-        if item is None:
-            continue
-        item_chars = len(json.dumps(item, ensure_ascii=False, default=str))
-        if hot_evidence_chars + item_chars > hot_evidence_char_budget:
-            continue
-        hot_evidence.append(item)
-        hot_evidence_chars += item_chars
+    shadowed = min(max(shadowed_item_count, 0), len(raw_input))
+    projected = list(raw_input[shadowed:])
+    if checkpoint:
+        projected.insert(
+            0,
+            _surface_checkpoint_item(checkpoint, generation=generation),
+        )
+    projected.extend(transient)
+    return projected
 
-    payload = {
-        "llm_research_summary": summary.model_dump(mode="json"),
-        "continuation_contract": {
-            "resume_not_restart": True,
-            "current_phase": summary.phase,
-            "completed_work_is_final": True,
-            "prohibited": (
-                "不要重新执行 completed_work 或 evidence_index 中已有的相同工具调用；"
-                "不要重跑开场概览、当前报告或质量列表。"
-            ),
-            "immediate_next_action": summary.immediate_next_action,
-        },
-        "summary_authority": (
-            "仅用于恢复研究主线，不是正式事实证据。凡需写入报告的事实、数字、"
-            "日期或因果关系，必须来自 hot_evidence 中继续原样保留的结果，或先调用 "
-            "run_evidence_reopen 打开对应原始结果。"
-        ),
-        "notebook_fingerprint": fingerprint,
-        "evidence_index": evidence_index,
-        "hot_evidence": hot_evidence,
-        "recovery": {
-            "tool": "run_evidence_reopen",
-            "usage": "传入 evidence_index 中的 order，可选 path 精确恢复原始内容。",
-            "source_preserved": True,
-        },
+
+def _item_call_pair(item: object) -> tuple[str | None, str | None]:
+    if not isinstance(item, dict):
+        return None, None
+    item_type = item.get("type")
+    call_id = item.get("call_id")
+    if not isinstance(call_id, str):
+        return None, None
+    if item_type == "function_call":
+        return call_id, None
+    if item_type == "function_call_output":
+        return None, call_id
+    return None, None
+
+
+def _balanced_surface_boundary(items: list, boundary: int) -> int:
+    """Move a boundary left until no tool call/result pair is split."""
+
+    while boundary > 0:
+        head_calls: set[str] = set()
+        head_outputs: set[str] = set()
+        tail_calls: set[str] = set()
+        tail_outputs: set[str] = set()
+        for index, item in enumerate(items):
+            call_id, output_id = _item_call_pair(item)
+            calls = head_calls if index < boundary else tail_calls
+            outputs = head_outputs if index < boundary else tail_outputs
+            if call_id:
+                calls.add(call_id)
+            if output_id:
+                outputs.add(output_id)
+        split_ids = (head_calls & tail_outputs) | (head_outputs & tail_calls)
+        if not split_ids:
+            return boundary
+        boundary = min(
+            index
+            for index, item in enumerate(items)
+            if any(identifier in split_ids for identifier in _item_call_pair(item))
+        )
+    return boundary
+
+
+def _select_surface_replacement(
+    *,
+    raw_input: list,
+    checkpoint: str | None,
+    shadowed_item_count: int,
+    generation: int,
+    retain_tokens: int,
+) -> tuple[list, list, int] | None:
+    """Choose an old head to summarize and an exact recent tail to retain."""
+
+    shadowed = min(max(shadowed_item_count, 0), len(raw_input))
+    active_raw = list(raw_input[shadowed:])
+    if not active_raw:
+        return None
+    entries = list(active_raw)
+    synthetic_checkpoint = None
+    if checkpoint:
+        synthetic_checkpoint = _surface_checkpoint_item(
+            checkpoint,
+            generation=generation,
+        )
+        entries.insert(0, synthetic_checkpoint)
+
+    retained_tokens = 0
+    boundary = len(entries)
+    while boundary > 0:
+        candidate_tokens = _estimate_input_tokens(entries[boundary - 1])
+        if retained_tokens and retained_tokens + candidate_tokens > retain_tokens:
+            break
+        retained_tokens += candidate_tokens
+        boundary -= 1
+    boundary = _balanced_surface_boundary(entries, boundary)
+    minimum_source = 2 if synthetic_checkpoint is not None else 1
+    if boundary < minimum_source:
+        return None
+
+    source_items = entries[:boundary]
+    retained_items = entries[boundary:]
+    raw_source_count = boundary - (1 if synthetic_checkpoint is not None else 0)
+    if raw_source_count <= 0:
+        return None
+    return source_items, retained_items, shadowed + raw_source_count
+
+
+def _surface_evidence_index(invocations: list, source_items: list) -> list[dict]:
+    """Expose stable recovery pointers for tool results shadowed by a checkpoint."""
+
+    source_call_ids = {
+        pair_id
+        for item in source_items
+        for pair_id in _item_call_pair(item)
+        if pair_id
     }
-    recent_results = []
-    for invocation in recent_invocations or []:
-        if invocation.finished_at is None:
-            continue
-        recent_results.append({
-            "tool": invocation.name,
-            "arguments": (
-                None if invocation.name.startswith("submit_") else invocation.arguments
-            ),
-            "result": _decode_notebook_result(invocation.result),
-        })
-    if recent_results:
-        payload["recent_results_after_summary"] = recent_results
-    initial = deterministic.input[:1]
-    reminder = deterministic.input[-1:] if deterministic.input else []
-    return ModelInputData(
-        input=[
-            *initial,
-            {
-                "role": "user",
-                "content": json.dumps(
-                    payload,
-                    ensure_ascii=False,
-                    separators=(",", ":"),
-                    default=str,
-                ),
-            },
-            *reminder,
-        ],
-        instructions=deterministic.instructions,
+    refs_in_prior_checkpoint = set(
+        re.findall(
+            r"run_evidence:E\d+",
+            json.dumps(source_items, ensure_ascii=False, default=str),
+        )
     )
+    index: list[dict] = []
+    for order, invocation in enumerate(invocations, start=1):
+        evidence_ref = f"run_evidence:E{order}"
+        if (
+            invocation.finished_at is None
+            or invocation.name.startswith("submit_")
+            or (
+                invocation.call_id not in source_call_ids
+                and evidence_ref not in refs_in_prior_checkpoint
+            )
+        ):
+            continue
+        index.append(
+            {
+                "evidence_ref": evidence_ref,
+                "tool": invocation.name,
+                "call_id": invocation.call_id,
+            }
+        )
+    return index
 
 
 def _estimate_model_input_tokens(model_input: ModelInputData) -> int:

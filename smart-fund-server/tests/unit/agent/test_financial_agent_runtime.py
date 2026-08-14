@@ -40,8 +40,7 @@ from src.application.agents.financial_research.context import (
     ToolInvocation,
 )
 from src.application.agents.financial_research.context_compactor import (
-    CompressedEvidenceItem,
-    ResearchContextSummary,
+    validate_context_checkpoint,
 )
 from src.application.agents.financial_research.instructions import (
     build_run_input,
@@ -62,13 +61,14 @@ from src.application.agents.financial_research.runtime import (
     _expand_evidence_aliases,
     _estimate_input_tokens,
     _is_research_proposal_output,
-    _llm_summary_model_input,
+    _research_surface_input,
     _raise_on_tool_error,
     _project_notebook_result,
     _recent_research_working_notes,
     _semantic_reference_matches,
     _semantic_evidence_excerpt,
-    _validate_context_summary_refs,
+    _select_surface_replacement,
+    _surface_evidence_index,
 )
 from src.application.agents.financial_research.schemas import (
     ActiveViewSnapshot,
@@ -237,94 +237,51 @@ def test_compacted_notebook_retains_structured_working_memory() -> None:
     assert notebook["working_memory"]["state"] == memory
 
 
-def test_llm_summary_compaction_keeps_complete_reversible_index() -> None:
-    notebook = {
-        "working_memory": {"revision": 2, "state": {"next_step": "核验反证"}},
-        "completed_operations": [
-            {
-                "order": 1,
-                "evidence_ref": "run_evidence:E1",
-                "tool": "market_sector_open",
-                "arguments": {"provider_sector_code": "886033"},
-                "result_retained": True,
-            },
-            {
-                "order": 2,
-                "evidence_ref": "run_evidence:E2",
-                "tool": "market_evidence_open",
-                "arguments": {"reference": "market_ref:M1"},
-                "result_retained": False,
-            },
-        ],
-    }
-    summary = ResearchContextSummary(
-        phase="final_synthesis",
-        research_goal="判断CPO相对强度能否持续",
-        completed_work=["已完成行情和资金核验"],
-        immediate_next_action="恢复E1与E2后提交",
-        current_assessment="当前仅形成待验证的条件判断。",
-        key_evidence=[
-            CompressedEvidenceItem(
-                finding="CPO行情与资金需要联合复核",
-                evidence_refs=["run_evidence:E1", "run_evidence:E2"],
-                role="supports",
-            )
-        ],
-        next_steps=["恢复E1与E2中的精确记录"],
-    )
-    deterministic = ModelInputData(
-        input=[
-            {"role": "user", "content": "原始任务"},
-            {"role": "user", "content": "确定性笔记"},
-            {"role": "user", "content": "最终审计提醒"},
-        ],
-        instructions="研究指令",
-    )
-
-    _validate_context_summary_refs(summary, notebook)
-    compacted = _llm_summary_model_input(
-        deterministic=deterministic,
-        notebook=notebook,
-        summary=summary,
-        fingerprint="abc123",
-    )
-    payload = json.loads(compacted.input[1]["content"])
-
-    assert compacted.input[0] == deterministic.input[0]
-    assert compacted.input[-1] == deterministic.input[-1]
-    assert payload["recovery"]["source_preserved"] is True
-    assert [item["evidence_ref"] for item in payload["evidence_index"]] == [
-        "run_evidence:E1",
-        "run_evidence:E2",
-    ]
-    assert "result" not in payload["evidence_index"][0]
-
-
-def test_llm_summary_compaction_rejects_invented_recovery_reference() -> None:
-    summary = ResearchContextSummary(
-        phase="verification",
-        research_goal="形成观点",
-        completed_work=["已完成市场概览"],
-        immediate_next_action="核验候选",
-        current_assessment="仍待核验",
-        key_evidence=[
-            CompressedEvidenceItem(
-                finding="不存在的来源",
-                evidence_refs=["run_evidence:E99"],
-                role="supports",
-            )
-        ],
-    )
-
-    with pytest.raises(ValueError, match="invented evidence references"):
-        _validate_context_summary_refs(
-            summary,
-            {
-                "completed_operations": [
-                    {"evidence_ref": "run_evidence:E1"}
-                ]
-            },
+def test_context_checkpoint_requires_plain_markdown_sections() -> None:
+    checkpoint = "\n".join(
+        f"## {section}\n- 无"
+        for section in (
+            "研究目标与用户意图", "当前判断", "候选假设",
+            "已削弱或排除的解释", "已完成验证", "关键证据索引",
+            "最强反证索引", "未解决问题", "当前工作", "下一步", "关键限制",
         )
+    )
+    assert validate_context_checkpoint(checkpoint) == checkpoint
+
+
+def test_surface_replacement_keeps_exact_tail_and_balances_tool_pair() -> None:
+    raw = [
+        {"role": "user", "content": "任务"},
+        {"type": "function_call", "call_id": "c1", "name": "open"},
+        {"type": "function_call_output", "call_id": "c1", "output": "x" * 400},
+        {"role": "assistant", "content": "下一步"},
+    ]
+    selected = _select_surface_replacement(
+        raw_input=raw,
+        checkpoint=None,
+        shadowed_item_count=0,
+        generation=0,
+        retain_tokens=30,
+    )
+    assert selected is not None
+    source, retained, shadowed_count = selected
+    assert source[-2:] == raw[1:3]
+    assert retained == raw[3:]
+    assert shadowed_count == 3
+
+
+def test_surface_projection_merges_checkpoint_with_unshadowed_history() -> None:
+    raw = [{"role": "user", "content": str(index)} for index in range(4)]
+    surface = _research_surface_input(
+        raw_input=raw,
+        checkpoint="## 旧检查点",
+        shadowed_item_count=2,
+        generation=1,
+        transient=[{"role": "user", "content": "提醒"}],
+    )
+    assert "旧检查点" in surface[0]["content"]
+    assert surface[1:3] == raw[2:]
+    assert surface[-1]["content"] == "提醒"
 
 
 def test_compacted_notebook_keeps_current_market_results_with_many_analogues() -> None:
@@ -1057,7 +1014,7 @@ def test_research_budget_guard_adds_structural_audit_after_ledger() -> None:
     assert "只有午间休市" in reminder
 
 
-def test_research_budget_guard_compacts_long_transcript_after_ledger() -> None:
+def test_research_budget_guard_does_not_compact_long_transcript_after_ledger() -> None:
     context = _context()
     context.working_memory = {"research_goal": "最终审计"}
     context.tool_invocations = [
@@ -1077,13 +1034,11 @@ def test_research_budget_guard_compacts_long_transcript_after_ledger() -> None:
         SimpleNamespace(model_data=model_data, context=context)
     )
 
-    assert len(json.dumps(filtered.input, ensure_ascii=False)) < 10_000
-    assert filtered.input[0] == model_data.input[0]
-    assert "research_notebook" in filtered.input[1]["content"]
-    assert "x" * 1_000 not in filtered.input[1]["content"]
+    assert filtered.input[:-1] == model_data.input
+    assert "最终事实审计" in filtered.input[-1]["content"]
 
 
-def test_research_budget_guard_compacts_long_exploration_before_ledger() -> None:
+def test_research_budget_guard_never_drives_context_compaction() -> None:
     context = _context()
     context.working_memory = {
         "research_goal": "保持研究主线",
@@ -1109,10 +1064,7 @@ def test_research_budget_guard_compacts_long_exploration_before_ledger() -> None
         SimpleNamespace(model_data=model_data, context=context)
     )
 
-    serialized = json.dumps(filtered.input, ensure_ascii=False)
-    assert len(serialized) < 10_000
-    assert "Research Notebook" in filtered.input[-1]["content"]
-    assert "继续按当前问题自主探索" in filtered.input[-1]["content"]
+    assert filtered is model_data
 
 
 def test_research_budget_guard_does_not_compact_ordinary_30k_json_input() -> None:

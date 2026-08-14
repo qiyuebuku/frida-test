@@ -478,6 +478,51 @@ class AgentAuditHooks(RunHooksBase[AgentRunContext, Any]):
             len(retained_chunks),
         )
 
+    def record_context_surface(
+        self,
+        *,
+        run_id: str,
+        generation: int,
+        checkpoint: str,
+        evidence_index: list[dict[str, Any]],
+        before_tokens: int,
+        after_tokens: int,
+        shadowed_item_count: int,
+        retained_item_count: int,
+        source_fingerprint: str,
+    ) -> None:
+        """Trace the actual model-visible checkpoint and replacement metrics."""
+
+        observation = self._start_observation(
+            name=f"06 上下文替换｜检查点 {generation}",
+            as_type="span",
+            input={
+                "generation": generation,
+                "source_fingerprint": source_fingerprint,
+                "before_tokens_estimated": before_tokens,
+                "shadowed_item_count": shadowed_item_count,
+                "retained_item_count": retained_item_count,
+            },
+            metadata={
+                "run_id": run_id,
+                "surface_generation": generation,
+                "compression_mode": "replaceable_surface",
+            },
+        )
+        self._finish_observation(
+            observation,
+            output={
+                "checkpoint": checkpoint,
+                "recoverable_evidence_index": evidence_index,
+                "after_tokens_estimated": after_tokens,
+                "reduction_percent": round(
+                    100 * (before_tokens - after_tokens) / max(before_tokens, 1),
+                    1,
+                ),
+            },
+        )
+        self._flush_completed_observations()
+
     async def on_llm_start(
         self,
         context,

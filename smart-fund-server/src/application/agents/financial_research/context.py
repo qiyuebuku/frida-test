@@ -48,6 +48,14 @@ class AgentRunContext:
     context_summary: dict[str, Any] | None = None
     context_summary_fingerprint: str | None = None
     context_summary_source_operation_count: int = 0
+    # Replaceable model-visible projection over the SDK's complete history.
+    # The checkpoint shadows raw items before this index; the recent tail stays
+    # byte-for-byte intact for immediate continuation.
+    surface_checkpoint: str | None = None
+    surface_shadowed_item_count: int = 0
+    surface_generation: int = 0
+    surface_last_before_tokens: int = 0
+    surface_last_after_tokens: int = 0
     # Latest model-authored submission draft. Repair turns may send only the
     # fields they changed; omitted fields retain their preceding value.
     submission_draft: dict[str, Any] | None = None

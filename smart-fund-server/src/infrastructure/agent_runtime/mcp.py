@@ -1154,20 +1154,6 @@ def research_ledger_missing_requirements(
     """Explain the remaining convergence work in terms the Agent can act on."""
 
     called = {item.name for item in run_context.tool_invocations}
-    latest_checkpoint_index = max(
-        (
-            index
-            for index, invocation in enumerate(run_context.tool_invocations)
-            if invocation.name == "checkpoint_research_working_memory"
-            and invocation.finished_at is not None
-            and invocation.result is not None
-        ),
-        default=-1,
-    )
-    reads_since_checkpoint = sum(
-        invocation.name in RESEARCH_READ_TOOLS
-        for invocation in run_context.tool_invocations[latest_checkpoint_index + 1 :]
-    )
     completed_reads = sum(
         invocation.name in RESEARCH_READ_TOOLS
         for invocation in run_context.tool_invocations
@@ -1242,10 +1228,6 @@ def research_ledger_missing_requirements(
         and "全市场" in str(context_pack.research_question or "")
     )
     checks = [
-        (
-            run_context.working_memory is not None and reads_since_checkpoint <= 12,
-            "更新结构化研究工作记忆，使候选、已回答问题、剩余缺口和下一步反映最近证据",
-        ),
         (completed_reads >= 12, "至少完成12次有效读取"),
         (
             bool(

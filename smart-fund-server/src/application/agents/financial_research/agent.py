@@ -88,8 +88,8 @@ def _working_memory_checkpoint_enabled(
 checkpoint_research_working_memory = FunctionTool(
     name="checkpoint_research_working_memory",
     description=(
-        "保存本次研究的结构化工作状态，供上下文压缩后继续研究。开始形成候选后、"
-        "改变主假设后以及打开证据账本前更新。它不保存事实，也不能作为证据。"
+        "可选地保存本次研究的结构化工作状态。只在候选很多、需要显式整理计划时"
+        "使用；Runtime 上下文压缩不依赖它。它不保存事实，也不能作为证据。"
     ),
     params_json_schema={
         "type": "object",
@@ -220,17 +220,15 @@ def _run_evidence_reopen_enabled(
     wrapper: RunContextWrapper[AgentRunContext],
     _agent,
 ) -> bool:
-    # Compaction most commonly happens immediately after the evidence ledger is
-    # opened.  The source-recovery tool must remain available during final
-    # synthesis; otherwise the model is told to reopen evidence but has no way
-    # to do so and will invent human-readable pseudo references instead.
-    return wrapper.context.notebook_compacted
+    # Recovery is harmless before compaction and must never disappear from the
+    # model's tool schema as the surface changes.
+    return True
 
 
 run_evidence_reopen = FunctionTool(
     name="run_evidence_reopen",
     description=(
-        "按 Research Notebook 中的 order 重新展开本次运行已经成功读取的原始工具结果。"
+        "按上下文检查点中的 order 重新展开本次运行已经成功读取的原始工具结果。"
         "不重新请求数据；压缩后需要核对被折叠字段时使用。可用 path 只取某个字段，"
         "大结果可用 offset_chars 分页。"
     ),
