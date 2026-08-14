@@ -43,6 +43,11 @@ class AgentRunContext:
     # Research Notebook.  It prevents the model from guessing notebook orders
     # before such an index actually exists.
     notebook_compacted: bool = False
+    # LLM compaction is a semantic index only. The exact source remains in
+    # tool_invocations and can be recovered through run_evidence_reopen.
+    context_summary: dict[str, Any] | None = None
+    context_summary_fingerprint: str | None = None
+    context_summary_source_operation_count: int = 0
     # Latest model-authored submission draft. Repair turns may send only the
     # fields they changed; omitted fields retain their preceding value.
     submission_draft: dict[str, Any] | None = None

@@ -82,20 +82,7 @@ def _working_memory_checkpoint_enabled(
     wrapper: RunContextWrapper[AgentRunContext],
     _agent,
 ) -> bool:
-    context = wrapper.context
-    if any(
-        invocation.name == "agent_evidence_ledger_open"
-        for invocation in context.tool_invocations
-    ):
-        return False
-    pack = context.research_context
-    if pack is None:
-        return True
-    completed_reads = sum(
-        invocation.name in RESEARCH_READ_TOOLS
-        for invocation in context.tool_invocations
-    )
-    return completed_reads <= pack.trigger.max_tool_calls
+    return True
 
 
 checkpoint_research_working_memory = FunctionTool(
@@ -233,10 +220,11 @@ def _run_evidence_reopen_enabled(
     wrapper: RunContextWrapper[AgentRunContext],
     _agent,
 ) -> bool:
-    return wrapper.context.notebook_compacted and not any(
-        item.name == "agent_evidence_ledger_open"
-        for item in wrapper.context.tool_invocations
-    )
+    # Compaction most commonly happens immediately after the evidence ledger is
+    # opened.  The source-recovery tool must remain available during final
+    # synthesis; otherwise the model is told to reopen evidence but has no way
+    # to do so and will invent human-readable pseudo references instead.
+    return wrapper.context.notebook_compacted
 
 
 run_evidence_reopen = FunctionTool(
@@ -267,12 +255,7 @@ def _research_submission_enabled(
     wrapper: RunContextWrapper[AgentRunContext],
     _agent,
 ) -> bool:
-    return any(
-        invocation.name == "agent_evidence_ledger_open"
-        and invocation.finished_at is not None
-        and invocation.result is not None
-        for invocation in wrapper.context.tool_invocations
-    )
+    return True
 
 
 async def _invoke_research_conclusion(

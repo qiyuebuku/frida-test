@@ -366,7 +366,7 @@ class AgentAuditHooks(RunHooksBase[AgentRunContext, Any]):
             )
         self._tool_observations.clear()
 
-    def _record_research_notebook(
+    def record_research_notebook(
         self,
         *,
         run_id: str,
@@ -494,7 +494,7 @@ class AgentAuditHooks(RunHooksBase[AgentRunContext, Any]):
         )
         notebook = _research_notebook_from_input(input_items)
         if notebook is not None:
-            self._record_research_notebook(
+            self.record_research_notebook(
                 run_id=context.context.run_id,
                 notebook=notebook,
             )

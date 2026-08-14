@@ -274,6 +274,21 @@ class ResearchMCPServerStreamableHttp(MCPServerStreamableHttp):
                 self._run_context,
                 tool_name=tool_name,
             )
+        if self._research_read_budget_exhausted(tool_name):
+            return CallToolResult(
+                content=[TextContent(
+                    type="text",
+                    text=json.dumps({
+                        "status": "budget_exhausted",
+                        "tool": tool_name,
+                        "instruction": (
+                            "研究读取预算已经用尽。工具仍然可见，但本次不再执行新的远程读取；"
+                            "请使用已打开证据、run_evidence_reopen 或提交当前结论。"
+                        ),
+                    }, ensure_ascii=False, separators=(",", ":")),
+                )],
+                isError=False,
+            )
         cache_key = _read_call_key(tool_name, arguments)
         semantic_group = _semantic_read_group(tool_name)
         if semantic_group is not None:
@@ -313,6 +328,23 @@ class ResearchMCPServerStreamableHttp(MCPServerStreamableHttp):
             result,
             self._run_context,
             tool_name=tool_name,
+        )
+
+    def _research_read_budget_exhausted(self, tool_name: str) -> bool:
+        if self._run_context is None or self._run_context.research_context is None:
+            return False
+        if tool_name == "agent_evidence_ledger_open":
+            return False
+        completed_remote_reads = sum(
+            invocation.name in RESEARCH_READ_TOOLS
+            and invocation.name != "agent_evidence_ledger_open"
+            and invocation.finished_at is not None
+            and invocation.result is not None
+            for invocation in self._run_context.tool_invocations
+        )
+        return (
+            completed_remote_reads
+            >= self._run_context.research_context.trigger.max_tool_calls
         )
 
     async def _call_tool_isolated(
@@ -1270,220 +1302,41 @@ def research_ledger_missing_requirements(
 
 
 def financial_tool_filter(context: ToolFilterContext, tool: Any) -> bool:
-    """Project only the read tools for the current role task.
+    """Expose the complete role-authorized read toolbox throughout the run.
 
     Business writes are never unlocked by a model-run flag.  The model emits a
     Proposal through its local structured-output tool; a deterministic
-    application service performs any later commit.
+    application service performs any later commit.  Research stage, call count,
+    checkpoints and evidence-ledger state must not hide read tools: those are
+    reasoning state, not authorization boundaries.
     """
 
     tool_name = str(getattr(tool, "name", ""))
     run_context = context.run_context.context
     if isinstance(run_context, AgentRunContext):
-        context_pack = run_context.research_context
-        already_called = {item.name for item in run_context.tool_invocations}
-        latest_checkpoint_index = max(
-            (
-                index
-                for index, invocation in enumerate(run_context.tool_invocations)
-                if invocation.name == "checkpoint_research_working_memory"
-                and invocation.finished_at is not None
-                and invocation.result is not None
-            ),
-            default=-1,
-        )
-        latest_quality_detail_index = max(
-            (
-                index
-                for index, invocation in enumerate(run_context.tool_invocations)
-                if invocation.name == "research_quality_open"
-                and invocation.finished_at is not None
-                and invocation.result is not None
-            ),
-            default=-1,
-        )
-        reads_since_checkpoint = sum(
-            invocation.name in RESEARCH_READ_TOOLS
-            and invocation.finished_at is not None
-            for invocation in run_context.tool_invocations[latest_checkpoint_index + 1 :]
-        )
         if (
-            latest_quality_detail_index > latest_checkpoint_index
-            or reads_since_checkpoint >= 12
+            run_context.task_mode is not ResearchTaskMode.RESEARCH_REVIEW
+            or tool_name not in RESEARCH_READ_TOOLS
         ):
-            # All remote reads resume after the local checkpoint replaces the
-            # run's structured state. This is a recurring state boundary, not
-            # permanent one-shot tool hiding.
             return False
-        last_failed_submit_index = max(
-            (
-                index
-                for index, invocation in enumerate(run_context.tool_invocations)
-                if invocation.name in _SUBMIT_TOOL_NAMES
-                and invocation.result is not None
-                and "校验失败" in str(invocation.result)
-            ),
-            default=-1,
-        )
-        if last_failed_submit_index >= 0:
-            failed_text = str(
-                run_context.tool_invocations[last_failed_submit_index].result
-            )
-            if tool_name in failed_text:
-                recovered = any(
-                    index > last_failed_submit_index
-                    and invocation.name == tool_name
-                    and invocation.finished_at is not None
-                    and invocation.result is not None
-                    and "unavailable" not in str(invocation.result)
-                    and "not_found" not in str(invocation.result)
-                    for index, invocation in enumerate(run_context.tool_invocations)
-                )
-                if not recovered:
-                    return True
-        completed_reads = sum(
-            invocation.name in RESEARCH_READ_TOOLS
-            for invocation in run_context.tool_invocations
-        )
-        missing_requirements = research_ledger_missing_requirements(run_context)
-        reserve_threshold = max(
-            0,
-            (context_pack.trigger.max_tool_calls - 5)
-            if context_pack is not None
-            else 0,
-        )
-        hard_convergence_threshold = (
-            context_pack.trigger.max_tool_calls
-            if context_pack is not None
-            else 0
-        )
-        if (
+        context_pack = run_context.research_context
+        is_replay = bool(
             context_pack is not None
-            and completed_reads >= hard_convergence_threshold
-        ):
-            # Recovery reads are useful only while they are converging. A
-            # missing locator that repeatedly returns unavailable must not
-            # create an unbounded read loop. The ledger records unresolved
-            # requirements explicitly; the agent can then submit an honest
-            # evidence gap or insufficient-evidence conclusion.
-            return (
-                tool_name == "agent_evidence_ledger_open"
-                and tool_name not in already_called
-            )
-        if context_pack is not None and completed_reads >= reserve_threshold:
-            recovery_tools: set[str] = set()
-            if any(
-                "来源材料" in item or "外部原文" in item
-                for item in missing_requirements
-            ):
-                if _completed_calls(run_context, "external_web_search"):
-                    recovery_tools.add("external_web_read")
-                else:
-                    recovery_tools.add("external_web_search")
-            if any("基线记录级证据" in item for item in missing_requirements):
-                recovery_tools.add("market_evidence_open")
-            if any("历史类比" in item for item in missing_requirements):
-                recovery_tools.add("market_historical_analogue_open")
-            if any("质量评测详情" in item for item in missing_requirements):
-                recovery_tools.add("research_quality_open")
-            if any("可交易ETF表达" in item for item in missing_requirements):
-                recovery_tools.add("market_expression_compare_open")
-            if recovery_tools:
-                return tool_name in recovery_tools
-        if (
-            context_pack is not None
-            and completed_reads >= context_pack.trigger.max_tool_calls
-        ):
-            # The read budget must stop further exploration without making the
-            # run impossible to close. The ledger is a convergence/readout
-            # operation, not additional market exploration.
-            return not missing_requirements and (
-                tool_name == "agent_evidence_ledger_open"
-                and tool_name not in already_called
-            )
-    if not (
-        isinstance(run_context, AgentRunContext)
-        and run_context.task_mode is ResearchTaskMode.RESEARCH_REVIEW
-        and tool_name in RESEARCH_READ_TOOLS
-    ):
-        return False
-    context_pack = run_context.research_context
-    is_replay = bool(
-        context_pack is not None
-        and context_pack.trigger.run_mode.value == "replay"
-    )
-    # Live Research must not accidentally read a stale tracked-instrument row
-    # when it intends to inspect an ad-hoc stock or ETF.  Replay is the inverse:
-    # it may use persisted facts but can never contact the live upstream.
-    if tool_name == "market_instrument_open" and not is_replay:
-        return False
-    if tool_name in {
-        "market_instrument_realtime_open",
-        "market_expression_compare_open",
-    } and is_replay:
-        return False
-    called = {item.name for item in run_context.tool_invocations}
-    if "agent_evidence_ledger_open" in called:
-        last_failed_submit_index = max(
-            (
-                index
-                for index, invocation in enumerate(run_context.tool_invocations)
-                if invocation.name in _SUBMIT_TOOL_NAMES
-                and invocation.result is not None
-                and "校验失败" in str(invocation.result)
-            ),
-            default=-1,
+            and context_pack.trigger.run_mode.value == "replay"
         )
-        failed_text = (
-            str(run_context.tool_invocations[last_failed_submit_index].result)
-            if last_failed_submit_index >= 0
-            else ""
-        )
-        recovery_tools = set()
-        for candidate in RESEARCH_READ_TOOLS:
-            if candidate not in failed_text:
-                continue
-            recovered = any(
-                index > last_failed_submit_index
-                and invocation.name == candidate
-                and invocation.finished_at is not None
-                and invocation.result is not None
-                and "unavailable" not in str(invocation.result)
-                and "not_found" not in str(invocation.result)
-                for index, invocation in enumerate(run_context.tool_invocations)
-            )
-            if not recovered:
-                recovery_tools.add(candidate)
-        if recovery_tools:
-            return tool_name in recovery_tools
-        # Opening the ledger is the Agent's explicit convergence decision. The
-        # Runtime then compacts all evidence into a trusted notebook and leaves
-        # only local Proposal submission tools visible.
-        return False
-    if tool_name == "agent_evidence_ledger_open":
-        return not research_ledger_missing_requirements(run_context)
-    if tool_name == "research_current_report_open":
-        return tool_name not in called
-    if tool_name == "research_quality_list":
-        return "research_current_report_open" in called and tool_name not in called
-    if tool_name == "research_quality_open":
-        return "research_quality_list" in called and tool_name not in called
-    if tool_name in _INITIAL_RESEARCH_TOOLS:
+        # These are data-authority boundaries, not reasoning-stage projection:
+        # live runs use the upstream quote tool; replay can only use persisted
+        # point-in-time facts and must never contact the current upstream.
+        if tool_name == "market_instrument_open" and not is_replay:
+            return False
+        if tool_name in {
+            "market_instrument_realtime_open",
+            "market_expression_compare_open",
+        } and is_replay:
+            return False
         return True
-    if tool_name in _MARKET_DRILLDOWN_TOOLS:
-        return bool(called.intersection(_MARKET_ENTRY_TOOLS))
-    if tool_name in _GRAPH_DETAIL_TOOLS:
-        return "kg_relation_graph_search" in called
-    if tool_name in _EXTERNAL_DETAIL_TOOLS:
-        return "external_web_search" in called
-    if tool_name in _POSITION_DETAIL_TOOLS:
-        return "research_exposure_summary_open" in called
-    if tool_name in {"research_view_list"}:
-        return "research_current_report_open" in called
-    if tool_name in {"role_memory_case_open"}:
-        return "role_memory_open" in called
-    return False
 
+    return False
 
 _SUBMIT_TOOL_NAMES = frozenset(
     {"submit_research_conclusion", "submit_investment_view_revision"}

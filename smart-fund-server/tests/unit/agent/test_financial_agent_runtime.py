@@ -17,6 +17,7 @@ from src.application.agents.financial_research.agent import (
     _merge_submission_objects,
     _normalize_provider_proposal,
     _prune_unopened_citations,
+    _run_evidence_reopen_enabled,
     _remove_unsupported_directional_forecasts,
     _relevant_plan_references,
     _validated_proposal_is_final,
@@ -38,6 +39,10 @@ from src.application.agents.financial_research.context import (
     AgentRunContext,
     ToolInvocation,
 )
+from src.application.agents.financial_research.context_compactor import (
+    CompressedEvidenceItem,
+    ResearchContextSummary,
+)
 from src.application.agents.financial_research.instructions import (
     build_run_input,
     load_financial_research_instructions,
@@ -57,11 +62,13 @@ from src.application.agents.financial_research.runtime import (
     _expand_evidence_aliases,
     _estimate_input_tokens,
     _is_research_proposal_output,
+    _llm_summary_model_input,
     _raise_on_tool_error,
     _project_notebook_result,
     _recent_research_working_notes,
     _semantic_reference_matches,
     _semantic_evidence_excerpt,
+    _validate_context_summary_refs,
 )
 from src.application.agents.financial_research.schemas import (
     ActiveViewSnapshot,
@@ -230,6 +237,96 @@ def test_compacted_notebook_retains_structured_working_memory() -> None:
     assert notebook["working_memory"]["state"] == memory
 
 
+def test_llm_summary_compaction_keeps_complete_reversible_index() -> None:
+    notebook = {
+        "working_memory": {"revision": 2, "state": {"next_step": "核验反证"}},
+        "completed_operations": [
+            {
+                "order": 1,
+                "evidence_ref": "run_evidence:E1",
+                "tool": "market_sector_open",
+                "arguments": {"provider_sector_code": "886033"},
+                "result_retained": True,
+            },
+            {
+                "order": 2,
+                "evidence_ref": "run_evidence:E2",
+                "tool": "market_evidence_open",
+                "arguments": {"reference": "market_ref:M1"},
+                "result_retained": False,
+            },
+        ],
+    }
+    summary = ResearchContextSummary(
+        phase="final_synthesis",
+        research_goal="判断CPO相对强度能否持续",
+        completed_work=["已完成行情和资金核验"],
+        immediate_next_action="恢复E1与E2后提交",
+        current_assessment="当前仅形成待验证的条件判断。",
+        key_evidence=[
+            CompressedEvidenceItem(
+                finding="CPO行情与资金需要联合复核",
+                evidence_refs=["run_evidence:E1", "run_evidence:E2"],
+                role="supports",
+            )
+        ],
+        next_steps=["恢复E1与E2中的精确记录"],
+    )
+    deterministic = ModelInputData(
+        input=[
+            {"role": "user", "content": "原始任务"},
+            {"role": "user", "content": "确定性笔记"},
+            {"role": "user", "content": "最终审计提醒"},
+        ],
+        instructions="研究指令",
+    )
+
+    _validate_context_summary_refs(summary, notebook)
+    compacted = _llm_summary_model_input(
+        deterministic=deterministic,
+        notebook=notebook,
+        summary=summary,
+        fingerprint="abc123",
+    )
+    payload = json.loads(compacted.input[1]["content"])
+
+    assert compacted.input[0] == deterministic.input[0]
+    assert compacted.input[-1] == deterministic.input[-1]
+    assert payload["recovery"]["source_preserved"] is True
+    assert [item["evidence_ref"] for item in payload["evidence_index"]] == [
+        "run_evidence:E1",
+        "run_evidence:E2",
+    ]
+    assert "result" not in payload["evidence_index"][0]
+
+
+def test_llm_summary_compaction_rejects_invented_recovery_reference() -> None:
+    summary = ResearchContextSummary(
+        phase="verification",
+        research_goal="形成观点",
+        completed_work=["已完成市场概览"],
+        immediate_next_action="核验候选",
+        current_assessment="仍待核验",
+        key_evidence=[
+            CompressedEvidenceItem(
+                finding="不存在的来源",
+                evidence_refs=["run_evidence:E99"],
+                role="supports",
+            )
+        ],
+    )
+
+    with pytest.raises(ValueError, match="invented evidence references"):
+        _validate_context_summary_refs(
+            summary,
+            {
+                "completed_operations": [
+                    {"evidence_ref": "run_evidence:E1"}
+                ]
+            },
+        )
+
+
 def test_compacted_notebook_keeps_current_market_results_with_many_analogues() -> None:
     invocations = []
     for index in range(8):
@@ -327,6 +424,20 @@ async def test_run_evidence_reopen_restores_folded_result_by_order_and_path() ->
     assert payload["available"] is True
     assert payload["tool"] == "market_global_overview_open"
     assert json.loads(payload["content"]) == {"symbol": "IXIC", "change_pct": 0.81}
+
+
+def test_run_evidence_reopen_remains_enabled_after_evidence_ledger() -> None:
+    context = _context()
+    context.notebook_compacted = True
+    context.tool_invocations.append(ToolInvocation(
+        name="agent_evidence_ledger_open",
+        call_id="ledger",
+        arguments={},
+        result="{}",
+        finished_at=CUTOFF,
+    ))
+
+    assert _run_evidence_reopen_enabled(SimpleNamespace(context=context), None)
 
 
 def test_only_market_tool_aliases_are_authoritative_opened_evidence() -> None:
@@ -933,9 +1044,7 @@ def test_research_budget_guard_adds_structural_audit_after_ledger() -> None:
 
     filtered = _apply_research_budget_guard(call_data)
 
-    assert len(filtered.input) == 2
-    notebook = json.loads(filtered.input[0]["content"])
-    assert notebook["research_notebook"]["retained_results"]
+    assert len(filtered.input) == 1
     reminder = filtered.input[-1]["content"]
     assert "observed_fact" in reminder
     assert "必须拆成 inference" in reminder
@@ -950,6 +1059,7 @@ def test_research_budget_guard_adds_structural_audit_after_ledger() -> None:
 
 def test_research_budget_guard_compacts_long_transcript_after_ledger() -> None:
     context = _context()
+    context.working_memory = {"research_goal": "最终审计"}
     context.tool_invocations = [
         _finished_invocation("market_change_brief_open", 1),
         _finished_invocation("market_evidence_open", 2),
@@ -958,7 +1068,7 @@ def test_research_budget_guard_compacts_long_transcript_after_ledger() -> None:
     model_data = ModelInputData(
         input=[
             {"role": "user", "content": "原始任务"},
-            {"role": "assistant", "content": "x" * 100_000},
+            {"role": "assistant", "content": "x" * 400_000},
         ],
         instructions="研究指令",
     )
@@ -1070,8 +1180,8 @@ def test_financial_tool_filter_exposes_research_reads_and_never_model_writes() -
     read_context = SimpleNamespace(
         run_context=SimpleNamespace(context=context)
     )
-    assert financial_tool_filter(read_context, sector_tool) is False
-    assert financial_tool_filter(read_context, frame_tool) is False
+    assert financial_tool_filter(read_context, sector_tool) is True
+    assert financial_tool_filter(read_context, frame_tool) is True
     assert financial_tool_filter(read_context, change_brief_tool) is True
     assert financial_tool_filter(read_context, write_tool) is False
     assert financial_tool_filter(read_context, unknown_tool) is False
@@ -1093,13 +1203,13 @@ def test_financial_tool_filter_exposes_quality_feedback_before_new_research() ->
     quality_list = SimpleNamespace(name="research_quality_list")
     quality_open = SimpleNamespace(name="research_quality_open")
 
-    assert financial_tool_filter(filter_context, quality_list) is False
-    assert financial_tool_filter(filter_context, quality_open) is False
+    assert financial_tool_filter(filter_context, quality_list) is True
+    assert financial_tool_filter(filter_context, quality_open) is True
     context.tool_invocations.append(
         ToolInvocation(name="research_current_report_open", call_id="call-report")
     )
     assert financial_tool_filter(filter_context, quality_list) is True
-    assert financial_tool_filter(filter_context, quality_open) is False
+    assert financial_tool_filter(filter_context, quality_open) is True
     context.tool_invocations.append(
         ToolInvocation(name="research_quality_list", call_id="call-quality-list")
     )
@@ -1119,7 +1229,7 @@ def test_financial_tool_filter_hides_reads_after_run_budget_is_exhausted() -> No
     assert financial_tool_filter(
         filter_context,
         SimpleNamespace(name="market_dimension_open"),
-    ) is False
+    ) is True
     assert financial_tool_filter(
         filter_context,
         SimpleNamespace(name="agent_evidence_ledger_open"),
@@ -1127,14 +1237,14 @@ def test_financial_tool_filter_hides_reads_after_run_budget_is_exhausted() -> No
     assert financial_tool_filter(
         filter_context,
         SimpleNamespace(name="external_web_search"),
-    ) is False
+    ) is True
     context.tool_invocations.append(
         ToolInvocation(name="agent_evidence_ledger_open", call_id="call-ledger")
     )
     assert financial_tool_filter(
         filter_context,
         SimpleNamespace(name="agent_evidence_ledger_open"),
-    ) is False
+    ) is True
 
 
 def test_financial_tool_filter_forces_ledger_after_bounded_recovery_reads() -> None:
@@ -1151,11 +1261,11 @@ def test_financial_tool_filter_forces_ledger_after_bounded_recovery_reads() -> N
     assert financial_tool_filter(
         filter_context,
         SimpleNamespace(name="market_evidence_open"),
-    ) is False
+    ) is True
     assert financial_tool_filter(
         filter_context,
         SimpleNamespace(name="external_web_read"),
-    ) is False
+    ) is True
     assert financial_tool_filter(
         filter_context,
         SimpleNamespace(name="agent_evidence_ledger_open"),
@@ -1169,7 +1279,7 @@ def test_financial_tool_filter_opens_ledger_only_after_decision_coverage() -> No
     )
     ledger = SimpleNamespace(name="agent_evidence_ledger_open")
 
-    assert financial_tool_filter(filter_context, ledger) is False
+    assert financial_tool_filter(filter_context, ledger) is True
 
     names = [
         "market_frame_open",
@@ -1577,7 +1687,7 @@ def test_tool_result_decoder_unwraps_mcp_text_content() -> None:
     }
 
 
-def test_financial_tool_filter_hides_all_remote_reads_after_ledger() -> None:
+def test_financial_tool_filter_keeps_remote_reads_after_ledger() -> None:
     context = _context()
     context.tool_invocations = [
         ToolInvocation(name="agent_evidence_ledger_open", call_id="ledger")
@@ -1589,10 +1699,10 @@ def test_financial_tool_filter_hides_all_remote_reads_after_ledger() -> None:
     assert financial_tool_filter(
         filter_context,
         SimpleNamespace(name="market_dimension_open"),
-    ) is False
+    ) is True
 
 
-def test_financial_tool_filter_reopens_only_tool_named_by_submit_error() -> None:
+def test_financial_tool_filter_keeps_all_reads_after_submit_error() -> None:
     context = _context()
     context.research_context.trigger.max_tool_calls = 1
     context.tool_invocations = [
@@ -1615,7 +1725,7 @@ def test_financial_tool_filter_reopens_only_tool_named_by_submit_error() -> None
     assert financial_tool_filter(
         filter_context,
         SimpleNamespace(name="market_dimension_open"),
-    ) is False
+    ) is True
 
 
 def test_read_call_key_treats_reordered_arguments_as_the_same_read() -> None:

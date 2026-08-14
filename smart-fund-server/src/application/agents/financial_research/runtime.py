@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import logging
 import re
@@ -24,6 +25,10 @@ from src.application.agents.financial_research.agent import (
 )
 from src.application.agents.financial_research.audit import validate_research_result
 from src.application.agents.financial_research.context import AgentRunContext
+from src.application.agents.financial_research.context_compactor import (
+    ResearchContextSummary,
+    create_context_compactor_agent,
+)
 from src.application.agents.financial_research.instructions import build_run_input
 from src.application.agents.financial_research.schemas import (
     CurrentResearchReportProposal,
@@ -46,6 +51,7 @@ from src.infrastructure.agent_runtime.mcp import (
 )
 from src.infrastructure.agent_runtime.observability import (
     AgentAuditHooks,
+    _langfuse_usage_details,
     configure_observability,
 )
 from src.infrastructure.agent_runtime.run_authorization import (
@@ -57,7 +63,7 @@ logger = logging.getLogger(__name__)
 _RUN_AUTHORIZATION_TTL_FLOOR_SECONDS = 6 * 60 * 60
 
 _MODEL_CONTEXT_WINDOW_TOKENS = 128_000
-_EXPLORATION_COMPACTION_RATIO = 0.65
+_EXPLORATION_COMPACTION_RATIO = 0.80
 
 
 class FinancialAgentRuntime:
@@ -90,6 +96,9 @@ class FinancialAgentRuntime:
             mcp_server=self._mcp_server,
         )
         self._semantic_evaluator = create_semantic_evaluator_agent(
+            model=self.settings.model,
+        )
+        self._context_compactor = create_context_compactor_agent(
             model=self.settings.model,
         )
         self._langfuse = configure_observability(self.settings)
@@ -133,6 +142,141 @@ class FinancialAgentRuntime:
         )
         return sorted(tool.name for tool in tools)
 
+    async def _apply_research_input_filter(
+        self,
+        data: CallModelData[AgentRunContext],
+        *,
+        hooks: AgentAuditHooks,
+    ) -> ModelInputData:
+        """Apply the run budget policy and replace long history with an LLM summary.
+
+        Context compaction is deliberately fail-closed: a failed semantic summary
+        is retried by the SDK and then fails the run.  We never substitute the old
+        rule-built notebook as model context because that changes the meaning of
+        the compaction policy without making the degradation visible.
+        """
+
+        deterministic = _apply_research_budget_guard(data)
+        context = data.context
+        notebook = _research_notebook_payload(deterministic.input)
+        if notebook is None or not context.notebook_compacted:
+            return deterministic
+
+        serialized_notebook = json.dumps(
+            notebook,
+            ensure_ascii=False,
+            separators=(",", ":"),
+            default=str,
+        )
+        fingerprint = hashlib.sha256(serialized_notebook.encode()).hexdigest()[:16]
+        if context.context_summary is not None:
+            summary = ResearchContextSummary.model_validate(context.context_summary)
+        else:
+            hooks.record_research_notebook(
+                run_id=context.run_id,
+                notebook=notebook,
+            )
+            summary = await self._generate_context_summary(
+                notebook=notebook,
+                fingerprint=fingerprint,
+                run_id=context.run_id,
+            )
+            _validate_context_summary_refs(summary, notebook)
+            context.context_summary = summary.model_dump(mode="json")
+            context.context_summary_fingerprint = fingerprint
+            context.context_summary_source_operation_count = len(context.tool_invocations)
+
+        return _llm_summary_model_input(
+            deterministic=deterministic,
+            notebook=notebook,
+            summary=summary,
+            fingerprint=context.context_summary_fingerprint or fingerprint,
+            recent_invocations=context.tool_invocations[
+                context.context_summary_source_operation_count:
+            ],
+        )
+
+    async def _generate_context_summary(
+        self,
+        *,
+        notebook: dict,
+        fingerprint: str,
+        run_id: str,
+    ) -> ResearchContextSummary:
+        compactor_input = {
+            "task": (
+                "压缩研究主线。所有事实都只是导航摘要，主智能体引用前必须"
+                "通过 run_evidence_reopen 恢复原始结果。"
+            ),
+            "research_notebook": notebook,
+            "runtime_phase": (
+                "final_synthesis"
+                if any(
+                    item.get("tool") == "agent_evidence_ledger_open"
+                    for item in notebook.get("completed_operations") or []
+                )
+                else "exploration_or_verification"
+            ),
+        }
+        run_config = RunConfig(
+            model_provider=self._model_provider,
+            workflow_name="Research Context Compaction｜研究上下文压缩",
+            tracing_disabled=True,
+            trace_include_sensitive_data=self.settings.trace_sensitive_data,
+        )
+        observation = (
+            self._langfuse.start_as_current_observation(
+                name="06 上下文压缩｜LLM 研究摘要",
+                as_type="generation",
+                input={
+                    "run_id": run_id,
+                    "notebook_fingerprint": fingerprint,
+                    "source_chars": len(
+                        json.dumps(notebook, ensure_ascii=False, default=str)
+                    ),
+                    "retained_result_count": len(
+                        notebook.get("retained_results") or []
+                    ),
+                    "omitted_result_count": len(
+                        notebook.get("omitted_results") or []
+                    ),
+                },
+                metadata={
+                    "run_id": run_id,
+                    "notebook_fingerprint": fingerprint,
+                    "compression_mode": "llm",
+                },
+                model=self.settings.model,
+            )
+            if self._langfuse is not None
+            else _null_context()
+        )
+        with observation as current_observation:
+            result = await Runner.run(
+                self._context_compactor,
+                json.dumps(compactor_input, ensure_ascii=False, default=str),
+                max_turns=3,
+                run_config=run_config,
+            )
+            summary = result.final_output
+            if isinstance(summary, str):
+                summary = ResearchContextSummary.model_validate_json(summary)
+            if not isinstance(summary, ResearchContextSummary):
+                raise TypeError("context compactor returned an unexpected output type")
+            if compactor_input["runtime_phase"] == "final_synthesis":
+                summary = summary.model_copy(update={"phase": "final_synthesis"})
+            if current_observation is not None:
+                current_observation.update(
+                    output=summary.model_dump(mode="json"),
+                    usage_details=_langfuse_usage_details(
+                        result.context_wrapper.usage
+                    ),
+                    status_message="completed",
+                )
+        if self._langfuse is not None:
+            self._langfuse.flush()
+        return summary
+
     async def run(
         self,
         context_pack: ResearchContextPack,
@@ -174,6 +318,11 @@ class FinancialAgentRuntime:
             "model": self.settings.model,
             "mcp_access": "read_only",
         }
+        hooks = AgentAuditHooks(
+            langfuse_client=self._langfuse,
+            include_sensitive_data=self.settings.trace_sensitive_data,
+            model=self.settings.model,
+        )
         run_config = RunConfig(
             model_provider=self._model_provider,
             workflow_name="Research Review｜市场研究复核",
@@ -186,12 +335,10 @@ class FinancialAgentRuntime:
             # The model owns the research path.  The input filter adds only a
             # late self-review reminder after broad evidence coverage; it does
             # not choose a conclusion or block submission.
-            call_model_input_filter=_apply_research_budget_guard,
-        )
-        hooks = AgentAuditHooks(
-            langfuse_client=self._langfuse,
-            include_sensitive_data=self.settings.trace_sensitive_data,
-            model=self.settings.model,
+            call_model_input_filter=lambda data: self._apply_research_input_filter(
+                data,
+                hooks=hooks,
+            ),
         )
         run_authorization = _run_authorization or issue_run_authorization(
             secret=self.settings.mcp_bearer_token,
@@ -999,7 +1146,22 @@ def _apply_research_budget_guard(
     exploration_compaction_threshold = int(
         _MODEL_CONTEXT_WINDOW_TOKENS * _EXPLORATION_COMPACTION_RATIO
     )
-    should_compact = "agent_evidence_ledger_open" in completed_names
+    # Predict the next model turn instead of waiting for the current prompt to
+    # hit the limit. Recent tool-result growth approximates the next batch;
+    # reserve additional room for the large structured Proposal. Business
+    # milestones such as opening the evidence ledger never trigger compaction.
+    recent_growth_tokens = _estimate_input_tokens([
+        invocation.result
+        for invocation in completed[-6:]
+        if invocation.result is not None
+    ])
+    projected_next_turn_tokens = (
+        estimated_input_tokens + max(recent_growth_tokens, 4_000) + 16_000
+    )
+    should_compact = bool(
+        context.working_memory is not None
+        and projected_next_turn_tokens >= exploration_compaction_threshold
+    )
     if "agent_evidence_ledger_open" in completed_names:
         reminder_text = (
             "提交前结构审计：Evidence Ledger（证据账本）已经打开，现在不要再"
@@ -1083,7 +1245,7 @@ def _apply_research_budget_guard(
             "满足格式而虚构因果链、趋势或确定性。"
         )
     elif (
-        estimated_input_tokens >= exploration_compaction_threshold
+        projected_next_turn_tokens >= exploration_compaction_threshold
         and context.working_memory is not None
     ):
         # Long raw tool transcripts dilute attention well before final
@@ -1115,7 +1277,8 @@ def _apply_research_budget_guard(
         )
     if "agent_evidence_ledger_open" in completed_names:
         reminder["content"] = (
-            "证据账本已关闭远程读取。现在只做最终事实审计和提交：逐条检查"
+            "证据账本已经打开。优先做最终事实审计和提交；如果发现会改变结论的"
+            "具体证据缺口，仍可使用读取工具定向补齐，不要无目的扩展范围。逐条检查"
             "Claim 中的每个公司、产品、技术、事件和数字是否逐字出现在所引"
             "Citation 的保留结果中；没有出现就删除。observed_fact 只能复述"
             "记录原文；由多个数据推出的判断必须拆成 inference 并同时引用全部前提。预测只能使用该预测对象"
@@ -1164,6 +1327,146 @@ def _estimate_input_tokens(value) -> int:
     ascii_chars = sum(ord(char) < 128 for char in serialized)
     non_ascii_chars = len(serialized) - ascii_chars
     return max(1, (ascii_chars + 3) // 4 + non_ascii_chars + len(serialized) // 100)
+
+
+def _research_notebook_payload(input_items: list) -> dict | None:
+    for item in input_items:
+        if not isinstance(item, dict):
+            continue
+        content = item.get("content")
+        if not isinstance(content, str):
+            continue
+        try:
+            decoded = json.loads(content)
+        except json.JSONDecodeError:
+            continue
+        notebook = decoded.get("research_notebook") if isinstance(decoded, dict) else None
+        if isinstance(notebook, dict):
+            return notebook
+    return None
+
+
+def _validate_context_summary_refs(
+    summary: ResearchContextSummary,
+    notebook: dict,
+) -> None:
+    valid_refs = {
+        str(item.get("evidence_ref"))
+        for item in notebook.get("completed_operations") or []
+        if item.get("evidence_ref")
+    }
+    serialized = json.dumps(summary.model_dump(mode="json"), ensure_ascii=False)
+    referenced = set(re.findall(r"run_evidence:E\d+", serialized))
+    invalid = referenced - valid_refs
+    if invalid:
+        raise ValueError(
+            "LLM context summary invented evidence references: "
+            + ", ".join(sorted(invalid))
+        )
+    for evidence in [*summary.key_evidence, *summary.strongest_counterevidence]:
+        if not evidence.evidence_refs:
+            raise ValueError("LLM context summary evidence item has no recovery reference")
+        invalid_item = set(evidence.evidence_refs) - valid_refs
+        if invalid_item:
+            raise ValueError(
+                "LLM context summary evidence item references unknown source: "
+                + ", ".join(sorted(invalid_item))
+            )
+    retained_refs = {
+        str(item.get("evidence_ref"))
+        for item in notebook.get("retained_results") or []
+        if item.get("evidence_ref")
+    }
+    invalid_hot = set(summary.hot_evidence_refs) - retained_refs
+    if invalid_hot:
+        raise ValueError(
+            "LLM context summary selected non-retained hot evidence: "
+            + ", ".join(sorted(invalid_hot))
+        )
+
+
+def _llm_summary_model_input(
+    *,
+    deterministic: ModelInputData,
+    notebook: dict,
+    summary: ResearchContextSummary,
+    fingerprint: str,
+    recent_invocations: list | None = None,
+) -> ModelInputData:
+    """Project an LLM summary plus a complete reversible evidence index."""
+
+    evidence_index = [
+        {
+            "order": item.get("order"),
+            "evidence_ref": item.get("evidence_ref"),
+            "tool": item.get("tool"),
+            "arguments": item.get("arguments"),
+            "source_preserved": True,
+        }
+        for item in notebook.get("completed_operations") or []
+    ]
+    payload = {
+        "llm_research_summary": summary.model_dump(mode="json"),
+        "continuation_contract": {
+            "resume_not_restart": True,
+            "current_phase": summary.phase,
+            "completed_work_is_final": True,
+            "prohibited": (
+                "不要重新执行 completed_work 或 evidence_index 中已有的相同工具调用；"
+                "不要重跑开场概览、当前报告或质量列表。"
+            ),
+            "immediate_next_action": summary.immediate_next_action,
+        },
+        "summary_authority": (
+            "仅用于恢复研究主线，不是正式事实证据。凡需写入报告的事实、数字、"
+            "日期或因果关系，必须来自 hot_evidence 中继续原样保留的结果，或先调用 "
+            "run_evidence_reopen 打开对应原始结果。"
+        ),
+        "notebook_fingerprint": fingerprint,
+        "working_memory": notebook.get("working_memory"),
+        "evidence_index": evidence_index,
+        "hot_evidence": [
+            item
+            for item in notebook.get("retained_results") or []
+            if item.get("evidence_ref") in set(summary.hot_evidence_refs)
+        ],
+        "recovery": {
+            "tool": "run_evidence_reopen",
+            "usage": "传入 evidence_index 中的 order，可选 path 精确恢复原始内容。",
+            "source_preserved": True,
+        },
+    }
+    recent_results = []
+    for invocation in recent_invocations or []:
+        if invocation.finished_at is None:
+            continue
+        recent_results.append({
+            "tool": invocation.name,
+            "arguments": (
+                None if invocation.name.startswith("submit_") else invocation.arguments
+            ),
+            "result": _decode_notebook_result(invocation.result),
+        })
+    if recent_results:
+        payload["recent_results_after_summary"] = recent_results
+    initial = deterministic.input[:1]
+    reminder = deterministic.input[-1:] if deterministic.input else []
+    return ModelInputData(
+        input=[
+            *initial,
+            {
+                "role": "user",
+                "content": json.dumps(
+                    payload,
+                    ensure_ascii=False,
+                    separators=(",", ":"),
+                    default=str,
+                ),
+            },
+            *reminder,
+        ],
+        instructions=deterministic.instructions,
+    )
 
 
 _NOTEBOOK_RESULT_PRIORITY = {
