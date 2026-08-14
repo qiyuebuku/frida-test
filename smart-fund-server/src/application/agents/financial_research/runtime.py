@@ -75,7 +75,7 @@ _COMPACTION_RETAIN_RATIO = float(
 _COMPACTION_MIN_GROWTH_RATIO = float(
     os.getenv("SMART_FUND_RESEARCH_COMPACTION_MIN_GROWTH_RATIO", "0.08")
 )
-_REPEATED_COMPACTION_RATIO = 0.90
+_REPEATED_COMPACTION_RATIO = 0.65
 _POST_LEDGER_COMPACTION_RATIO = 0.95
 
 
@@ -92,16 +92,16 @@ class FinancialAgentRuntime:
         self._openai_client = AsyncOpenAI(
             api_key=self.settings.llm_api_key,
             base_url=self.settings.llm_base_url,
-            # A single Responses request must not consume the complete run
-            # deadline. GLM max reasoning has legitimately taken about four
-            # minutes in regression runs, so keep that headroom but bound each
-            # attempt and its retry chain independently.
-            timeout=min(self.settings.llm_timeout, 300.0),
+            # A single oversized synthesis request must not consume most of a
+            # Research run.  High-effort GLM-5.3 turns normally finish well
+            # inside this bound; one transport retry still covers transient
+            # gateway failures without waiting ten minutes on one turn.
+            timeout=min(self.settings.llm_timeout, 180.0),
             # One Research run commonly contains dozens of model turns.  A
             # short proxy/network flap must not discard all evidence already
             # gathered in the run.  The OpenAI client retries only idempotent
             # response creation failures and applies bounded backoff.
-            max_retries=2,
+            max_retries=1,
         )
         self._model_provider = OpenAIProvider(
             openai_client=self._openai_client,
@@ -1624,7 +1624,14 @@ def _estimate_model_input_tokens(model_input: ModelInputData) -> int:
 
 
 def _compaction_threshold_ratio(context: AgentRunContext) -> float:
-    """Reserve more runway after replacement and protect final evidence audit."""
+    """Compact renewed evidence pressure without entering a recovery loop.
+
+    Hysteresis already requires at least eight percent of genuinely new input
+    after a replacement.  Raising every later threshold to ninety percent made
+    a 50k-token synthesis request reach the gateway before another checkpoint
+    could be created.  A 65% floor leaves room for newly gathered evidence and
+    still permits a second, progress-aware checkpoint late in a long study.
+    """
 
     ratio = _EXPLORATION_COMPACTION_RATIO
     if context.surface_generation > 0:
