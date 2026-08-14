@@ -84,8 +84,11 @@ def frame_context_checkpoint(checkpoint: str, *, generation: int) -> str:
     return (
         "以下是 Runtime 生成的研究上下文检查点，替代更早的一段历史。"
         "把它视为已经完成的背景并直接继续，不要复述检查点，也不要重新执行其中"
-        "已经完成的工作。检查点中的事实只是导航；写入正式报告前，必须使用"
-        "近期保留的原始工具结果，或调用 run_evidence_reopen 恢复对应证据。"
+        "已经完成的工作。检查点可用于继续分析和起草 Proposal；被折叠的完整"
+        "原始工具结果仍由 Runtime 保存，并会在提交时对 Citation 和 Claim 做"
+        "确定性校验。不要仅为复制检查点中已经明确记录的数值或定位符而恢复"
+        "原文；只有检查点标明不确定、字段被截断，或提交校验指出具体缺口时，"
+        "才调用 run_evidence_reopen 定向恢复。"
         "“热证据原文保留”所列结果已紧随检查点保留，不要再次打开。\n\n"
         f"<research-context-checkpoint generation=\"{generation}\">\n"
         f"{checkpoint}\n"
@@ -125,5 +128,7 @@ _INSTRUCTIONS = """
    逐字引用、审计或提交的工具结果；导航资料、已经用完的证据和以后可能用到的资料不得列入。
 6. 如果输入包含上一代 research-context-checkpoint，合并仍有效内容、删除过时内容，
    只输出一份新的检查点，不复制旧检查点全文。
-7. 输出纯 Markdown，不输出 JSON，不调用工具，不解释压缩过程。
+7. “下一步”只保存动作和尚未解决的判断，不规划 Claim 数量、字段清单或大段提交结构；
+   已经打开 Evidence Ledger 时，下一步默认是直接形成最小充分 Proposal 并提交。
+8. 输出纯 Markdown，不输出 JSON，不调用工具，不解释压缩过程。
 """.strip()
