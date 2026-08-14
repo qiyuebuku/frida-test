@@ -19,6 +19,7 @@ _REQUIRED_SECTIONS = (
     "已完成验证",
     "关键证据索引",
     "最强反证索引",
+    "热证据原文保留",
     "未解决问题",
     "当前工作",
     "下一步",
@@ -52,6 +53,9 @@ def validate_context_checkpoint(value: object) -> str:
         raise ValueError(f"context checkpoint exceeds 4500 characters: {len(text)}")
     if re.search(r"run_evidence:E\d+\s*[-—~至]\s*(?:E)?\d+", text):
         raise ValueError("context checkpoint must list recovery references individually")
+    hot_references = checkpoint_hot_evidence_refs(text)
+    if len(hot_references) > 6:
+        raise ValueError("context checkpoint may retain at most 6 hot evidence references")
     missing = [
         section
         for section in _REQUIRED_SECTIONS
@@ -62,6 +66,18 @@ def validate_context_checkpoint(value: object) -> str:
     return text
 
 
+def checkpoint_hot_evidence_refs(checkpoint: str) -> list[str]:
+    """Return immediate-next-step evidence selected for exact retention."""
+
+    match = re.search(
+        r"(?ms)^## 热证据原文保留\s*$\n(.*?)(?=^## |\Z)",
+        checkpoint,
+    )
+    if match is None:
+        return []
+    return list(dict.fromkeys(re.findall(r"run_evidence:E\d+", match.group(1))))
+
+
 def frame_context_checkpoint(checkpoint: str, *, generation: int) -> str:
     """Frame a model-visible replacement checkpoint as established context."""
 
@@ -69,7 +85,8 @@ def frame_context_checkpoint(checkpoint: str, *, generation: int) -> str:
         "以下是 Runtime 生成的研究上下文检查点，替代更早的一段历史。"
         "把它视为已经完成的背景并直接继续，不要复述检查点，也不要重新执行其中"
         "已经完成的工作。检查点中的事实只是导航；写入正式报告前，必须使用"
-        "近期保留的原始工具结果，或调用 run_evidence_reopen 恢复对应证据。\n\n"
+        "近期保留的原始工具结果，或调用 run_evidence_reopen 恢复对应证据。"
+        "“热证据原文保留”所列结果已紧随检查点保留，不要再次打开。\n\n"
         f"<research-context-checkpoint generation=\"{generation}\">\n"
         f"{checkpoint}\n"
         "</research-context-checkpoint>"
@@ -92,6 +109,7 @@ _INSTRUCTIONS = """
 ## 已完成验证
 ## 关键证据索引
 ## 最强反证索引
+## 热证据原文保留
 ## 未解决问题
 ## 当前工作
 ## 下一步
@@ -103,7 +121,9 @@ _INSTRUCTIONS = """
 3. 事实导航必须带输入中真实存在的 run_evidence:E*；不得创造编号，也不得用
    E1-E4 之类范围缩写，逐个列出实际需要恢复的编号。
 4. 明确保留主假设、直接反证、已经放弃的路径、唯一紧接着要做的动作。
-5. 如果输入包含上一代 research-context-checkpoint，合并仍有效内容、删除过时内容，
+5. “热证据原文保留”最多列6个 run_evidence:E*，只选主智能体下一步马上需要
+   逐字引用、审计或提交的工具结果；导航资料、已经用完的证据和以后可能用到的资料不得列入。
+6. 如果输入包含上一代 research-context-checkpoint，合并仍有效内容、删除过时内容，
    只输出一份新的检查点，不复制旧检查点全文。
-6. 输出纯 Markdown，不输出 JSON，不调用工具，不解释压缩过程。
+7. 输出纯 Markdown，不输出 JSON，不调用工具，不解释压缩过程。
 """.strip()

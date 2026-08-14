@@ -27,6 +27,7 @@ from src.application.agents.financial_research.agent import (
 from src.application.agents.financial_research.audit import validate_research_result
 from src.application.agents.financial_research.context import AgentRunContext
 from src.application.agents.financial_research.context_compactor import (
+    checkpoint_hot_evidence_refs,
     create_context_compactor_agent,
     frame_context_checkpoint,
     validate_context_checkpoint,
@@ -167,6 +168,7 @@ class FinancialAgentRuntime:
         active_input = _research_surface_input(
             raw_input=raw_input,
             checkpoint=context.surface_checkpoint,
+            hot_items=context.surface_hot_items,
             shadowed_item_count=context.surface_shadowed_item_count,
             generation=context.surface_generation,
             transient=transient,
@@ -231,9 +233,16 @@ class FinancialAgentRuntime:
             )
             return active
         generation = context.surface_generation + 1
+        hot_items = _surface_hot_evidence_items(
+            raw_input=raw_input,
+            invocations=context.tool_invocations,
+            evidence_refs=checkpoint_hot_evidence_refs(checkpoint),
+            retained_items=retained_items,
+        )
         compacted = ModelInputData(
             input=[
                 _surface_checkpoint_item(checkpoint, generation=generation),
+                *hot_items,
                 *retained_items,
                 *transient,
             ],
@@ -268,6 +277,7 @@ class FinancialAgentRuntime:
                 threshold,
             )
         context.surface_checkpoint = checkpoint
+        context.surface_hot_items = hot_items
         context.surface_shadowed_item_count = new_shadowed_count
         context.surface_generation = generation
         context.surface_last_before_tokens = before_tokens
@@ -280,7 +290,7 @@ class FinancialAgentRuntime:
             before_tokens=before_tokens,
             after_tokens=after_tokens,
             shadowed_item_count=len(source_items),
-            retained_item_count=len(retained_items),
+            retained_item_count=len(hot_items) + len(retained_items),
             source_fingerprint=fingerprint,
         )
         logger.info(
@@ -291,7 +301,7 @@ class FinancialAgentRuntime:
             after_tokens,
             100 * (before_tokens - after_tokens) / max(before_tokens, 1),
             len(source_items),
-            len(retained_items),
+            len(hot_items) + len(retained_items),
         )
         return compacted
 
@@ -1420,6 +1430,7 @@ def _research_surface_input(
     *,
     raw_input: list,
     checkpoint: str | None,
+    hot_items: list,
     shadowed_item_count: int,
     generation: int,
     transient: list,
@@ -1428,13 +1439,66 @@ def _research_surface_input(
 
     shadowed = min(max(shadowed_item_count, 0), len(raw_input))
     projected = list(raw_input[shadowed:])
-    if checkpoint:
-        projected.insert(
-            0,
-            _surface_checkpoint_item(checkpoint, generation=generation),
+    visible_pair_ids = {
+        pair_id
+        for item in projected
+        for pair_id in _item_call_pair(item)
+        if pair_id
+    }
+    retained_hot = [
+        item
+        for item in hot_items
+        if not any(
+            pair_id in visible_pair_ids
+            for pair_id in _item_call_pair(item)
+            if pair_id
         )
+    ]
+    if checkpoint:
+        projected = [
+            _surface_checkpoint_item(checkpoint, generation=generation),
+            *retained_hot,
+            *projected,
+        ]
     projected.extend(transient)
     return projected
+
+
+def _surface_hot_evidence_items(
+    *,
+    raw_input: list,
+    invocations: list,
+    evidence_refs: list[str],
+    retained_items: list,
+) -> list:
+    """Keep exact checkpoint-selected evidence without duplicating the tail."""
+
+    orders = {
+        int(match.group(1))
+        for reference in evidence_refs[:6]
+        if (match := re.fullmatch(r"run_evidence:E(\d+)", reference))
+    }
+    call_ids = {
+        invocation.call_id
+        for order, invocation in enumerate(invocations, start=1)
+        if order in orders and invocation.call_id
+    }
+    retained_call_ids = {
+        pair_id
+        for item in retained_items
+        for pair_id in _item_call_pair(item)
+        if pair_id
+    }
+    selected_call_ids = call_ids - retained_call_ids
+    return [
+        item
+        for item in raw_input
+        if any(
+            pair_id in selected_call_ids
+            for pair_id in _item_call_pair(item)
+            if pair_id
+        )
+    ]
 
 
 def _item_call_pair(item: object) -> tuple[str | None, str | None]:

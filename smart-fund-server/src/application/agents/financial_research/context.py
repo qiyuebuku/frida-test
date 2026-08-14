@@ -52,6 +52,10 @@ class AgentRunContext:
     # The checkpoint shadows raw items before this index; the recent tail stays
     # byte-for-byte intact for immediate continuation.
     surface_checkpoint: str | None = None
+    # Exact call/result pairs selected by the compactor as immediately needed
+    # for the next action. They remain model-visible alongside the checkpoint
+    # so final evidence audit does not reopen data that was just compacted.
+    surface_hot_items: list[Any] = field(default_factory=list)
     surface_shadowed_item_count: int = 0
     surface_generation: int = 0
     surface_last_before_tokens: int = 0

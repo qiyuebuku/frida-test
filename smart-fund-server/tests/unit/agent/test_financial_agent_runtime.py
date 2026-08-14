@@ -40,6 +40,7 @@ from src.application.agents.financial_research.context import (
     ToolInvocation,
 )
 from src.application.agents.financial_research.context_compactor import (
+    checkpoint_hot_evidence_refs,
     validate_context_checkpoint,
 )
 from src.application.agents.financial_research.instructions import (
@@ -71,6 +72,7 @@ from src.application.agents.financial_research.runtime import (
     _semantic_reference_matches,
     _semantic_evidence_excerpt,
     _select_surface_replacement,
+    _surface_hot_evidence_items,
     _surface_evidence_index,
 )
 from src.application.agents.financial_research.schemas import (
@@ -279,7 +281,8 @@ def test_context_checkpoint_requires_plain_markdown_sections() -> None:
         for section in (
             "研究目标与用户意图", "当前判断", "候选假设",
             "已削弱或排除的解释", "已完成验证", "关键证据索引",
-            "最强反证索引", "未解决问题", "当前工作", "下一步", "关键限制",
+            "最强反证索引", "热证据原文保留", "未解决问题",
+            "当前工作", "下一步", "关键限制",
         )
     )
     assert validate_context_checkpoint(checkpoint) == checkpoint
@@ -311,6 +314,7 @@ def test_surface_projection_merges_checkpoint_with_unshadowed_history() -> None:
     surface = _research_surface_input(
         raw_input=raw,
         checkpoint="## 旧检查点",
+        hot_items=[],
         shadowed_item_count=2,
         generation=1,
         transient=[{"role": "user", "content": "提醒"}],
@@ -318,6 +322,53 @@ def test_surface_projection_merges_checkpoint_with_unshadowed_history() -> None:
     assert "旧检查点" in surface[0]["content"]
     assert surface[1:3] == raw[2:]
     assert surface[-1]["content"] == "提醒"
+
+
+def test_checkpoint_selects_at_most_six_immediate_hot_evidence_refs() -> None:
+    checkpoint = """## 热证据原文保留
+- run_evidence:E14
+- run_evidence:E23
+- run_evidence:E14
+## 未解决问题
+- 无"""
+
+    assert checkpoint_hot_evidence_refs(checkpoint) == [
+        "run_evidence:E14",
+        "run_evidence:E23",
+    ]
+
+
+def test_surface_keeps_checkpoint_selected_hot_call_result_pairs() -> None:
+    raw = [
+        {"role": "user", "content": "任务"},
+        {"type": "function_call", "call_id": "cold-call", "name": "open"},
+        {"type": "function_call_output", "call_id": "cold-call", "output": "关键事实"},
+        {"type": "function_call", "call_id": "tail-call", "name": "ledger"},
+        {"type": "function_call_output", "call_id": "tail-call", "output": "账本"},
+    ]
+    invocations = [
+        ToolInvocation(name="market_sector_compare_open", call_id="cold-call"),
+        ToolInvocation(name="agent_evidence_ledger_open", call_id="tail-call"),
+    ]
+
+    hot = _surface_hot_evidence_items(
+        raw_input=raw,
+        invocations=invocations,
+        evidence_refs=["run_evidence:E1", "run_evidence:E2"],
+        retained_items=raw[3:],
+    )
+    surface = _research_surface_input(
+        raw_input=raw,
+        checkpoint="## 检查点",
+        hot_items=hot,
+        shadowed_item_count=3,
+        generation=1,
+        transient=[],
+    )
+
+    assert hot == raw[1:3]
+    assert surface[1:3] == raw[1:3]
+    assert surface[3:] == raw[3:]
 
 
 def test_compacted_notebook_keeps_current_market_results_with_many_analogues() -> None:
