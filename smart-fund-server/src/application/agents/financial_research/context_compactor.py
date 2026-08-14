@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
-from typing import Literal
+from typing import Annotated, Literal
 
 from agents import Agent, FunctionTool, ModelSettings, ToolsToFinalOutputResult
 from pydantic import Field
@@ -14,23 +14,25 @@ from src.application.agents.financial_research.schemas import ResearchContract
 
 logger = logging.getLogger(__name__)
 
+CompactText = Annotated[str, Field(min_length=1, max_length=500)]
+
 
 class CompressedEvidenceItem(ResearchContract):
-    finding: str = Field(min_length=1, max_length=1200)
+    finding: str = Field(min_length=1, max_length=600)
     evidence_refs: list[str] = Field(min_length=1, max_length=12)
     role: Literal["supports", "contradicts", "context", "data_quality"]
-    caveat: str | None = Field(default=None, max_length=800)
+    caveat: str | None = Field(default=None, max_length=400)
 
 
 class ResearchContextSummary(ResearchContract):
     phase: Literal["exploration", "verification", "final_synthesis"]
-    research_goal: str = Field(min_length=1, max_length=1200)
-    completed_work: list[str] = Field(min_length=1, max_length=30)
-    immediate_next_action: str = Field(min_length=1, max_length=1200)
+    research_goal: str = Field(min_length=1, max_length=600)
+    completed_work: list[CompactText] = Field(min_length=1, max_length=20)
+    immediate_next_action: str = Field(min_length=1, max_length=600)
     hot_evidence_refs: list[str] = Field(default_factory=list, max_length=12)
-    current_assessment: str = Field(min_length=1, max_length=2400)
-    candidate_hypotheses: list[str] = Field(default_factory=list, max_length=12)
-    rejected_or_weakened_hypotheses: list[str] = Field(
+    current_assessment: str = Field(min_length=1, max_length=1200)
+    candidate_hypotheses: list[CompactText] = Field(default_factory=list, max_length=10)
+    rejected_or_weakened_hypotheses: list[CompactText] = Field(
         default_factory=list,
         max_length=12,
     )
@@ -42,14 +44,21 @@ class ResearchContextSummary(ResearchContract):
         default_factory=list,
         max_length=16,
     )
-    unresolved_questions: list[str] = Field(default_factory=list, max_length=16)
-    discarded_paths: list[str] = Field(default_factory=list, max_length=16)
-    next_steps: list[str] = Field(default_factory=list, max_length=12)
+    unresolved_questions: list[CompactText] = Field(default_factory=list, max_length=12)
+    discarded_paths: list[CompactText] = Field(default_factory=list, max_length=12)
+    next_steps: list[CompactText] = Field(default_factory=list, max_length=10)
 
 
 async def _submit_context_summary(_wrapper, raw_arguments: str) -> str:
     try:
-        return ResearchContextSummary.model_validate_json(raw_arguments).model_dump_json()
+        summary = ResearchContextSummary.model_validate_json(raw_arguments)
+        serialized = summary.model_dump_json()
+        if len(serialized) > 5_000:
+            raise ValueError(
+                f"摘要共 {len(serialized)} 字符，超过 5000 字符上限；"
+                "删除过程复述，只保留继续工作必需的信息"
+            )
+        return serialized
     except (ValueError, TypeError, json.JSONDecodeError) as error:
         logger.warning("research_context_summary_validation_error: %s", error)
         return f"研究上下文摘要校验失败，请修正全部字段后重试：{error}"
@@ -117,4 +126,6 @@ _INSTRUCTIONS = """
    标注冲突，不替主智能体裁决。
 6. 删除寒暄、重复过程、工具协议字段和对最终判断没有帮助的导航信息。
 7. 必须调用 submit_context_summary；不要输出自然语言答案。
+8. 整份摘要必须少于 5000 字符。不要把工具结果逐条复述进摘要；数字和原文应交给
+   hot_evidence_refs 或可恢复引用保存，摘要只保存判断结构和继续工作的最小信息。
 """.strip()

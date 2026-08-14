@@ -6,6 +6,7 @@ import asyncio
 import hashlib
 import json
 import logging
+import os
 import re
 from datetime import UTC, datetime
 from types import TracebackType
@@ -63,7 +64,9 @@ logger = logging.getLogger(__name__)
 _RUN_AUTHORIZATION_TTL_FLOOR_SECONDS = 6 * 60 * 60
 
 _MODEL_CONTEXT_WINDOW_TOKENS = 128_000
-_EXPLORATION_COMPACTION_RATIO = 0.80
+_EXPLORATION_COMPACTION_RATIO = float(
+    os.getenv("SMART_FUND_RESEARCH_COMPACTION_RATIO", "0.80")
+)
 
 
 class FinancialAgentRuntime:
@@ -171,22 +174,47 @@ class FinancialAgentRuntime:
         fingerprint = hashlib.sha256(serialized_notebook.encode()).hexdigest()[:16]
         if context.context_summary is not None:
             summary = ResearchContextSummary.model_validate(context.context_summary)
+            compacted = _llm_summary_model_input(
+                deterministic=deterministic,
+                notebook=notebook,
+                summary=summary,
+                fingerprint=context.context_summary_fingerprint or fingerprint,
+                recent_invocations=context.tool_invocations[
+                    context.context_summary_source_operation_count:
+                ],
+            )
+            compacted_tokens = _estimate_model_input_tokens(compacted)
+            threshold = int(
+                _MODEL_CONTEXT_WINDOW_TOKENS * _EXPLORATION_COMPACTION_RATIO
+            )
+            delta_tokens = _estimate_input_tokens([
+                invocation.result
+                for invocation in context.tool_invocations[
+                    context.context_summary_source_operation_count:
+                ]
+                if invocation.finished_at is not None
+            ])
+            # Reuse the semantic checkpoint until genuinely new work makes the
+            # active compacted context approach capacity. A phase change alone
+            # must never cause another compression cycle.
+            if compacted_tokens + 16_000 < threshold or delta_tokens < 8_000:
+                return compacted
         else:
             hooks.record_research_notebook(
                 run_id=context.run_id,
                 notebook=notebook,
             )
-            summary = await self._generate_context_summary(
-                notebook=notebook,
-                fingerprint=fingerprint,
-                run_id=context.run_id,
-            )
-            _validate_context_summary_refs(summary, notebook)
-            context.context_summary = summary.model_dump(mode="json")
-            context.context_summary_fingerprint = fingerprint
-            context.context_summary_source_operation_count = len(context.tool_invocations)
+        summary = await self._generate_context_summary(
+            notebook=notebook,
+            fingerprint=fingerprint,
+            run_id=context.run_id,
+        )
+        _validate_context_summary_refs(summary, notebook)
+        context.context_summary = summary.model_dump(mode="json")
+        context.context_summary_fingerprint = fingerprint
+        context.context_summary_source_operation_count = len(context.tool_invocations)
 
-        return _llm_summary_model_input(
+        compacted = _llm_summary_model_input(
             deterministic=deterministic,
             notebook=notebook,
             summary=summary,
@@ -195,6 +223,30 @@ class FinancialAgentRuntime:
                 context.context_summary_source_operation_count:
             ],
         )
+        original_tokens = _estimate_model_input_tokens(deterministic)
+        compacted_tokens = _estimate_model_input_tokens(compacted)
+        if compacted_tokens > int(original_tokens * 0.85):
+            compacted = _llm_summary_model_input(
+                deterministic=deterministic,
+                notebook=notebook,
+                summary=summary,
+                fingerprint=fingerprint,
+                recent_invocations=[],
+                hot_evidence_char_budget=0,
+            )
+            compacted_tokens = _estimate_model_input_tokens(compacted)
+        if compacted_tokens > int(original_tokens * 0.85):
+            raise RuntimeError(
+                "LLM context summary did not reduce active context by at least 15%: "
+                f"before={original_tokens}, after={compacted_tokens}"
+            )
+        logger.info(
+            "research_context_compacted: before=%s after=%s reduction=%.1f%%",
+            original_tokens,
+            compacted_tokens,
+            100 * (original_tokens - compacted_tokens) / max(original_tokens, 1),
+        )
+        return compacted
 
     async def _generate_context_summary(
         self,
@@ -1142,7 +1194,10 @@ def _apply_research_budget_guard(
         default=-1,
     )
     has_unresolved_external_search = last_search_index > last_read_index
-    estimated_input_tokens = _estimate_input_tokens(data.model_data.input)
+    estimated_input_tokens = _estimate_input_tokens({
+        "instructions": data.model_data.instructions,
+        "input": data.model_data.input,
+    })
     exploration_compaction_threshold = int(
         _MODEL_CONTEXT_WINDOW_TOKENS * _EXPLORATION_COMPACTION_RATIO
     )
@@ -1243,6 +1298,19 @@ def _apply_research_budget_guard(
             "应形成带条件、较低置信度且可证伪的观点，不能仅因缺少一个辅助"
             "维度改报 insufficient_evidence（证据不足）。不得为了"
             "满足格式而虚构因果链、趋势或确定性。"
+        )
+    elif (
+        projected_next_turn_tokens >= exploration_compaction_threshold
+        and context.working_memory is None
+    ):
+        # The semantic checkpoint is authored by the Research Agent because
+        # Runtime cannot infer which hypotheses and unresolved questions still
+        # matter. Ask only when capacity requires it, never at a fixed phase.
+        reminder_text = (
+            "活动上下文即将接近容量阈值。继续调用其他研究工具前，先调用 "
+            "checkpoint_research_working_memory（研究工作记忆检查点），保存当前"
+            "目标、候选与被削弱假设、已回答问题、剩余问题、丢弃路径和紧接着"
+            "要做的一步。这里只保存研究状态，不要复制工具原文或大量数字。"
         )
     elif (
         projected_next_turn_tokens >= exploration_compaction_threshold
@@ -1392,6 +1460,7 @@ def _llm_summary_model_input(
     summary: ResearchContextSummary,
     fingerprint: str,
     recent_invocations: list | None = None,
+    hot_evidence_char_budget: int = 8_000,
 ) -> ModelInputData:
     """Project an LLM summary plus a complete reversible evidence index."""
 
@@ -1400,11 +1469,27 @@ def _llm_summary_model_input(
             "order": item.get("order"),
             "evidence_ref": item.get("evidence_ref"),
             "tool": item.get("tool"),
-            "arguments": item.get("arguments"),
             "source_preserved": True,
         }
         for item in notebook.get("completed_operations") or []
     ]
+    retained_by_ref = {
+        str(item.get("evidence_ref")): item
+        for item in notebook.get("retained_results") or []
+        if item.get("evidence_ref")
+    }
+    hot_evidence = []
+    hot_evidence_chars = 0
+    for evidence_ref in summary.hot_evidence_refs:
+        item = retained_by_ref.get(evidence_ref)
+        if item is None:
+            continue
+        item_chars = len(json.dumps(item, ensure_ascii=False, default=str))
+        if hot_evidence_chars + item_chars > hot_evidence_char_budget:
+            continue
+        hot_evidence.append(item)
+        hot_evidence_chars += item_chars
+
     payload = {
         "llm_research_summary": summary.model_dump(mode="json"),
         "continuation_contract": {
@@ -1423,13 +1508,8 @@ def _llm_summary_model_input(
             "run_evidence_reopen 打开对应原始结果。"
         ),
         "notebook_fingerprint": fingerprint,
-        "working_memory": notebook.get("working_memory"),
         "evidence_index": evidence_index,
-        "hot_evidence": [
-            item
-            for item in notebook.get("retained_results") or []
-            if item.get("evidence_ref") in set(summary.hot_evidence_refs)
-        ],
+        "hot_evidence": hot_evidence,
         "recovery": {
             "tool": "run_evidence_reopen",
             "usage": "传入 evidence_index 中的 order，可选 path 精确恢复原始内容。",
@@ -1467,6 +1547,13 @@ def _llm_summary_model_input(
         ],
         instructions=deterministic.instructions,
     )
+
+
+def _estimate_model_input_tokens(model_input: ModelInputData) -> int:
+    return _estimate_input_tokens({
+        "instructions": model_input.instructions,
+        "input": model_input.input,
+    })
 
 
 _NOTEBOOK_RESULT_PRIORITY = {
