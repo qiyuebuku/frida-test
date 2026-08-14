@@ -104,6 +104,22 @@ def test_run_prepare_builds_context_from_server_state() -> None:
     assert pack["research_question"] == "市场温度上升是否得到成交确认？"
 
 
+def test_run_prepare_programmatically_binds_default_research_question() -> None:
+    result = AgentRunPrepareService(
+        market_service=_Market(),
+        research_repository=_Research(),
+    ).prepare_research(
+        trigger_payload=_trigger(),
+        signed_cutoff_at=CUTOFF,
+        research_question="",
+    )
+
+    question = result["context_pack"]["research_question"]
+    assert isinstance(question, str)
+    assert "现有投资观点" in question
+    assert "不关注账户持仓" in question
+
+
 def test_run_prepare_rejects_trigger_cutoff_mismatch() -> None:
     service = AgentRunPrepareService(
         market_service=_Market(),

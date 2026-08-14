@@ -17,6 +17,7 @@ from src.application.agents.financial_research.schemas import (
 )
 from src.application.services.market_evidence_locator import (
     LOCATOR_PREFIX,
+    decode_market_evidence_locator,
     normalize_market_evidence_locator,
 )
 
@@ -28,6 +29,7 @@ _URL_PATTERN = re.compile(r"https?://[^\s\"'<>]+")
 _EXTERNAL_HANDLE_PATTERN = re.compile(r"external_content:[A-Za-z0-9:_-]+")
 _MARKET_LOCATOR_PATTERN = re.compile(r"market:v1:[A-Za-z0-9_-]+=*")
 _MARKET_ALIAS_PATTERN = re.compile(r"market_ref:M[1-9][0-9]*")
+_ISO_DATE_PATTERN = re.compile(r"(?<!\d)20\d{2}-\d{2}-\d{2}(?!\d)")
 
 # Card 必须由 kg_card_open 真正打开。Edge 结果里附带的端点 Card ID
 # 只能用于导航，不等于模型已经阅读 Card 正文。
@@ -39,6 +41,7 @@ _MARKET_EVIDENCE_TOOLS = {
     "market_frame_open",
     "market_change_brief_open",
     "market_premarket_context_open",
+    "market_global_overview_open",
     "market_dimension_open",
     "market_topic_open",
     "market_domain_open",
@@ -84,7 +87,28 @@ def collect_opened_evidence(context: AgentRunContext) -> dict[str, object]:
         _normalized_reference(reference)
         for reference in _MARKET_LOCATOR_PATTERN.findall(market_text)
     }
-    market_references.update(_MARKET_ALIAS_PATTERN.findall(market_text))
+    market_aliases = set(_MARKET_ALIAS_PATTERN.findall(market_text))
+    market_references.update(market_aliases)
+    # Keep both representations.  Model-facing results contain compact aliases,
+    # while runtime-owned binding writes canonical reversible locators into the
+    # formal proposal.  Treating only one representation as opened makes the
+    # subsequent evidence-plan pruning delete evidence that came from the same
+    # successful tool result.
+    market_references.update(
+        _normalized_reference(context.evidence_aliases[alias])
+        for alias in market_aliases
+        if alias in context.evidence_aliases
+        and context.evidence_aliases[alias].startswith(LOCATOR_PREFIX)
+    )
+    # The alias table also contains locators projected from the previous report.
+    # Only aliases explicitly marked by a successful market-evidence tool are
+    # authoritative in the current run, matching the server-owned audit ledger.
+    for alias in context.opened_market_aliases:
+        reference = context.evidence_aliases.get(alias, "")
+        if not reference.startswith(LOCATOR_PREFIX):
+            continue
+        market_references.add(alias)
+        market_references.add(_normalized_reference(reference))
     context_pack = context.research_context
     input_references: set[str] = set()
     if context_pack is not None:
@@ -134,6 +158,11 @@ def _validate_citation(
             )
         return None
     if citation.kind == "external":
+        if citation.reference.endswith(":result:empty"):
+            return (
+                "empty search sentinel is not evidence; delete this citation: "
+                f"{citation.reference}"
+            )
         references = opened["external"]
         if not isinstance(references, set) or citation.reference not in references:
             return f"external source was not opened in this run: {citation.reference}"
@@ -177,6 +206,54 @@ def _iter_citations(
             yield from link.evidence
         if revision.market_structure is not None:
             yield from revision.market_structure.evidence
+
+
+def _iter_claims(result: CurrentResearchReportProposal):
+    yield from result.claims
+    for revision in result.view_revisions:
+        yield from revision.claims
+
+
+def _market_claim_date_error(
+    claim,
+    context: AgentRunContext,
+) -> str | None:
+    """Reject exact dated market claims whose citations cover other dates.
+
+    This deliberately validates provenance rather than market semantics. A
+    model may interpret a record, but it may not cite an Aug-13 locator for an
+    Aug-12 number or carry an unverified baseline out of the previous report.
+    """
+
+    claimed_dates = set(_ISO_DATE_PATTERN.findall(str(claim.statement)))
+    market_citations = [item for item in claim.evidence if item.kind == "market"]
+    if not claimed_dates or not market_citations:
+        return None
+    cited_dates: set[str] = set()
+    for citation in market_citations:
+        reference = context.evidence_aliases.get(
+            citation.reference,
+            citation.reference,
+        )
+        if not str(reference).startswith(LOCATOR_PREFIX):
+            continue
+        try:
+            identity = decode_market_evidence_locator(str(reference))
+        except ValueError:
+            continue
+        trade_date = identity.identity.get("trade_date")
+        if trade_date:
+            cited_dates.add(str(trade_date)[:10])
+        if identity.fact_time:
+            cited_dates.add(str(identity.fact_time)[:10])
+    missing = sorted(claimed_dates - cited_dates)
+    if missing:
+        return (
+            f"dated market claim {claim.claim_id} has no citation for "
+            + ", ".join(missing)
+            + "; remove the unverified dated fact or open its exact record"
+        )
+    return None
 
 
 def _reference_was_opened(reference: str, opened: dict[str, object]) -> bool:
@@ -244,6 +321,11 @@ def validate_research_result(
         )
         is not None
     ]
+    errors.extend(
+        error
+        for claim in _iter_claims(result)
+        if (error := _market_claim_date_error(claim, context)) is not None
+    )
     if result.status.value == "updated" and not _opened_exact_market_record(context):
         errors.append(
             "updated view requires at least one successfully opened record-level "

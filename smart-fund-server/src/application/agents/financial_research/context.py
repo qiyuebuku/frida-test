@@ -30,4 +30,20 @@ class AgentRunContext:
     research_context: ResearchContextPack | None = None
     tool_invocations: list[ToolInvocation] = field(default_factory=list)
     evidence_aliases: dict[str, str] = field(default_factory=dict)
+    # Only aliases observed through market evidence tools are admissible as
+    # citations. Aliases created while projecting a previous report remain
+    # navigation text and must not masquerade as evidence opened in this run.
+    opened_market_aliases: set[str] = field(default_factory=set)
+    # Model-authored, run-local decision state. This is deliberately separate
+    # from factual evidence and from cross-run Research Memory: it exists only
+    # to preserve the current investigation across context compaction.
+    working_memory: dict[str, Any] | None = None
+    working_memory_revision: int = 0
+    # Set only after Runtime has replaced the transcript with a reversible
+    # Research Notebook.  It prevents the model from guessing notebook orders
+    # before such an index actually exists.
+    notebook_compacted: bool = False
+    # Latest model-authored submission draft. Repair turns may send only the
+    # fields they changed; omitted fields retain their preceding value.
+    submission_draft: dict[str, Any] | None = None
     llm_calls: int = 0

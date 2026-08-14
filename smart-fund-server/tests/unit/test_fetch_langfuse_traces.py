@@ -1,4 +1,5 @@
 import importlib.util
+import io
 import json
 import sys
 from pathlib import Path
@@ -101,3 +102,30 @@ def test_summarize_trace_accepts_langfuse_v4_usage_keys():
         "observations": [{"usageDetails": {"input": 8, "output": 3, "total": 11}}],
     })
     assert summary["usage"] == {"input_tokens": 8, "output_tokens": 3, "total_tokens": 11}
+
+
+def test_langfuse_client_retries_transient_read_failure(monkeypatch):
+    module = _load_script_module()
+    attempts = 0
+
+    class _Response(io.BytesIO):
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            self.close()
+
+    def fake_urlopen(_request, timeout):
+        nonlocal attempts
+        assert timeout == 1
+        attempts += 1
+        if attempts < 3:
+            raise ConnectionResetError("transient")
+        return _Response(b'{"data": []}')
+
+    monkeypatch.setattr(module.urllib.request, "urlopen", fake_urlopen)
+    monkeypatch.setattr(module.time, "sleep", lambda _seconds: None)
+    client = module.LangfuseClient(host="http://langfuse", public_key="pk", secret_key="sk", timeout=1)
+
+    assert client.list_observations() == {"data": []}
+    assert attempts == 3

@@ -60,15 +60,19 @@ class AgentRunPrepareService:
             cutoff_at=signed_cutoff_at,
             limit=12,
         )
+        active_views = [_active_view(item) for item in raw_views]
+        effective_question = research_question.strip() or _default_research_question(
+            active_views=active_views,
+        )
         pack = self._builder.build(
             trigger=trigger,
             market_state=_market_state_frame(raw_frame, signed_cutoff_at),
             current_report_revision_id=(
                 str(report["revision_id"]) if report else None
             ),
-            active_views=[_active_view(item) for item in raw_views],
+            active_views=active_views,
             memory_items=[_memory_item(item) for item in raw_memories],
-            research_question=research_question.strip() or None,
+            research_question=effective_question,
         )
         return {
             "operation": "research_run_prepare",
@@ -76,6 +80,23 @@ class AgentRunPrepareService:
             "cutoff_at": signed_cutoff_at.isoformat(),
             "context_pack": pack.model_dump(mode="json"),
         }
+
+
+def _default_research_question(
+    *,
+    active_views: list[ActiveViewSnapshot],
+) -> str:
+    """Create a decision-neutral task when a scheduler supplies no question."""
+
+    if active_views:
+        return (
+            "复核当前市场环境与现有投资观点，主动寻找支持、削弱或推翻观点的新证据，"
+            "比较重要替代解释并判断观点是否需要修订；不关注账户持仓。"
+        )
+    return (
+        "研究当前市场最值得关注的结构性方向，比较主要候选、历史证据和直接反证，"
+        "形成可证伪的最新投资观点；不关注账户持仓。"
+    )
 
 
 def _market_state_frame(

@@ -658,7 +658,6 @@ class AgentMarketQueryService:
             }
         limit = max(1, min(int(limit_per_dimension), 2))
         dimensions = (
-            "global_us_hk_fx",
             "futures_commodities",
             "gold",
             "etf_fund",
@@ -674,6 +673,7 @@ class AgentMarketQueryService:
             )
             for dimension in dimensions
         ]
+        global_market = self.global_market_overview(cutoff_at=cutoff)
         return {
             "operation": "market_premarket_context_open",
             "status": "available",
@@ -682,6 +682,7 @@ class AgentMarketQueryService:
                 "建立A股开盘前的跨市场先验；这些数据用于提出条件情景和预测，"
                 "不能被表述为已经发生的当日A股行情。"
             ),
+            "global_market": global_market,
             "dimensions": [
                 {
                     "dimension": result["dimension"],
@@ -693,10 +694,126 @@ class AgentMarketQueryService:
                 for result in results
             ],
             "next_operations": [
+                "market_global_overview_open",
                 "market_evidence_open",
                 "market_topic_open",
                 "kg_relation_graph_search",
                 "market_instrument_realtime_open",
+            ],
+        }
+
+    def global_market_overview(
+        self,
+        *,
+        cutoff_at: datetime,
+    ) -> dict[str, Any]:
+        """Return a semantic, bounded global-market map instead of arbitrary rows.
+
+        The US dashboard is assembled from many snapshots. A generic newest-N
+        query can therefore hide the index table behind ETF/ranking modules.
+        This read model deliberately selects the US index, breadth and sector
+        snapshots and projects their provider-native tables into readable facts.
+        """
+
+        cutoff = self._validate_cutoff(cutoff_at)
+        us_result = self._snapshots.list_latest_for_agent(
+            data_types=["ths_us_market_module"],
+            cutoff_at=cutoff,
+            limit=100,
+        )
+        other_types = sorted(
+            MARKET_DIMENSIONS["global_us_hk_fx"]
+            - {"ths_us_market_module", "ths_us_security_quote"}
+        )
+        other_result = self._snapshots.list_latest_for_agent(
+            data_types=other_types,
+            cutoff_at=cutoff,
+            limit=20,
+        )
+        us_rows = list(us_result.get("items") or [])
+        other_rows = list(other_result.get("items") or [])
+        rows = [*us_rows, *other_rows]
+        us_modules = {
+            str(row.get("subject_id") or ""): row
+            for row in rows
+            if row.get("data_type") == "ths_us_market_module"
+        }
+        indices = _native_table_quote_preview(
+            (us_modules.get("indices_stream") or {}).get("data")
+        )
+        breadth = _us_breadth_preview(
+            (us_modules.get("overview") or us_modules.get("breadth") or {}).get(
+                "data"
+            )
+        )
+        sectors = {
+            kind: _us_sector_preview((us_modules.get(subject) or {}).get("data"))
+            for kind, subject in (
+                ("industry", "industry_current_stream"),
+                ("concept", "concept_current_stream"),
+            )
+        }
+        selected_us_rows = [
+            row
+            for subject in (
+                "indices_stream",
+                "overview",
+                "breadth",
+                "industry_current_stream",
+                "concept_current_stream",
+            )
+            if (row := us_modules.get(subject)) is not None
+        ]
+        us_locators = {
+            subject: _snapshot_locator(row)
+            for subject, row in us_modules.items()
+            if subject in {
+                "indices_stream",
+                "overview",
+                "breadth",
+                "industry_current_stream",
+                "concept_current_stream",
+            }
+        }
+        other_global = [_project_snapshot(row) for row in other_rows][:12]
+        return {
+            "operation": "market_global_overview_open",
+            "status": "available" if indices or breadth or other_global else "empty",
+            "as_of": _latest_time([_fact_time(row) for row in rows]),
+            "us_market": {
+                "indices": (indices or {}).get("quotes", []),
+                "indices_evidence_locator": us_locators.get("indices_stream"),
+                "breadth": breadth,
+                "breadth_evidence_locator": (
+                    us_locators.get("overview") or us_locators.get("breadth")
+                ),
+                "leading_industries": sectors["industry"],
+                "leading_industries_evidence_locator": us_locators.get(
+                    "industry_current_stream"
+                ),
+                "leading_concepts": sectors["concept"],
+                "leading_concepts_evidence_locator": us_locators.get(
+                    "concept_current_stream"
+                ),
+                "evidence_locators": [
+                    locator
+                    for row in selected_us_rows
+                    if (locator := _snapshot_locator(row)) is not None
+                ],
+            },
+            "other_global_facts": other_global,
+            "total_available": (
+                int(us_result.get("total") or 0)
+                + int(other_result.get("total") or 0)
+            ),
+            "other_global_truncated": max(
+                0,
+                int(other_result.get("total") or 0) - len(other_global),
+            ) > 0,
+            "next_operations": [
+                "market_evidence_open",
+                "market_instrument_realtime_open",
+                "market_instrument_history",
             ],
         }
 
@@ -1437,6 +1554,79 @@ def _native_table_quote_preview(value: Any) -> dict[str, Any] | None:
         "truncated": row_count > len(rows),
         "available_field_codes": list(data_dict.keys())[:30],
     }
+
+
+def _us_breadth_preview(value: Any) -> dict[str, Any] | None:
+    if not isinstance(value, Mapping):
+        return None
+    today = value.get("breadth_today") or value.get("today")
+    if not isinstance(today, Mapping):
+        return None
+
+    def total(key: str) -> int:
+        rows = today.get(key)
+        if not isinstance(rows, (list, tuple)):
+            return 0
+        return sum(
+            int(row.get("count") or 0)
+            for row in rows
+            if isinstance(row, Mapping)
+        )
+
+    advancing = total("increase_ranges")
+    declining = total("decline_ranges")
+    unchanged = int(today.get("zero_range") or 0)
+    return {
+        "advancing": advancing,
+        "declining": declining,
+        "unchanged": unchanged,
+        "advance_decline_ratio": (
+            round(advancing / declining, 2) if declining else None
+        ),
+    }
+
+
+def _us_sector_preview(value: Any) -> list[dict[str, Any]]:
+    if not isinstance(value, Mapping):
+        return []
+    native_table = value.get("native_table")
+    data = native_table.get("dataDict") if isinstance(native_table, Mapping) else None
+    if not isinstance(data, Mapping):
+        return []
+    names = data.get("55")
+    changes = data.get("34313")
+    leaders = data.get("35284")
+    leader_changes = data.get("35286")
+    if not isinstance(names, (list, tuple)):
+        return []
+    rows = []
+    for index, name in enumerate(names[:5]):
+        rows.append(
+            {
+                key: item
+                for key, item in {
+                    "name": name,
+                    "change_pct": (
+                        changes[index]
+                        if isinstance(changes, (list, tuple)) and index < len(changes)
+                        else None
+                    ),
+                    "leader": (
+                        leaders[index]
+                        if isinstance(leaders, (list, tuple)) and index < len(leaders)
+                        else None
+                    ),
+                    "leader_change_pct": (
+                        leader_changes[index]
+                        if isinstance(leader_changes, (list, tuple))
+                        and index < len(leader_changes)
+                        else None
+                    ),
+                }.items()
+                if item not in (None, "")
+            }
+        )
+    return rows
 
 
 def _compact_evidence_record(record: Mapping[str, Any]) -> Any:

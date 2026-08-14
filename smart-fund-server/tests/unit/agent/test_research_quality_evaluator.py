@@ -1,3 +1,4 @@
+from copy import deepcopy
 from datetime import UTC, datetime, timedelta
 
 import pytest
@@ -7,6 +8,18 @@ from src.application.agents.financial_research.quality_evaluator import (
     evaluate_research_quality,
     require_publishable_quality,
 )
+from src.application.agents.financial_research.audit import (
+    collect_opened_evidence,
+    prune_unopened_evidence_plan_references,
+)
+from src.application.agents.financial_research.agent import (
+    _bind_opened_daily_history_references,
+)
+from src.application.agents.financial_research.context import (
+    AgentRunContext,
+    ToolInvocation,
+)
+from src.application.agents.financial_research.schemas import ResearchTaskMode
 from src.application.services.market_evidence_locator import (
     MarketEvidenceIdentity,
     encode_market_evidence_locator,
@@ -279,6 +292,171 @@ def test_deep_research_passes_all_quality_gates() -> None:
     require_publishable_quality(evaluation)
 
 
+def test_challenge_event_is_state_degradation_not_a_new_forward_contract() -> None:
+    payload = _proposal(deep=True).model_dump(mode="python")
+    challenged = deepcopy(payload["view_revisions"][0])
+    challenged.update(
+        view_id="view-old",
+        base_revision_id="view-old-rev-1",
+        proposed_revision_id="view-old-rev-2",
+        event="challenge",
+        status="challenged",
+        market_structure=None,
+        decision_boundary=None,
+        evidence_plan=[deepcopy(payload["view_revisions"][0]["evidence_plan"][0])],
+        forecasts=[],
+    )
+    payload["view_revisions"].append(challenged)
+    proposal = CurrentResearchReportProposal.model_validate(payload)
+    opened = {
+        citation.reference
+        for revision in proposal.view_revisions
+        for claim in revision.claims
+        for citation in claim.evidence
+    }
+    opened.update(
+        reference
+        for plan in proposal.view_revisions[0].evidence_plan
+        for reference in plan.opened_references
+    )
+    opened.update(
+        {
+            "market:v1:source", "market:v1:breadth",
+            "market:v1:structure1", "market:v1:structure2",
+        }
+    )
+
+    evaluation = evaluate_research_quality(
+        proposal,
+        tool_names={
+            "market_change_brief_open",
+            "market_frame_open",
+            "market_dimension_open",
+            "market_sector_open",
+            "market_instrument_history",
+            "market_evidence_open",
+            "external_web_read",
+        },
+        opened_evidence_refs=opened,
+    )
+
+    assert "missing_market_structure_assessment" not in evaluation.advisory_findings
+    assert "missing_portfolio_decision_boundary" not in evaluation.advisory_findings
+    assert "primary_view_missing_own_multi_day_history" not in evaluation.advisory_findings
+
+
+def test_challenge_only_update_does_not_trigger_impossible_forward_contract_gate() -> None:
+    payload = _proposal(deep=True).model_dump(mode="python")
+    challenged = deepcopy(payload["view_revisions"][0])
+    challenged.update(
+        view_id="view-old",
+        base_revision_id="view-old-rev-1",
+        proposed_revision_id="view-old-rev-2",
+        event="challenge",
+        status="challenged",
+        market_structure=None,
+        decision_boundary=None,
+        forecasts=[],
+    )
+    payload["view_revisions"] = [challenged]
+    proposal = CurrentResearchReportProposal.model_validate(payload)
+    opened = {
+        citation["reference"]
+        for claim in challenged["claims"]
+        for citation in claim["evidence"]
+    }
+    opened.update(
+        reference
+        for plan in challenged["evidence_plan"]
+        for reference in plan["opened_references"]
+    )
+
+    evaluation = evaluate_research_quality(
+        proposal,
+        tool_names={
+            "market_change_brief_open",
+            "market_sector_open",
+            "market_instrument_history",
+            "market_evidence_open",
+            "market_historical_analogue_open",
+        },
+        opened_evidence_refs=opened,
+    )
+
+    assert "missing_market_structure_assessment" not in evaluation.advisory_findings
+    assert "missing_portfolio_decision_boundary" not in evaluation.advisory_findings
+    assert "incomplete_mechanism_chain" not in evaluation.advisory_findings
+
+
+def test_daily_history_binding_reads_market_bucket_not_evidence_dict_keys() -> None:
+    proposal = _proposal(deep=True)
+    payload = proposal.model_dump(mode="python")
+    payload["view_revisions"][0]["evidence_plan"][1]["opened_references"] = []
+    proposal = CurrentResearchReportProposal.model_validate(payload)
+    locators = [
+        encode_market_evidence_locator(
+            MarketEvidenceIdentity(
+                kind="snapshot",
+                domain="market_snapshot",
+                identity={"id": 200 + day, "trade_date": f"2026-08-{day:02d}"},
+                data_type="ths_sector_daily",
+                subject_id="ths:concept:886033",
+                fact_time=f"2026-08-{day:02d}T15:00:00+08:00",
+            )
+        )
+        for day in (8, 9, 10)
+    ]
+    now = datetime.now(UTC)
+    aliases = {f"market_ref:M{index}": locator for index, locator in enumerate(locators, 1)}
+    context = AgentRunContext(
+        run_id="run-bind-history",
+        session_id="session-bind-history",
+        task_mode=ResearchTaskMode.RESEARCH_REVIEW,
+        evidence_aliases=aliases,
+        tool_invocations=[
+            ToolInvocation(
+                name="market_instrument_history",
+                call_id="history-1",
+                arguments={
+                    "code": "ths:concept:886033",
+                    "data_type": "ths_sector_daily",
+                },
+                # Compaction replaces reversible locators with short model-facing aliases.
+                result={
+                    "window_evidence": {
+                        "latest": {
+                            "trade_date": "2026-08-10",
+                            "evidence_locator": "market_ref:M3",
+                        },
+                        "5_bars": {
+                            "baseline": {
+                                "trade_date": "2026-08-08",
+                                "evidence_locator": "market_ref:M1",
+                            },
+                            "close_high": {
+                                "trade_date": "2026-08-09",
+                                "evidence_locator": "market_ref:M2",
+                            },
+                        },
+                    }
+                },
+                started_at=now,
+                finished_at=now,
+            )
+        ],
+    )
+    proposal_payload = proposal.model_dump(mode="python")
+    proposal_payload["view_revisions"][0]["scope"] = ["ths:concept:886033"]
+    proposal = CurrentResearchReportProposal.model_validate(proposal_payload)
+
+    bound = _bind_opened_daily_history_references(proposal, context)
+    bound = prune_unopened_evidence_plan_references(bound, context)
+
+    history_plan = bound.view_revisions[0].evidence_plan[1]
+    assert history_plan.opened_references == list(reversed(locators))
+    assert set(locators).issubset(collect_opened_evidence(context)["market"])
+
+
 def test_shallow_market_summary_is_rejected_with_actionable_failures() -> None:
     evaluation = evaluate_research_quality(
         _proposal(deep=False),
@@ -286,7 +464,7 @@ def test_shallow_market_summary_is_rejected_with_actionable_failures() -> None:
     )
 
     assert evaluation.passed is False
-    assert "missing_narrative_source_evidence" in evaluation.advisory_findings
+    assert "missing_narrative_source_evidence" not in evaluation.advisory_findings
     assert "missing_exact_market_evidence" in evaluation.advisory_findings
     assert "missing_direct_counterevidence" not in evaluation.hard_failures
     assert "incomplete_mechanism_chain" in evaluation.advisory_findings

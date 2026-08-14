@@ -1,3 +1,4 @@
+import json
 from types import SimpleNamespace
 
 import pytest
@@ -115,6 +116,73 @@ async def test_business_trace_formats_json_user_message_as_object():
         "research_task": {"question": "当前市场如何？"}
     }
     assert "text" not in conversation[0]
+    hooks.close_open_observations()
+
+
+@pytest.mark.asyncio
+async def test_business_trace_projects_research_notebook_into_readable_chunks():
+    langfuse = _Langfuse()
+    hooks = AgentAuditHooks(
+        langfuse_client=langfuse,
+        include_sensitive_data=True,
+        model="glm-5.2",
+    )
+    context = _hook_context()
+    agent = SimpleNamespace(name="Research Agent｜研究智能体", model="glm-5.2")
+    notebook = {
+        "research_notebook": {
+            "compaction_policy": "确定性压缩",
+            "working_memory": {"revision": 2, "state": {"next_step": "核验反证"}},
+            "recent_working_notes": [{"text": "保留主线"}],
+            "completed_operations": [{"order": 1}, {"order": 2}],
+            "retained_results": [
+                {
+                    "evidence_ref": "run_evidence:E1",
+                    "tool": "market_sector_open",
+                    "result": {"change_pct": 2.03},
+                }
+            ],
+            "omitted_results": [{"evidence_ref": "run_evidence:E2"}],
+        }
+    }
+
+    await hooks.on_llm_start(
+        context,
+        agent,
+        "system",
+        [{"role": "user", "content": json.dumps(notebook)}],
+    )
+
+    names = [record["start"]["name"] for record in langfuse.records]
+    assert names == [
+        "06 上下文压缩｜研究笔记总览",
+        "06 上下文压缩｜研究主线与工作记忆",
+        "06 上下文压缩｜保留证据 1/1",
+        "06 上下文压缩｜省略结果索引",
+        "01 研究规划｜LLM 1",
+    ]
+    assert langfuse.records[0]["update"]["output"] == {
+        "completed_operation_count": 2,
+        "retained_result_count": 1,
+        "omitted_result_count": 1,
+        "retained_result_chunks": 1,
+        "recent_working_note_count": 1,
+    }
+    assert langfuse.records[2]["update"]["output"]["retained_results"][0][
+        "evidence_ref"
+    ] == "run_evidence:E1"
+
+    # The same notebook may be sent on a correction round; trace it only once.
+    await hooks.on_llm_start(
+        context,
+        agent,
+        "system",
+        [{"role": "user", "content": json.dumps(notebook)}],
+    )
+    assert sum(
+        record["start"]["name"] == "06 上下文压缩｜研究笔记总览"
+        for record in langfuse.records
+    ) == 1
     hooks.close_open_observations()
 
 

@@ -3252,7 +3252,12 @@ class MarketObservationService:
                     native_code,
                     market_code,
                     name=name,
-                    count=120,
+                    # Unified 1234/2312 returns a stale historical page when
+                    # klinecount=500 for sector/index identities.  300 is the
+                    # largest production-verified window that still ends at
+                    # the newest trading day; it also exceeds the Agent's
+                    # 120-bar research requirement.
+                    count=300,
                 ),
             )
             for native_code, market_code, canonical_code, name
@@ -3360,7 +3365,7 @@ class MarketObservationService:
                     str(sector["provider_sector_code"]),
                     str(sector["market_code"]),
                     name=str(sector["sector_name"]),
-                    count=120,
+                    count=300,
                 )
 
         sector_results = await asyncio.gather(

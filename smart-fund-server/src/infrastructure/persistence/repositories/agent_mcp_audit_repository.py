@@ -230,6 +230,10 @@ def _extract_opened_evidence(tool_name: str, value: Any) -> list[str]:
             "baseline_evidence_locator",
         },
         "market_premarket_context_open": {"evidence_locator"},
+        "market_global_overview_open": {
+            "evidence_locator",
+            "evidence_locators",
+        },
         "market_domain_open": {"evidence_locator"},
         "market_topic_open": {"evidence_locator"},
         "market_evidence_open": {"locator", "evidence_locator"},
@@ -248,7 +252,11 @@ def _extract_opened_evidence(tool_name: str, value: Any) -> list[str]:
             "high_evidence_locator",
             "low_evidence_locator",
         },
-        "market_historical_analogue_open": {"evidence_locator", "evidence_locators"},
+        "market_historical_analogue_open": {
+            "evidence_locator",
+            "evidence_locators",
+            "analysis_evidence_locator",
+        },
         "market_sector_overview": {"evidence_locator"},
         "market_sector_rankings": {"evidence_locator"},
         "market_sector_open": {"evidence_locator"},
@@ -262,10 +270,26 @@ def _extract_opened_evidence(tool_name: str, value: Any) -> list[str]:
             for key, child in item.items():
                 if key in keys and isinstance(child, (str, int)) and str(child):
                     found.append(str(child))
+                elif key in keys and isinstance(child, list):
+                    found.extend(
+                        str(value)
+                        for value in child
+                        if isinstance(value, (str, int)) and str(value)
+                    )
                 visit(child)
         elif isinstance(item, list):
             for child in item:
                 visit(child)
+        elif (
+            keys
+            and isinstance(item, str)
+            and item.startswith("market:v1:")
+        ):
+            # Model-facing projection treats every reversible locator inside a
+            # successful market tool result as opened. Register the same set on
+            # the server even when a new semantic view nests it under a field
+            # name not yet listed above.
+            found.append(item)
 
     visit(value)
     return list(dict.fromkeys(found))[:500]

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import base64
+import hashlib
 import json
 from dataclasses import dataclass
 from datetime import UTC, date, datetime
@@ -115,6 +116,42 @@ def with_evidence_field(locator: str, field: str) -> str:
             fact_time=identity.fact_time,
             version=identity.version,
             field=_required(field, "field"),
+        )
+    )
+
+
+def historical_analogue_evidence_locator(value: Mapping[str, Any]) -> str:
+    """Identify one deterministic historical-analogue aggregate."""
+
+    material = {
+        key: value.get(key)
+        for key in (
+            "subject_id",
+            "benchmark_subject_id",
+            "signal_definition",
+            "forward_window_bars",
+            "sample_count",
+            "statistics",
+            "robustness",
+        )
+    }
+    digest = hashlib.sha256(
+        json.dumps(
+            material,
+            sort_keys=True,
+            ensure_ascii=False,
+            default=str,
+        ).encode()
+    ).hexdigest()
+    return encode_market_evidence_locator(
+        MarketEvidenceIdentity(
+            kind="calculation",
+            domain="market_historical_analogue",
+            identity={"sha256": digest},
+            data_type=str(value.get("data_type") or "historical_analogue"),
+            subject_id=str(value.get("subject_id") or "") or None,
+            provider="smart_fund_deterministic",
+            version="v1",
         )
     )
 

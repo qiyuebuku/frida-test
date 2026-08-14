@@ -12,13 +12,23 @@ from pydantic import ValidationError
 
 from src.application.agents.financial_research.agent import (
     _bind_research_draft,
+    _bind_forecast_calibration_fields,
     _decode_provider_proposal,
+    _merge_submission_objects,
+    _normalize_provider_proposal,
+    _prune_unopened_citations,
+    _remove_unsupported_directional_forecasts,
     _relevant_plan_references,
     _validated_proposal_is_final,
+    _validate_forecast_calibration,
+    checkpoint_research_working_memory,
+    run_evidence_reopen,
     submit_investment_view_revision,
     submit_research_conclusion,
 )
 from src.application.agents.financial_research.audit import (
+    _market_claim_date_error,
+    _normalized_reference,
     _opened_exact_market_record,
     _validate_citation,
     collect_opened_evidence,
@@ -39,9 +49,19 @@ from src.application.agents.financial_research.research_context import (
     ResearchContextBuilder,
 )
 from src.application.agents.financial_research.runtime import (
+    FinancialAgentRuntime,
     _apply_research_budget_guard,
+    _collect_semantic_audit_references,
+    _compacted_research_notebook_input,
+    _decode_notebook_result,
     _expand_evidence_aliases,
+    _estimate_input_tokens,
+    _is_research_proposal_output,
     _raise_on_tool_error,
+    _project_notebook_result,
+    _recent_research_working_notes,
+    _semantic_reference_matches,
+    _semantic_evidence_excerpt,
 )
 from src.application.agents.financial_research.schemas import (
     ActiveViewSnapshot,
@@ -54,6 +74,7 @@ from src.application.agents.financial_research.schemas import (
     MarketStateFrame,
     OutcomeObservation,
     ResearchContextPack,
+    ResearchClaim,
     ResearchMemoryItem,
     ResearchReportDraft,
     ResearchRunStatus,
@@ -66,12 +87,18 @@ from src.application.services.market_evidence_locator import (
 )
 from src.infrastructure.agent_runtime.config import AgentSettings
 from src.infrastructure.agent_runtime.mcp import (
+    _attach_calculation_evidence,
     _compact_market_evidence,
+    _decode_tool_result_object,
     _project_market_history,
+    _project_model_tool_payload,
     _read_call_key,
     create_mcp_server,
     financial_tool_filter,
+    research_ledger_missing_requirements,
 )
+
+
 from src.infrastructure.persistence.models.agent_research import (
     AgentCurrentResearchReport,
     AgentInvestmentViewRevision,
@@ -85,6 +112,327 @@ from src.interfaces.cli.main import cli
 
 
 CUTOFF = datetime(2026, 8, 9, 6, 0, tzinfo=UTC)
+
+
+def test_historical_analogue_projection_keeps_leakage_and_sensitivity() -> None:
+    projected = _project_model_tool_payload({
+        "subject_id": "ths:concept:886033",
+        "statistics": {"median_return_pct": 9.9},
+        "robustness": {
+            "leakage_controls": {"non_overlapping_forward_windows": True},
+            "threshold_sensitivity": [
+                {"match_distance_threshold": 1.75, "sample_count": 12},
+                {"match_distance_threshold": 2.5, "sample_count": 18},
+            ],
+            "strict_statistics": {"median_return_pct": 1.2},
+            "trimmed_one_each_tail_statistics": {"median_return_pct": 1.1},
+            "temporal_holdout": {
+                "development_statistics": {
+                    "median_return_pct": 1.0,
+                    "positive_share": 0.6,
+                },
+                "holdout_statistics": {
+                    "median_return_pct": -0.5,
+                    "positive_share": 0.4,
+                },
+                "median_direction_consistent": False,
+                "validation_status": "direction_shift",
+            },
+        },
+    }, "market_historical_analogue_open")
+
+    assert projected["robustness"]["leakage_controls"] == {
+        "non_overlapping_forward_windows": True,
+    }
+    assert len(projected["robustness"]["threshold_sensitivity"]) == 2
+    assert projected["full_sample_distribution"]["median_return_pct"] == 9.9
+    assert "temporal_holdout" not in projected["robustness"]
+    assert projected["calibration_readout"]["absolute_return"] == {
+        "development_median_return_pct": 1.0,
+        "holdout_median_return_pct": -0.5,
+        "development_positive_share_return_pct": 0.6,
+        "holdout_positive_share_return_pct": 0.4,
+        "median_direction_consistent": False,
+        "validation_status": "direction_shift",
+        "program_interpretation": "开发集与留出集方向不一致，不得声称规律稳定",
+    }
+    assert projected["robustness"]["strict_statistics"]["median_return_pct"] == 1.2
+    assert projected["distribution_stability_readout"][
+        "strict_vs_full_direction_conflict"
+    ] is False
+
+
+def test_natural_language_cannot_end_research_run() -> None:
+    assert hasattr(FinancialAgentRuntime, "prepare_and_run")
+    assert _is_research_proposal_output("现在打开证据账本。") is False
+    assert _is_research_proposal_output('{"status":"updated"}') is False
+
+
+def test_submission_repair_merges_omitted_fields_and_honours_explicit_deletion() -> None:
+    previous = {
+        "report_summary": "original",
+        "view_revisions": [{"view_id": "v1"}],
+        "market_structure": {"breadth": "narrow", "volume": "weak"},
+    }
+    repaired = _merge_submission_objects(previous, {
+        "report_summary": "repaired",
+        "market_structure": {"breadth": "broad"},
+        "view_revisions": [],
+    })
+
+    assert repaired == {
+        "report_summary": "repaired",
+        "view_revisions": [],
+        "market_structure": {"breadth": "broad", "volume": "weak"},
+    }
+
+
+@pytest.mark.asyncio
+async def test_working_memory_checkpoint_replaces_run_local_state() -> None:
+    context = _context()
+    payload = {
+        "research_goal": "比较两个候选",
+        "candidate_hypotheses": [],
+        "answered_questions": [],
+        "remaining_questions": ["哪个候选历史表现更稳健"],
+        "discarded_paths": ["不再研究无关板块"],
+        "next_step": "查询两个候选的历史类比",
+    }
+
+    result = await checkpoint_research_working_memory.on_invoke_tool(
+        SimpleNamespace(context=context), json.dumps(payload, ensure_ascii=False)
+    )
+
+    assert json.loads(result)["saved"] is True
+    assert context.working_memory == payload
+    assert context.working_memory_revision == 1
+
+
+def test_compacted_notebook_retains_structured_working_memory() -> None:
+    memory = {
+        "research_goal": "形成观点",
+        "candidate_hypotheses": [],
+        "answered_questions": [],
+        "remaining_questions": ["补直接反证"],
+        "discarded_paths": ["黄金"],
+        "next_step": "打开反方原文",
+    }
+
+    compacted = _compacted_research_notebook_input(
+        original_input=[{"role": "user", "content": "{}"}],
+        invocations=[],
+        working_memory=memory,
+        working_memory_revision=3,
+    )
+    notebook = json.loads(compacted[1]["content"])["research_notebook"]
+
+    assert notebook["working_memory"]["revision"] == 3
+    assert notebook["working_memory"]["state"] == memory
+
+
+def test_compacted_notebook_keeps_current_market_results_with_many_analogues() -> None:
+    invocations = []
+    for index in range(8):
+        invocations.append(ToolInvocation(
+            name="market_historical_analogue_open",
+            call_id=f"history-{index}",
+            arguments={"code": f"candidate-{index}"},
+            result=json.dumps({"subject_id": f"candidate-{index}", "payload": "h" * 4_000}),
+            finished_at=CUTOFF,
+        ))
+    invocations.extend([
+        ToolInvocation(
+            name="market_sector_open",
+            call_id=f"sector-{index}",
+            arguments={"provider_sector_code": str(881100 + index)},
+            result=json.dumps({"subject_id": f"sector-{index}", "payload": "m" * 8_000}),
+            finished_at=CUTOFF,
+        )
+        for index in range(3)
+    ])
+
+    compacted = _compacted_research_notebook_input(
+        original_input=[{"role": "user", "content": "{}"}],
+        invocations=invocations,
+    )
+    notebook = json.loads(compacted[1]["content"])["research_notebook"]
+    retained_tools = [item["tool"] for item in notebook["retained_results"]]
+
+    assert retained_tools.count("market_historical_analogue_open") == 8
+    assert retained_tools.count("market_sector_open") == 3
+
+
+def test_compacted_notebook_retains_global_overview_before_repeated_analogues() -> None:
+    invocations = [ToolInvocation(
+        name="market_global_overview_open",
+        call_id="global",
+        arguments={},
+        result=json.dumps({
+            "us_indices": [{"symbol": "IXIC", "change_pct": 0.81}],
+            "us_breadth": {"advancing": 6798, "declining": 3618},
+            "evidence": ["market_ref:US1"],
+        }),
+        finished_at=CUTOFF,
+    )]
+    invocations.extend(
+        ToolInvocation(
+            name="market_historical_analogue_open",
+            call_id=f"history-{index}",
+            arguments={"code": f"candidate-{index}"},
+            result=json.dumps({
+                "subject_id": f"candidate-{index}",
+                "payload": "h" * 9_000,
+            }),
+            finished_at=CUTOFF,
+        )
+        for index in range(12)
+    )
+
+    compacted = _compacted_research_notebook_input(
+        original_input=[{"role": "user", "content": "{}"}],
+        invocations=invocations,
+    )
+    notebook = json.loads(compacted[1]["content"])["research_notebook"]
+    global_result = next(
+        item for item in notebook["retained_results"]
+        if item["tool"] == "market_global_overview_open"
+    )
+
+    assert global_result["result"]["us_indices"][0]["symbol"] == "IXIC"
+    assert global_result["result"]["evidence"] == ["market_ref:US1"]
+
+
+@pytest.mark.asyncio
+async def test_run_evidence_reopen_restores_folded_result_by_order_and_path() -> None:
+    context = _context()
+    context.tool_invocations = [ToolInvocation(
+        name="market_global_overview_open",
+        call_id="global",
+        arguments={},
+        result=json.dumps({
+            "us_indices": [
+                {"symbol": "DJI", "change_pct": 0.4},
+                {"symbol": "IXIC", "change_pct": 0.81},
+            ],
+        }),
+        finished_at=CUTOFF,
+    )]
+
+    result = await run_evidence_reopen.on_invoke_tool(
+        SimpleNamespace(context=context),
+        json.dumps({"order": 1, "path": "us_indices.1"}),
+    )
+    payload = json.loads(result)
+
+    assert payload["available"] is True
+    assert payload["tool"] == "market_global_overview_open"
+    assert json.loads(payload["content"]) == {"symbol": "IXIC", "change_pct": 0.81}
+
+
+def test_only_market_tool_aliases_are_authoritative_opened_evidence() -> None:
+    context = _context()
+    locator = encode_market_evidence_locator(MarketEvidenceIdentity(
+        kind="snapshot",
+        domain="market_snapshot",
+        data_type="ths_us_market_module",
+        subject_id="indices_stream",
+        provider="ths_native_stream",
+        identity={"id": 1},
+    ))
+    context.evidence_aliases["market_ref:M1"] = locator
+
+    opened = collect_opened_evidence(context)
+
+    assert "market_ref:M1" not in opened["market"]
+    context.opened_market_aliases.add("market_ref:M1")
+    opened = collect_opened_evidence(context)
+
+    assert "market_ref:M1" in opened["market"]
+    assert _normalized_reference(locator) in opened["market"]
+
+
+def test_submit_boundary_prunes_citations_not_opened_in_current_run() -> None:
+    context = _context()
+    context.tool_invocations = [
+        ToolInvocation(
+            name="kg_card_open",
+            call_id="card",
+            arguments={"card_id": "kg_cognitive_card:opened"},
+            result=json.dumps({"card_id": "kg_cognitive_card:opened"}),
+            finished_at=CUTOFF,
+        )
+    ]
+    proposal = _no_change_report()
+    proposal.claims = [ResearchClaim(
+        claim_id="claim-1",
+        claim_type="source_claim",
+        epistemic_status="supported",
+        statement="已打开来源陈述了一项事实。",
+        thesis_effect="context",
+        confidence="medium",
+        evidence=[
+            EvidenceCitation(
+                citation_id="citation-opened",
+                kind="card",
+                reference="kg_cognitive_card:opened",
+                support="supports",
+            ),
+            EvidenceCitation(
+                citation_id="citation-stale",
+                kind="card",
+                reference="kg_cognitive_card:stale",
+                support="context",
+            ),
+        ],
+    )]
+
+    pruned = _prune_unopened_citations(proposal, context)
+    references = [
+        citation.reference
+        for claim in pruned.claims
+        for citation in claim.evidence
+    ]
+
+    assert references == []
+    assert pruned.claims == []
+
+
+def test_submit_boundary_drops_observed_fact_when_its_only_locator_is_unopened() -> None:
+    context = _context()
+    proposal = _no_change_report()
+    proposal.claims = [ResearchClaim(
+        claim_id="claim-unopened-market",
+        claim_type="observed_fact",
+        epistemic_status="supported",
+        statement="模型使用了带虚构后缀的行情定位符。",
+        thesis_effect="context",
+        confidence="medium",
+        evidence=[EvidenceCitation(
+            citation_id="citation-unopened-market",
+            kind="market",
+            reference="market_ref:M30_result",
+            support="supports",
+        )],
+    )]
+
+    pruned = _prune_unopened_citations(proposal, context)
+
+    assert pruned.claims == []
+
+
+def test_notebook_decoder_unwraps_agents_sdk_text_envelope() -> None:
+    payload = {
+        "subject_id": "ths:concept:886033",
+        "calibration_status": "calibrated",
+        "sample_count": 30,
+    }
+    envelope = {
+        "content": [
+            {"type": "text", "text": json.dumps(payload, ensure_ascii=False)}
+        ]
+    }
+
+    assert _decode_notebook_result(json.dumps(envelope)) == payload
 
 
 def test_submit_tool_uses_flat_proposal_schema() -> None:
@@ -120,6 +468,216 @@ def test_submit_tool_uses_flat_proposal_schema() -> None:
     ]
     assert "requirement_id" not in requirement["properties"]
     assert "budget_exhausted" not in gap["properties"]["reason"]["enum"]
+
+
+def test_submit_boundary_normalizes_non_judgmental_provider_shape_noise() -> None:
+    evidence = [
+        {"reference": f"market_ref:M{index}", "support": "supports"}
+        for index in range(13)
+    ]
+    proposal = {
+        "view_revisions": [{
+            "confidence": {
+                "overall": "medium_low",
+                "evidence_quality": "moderate",
+                "independent_confirmation": "medium-high",
+                "counterevidence_resilience": "very_low",
+                "timing_clarity": "very_high",
+            },
+            "mechanism_chain": [{"evidence": evidence}],
+        }],
+    }
+
+    normalized = _normalize_provider_proposal(proposal)
+    revision = normalized["view_revisions"][0]
+
+    assert revision["confidence"] == {
+        "overall": "low",
+        "evidence_quality": "medium",
+        "independent_confirmation": "medium_high",
+        "counterevidence_resilience": "low",
+        "timing_clarity": "high",
+    }
+    assert len(revision["mechanism_chain"][0]["evidence"]) == 12
+    assert len(evidence) == 13
+
+
+def test_submit_boundary_repairs_program_derivable_roles_and_claim_semantics() -> None:
+    normalized = _normalize_provider_proposal({
+        "hypotheses": [
+            {"hypothesis_id": "h_main"},
+            {"hypothesis_id": "h_data_missing"},
+        ],
+        "claims": [{
+            "claim_id": "aggregate",
+            "claim_type": "observed_fact",
+            "evidence": [{"reference": "market_ref:M1", "support": "context"}],
+        }],
+    })
+
+    assert normalized["hypotheses"][0]["role"] == "primary"
+    assert normalized["hypotheses"][1]["role"] == "data_quality"
+    assert normalized["claims"][0]["claim_type"] == "inference"
+
+
+def test_submit_boundary_normalizes_provider_hypothesis_status_aliases() -> None:
+    normalized = _normalize_provider_proposal({
+        "hypotheses": [
+            {"hypothesis_id": "h_main", "status": "unresolved"},
+            {"hypothesis_id": "h_alt", "status": "pending"},
+        ],
+        "view_revisions": [{
+            "hypotheses": [
+                {"hypothesis_id": "h_data_missing", "status": "unknown"},
+            ],
+        }],
+    })
+
+    assert normalized["hypotheses"][0]["status"] == "inconclusive"
+    assert normalized["hypotheses"][1]["status"] == "unverified"
+    assert normalized["view_revisions"][0]["hypotheses"][0]["status"] == "inconclusive"
+
+
+def test_submit_boundary_removes_empty_analogue_pseudo_citations() -> None:
+    normalized = _normalize_provider_proposal({
+        "claims": [{
+            "claim_id": "empty",
+            "claim_type": "observed_fact",
+            "evidence": [{
+                "kind": "external",
+                "reference": "market_historical_analogue_open:ths:concept:886033:empty",
+                "support": "supports",
+            }],
+        }],
+    })
+
+    assert normalized["claims"][0]["evidence"] == []
+    assert normalized["claims"][0]["claim_type"] == "inference"
+
+
+def test_semantic_audit_collects_citations_beyond_top_level_claims() -> None:
+    references = _collect_semantic_audit_references({
+        "claims": [{
+            "evidence": [{
+                "reference": "market:v1:claim",
+                "support": "supports",
+            }],
+        }],
+        "view_revisions": [{
+            "mechanism_chain": [{
+                "evidence": [{
+                    "reference": "https://example.com/mechanism",
+                    "support": "context_only",
+                }],
+            }],
+            "forecasts": [{
+                "evidence": [{
+                    "reference": "market:v1:forecast",
+                    "support": "supports",
+                }],
+            }],
+        }],
+    })
+
+    assert references == {
+        "market:v1:claim",
+        "https://example.com/mechanism",
+        "market:v1:forecast",
+    }
+    assert _semantic_reference_matches(
+        "market:v1:canonical",
+        "market_ref:M50",
+        '{"evidence_locator":"market_ref:M50"}',
+    )
+
+
+def test_notebook_projection_retains_bounded_external_source_substance() -> None:
+    projected = _project_notebook_result(
+        "external_web_read",
+        {
+            "provider": "zhipu",
+            "title": "CPO量产观察",
+            "url": "https://example.com/cpo",
+            "content_handle": "external_content:1",
+            "preview": "关键反证" * 2_000,
+            "media_type": "text/markdown",
+        },
+    )
+
+    assert projected["source_excerpt"].startswith("关键反证")
+    assert len(projected["source_excerpt"]) == 4_500
+    assert projected["source_excerpt_truncated"] is True
+    assert "media_type" not in projected
+
+
+def test_notebook_projection_keeps_analogue_aggregates_for_parallel_candidates() -> None:
+    samples = [{"signal_date": f"2026-01-{day:02d}"} for day in range(1, 11)]
+    projected = _project_notebook_result(
+        "market_historical_analogue_open",
+        {
+            "subject_id": "ths:concept:886033",
+            "sample_count": 30,
+            "calibration_status": "calibrated",
+            "statistics": {"positive_share": 0.4333, "median_return_pct": -0.69},
+            "robustness": {
+                "strict_statistics": {"median_return_pct": 0.25},
+                "temporal_holdout": {
+                    "development_statistics": {"median_return_pct": 0.5},
+                    "holdout_statistics": {"median_return_pct": -0.7},
+                    "median_direction_consistent": False,
+                },
+            },
+            "samples": samples,
+            "evidence_locators": ["market_ref:M1", "market_ref:M2"],
+            "analysis_evidence_locator": "market_ref:M3",
+        },
+    )
+
+    assert projected["full_sample_distribution"]["median_return_pct"] == -0.69
+    assert "temporal_holdout" not in projected["robustness"]
+    assert projected["calibration_readout"]["absolute_return"][
+        "holdout_median_return_pct"
+    ] == -0.7
+    assert projected["distribution_stability_readout"][
+        "strict_vs_full_direction_conflict"
+    ] is True
+    assert projected["analysis_evidence_locator"] == "market_ref:M3"
+    assert "evidence_locators" not in projected
+    assert "sample_examples" not in projected
+    assert "samples" not in projected
+
+
+def test_analogue_result_receives_stable_calculation_evidence_locator() -> None:
+    payload = {
+        "subject_id": "ths:concept:886033",
+        "data_type": "ths_sector_daily",
+        "signal_definition": {"return_5_bars_pct": 3.0},
+        "forward_window_bars": 3,
+        "sample_count": 30,
+        "statistics": {"median_return_pct": -0.69},
+        "robustness": {"temporal_holdout": {"median_direction_consistent": False}},
+    }
+    first = _attach_calculation_evidence(payload, "market_historical_analogue_open")
+    second = _attach_calculation_evidence(payload, "market_historical_analogue_open")
+
+    assert first["analysis_evidence_locator"].startswith("market:v1:")
+    assert first["analysis_evidence_locator"] == second["analysis_evidence_locator"]
+    assert "analysis_evidence_locator" not in payload
+
+
+def test_compaction_preserves_recent_non_evidentiary_working_plan() -> None:
+    notes = _recent_research_working_notes([
+        {"role": "user", "content": "研究问题"},
+        {"role": "assistant", "text": "先比较CPO与半导体。"},
+        {"type": "tool_call", "tool": "market_sector_open"},
+        {"role": "assistant", "text": "CPO历史反证更强；只剩来源核验。"},
+    ])
+
+    assert [item["text"] for item in notes] == [
+        "先比较CPO与半导体。",
+        "CPO历史反证更强；只剩来源核验。",
+    ]
+    assert all(item["type"] == "non_evidentiary_working_note" for item in notes)
 
 
 def test_finalizer_selects_relevant_plan_references_instead_of_copying_ledger() -> None:
@@ -197,7 +755,13 @@ def test_market_history_projection_keeps_bars_and_adds_window_statistics() -> No
     assert projected["bars"][0] == ["2026-08-12", 12, 13, 11, 12, 1200]
     assert projected["window_statistics"]["return_5_bars_pct"] == 50
     assert projected["window_statistics"]["close_high_5_bars"] == ["2026-08-12", 12]
-    assert projected["window_statistics"]["up_days_5_bars"] == 4
+    assert projected["window_statistics"]["drawdown_from_close_high_5_bars_pct"] == 0
+    assert projected["window_statistics"]["intraday_high_5_bars"] == ["2026-08-12", 13]
+    assert projected["window_statistics"][
+        "drawdown_from_intraday_high_5_bars_pct"
+    ] == -7.6923
+    assert projected["window_statistics"]["up_transitions_within_5_bars"] == 4
+    assert "N-1 adjacent" in projected["window_statistics_note"]
     assert projected["series_semantics"] == {"volume_field": "unknown"}
 
 
@@ -211,6 +775,25 @@ def _settings_values() -> dict[str, str]:
         "SMART_FUND_AGENT_SESSION_DB": "data/test-agent.sqlite3",
         "SMART_FUND_AGENT_LANGFUSE_ENABLED": "false",
     }
+
+
+def test_agent_langfuse_project_overrides_server_project() -> None:
+    values = {
+        **_settings_values(),
+        "SMART_FUND_AGENT_LANGFUSE_ENABLED": "true",
+        "SMART_FUND_AGENT_LANGFUSE_PUBLIC_KEY": "pk-agent",
+        "SMART_FUND_AGENT_LANGFUSE_SECRET_KEY": "sk-agent",
+        "SMART_FUND_AGENT_LANGFUSE_BASE_URL": "http://agent-langfuse:3001/",
+        "LANGFUSE_PUBLIC_KEY": "pk-server",
+        "LANGFUSE_SECRET_KEY": "sk-server",
+        "LANGFUSE_BASE_URL": "http://server-langfuse:3001",
+    }
+
+    resolved = AgentSettings.from_mapping(values)
+
+    assert resolved.langfuse_public_key == "pk-agent"
+    assert resolved.langfuse_secret_key == "sk-agent"
+    assert resolved.langfuse_base_url == "http://agent-langfuse:3001"
 
 
 def _hypotheses() -> list[CompetingHypothesis]:
@@ -390,6 +973,51 @@ def test_research_budget_guard_compacts_long_transcript_after_ledger() -> None:
     assert "x" * 1_000 not in filtered.input[1]["content"]
 
 
+def test_research_budget_guard_compacts_long_exploration_before_ledger() -> None:
+    context = _context()
+    context.working_memory = {
+        "research_goal": "保持研究主线",
+        "candidate_hypotheses": [],
+        "answered_questions": [],
+        "remaining_questions": [],
+        "discarded_paths": [],
+        "next_step": "继续核验",
+    }
+    context.tool_invocations = [
+        _finished_invocation("market_change_brief_open", 1),
+        _finished_invocation("market_sector_open", 2),
+    ]
+    model_data = ModelInputData(
+        input=[
+            {"role": "user", "content": "原始任务"},
+            {"role": "assistant", "content": "研究" * 50_000},
+        ],
+        instructions="研究指令",
+    )
+
+    filtered = _apply_research_budget_guard(
+        SimpleNamespace(model_data=model_data, context=context)
+    )
+
+    serialized = json.dumps(filtered.input, ensure_ascii=False)
+    assert len(serialized) < 10_000
+    assert "Research Notebook" in filtered.input[-1]["content"]
+    assert "继续按当前问题自主探索" in filtered.input[-1]["content"]
+
+
+def test_research_budget_guard_does_not_compact_ordinary_30k_json_input() -> None:
+    context = _context()
+    model_data = ModelInputData(
+        input=[{"role": "assistant", "content": "x" * 35_000}],
+        instructions="研究指令",
+    )
+
+    assert _estimate_input_tokens(model_data.input) < 20_000
+    assert _apply_research_budget_guard(
+        SimpleNamespace(model_data=model_data, context=context)
+    ) is model_data
+
+
 def _no_change_report() -> CurrentResearchReportProposal:
     return CurrentResearchReportProposal(
         base_report_revision_id="report-rev-0",
@@ -431,6 +1059,7 @@ def test_agent_settings_resolve_session_path_from_server_root(
 def test_financial_tool_filter_exposes_research_reads_and_never_model_writes() -> None:
     sector_tool = SimpleNamespace(name="market_sector_open")
     frame_tool = SimpleNamespace(name="market_frame_open")
+    change_brief_tool = SimpleNamespace(name="market_change_brief_open")
     write_tool = SimpleNamespace(name="market_watchlist_add")
     unknown_tool = SimpleNamespace(name="database_query")
     persisted_instrument_tool = SimpleNamespace(name="market_instrument_open")
@@ -442,7 +1071,8 @@ def test_financial_tool_filter_exposes_research_reads_and_never_model_writes() -
         run_context=SimpleNamespace(context=context)
     )
     assert financial_tool_filter(read_context, sector_tool) is False
-    assert financial_tool_filter(read_context, frame_tool) is True
+    assert financial_tool_filter(read_context, frame_tool) is False
+    assert financial_tool_filter(read_context, change_brief_tool) is True
     assert financial_tool_filter(read_context, write_tool) is False
     assert financial_tool_filter(read_context, unknown_tool) is False
 
@@ -457,6 +1087,25 @@ def test_financial_tool_filter_exposes_research_reads_and_never_model_writes() -
     assert financial_tool_filter(read_context, write_tool) is False
 
 
+def test_financial_tool_filter_exposes_quality_feedback_before_new_research() -> None:
+    context = _context()
+    filter_context = SimpleNamespace(run_context=SimpleNamespace(context=context))
+    quality_list = SimpleNamespace(name="research_quality_list")
+    quality_open = SimpleNamespace(name="research_quality_open")
+
+    assert financial_tool_filter(filter_context, quality_list) is False
+    assert financial_tool_filter(filter_context, quality_open) is False
+    context.tool_invocations.append(
+        ToolInvocation(name="research_current_report_open", call_id="call-report")
+    )
+    assert financial_tool_filter(filter_context, quality_list) is True
+    assert financial_tool_filter(filter_context, quality_open) is False
+    context.tool_invocations.append(
+        ToolInvocation(name="research_quality_list", call_id="call-quality-list")
+    )
+    assert financial_tool_filter(filter_context, quality_open) is True
+
+
 def test_financial_tool_filter_hides_reads_after_run_budget_is_exhausted() -> None:
     context = _context()
     context.research_context.trigger.max_tool_calls = 1
@@ -467,6 +1116,502 @@ def test_financial_tool_filter_hides_reads_after_run_budget_is_exhausted() -> No
         run_context=SimpleNamespace(context=context),
     )
 
+    assert financial_tool_filter(
+        filter_context,
+        SimpleNamespace(name="market_dimension_open"),
+    ) is False
+    assert financial_tool_filter(
+        filter_context,
+        SimpleNamespace(name="agent_evidence_ledger_open"),
+    ) is True
+    assert financial_tool_filter(
+        filter_context,
+        SimpleNamespace(name="external_web_search"),
+    ) is False
+    context.tool_invocations.append(
+        ToolInvocation(name="agent_evidence_ledger_open", call_id="call-ledger")
+    )
+    assert financial_tool_filter(
+        filter_context,
+        SimpleNamespace(name="agent_evidence_ledger_open"),
+    ) is False
+
+
+def test_financial_tool_filter_forces_ledger_after_bounded_recovery_reads() -> None:
+    context = _context()
+    context.research_context.trigger.max_tool_calls = 1
+    context.tool_invocations.extend(
+        ToolInvocation(name="market_evidence_open", call_id=f"call-{index}")
+        for index in range(1)
+    )
+    filter_context = SimpleNamespace(
+        run_context=SimpleNamespace(context=context),
+    )
+
+    assert financial_tool_filter(
+        filter_context,
+        SimpleNamespace(name="market_evidence_open"),
+    ) is False
+    assert financial_tool_filter(
+        filter_context,
+        SimpleNamespace(name="external_web_read"),
+    ) is False
+    assert financial_tool_filter(
+        filter_context,
+        SimpleNamespace(name="agent_evidence_ledger_open"),
+    ) is True
+
+
+def test_financial_tool_filter_opens_ledger_only_after_decision_coverage() -> None:
+    context = _context()
+    filter_context = SimpleNamespace(
+        run_context=SimpleNamespace(context=context),
+    )
+    ledger = SimpleNamespace(name="agent_evidence_ledger_open")
+
+    assert financial_tool_filter(filter_context, ledger) is False
+
+    names = [
+        "market_frame_open",
+        "market_dimension_open",
+        "market_sector_open",
+        "market_sector_compare_open",
+        "market_instrument_history",
+        "market_technical_state_open",
+        "market_historical_analogue_open",
+        "market_evidence_open",
+        "kg_card_open",
+        "role_memory_search",
+        "external_web_search",
+        "external_web_read",
+        "external_content_read",
+        "kg_edge_open",
+    ]
+    context.tool_invocations = [
+        ToolInvocation(
+            name=name,
+            call_id=f"call-{index}",
+            result='{"status":"available"}',
+            finished_at=CUTOFF,
+        )
+        for index, name in enumerate(names)
+    ]
+    for invocation in context.tool_invocations:
+        if invocation.name == "market_historical_analogue_open":
+            invocation.arguments = {"code": "ths:concept:886033"}
+            invocation.result = '{"calibration_status":"calibrated"}'
+    context.working_memory = {
+        "research_goal": "比较候选并形成观点",
+        "candidate_hypotheses": [],
+        "answered_questions": [],
+        "remaining_questions": [],
+        "discarded_paths": [],
+        "next_step": "打开证据账本",
+    }
+    context.tool_invocations.append(
+        ToolInvocation(
+            name="checkpoint_research_working_memory",
+            call_id="call-checkpoint",
+            result='{"saved":true}',
+            finished_at=CUTOFF,
+        )
+    )
+
+    assert financial_tool_filter(filter_context, ledger) is True
+
+
+def test_ledger_waits_until_comparison_baseline_is_opened() -> None:
+    context = _context()
+    context.tool_invocations = [
+        ToolInvocation(
+            name="market_sector_compare_open",
+            call_id="compare",
+            result=json.dumps({
+                "comparison_evidence_requirements": [{
+                    "evidence_locator": "market_ref:M88",
+                }],
+            }),
+            finished_at=CUTOFF,
+        ),
+    ]
+
+    missing = research_ledger_missing_requirements(context)
+    assert any("market_ref:M88" in item for item in missing)
+
+    context.tool_invocations.append(ToolInvocation(
+        name="market_evidence_open",
+        call_id="open-baseline",
+        result='{"evidence_locator":"market_ref:M88"}',
+        finished_at=CUTOFF,
+    ))
+    missing = research_ledger_missing_requirements(context)
+    assert not any("market_ref:M88" in item for item in missing)
+
+
+def test_directional_forecast_requires_same_subject_calibration() -> None:
+    context = _context()
+    context.tool_invocations = [
+        ToolInvocation(
+            name="market_historical_analogue_open",
+            call_id=f"analogue-{window}",
+            arguments={"code": "ths:concept:886033", "forward_window_bars": window},
+            result=json.dumps({
+                "subject_id": "ths:concept:886033",
+                "forward_window_bars": window,
+                "sample_count": 12,
+                "minimum_sample_count": 8,
+                "calibration_status": "calibrated",
+                "robustness": {"temporal_holdout": {
+                    "median_direction_consistent": True,
+                }},
+            }),
+            finished_at=CUTOFF,
+        )
+        for window in (3, 5)
+    ]
+    proposal = SimpleNamespace(view_revisions=[SimpleNamespace(forecasts=[Forecast(
+        forecast_id="forecast-1",
+        subject_id="ths:industry:881121",
+        metric="3日绝对收益率（%）",
+        expected_direction="up",
+        expected_min_value=-1.0,
+        expected_max_value=3.0,
+        evaluation_start_at=CUTOFF + timedelta(minutes=1),
+        evaluation_end_at=CUTOFF + timedelta(days=3),
+        invalidation_condition="跌破近期低点",
+    )])])
+
+    with pytest.raises(ValueError, match="不能借用其他候选"):
+        _validate_forecast_calibration(proposal, context)
+
+
+def test_directional_forecast_requires_calibrated_distribution_bounds() -> None:
+    context = _context()
+    context.tool_invocations = [
+        ToolInvocation(
+            name="market_historical_analogue_open",
+            call_id=f"analogue-{window}",
+            arguments={"code": "ths:concept:886033", "forward_window_bars": window},
+            result=json.dumps({
+                "subject_id": "ths:concept:886033",
+                "forward_window_bars": window,
+                "sample_count": 12,
+                "minimum_sample_count": 8,
+                "calibration_status": "calibrated",
+                "robustness": {
+                    "temporal_holdout": {"median_direction_consistent": True},
+                    "relative_temporal_holdout": {
+                        "median_direction_consistent": True,
+                    },
+                },
+            }),
+            finished_at=CUTOFF,
+        )
+        for window in (3, 5)
+    ]
+    proposal = SimpleNamespace(view_revisions=[SimpleNamespace(forecasts=[Forecast(
+        forecast_id="forecast-1",
+        subject_id="ths:concept:886033",
+        metric="3日绝对收益率（%）",
+        expected_direction="up",
+        evaluation_start_at=CUTOFF + timedelta(minutes=1),
+        evaluation_end_at=CUTOFF + timedelta(days=3),
+        invalidation_condition="跌破近期低点",
+    )])])
+
+    with pytest.raises(ValueError, match="历史分布"):
+        _validate_forecast_calibration(proposal, context)
+
+
+def test_forecast_range_is_bound_from_same_object_relative_distribution() -> None:
+    context = _context()
+    context.tool_invocations = [
+        ToolInvocation(
+            name="market_historical_analogue_open",
+            call_id="analogue",
+            arguments={"code": "ths:concept:886033"},
+            result=json.dumps({
+                "subject_id": "ths:concept:886033",
+                "sample_count": 12,
+                "minimum_sample_count": 8,
+                "calibration_status": "calibrated",
+                "robustness": {
+                    "temporal_holdout": {"median_direction_consistent": True},
+                    "relative_temporal_holdout": {
+                        "median_direction_consistent": True,
+                    },
+                },
+                "statistics": {
+                    "lower_quartile_return_pct": -2.0,
+                    "upper_quartile_return_pct": 4.0,
+                    "lower_quartile_relative_return_pct": -1.0,
+                    "upper_quartile_relative_return_pct": 2.5,
+                },
+            }),
+            finished_at=CUTOFF,
+        )
+    ]
+    forecast = Forecast(
+        forecast_id="forecast-1",
+        subject_id="ths:concept:886033",
+        metric="3日相对上证超额收益率（%）",
+        benchmark_subject_id="cn:index:000001",
+        expected_direction="up",
+        expected_min_value=-99,
+        expected_max_value=99,
+        baseline_value=-3,
+        evaluation_start_at=CUTOFF + timedelta(minutes=1),
+        evaluation_end_at=CUTOFF + timedelta(days=3),
+        invalidation_condition="相对收益转负",
+    )
+    proposal = SimpleNamespace(
+        view_revisions=[SimpleNamespace(forecasts=[forecast])]
+    )
+
+    _bind_forecast_calibration_fields(proposal, context)
+
+    assert forecast.expected_min_value == -1.0
+    assert forecast.expected_max_value == 2.5
+    assert forecast.baseline_value == 0.0
+    assert forecast.expected_direction == "range"
+
+
+def test_forecast_ranges_bind_to_their_own_forward_windows() -> None:
+    context = _context()
+    context.tool_invocations = [
+        ToolInvocation(
+            name="market_historical_analogue_open",
+            call_id=f"analogue-{window}",
+            arguments={"code": "ths:concept:886033", "forward_window_bars": window},
+            result=json.dumps({
+                "subject_id": "ths:concept:886033",
+                "forward_window_bars": window,
+                "sample_count": 30,
+                "calibration_status": "calibrated",
+                "robustness": {
+                    "temporal_holdout": {"median_direction_consistent": True},
+                    "relative_temporal_holdout": {
+                        "median_direction_consistent": True,
+                    },
+                },
+                "statistics": {
+                    "lower_quartile_relative_return_pct": lower,
+                    "upper_quartile_relative_return_pct": upper,
+                },
+            }),
+            finished_at=CUTOFF,
+        )
+        for window, lower, upper in ((3, -0.46, 2.90), (5, 0.20, 4.23))
+    ]
+    forecasts = [
+        Forecast(
+            forecast_id=f"forecast-{window}",
+            subject_id="ths:concept:886033",
+            metric=f"相对上证指数{window}日累计超额收益",
+            benchmark_subject_id="cn:index:000001",
+            expected_direction="up",
+            expected_min_value=-99,
+            expected_max_value=99,
+            baseline_value=-3,
+            evaluation_start_at=CUTOFF + timedelta(minutes=1),
+            evaluation_end_at=CUTOFF + timedelta(days=window),
+            invalidation_condition="相对收益转负",
+        )
+        for window in (3, 5)
+    ]
+    proposal = SimpleNamespace(view_revisions=[SimpleNamespace(forecasts=forecasts)])
+
+    _bind_forecast_calibration_fields(proposal, context)
+
+    assert (forecasts[0].expected_min_value, forecasts[0].expected_max_value) == (-0.46, 2.90)
+    assert (forecasts[1].expected_min_value, forecasts[1].expected_max_value) == (0.20, 4.23)
+    assert forecasts[0].expected_direction == "range"
+    assert forecasts[1].expected_direction == "up"
+
+
+def test_generic_dated_forecast_uses_longest_stable_opened_window() -> None:
+    context = _context()
+    context.tool_invocations = [
+        ToolInvocation(
+            name="market_historical_analogue_open",
+            call_id=f"analogue-{window}",
+            arguments={"code": "ths:concept:886033", "forward_window_bars": window},
+            result=json.dumps({
+                "subject_id": "ths:concept:886033",
+                "forward_window_bars": window,
+                "sample_count": 30,
+                "calibration_status": "calibrated",
+                "robustness": {
+                    "temporal_holdout": {"median_direction_consistent": True},
+                    "relative_temporal_holdout": {
+                        "median_direction_consistent": True,
+                    },
+                },
+                "statistics": {
+                    "lower_quartile_relative_return_pct": lower,
+                    "upper_quartile_relative_return_pct": upper,
+                },
+            }),
+            finished_at=CUTOFF,
+        )
+        for window, lower, upper in ((3, -0.46, 2.90), (5, 0.20, 4.23))
+    ]
+    forecast = Forecast(
+        forecast_id="forecast-generic",
+        subject_id="cn:concept:886033",
+        metric="CPO概念相对上证指数累计超额收益",
+        benchmark_subject_id="cn:index:000001",
+        expected_direction="up",
+        evaluation_start_at=CUTOFF + timedelta(minutes=1),
+        evaluation_end_at=CUTOFF + timedelta(days=5),
+        invalidation_condition="相对收益转负",
+    )
+    proposal = SimpleNamespace(
+        view_revisions=[SimpleNamespace(forecasts=[forecast])]
+    )
+
+    _remove_unsupported_directional_forecasts(proposal, context)
+    _bind_forecast_calibration_fields(proposal, context)
+    _validate_forecast_calibration(proposal, context)
+
+    assert proposal.view_revisions[0].forecasts == [forecast]
+    assert (forecast.expected_min_value, forecast.expected_max_value) == (0.20, 4.23)
+    assert forecast.expected_direction == "up"
+
+
+def test_semantic_excerpt_keeps_late_cited_fact_instead_of_first_rows() -> None:
+    serialized = (
+        '{"facts":['
+        + ','.join(
+            f'{{"evidence_locator":"market_ref:M{i}","name":"row-{i}",'
+            f'"change_percent":{i}}}'
+            for i in range(1, 90)
+        )
+        + ']}'
+    )
+
+    excerpt = _semantic_evidence_excerpt(
+        serialized,
+        references=["canonical-m83"],
+        canonical_to_alias={"canonical-m83": "market_ref:M83"},
+    )
+
+    assert "reference=canonical-m83" in excerpt
+    assert '"name":"row-83"' in excerpt
+    assert '"change_percent":83' in excerpt
+    assert '"name":"row-1"' not in excerpt
+
+
+def test_semantic_excerpt_keeps_table_values_that_precede_overview_locator() -> None:
+    serialized = (
+        '{"us_market":{"indices":['
+        '{"code":"SPX","change_pct":"0.65%"},'
+        '{"code":"HXC","change_pct":"-1.84%"}'
+        '],"indices_evidence_locator":"market_ref:M157"}}'
+    )
+
+    excerpt = _semantic_evidence_excerpt(
+        serialized,
+        references=["canonical-us-indices"],
+        canonical_to_alias={"canonical-us-indices": "market_ref:M157"},
+    )
+
+    assert '"code":"HXC","change_pct":"-1.84%"' in excerpt
+    assert '"indices_evidence_locator":"market_ref:M157"' in excerpt
+
+
+def test_directional_forecast_rejects_temporally_unstable_calibration() -> None:
+    context = _context()
+    context.tool_invocations = [
+        ToolInvocation(
+            name="market_historical_analogue_open",
+            call_id="analogue-unstable",
+            arguments={"code": "ths:concept:886033"},
+            result=json.dumps({
+                "subject_id": "ths:concept:886033",
+                "sample_count": 30,
+                "minimum_sample_count": 8,
+                "calibration_status": "calibrated",
+                "robustness": {"temporal_holdout": {
+                    "median_direction_consistent": False,
+                }},
+                "statistics": {
+                    "lower_quartile_return_pct": -2.0,
+                    "upper_quartile_return_pct": 3.0,
+                },
+            }),
+            finished_at=CUTOFF,
+        )
+    ]
+    forecast = Forecast(
+        forecast_id="forecast-unstable",
+        subject_id="ths:concept:886033",
+        metric="3日绝对收益率（%）",
+        expected_direction="up",
+        expected_min_value=-2,
+        expected_max_value=3,
+        evaluation_start_at=CUTOFF + timedelta(minutes=1),
+        evaluation_end_at=CUTOFF + timedelta(days=3),
+        invalidation_condition="方向转弱",
+    )
+    proposal = SimpleNamespace(
+        view_revisions=[SimpleNamespace(forecasts=[forecast])]
+    )
+
+    with pytest.raises(ValueError, match="时间留出方向一致"):
+        _validate_forecast_calibration(proposal, context)
+
+    _remove_unsupported_directional_forecasts(proposal, context)
+    assert proposal.view_revisions[0].forecasts == []
+
+
+def test_tool_result_decoder_unwraps_mcp_text_content() -> None:
+    wrapped = CallToolResult(content=[TextContent(
+        type="text",
+        text='{"subject_id":"ths:concept:886033","sample_count":13}',
+    )])
+
+    assert _decode_tool_result_object(wrapped) == {
+        "subject_id": "ths:concept:886033",
+        "sample_count": 13,
+    }
+
+
+def test_financial_tool_filter_hides_all_remote_reads_after_ledger() -> None:
+    context = _context()
+    context.tool_invocations = [
+        ToolInvocation(name="agent_evidence_ledger_open", call_id="ledger")
+    ]
+    filter_context = SimpleNamespace(
+        run_context=SimpleNamespace(context=context),
+    )
+
+    assert financial_tool_filter(
+        filter_context,
+        SimpleNamespace(name="market_dimension_open"),
+    ) is False
+
+
+def test_financial_tool_filter_reopens_only_tool_named_by_submit_error() -> None:
+    context = _context()
+    context.research_context.trigger.max_tool_calls = 1
+    context.tool_invocations = [
+        ToolInvocation(name="agent_evidence_ledger_open", call_id="ledger"),
+        ToolInvocation(
+            name="submit_investment_view_revision",
+            call_id="submit",
+            result="校验失败：updated view requires market_evidence_open",
+            finished_at=CUTOFF,
+        ),
+    ]
+    filter_context = SimpleNamespace(
+        run_context=SimpleNamespace(context=context),
+    )
+
+    assert financial_tool_filter(
+        filter_context,
+        SimpleNamespace(name="market_evidence_open"),
+    ) is True
     assert financial_tool_filter(
         filter_context,
         SimpleNamespace(name="market_dimension_open"),
@@ -605,6 +1750,52 @@ def test_market_change_model_view_removes_runtime_metadata_and_ambiguous_metric(
     assert "absolute_change" not in change
     assert change["current_as_of"] == "2026-08-12 11:30"
     assert change["baseline_as_of"] == "2026-08-11 11:30"
+
+
+def test_sector_compare_marks_unopened_baseline_identity_explicitly() -> None:
+    context = AgentRunContext(
+        run_id="run-sector-compare",
+        session_id="session-sector-compare",
+        task_mode=ResearchTaskMode.RESEARCH_REVIEW,
+    )
+    payload = {
+        "candidates": [{
+            "provider_sector_code": "886033",
+            "latest_signals": [
+                {
+                    "trade_date": "2026-08-12",
+                    "evidence_locator": "market_ref:M88",
+                },
+                {
+                    "trade_date": "2026-08-13",
+                    "main_net_inflow": -15.93,
+                    "evidence_locator": "market_ref:M89",
+                },
+            ],
+        }],
+    }
+    result = CallToolResult(
+        content=[TextContent(type="text", text=json.dumps(payload))],
+        structuredContent=payload,
+    )
+
+    compacted = _compact_market_evidence(
+        result,
+        context,
+        tool_name="market_sector_compare_open",
+    )
+    model_payload = json.loads(compacted.content[0].text)
+
+    baseline = model_payload["candidates"][0]["latest_signals"][0]
+    assert baseline["comparison_role"] == "baseline_identity_only"
+    assert baseline["citation_ready"] is False
+    assert model_payload["comparison_evidence_requirements"] == [{
+        "subject_id": "886033",
+        "trade_date": "2026-08-12",
+        "evidence_locator": "market_ref:M88",
+        "required_action": "market_evidence_open",
+        "reason": "基线仅有身份；打开后才能读取数值并证明变化。",
+    }]
 
 
 def test_existing_research_view_is_projected_as_decision_state_not_old_report() -> None:
@@ -871,6 +2062,44 @@ def test_evidence_audit_rejects_navigation_handle_as_market_evidence() -> None:
     )
     assert error is not None
     assert "navigation handle" in error
+
+
+def test_dated_market_claim_requires_citation_for_each_claimed_date() -> None:
+    context = _context()
+    current = encode_market_evidence_locator(MarketEvidenceIdentity(
+        kind="snapshot",
+        domain="market_snapshot",
+        identity={"id": 2, "trade_date": "2026-08-13"},
+        data_type="ths_sector_flow",
+    ))
+    claim = SimpleNamespace(
+        claim_id="flow-reversal",
+        statement="2026-08-12流入134.53亿元，2026-08-13流出15.93亿元",
+        evidence=[EvidenceCitation(
+            citation_id="current-only",
+            kind="market",
+            reference=current,
+            claim="当前流出",
+            support="supports",
+        )],
+    )
+
+    assert "2026-08-12" in _market_claim_date_error(claim, context)
+
+    baseline = encode_market_evidence_locator(MarketEvidenceIdentity(
+        kind="snapshot",
+        domain="market_snapshot",
+        identity={"id": 1, "trade_date": "2026-08-12"},
+        data_type="ths_sector_flow",
+    ))
+    claim.evidence.append(EvidenceCitation(
+        citation_id="baseline",
+        kind="market",
+        reference=baseline,
+        claim="基线流入",
+        support="supports",
+    ))
+    assert _market_claim_date_error(claim, context) is None
 
 
 def test_edge_endpoint_card_id_is_not_treated_as_opened_card() -> None:

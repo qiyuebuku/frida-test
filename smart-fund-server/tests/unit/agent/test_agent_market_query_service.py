@@ -8,6 +8,8 @@ from src.application.services.agent_market_query_service import (
     AgentMarketQueryService,
     _display_number,
     _native_table_quote_preview,
+    _us_breadth_preview,
+    _us_sector_preview,
 )
 from src.application.services.market_evidence_locator import (
     decode_market_evidence_locator,
@@ -98,6 +100,42 @@ def test_native_table_quote_preview_exposes_gold_prices_without_raw_dump() -> No
         "truncated": False,
         "available_field_codes": ["4", "55", "10", "34818", "other"],
     }
+
+
+def test_us_market_previews_expose_semantic_breadth_and_sector_rows() -> None:
+    assert _us_breadth_preview(
+        {
+            "breadth_today": {
+                "increase_ranges": [{"count": 120}, {"count": 30}],
+                "decline_ranges": [{"count": 50}],
+                "zero_range": 20,
+            }
+        }
+    ) == {
+        "advancing": 150,
+        "declining": 50,
+        "unchanged": 20,
+        "advance_decline_ratio": 3.0,
+    }
+    assert _us_sector_preview(
+        {
+            "native_table": {
+                "dataDict": {
+                    "55": ["半导体"],
+                    "34313": ["1.25%"],
+                    "35284": ["示例公司"],
+                    "35286": ["3.5%"],
+                }
+            }
+        }
+    ) == [
+        {
+            "name": "半导体",
+            "change_pct": "1.25%",
+            "leader": "示例公司",
+            "leader_change_pct": "3.5%",
+        }
+    ]
 
 
 class _SnapshotRepository:
@@ -471,6 +509,59 @@ def test_market_dimension_returns_compact_facts_and_evidence_locator() -> None:
     }
     assert "large_rows" in result["facts"][0]["data_fields"]
     assert result["read_path"] == "database"
+
+
+def test_global_market_overview_selects_us_indices_not_arbitrary_latest_rows() -> None:
+    service, snapshots, _collections = _service()
+    snapshots.rows.extend(
+        [
+            {
+                "id": 20,
+                "data_type": "ths_us_market_module",
+                "subject_type": "us_market",
+                "subject_id": "ranking_noise_stream",
+                "market": "us",
+                "provider": "ths_native_stream",
+                "trade_date": date(2026, 8, 7),
+                "bucket_at": CUTOFF,
+                "data": {"native_table": {"dataDict": {"55": ["噪声"]}}},
+            },
+            {
+                "id": 21,
+                "data_type": "ths_us_market_module",
+                "subject_type": "us_market",
+                "subject_id": "indices_stream",
+                "market": "us",
+                "provider": "ths_native_stream",
+                "trade_date": date(2026, 8, 7),
+                "bucket_at": CUTOFF - timedelta(minutes=2),
+                "data": {
+                    "native_table": {
+                        "dataDict": {
+                            "4": ["DJI", "SPX"],
+                            "55": ["道琼斯", "标普500"],
+                            "10": [45000, 6500],
+                            "34818": ["0.5%", "0.8%"],
+                        }
+                    }
+                },
+            },
+        ]
+    )
+
+    result = service.global_market_overview(cutoff_at=CUTOFF)
+
+    assert result["status"] == "available"
+    assert [row["code"] for row in result["us_market"]["indices"]] == [
+        "DJI",
+        "SPX",
+    ]
+    assert len(result["us_market"]["evidence_locators"]) == 1
+    assert result["us_market"]["indices_evidence_locator"] is not None
+    assert result["us_market"]["breadth_evidence_locator"] is None
+    assert result["us_market"]["leading_industries_evidence_locator"] is None
+    assert result["us_market"]["leading_concepts_evidence_locator"] is None
+    assert "ranking_noise_stream" not in str(result["us_market"])
 
 
 def test_market_topic_covers_snapshot_and_persisted_domain_handles() -> None:

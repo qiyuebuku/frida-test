@@ -66,6 +66,15 @@ def evaluate_research_quality(
     tools = {str(item) for item in tool_names if str(item)}
     opened = {str(item) for item in opened_evidence_refs if str(item)}
     revisions = proposal.view_revisions
+    # An invalidation revision records why an old view is closed.  It should
+    # carry direct refutation evidence, but it is not a new investable thesis
+    # and therefore does not need a fresh market-structure/portfolio-expression
+    # package.  Score those forward-looking contracts on surviving views only.
+    forward_revisions = [
+        item for item in revisions
+        if item.status in {"active", "challenged"}
+        and item.event not in {"challenge", "invalidate"}
+    ]
     report_claims = proposal.claims
     claims = [*report_claims, *[claim for revision in revisions for claim in revision.claims]]
     citations = [
@@ -103,16 +112,25 @@ def evaluate_research_quality(
         len(references) * 1.5 + len({item.kind for item in all_citations}) * 2,
     )
     if proposal.status == ResearchRunStatus.UPDATED:
-        mechanism_score = min(
-            10.0,
-            sum(len(revision.mechanism_chain) for revision in revisions) * 3.0
-            + (2.0 if mechanism_citations else 0.0),
-        )
-        structure_score = 10.0 if all(
-            revision.market_structure is not None
-            and len(revision.market_structure.evidence) >= 2
-            for revision in revisions
-        ) else 0.0
+        if forward_revisions:
+            mechanism_score = min(
+                10.0,
+                sum(len(revision.mechanism_chain) for revision in forward_revisions) * 3.0
+                + (2.0 if mechanism_citations else 0.0),
+            )
+            structure_score = 10.0 if all(
+                revision.market_structure is not None
+                and len(revision.market_structure.evidence) >= 2
+                for revision in forward_revisions
+            ) else 0.0
+        else:
+            # A challenge/invalidate-only revision records deterioration of an
+            # existing view. It deliberately does not propose a new forward
+            # expression, so forward-contract fields are not missing; they are
+            # not applicable. Scoring them as zero made the later gate
+            # impossible to satisfy, regardless of how often the model retried.
+            mechanism_score = 10.0
+            structure_score = 10.0
     else:
         completed_layers = {
             item.layer for item in proposal.evidence_plan
@@ -149,11 +167,14 @@ def evaluate_research_quality(
             + (2.0 if proposal.observation_requirements else 0.0),
         )
     decision_score = (
-        10.0 if proposal.status == ResearchRunStatus.UPDATED and all(
-            revision.decision_boundary is not None
-            and revision.decision_boundary.actions_not_supported
-            and revision.decision_boundary.monitoring_signals
-            for revision in revisions
+        10.0 if proposal.status == ResearchRunStatus.UPDATED and (
+            not forward_revisions
+            or all(
+                revision.decision_boundary is not None
+                and revision.decision_boundary.actions_not_supported
+                and revision.decision_boundary.monitoring_signals
+                for revision in forward_revisions
+            )
         )
         else min(
             10.0,
@@ -181,12 +202,6 @@ def evaluate_research_quality(
     )
     failures: list[str] = []
     actions: list[str] = []
-    source_tools = {
-        "kg_card_open",
-        "kg_edge_open",
-        "external_web_read",
-        "external_content_read",
-    }
     history_tools = {
         "market_instrument_history",
         "market_technical_state_open",
@@ -194,9 +209,10 @@ def evaluate_research_quality(
         "market_sector_open",
         "market_sector_compare_open",
     }
-    if proposal.status == ResearchRunStatus.UPDATED and not tools.intersection(source_tools):
-        failures.append("missing_narrative_source_evidence")
-        actions.append("打开 Card、Edge 或外部原文，验证政策、事件、产业或盈利驱动")
+    # External narrative is optional.  Objective price/flow/history research
+    # must not be pushed into inventing a causal story merely to satisfy a
+    # structural gate.  When a report does use narrative sources, citation and
+    # semantic evaluation still check their lineage and entailment.
     if not claims:
         failures.append("missing_auditable_report_claims")
         actions.append("把报告关键结论拆成逐条 Claim，并为事实和反证附上本次打开的证据")
@@ -242,17 +258,25 @@ def evaluate_research_quality(
     if evidence_independence < 6:
         failures.append("insufficient_independent_evidence")
         actions.append("补充不同证据身份或不同证据类型，避免重复计算同一事实")
-    if proposal.status == ResearchRunStatus.UPDATED and mechanism_score < 8:
+    if (
+        proposal.status == ResearchRunStatus.UPDATED
+        and forward_revisions
+        and mechanism_score < 8
+    ):
         failures.append("incomplete_mechanism_chain")
         actions.append("补齐至少两段带证据和失效条件的原因—机制—结果链")
-    if structure_score < 8:
+    if (
+        proposal.status != ResearchRunStatus.UPDATED or forward_revisions
+    ) and structure_score < 8:
         failures.append("missing_market_structure_assessment")
         actions.append("补齐宽度、龙头集中、量能、拥挤、持续性和定价状态")
-    if proposal.status == ResearchRunStatus.UPDATED and (
-        forecast_count == 0 or not proposal.observation_requirements
+    if (
+        proposal.status == ResearchRunStatus.UPDATED
+        and forward_revisions
+        and not proposal.observation_requirements
     ):
         failures.append("missing_testable_forecast")
-        actions.append("声明带窗口、基准、失效条件的预测及后续观察要求")
+        actions.append("声明可验证的后续观察要求；历史稳健性不足时不得强造方向预测")
     if proposal.status == ResearchRunStatus.UPDATED:
         history_failures = _primary_history_failures(proposal)
         if history_failures:
@@ -261,7 +285,9 @@ def evaluate_research_quality(
                 "正式观点必须用观点对象自身至少3个不同交易日的历史验证持续性，"
                 "不得用无关指数或ETF历史替代：" + "、".join(history_failures)
             )
-    if decision_score < 10:
+    if (
+        proposal.status != ResearchRunStatus.UPDATED or forward_revisions
+    ) and decision_score < 10:
         failures.append("missing_portfolio_decision_boundary")
         actions.append("明确组合层可继续评估什么、不能据此做什么和监控信号")
     if (
@@ -450,7 +476,7 @@ def _valid_data_quality_hypothesis(proposal: CurrentResearchReportProposal) -> b
         return proposal.status != ResearchRunStatus.UPDATED
     quality_terms = (
         "数据", "覆盖", "缺失", "新鲜", "截止", "时间", "口径", "快照",
-        "延迟", "异常", "data", "fresh", "cutoff", "missing", "coverage",
+        "延迟", "异常", "持仓", "返回", "核验", "data", "fresh", "cutoff", "missing", "coverage",
     )
     return all(
         any(term in item.statement.lower() for term in quality_terms)
@@ -497,6 +523,11 @@ def _primary_history_failures(
 ) -> list[str]:
     failures: list[str] = []
     for revision in proposal.view_revisions:
+        if (
+            revision.status not in {"active", "challenged"}
+            or revision.event in {"challenge", "invalidate"}
+        ):
+            continue
         primary_ids = {
             item.hypothesis_id for item in revision.hypotheses
             if item.role == "primary"

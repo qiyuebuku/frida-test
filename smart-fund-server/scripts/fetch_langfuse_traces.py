@@ -15,6 +15,7 @@ import json
 import os
 import re
 import sys
+import time
 import urllib.parse
 import urllib.request
 from dataclasses import dataclass
@@ -29,6 +30,7 @@ DEFAULT_LIST_FIELDS = "core,basic,time,trace_context"
 DEFAULT_PAGE_SIZE = 100
 DEFAULT_TIMEOUT_SECONDS = 60
 DEFAULT_LOOKBACK_DAYS = 7
+DEFAULT_REQUEST_ATTEMPTS = 4
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_ENV_FILE = PROJECT_ROOT / ".env"
@@ -80,11 +82,21 @@ class LangfuseClient:
         query = urllib.parse.urlencode(params, doseq=True)
         url = f"{self._host}{path}?{query}"
         request = urllib.request.Request(url, headers=self._headers)
-        try:
-            with urllib.request.urlopen(request, timeout=self._timeout) as response:
-                payload = response.read()
-        except Exception as exc:  # noqa: BLE001
-            raise LangfuseApiError(f"Langfuse request failed: {url}: {exc}") from exc
+        last_error: Exception | None = None
+        for attempt in range(1, DEFAULT_REQUEST_ATTEMPTS + 1):
+            try:
+                with urllib.request.urlopen(request, timeout=self._timeout) as response:
+                    payload = response.read()
+                break
+            except Exception as exc:  # noqa: BLE001
+                last_error = exc
+                if attempt == DEFAULT_REQUEST_ATTEMPTS:
+                    raise LangfuseApiError(
+                        f"Langfuse request failed after {attempt} attempts: {url}: {exc}"
+                    ) from exc
+                time.sleep(0.5 * (2 ** (attempt - 1)))
+        else:  # pragma: no cover - loop always breaks or raises
+            raise LangfuseApiError(f"Langfuse request failed: {url}: {last_error}")
         try:
             data = json.loads(payload)
         except json.JSONDecodeError as exc:

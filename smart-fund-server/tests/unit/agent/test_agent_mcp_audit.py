@@ -20,6 +20,13 @@ def test_evidence_ledger_records_only_opened_evidence_contracts() -> None:
         },
     ) == ["market:v1:record", "market:v1:field"]
     assert _extract_opened_evidence(
+        "market_global_overview_open",
+        {"us_market": {"evidence_locators": [
+            "market:v1:us-indices",
+            "market:v1:us-breadth",
+        ]}},
+    ) == ["market:v1:us-indices", "market:v1:us-breadth"]
+    assert _extract_opened_evidence(
         "market_change_brief_open",
         {
             "significant_changes": [
@@ -47,3 +54,10 @@ def test_evidence_ledger_records_only_opened_evidence_contracts() -> None:
             "low_evidence_locator": "market:v1:technical-low",
         }}},
     ) == ["market:v1:technical-high", "market:v1:technical-low"]
+    assert _extract_opened_evidence(
+        "market_historical_analogue_open",
+        {
+            "analysis_evidence_locator": "market:v1:analogue-calculation",
+            "semantic_projection": {"reference": "market:v1:nested-record"},
+        },
+    ) == ["market:v1:analogue-calculation", "market:v1:nested-record"]

@@ -13,6 +13,7 @@ from src.application.services.watchlist_service import WatchlistService
 from src.application.services.market_evidence_locator import (
     MarketEvidenceIdentity,
     encode_market_evidence_locator,
+    historical_analogue_evidence_locator,
 )
 from src.application.services.market_history_analysis import (
     historical_analogues,
@@ -48,6 +49,16 @@ DEFAULT_SNAPSHOT_DATA_TYPES = [
     "fund_detail",
     "holding_overview",
 ]
+
+# These Observatory series are persisted in ft_market_snapshots but are not
+# watchlist projection types.  They still belong to the Agent's historical
+# market reader; routing them through InstrumentDataRepository silently returns
+# an empty result even when the requested trading date exists in PostgreSQL.
+AGENT_HISTORY_SNAPSHOT_DATA_TYPES = MARKET_SNAPSHOT_DATA_TYPES | {
+    "ths_sector_flow",
+    "ths_sector_hot",
+    "ths_sector_ranking",
+}
 
 DEFAULT_REFRESH_WAIT_SECONDS = 100.0
 DEFAULT_REFRESH_POLL_SECONDS = 1.0
@@ -506,7 +517,7 @@ class MarketTrackingService:
             [normalized_input_code],
             [item.code for item in watchlist_items],
         )[0]
-        if normalized_data_type in MARKET_SNAPSHOT_DATA_TYPES:
+        if normalized_data_type in AGENT_HISTORY_SNAPSHOT_DATA_TYPES:
             snapshots = await asyncio.to_thread(
                 self._snapshots.query_history,
                 subject_id=normalized_code,
@@ -623,12 +634,16 @@ class MarketTrackingService:
             min_samples=min_samples,
             match_distance_threshold=match_distance_threshold,
         )
-        return {
+        response = {
             "operation": "market_historical_analogue_open",
             "data_type": subject["data_type"],
             "benchmark_subject_id": benchmark["code"] if benchmark else None,
             **result,
         }
+        response["analysis_evidence_locator"] = (
+            historical_analogue_evidence_locator(response)
+        )
+        return response
 
 
 def _history_subject_id(code: str, data_type: str) -> str | None:

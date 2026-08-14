@@ -46,7 +46,26 @@ def test_historical_analogues_returns_distribution_and_sample_identity() -> None
     assert result["sample_count"] >= 3
     assert result["calibration_status"] == "calibrated"
     assert "median_return_pct" in result["statistics"]
+    assert "lower_quartile_relative_return_pct" in result["statistics"]
+    assert "upper_quartile_relative_return_pct" in result["statistics"]
     assert result["samples"][0]["evidence_locator"].startswith("market:v1:")
+    holdout = result["robustness"]["temporal_holdout"]
+    assert holdout["validation_status"] == "validated"
+    assert holdout["development_sample_count"] >= 3
+    assert holdout["holdout_sample_count"] >= 3
+    relative_holdout = result["robustness"]["relative_temporal_holdout"]
+    assert relative_holdout["validation_status"] == "validated"
+    assert "median_return_pct" in relative_holdout["holdout_statistics"]
+    controls = result["robustness"]["leakage_controls"]
+    assert controls["point_in_time_features_only"] is True
+    assert controls["non_overlapping_forward_windows"] is True
+    signal_dates = [row["signal_trade_date"] for row in result["samples"]]
+    assert len(signal_dates) == len(set(signal_dates))
+    sensitivity = result["robustness"]["threshold_sensitivity"]
+    assert len(sensitivity) == 3
+    assert [row["match_distance_threshold"] for row in sensitivity] == sorted(
+        row["match_distance_threshold"] for row in sensitivity
+    )
 
 
 def test_historical_analogues_warns_when_minimum_is_not_met() -> None:
@@ -58,6 +77,10 @@ def test_historical_analogues_warns_when_minimum_is_not_met() -> None:
 
     assert result["calibration_status"] == "insufficient_samples"
     assert "不得" in result["warning"]
+    assert (
+        result["robustness"]["temporal_holdout"]["validation_status"]
+        == "insufficient_samples"
+    )
 
 
 def test_historical_analogues_discloses_adjustable_match_threshold() -> None:
@@ -70,3 +93,4 @@ def test_historical_analogues_discloses_adjustable_match_threshold() -> None:
 
     assert result["signal_definition"]["match_distance_threshold"] == 5.0
     assert "不超过5" in result["signal_definition"]["distance_rule"]
+    assert result["robustness"]["strict_distance_threshold"] < 5.0

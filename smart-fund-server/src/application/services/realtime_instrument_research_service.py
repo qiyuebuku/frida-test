@@ -389,7 +389,8 @@ def _optional_number(value: Any) -> float | None:
 
 def _expression_projection(item: dict[str, Any]) -> dict[str, Any]:
     quote = item.get("quote") if isinstance(item.get("quote"), dict) else {}
-    holdings = _collect_six_digit_codes(item.get("holdings"))[:10]
+    top_holdings = _collect_top_holdings(item.get("holdings"))[:10]
+    holdings = [holding["code"] for holding in top_holdings]
     return {
         "code": item.get("code"),
         "name": quote.get("name") or _find_first(item.get("fund_overview"), {"name", "fundName", "productName"}),
@@ -398,8 +399,9 @@ def _expression_projection(item: dict[str, Any]) -> dict[str, Any]:
         "turnover_rate_pct": _optional_number(quote.get("turnover_rate")),
         "tracking_index": _find_first(item.get("fund_overview"), {"trackingIndex", "trackIndex", "indexName", "benchmark"}),
         "fund_scale": _find_first(item.get("fund_overview"), {"scale", "fundScale", "netAsset"}),
-        "year_return": _find_first(item.get("performance"), {"yearReturn", "year_return", "sylY"}),
-        "max_drawdown": _find_first(item.get("performance"), {"maxDrawdown", "max_drawdown"}),
+        "year_return": _latest_performance_value(item.get("performance"), "year_return"),
+        "max_drawdown": _latest_performance_value(item.get("performance"), "max_drawdown"),
+        "top_holdings": top_holdings,
         "top_holding_codes": holdings,
         "top_holding_count": len(holdings),
         "evidence_locator": item.get("evidence_locator"),
@@ -428,7 +430,12 @@ def _collect_six_digit_codes(value: Any) -> list[str]:
     found: list[str] = []
     if isinstance(value, dict):
         for key, child in value.items():
-            if key.lower() in {"code", "stockcode", "securitycode", "hqcode"}:
+            # Fund holding responses also carry the parent fund in `code`.
+            # Only constituent-security fields are valid holding identities.
+            if key.lower() in {
+                "seccode", "stockcode", "securitycode", "thscodehq",
+                "thsstockcode",
+            }:
                 digits = "".join(character for character in str(child) if character.isdigit())[-6:]
                 if len(digits) == 6:
                     found.append(digits)
@@ -437,3 +444,54 @@ def _collect_six_digit_codes(value: Any) -> list[str]:
         for child in value:
             found.extend(_collect_six_digit_codes(child))
     return list(dict.fromkeys(found))
+
+
+def _collect_top_holdings(value: Any) -> list[dict[str, Any]]:
+    rows = _find_first(value, {"stock", "top10", "holdings"})
+    if not isinstance(rows, list):
+        return []
+    result: list[dict[str, Any]] = []
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        codes = _collect_six_digit_codes(row)
+        if not codes:
+            continue
+        result.append({
+            "code": codes[0],
+            "name": row.get("secName") or row.get("stockName") or row.get("name"),
+            "weight_pct": _optional_number(
+                row.get("fundNavRate") or row.get("weight") or row.get("ratio")
+            ),
+        })
+    return result
+
+
+def _latest_performance_value(value: Any, field: str) -> Any:
+    keys = (
+        {"yearReturn", "year_return", "sylY"}
+        if field == "year_return"
+        else {"maxDrawdown", "max_drawdown"}
+    )
+    payload = _find_first(value, keys)
+    if not isinstance(payload, dict):
+        return payload
+    rows = payload.get("data")
+    if not isinstance(rows, list) or not rows:
+        return None
+    if field == "year_return":
+        row = rows[-1]
+        return {
+            "period": row.get("time"),
+            "return_pct": _optional_number(row.get("yield")),
+            "peer_rank": row.get("rank"),
+        }
+    preferred = next(
+        (row for row in rows if row.get("time") == "近一年"),
+        rows[0],
+    )
+    return {
+        "period": preferred.get("time"),
+        "drawdown_pct": _optional_number(preferred.get("drawdown")),
+        "peer_rank": preferred.get("rank"),
+    }

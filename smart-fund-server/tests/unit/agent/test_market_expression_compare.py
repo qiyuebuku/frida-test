@@ -16,3 +16,20 @@ def test_expression_projection_keeps_comparable_fields_and_holdings() -> None:
     assert result["tracking_index"] == "科创50"
     assert result["max_drawdown"] == -18.2
     assert result["top_holding_codes"] == ["688981", "688256"]
+
+
+def test_expression_projection_does_not_treat_parent_fund_as_holding() -> None:
+    result = _expression_projection({
+        "code": "159363",
+        "holdings": {"data": {"stock": [{
+            "code": "159363",
+            "secCode": "300502",
+            "secName": "新易盛",
+            "fundNavRate": 15.16,
+        }]}},
+    })
+
+    assert result["top_holding_codes"] == ["300502"]
+    assert result["top_holdings"] == [
+        {"code": "300502", "name": "新易盛", "weight_pct": 15.16}
+    ]

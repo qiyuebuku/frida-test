@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import re
 from datetime import UTC, datetime
 from types import TracebackType
 from uuid import uuid4
@@ -16,6 +17,9 @@ from langfuse import propagate_attributes
 from openai import AsyncOpenAI
 
 from src.application.agents.financial_research.agent import (
+    _historical_forward_window,
+    _market_subject_equivalence_key,
+    _select_forecast_calibration,
     create_financial_research_agent,
 )
 from src.application.agents.financial_research.audit import validate_research_result
@@ -33,8 +37,13 @@ from src.application.agents.financial_research.semantic_evaluator import (
     create_semantic_evaluator_agent,
 )
 from src.infrastructure.agent_runtime.config import AgentSettings
-from src.infrastructure.agent_runtime.mcp import create_mcp_server
-from src.infrastructure.agent_runtime.mcp import RESEARCH_READ_TOOLS
+from src.infrastructure.agent_runtime.mcp import (
+    RESEARCH_READ_TOOLS,
+    _decode_tool_result_object,
+    _project_model_tool_payload,
+    create_mcp_server,
+    research_ledger_missing_requirements,
+)
 from src.infrastructure.agent_runtime.observability import (
     AgentAuditHooks,
     configure_observability,
@@ -45,6 +54,10 @@ from src.infrastructure.agent_runtime.run_authorization import (
 
 
 logger = logging.getLogger(__name__)
+_RUN_AUTHORIZATION_TTL_FLOOR_SECONDS = 6 * 60 * 60
+
+_MODEL_CONTEXT_WINDOW_TOKENS = 128_000
+_EXPLORATION_COMPACTION_RATIO = 0.65
 
 
 class FinancialAgentRuntime:
@@ -61,7 +74,11 @@ class FinancialAgentRuntime:
             api_key=self.settings.llm_api_key,
             base_url=self.settings.llm_base_url,
             timeout=self.settings.llm_timeout,
-            max_retries=2,
+            # One Research run commonly contains dozens of model turns.  A
+            # short proxy/network flap must not discard all evidence already
+            # gathered in the run.  The OpenAI client retries only idempotent
+            # response creation failures and applies bounded backoff.
+            max_retries=5,
         )
         self._model_provider = OpenAIProvider(
             openai_client=self._openai_client,
@@ -189,7 +206,13 @@ class FinancialAgentRuntime:
                 "research_run_abort",
             ],
             run_mode=context_pack.trigger.run_mode.value,
-            ttl_seconds=context_pack.trigger.max_elapsed_seconds + 120,
+            # Runtime uses monotonic elapsed-time enforcement. Keep the signed
+            # remote capability longer-lived so an NTP/WSL wall-clock jump does
+            # not invalidate every subsequent MCP read mid-run.
+            ttl_seconds=max(
+                _RUN_AUTHORIZATION_TTL_FLOOR_SECONDS,
+                context_pack.trigger.max_elapsed_seconds + 120,
+            ),
         )
         run_mcp_server = create_mcp_server(
             self.settings,
@@ -244,7 +267,6 @@ class FinancialAgentRuntime:
             if self._langfuse is not None
             else _null_context()
         )
-        await run_mcp_server.connect()
         try:
             with propagation:
                 with run_observation as observation:
@@ -264,6 +286,39 @@ class FinancialAgentRuntime:
                             hooks=hooks,
                             run_config=run_config,
                         )
+                        for repair_attempt in range(1, 4):
+                            if _is_research_proposal_output(result.final_output):
+                                break
+                            logger.warning(
+                                "research_non_proposal_final_output_retry "
+                                "run_id=%s attempt=%s output_type=%s",
+                                run_id,
+                                repair_attempt,
+                                type(result.final_output).__name__,
+                            )
+                            missing = research_ledger_missing_requirements(context)
+                            continuation = result.to_input_list()
+                            continuation.append({
+                                "role": "user",
+                                "content": (
+                                    "你刚才只说明了下一步，没有完成它。自然语言不能结束本次运行。"
+                                    "当前尚未满足的确定性收敛条件是："
+                                    + ("；".join(missing) if missing else "无")
+                                    + "。若仍有条件，立即只调用对应工具补齐；"
+                                    "如果证据账本尚未打开且已无条件，立即实际调用 "
+                                    "agent_evidence_ledger_open；"
+                                    "随后必须调用 submit_research_conclusion 或 "
+                                    "submit_investment_view_revision，直到工具返回通过校验的正式 Proposal。"
+                                ),
+                            })
+                            result = await Runner.run(
+                                run_agent,
+                                continuation,
+                                context=context,
+                                max_turns=self.settings.max_turns,
+                                hooks=hooks,
+                                run_config=run_config,
+                            )
                     if observation is not None:
                         raw_output = result.final_output
                         if isinstance(raw_output, CurrentResearchReportProposal):
@@ -287,7 +342,6 @@ class FinancialAgentRuntime:
                         observation.update(output=trace_output)
         finally:
             hooks.close_open_observations()
-            await run_mcp_server.cleanup()
 
         output = result.final_output
         if isinstance(output, str):
@@ -306,10 +360,12 @@ class FinancialAgentRuntime:
             for item in context.tool_invocations
         )
         if evidence_tool_calls > context_pack.trigger.max_tool_calls:
-            raise ValueError(
-                "Research Agent exceeded max_tool_calls: "
-                f"{evidence_tool_calls} > "
-                f"{context_pack.trigger.max_tool_calls}"
+            logger.warning(
+                "research_parallel_batch_exceeded_soft_budget run_id=%s "
+                "evidence_tool_calls=%s configured_limit=%s",
+                run_id,
+                evidence_tool_calls,
+                context_pack.trigger.max_tool_calls,
             )
         validate_research_result(output, context)
         output = CurrentResearchReportProposal.model_validate(
@@ -319,22 +375,16 @@ class FinancialAgentRuntime:
             )
         )
 
-        commit_server = create_mcp_server(
+        commit_result = await _call_internal_mcp_tool(
             self.settings,
             run_authorization=run_authorization,
+            tool_name="research_proposal_commit",
+            arguments={
+                "proposal_payload": output.model_dump(mode="json"),
+                "publish": publish,
+            },
         )
-        await commit_server.connect()
-        try:
-            commit_result = await commit_server.call_tool(
-                "research_proposal_commit",
-                {
-                    "proposal_payload": output.model_dump(mode="json"),
-                    "publish": publish,
-                },
-            )
-            _raise_on_tool_error(commit_result, "research_proposal_commit")
-        finally:
-            await commit_server.cleanup()
+        _raise_on_tool_error(commit_result, "research_proposal_commit")
 
         try:
             await self._run_semantic_evaluation(
@@ -364,7 +414,6 @@ class FinancialAgentRuntime:
         if self._langfuse is not None:
             self._langfuse.flush()
         return output
-
     async def _run_semantic_evaluation(
         self,
         *,
@@ -449,9 +498,7 @@ class FinancialAgentRuntime:
                 )
                 if current_observation is not None:
                     current_observation.update(output=evaluation.model_dump(mode="json"))
-        commit_server = create_mcp_server(
-            self.settings,
-            run_authorization=issue_run_authorization(
+        evaluation_authorization = issue_run_authorization(
                 secret=self.settings.mcp_bearer_token,
                 run_id=proposal.run_id,
                 role="research",
@@ -464,19 +511,14 @@ class FinancialAgentRuntime:
                     else "shadow"
                 ),
                 ttl_seconds=180,
-            ),
+            )
+        commit_result = await _call_internal_mcp_tool(
+            self.settings,
+            run_authorization=evaluation_authorization,
+            tool_name="research_semantic_evaluation_commit",
+            arguments={"evaluation_payload": evaluation.model_dump(mode="json")},
         )
-        await commit_server.connect()
-        try:
-            commit_result = await commit_server.call_tool(
-                "research_semantic_evaluation_commit",
-                {"evaluation_payload": evaluation.model_dump(mode="json")},
-            )
-            _raise_on_tool_error(
-                commit_result, "research_semantic_evaluation_commit"
-            )
-        finally:
-            await commit_server.cleanup()
+        _raise_on_tool_error(commit_result, "research_semantic_evaluation_commit")
         if self._langfuse is not None:
             self._langfuse.flush()
         return evaluation
@@ -507,23 +549,20 @@ class FinancialAgentRuntime:
                 "research_run_abort",
             ],
             run_mode=trigger.run_mode.value,
-            ttl_seconds=trigger.max_elapsed_seconds + 180,
+            ttl_seconds=max(
+                _RUN_AUTHORIZATION_TTL_FLOOR_SECONDS,
+                trigger.max_elapsed_seconds + 180,
+            ),
         )
-        server = create_mcp_server(
+        result = await _call_internal_mcp_tool(
             self.settings,
             run_authorization=authorization,
+            tool_name="research_run_prepare",
+            arguments={
+                "trigger_payload": trigger.model_dump(mode="json"),
+                "research_question": research_question or "",
+            },
         )
-        await server.connect()
-        try:
-            result = await server.call_tool(
-                "research_run_prepare",
-                {
-                    "trigger_payload": trigger.model_dump(mode="json"),
-                    "research_question": research_question or "",
-                },
-            )
-        finally:
-            await server.cleanup()
         _raise_on_tool_error(result, "research_run_prepare")
         payload = _tool_result_payload(result)
         context_pack = ResearchContextPack.model_validate(
@@ -538,24 +577,83 @@ class FinancialAgentRuntime:
                 _run_authorization=authorization,
             )
         except BaseException as exc:
-            abort_server = create_mcp_server(
-                self.settings,
-                run_authorization=authorization,
-            )
             try:
-                await abort_server.connect()
-                await abort_server.call_tool(
-                    "research_run_abort",
-                    {
+                await _call_internal_mcp_tool(
+                    self.settings,
+                    run_authorization=authorization,
+                    tool_name="research_run_abort",
+                    arguments={
                         "error_type": type(exc).__name__,
                         "error_message": str(exc),
                     },
                 )
-            except Exception:
+            except BaseException:
                 logger.exception("failed to close Research run audit state")
-            finally:
-                await abort_server.cleanup()
             raise
+
+
+def _is_research_proposal_output(value: object) -> bool:
+    if isinstance(value, CurrentResearchReportProposal):
+        return True
+    if not isinstance(value, str):
+        return False
+    try:
+        CurrentResearchReportProposal.model_validate_json(value)
+    except (ValueError, TypeError):
+        return False
+    return True
+
+
+async def _call_internal_mcp_tool(
+    settings: AgentSettings,
+    *,
+    run_authorization: str,
+    tool_name: str,
+    arguments: dict[str, object],
+    attempts: int = 4,
+):
+    """Call an idempotent runtime contract through a fresh retriable session."""
+
+    async def one_attempt():
+        # The SDK's Streamable HTTP implementation uses an anyio cancel scope.
+        # A transport failure can leave the *calling task* cancelled.  Keep
+        # that scope inside a disposable child task so the orchestration task
+        # remains able to perform the next bounded retry.
+        server = create_mcp_server(
+            settings,
+            run_authorization=run_authorization,
+        )
+        try:
+            await server.connect()
+            return await server.call_tool(tool_name, arguments)
+        finally:
+            try:
+                await server.cleanup()
+            except BaseException:
+                logger.warning(
+                    "internal_mcp_cleanup_failed tool=%s",
+                    tool_name,
+                    exc_info=True,
+                )
+
+    last_error: BaseException | None = None
+    for attempt in range(1, attempts + 1):
+        try:
+            return await asyncio.create_task(one_attempt())
+        except BaseException as exc:
+            last_error = exc
+            if attempt >= attempts:
+                raise
+            logger.warning(
+                "internal_mcp_transient_retry tool=%s attempt=%s/%s error=%s",
+                tool_name,
+                attempt,
+                attempts,
+                type(exc).__name__,
+            )
+            await asyncio.sleep(min(4.0, 0.5 * (2 ** (attempt - 1))))
+    assert last_error is not None
+    raise last_error
 
 
 class _null_context:
@@ -580,10 +678,11 @@ def _semantic_evaluator_input(
             for claim in revision.claims
         ],
     ]
-    cited_references = {
-        citation.reference
-        for claim in claims
-        for citation in claim.evidence
+    cited_references = _collect_semantic_audit_references(
+        proposal.model_dump(mode="python")
+    )
+    canonical_to_alias = {
+        canonical: alias for alias, canonical in context.evidence_aliases.items()
     }
     evidence_records: list[dict[str, object]] = []
     for invocation in context.tool_invocations:
@@ -595,22 +694,31 @@ def _semantic_evaluator_input(
             default=str,
             separators=(",", ":"),
         )
-        matching = [
-            reference
-            for reference in cited_references
-            if reference in serialized
-        ]
+        matching = []
+        for reference in cited_references:
+            alias = canonical_to_alias.get(reference)
+            if _semantic_reference_matches(reference, alias, serialized):
+                matching.append(reference)
         if not matching and invocation.name not in {
             "market_historical_analogue_open",
             "market_technical_state_open",
         }:
             continue
+        excerpt = _semantic_evidence_excerpt(
+            serialized,
+            references=matching,
+            canonical_to_alias=canonical_to_alias,
+        )
         evidence_records.append({
             "tool": invocation.name,
             "references": matching[:20],
-            "result_excerpt": serialized[:6000],
-            "truncated": len(serialized) > 6000,
+            "result_excerpt": excerpt,
+            "truncated": len(excerpt) < len(serialized),
         })
+    evidence_records.sort(
+        key=lambda item: (bool(item.get("references")), item.get("tool") == "market_historical_analogue_open"),
+        reverse=True,
+    )
     return {
         "research_run_id": proposal.run_id,
         "report": {
@@ -652,8 +760,161 @@ def _semantic_evaluator_input(
         "tool_trajectory": [
             invocation.name for invocation in context.tool_invocations
         ],
-        "evidence_records": evidence_records[:40],
+        "evidence_records": evidence_records[:60],
+        "deterministic_checks": {
+            "forecast_calibration_bindings": _forecast_calibration_bindings(
+                proposal, context
+            ),
+        },
     }
+
+
+def _semantic_evidence_excerpt(
+    serialized: str,
+    *,
+    references: list[str],
+    canonical_to_alias: dict[str, str],
+    max_chars: int = 6000,
+) -> str:
+    """Keep the cited rows, not merely the first rows of a large tool result."""
+
+    if not references:
+        return serialized[:max_chars]
+    chunks: list[str] = []
+    remaining = max_chars
+    for reference in references:
+        token = canonical_to_alias.get(reference) or reference
+        index = serialized.find(token)
+        if index < 0:
+            continue
+        # Most record locators precede their values, but compact overview tools
+        # intentionally place one locator *after* a bounded table (for example
+        # ``indices_evidence_locator`` follows the full US-index quote array).
+        # A tiny backward window made those values visible to Research but
+        # invisible to the semantic evaluator, producing false "unverifiable"
+        # defects. Keep a symmetric neighbourhood around the cited locator.
+        start = max(0, index - 1800)
+        chunk = serialized[start : min(len(serialized), index + 1400)]
+        labelled = f"reference={reference}\n{chunk}"
+        if len(labelled) > remaining:
+            labelled = labelled[:remaining]
+        chunks.append(labelled)
+        remaining -= len(labelled)
+        if remaining <= 0:
+            break
+    return "\n---\n".join(chunks) if chunks else serialized[:max_chars]
+
+
+def _forecast_calibration_bindings(
+    proposal: CurrentResearchReportProposal,
+    context: AgentRunContext,
+) -> list[dict[str, object]]:
+    """Expose same-subject/same-window range checks to the semantic judge."""
+
+    results: dict[tuple[str, int | None], dict[str, object]] = {}
+    for invocation in context.tool_invocations:
+        if invocation.name != "market_historical_analogue_open":
+            continue
+        result = _decode_tool_result_object(invocation.result)
+        subject = _market_subject_equivalence_key(
+            str(result.get("subject_id") or "")
+        )
+        window = result.get("forward_window_bars")
+        if subject and isinstance(window, (int, float)):
+            results[(subject, int(window))] = result
+    checks: list[dict[str, object]] = []
+    for revision in proposal.view_revisions:
+        for forecast in revision.forecasts:
+            match = re.search(
+                r"(?<!\d)(\d{1,3})\s*(?:个?交易日|日|bars?|根)",
+                forecast.metric,
+            )
+            window = int(match.group(1)) if match else None
+            relative = bool(forecast.benchmark_subject_id) or any(
+                term in forecast.metric for term in ("相对", "超额")
+            )
+            result = _select_forecast_calibration(
+                results,
+                subject_key=_market_subject_equivalence_key(forecast.subject_id),
+                declared_window=window,
+                relative=relative,
+            )
+            statistics = result.get("statistics") if isinstance(result, dict) else None
+            selected_window = (
+                _historical_forward_window(result)
+                if isinstance(result, dict)
+                else None
+            )
+            lower_key = (
+                "lower_quartile_relative_return_pct"
+                if relative else "lower_quartile_return_pct"
+            )
+            upper_key = (
+                "upper_quartile_relative_return_pct"
+                if relative else "upper_quartile_return_pct"
+            )
+            calibrated_min = statistics.get(lower_key) if isinstance(statistics, dict) else None
+            calibrated_max = statistics.get(upper_key) if isinstance(statistics, dict) else None
+            matches = (
+                isinstance(calibrated_min, (int, float))
+                and isinstance(calibrated_max, (int, float))
+                and forecast.expected_min_value is not None
+                and forecast.expected_max_value is not None
+                and abs(float(forecast.expected_min_value) - float(calibrated_min)) < 1e-6
+                and abs(float(forecast.expected_max_value) - float(calibrated_max)) < 1e-6
+            )
+            checks.append({
+                "forecast_id": forecast.forecast_id,
+                "subject_id": forecast.subject_id,
+                "declared_window_bars": window,
+                "selected_window_bars": selected_window,
+                "reported_range": [
+                    forecast.expected_min_value,
+                    forecast.expected_max_value,
+                ],
+                "calibrated_range": [calibrated_min, calibrated_max],
+                "range_matches_same_window": matches,
+            })
+    return checks
+
+
+def _collect_semantic_audit_references(value: object) -> set[str]:
+    """Collect citations from claims, mechanisms, hypotheses and forecasts."""
+
+    references: set[str] = set()
+
+    def visit(item: object) -> None:
+        if isinstance(item, list):
+            for child in item:
+                visit(child)
+            return
+        if not isinstance(item, dict):
+            return
+        reference = item.get("reference")
+        support = item.get("support")
+        if isinstance(reference, str) and support in {
+            "supports",
+            "contradicts",
+            "context_only",
+        }:
+            references.add(reference)
+        for child in item.values():
+            visit(child)
+
+    visit(value)
+    return references
+
+
+def _semantic_reference_matches(
+    reference: str,
+    alias: str | None,
+    serialized_tool_result: str,
+) -> bool:
+    """Match canonical persisted citations against model-facing tool aliases."""
+
+    return reference in serialized_tool_result or (
+        alias is not None and alias in serialized_tool_result
+    )
 
 
 _DECISION_COVERAGE_TOOL_GROUPS = (
@@ -734,6 +995,11 @@ def _apply_research_budget_guard(
         default=-1,
     )
     has_unresolved_external_search = last_search_index > last_read_index
+    estimated_input_tokens = _estimate_input_tokens(data.model_data.input)
+    exploration_compaction_threshold = int(
+        _MODEL_CONTEXT_WINDOW_TOKENS * _EXPLORATION_COMPACTION_RATIO
+    )
+    should_compact = "agent_evidence_ledger_open" in completed_names
     if "agent_evidence_ledger_open" in completed_names:
         reminder_text = (
             "提交前结构审计：Evidence Ledger（证据账本）已经打开，现在不要再"
@@ -776,6 +1042,14 @@ def _apply_research_budget_guard(
             "不要先输出草稿，也不要改写事实来迎合结论。"
         )
     elif evidence_calls >= 18 and has_decision_coverage:
+        missing_requirements = research_ledger_missing_requirements(context)
+        readiness_instruction = (
+            "Evidence Ledger（证据账本）当前尚未开放。还必须完成："
+            + "；".join(missing_requirements)
+            + "。只补齐这些项目，不要盲目试交报告。"
+            if missing_requirements
+            else "Evidence Ledger（证据账本）已经满足开放条件，立即调用它。"
+        )
         memory_instruction = (
             "在打开 Evidence Ledger（证据账本）前，先调用 role_memory_search"
             "（角色记忆搜索）查找与当前主假设、直接反证或相似市场结构相关的"
@@ -799,6 +1073,7 @@ def _apply_research_budget_guard(
             "不要开启新主题、Community（社区）或无明确问题的搜索。"
             f"{memory_instruction}"
             f"{unresolved_source_instruction}"
+            f"{readiness_instruction}"
             "先判断是否仍存在一个会改变结论的具体阻塞缺口：如果存在，只补"
             "这个缺口；如果不存在，立即打开 Evidence Ledger（证据账本）并"
             "提交你独立得出的结论。可以得出 no_change（不修订）；如果当前无"
@@ -807,6 +1082,22 @@ def _apply_research_budget_guard(
             "维度改报 insufficient_evidence（证据不足）。不得为了"
             "满足格式而虚构因果链、趋势或确定性。"
         )
+    elif (
+        estimated_input_tokens >= exploration_compaction_threshold
+        and context.working_memory is not None
+    ):
+        # Long raw tool transcripts dilute attention well before final
+        # synthesis. Rebuild a deterministic notebook from trusted invocation
+        # state while keeping all tools available for autonomous exploration.
+        should_compact = True
+        reminder_text = (
+            "运行时已将冗长工具消息压缩为 Research Notebook（研究笔记）。"
+            "其中保留了当前研究实际打开的证据和调用参数；未保留的导航结果"
+            "不得引用。继续按当前问题自主探索，不要因为发生压缩就提前提交，"
+            "也不要重复 completed_operations（已完成操作）中参数相同且结果可用"
+            "的调用。recent_working_notes（最近工作笔记）用于延续你压缩前的计划，"
+            "但不是事实证据；继续前先据此恢复当前候选、已排除解释和唯一剩余缺口。"
+        )
     else:
         return data.model_data
     reminder = {
@@ -814,10 +1105,44 @@ def _apply_research_budget_guard(
         "content": reminder_text,
     }
     model_input = data.model_data.input
-    if "agent_evidence_ledger_open" in completed_names:
+    if should_compact:
+        context.notebook_compacted = True
         model_input = _compacted_research_notebook_input(
             original_input=data.model_data.input,
             invocations=completed,
+            working_memory=context.working_memory,
+            working_memory_revision=context.working_memory_revision,
+        )
+    if "agent_evidence_ledger_open" in completed_names:
+        reminder["content"] = (
+            "证据账本已关闭远程读取。现在只做最终事实审计和提交：逐条检查"
+            "Claim 中的每个公司、产品、技术、事件和数字是否逐字出现在所引"
+            "Citation 的保留结果中；没有出现就删除。observed_fact 只能复述"
+            "记录原文；由多个数据推出的判断必须拆成 inference 并同时引用全部前提。预测只能使用该预测对象"
+            "自己的历史校准，不能借用替代候选样本。最强反证必须直接攻击"
+            "最终主假设。方向预测必须填写该对象历史分布支持的数值区间；若"
+            "主候选样本不足，应改选已校准的候选或不做方向预测。若打开的来源"
+            "正文包含明确反方观点或分歧，必须如实纳入反证，不能只摘有利段落。"
+            "报告不得猜测媒体归属，只按工具返回的标题和来源署名。若保留结果"
+            "仍出现 UTC 时间必须先换算为北京时间。"
+            "结论范围必须与实际检验范围一致：只检验若干候选时只能写‘已检验"
+            "候选中’，不得写‘全市场无方向’。累计上涨不等于连续上涨；百分比"
+            "必须按证据值重新计算并统一四舍五入。"
+            "不同域名不等于独立来源；正文含UGC、用户上传、转载或平台仅提供"
+            "存储空间声明时，不得计作独立确认。多个媒体都复述同一公司公告时"
+            "必须披露共同原始血缘。"
+            "run_evidence:E* 只是压缩后重新打开工具结果的运行时指针，永远不能"
+            "写入 Citation；调用 run_evidence_reopen 后，正式引用只能使用其"
+            "返回内容内部的 market_ref、external_ref、Card 或 Edge 定位符。"
+            "同一对象同一指标若存在多个盘中快照，正文默认只采用最新快照；"
+            "只有明确比较变化时才能同时引用旧值和新值，并写清各自时点。"
+            "盘中形成的方向观点必须明确为条件观点，并给出下午或收盘反转时"
+            "如何降级/推翻结论，不能把未完成交易日当成完整日样本。"
+            "如果最终判断依赖历史稳定性，至少比较最终候选两个前瞻窗口并披露"
+            "留出半样本数量，同时说明历史工具返回的非重叠窗口、防前视和阈值"
+            "敏感性结果；未完成多窗口检验时缩小结论范围。"
+            "已有可证伪方向性结论时不能提交 no_change。报告保持精炼，不复述研究过程。"
+            + reminder_text
         )
     return ModelInputData(
         input=[*model_input, reminder],
@@ -825,11 +1150,32 @@ def _apply_research_budget_guard(
     )
 
 
+def _estimate_input_tokens(value) -> int:
+    """Conservatively estimate mixed Chinese/JSON model-input tokens.
+
+    The provider does not expose a preflight tokenizer. ASCII JSON averages
+    roughly four characters per token while Chinese text is commonly close to
+    one character per token, so count both classes separately and include a
+    small structural allowance. This estimate is intentionally conservative
+    without treating 30k JSON characters as an exhausted context window.
+    """
+
+    serialized = json.dumps(value, ensure_ascii=False, default=str)
+    ascii_chars = sum(ord(char) < 128 for char in serialized)
+    non_ascii_chars = len(serialized) - ascii_chars
+    return max(1, (ascii_chars + 3) // 4 + non_ascii_chars + len(serialized) // 100)
+
+
 _NOTEBOOK_RESULT_PRIORITY = {
     "agent_evidence_ledger_open": 100,
+    # This bounded semantic view contains citable US index, breadth and
+    # leadership facts. It must survive compaction ahead of repeated analogue
+    # calls; otherwise synthesis remembers a number but loses its source.
+    "market_global_overview_open": 97,
     "market_historical_analogue_open": 95,
     "market_technical_state_open": 94,
     "market_expression_compare_open": 93,
+    "research_quality_open": 92,
     "market_evidence_open": 90,
     "kg_edge_open": 89,
     "kg_card_open": 88,
@@ -843,15 +1189,24 @@ _NOTEBOOK_RESULT_PRIORITY = {
     "role_memory_open": 79,
     "role_memory_search": 78,
     "market_change_brief_open": 75,
+    "market_dimension_open": 76,
 }
-_NOTEBOOK_MAX_RESULT_CHARS = 8_000
-_NOTEBOOK_MAX_TOTAL_RESULT_CHARS = 65_000
+_NOTEBOOK_MAX_RESULT_CHARS = 12_000
+# The notebook replaces the entire raw conversation, so a 40k-character cap
+# was unnecessarily aggressive: eight dual-window historical results could
+# crowd out every current market record and leave final synthesis unable to
+# compare calibration with today's price/flow counterevidence. 100k characters
+# remains comfortably below the model context budget while preserving a
+# balanced evidence set for long, cross-market research runs.
+_NOTEBOOK_MAX_TOTAL_RESULT_CHARS = 100_000
 
 
 def _compacted_research_notebook_input(
     *,
     original_input: list,
     invocations: list,
+    working_memory: dict | None = None,
+    working_memory_revision: int = 0,
 ) -> list:
     """Replace the long tool transcript with one exact, bounded research notebook.
 
@@ -865,9 +1220,16 @@ def _compacted_research_notebook_input(
 
     candidates: list[tuple[int, int, dict]] = []
     for order, invocation in enumerate(invocations):
-        if invocation.name.startswith("submit_") or invocation.result is None:
+        if (
+            invocation.name.startswith("submit_")
+            or invocation.name == "agent_evidence_ledger_open"
+            or invocation.result is None
+        ):
             continue
-        result = _decode_notebook_result(invocation.result)
+        result = _project_notebook_result(
+            invocation.name,
+            _decode_notebook_result(invocation.result),
+        )
         serialized = json.dumps(
             result,
             ensure_ascii=False,
@@ -883,6 +1245,7 @@ def _compacted_research_notebook_input(
             serialized = json.dumps(result, ensure_ascii=False, separators=(",", ":"))
         entry = {
             "order": order + 1,
+            "evidence_ref": f"run_evidence:E{order + 1}",
             "tool": invocation.name,
             "arguments": invocation.arguments,
             "result": result,
@@ -908,6 +1271,7 @@ def _compacted_research_notebook_input(
     omitted = [
         {
             "order": entry["order"],
+            "evidence_ref": entry["evidence_ref"],
             "tool": entry["tool"],
             "arguments": entry["arguments"],
             "reason": "结果为低优先级导航信息，已从最终综合上下文移除；不得引用其内容",
@@ -915,12 +1279,35 @@ def _compacted_research_notebook_input(
         for _, order, entry in sorted(candidates, key=lambda item: item[1])
         if order not in selected_orders
     ]
+    working_notes = _recent_research_working_notes(original_input)
+    completed_operations = [
+        {
+            "order": entry["order"],
+            "evidence_ref": entry["evidence_ref"],
+            "tool": entry["tool"],
+            "arguments": entry["arguments"],
+            "result_retained": order in selected_orders,
+        }
+        for _, order, entry in sorted(candidates, key=lambda item: item[1])
+    ]
     notebook = {
         "research_notebook": {
             "compaction_policy": (
                 "由 Runtime 从本次真实工具结果确定性生成；保留值不得改写，"
-                "omitted_results 只能证明调用发生，不能作为事实证据"
+                "omitted_results 只能证明调用发生，不能作为事实证据。"
+                "recent_working_notes 是模型压缩前的阶段计划和判断，不是事实证据；"
+                "它用于延续研究意图，必须用 retained_results 中的证据复核。"
             ),
+            "working_memory": {
+                "revision": working_memory_revision,
+                "state": working_memory,
+                "authority": (
+                    "本次运行的计划与判断，不是事实证据；继续研究时以它为当前状态，"
+                    "不得把已回答问题当作待办，也不得恢复 discarded_paths。"
+                ),
+            },
+            "recent_working_notes": working_notes,
+            "completed_operations": completed_operations,
             "retained_results": evidence,
             "omitted_results": omitted,
         }
@@ -940,7 +1327,56 @@ def _compacted_research_notebook_input(
     ]
 
 
+def _recent_research_working_notes(original_input: list) -> list[dict[str, str]]:
+    """Preserve the Agent's recent plan across deterministic compaction.
+
+    Tool evidence alone cannot reconstruct why a tool was called or which
+    competing hypothesis the Agent had already rejected.  Keeping a small tail
+    of assistant-authored planning messages supplies run-local continuity while
+    explicitly preventing those notes from becoming evidence.
+    """
+
+    notes: list[dict[str, str]] = []
+    remaining = 8_000
+    for item in reversed(original_input):
+        if not isinstance(item, dict) or item.get("role") != "assistant":
+            continue
+        text = item.get("text") or item.get("content")
+        if not isinstance(text, str) or not text.strip():
+            continue
+        if re.search(r"(.)\1{199,}", text, flags=re.DOTALL):
+            # Provider glitches occasionally emit huge repeated-token messages;
+            # they carry no recoverable plan and must not poison compaction.
+            continue
+        excerpt = text.strip()[-min(len(text.strip()), remaining, 4_000) :]
+        notes.append({"type": "non_evidentiary_working_note", "text": excerpt})
+        remaining -= len(excerpt)
+        if len(notes) >= 3 or remaining <= 0:
+            break
+    notes.reverse()
+    return notes
+
+
 def _decode_notebook_result(value):
+    if isinstance(value, dict):
+        structured = value.get("structuredContent")
+        if isinstance(structured, dict):
+            return _decode_notebook_result(structured)
+        if value.get("type") == "text" and "text" in value:
+            return _decode_notebook_result(value["text"])
+        content = value.get("content")
+        if isinstance(content, list):
+            for item in content:
+                decoded = _decode_notebook_result(item)
+                if isinstance(decoded, dict) and decoded:
+                    return decoded
+        return value
+    if isinstance(value, (list, tuple)):
+        for item in value:
+            decoded = _decode_notebook_result(item)
+            if isinstance(decoded, dict) and decoded:
+                return decoded
+        return value
     if not isinstance(value, str):
         return value
     stripped = value.strip()
@@ -951,6 +1387,58 @@ def _decode_notebook_result(value):
     except json.JSONDecodeError:
         return value
     return _decode_notebook_result(decoded)
+
+
+def _project_notebook_result(tool_name: str, value):
+    """Keep source substance while dropping page chrome from final synthesis."""
+
+    # Compaction must preserve the same canonical semantic view that the model
+    # saw when the tool returned.  Re-projecting the raw audited invocation with
+    # a second, older schema reintroduced duplicate generic ``statistics`` and
+    # raw temporal-holdout trees, which made development/holdout and
+    # absolute/relative figures easy to mix up after compaction.
+    value = _project_model_tool_payload(value, tool_name)
+
+    if tool_name == "market_historical_analogue_open":
+        if not isinstance(value, dict):
+            return value
+        # Aggregate statistics and their calculation locator are the
+        # decision-bearing part. Raw sample rows and per-row locators would
+        # crowd competing candidates out of the synthesis notebook.
+        projected = {
+            key: value.get(key)
+            for key in (
+                "data_type",
+                "benchmark_subject_id",
+                "subject_id",
+                "signal_definition",
+                "forward_window_bars",
+                "sample_count",
+                "minimum_sample_count",
+                "calibration_status",
+                "full_sample_distribution",
+                "calibration_readout",
+                "distribution_stability_readout",
+                "robustness",
+                "analysis_evidence_locator",
+            )
+            if value.get(key) is not None
+        }
+        return projected
+    if tool_name not in {"external_web_read", "external_content_read"}:
+        return value
+    if not isinstance(value, dict):
+        return value
+    projected = {
+        key: value.get(key)
+        for key in ("provider", "title", "url", "content_handle")
+        if value.get(key) is not None
+    }
+    body = value.get("preview") or value.get("content") or value.get("text")
+    if isinstance(body, str):
+        projected["source_excerpt"] = body[:4_500]
+        projected["source_excerpt_truncated"] = len(body) > 4_500
+    return projected
 
 
 def _tool_result_payload(result) -> dict:

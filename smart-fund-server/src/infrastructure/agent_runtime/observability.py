@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
-import os
+from hashlib import sha256
 from dataclasses import asdict, is_dataclass
 from datetime import UTC, datetime
 from typing import Any
@@ -20,6 +20,7 @@ _SUBMIT_TOOLS = {
     "submit_research_conclusion",
     "submit_investment_view_revision",
 }
+_NOTEBOOK_TRACE_CHUNK_CHARS = 40_000
 
 
 def configure_observability(settings: AgentSettings) -> Any | None:
@@ -28,14 +29,20 @@ def configure_observability(settings: AgentSettings) -> Any | None:
     if not settings.langfuse_configured:
         return None
 
-    os.environ.setdefault("LANGFUSE_PUBLIC_KEY", settings.langfuse_public_key)
-    os.environ.setdefault("LANGFUSE_SECRET_KEY", settings.langfuse_secret_key)
-    os.environ.setdefault("LANGFUSE_BASE_URL", settings.langfuse_base_url)
-    os.environ.setdefault("LANGFUSE_HOST", settings.langfuse_base_url)
+    from langfuse import Langfuse
 
-    from langfuse import get_client
-
-    return get_client()
+    client = Langfuse(
+        public_key=settings.langfuse_public_key,
+        secret_key=settings.langfuse_secret_key,
+        base_url=settings.langfuse_base_url,
+    )
+    resources = getattr(client, "_resources", None)
+    actual_base_url = str(getattr(resources, "base_url", "") or "").rstrip("/")
+    if actual_base_url != settings.langfuse_base_url:
+        raise RuntimeError(
+            "Agent Langfuse client is already bound to a different endpoint"
+        )
+    return client
 
 
 def _parse_arguments(raw: Any) -> Any:
@@ -173,6 +180,42 @@ def _llm_trace_output(output: Any) -> dict[str, Any]:
     return result
 
 
+def _research_notebook_from_input(input_items: Any) -> dict[str, Any] | None:
+    """Return the structured Runtime notebook embedded in model input, if any."""
+
+    for item in input_items or []:
+        simplified = _simplify_conversation_item(item)
+        content = simplified.get("content")
+        if isinstance(content, dict) and isinstance(
+            content.get("research_notebook"), dict
+        ):
+            return content["research_notebook"]
+    return None
+
+
+def _bounded_notebook_chunks(
+    entries: list[Any],
+    *,
+    max_chars: int = _NOTEBOOK_TRACE_CHUNK_CHARS,
+) -> list[list[Any]]:
+    """Group complete notebook entries without cutting JSON values in half."""
+
+    chunks: list[list[Any]] = []
+    current: list[Any] = []
+    current_chars = 0
+    for entry in entries:
+        entry_chars = len(json.dumps(entry, ensure_ascii=False, default=str))
+        if current and current_chars + entry_chars > max_chars:
+            chunks.append(current)
+            current = []
+            current_chars = 0
+        current.append(entry)
+        current_chars += entry_chars
+    if current:
+        chunks.append(current)
+    return chunks
+
+
 def _langfuse_usage_details(usage: Any) -> dict[str, int] | None:
     """Map Agents SDK usage onto Langfuse's generation usage fields."""
 
@@ -253,6 +296,7 @@ class AgentAuditHooks(RunHooksBase[AgentRunContext, Any]):
         self._trace_context: dict[str, str] | None = None
         self._llm_observation: Any | None = None
         self._tool_observations: dict[str, Any] = {}
+        self._observed_notebooks: set[str] = set()
 
     def set_parent(self, *, trace_id: str, parent_span_id: str) -> None:
         self._trace_context = {
@@ -271,6 +315,18 @@ class AgentAuditHooks(RunHooksBase[AgentRunContext, Any]):
         except Exception as exc:  # noqa: BLE001
             logger.warning("agent_trace_observation_start_failed: %s", exc)
             return None
+
+    def _flush_completed_observations(self) -> None:
+        """Publish long-running Agent progress instead of waiting for run exit."""
+
+        if self._langfuse is None:
+            return
+        try:
+            self._langfuse.flush()
+        except Exception as exc:  # noqa: BLE001
+            # Observability must never make the research run fail.  A later
+            # phase/run-final flush can still deliver the buffered records.
+            logger.warning("agent_trace_incremental_flush_failed: %s", exc)
 
     @staticmethod
     def _finish_observation(
@@ -310,6 +366,118 @@ class AgentAuditHooks(RunHooksBase[AgentRunContext, Any]):
             )
         self._tool_observations.clear()
 
+    def _record_research_notebook(
+        self,
+        *,
+        run_id: str,
+        notebook: dict[str, Any],
+    ) -> None:
+        """Expose compaction as readable, bounded Langfuse observations.
+
+        The LLM generation still records its exact input for forensic replay. A
+        second semantic projection prevents the useful notebook from being
+        buried inside a several-hundred-kilobyte conversation JSON tree.
+        """
+
+        fingerprint = sha256(
+            json.dumps(
+                notebook,
+                ensure_ascii=False,
+                sort_keys=True,
+                default=str,
+            ).encode()
+        ).hexdigest()[:16]
+        if fingerprint in self._observed_notebooks:
+            return
+        self._observed_notebooks.add(fingerprint)
+
+        retained = list(notebook.get("retained_results") or [])
+        omitted = list(notebook.get("omitted_results") or [])
+        completed = list(notebook.get("completed_operations") or [])
+        overview = self._start_observation(
+            name="06 上下文压缩｜研究笔记总览",
+            as_type="span",
+            input={
+                "policy": notebook.get("compaction_policy"),
+                "working_memory_revision": (
+                    notebook.get("working_memory") or {}
+                ).get("revision"),
+            },
+            metadata={
+                "run_id": run_id,
+                "notebook_fingerprint": fingerprint,
+                "ui_chunk_chars": _NOTEBOOK_TRACE_CHUNK_CHARS,
+            },
+        )
+        self._finish_observation(
+            overview,
+            output={
+                "completed_operation_count": len(completed),
+                "retained_result_count": len(retained),
+                "omitted_result_count": len(omitted),
+                "retained_result_chunks": len(_bounded_notebook_chunks(retained)),
+                "recent_working_note_count": len(
+                    notebook.get("recent_working_notes") or []
+                ),
+            },
+        )
+        if not self._include_sensitive_data:
+            self._flush_completed_observations()
+            return
+
+        working = self._start_observation(
+            name="06 上下文压缩｜研究主线与工作记忆",
+            as_type="span",
+            input={"notebook_fingerprint": fingerprint},
+            metadata={"run_id": run_id, "notebook_fingerprint": fingerprint},
+        )
+        self._finish_observation(
+            working,
+            output={
+                "working_memory": notebook.get("working_memory"),
+                "recent_working_notes": notebook.get("recent_working_notes") or [],
+            },
+        )
+
+        retained_chunks = _bounded_notebook_chunks(retained)
+        for index, chunk in enumerate(retained_chunks, start=1):
+            observation = self._start_observation(
+                name=(
+                    "06 上下文压缩｜保留证据 "
+                    f"{index}/{len(retained_chunks)}"
+                ),
+                as_type="span",
+                input={
+                    "notebook_fingerprint": fingerprint,
+                    "evidence_refs": [item.get("evidence_ref") for item in chunk],
+                },
+                metadata={"run_id": run_id, "notebook_fingerprint": fingerprint},
+            )
+            self._finish_observation(observation, output={"retained_results": chunk})
+
+        if omitted:
+            observation = self._start_observation(
+                name="06 上下文压缩｜省略结果索引",
+                as_type="span",
+                input={"notebook_fingerprint": fingerprint},
+                metadata={"run_id": run_id, "notebook_fingerprint": fingerprint},
+            )
+            self._finish_observation(
+                observation,
+                output={"omitted_results": omitted},
+            )
+
+        self._flush_completed_observations()
+        logger.info(
+            "agent_research_notebook_traced run_id=%s fingerprint=%s "
+            "retained=%s omitted=%s chunks=%s",
+            run_id,
+            fingerprint,
+            len(retained),
+            len(omitted),
+            len(retained_chunks),
+        )
+
     async def on_llm_start(
         self,
         context,
@@ -324,6 +492,12 @@ class AgentAuditHooks(RunHooksBase[AgentRunContext, Any]):
             and "校验失败" in str(item.result)
             for item in context.context.tool_invocations[-2:]
         )
+        notebook = _research_notebook_from_input(input_items)
+        if notebook is not None:
+            self._record_research_notebook(
+                run_id=context.context.run_id,
+                notebook=notebook,
+            )
         trace_input = {
             "round": context.context.llm_calls,
             "purpose": "修正报告" if correcting else "研究分析",
@@ -366,6 +540,7 @@ class AgentAuditHooks(RunHooksBase[AgentRunContext, Any]):
             usage_details=usage_details,
         )
         self._llm_observation = None
+        self._flush_completed_observations()
         logger.info(
             "agent_llm_end run_id=%s agent=%s outputs=%s",
             context.context.run_id,
@@ -384,9 +559,18 @@ class AgentAuditHooks(RunHooksBase[AgentRunContext, Any]):
             and tool.name not in _SUBMIT_TOOLS
             and evidence_tool_calls >= research_context.trigger.max_tool_calls
         ):
-            raise RuntimeError(
-                "Research Agent tool-call budget exhausted before executing "
-                f"{tool.name}"
+            # Tool visibility is calculated before a parallel batch starts, so
+            # several calls can legitimately cross the soft limit together.
+            # Killing the whole run here would discard successful sibling reads
+            # and the complete research state. Hide reads on the next turn and
+            # let the Agent submit from what it has already learned.
+            logger.warning(
+                "research_tool_soft_budget_exceeded run_id=%s tool=%s "
+                "completed_evidence_calls=%s configured_limit=%s",
+                context.context.run_id,
+                tool.name,
+                evidence_tool_calls,
+                research_context.trigger.max_tool_calls,
             )
         call_id = str(getattr(context, "tool_call_id", "") or "")
         invocation = ToolInvocation(
@@ -450,6 +634,7 @@ class AgentAuditHooks(RunHooksBase[AgentRunContext, Any]):
                 else "completed"
             ),
         )
+        self._flush_completed_observations()
         if (
             invocation.name in _SUBMIT_TOOLS
             and "校验失败" in str(result)

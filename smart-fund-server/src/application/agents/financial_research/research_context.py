@@ -70,7 +70,11 @@ class ResearchContextBuilder:
             current_report_revision_id=current_report_revision_id,
             active_views=active_views,
             memory_items=effective_memories,
-            research_question=research_question,
+            research_question=(
+                research_question.strip()
+                if isinstance(research_question, str) and research_question.strip()
+                else "研究当前市场变化并判断现有投资观点是否需要修订。"
+            ),
         )
         serialized_chars = len(pack.model_dump_json())
         if serialized_chars > self._limits.max_serialized_chars:
