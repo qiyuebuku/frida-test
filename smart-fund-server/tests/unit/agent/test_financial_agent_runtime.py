@@ -23,6 +23,7 @@ from src.application.agents.financial_research.agent import (
     _validated_proposal_is_final,
     _validate_forecast_calibration,
     checkpoint_research_working_memory,
+    create_financial_research_agent,
     run_evidence_reopen,
     submit_investment_view_revision,
     submit_research_conclusion,
@@ -220,6 +221,15 @@ def test_glm53_role_settings_use_supported_reasoning_effort() -> None:
     assert compactor.extra_body == {
         "thinking": {"type": "enabled"},
         "reasoning_effort": "low",
+    }
+
+
+def test_glm53_research_agent_uses_high_effort_for_multi_turn_work() -> None:
+    agent = create_financial_research_agent(model="glm-5.3", mcp_server=None)
+
+    assert agent.model_settings.extra_body == {
+        "thinking": {"type": "enabled"},
+        "reasoning_effort": "high",
     }
 
 

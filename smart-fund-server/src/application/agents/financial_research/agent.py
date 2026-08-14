@@ -1679,7 +1679,11 @@ def create_financial_research_agent(
         model=model,
         model_settings=research_model_settings(
             model=model,
-            reasoning_effort="max",
+            # Financial research benefits from sustained reasoning, but unlike
+            # code generation it performs many tool-selection turns. `high`
+            # keeps those turns bounded; the isolated final quality evaluator
+            # remains on `max` for adversarial evidence review.
+            reasoning_effort="high",
             parallel_tool_calls=True,
             tool_choice="required",
         ),
