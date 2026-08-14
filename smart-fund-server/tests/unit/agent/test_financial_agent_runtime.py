@@ -389,7 +389,7 @@ def test_compaction_threshold_reserves_runway_after_first_replacement() -> None:
     context.surface_generation = 1
 
     assert initial < 0.90
-    assert _compaction_threshold_ratio(context) == max(initial, 0.65)
+    assert _compaction_threshold_ratio(context) == min(initial, 0.42)
 
 
 def test_compaction_threshold_protects_post_ledger_submission() -> None:

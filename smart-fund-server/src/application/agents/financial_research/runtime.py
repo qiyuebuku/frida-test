@@ -70,12 +70,12 @@ _EXPLORATION_COMPACTION_RATIO = float(
     os.getenv("SMART_FUND_RESEARCH_COMPACTION_RATIO", "0.80")
 )
 _COMPACTION_RETAIN_RATIO = float(
-    os.getenv("SMART_FUND_RESEARCH_COMPACTION_RETAIN_RATIO", "0.16")
+    os.getenv("SMART_FUND_RESEARCH_COMPACTION_RETAIN_RATIO", "0.10")
 )
 _COMPACTION_MIN_GROWTH_RATIO = float(
-    os.getenv("SMART_FUND_RESEARCH_COMPACTION_MIN_GROWTH_RATIO", "0.08")
+    os.getenv("SMART_FUND_RESEARCH_COMPACTION_MIN_GROWTH_RATIO", "0.06")
 )
-_REPEATED_COMPACTION_RATIO = 0.65
+_REPEATED_COMPACTION_RATIO = 0.42
 _POST_LEDGER_COMPACTION_RATIO = 0.95
 
 
@@ -1626,16 +1626,16 @@ def _estimate_model_input_tokens(model_input: ModelInputData) -> int:
 def _compaction_threshold_ratio(context: AgentRunContext) -> float:
     """Compact renewed evidence pressure without entering a recovery loop.
 
-    Hysteresis already requires at least eight percent of genuinely new input
-    after a replacement.  Raising every later threshold to ninety percent made
-    a 50k-token synthesis request reach the gateway before another checkpoint
-    could be created.  A 65% floor leaves room for newly gathered evidence and
-    still permits a second, progress-aware checkpoint late in a long study.
+    Hysteresis requires at least six percent of genuinely new input after a
+    replacement.  Once a run has crossed the first pressure threshold, keep its
+    active surface below the GLM gateway's observed unstable range instead of
+    letting it grow back to the initial threshold.  A later checkpoint still
+    represents real research progress, not a fixed workflow phase.
     """
 
     ratio = _EXPLORATION_COMPACTION_RATIO
     if context.surface_generation > 0:
-        ratio = max(ratio, _REPEATED_COMPACTION_RATIO)
+        ratio = min(ratio, _REPEATED_COMPACTION_RATIO)
     if any(
         invocation.name == "agent_evidence_ledger_open"
         and invocation.finished_at is not None
