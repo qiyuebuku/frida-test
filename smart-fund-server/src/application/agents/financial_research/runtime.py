@@ -76,18 +76,6 @@ _COMPACTION_RETAIN_RATIO = float(
 _COMPACTION_MIN_GROWTH_RATIO = float(
     os.getenv("SMART_FUND_RESEARCH_COMPACTION_MIN_GROWTH_RATIO", "0.06")
 )
-_REASONING_PRESSURE_TOKENS = int(
-    os.getenv("SMART_FUND_RESEARCH_REASONING_PRESSURE_TOKENS", "18000")
-)
-_REASONING_PRESSURE_SHARE = float(
-    os.getenv("SMART_FUND_RESEARCH_REASONING_PRESSURE_SHARE", "0.25")
-)
-_REASONING_PRESSURE_RETAIN_TOKENS = int(
-    os.getenv("SMART_FUND_RESEARCH_REASONING_RETAIN_TOKENS", "20000")
-)
-_REASONING_PRESSURE_MIN_GROWTH_TOKENS = int(
-    os.getenv("SMART_FUND_RESEARCH_REASONING_MIN_GROWTH_TOKENS", "8000")
-)
 _REPEATED_COMPACTION_RATIO = 0.42
 _POST_LEDGER_COMPACTION_RATIO = 0.95
 
@@ -196,27 +184,22 @@ class FinancialAgentRuntime:
         )
         active = ModelInputData(input=active_input, instructions=guarded.instructions)
         before_tokens = _estimate_model_input_tokens(active)
-        threshold_ratio = _compaction_threshold_ratio(context)
-        threshold = int(_MODEL_CONTEXT_WINDOW_TOKENS * threshold_ratio)
         reasoning_tokens = _estimate_reasoning_surface_tokens(active_input)
         reasoning_share = reasoning_tokens / max(before_tokens, 1)
+        threshold_ratio = _compaction_threshold_ratio(context)
+        threshold = int(_MODEL_CONTEXT_WINDOW_TOKENS * threshold_ratio)
         capacity_pressure = before_tokens >= threshold
-        # GLM can technically accept a very large input while still wasting
-        # attention and latency by replaying many completed reasoning blocks.
-        # Treat that as a separate pressure signal. We replace only a balanced,
-        # closed prefix; the recent protocol/tool chain remains verbatim.
-        reasoning_pressure = _reasoning_surface_is_pressured(
-            context=context,
-            total_tokens=before_tokens,
-            reasoning_tokens=reasoning_tokens,
-        )
-        if not capacity_pressure and not reasoning_pressure:
+        # Context replacement is a capacity safeguard, not a generic latency
+        # optimization.  GLM-5.3 accepts a 1M-token input window; replacing a
+        # coherent 50-60K transcript merely because it contains reasoning made
+        # the Agent reopen evidence it had just read and created compression
+        # loops.  Preserve the verbatim trajectory until the configured input
+        # capacity threshold is genuinely approaching.
+        if not capacity_pressure:
             return active
-        pressure_kind = "capacity" if capacity_pressure else "reasoning_surface"
-        min_growth_tokens = (
-            int(_MODEL_CONTEXT_WINDOW_TOKENS * _COMPACTION_MIN_GROWTH_RATIO)
-            if capacity_pressure
-            else _REASONING_PRESSURE_MIN_GROWTH_TOKENS
+        pressure_kind = "capacity"
+        min_growth_tokens = int(
+            _MODEL_CONTEXT_WINDOW_TOKENS * _COMPACTION_MIN_GROWTH_RATIO
         )
         if (
             context.surface_generation > 0
@@ -234,10 +217,8 @@ class FinancialAgentRuntime:
             )
             return active
 
-        retain_tokens = (
-            int(_MODEL_CONTEXT_WINDOW_TOKENS * _COMPACTION_RETAIN_RATIO)
-            if capacity_pressure
-            else min(_REASONING_PRESSURE_RETAIN_TOKENS, before_tokens // 3)
+        retain_tokens = int(
+            _MODEL_CONTEXT_WINDOW_TOKENS * _COMPACTION_RETAIN_RATIO
         )
         selection = _select_surface_replacement(
             raw_input=raw_input,
@@ -1861,21 +1842,6 @@ def _research_ledger_is_open(context: AgentRunContext) -> bool:
         invocation.name == "agent_evidence_ledger_open"
         and invocation.finished_at is not None
         for invocation in context.tool_invocations
-    )
-
-
-def _reasoning_surface_is_pressured(
-    *,
-    context: AgentRunContext,
-    total_tokens: int,
-    reasoning_tokens: int,
-) -> bool:
-    """Detect attention pressure without pretending the 1M window is full."""
-
-    return (
-        not _research_ledger_is_open(context)
-        and reasoning_tokens >= _REASONING_PRESSURE_TOKENS
-        and reasoning_tokens / max(total_tokens, 1) >= _REASONING_PRESSURE_SHARE
     )
 
 

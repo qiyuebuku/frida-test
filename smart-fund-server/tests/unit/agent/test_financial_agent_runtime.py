@@ -70,10 +70,8 @@ from src.application.agents.financial_research.runtime import (
     _decode_notebook_result,
     _expand_evidence_aliases,
     _estimate_input_tokens,
-    _estimate_reasoning_surface_tokens,
     _is_research_proposal_output,
     _research_surface_input,
-    _reasoning_surface_is_pressured,
     _raise_on_tool_error,
     _project_notebook_result,
     _recent_research_working_notes,
@@ -501,40 +499,6 @@ def test_surface_replacement_keeps_reasoning_that_introduces_retained_tool_turn(
     assert source == raw[:1]
     assert retained == raw[1:]
     assert shadowed_count == 1
-
-
-def test_reasoning_surface_pressure_requires_both_size_and_dominance() -> None:
-    context = _context()
-    reasoning_item = {
-        "type": "reasoning",
-        "summary": [{"type": "summary_text", "text": "分析" * 20_000}],
-    }
-    reasoning_tokens = _estimate_reasoning_surface_tokens([reasoning_item])
-
-    assert reasoning_tokens >= 18_000
-    assert _reasoning_surface_is_pressured(
-        context=context,
-        total_tokens=reasoning_tokens * 2,
-        reasoning_tokens=reasoning_tokens,
-    ) is True
-    assert _reasoning_surface_is_pressured(
-        context=context,
-        total_tokens=reasoning_tokens * 5,
-        reasoning_tokens=reasoning_tokens,
-    ) is False
-
-
-def test_reasoning_surface_pressure_is_disabled_after_evidence_ledger() -> None:
-    context = _context()
-    context.tool_invocations.append(
-        _finished_invocation("agent_evidence_ledger_open", 1)
-    )
-
-    assert _reasoning_surface_is_pressured(
-        context=context,
-        total_tokens=40_000,
-        reasoning_tokens=20_000,
-    ) is False
 
 
 def test_checkpoint_source_projection_omits_reasoning_but_keeps_exact_facts() -> None:
