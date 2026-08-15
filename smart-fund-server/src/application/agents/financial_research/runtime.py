@@ -1455,11 +1455,11 @@ def _apply_research_budget_guard(
     elif evidence_calls >= 18 and has_decision_coverage:
         missing_requirements = research_ledger_missing_requirements(context)
         readiness_instruction = (
-            "Evidence Ledger（证据账本）当前尚未开放。还必须完成："
+            "当前仍有以下确定性证据完整性问题："
             + "；".join(missing_requirements)
-            + "。只补齐这些项目，不要盲目试交报告。"
+            + "。只补齐这些项目，然后重新判断是否收敛。"
             if missing_requirements
-            else "Evidence Ledger（证据账本）已经满足开放条件，立即调用它。"
+            else "当前没有阻止打开 Evidence Ledger（证据账本）的确定性完整性问题。"
         )
         memory_instruction = (
             "在打开 Evidence Ledger（证据账本）前，先调用 role_memory_search"
@@ -1478,8 +1478,7 @@ def _apply_research_budget_guard(
             else ""
         )
         reminder_text = (
-            "研究收敛提醒：你已经完成了市场概览、候选比较、精确证据与"
-            "历史或来源验证，当前已有形成决定所需的多层证据。"
+            "研究收敛提醒：停止扩展研究范围，只做一次收敛判断。"
             f"本轮已经完成的工具能力：{completed_capabilities}。"
             "不要用相同参数重复调用这些能力；只有刷新实时数据、修正失败参数或"
             "下钻不同对象/字段时才再次调用。"
@@ -1491,9 +1490,9 @@ def _apply_research_budget_guard(
             f"{memory_instruction}"
             f"{unresolved_source_instruction}"
             f"{readiness_instruction}"
-            "不要先在内部起草整份 Proposal 或手工复算工具已经返回的统计。"
-            "只判断是否仍存在一个会改变结论的具体阻塞缺口：如果存在，只补"
-            "这个缺口；如果不存在，立即打开 Evidence Ledger（证据账本）并"
+            "不要先在内部起草 Proposal、枚举 Claim 或复述工具统计。"
+            "如果存在一个明确且足以改变主假设或最强替代假设的证据缺口，只补"
+            "这个缺口；否则立即打开 Evidence Ledger（证据账本）并"
             "提交你独立得出的结论。可以得出 no_change（不修订）；如果当前无"
             "观点且已有同对象行情或资金、对象历史或业绩、机制和直接反证，就"
             "应形成带条件、较低置信度且可证伪的观点，不能仅因缺少一个辅助"
@@ -1508,40 +1507,13 @@ def _apply_research_budget_guard(
     }
     if "agent_evidence_ledger_open" in completed_names:
         reminder["content"] = (
-            "证据账本已经打开。优先做最终事实审计和提交；如果发现会改变结论的"
-            "具体证据缺口，仍可使用读取工具定向补齐，不要无目的扩展范围。逐条检查"
-            "Claim 中的每个公司、产品、技术、事件和数字是否逐字出现在所引"
-            "Citation 的保留结果中；没有出现就删除。observed_fact 只能复述"
-            "记录原文；由多个数据推出的判断必须拆成 inference 并同时引用全部前提。预测只能使用该预测对象"
-            "自己的历史校准，不能借用替代候选样本。最强反证必须直接攻击"
-            "最终主假设。方向预测必须填写该对象历史分布支持的数值区间；若"
-            "主候选样本不足，应改选已校准的候选或不做方向预测。若打开的来源"
-            "正文包含明确反方观点或分歧，必须如实纳入反证，不能只摘有利段落。"
-            "报告不得猜测媒体归属，只按工具返回的标题和来源署名。若保留结果"
-            "仍出现 UTC 时间必须先换算为北京时间。"
-            "结论范围必须与实际检验范围一致：只检验若干候选时只能写‘已检验"
-            "候选中’，不得写‘全市场无方向’。累计上涨不等于连续上涨；百分比"
-            "必须按证据值重新计算并统一四舍五入。"
-            "不同域名不等于独立来源；正文含UGC、用户上传、转载或平台仅提供"
-            "存储空间声明时，不得计作独立确认。多个媒体都复述同一公司公告时"
-            "必须披露共同原始血缘。"
-            "run_evidence:E* 只是压缩后重新打开工具结果的运行时指针，永远不能"
-            "写入 Citation；调用 run_evidence_reopen 后，正式引用只能使用其"
-            "返回内容内部的 market_ref、external_ref、Card 或 Edge 定位符。"
-            "压缩前的完整工具结果仍由 Runtime 保存在服务端证据审计中，提交时"
-            "会据此校验 Claim 与 Citation。检查点已经明确记录的对象、数值和"
-            "正式定位符可以直接用于起草；不要仅为逐字复制而批量恢复。只有某个"
-            "字段在检查点中不确定、被截断，或提交校验明确指出该项不受支持时，"
-            "才使用 run_evidence_reopen 定向核对该项。"
-            "同一对象同一指标若存在多个盘中快照，正文默认只采用最新快照；"
-            "只有明确比较变化时才能同时引用旧值和新值，并写清各自时点。"
-            "盘中形成的方向观点必须明确为条件观点，并给出下午或收盘反转时"
-            "如何降级/推翻结论，不能把未完成交易日当成完整日样本。"
-            "如果最终判断依赖历史稳定性，至少比较最终候选两个前瞻窗口并披露"
-            "留出半样本数量，同时说明历史工具返回的非重叠窗口、防前视和阈值"
-            "敏感性结果；未完成多窗口检验时缩小结论范围。"
-            "已有可证伪方向性结论时不能提交 no_change。报告保持精炼，不复述研究过程。"
-            + reminder_text
+            "Evidence Ledger（证据账本）已经打开，研究阶段现在结束。不要再调用"
+            "任何读取工具，不要重新评估研究范围，也不要在隐藏推理中枚举 Claim、"
+            "复制全部数字或起草第二份报告。直接调用提交工具生成最小充分 Proposal："
+            "表达最终判断、最强反证、实际检验范围、组合决策边界和必要观察信号。"
+            "只使用账本中的正式引用；observed_fact 复述证据，综合判断标为 inference。"
+            "引用对象、时间、状态、历史窗口、Forecast 区间和 Runtime 字段由提交程序"
+            "确定性校验或补全。若提交返回错误，只修正错误指出的字段，不重新研究。"
         )
     return ModelInputData(
         input=[*data.model_data.input, reminder],

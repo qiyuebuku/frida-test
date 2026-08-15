@@ -22,7 +22,13 @@ logger = logging.getLogger(__name__)
 
 class ClaimCitationAssessment(ResearchContract):
     claim_id: str = Field(min_length=1, max_length=180)
-    reference: str = Field(min_length=1, max_length=512)
+    reference: str = Field(
+        min_length=1,
+        max_length=512,
+        description=(
+            "只填写报告 Citation 的短 citation_id；Runtime 会映射为真实证据定位符"
+        ),
+    )
     verdict: Literal[
         "fully_supports",
         "partially_supports",
@@ -30,8 +36,8 @@ class ClaimCitationAssessment(ResearchContract):
         "contradicts",
         "unrelated",
     ]
-    unsupported_part: str | None = Field(default=None, max_length=800)
-    rationale: str = Field(min_length=1, max_length=1000)
+    unsupported_part: str | None = Field(default=None, max_length=300)
+    rationale: str = Field(min_length=1, max_length=300)
 
 
 class SemanticResearchScores(ResearchContract):
@@ -109,9 +115,15 @@ def create_semantic_evaluator_agent(*, model: str) -> Agent:
         model=model,
         model_settings=research_model_settings(
             model=model,
-            reasoning_effort="max",
+            # The evaluator receives a completed, bounded audit package and
+            # applies a fixed rubric. GLM-5.3 max spent several minutes and
+            # tens of thousands of reasoning tokens re-deriving the report.
+            # Low is sufficient for citation-by-citation classification; the
+            # deterministic evaluator still enforces structural invariants.
+            reasoning_effort="low",
             parallel_tool_calls=False,
             tool_choice="required",
+            max_tokens=12_000,
         ),
         tools=[submit_semantic_evaluation],
         tool_use_behavior=_evaluation_is_final,
@@ -134,7 +146,7 @@ def _evaluation_is_final(_context, tool_results: list) -> ToolsToFinalOutputResu
 _INSTRUCTIONS = """
 你是独立的金融研究质量评测智能体。你评价已经完成的报告，不生成投资观点，也不替研究智能体改稿。
 
-逐条检查 Claim（主张）和 Citation（引用）的语义蕴含。引用真实不代表它能支持整句话；无法支持的部分必须写入 unsupported_part。识别同一底层来源的转载、同一研报的不同 Card、同一行情表的多个字段，不得把它们机械算成独立来源。来源独立性主要评价新闻、产业机制和因果主张；对交易所行情、板块成分和资金等客观测量，不要求为了凑数再找第二家行情供应商，但不得把同一张行情表拆成多个独立印证。
+逐条检查 Claim（主张）和 Citation（引用）的语义蕴含。引用真实不代表它能支持整句话；无法支持的部分必须写入 unsupported_part。每条 assessment 的 reference 只复制 Citation 的短 citation_id，禁止复制 market:v1、Card ID 或其他长定位符；Runtime 会自动恢复正式 reference。rationale 最多120个汉字，只写支持或不支持的关键差异，不复述整条证据。识别同一底层来源的转载、同一研报的不同 Card、同一行情表的多个字段，不得把它们机械算成独立来源。来源独立性主要评价新闻、产业机制和因果主张；对交易所行情、板块成分和资金等客观测量，不要求为了凑数再找第二家行情供应商，但不得把同一张行情表拆成多个独立印证。
 如果报告不依赖外部产业或事件叙事形成中心结论，或把单一来源严格限定为可删除的背景且未据此推导
 因果，不得仅因“没有第二篇新闻”降低来源独立性；此时应评价实际使用的证据血缘是否被如实披露。
 若中心结论只依赖客观行情测量和透明的确定性统计，报告如实说明这些数据来自同一行情血缘、没有把
@@ -155,5 +167,8 @@ _INSTRUCTIONS = """
 输入中的 deterministic_checks 是程序按正式 Forecast 与同对象、同窗口历史结果计算的审计结论。对于
 预测区间是否绑定错窗口等机械事实，以该字段为准；不得因多个窗口数字相邻出现而自行推断串绑。
 
-评测结果不会反馈给本次 Research Agent，因此应客观记录缺陷与后续研究动作，不要为了让报告通过而宽松打分。最后必须调用 submit_semantic_evaluation。
+评测结果不会反馈给本次 Research Agent，因此应客观记录缺陷与后续研究动作，不要为了让报告通过而宽松打分。
+不要在隐藏推理中重写报告或逐字复述全部证据。完成必要判断后立即调用 submit_semantic_evaluation；
+工具参数的第一个顶层字段必须是完整的 scores，先填写七项分数，再填写精简的逐 Claim assessment。
+每条 rationale 只写一个关键差异，strengths、defects 和 recommended_research_actions 只保留会影响评分的项目。
 """.strip()

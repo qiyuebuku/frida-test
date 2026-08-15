@@ -195,8 +195,6 @@ class ResearchMCPServerStreamableHttp(MCPServerStreamableHttp):
     ) -> None:
         super().__init__(*args, **kwargs)
         self._completed_read_keys: set[str] = set()
-        self._completed_semantic_groups: set[str] = set()
-        self._semantic_group_locks: dict[str, asyncio.Lock] = {}
         # Preserve parallel research while protecting the remote API from a
         # retry storm when one model turn emits many tools during a network
         # flap. Four concurrent reads still cover a broad batch efficiently.
@@ -275,27 +273,6 @@ class ResearchMCPServerStreamableHttp(MCPServerStreamableHttp):
                 tool_name=tool_name,
             )
         cache_key = _read_call_key(tool_name, arguments)
-        semantic_group = _semantic_read_group(tool_name)
-        if semantic_group is not None:
-            lock = self._semantic_group_locks.setdefault(
-                semantic_group,
-                asyncio.Lock(),
-            )
-            async with lock:
-                if semantic_group in self._completed_semantic_groups:
-                    return _skipped_read_result(
-                        tool_name,
-                        "本次运行已打开语义等价的市场入口；请使用已有结果继续下钻。",
-                    )
-                result = await self._call_tool_isolated(tool_name, arguments, meta)
-                if not bool(result.isError):
-                    self._completed_semantic_groups.add(semantic_group)
-                    self._completed_read_keys.add(cache_key)
-                return _compact_market_evidence(
-                    result,
-                    self._run_context,
-                    tool_name=tool_name,
-                )
         if (
             tool_name in RESEARCH_READ_TOOLS
             and tool_name not in _STATEFUL_READ_TOOLS
@@ -400,12 +377,6 @@ def _is_transient_tool_error(result: CallToolResult) -> bool:
             "transport",
         )
     )
-
-def _semantic_read_group(tool_name: str) -> str | None:
-    if tool_name in {"market_change_brief_open", "market_frame_open"}:
-        return "market_starting_frame"
-    return None
-
 
 def _skipped_read_result(tool_name: str, reason: str) -> CallToolResult:
     return CallToolResult(

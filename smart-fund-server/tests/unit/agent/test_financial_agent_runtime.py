@@ -1384,7 +1384,7 @@ def test_research_budget_guard_requests_convergence_after_broad_coverage() -> No
     assert filtered.input[:-1] == model_data.input
     assert "不要开启新主题" in filtered.input[-1]["content"]
     assert "role_memory_search" in filtered.input[-1]["content"]
-    assert "立即打开 Evidence Ledger" in filtered.input[-1]["content"]
+    assert "当前仍有以下确定性证据完整性问题" in filtered.input[-1]["content"]
     assert "本轮已经完成的工具能力" in filtered.input[-1]["content"]
     assert "market_change_brief_open" in filtered.input[-1]["content"]
     assert "最多还可调用" not in filtered.input[-1]["content"]
@@ -1431,15 +1431,12 @@ def test_research_budget_guard_adds_structural_audit_after_ledger() -> None:
 
     assert len(filtered.input) == 1
     reminder = filtered.input[-1]["content"]
+    assert "研究阶段现在结束" in reminder
+    assert "不要再调用任何读取工具" in reminder
+    assert "不要在隐藏推理中枚举 Claim" in reminder
+    assert "直接调用提交工具" in reminder
     assert "observed_fact" in reminder
-    assert "必须拆成 inference" in reminder
-    assert "UTC 时间必须先换算为北京时间" in reminder
-    assert "不能提交 no_change" in reminder
-    assert "组合层可继续评估" in reminder
-    assert "data_quality（数据质量）只能讨论覆盖" in reminder
-    assert "同一语义" in reminder
-    assert "单篇二手报道" in reminder
-    assert "只有午间休市" in reminder
+    assert "若提交返回错误，只修正错误指出的字段" in reminder
 
 
 def test_research_budget_guard_does_not_compact_long_transcript_after_ledger() -> None:
@@ -1463,7 +1460,7 @@ def test_research_budget_guard_does_not_compact_long_transcript_after_ledger() -
     )
 
     assert filtered.input[:-1] == model_data.input
-    assert "最终事实审计" in filtered.input[-1]["content"]
+    assert "研究阶段现在结束" in filtered.input[-1]["content"]
 
 
 def test_research_budget_guard_never_drives_context_compaction() -> None:

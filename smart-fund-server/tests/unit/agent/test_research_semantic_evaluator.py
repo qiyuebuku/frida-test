@@ -6,6 +6,7 @@ from src.application.agents.financial_research.semantic_evaluator import (
     SemanticResearchEvaluation,
     _decode_nested_json_strings,
     submit_semantic_evaluation,
+    create_semantic_evaluator_agent,
 )
 
 
@@ -42,6 +43,13 @@ def test_semantic_evaluator_tool_schema_requires_substantive_scores() -> None:
 
     assert "scores" in schema["required"]
     assert "claim_citation_assessments" in schema["properties"]
+
+
+def test_semantic_evaluator_limits_output_and_requires_scores_first() -> None:
+    agent = create_semantic_evaluator_agent(model="glm-5.3")
+
+    assert agent.model_settings.max_tokens == 12_000
+    assert "第一个顶层字段必须是完整的 scores" in agent.instructions
 
 
 def test_semantic_evaluator_normalizes_provider_stringified_nested_json() -> None:
