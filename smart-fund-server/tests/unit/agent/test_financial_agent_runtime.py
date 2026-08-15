@@ -1552,6 +1552,10 @@ def test_research_budget_guard_adds_structural_audit_after_ledger() -> None:
     assert "单日记录不得写连续性" in reminder
     assert "精确监测位必须能在账本定位" in reminder
     assert "适用期限不得超过实际检验窗口" in reminder
+    assert "每个精确事实" in reminder
+    assert "必须能对应本次 Proposal 内的一条 Claim" in reminder
+    assert "实际打开的全部3日/5日窗口" in reminder
+    assert "不得挑选有利窗口" in reminder
 
 
 def test_research_budget_guard_does_not_compact_long_transcript_after_ledger() -> None:
