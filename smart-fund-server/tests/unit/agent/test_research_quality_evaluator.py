@@ -465,7 +465,7 @@ def test_shallow_market_summary_is_rejected_with_actionable_failures() -> None:
 
     assert evaluation.passed is False
     assert "missing_narrative_source_evidence" not in evaluation.advisory_findings
-    assert "missing_exact_market_evidence" in evaluation.advisory_findings
+    assert "missing_exact_market_evidence" not in evaluation.advisory_findings
     assert "missing_direct_counterevidence" not in evaluation.hard_failures
     assert "incomplete_mechanism_chain" in evaluation.advisory_findings
 

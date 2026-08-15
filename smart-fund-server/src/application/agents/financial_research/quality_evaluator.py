@@ -197,7 +197,7 @@ def evaluate_research_quality(
         ),
         market_structure_and_pricing=structure_score,
         portfolio_decision_value=decision_score,
-        exploration_depth=_exploration_score(tools),
+        exploration_depth=_exploration_score(tools, references),
         clarity_and_structure=_clarity_score(claims),
     )
     failures: list[str] = []
@@ -253,9 +253,15 @@ def evaluate_research_quality(
             "全市场复核应打开 overall 变化简报；非交易日简报没有可登记记录时，"
             "至少同时核对市场框架、全球概览和板块概览后再选择下钻方向"
         )
-    if "market_evidence_open" not in tools:
+    has_record_level_market_evidence = any(
+        reference.startswith(LOCATOR_PREFIX) for reference in references
+    )
+    if "market_evidence_open" not in tools and not has_record_level_market_evidence:
         failures.append("missing_exact_market_evidence")
-        actions.append("使用稳定定位符打开记录级市场证据和关键字段")
+        actions.append(
+            "使用返回稳定 market:v1 定位符的专用工具，或通过 market_evidence_open "
+            "打开记录级市场证据和关键字段"
+        )
     if not tools.intersection(history_tools):
         failures.append("missing_history_or_object_drilldown")
         actions.append("下钻对象和历史，验证持续性、事件窗口与基线")
@@ -412,7 +418,7 @@ def merge_semantic_quality(
     return merged, overall, grade
 
 
-def _exploration_score(tools: set[str]) -> float:
+def _exploration_score(tools: set[str], references: set[str]) -> float:
     layers = (
         {
             "market_frame_open",
@@ -433,7 +439,13 @@ def _exploration_score(tools: set[str]) -> float:
         },
         {"market_evidence_open", "kg_edge_open", "external_web_read", "external_content_read"},
     )
-    return sum(2.0 for layer in layers if tools.intersection(layer))
+    covered = sum(2.0 for layer in layers if tools.intersection(layer))
+    if (
+        not tools.intersection(layers[-1])
+        and any(reference.startswith(LOCATOR_PREFIX) for reference in references)
+    ):
+        covered += 2.0
+    return covered
 
 
 def _hypothesis_score(proposal: CurrentResearchReportProposal) -> float:

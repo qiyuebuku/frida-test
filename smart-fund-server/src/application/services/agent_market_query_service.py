@@ -1321,11 +1321,15 @@ def _snapshot_locator(row: Mapping[str, Any]) -> str | None:
     snapshot_id = row.get("id")
     if snapshot_id is None:
         return None
+    identity: dict[str, Any] = {"id": snapshot_id}
+    trade_date = row.get("trade_date")
+    if trade_date is not None:
+        identity["trade_date"] = str(trade_date)[:10]
     return encode_market_evidence_locator(
         MarketEvidenceIdentity(
             kind="snapshot",
             domain="market_snapshot",
-            identity={"id": snapshot_id},
+            identity=identity,
             data_type=str(row.get("data_type") or "") or None,
             subject_id=str(row.get("subject_id") or "") or None,
             provider=str(row.get("provider") or "") or None,

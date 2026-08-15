@@ -520,7 +520,7 @@ def test_market_dimension_returns_compact_facts_and_evidence_locator() -> None:
         result["facts"][0]["evidence_locator"]
     )
     assert identity.kind == "snapshot"
-    assert identity.identity == {"id": 1}
+    assert identity.identity == {"id": 1, "trade_date": "2026-08-08"}
     assert result["facts"][0]["data_preview"]["large_rows"] == {
         "_item_count": 30
     }
@@ -576,6 +576,10 @@ def test_global_market_overview_selects_us_indices_not_arbitrary_latest_rows() -
     assert result["us_market"]["trade_date"] == date(2026, 8, 7)
     assert len(result["us_market"]["evidence_locators"]) == 1
     assert result["us_market"]["indices_evidence_locator"] is not None
+    identity = decode_market_evidence_locator(
+        result["us_market"]["indices_evidence_locator"]
+    )
+    assert identity.identity["trade_date"] == "2026-08-07"
     assert result["us_market"]["breadth_evidence_locator"] is None
     assert result["us_market"]["leading_industries_evidence_locator"] is None
     assert result["us_market"]["leading_concepts_evidence_locator"] is None
