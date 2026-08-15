@@ -37,7 +37,7 @@ async def test_sector_comparison_returns_bounded_pairwise_constituent_overlap(
                 {"security_code": member, "change_pct": 1.0}
                 for member in members
             ],
-            "constituent_count": len(members),
+            "constituent_count": len(members) + 1,
             "constituent_evidence": {
                 "id": 1 if code == "886033" else 2,
                 "data_type": "ths_sector_constituents",
@@ -63,6 +63,11 @@ async def test_sector_comparison_returns_bounded_pairwise_constituent_overlap(
     assert overlap["left_overlap_pct"] == pytest.approx(66.67)
     assert overlap["right_overlap_pct"] == pytest.approx(66.67)
     assert overlap["jaccard_pct"] == 50.0
+    assert overlap["left_total_count"] == 4
+    assert overlap["right_total_count"] == 4
+    assert overlap["left_coverage_pct"] == 75.0
+    assert overlap["right_coverage_pct"] == 75.0
+    assert overlap["partial_membership"] is True
     assert len(overlap["evidence_locators"]) == 2
 
 

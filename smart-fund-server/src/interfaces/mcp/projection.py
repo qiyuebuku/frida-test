@@ -579,7 +579,9 @@ def _project_sector_comparison(result: Mapping[str, Any]) -> dict[str, Any]:
     overlap = [
         _select(item, (
             "left_code", "right_code", "left_count", "right_count",
-            "shared_count", "left_overlap_pct", "right_overlap_pct",
+            "left_total_count", "right_total_count", "left_coverage_pct",
+            "right_coverage_pct", "partial_membership", "shared_count",
+            "left_overlap_pct", "right_overlap_pct",
             "jaccard_pct", "evidence_locators",
         ))
         for item in (result.get("pairwise_constituent_overlap") or [])

@@ -1799,7 +1799,7 @@ async def _read_sector_comparison(
         ]
     )
     candidates = []
-    constituent_memberships: list[tuple[str, set[str], str | None]] = []
+    constituent_memberships: list[tuple[str, set[str], int, str | None]] = []
     for detail in details:
         constituent_evidence = detail.get("constituent_evidence") or {}
         breadth_trade_date = (
@@ -1902,16 +1902,20 @@ async def _read_sector_comparison(
             (
                 str(detail.get("provider_sector_code") or ""),
                 member_codes,
+                int(detail.get("constituent_count") or len(member_codes)),
                 _sector_row_locator(constituent_evidence),
             )
         )
     pairwise_overlap = []
-    for left_index, (left_code, left_members, left_ref) in enumerate(
+    for left_index, (left_code, left_members, left_total, left_ref) in enumerate(
         constituent_memberships
     ):
-        for right_code, right_members, right_ref in constituent_memberships[
-            left_index + 1:
-        ]:
+        for (
+            right_code,
+            right_members,
+            right_total,
+            right_ref,
+        ) in constituent_memberships[left_index + 1:]:
             if not left_members or not right_members:
                 continue
             shared = left_members.intersection(right_members)
@@ -1922,6 +1926,18 @@ async def _read_sector_comparison(
                     "right_code": right_code,
                     "left_count": len(left_members),
                     "right_count": len(right_members),
+                    "left_total_count": left_total,
+                    "right_total_count": right_total,
+                    "left_coverage_pct": round(
+                        len(left_members) / left_total * 100, 2
+                    ) if left_total else None,
+                    "right_coverage_pct": round(
+                        len(right_members) / right_total * 100, 2
+                    ) if right_total else None,
+                    "partial_membership": (
+                        len(left_members) < left_total
+                        or len(right_members) < right_total
+                    ),
                     "shared_count": len(shared),
                     "left_overlap_pct": round(
                         len(shared) / len(left_members) * 100, 2
