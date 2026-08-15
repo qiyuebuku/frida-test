@@ -48,7 +48,6 @@ from src.infrastructure.agent_runtime.config import AgentSettings
 from src.infrastructure.agent_runtime.mcp import (
     RESEARCH_READ_TOOLS,
     _decode_tool_result_object,
-    _project_model_tool_payload,
     create_mcp_server,
     research_ledger_missing_requirements,
 )
@@ -65,7 +64,9 @@ from src.infrastructure.agent_runtime.run_authorization import (
 logger = logging.getLogger(__name__)
 _RUN_AUTHORIZATION_TTL_FLOOR_SECONDS = 6 * 60 * 60
 
-_MODEL_CONTEXT_WINDOW_TOKENS = 128_000
+# GLM-5.3 accepts roughly 1M input tokens. Its separate 128K maximum applies
+# to one response (reasoning + visible output), not to the input context.
+_MODEL_CONTEXT_WINDOW_TOKENS = 1_000_000
 _EXPLORATION_COMPACTION_RATIO = float(
     os.getenv("SMART_FUND_RESEARCH_COMPACTION_RATIO", "0.80")
 )
@@ -74,6 +75,18 @@ _COMPACTION_RETAIN_RATIO = float(
 )
 _COMPACTION_MIN_GROWTH_RATIO = float(
     os.getenv("SMART_FUND_RESEARCH_COMPACTION_MIN_GROWTH_RATIO", "0.06")
+)
+_REASONING_PRESSURE_TOKENS = int(
+    os.getenv("SMART_FUND_RESEARCH_REASONING_PRESSURE_TOKENS", "18000")
+)
+_REASONING_PRESSURE_SHARE = float(
+    os.getenv("SMART_FUND_RESEARCH_REASONING_PRESSURE_SHARE", "0.25")
+)
+_REASONING_PRESSURE_RETAIN_TOKENS = int(
+    os.getenv("SMART_FUND_RESEARCH_REASONING_RETAIN_TOKENS", "20000")
+)
+_REASONING_PRESSURE_MIN_GROWTH_TOKENS = int(
+    os.getenv("SMART_FUND_RESEARCH_REASONING_MIN_GROWTH_TOKENS", "8000")
 )
 _REPEATED_COMPACTION_RATIO = 0.42
 _POST_LEDGER_COMPACTION_RATIO = 0.95
@@ -92,16 +105,18 @@ class FinancialAgentRuntime:
         self._openai_client = AsyncOpenAI(
             api_key=self.settings.llm_api_key,
             base_url=self.settings.llm_base_url,
-            # A single oversized synthesis request must not consume most of a
-            # Research run.  High-effort GLM-5.3 turns normally finish well
-            # inside this bound; one transport retry still covers transient
-            # gateway failures without waiting ten minutes on one turn.
-            timeout=min(self.settings.llm_timeout, 180.0),
+            # GLM-5.3 always reasons and may need several minutes for a large
+            # structured proposal. Keep a generous configurable safety bound;
+            # the run-level deadline remains the final runaway guard.
+            timeout=self.settings.llm_timeout,
             # One Research run commonly contains dozens of model turns.  A
             # short proxy/network flap must not discard all evidence already
             # gathered in the run.  The OpenAI client retries only idempotent
             # response creation failures and applies bounded backoff.
-            max_retries=1,
+            # Final structured proposals are comparatively large. Keep two
+            # transport retries so a timeout followed by a proxy disconnect
+            # does not discard an otherwise complete research run.
+            max_retries=2,
         )
         self._model_provider = OpenAIProvider(
             openai_client=self._openai_client,
@@ -183,24 +198,47 @@ class FinancialAgentRuntime:
         before_tokens = _estimate_model_input_tokens(active)
         threshold_ratio = _compaction_threshold_ratio(context)
         threshold = int(_MODEL_CONTEXT_WINDOW_TOKENS * threshold_ratio)
-        if before_tokens < threshold:
+        reasoning_tokens = _estimate_reasoning_surface_tokens(active_input)
+        reasoning_share = reasoning_tokens / max(before_tokens, 1)
+        capacity_pressure = before_tokens >= threshold
+        # GLM can technically accept a very large input while still wasting
+        # attention and latency by replaying many completed reasoning blocks.
+        # Treat that as a separate pressure signal. We replace only a balanced,
+        # closed prefix; the recent protocol/tool chain remains verbatim.
+        reasoning_pressure = _reasoning_surface_is_pressured(
+            context=context,
+            total_tokens=before_tokens,
+            reasoning_tokens=reasoning_tokens,
+        )
+        if not capacity_pressure and not reasoning_pressure:
             return active
+        pressure_kind = "capacity" if capacity_pressure else "reasoning_surface"
+        min_growth_tokens = (
+            int(_MODEL_CONTEXT_WINDOW_TOKENS * _COMPACTION_MIN_GROWTH_RATIO)
+            if capacity_pressure
+            else _REASONING_PRESSURE_MIN_GROWTH_TOKENS
+        )
         if (
             context.surface_generation > 0
             and before_tokens - context.surface_last_after_tokens
-            < int(_MODEL_CONTEXT_WINDOW_TOKENS * _COMPACTION_MIN_GROWTH_RATIO)
+            < min_growth_tokens
         ):
             logger.info(
                 "research_context_pressure_in_hysteresis run_id=%s generation=%s "
-                "before=%s previous_after=%s",
+                "kind=%s before=%s previous_after=%s",
                 context.run_id,
                 context.surface_generation,
+                pressure_kind,
                 before_tokens,
                 context.surface_last_after_tokens,
             )
             return active
 
-        retain_tokens = int(_MODEL_CONTEXT_WINDOW_TOKENS * _COMPACTION_RETAIN_RATIO)
+        retain_tokens = (
+            int(_MODEL_CONTEXT_WINDOW_TOKENS * _COMPACTION_RETAIN_RATIO)
+            if capacity_pressure
+            else min(_REASONING_PRESSURE_RETAIN_TOKENS, before_tokens // 3)
+        )
         selection = _select_surface_replacement(
             raw_input=raw_input,
             checkpoint=context.surface_checkpoint,
@@ -301,11 +339,15 @@ class FinancialAgentRuntime:
             source_fingerprint=fingerprint,
         )
         logger.info(
-            "research_surface_replaced: generation=%s before=%s after=%s "
-            "reduction=%.1f%% shadowed_items=%s retained_items=%s",
+            "research_surface_replaced: generation=%s kind=%s before=%s after=%s "
+            "reasoning_tokens=%s reasoning_share=%.3f reduction=%.1f%% "
+            "shadowed_items=%s retained_items=%s",
             generation,
+            pressure_kind,
             before_tokens,
             after_tokens,
+            reasoning_tokens,
+            reasoning_share,
             100 * (before_tokens - after_tokens) / max(before_tokens, 1),
             len(source_items),
             len(hot_items) + len(retained_items),
@@ -321,9 +363,10 @@ class FinancialAgentRuntime:
         run_id: str,
         generation: int,
     ) -> str:
+        projected_source_items = _checkpoint_source_projection(source_items)
         compactor_input = {
             "task": "把 shadowed_history 压缩为可继续研究的 Markdown 检查点。",
-            "prior_and_shadowed_history": source_items,
+            "prior_and_shadowed_history": projected_source_items,
             "recoverable_evidence_index": evidence_index,
         }
         run_config = RunConfig(
@@ -342,6 +385,12 @@ class FinancialAgentRuntime:
                     "source_fingerprint": fingerprint,
                     "source_item_count": len(source_items),
                     "source_tokens_estimated": _estimate_input_tokens(source_items),
+                    "projected_item_count": len(projected_source_items),
+                    "projected_tokens_estimated": _estimate_input_tokens(
+                        projected_source_items
+                    ),
+                    "reasoning_items_omitted": len(source_items)
+                    - len(projected_source_items),
                     "evidence_index": evidence_index,
                 },
                 metadata={
@@ -753,6 +802,7 @@ class FinancialAgentRuntime:
                     draft = SemanticResearchEvaluationDraft.model_validate_json(draft)
                 if not isinstance(draft, SemanticResearchEvaluationDraft):
                     raise TypeError("semantic evaluator returned an unexpected output type")
+                draft = _bind_semantic_assessment_references(draft, proposal)
                 evaluation = SemanticResearchEvaluation(
                     **draft.model_dump(mode="python"),
                     run_id=proposal.run_id,
@@ -943,6 +993,7 @@ def _semantic_evaluator_input(
     cited_references = _collect_semantic_audit_references(
         proposal.model_dump(mode="python")
     )
+    reference_aliases = _semantic_citation_reference_aliases(proposal)
     canonical_to_alias = {
         canonical: alias for alias, canonical in context.evidence_aliases.items()
     }
@@ -971,9 +1022,14 @@ def _semantic_evaluator_input(
             references=matching,
             canonical_to_alias=canonical_to_alias,
         )
+        for reference, alias in reference_aliases.items():
+            excerpt = excerpt.replace(reference, alias)
         evidence_records.append({
             "tool": invocation.name,
-            "references": matching[:20],
+            "references": [
+                reference_aliases.get(reference, reference)
+                for reference in matching[:20]
+            ],
             "result_excerpt": excerpt,
             "truncated": len(excerpt) < len(serialized),
         })
@@ -987,7 +1043,13 @@ def _semantic_evaluator_input(
             "status": proposal.status.value,
             "summary": proposal.report_summary,
             "counterevidence_summary": proposal.counterevidence_summary,
-            "claims": [claim.model_dump(mode="json") for claim in claims],
+            "claims": [
+                _project_semantic_references(
+                    claim.model_dump(mode="json"),
+                    reference_aliases,
+                )
+                for claim in claims
+            ],
             "views": [
                 {
                     "view_id": revision.view_id,
@@ -998,16 +1060,25 @@ def _semantic_evaluator_input(
                         for item in revision.hypotheses
                     ],
                     "mechanism_chain": [
-                        item.model_dump(mode="json")
+                        _project_semantic_references(
+                            item.model_dump(mode="json"),
+                            reference_aliases,
+                        )
                         for item in revision.mechanism_chain
                     ],
                     "market_structure": (
-                        revision.market_structure.model_dump(mode="json")
+                        _project_semantic_references(
+                            revision.market_structure.model_dump(mode="json"),
+                            reference_aliases,
+                        )
                         if revision.market_structure is not None
                         else None
                     ),
                     "forecasts": [
-                        item.model_dump(mode="json")
+                        _project_semantic_references(
+                            item.model_dump(mode="json"),
+                            reference_aliases,
+                        )
                         for item in revision.forecasts
                     ],
                     "decision_boundary": (
@@ -1029,6 +1100,83 @@ def _semantic_evaluator_input(
             ),
         },
     }
+
+
+def _semantic_citation_reference_aliases(
+    proposal: CurrentResearchReportProposal,
+) -> dict[str, str]:
+    """Map opaque formal locators to model-friendly citation IDs."""
+
+    aliases: dict[str, str] = {}
+
+    def visit(value: object) -> None:
+        if isinstance(value, dict):
+            citation_id = value.get("citation_id")
+            reference = value.get("reference")
+            if isinstance(citation_id, str) and isinstance(reference, str):
+                aliases.setdefault(reference, citation_id)
+            for child in value.values():
+                visit(child)
+        elif isinstance(value, list):
+            for child in value:
+                visit(child)
+
+    visit(proposal.model_dump(mode="python"))
+    return aliases
+
+
+def _project_semantic_references(
+    value: object,
+    aliases: dict[str, str],
+) -> object:
+    """Replace formal locators in the model-facing evaluator package."""
+
+    if isinstance(value, dict):
+        return {
+            key: (
+                aliases.get(child, child)
+                if key == "reference" and isinstance(child, str)
+                else _project_semantic_references(child, aliases)
+            )
+            for key, child in value.items()
+        }
+    if isinstance(value, list):
+        return [_project_semantic_references(child, aliases) for child in value]
+    return value
+
+
+def _bind_semantic_assessment_references(
+    draft: SemanticResearchEvaluationDraft,
+    proposal: CurrentResearchReportProposal,
+) -> SemanticResearchEvaluationDraft:
+    """Replace model-friendly citation IDs with authoritative locators.
+
+    Long opaque evidence locators are deterministic report data. Requiring the
+    evaluator to reproduce them wastes output tokens and creates truncation or
+    transcription risk, so the model selects a citation_id and Runtime binds
+    its immutable reference before persistence.
+    """
+
+    aliases: dict[str, str] = {}
+
+    def visit(value: object) -> None:
+        if isinstance(value, dict):
+            citation_id = value.get("citation_id")
+            reference = value.get("reference")
+            if isinstance(citation_id, str) and isinstance(reference, str):
+                aliases[citation_id] = reference
+            for child in value.values():
+                visit(child)
+        elif isinstance(value, list):
+            for child in value:
+                visit(child)
+
+    visit(proposal.model_dump(mode="python"))
+    payload = draft.model_dump(mode="python")
+    for assessment in payload["claim_citation_assessments"]:
+        short_reference = assessment["reference"]
+        assessment["reference"] = aliases.get(short_reference, short_reference)
+    return SemanticResearchEvaluationDraft.model_validate(payload)
 
 
 def _semantic_evidence_excerpt(
@@ -1509,7 +1657,7 @@ def _item_call_pair(item: object) -> tuple[str | None, str | None]:
 
 
 def _balanced_surface_boundary(items: list, boundary: int) -> int:
-    """Move a boundary left until no tool call/result pair is split."""
+    """Move a boundary left until no Responses reasoning/tool turn is split."""
 
     while boundary > 0:
         head_calls: set[str] = set()
@@ -1525,13 +1673,39 @@ def _balanced_surface_boundary(items: list, boundary: int) -> int:
             if output_id:
                 outputs.add(output_id)
         split_ids = (head_calls & tail_outputs) | (head_outputs & tail_calls)
-        if not split_ids:
-            return boundary
-        boundary = min(
-            index
-            for index, item in enumerate(items)
-            if any(identifier in split_ids for identifier in _item_call_pair(item))
-        )
+        if split_ids:
+            boundary = min(
+                index
+                for index, item in enumerate(items)
+                if any(identifier in split_ids for identifier in _item_call_pair(item))
+            )
+            continue
+
+        # A Responses assistant turn is commonly serialized as
+        # reasoning -> one or more function_call items -> outputs. If the tail
+        # starts at a function call, retain the reasoning item that immediately
+        # introduced that call as required provider state. Do not attempt to
+        # edit or summarize an item inside the retained protocol turn.
+        if (
+            boundary < len(items)
+            and isinstance(items[boundary], dict)
+            and items[boundary].get("type") == "function_call"
+        ):
+            reasoning_index = None
+            for index in range(boundary - 1, -1, -1):
+                prior = items[index]
+                if not isinstance(prior, dict):
+                    break
+                prior_type = prior.get("type")
+                if prior_type == "reasoning":
+                    reasoning_index = index
+                    break
+                if prior_type not in {"function_call"}:
+                    break
+            if reasoning_index is not None:
+                boundary = reasoning_index
+                continue
+        return boundary
     return boundary
 
 
@@ -1623,6 +1797,65 @@ def _estimate_model_input_tokens(model_input: ModelInputData) -> int:
     })
 
 
+def _estimate_reasoning_surface_tokens(items: list) -> int:
+    """Estimate only model reasoning blocks currently replayed to the model.
+
+    Reasoning remains fully observable on the generation that produced it.
+    This metric only decides when completed old turns should leave the active
+    model surface and be represented by a reversible research checkpoint.
+    """
+
+    reasoning_items = [
+        item
+        for item in items
+        if isinstance(item, dict) and item.get("type") == "reasoning"
+    ]
+    if not reasoning_items:
+        return 0
+    return _estimate_input_tokens(reasoning_items)
+
+
+def _checkpoint_source_projection(source_items: list) -> list:
+    """Exclude old hidden reasoning from the checkpoint summarizer input.
+
+    Tool facts, visible assistant decisions, and the original task are enough
+    to reconstruct research state. Re-summarizing provider reasoning is slow,
+    duplicates those decisions, and can make the checkpoint preserve obsolete
+    exploratory paths. The append-only SDK/Langfuse history remains untouched.
+    """
+
+    return [
+        item
+        for item in source_items
+        if not (isinstance(item, dict) and item.get("type") == "reasoning")
+    ]
+
+
+def _research_ledger_is_open(context: AgentRunContext) -> bool:
+    """Return whether the run has entered its exact final evidence audit."""
+
+    return any(
+        invocation.name == "agent_evidence_ledger_open"
+        and invocation.finished_at is not None
+        for invocation in context.tool_invocations
+    )
+
+
+def _reasoning_surface_is_pressured(
+    *,
+    context: AgentRunContext,
+    total_tokens: int,
+    reasoning_tokens: int,
+) -> bool:
+    """Detect attention pressure without pretending the 1M window is full."""
+
+    return (
+        not _research_ledger_is_open(context)
+        and reasoning_tokens >= _REASONING_PRESSURE_TOKENS
+        and reasoning_tokens / max(total_tokens, 1) >= _REASONING_PRESSURE_SHARE
+    )
+
+
 def _compaction_threshold_ratio(context: AgentRunContext) -> float:
     """Compact renewed evidence pressure without entering a recovery loop.
 
@@ -1636,11 +1869,7 @@ def _compaction_threshold_ratio(context: AgentRunContext) -> float:
     ratio = _EXPLORATION_COMPACTION_RATIO
     if context.surface_generation > 0:
         ratio = min(ratio, _REPEATED_COMPACTION_RATIO)
-    if any(
-        invocation.name == "agent_evidence_ledger_open"
-        and invocation.finished_at is not None
-        for invocation in context.tool_invocations
-    ):
+    if _research_ledger_is_open(context):
         ratio = max(ratio, _POST_LEDGER_COMPACTION_RATIO)
     return ratio
 
@@ -1876,8 +2105,6 @@ def _project_notebook_result(tool_name: str, value):
     # a second, older schema reintroduced duplicate generic ``statistics`` and
     # raw temporal-holdout trees, which made development/holdout and
     # absolute/relative figures easy to mix up after compaction.
-    value = _project_model_tool_payload(value, tool_name)
-
     if tool_name == "market_historical_analogue_open":
         if not isinstance(value, dict):
             return value

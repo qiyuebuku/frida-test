@@ -51,6 +51,9 @@ from src.application.agents.financial_research.instructions import (
 from src.application.agents.financial_research.model_settings import (
     research_model_settings,
 )
+from src.infrastructure.agent_runtime.observability import (
+    _llm_trace_output,
+)
 from src.application.agents.financial_research.outcome_evaluator import (
     ResearchOutcomeEvaluator,
 )
@@ -61,13 +64,16 @@ from src.application.agents.financial_research.runtime import (
     FinancialAgentRuntime,
     _apply_research_budget_guard,
     _collect_semantic_audit_references,
+    _checkpoint_source_projection,
     _compaction_threshold_ratio,
     _compacted_research_notebook_input,
     _decode_notebook_result,
     _expand_evidence_aliases,
     _estimate_input_tokens,
+    _estimate_reasoning_surface_tokens,
     _is_research_proposal_output,
     _research_surface_input,
+    _reasoning_surface_is_pressured,
     _raise_on_tool_error,
     _project_notebook_result,
     _recent_research_working_notes,
@@ -104,13 +110,12 @@ from src.infrastructure.agent_runtime.mcp import (
     _attach_calculation_evidence,
     _compact_market_evidence,
     _decode_tool_result_object,
-    _project_market_history,
-    _project_model_tool_payload,
     _read_call_key,
     create_mcp_server,
     financial_tool_filter,
     research_ledger_missing_requirements,
 )
+from src.interfaces.mcp.projection import project_tool_result
 
 
 from src.infrastructure.persistence.models.agent_research import (
@@ -129,11 +134,17 @@ CUTOFF = datetime(2026, 8, 9, 6, 0, tzinfo=UTC)
 
 
 def test_historical_analogue_projection_keeps_leakage_and_sensitivity() -> None:
-    projected = _project_model_tool_payload({
+    projected = project_tool_result("market_historical_analogue_open", {
         "subject_id": "ths:concept:886033",
         "statistics": {"median_return_pct": 9.9},
         "robustness": {
-            "leakage_controls": {"non_overlapping_forward_windows": True},
+            "leakage_controls": {
+                "point_in_time_features_only": True,
+                "future_bars_excluded_from_signal": True,
+                "non_overlapping_forward_windows": True,
+                "minimum_signal_gap_bars": 6,
+                "temporal_split": "chronological_older_vs_newer_half",
+            },
             "threshold_sensitivity": [
                 {"match_distance_threshold": 1.75, "sample_count": 12},
                 {"match_distance_threshold": 2.5, "sample_count": 18},
@@ -153,27 +164,96 @@ def test_historical_analogue_projection_keeps_leakage_and_sensitivity() -> None:
                 "validation_status": "direction_shift",
             },
         },
-    }, "market_historical_analogue_open")
+    })
 
-    assert projected["robustness"]["leakage_controls"] == {
-        "non_overlapping_forward_windows": True,
-    }
+    assert projected["robustness"]["leakage_safe"] is True
     assert len(projected["robustness"]["threshold_sensitivity"]) == 2
     assert projected["full_sample_distribution"]["median_return_pct"] == 9.9
     assert "temporal_holdout" not in projected["robustness"]
     assert projected["calibration_readout"]["absolute_return"] == {
         "development_median_return_pct": 1.0,
         "holdout_median_return_pct": -0.5,
-        "development_positive_share_return_pct": 0.6,
-        "holdout_positive_share_return_pct": 0.4,
+        "development_positive_share": 0.6,
+        "holdout_positive_share": 0.4,
         "median_direction_consistent": False,
         "validation_status": "direction_shift",
-        "program_interpretation": "开发集与留出集方向不一致，不得声称规律稳定",
     }
-    assert projected["robustness"]["strict_statistics"]["median_return_pct"] == 1.2
+    assert "strict_statistics" not in projected["robustness"]
     assert projected["distribution_stability_readout"][
         "strict_vs_full_direction_conflict"
     ] is False
+
+
+def test_market_frame_projection_keeps_capabilities_without_dashboard_metadata() -> None:
+    projected = project_tool_result("market_frame_open", {
+        "market": "cn",
+        "market_session": "closed",
+        "trade_date": "2026-08-15",
+        "dimensions": [{
+            "dimension": "sector_style",
+            "as_of": "2026-08-15 15:00",
+            "subject_count": 1269,
+            "trade_dates": ["2026-08-15", "2026-08-14", "2026-08-13", "2026-08-12"],
+            "trade_dates_truncated": True,
+            "freshness": {"realtime": 287, "fetch_time": 752},
+            "data_types": [
+                {"data_type": "sector_quote", "subject_count": 265},
+                {"data_type": "sector_flow", "subject_count": 228},
+            ],
+            "drilldown_handle": "market-dimension:sector_style:long-timestamp",
+            "next_operation": "market_dimension_open",
+        }],
+    })
+
+    assert projected["dimensions"] == [{
+        "dimension": "sector_style",
+        "latest_fact_time": "2026-08-15 15:00",
+        "latest_trade_dates": ["2026-08-15", "2026-08-14", "2026-08-13"],
+        "available_data_types": ["sector_quote", "sector_flow"],
+        "more_trade_dates_available": True,
+    }]
+    assert "freshness" not in json.dumps(projected)
+    assert "drilldown_handle" not in json.dumps(projected)
+
+
+def test_sector_comparison_projection_hoists_identity_and_drops_empty_anchors() -> None:
+    projected = project_tool_result("market_sector_compare_open", {
+        "candidate_count": 1,
+        "candidates": [{
+            "provider_sector_code": "886033",
+            "found": True,
+            "latest_signals": [{
+                "data_type": "ths_sector_ranking",
+                "subject_id": "ths_native:concept:886033:concept_change",
+                "provider_sector_code": "886033",
+                "sector_name": "共封装光学(CPO)",
+                "sector_type": "concept",
+                "metric": "change",
+                "metric_value": 2.93,
+                "trade_date": "2026-08-15",
+                "freshness_status": "fetch_time",
+                "provider": "ths_native",
+                "evidence_locator": "market_ref:M1",
+            }],
+            "history": [{"anchors": [{
+                "trade_date": "2026-08-01",
+                "data": {"provider_sector_code": "886033"},
+                "evidence_locator": "market_ref:M2",
+            }]}],
+        }],
+        "next_operations": ["market_evidence_open"],
+    })
+
+    candidate = projected["candidates"][0]
+    assert candidate["provider_sector_code"] == "886033"
+    assert candidate["latest_signals"] == [{
+        "metric": "change",
+        "metric_value": 2.93,
+        "trade_date": "2026-08-15",
+        "evidence_locator": "market_ref:M1",
+    }]
+    assert "history" not in candidate
+    assert all("provider" not in item for item in candidate["latest_signals"])
 
 
 def test_natural_language_cannot_end_research_run() -> None:
@@ -207,6 +287,7 @@ def test_glm53_role_settings_use_supported_reasoning_effort() -> None:
         reasoning_effort="max",
         parallel_tool_calls=True,
         tool_choice="required",
+        max_tokens=48_000,
     )
     compactor = research_model_settings(
         model="glm-5.3",
@@ -218,19 +299,25 @@ def test_glm53_role_settings_use_supported_reasoning_effort() -> None:
         "thinking": {"type": "enabled"},
         "reasoning_effort": "max",
     }
+    assert main.reasoning is not None
+    assert main.reasoning.summary == "auto"
+    assert main.max_tokens == 48_000
     assert compactor.extra_body == {
         "thinking": {"type": "enabled"},
         "reasoning_effort": "low",
     }
+    assert compactor.reasoning is not None
+    assert compactor.reasoning.summary == "auto"
 
 
-def test_glm53_research_agent_uses_high_effort_for_multi_turn_work() -> None:
+def test_glm53_research_agent_uses_low_effort_for_multi_turn_work() -> None:
     agent = create_financial_research_agent(model="glm-5.3", mcp_server=None)
 
     assert agent.model_settings.extra_body == {
         "thinking": {"type": "enabled"},
-        "reasoning_effort": "high",
+        "reasoning_effort": "low",
     }
+    assert agent.model_settings.max_tokens == 48_000
 
 
 def test_non_glm53_role_settings_keep_provider_reasoning_defaults() -> None:
@@ -240,7 +327,53 @@ def test_non_glm53_role_settings_keep_provider_reasoning_defaults() -> None:
         parallel_tool_calls=True,
     )
 
-    assert settings.extra_body is None
+    assert settings.extra_body == {"thinking": {"type": "disabled"}}
+    assert settings.reasoning is None
+
+
+def test_agent_langfuse_output_keeps_responses_reasoning_summary() -> None:
+    output = _llm_trace_output(
+        [
+            {
+                "type": "message",
+                "role": "assistant",
+                "content": [{"type": "output_text", "text": "最终结论"}],
+            },
+            {
+                "type": "reasoning",
+                "summary": [
+                    {
+                        "type": "summary_text",
+                        "text": "先比较支持证据，再检查反证。",
+                    }
+                ],
+                "encrypted_content": "opaque-provider-state",
+            },
+        ]
+    )
+
+    assert output["assistant_text"] == "最终结论"
+    assert output["reasoning_summaries"] == [
+        "先比较支持证据，再检查反证。"
+    ]
+    assert "opaque-provider-state" not in json.dumps(output, ensure_ascii=False)
+
+
+def test_agent_langfuse_output_keeps_native_reasoning_text_content() -> None:
+    output = _llm_trace_output(
+        [
+            {
+                "type": "reasoning",
+                "summary": [],
+                "content": [
+                    {"type": "reasoning_text", "text": "先筛选候选，再核验证据。"}
+                ],
+                "encrypted_content": None,
+            }
+        ]
+    )
+
+    assert output["reasoning_summaries"] == ["先筛选候选，再核验证据。"]
 
 
 @pytest.mark.asyncio
@@ -318,6 +451,78 @@ def test_surface_replacement_keeps_exact_tail_and_balances_tool_pair() -> None:
     assert source[-2:] == raw[1:3]
     assert retained == raw[3:]
     assert shadowed_count == 3
+
+
+def test_surface_replacement_keeps_reasoning_that_introduces_retained_tool_turn() -> None:
+    raw = [
+        {"role": "user", "content": "任务"},
+        {"type": "reasoning", "summary": [{"text": "先打开证据"}]},
+        {"type": "function_call", "call_id": "c1", "name": "open"},
+        {"type": "function_call_output", "call_id": "c1", "output": "x" * 400},
+    ]
+
+    selected = _select_surface_replacement(
+        raw_input=raw,
+        checkpoint=None,
+        shadowed_item_count=0,
+        generation=0,
+        retain_tokens=120,
+    )
+
+    assert selected is not None
+    source, retained, shadowed_count = selected
+    assert source == raw[:1]
+    assert retained == raw[1:]
+    assert shadowed_count == 1
+
+
+def test_reasoning_surface_pressure_requires_both_size_and_dominance() -> None:
+    context = _context()
+    reasoning_item = {
+        "type": "reasoning",
+        "summary": [{"type": "summary_text", "text": "分析" * 20_000}],
+    }
+    reasoning_tokens = _estimate_reasoning_surface_tokens([reasoning_item])
+
+    assert reasoning_tokens >= 18_000
+    assert _reasoning_surface_is_pressured(
+        context=context,
+        total_tokens=reasoning_tokens * 2,
+        reasoning_tokens=reasoning_tokens,
+    ) is True
+    assert _reasoning_surface_is_pressured(
+        context=context,
+        total_tokens=reasoning_tokens * 5,
+        reasoning_tokens=reasoning_tokens,
+    ) is False
+
+
+def test_reasoning_surface_pressure_is_disabled_after_evidence_ledger() -> None:
+    context = _context()
+    context.tool_invocations.append(
+        _finished_invocation("agent_evidence_ledger_open", 1)
+    )
+
+    assert _reasoning_surface_is_pressured(
+        context=context,
+        total_tokens=40_000,
+        reasoning_tokens=20_000,
+    ) is False
+
+
+def test_checkpoint_source_projection_omits_reasoning_but_keeps_exact_facts() -> None:
+    source = [
+        {"role": "user", "content": "研究目标"},
+        {"type": "reasoning", "summary": [{"text": "旧推理"}]},
+        {"type": "function_call", "call_id": "c1", "name": "open"},
+        {"type": "function_call_output", "call_id": "c1", "output": "事实"},
+        {"role": "assistant", "content": "下一步核验反证"},
+    ]
+
+    projected = _checkpoint_source_projection(source)
+
+    assert projected == [source[0], *source[2:]]
+    assert source[1]["summary"][0]["text"] == "旧推理"
 
 
 def test_surface_projection_merges_checkpoint_with_unshadowed_history() -> None:
@@ -706,6 +911,22 @@ def test_submit_boundary_repairs_program_derivable_roles_and_claim_semantics() -
     assert normalized["claims"][0]["claim_type"] == "inference"
 
 
+def test_submit_boundary_normalizes_instrument_expression_evidence_layers() -> None:
+    normalized = _normalize_provider_proposal({
+        "evidence_plan": [
+            {"plan_item_id": "p1", "layer": "expression"},
+            {"plan_item_id": "p2", "layer": "ETF"},
+            {"plan_item_id": "p3", "layer": "history"},
+        ],
+    })
+
+    assert [item["layer"] for item in normalized["evidence_plan"]] == [
+        "object",
+        "object",
+        "history",
+    ]
+
+
 def test_submit_boundary_removes_only_mixed_unknown_hypothesis_ids() -> None:
     normalized = _normalize_provider_proposal({
         "hypotheses": [
@@ -740,6 +961,43 @@ def test_submit_boundary_normalizes_provider_hypothesis_status_aliases() -> None
     assert normalized["hypotheses"][0]["status"] == "inconclusive"
     assert normalized["hypotheses"][1]["status"] == "unverified"
     assert normalized["view_revisions"][0]["hypotheses"][0]["status"] == "inconclusive"
+
+
+def test_submit_boundary_marks_omitted_market_structure_dimensions_unverified() -> None:
+    normalized = _normalize_provider_proposal({
+        "view_revisions": [{
+            "market_structure": {
+                "breadth": "跌多涨少",
+                "pricing_state": "partially_priced",
+            },
+        }],
+    })
+    market_structure = normalized["view_revisions"][0]["market_structure"]
+
+    assert market_structure["breadth"] == "跌多涨少"
+    assert market_structure["pricing_state"] == "partially_priced"
+    assert market_structure["volume_liquidity_confirmation"] == (
+        "本轮未形成可验证的成交量或流动性确认结论。"
+    )
+    assert all(market_structure[field] for field in (
+        "leadership_concentration",
+        "crowding_and_reversal_risk",
+        "persistence_assessment",
+    ))
+
+
+def test_submit_boundary_normalizes_expired_view_event_alias() -> None:
+    normalized = _normalize_provider_proposal({
+        "view_revisions": [{
+            "event": "expire",
+            "status": "expired",
+        }],
+    })
+
+    assert normalized["view_revisions"][0] == {
+        "event": "invalidate",
+        "status": "expired",
+    }
 
 
 def test_submit_boundary_removes_empty_analogue_pseudo_citations() -> None:
@@ -816,7 +1074,7 @@ def test_notebook_projection_retains_bounded_external_source_substance() -> None
 
 def test_notebook_projection_keeps_analogue_aggregates_for_parallel_candidates() -> None:
     samples = [{"signal_date": f"2026-01-{day:02d}"} for day in range(1, 11)]
-    projected = _project_notebook_result(
+    source_result = project_tool_result(
         "market_historical_analogue_open",
         {
             "subject_id": "ths:concept:886033",
@@ -836,9 +1094,13 @@ def test_notebook_projection_keeps_analogue_aggregates_for_parallel_candidates()
             "analysis_evidence_locator": "market_ref:M3",
         },
     )
+    projected = _project_notebook_result(
+        "market_historical_analogue_open",
+        source_result,
+    )
 
     assert projected["full_sample_distribution"]["median_return_pct"] == -0.69
-    assert "temporal_holdout" not in projected["robustness"]
+    assert "robustness" not in projected or "temporal_holdout" not in projected["robustness"]
     assert projected["calibration_readout"]["absolute_return"][
         "holdout_median_return_pct"
     ] == -0.7
@@ -942,7 +1204,7 @@ def test_exact_market_evidence_requires_a_returned_locator_not_only_tool_name() 
 
 
 def test_market_history_projection_keeps_bars_and_adds_window_statistics() -> None:
-    projected = _project_market_history({
+    projected = project_tool_result("market_instrument_history", {
         "code": "cn:index:000001",
         "data_type": "ths_index_daily",
         "items": [
@@ -965,7 +1227,7 @@ def test_market_history_projection_keeps_bars_and_adds_window_statistics() -> No
         "drawdown_from_intraday_high_5_bars_pct"
     ] == -7.6923
     assert projected["window_statistics"]["up_transitions_within_5_bars"] == 4
-    assert "N-1 adjacent" in projected["window_statistics_note"]
+    assert projected["bars_truncated"] is False
     assert projected["series_semantics"] == {"volume_field": "unknown"}
 
 
@@ -1871,22 +2133,23 @@ def test_market_evidence_is_compacted_for_model_and_restored_for_commit() -> Non
             version="a" * 64,
         )
     )
+    source_payload = project_tool_result("market_evidence_open", {
+        "evidence_locator": locator,
+        "record": {
+            "observed_at": "2026-08-11T11:28:07.082026Z",
+            "data": {"volume_ratio": 0.74},
+        },
+    })
     result = CallToolResult(
         content=[
             TextContent(
                 type="text",
                 text=(
-                    f'{{"evidence_locator":"{locator}",'
-                    '"fact_time":"2026-08-11T11:28:07.082026Z",'
-                    '"volume_ratio":0.74}'
+                    json.dumps(source_payload, ensure_ascii=False)
                 ),
             )
         ],
-        structuredContent={
-            "evidence_locator": locator,
-            "fact_time": "2026-08-11T11:28:07.082026Z",
-            "volume_ratio": 0.74,
-        },
+        structuredContent=source_payload,
     )
 
     compacted = _compact_market_evidence(result, context)
@@ -1949,9 +2212,10 @@ def test_market_change_model_view_removes_runtime_metadata_and_ambiguous_metric(
         ],
         "quality_issues": [{"description": "市场维度来自多个交易日"}],
     }
+    source_payload = project_tool_result("market_change_brief_open", payload)
     result = CallToolResult(
-        content=[TextContent(type="text", text=json.dumps(payload))],
-        structuredContent=payload,
+        content=[TextContent(type="text", text=json.dumps(source_payload))],
+        structuredContent=source_payload,
     )
 
     compacted = _compact_market_evidence(
@@ -1996,9 +2260,10 @@ def test_sector_compare_marks_unopened_baseline_identity_explicitly() -> None:
             ],
         }],
     }
+    source_payload = project_tool_result("market_sector_compare_open", payload)
     result = CallToolResult(
-        content=[TextContent(type="text", text=json.dumps(payload))],
-        structuredContent=payload,
+        content=[TextContent(type="text", text=json.dumps(source_payload))],
+        structuredContent=source_payload,
     )
 
     compacted = _compact_market_evidence(
@@ -2011,13 +2276,8 @@ def test_sector_compare_marks_unopened_baseline_identity_explicitly() -> None:
     baseline = model_payload["candidates"][0]["latest_signals"][0]
     assert baseline["comparison_role"] == "baseline_identity_only"
     assert baseline["citation_ready"] is False
-    assert model_payload["comparison_evidence_requirements"] == [{
-        "subject_id": "886033",
-        "trade_date": "2026-08-12",
-        "evidence_locator": "market_ref:M88",
-        "required_action": "market_evidence_open",
-        "reason": "基线仅有身份；打开后才能读取数值并证明变化。",
-    }]
+    assert baseline["required_action"] == "market_evidence_open"
+    assert "comparison_evidence_requirements" not in model_payload
 
 
 def test_existing_research_view_is_projected_as_decision_state_not_old_report() -> None:
@@ -2044,9 +2304,10 @@ def test_existing_research_view_is_projected_as_decision_state_not_old_report() 
         },
         "next_operations": ["role_outcome_search"],
     }
+    source_payload = project_tool_result("research_view_open", payload)
     result = CallToolResult(
-        content=[TextContent(type="text", text=json.dumps(payload))],
-        structuredContent=payload,
+        content=[TextContent(type="text", text=json.dumps(source_payload))],
+        structuredContent=source_payload,
     )
 
     compacted = _compact_market_evidence(
@@ -2089,9 +2350,10 @@ def test_current_report_projection_keeps_state_and_drops_old_report_body() -> No
         },
         "next_operations": ["research_view_open"],
     }
+    source_payload = project_tool_result("research_current_report_open", payload)
     result = CallToolResult(
-        content=[TextContent(type="text", text=json.dumps(payload))],
-        structuredContent=payload,
+        content=[TextContent(type="text", text=json.dumps(source_payload))],
+        structuredContent=source_payload,
     )
 
     compacted = _compact_market_evidence(
@@ -2322,6 +2584,83 @@ def test_dated_market_claim_requires_citation_for_each_claimed_date() -> None:
         support="supports",
     ))
     assert _market_claim_date_error(claim, context) is None
+
+
+def test_dated_market_claim_uses_date_from_exact_opened_alias_record() -> None:
+    context = _context()
+    context.evidence_aliases["market_ref:M58"] = (
+        "market:v1:compact-locator-without-date"
+    )
+    context.tool_invocations.append(ToolInvocation(
+        name="market_dimension_open",
+        call_id="futures",
+        result={
+            "facts": [{
+                "evidence_locator": "market_ref:M58",
+                "trade_date": "2026-08-15",
+                "bucket_at": "2026-08-15 00:40",
+                "data_preview": {"quotes": [{"code": "sc2609"}]},
+            }],
+        },
+    ))
+    claim = SimpleNamespace(
+        claim_id="night-session",
+        statement="2026-08-15 00:40夜盘原油上涨2.02%",
+        evidence=[EvidenceCitation(
+            citation_id="night-futures",
+            kind="market",
+            reference="market_ref:M58",
+            claim="夜盘商品快照",
+            support="supports",
+        )],
+    )
+
+    assert _market_claim_date_error(claim, context) is None
+
+
+def test_dated_market_claim_accepts_compact_china_time_for_utc_record() -> None:
+    context = _context()
+    locator = encode_market_evidence_locator(MarketEvidenceIdentity(
+        kind="snapshot",
+        domain="market_snapshot",
+        identity={"id": 3},
+        fact_time="2026-08-14T23:28:03.219000Z",
+        data_type="ths_cn_market_breadth",
+    ))
+    context.evidence_aliases["market_ref:M1"] = locator
+    context.tool_invocations.append(ToolInvocation(
+        name="market_frame_open",
+        call_id="frame",
+        result={
+            "current_evidence_locator": "market_ref:M1",
+            "current_as_of": "2026-08-15 07:28",
+        },
+    ))
+    claim = SimpleNamespace(
+        claim_id="china-local-date",
+        claim_type="observed_fact",
+        statement="2026-08-15 07:28宽度快照显示跌多涨少",
+        evidence=[EvidenceCitation(
+            citation_id="breadth",
+            kind="market",
+            reference="market_ref:M1",
+            claim="宽度快照",
+            support="supports",
+        )],
+    )
+
+    assert _market_claim_date_error(claim, context) is None
+
+
+def test_dated_market_inference_does_not_treat_view_lifecycle_as_market_fact() -> None:
+    claim = SimpleNamespace(
+        claim_id="view-outcome",
+        claim_type="inference",
+        statement="旧观点于2026-08-12建立，窗口内累计保持正超额",
+        evidence=[],
+    )
+
+    assert _market_claim_date_error(claim, _context()) is None
 
 
 def test_edge_endpoint_card_id_is_not_treated_as_opened_card() -> None:

@@ -38,6 +38,7 @@ def create_context_compactor_agent(*, model: str) -> Agent:
             model=model,
             reasoning_effort="low",
             parallel_tool_calls=False,
+            max_tokens=8_000,
         ),
         tools=[],
     )

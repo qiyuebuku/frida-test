@@ -373,6 +373,34 @@ def _normalize_provider_proposal(value: object) -> object:
         "unknown": "inconclusive",
         "pending": "unverified",
     }
+    evidence_layer_aliases = {
+        # Expression is an investment/portfolio concept, not a separate
+        # evidence depth.  At the Research boundary an ETF or instrument
+        # expression is an object-level record.  Repairing this vocabulary
+        # mismatch is mechanical and must not trigger regeneration of the
+        # complete Proposal.
+        "expression": "object",
+        "instrument": "object",
+        "etf": "object",
+    }
+    revision_event_aliases = {
+        # The business state has an ``expired`` status but its immutable event
+        # vocabulary uses ``invalidate``. Provider wording such as expire is a
+        # protocol synonym, not a different investment judgment.
+        "expire": "invalidate",
+        "expired": "invalidate",
+    }
+
+    def normalize_evidence_plan(container: dict) -> None:
+        for plan in container.get("evidence_plan") or []:
+            if not isinstance(plan, dict):
+                continue
+            layer = plan.get("layer")
+            if isinstance(layer, str):
+                plan["layer"] = evidence_layer_aliases.get(
+                    layer.strip().casefold(),
+                    layer,
+                )
 
     def remove_non_evidence_sentinels(item: object) -> None:
         if isinstance(item, list):
@@ -404,6 +432,7 @@ def _normalize_provider_proposal(value: object) -> object:
             remove_non_evidence_sentinels(child)
 
     remove_non_evidence_sentinels(normalized)
+    normalize_evidence_plan(normalized)
     for index, hypothesis in enumerate(normalized.get("hypotheses") or []):
         if not isinstance(hypothesis, dict):
             continue
@@ -438,6 +467,13 @@ def _normalize_provider_proposal(value: object) -> object:
     for revision in normalized.get("view_revisions") or []:
         if not isinstance(revision, dict):
             continue
+        event = revision.get("event")
+        if isinstance(event, str):
+            revision["event"] = revision_event_aliases.get(
+                event.strip().casefold(),
+                event,
+            )
+        normalize_evidence_plan(revision)
         for index, hypothesis in enumerate(revision.get("hypotheses") or []):
             if not isinstance(hypothesis, dict):
                 continue
@@ -454,11 +490,22 @@ def _normalize_provider_proposal(value: object) -> object:
             )
         repair_claims(revision)
         market_structure = revision.get("market_structure")
-        if isinstance(market_structure, dict) and not market_structure.get("pricing_state"):
-            # Missing is not evidence of any pricing conclusion.  Bind the
-            # schema's explicit uncertainty value instead of regenerating the
-            # entire proposal for a program-derivable default.
-            market_structure["pricing_state"] = "unknown"
+        if isinstance(market_structure, dict):
+            # Missing is not evidence of a market-structure conclusion. Bind
+            # explicit non-claims instead of asking the model to regenerate a
+            # large Proposal merely because it omitted one descriptive slot.
+            uncertainty_defaults = {
+                "breadth": "本轮未形成可验证的市场宽度结论。",
+                "leadership_concentration": "本轮未形成可验证的主线集中度结论。",
+                "volume_liquidity_confirmation": "本轮未形成可验证的成交量或流动性确认结论。",
+                "crowding_and_reversal_risk": "本轮未形成可验证的拥挤或反转风险结论。",
+                "persistence_assessment": "本轮未形成可验证的持续性结论。",
+            }
+            for field, default in uncertainty_defaults.items():
+                if not market_structure.get(field):
+                    market_structure[field] = default
+            if not market_structure.get("pricing_state"):
+                market_structure["pricing_state"] = "unknown"
         confidence = revision.get("confidence")
         if isinstance(confidence, dict):
             for field in (
@@ -1679,13 +1726,18 @@ def create_financial_research_agent(
         model=model,
         model_settings=research_model_settings(
             model=model,
-            # Financial research benefits from sustained reasoning, but unlike
-            # code generation it performs many tool-selection turns. `high`
-            # keeps those turns bounded; the isolated final quality evaluator
-            # remains on `max` for adversarial evidence review.
-            reasoning_effort="high",
+            # Research performs many iterative tool-selection turns. GLM-5.3
+            # can spend minutes reasoning on each high-effort turn, so keep the
+            # main exploratory loop on low. The isolated final evaluator also
+            # uses low against its bounded audit package; deterministic checks
+            # remain responsible for hard evidence invariants.
+            reasoning_effort="low",
             parallel_tool_calls=True,
             tool_choice="required",
+            # Total per-turn output budget: reasoning plus visible response or
+            # tool arguments. This leaves ample room for a compact Proposal
+            # without allowing one turn to approach GLM-5.3's 128K ceiling.
+            max_tokens=48_000,
         ),
         tools=[
             run_evidence_reopen,
