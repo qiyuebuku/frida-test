@@ -1024,6 +1024,13 @@ def _semantic_evaluator_input(
         if not matching and invocation.name not in {
             "market_historical_analogue_open",
             "market_technical_state_open",
+            # These are bounded, model-facing comparison results.  The final
+            # report may cite their record locators from nested rows while the
+            # tool envelope itself uses a synthesized comparison locator.  Do
+            # not make those facts invisible to the independent evaluator just
+            # because the compact locator matcher cannot recover that nesting.
+            "market_expression_compare_open",
+            "market_sector_compare_open",
         }:
             continue
         excerpt = _semantic_evidence_excerpt(
