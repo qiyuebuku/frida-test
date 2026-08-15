@@ -304,6 +304,25 @@ def test_weekend_a_share_app_ranking_uses_latest_exchange_trade_date() -> None:
     assert snapshot["trade_date"] == date(2026, 8, 14)
 
 
+def test_weekend_us_quote_uses_latest_exchange_trade_date() -> None:
+    snapshot = _snapshot_from_response(
+        response={
+            "provider": "eastmoney",
+            "market": "us",
+            "timezone": "America/New_York",
+            "trade_date": "2026-08-15",
+            "fetched_at": "2026-08-15T05:43:00+00:00",
+            "data": {"time": "2026-08-14 16:00:01", "price": 262.65},
+        },
+        data_type="us_quote",
+        subject_type="sector",
+        subject_id="006308",
+        bucket_seconds=60,
+    )
+
+    assert snapshot["trade_date"] == date(2026, 8, 14)
+
+
 def test_gold_ai_events_are_normalized_for_ft_news() -> None:
     rows = _gold_ai_news_records(
         {

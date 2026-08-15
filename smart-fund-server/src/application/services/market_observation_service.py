@@ -11,6 +11,7 @@ from datetime import date, datetime, time, timedelta, timezone
 from typing import Any, Awaitable, Callable
 from zoneinfo import ZoneInfo
 
+import exchange_calendars
 import redis
 
 from src.infrastructure.clients.market_contracts import (
@@ -37,6 +38,8 @@ from src.application.services.china_exchange_calendar_service import (
 
 logger = get_logger(__name__)
 CN_TIMEZONE = ZoneInfo("Asia/Shanghai")
+US_TIMEZONE = ZoneInfo("America/New_York")
+US_EXCHANGE_CALENDAR = exchange_calendars.get_calendar("XNYS")
 _A_SHARE_CALENDAR_DATA_TYPES = {
     "stock_dynamic_group",
     "ths_industry_opportunity",
@@ -4057,6 +4060,19 @@ def _snapshot_from_response(
             or resolved_trade_date > calendar_trade_date
         ):
             resolved_trade_date = calendar_trade_date
+    if str(response.get("market") or "").lower() == "us":
+        us_local_date = fetched_at.astimezone(US_TIMEZONE).date()
+        session_label = us_local_date.isoformat()
+        us_trade_date = (
+            us_local_date
+            if US_EXCHANGE_CALENDAR.is_session(session_label)
+            else US_EXCHANGE_CALENDAR.date_to_session(
+                session_label,
+                direction="previous",
+            ).date()
+        )
+        if resolved_trade_date is None or resolved_trade_date > us_trade_date:
+            resolved_trade_date = us_trade_date
     if (
         resolved_trade_date is None
         and str(response.get("market") or "").lower() == "cn"
