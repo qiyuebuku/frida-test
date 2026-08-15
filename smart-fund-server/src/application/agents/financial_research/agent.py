@@ -1679,6 +1679,7 @@ def _bind_research_draft(
         )
     payload = proposal.model_dump(mode="python")
     _bind_citation_times(payload, context=context)
+    _renumber_citations(payload)
     _bind_future_schedule_times(
         payload,
         cutoff_at=context_pack.trigger.cutoff_at,
@@ -1706,6 +1707,28 @@ def _bind_research_draft(
         active_views=[item.model_dump(mode="python") for item in context_pack.active_views],
     )
     return CurrentResearchReportProposal.model_validate(payload)
+
+
+def _renumber_citations(payload: dict) -> None:
+    """Assign globally unique display IDs after all nested copies are built."""
+
+    counter = 0
+
+    def visit(value) -> None:
+        nonlocal counter
+        if isinstance(value, list):
+            for item in value:
+                visit(item)
+            return
+        if not isinstance(value, dict):
+            return
+        if "reference" in value and "support" in value:
+            counter += 1
+            value["citation_id"] = f"citation-{counter:03d}"
+        for item in value.values():
+            visit(item)
+
+    visit(payload)
 
 
 def _bind_future_schedule_times(payload: dict, *, cutoff_at) -> None:

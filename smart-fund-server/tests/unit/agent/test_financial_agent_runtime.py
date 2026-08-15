@@ -12,6 +12,7 @@ from pydantic import ValidationError
 
 from src.application.agents.financial_research.agent import (
     _bind_research_draft,
+    _renumber_citations,
     _bind_forecast_calibration_fields,
     _decode_provider_proposal,
     _merge_submission_objects,
@@ -129,6 +130,29 @@ from src.interfaces.cli.main import cli
 
 
 CUTOFF = datetime(2026, 8, 9, 6, 0, tzinfo=UTC)
+
+
+def test_renumber_citations_assigns_unique_ids_across_nested_copies() -> None:
+    payload = {
+        "claims": [
+            {"evidence": [{"citation_id": "citation-001", "reference": "market_ref:M1", "support": "supports"}]}
+        ],
+        "view_revisions": [
+            {
+                "claims": [
+                    {"evidence": [{"citation_id": "citation-001", "reference": "market_ref:M2", "support": "supports"}]}
+                ]
+            }
+        ],
+    }
+
+    _renumber_citations(payload)
+
+    assert payload["claims"][0]["evidence"][0]["citation_id"] == "citation-001"
+    assert (
+        payload["view_revisions"][0]["claims"][0]["evidence"][0]["citation_id"]
+        == "citation-002"
+    )
 
 
 def test_historical_analogue_projection_keeps_leakage_and_sensitivity() -> None:
