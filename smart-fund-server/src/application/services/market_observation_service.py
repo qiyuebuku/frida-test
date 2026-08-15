@@ -50,6 +50,14 @@ _A_SHARE_CALENDAR_DATA_TYPES = {
     "ths_etf_cross_border",
     "ths_etf_hot_ranking",
 }
+_US_CALENDAR_DATA_TYPES = {
+    "us_quote",
+    "ths_us_security_quote",
+    "ths_us_market_zone",
+    "ths_us_market_module",
+    "ths_us_sector_period",
+    "ths_us_etf_catalog",
+}
 REALTIME_TYPES = frozenset(
     {"market_breadth", "sector_quote", "sector_flow", "index_quote",
      "futures_quote", "forex_quote", "stock_change",
@@ -4060,7 +4068,10 @@ def _snapshot_from_response(
             or resolved_trade_date > calendar_trade_date
         ):
             resolved_trade_date = calendar_trade_date
-    if str(response.get("market") or "").lower() == "us":
+    if (
+        str(response.get("market") or "").lower() == "us"
+        or data_type in _US_CALENDAR_DATA_TYPES
+    ):
         us_local_date = fetched_at.astimezone(US_TIMEZONE).date()
         session_label = us_local_date.isoformat()
         us_trade_date = (

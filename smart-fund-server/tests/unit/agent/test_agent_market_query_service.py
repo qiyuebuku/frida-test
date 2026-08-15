@@ -573,6 +573,7 @@ def test_global_market_overview_selects_us_indices_not_arbitrary_latest_rows() -
         "DJI",
         "SPX",
     ]
+    assert result["us_market"]["trade_date"] == date(2026, 8, 7)
     assert len(result["us_market"]["evidence_locators"]) == 1
     assert result["us_market"]["indices_evidence_locator"] is not None
     assert result["us_market"]["breadth_evidence_locator"] is None

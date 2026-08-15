@@ -794,6 +794,9 @@ class AgentMarketQueryService:
             "status": "available" if indices or breadth or other_global else "empty",
             "as_of": _latest_time([_fact_time(row) for row in rows]),
             "us_market": {
+                "trade_date": (
+                    us_modules.get("indices_stream") or {}
+                ).get("trade_date"),
                 "indices": (indices or {}).get("quotes", []),
                 "indices_evidence_locator": us_locators.get("indices_stream"),
                 "breadth": breadth,

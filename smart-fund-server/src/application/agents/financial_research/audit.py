@@ -298,6 +298,12 @@ def _opened_market_reference_dates(
             if target == canonical
         ),
     }
+    normalized_aliases = {
+        _normalized_reference(
+            str(context.evidence_aliases.get(alias, alias))
+        )
+        for alias in aliases
+    }
     dates: set[str] = set()
 
     def visit(value: object) -> None:
@@ -313,7 +319,15 @@ def _opened_market_reference_dates(
                 locator_values.add(item)
             elif key.endswith("evidence_locators") and isinstance(item, list):
                 locator_values.update(str(child) for child in item)
-        if aliases.intersection(locator_values):
+        normalized_locators = {
+            _normalized_reference(
+                str(context.evidence_aliases.get(locator, locator))
+            )
+            for locator in locator_values
+        }
+        if aliases.intersection(locator_values) or normalized_aliases.intersection(
+            normalized_locators
+        ):
             for field in (
                 "trade_date",
                 "observed_at",

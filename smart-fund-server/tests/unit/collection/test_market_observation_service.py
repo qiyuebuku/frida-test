@@ -308,7 +308,9 @@ def test_weekend_us_quote_uses_latest_exchange_trade_date() -> None:
     snapshot = _snapshot_from_response(
         response={
             "provider": "eastmoney",
-            "market": "us",
+            # The legacy Eastmoney wrapper mislabeled this feed as cn.  The
+            # data type still determines the authoritative exchange calendar.
+            "market": "cn",
             "timezone": "America/New_York",
             "trade_date": "2026-08-15",
             "fetched_at": "2026-08-15T05:43:00+00:00",
