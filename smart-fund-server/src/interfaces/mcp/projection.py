@@ -32,6 +32,9 @@ _MARKET_PROJECTIONS = {
     "research_quality_open",
     "research_view_open",
     "research_current_report_open",
+    "role_memory_search",
+    "role_memory_open",
+    "role_memory_case_open",
 }
 _GRAPH_PROJECTIONS = {
     "kg_relation_graph_search",
@@ -395,6 +398,40 @@ def _project_market_result(
                 for item in result.get("evaluations") or []
                 if isinstance(item, Mapping)
             ]
+        })
+    if tool_name == "role_memory_search":
+        return _nonempty({
+            "status": result.get("status"),
+            "memories": [
+                _select(item, (
+                    "memory_id", "summary", "applicability", "counterexample",
+                    "confidence", "expires_at",
+                ))
+                for item in result.get("memories") or []
+                if isinstance(item, Mapping)
+            ],
+        })
+    if tool_name == "role_memory_open":
+        item = result.get("memory")
+        return _nonempty({
+            "status": result.get("status"),
+            "memory": _select(item, (
+                "memory_id", "summary", "applicability", "counterexample",
+                "evidence_references", "confidence", "scope", "expires_at",
+                "version",
+            )) if isinstance(item, Mapping) else None,
+        })
+    if tool_name == "role_memory_case_open":
+        return _nonempty({
+            "status": result.get("status"),
+            "memory_id": result.get("memory_id"),
+            "cases": [
+                _select(item, (
+                    "case_id", "decision_ref", "outcome_refs", "context", "result",
+                ))
+                for item in result.get("cases") or []
+                if isinstance(item, Mapping)
+            ],
         })
     if tool_name == "research_quality_open":
         item = result.get("evaluation")

@@ -473,7 +473,6 @@ def _memory_summary(row: AgentRoleMemoryItem) -> dict[str, Any]:
         "summary": row.summary,
         "applicability": row.applicability,
         "counterexample": row.counterexample,
-        "evidence_references": row.evidence_references,
         "confidence": row.confidence,
         "valid_from": row.valid_from.isoformat(),
         "expires_at": _iso(row.expires_at),

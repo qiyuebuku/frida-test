@@ -5,6 +5,7 @@ from src.application.services.research_memory_consolidation_service import (
 )
 from src.interfaces.cli.main import COLLECTION_WORKER_GROUPS
 from src.interfaces.cli.schedules import SCHEDULES
+from src.interfaces.mcp.projection import project_tool_result
 
 
 NOW = datetime(2026, 8, 15, 8, 0, tzinfo=UTC)
@@ -106,3 +107,33 @@ def test_memory_consolidation_has_an_independent_hourly_schedule() -> None:
     assert schedule.queue == "consolidate_research_memory"
     assert schedule.cron_expression == "25 * * * *"
     assert "consolidate_research_memory" in COLLECTION_WORKER_GROUPS["internal"]
+
+
+def test_memory_search_projection_hides_audit_references_until_open() -> None:
+    result = project_tool_result(
+        "role_memory_search",
+        {
+            "operation": "role_memory_search",
+            "status": "available",
+            "cutoff_at": NOW.isoformat(),
+            "memories": [{
+                "memory_id": "RM_1234",
+                "summary": "对象证据必须对齐",
+                "applicability": "行情主张",
+                "counterexample": "显式跨对象比较",
+                "evidence_references": ["Q_long-audit-list"],
+                "confidence": "high",
+            }],
+        },
+    )
+
+    assert result == {
+        "status": "available",
+        "memories": [{
+            "memory_id": "RM_1234",
+            "summary": "对象证据必须对齐",
+            "applicability": "行情主张",
+            "counterexample": "显式跨对象比较",
+            "confidence": "high",
+        }],
+    }
