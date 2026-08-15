@@ -726,6 +726,12 @@ def _evidence_match_terms(text: str) -> set[str]:
 
 def _without_model_citation_times(schema: dict) -> dict:
     schema = deepcopy(schema)
+    research_claim = schema.get("$defs", {}).get("ResearchClaim", {})
+    statement = research_claim.get("properties", {}).get("statement", {})
+    statement["maxLength"] = 180
+    statement["description"] = (
+        "只写一个可验证的原子命题；不同对象、日期、口径或事实与推断必须拆成不同 Claim。"
+    )
     citation = schema.get("$defs", {}).get("EvidenceCitation", {})
     properties = citation.get("properties", {})
     for field in ("citation_id", "kind", "observed_at", "as_of"):

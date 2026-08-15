@@ -155,6 +155,12 @@ def test_renumber_citations_assigns_unique_ids_across_nested_copies() -> None:
     )
 
 
+def test_model_schema_limits_research_claim_to_atomic_length() -> None:
+    schema = submit_investment_view_revision.params_json_schema
+
+    assert schema["$defs"]["ResearchClaim"]["properties"]["statement"]["maxLength"] == 180
+
+
 def test_historical_analogue_projection_keeps_leakage_and_sensitivity() -> None:
     projected = project_tool_result("market_historical_analogue_open", {
         "subject_id": "ths:concept:886033",
