@@ -17,9 +17,59 @@ from src.infrastructure.persistence.repositories import (
     EtfDailyShareRepository,
     MarketSnapshotRepository,
 )
+from src.infrastructure.persistence.repositories.market_observation_repository import (
+    _drop_consecutive_unchanged_snapshots,
+)
 
 
 SUBJECT_ID = "test:market_observation"
+
+
+def test_drop_consecutive_unchanged_app_snapshots() -> None:
+    first_bucket = datetime(2026, 8, 15, 8, 0, tzinfo=timezone.utc)
+    base = {
+        "data_type": "ths_etf_home_ranking",
+        "subject_id": "etf:home",
+        "provider": "ths",
+        "trade_date": date(2026, 8, 14),
+        "payload_hash": "same",
+    }
+    items = [
+        {**base, "bucket_at": first_bucket},
+        {**base, "bucket_at": first_bucket + timedelta(minutes=5)},
+        {
+            **base,
+            "bucket_at": first_bucket + timedelta(minutes=10),
+            "payload_hash": "changed",
+        },
+    ]
+
+    kept = _drop_consecutive_unchanged_snapshots(items, {})
+
+    assert [item["payload_hash"] for item in kept] == ["same", "changed"]
+
+
+def test_unchanged_payload_is_kept_on_new_trade_date() -> None:
+    item = {
+        "data_type": "ths_etf_home_ranking",
+        "subject_id": "etf:home",
+        "provider": "ths",
+        "trade_date": date(2026, 8, 17),
+        "payload_hash": "same",
+        "bucket_at": datetime(2026, 8, 17, 1, 30, tzinfo=timezone.utc),
+    }
+
+    kept = _drop_consecutive_unchanged_snapshots(
+        [item],
+        {
+            ("ths_etf_home_ranking", "etf:home", "ths"): (
+                date(2026, 8, 14),
+                "same",
+            )
+        },
+    )
+
+    assert kept == [item]
 
 
 @pytest.fixture(autouse=True)
@@ -115,6 +165,45 @@ def test_market_snapshot_bucket_is_idempotent_and_keeps_history() -> None:
     ]
     assert len(test_latest) == 1
     assert test_latest[0]["data"]["up_count"] == 3
+
+
+@pytest.mark.integration
+def test_market_snapshot_skips_unchanged_app_payload_in_new_bucket() -> None:
+    repository = MarketSnapshotRepository()
+    bucket = datetime(2026, 8, 15, 1, 0, tzinfo=timezone.utc)
+    base = {
+        "data_type": "ths_etf_home_ranking",
+        "subject_type": "etf_universe",
+        "subject_id": SUBJECT_ID,
+        "market": "cn",
+        "provider": "ths",
+        "trade_date": date(2026, 8, 14),
+        "observed_at": bucket,
+        "fetched_at": bucket,
+        "freshness_status": "fetch_time",
+        "source_latency_seconds": 0,
+        "payload_hash": "unchanged",
+        "data": {"rank": 1},
+    }
+    repository.upsert_batch([{**base, "bucket_at": bucket}])
+
+    saved = repository.upsert_batch(
+        [
+            {
+                **base,
+                "observed_at": bucket + timedelta(minutes=5),
+                "fetched_at": bucket + timedelta(minutes=5),
+                "bucket_at": bucket + timedelta(minutes=5),
+            }
+        ]
+    )
+
+    assert saved == 0
+    rows = repository.query_history(
+        subject_id=SUBJECT_ID,
+        data_type="ths_etf_home_ranking",
+    )
+    assert len(rows) == 1
 
 
 @pytest.mark.integration

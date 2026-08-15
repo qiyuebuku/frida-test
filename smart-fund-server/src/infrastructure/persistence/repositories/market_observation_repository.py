@@ -6,7 +6,7 @@ from datetime import date, datetime
 from decimal import Decimal
 from typing import Any
 
-from sqlalchemy import and_, func, or_, select, update
+from sqlalchemy import and_, func, or_, select, tuple_, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 
 from src.infrastructure.connections import get_session
@@ -26,6 +26,52 @@ def _snapshot_order_key(item: dict[str, Any]) -> tuple[int, datetime, datetime]:
         observed_at or minimum,
         item["fetched_at"],
     )
+
+
+_UNCHANGED_PAYLOAD_DEDUP_DATA_TYPES = frozenset(
+    {
+        "stock_dynamic_group",
+        "ths_industry_opportunity",
+        "ths_sector_commodity_linkage",
+        "ths_etf_home_ranking",
+        "ths_etf_zone",
+        "ths_etf_ranking_universe",
+        "ths_etf_cross_border",
+        "ths_etf_hot_ranking",
+    }
+)
+
+
+def _drop_consecutive_unchanged_snapshots(
+    items: list[dict[str, Any]],
+    latest_payloads: dict[tuple[str, str, str], tuple[date | None, str]],
+) -> list[dict[str, Any]]:
+    """Keep a new bucket only when its business payload actually changes.
+
+    This is deliberately limited to A-share app-page snapshots. Other feeds
+    may use repeated payloads as heartbeats or have cross-market calendars.
+    """
+    kept: list[dict[str, Any]] = []
+    ordered = sorted(
+        items,
+        key=lambda item: (
+            item["data_type"],
+            item["subject_id"],
+            item["provider"],
+            item["bucket_at"],
+        ),
+    )
+    for item in ordered:
+        if item["data_type"] not in _UNCHANGED_PAYLOAD_DEDUP_DATA_TYPES:
+            kept.append(item)
+            continue
+        key = (item["data_type"], item["subject_id"], item["provider"])
+        current = (item.get("trade_date"), item["payload_hash"])
+        if latest_payloads.get(key) == current:
+            continue
+        kept.append(item)
+        latest_payloads[key] = current
+    return kept
 
 
 class MarketSnapshotRepository:
@@ -50,6 +96,53 @@ class MarketSnapshotRepository:
         values_to_save = list(unique_items.values())
         saved = 0
         with get_session() as session:
+            dedup_candidates = [
+                item
+                for item in values_to_save
+                if item["data_type"] in _UNCHANGED_PAYLOAD_DEDUP_DATA_TYPES
+            ]
+            latest_payloads: dict[
+                tuple[str, str, str], tuple[date | None, str]
+            ] = {}
+            for start in range(0, len(dedup_candidates), self.CHUNK_SIZE):
+                chunk = dedup_candidates[start : start + self.CHUNK_SIZE]
+                keys = {
+                    (item["data_type"], item["subject_id"], item["provider"])
+                    for item in chunk
+                }
+                statement = (
+                    select(
+                        MarketSnapshot.data_type,
+                        MarketSnapshot.subject_id,
+                        MarketSnapshot.provider,
+                        MarketSnapshot.trade_date,
+                        MarketSnapshot.payload_hash,
+                    )
+                    .where(
+                        tuple_(
+                            MarketSnapshot.data_type,
+                            MarketSnapshot.subject_id,
+                            MarketSnapshot.provider,
+                        ).in_(keys)
+                    )
+                    .order_by(
+                        MarketSnapshot.data_type,
+                        MarketSnapshot.subject_id,
+                        MarketSnapshot.provider,
+                        MarketSnapshot.bucket_at.desc(),
+                    )
+                    .distinct(
+                        MarketSnapshot.data_type,
+                        MarketSnapshot.subject_id,
+                        MarketSnapshot.provider,
+                    )
+                )
+                for row in session.execute(statement):
+                    latest_payloads[(row[0], row[1], row[2])] = (row[3], row[4])
+            values_to_save = _drop_consecutive_unchanged_snapshots(
+                values_to_save,
+                latest_payloads,
+            )
             for start in range(0, len(values_to_save), self.CHUNK_SIZE):
                 values = values_to_save[start : start + self.CHUNK_SIZE]
                 statement = pg_insert(MarketSnapshot).values(values)
