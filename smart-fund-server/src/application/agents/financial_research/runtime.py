@@ -1001,6 +1001,15 @@ def _semantic_evaluator_input(
     for invocation in context.tool_invocations:
         if invocation.result is None:
             continue
+        # Submission tools return the complete Proposal.  Including that result
+        # as "evidence" duplicates the report inside the evaluator input and
+        # previously added ~18 KB without supporting any Claim independently.
+        if invocation.name in {
+            "submit_research_conclusion",
+            "submit_investment_view_revision",
+            "agent_evidence_ledger_open",
+        }:
+            continue
         serialized = json.dumps(
             invocation.result,
             ensure_ascii=False,
@@ -1093,7 +1102,7 @@ def _semantic_evaluator_input(
         "tool_trajectory": [
             invocation.name for invocation in context.tool_invocations
         ],
-        "evidence_records": evidence_records[:60],
+        "evidence_records": evidence_records[:40],
         "deterministic_checks": {
             "forecast_calibration_bindings": _forecast_calibration_bindings(
                 proposal, context

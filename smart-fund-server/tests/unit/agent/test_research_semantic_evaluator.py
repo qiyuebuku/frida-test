@@ -48,8 +48,9 @@ def test_semantic_evaluator_tool_schema_requires_substantive_scores() -> None:
 def test_semantic_evaluator_limits_output_and_requires_scores_first() -> None:
     agent = create_semantic_evaluator_agent(model="glm-5.3")
 
-    assert agent.model_settings.max_tokens == 12_000
+    assert agent.model_settings.max_tokens == 18_000
     assert "第一个顶层字段必须是完整的 scores" in agent.instructions
+    assert "每个 Claim 只输出一条 assessment" in agent.instructions
 
 
 def test_semantic_evaluator_normalizes_provider_stringified_nested_json() -> None:
