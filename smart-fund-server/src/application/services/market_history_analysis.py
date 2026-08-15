@@ -58,6 +58,25 @@ def technical_state(
     }
     drawdown_high = max(bars, key=lambda row: row["high"])
     result["peak_drawdown_pct"] = _pct(latest["close"], drawdown_high["high"])
+    prior_volumes = [
+        row["volume"] for row in bars[-21:-1]
+        if isinstance(row.get("volume"), (int, float)) and row["volume"] >= 0
+    ]
+    if isinstance(latest.get("volume"), (int, float)) and prior_volumes:
+        baseline = median(prior_volumes)
+        ratio = latest["volume"] / baseline if baseline else None
+        result["volume_confirmation"] = {
+            "latest_volume_raw": _round(latest["volume"]),
+            "prior_20_median_volume_raw": _round(baseline),
+            "latest_to_prior_median_ratio": _round(ratio) if ratio is not None else None,
+            "state": (
+                "above_prior_median" if ratio is not None and ratio > 1
+                else "below_prior_median" if ratio is not None and ratio < 1
+                else "at_prior_median"
+            ),
+            "semantics": "provider-native raw volume ratio; unit is not established",
+            "latest_evidence_locator": latest.get("evidence_locator"),
+        }
     if benchmark_items:
         benchmark = _bars(benchmark_items)
         aligned = _aligned_returns(bars, benchmark, 20)
@@ -366,11 +385,17 @@ def _bars(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
             continue
         if not all(isfinite(value) and value > 0 for value in (close, high, low)):
             continue
+        volume = data.get("volume")
+        try:
+            volume = float(volume) if volume is not None else None
+        except (TypeError, ValueError):
+            volume = None
         rows.append({
             "trade_date": str(item.get("trade_date") or ""),
             "close": close,
             "high": high,
             "low": low,
+            "volume": volume if volume is not None and isfinite(volume) and volume >= 0 else None,
             "evidence_locator": item.get("evidence_locator"),
         })
     rows.sort(key=lambda row: row["trade_date"])

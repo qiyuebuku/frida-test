@@ -14,6 +14,7 @@ from src.application.services.market_evidence_locator import (
     MarketEvidenceIdentity,
     encode_market_evidence_locator,
     historical_analogue_evidence_locator,
+    technical_state_evidence_locator,
 )
 from src.application.services.market_history_analysis import (
     historical_analogues,
@@ -592,12 +593,14 @@ class MarketTrackingService:
                 _history_items_with_locators(benchmark) if benchmark else None
             ),
         )
-        return {
+        response = {
             "operation": "market_technical_state_open",
             "data_type": subject["data_type"],
             "benchmark_subject_id": benchmark["code"] if benchmark else None,
             **result,
         }
+        response["analysis_evidence_locator"] = technical_state_evidence_locator(response)
+        return response
 
     async def instrument_historical_analogues(
         self,

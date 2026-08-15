@@ -36,6 +36,44 @@ def test_compact_evidence_ledger_prefers_external_content_handle() -> None:
     ]
 
 
+@pytest.mark.asyncio
+async def test_sector_detail_samples_latest_row_per_trade_date(monkeypatch) -> None:
+    service = SimpleNamespace(
+        sector_detail=lambda **_kwargs: {
+            "provider_sector_code": "886033",
+            "found": True,
+            "latest": [],
+            "series": [{
+                "data_type": "ths_sector_flow",
+                "subject_id": "ths_native:concept:886033",
+                "items": [
+                    {"id": 1, "trade_date": "2026-08-12", "bucket_at": "2026-08-12T07:00:00Z", "data_type": "ths_sector_flow", "subject_id": "ths_native:concept:886033", "data": {"main_net_inflow": 134.53}},
+                    {"id": 2, "trade_date": "2026-08-13", "bucket_at": "2026-08-13T06:49:00Z", "data_type": "ths_sector_flow", "subject_id": "ths_native:concept:886033", "data": {"main_net_inflow": 8.53}},
+                    {"id": 3, "trade_date": "2026-08-13", "bucket_at": "2026-08-13T07:00:00Z", "data_type": "ths_sector_flow", "subject_id": "ths_native:concept:886033", "data": {"main_net_inflow": -15.93}},
+                ],
+            }],
+            "constituents": [],
+        },
+    )
+    monkeypatch.setattr(
+        relation_graph,
+        "_sector_observability_service",
+        lambda: service,
+    )
+
+    result = await relation_graph._read_sector_detail(
+        provider_sector_code="886033",
+        history_limit=5,
+        constituent_limit=0,
+    )
+
+    items = result["series"][0]["items"]
+    assert [item["trade_date"] for item in items] == ["2026-08-12", "2026-08-13"]
+    assert items[0]["data"]["main_net_inflow"] == 134.53
+    assert items[1]["data"]["main_net_inflow"] == -15.93
+    assert items[0]["data_type"] == "ths_sector_flow"
+
+
 def _run_authorization() -> str:
     now = datetime.now(UTC)
     return issue_run_authorization(
@@ -155,6 +193,7 @@ def test_mcp_exposes_graph_and_provider_neutral_external_tools() -> None:
         "market_frame_open",
         "market_change_brief_open",
         "market_premarket_context_open",
+        "market_global_overview_open",
         "market_dimension_open",
         "market_topic_open",
         "market_domain_open",
@@ -283,7 +322,7 @@ async def test_research_catalog_calls_agent_market_service_with_aware_cutoff(
     result = await relation_graph.research_data_catalog_open(_FakeContext())
 
     assert service.cutoff_at.tzinfo is not None
-    assert result["operation"] == "research_data_catalog_open"
+    assert "operation" not in result
     assert result["domains"] == []
 
 
@@ -326,10 +365,9 @@ async def test_market_sector_overview_is_database_only_and_compact(
         limit_per_group=2,
     )
 
-    assert result["upstream_requested"] is False
+    assert "upstream_requested" not in result
     row = result["fact_highlights"][0]
     assert row == {
-        "group_path": "hot/concept",
         "provider_sector_code": "885001",
         "sector_name": "AI应用",
         "heat_score": 23541,
@@ -391,3 +429,128 @@ def test_edge_open_projection_keeps_relation_proof() -> None:
             }
         ],
     }
+
+
+@pytest.mark.parametrize(
+    ("tool_name", "payload"),
+    [
+        ("market_frame_open", {"trade_date": "2026-08-15", "dimensions": [{
+            "dimension": "sector_style", "as_of": "2026-08-15 15:00",
+            "trade_dates": ["2026-08-15"],
+            "data_types": [{"data_type": "sector_quote", "subject_count": 2}],
+        }]}),
+        ("market_dimension_open", {"dimension": "flow_liquidity", "facts": [{
+            "data_type": "market_capital", "subject_id": "cn:market",
+            "data_preview": {"net_inflow": -10}, "evidence_locator": "M1",
+        }]}),
+        ("market_global_overview_open", {"us_market": {"indices": [{"code": "SPX"}]},
+            "other_global_facts": [{"data_type": "forex", "subject_id": "usd_cny",
+                "data_preview": {"price": 6.7}, "evidence_locator": "M2"}]}),
+        ("market_evidence_open", {"evidence_locator": "M3", "record": {
+            "data_type": "sector_flow", "subject_id": "886033",
+            "trade_date": "2026-08-15", "data": {"main_net_inflow": 12.3},
+        }}),
+        ("market_instrument_history", {"code": "000001", "items": [{
+            "trade_date": "2026-08-15", "data": {
+                "open": 1, "high": 2, "low": 0.5, "close": 1.5, "volume": 10,
+            },
+        }]}),
+        ("market_historical_analogue_open", {"subject_id": "886033",
+            "statistics": {"median_return_pct": 0.5}, "robustness": {}}),
+        ("agent_evidence_ledger_open", {"entries": [{
+            "tool_name": "market_evidence_open", "evidence_refs": ["M1", "M1"],
+        }]}),
+        ("research_quality_open", {"evaluation": {
+            "evaluation_id": "Q1", "overall_score": 8.5,
+            "semantic_evaluation": {"scores": {"decision_value": 8}},
+        }}),
+    ],
+)
+def test_agent_mcp_projection_is_idempotent(tool_name, payload) -> None:
+    once = project_tool_result(tool_name, payload)
+    assert project_tool_result(tool_name, once) == once
+
+
+def test_agent_mcp_projection_normalizes_time_precision_and_server_metadata() -> None:
+    projected = project_tool_result(
+        "market_dimension_open",
+        {
+            "dimension": "flow_liquidity",
+            "updated_at": "2026-08-15T05:02:03.123456Z",
+            "facts": [
+                {
+                    "data_type": "market_capital",
+                    "subject_id": "cn:a_share:market_capital",
+                    "observed_at": "2026-08-15T05:02:03.123456Z",
+                    "data_preview": {
+                        "net_inflow": 192.48392811,
+                        "percent_change": 216.6600001,
+                    },
+                    "evidence_locator": "market:v1:one",
+                },
+                {
+                    "data_type": "market_capital",
+                    "subject_id": "cn:a_share:market_capital:baseline",
+                    "observed_at": "2026-08-15T05:02:03.123456Z",
+                    "data_preview": {"net_inflow": -164.99000001},
+                    "evidence_locator": "market:v1:two",
+                },
+            ],
+        },
+    )
+
+    assert "updated_at" not in projected
+    assert projected["facts_shared_time"] == {"fact_time": "2026-08-15 13:02"}
+    assert all("fact_time" not in fact for fact in projected["facts"])
+    assert projected["facts"][0]["values"] == {
+        "net_inflow": 192.4839,
+        "percent_change": 216.66,
+    }
+    assert projected["facts"][1]["values"]["net_inflow"] == -164.99
+
+
+def test_agent_mcp_projection_normalizes_native_datetime_values() -> None:
+    from datetime import UTC, datetime
+
+    projected = project_tool_result(
+        "market_frame_open",
+        {"dimensions": [{
+            "dimension": "a_share_market",
+            "as_of": datetime(2026, 8, 14, 17, 41, 55, 431000, tzinfo=UTC),
+            "trade_dates": [],
+            "data_types": [],
+        }]},
+    )
+
+    assert projected["dimensions"][0]["latest_fact_time"] == "2026-08-15 01:41"
+
+
+def test_technical_state_projection_names_intraday_extremes_explicitly() -> None:
+    projected = project_tool_result("market_technical_state_open", {
+        "subject_id": "ths:industry:881175",
+        "latest_close": 21621.915,
+        "windows": {"20_bars": {
+            "high": 22066.371,
+            "high_trade_date": "2026-08-13",
+            "low": 17000.0,
+            "low_trade_date": "2026-07-20",
+            "distance_to_high_pct": -2.0133,
+            "return_pct": 24.19,
+        }},
+        "volume_confirmation": {
+            "latest_volume_raw": 1200,
+            "prior_20_median_volume_raw": 1000,
+            "latest_to_prior_median_ratio": 1.2,
+            "state": "above_prior_median",
+        },
+        "analysis_evidence_locator": "market:v1:technical",
+        "peak_drawdown_pct": -2.0133,
+    })
+
+    window = projected["windows"]["20_bars"]
+    assert window["intraday_high"] == 22066.371
+    assert window["close_distance_to_intraday_high_pct"] == -2.0133
+    assert "high" not in window
+    assert projected["drawdown_from_intraday_peak_pct"] == -2.0133
+    assert projected["volume_confirmation"]["latest_to_prior_median_ratio"] == 1.2
+    assert projected["analysis_evidence_locator"] == "market:v1:technical"

@@ -373,6 +373,7 @@ def _project_market_result(
             **_select(result, (
                 "subject_id", "benchmark_subject_id", "latest_trade_date",
                 "latest_close", "available_bars", "relative_strength",
+                "volume_confirmation", "analysis_evidence_locator",
                 "evidence_locators",
             )),
             "price_basis": "窗口高低点使用K线盘中最高/最低价；区间收益使用收盘价",

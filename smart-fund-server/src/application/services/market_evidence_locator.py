@@ -156,6 +156,44 @@ def historical_analogue_evidence_locator(value: Mapping[str, Any]) -> str:
     )
 
 
+def technical_state_evidence_locator(value: Mapping[str, Any]) -> str:
+    """Identify one deterministic technical-state aggregate."""
+
+    material = {
+        key: value.get(key)
+        for key in (
+            "subject_id",
+            "benchmark_subject_id",
+            "latest_trade_date",
+            "latest_close",
+            "windows",
+            "recent_swing",
+            "peak_drawdown_pct",
+            "relative_strength",
+            "volume_confirmation",
+        )
+    }
+    digest = hashlib.sha256(
+        json.dumps(
+            material,
+            sort_keys=True,
+            ensure_ascii=False,
+            default=str,
+        ).encode()
+    ).hexdigest()
+    return encode_market_evidence_locator(
+        MarketEvidenceIdentity(
+            kind="calculation",
+            domain="market_technical_state",
+            identity={"sha256": digest},
+            data_type=str(value.get("data_type") or "technical_state"),
+            subject_id=str(value.get("subject_id") or "") or None,
+            provider="smart_fund_deterministic",
+            version="v1",
+        )
+    )
+
+
 def _required(value: object, name: str) -> str:
     normalized = str(value or "").strip()
     if not normalized:

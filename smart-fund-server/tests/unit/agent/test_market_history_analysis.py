@@ -14,7 +14,12 @@ def _series(count: int = 160, *, multiplier: float = 1.0) -> list[dict]:
         rows.append({
             "id": index + 1,
             "trade_date": (start + timedelta(days=index)).isoformat(),
-            "data": {"close": close, "high": close + 1, "low": close - 1},
+            "data": {
+                "close": close,
+                "high": close + 1,
+                "low": close - 1,
+                "volume": 1_000 + index * 10,
+            },
             "evidence_locator": f"market:v1:{index}",
         })
     return list(reversed(rows))
@@ -32,6 +37,10 @@ def test_technical_state_uses_fixed_windows_and_optional_benchmark() -> None:
     assert result["recent_swing"]["rule"]
     assert result["relative_strength"]["window_bars"] == 20
     assert result["evidence_locators"]
+    volume = result["volume_confirmation"]
+    assert volume["latest_to_prior_median_ratio"] > 1
+    assert volume["state"] == "above_prior_median"
+    assert "unit is not established" in volume["semantics"]
 
 
 def test_historical_analogues_returns_distribution_and_sample_identity() -> None:
