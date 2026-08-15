@@ -6,6 +6,9 @@ from src.application.services.research_memory_consolidation_service import (
 from src.interfaces.cli.main import COLLECTION_WORKER_GROUPS
 from src.interfaces.cli.schedules import SCHEDULES
 from src.interfaces.mcp.projection import project_tool_result
+from src.infrastructure.persistence.repositories.agent_research_read_repository import (
+    _text_terms,
+)
 
 
 NOW = datetime(2026, 8, 15, 8, 0, tzinfo=UTC)
@@ -137,3 +140,10 @@ def test_memory_search_projection_hides_audit_references_until_open() -> None:
             "confidence": "high",
         }],
     }
+
+
+def test_chinese_memory_search_uses_partial_terms_not_whole_sentence() -> None:
+    query_terms = _text_terms("研究市场主线时如何避免证据对象错配")
+    memory_terms = _text_terms("市场主张必须引用同一对象的证据")
+
+    assert query_terms & memory_terms

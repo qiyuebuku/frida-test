@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from datetime import datetime
 from typing import Any
 
@@ -305,15 +306,6 @@ class AgentResearchReadRepository:
                 AgentRoleMemoryItem.expires_at > cutoff_at,
             ),
         ]
-        if query:
-            pattern = f"%{query.strip()}%"
-            filters.append(
-                or_(
-                    AgentRoleMemoryItem.summary.ilike(pattern),
-                    AgentRoleMemoryItem.applicability.ilike(pattern),
-                    AgentRoleMemoryItem.counterexample.ilike(pattern),
-                )
-            )
         if subject_id:
             parts = subject_id.split(":")
             subject_family = ":".join(parts[:2]) if len(parts) >= 2 else subject_id
@@ -338,6 +330,7 @@ class AgentResearchReadRepository:
                 )
             )
         normalized_limit = max(1, min(int(limit), 30))
+        retrieval_limit = min(max(normalized_limit * 3, 30), 100)
         with get_session(self._target) as session:
             rows = list(
                 session.scalars(
@@ -351,10 +344,15 @@ class AgentResearchReadRepository:
                         ),
                         AgentRoleMemoryItem.updated_at.desc(),
                     )
-                    .limit(normalized_limit)
+                    .limit(retrieval_limit)
                 ).all()
             )
-        return [_memory_summary(row) for row in rows]
+        if query.strip():
+            rows.sort(
+                key=lambda row: _memory_query_score(query, row),
+                reverse=True,
+            )
+        return [_memory_summary(row) for row in rows[:normalized_limit]]
 
     def open_memory_at(
         self,
@@ -478,6 +476,26 @@ def _memory_summary(row: AgentRoleMemoryItem) -> dict[str, Any]:
         "expires_at": _iso(row.expires_at),
         "version": row.version,
     }
+
+
+def _memory_query_score(query: str, row: AgentRoleMemoryItem) -> float:
+    query_terms = _text_terms(query)
+    memory_terms = _text_terms(" ".join((
+        row.summary,
+        row.applicability,
+        row.counterexample,
+    )))
+    if not query_terms or not memory_terms:
+        return 0.0
+    overlap = len(query_terms & memory_terms)
+    return overlap / max(len(query_terms), 1)
+
+
+def _text_terms(value: str) -> set[str]:
+    normalized = re.sub(r"[^0-9a-zA-Z\u4e00-\u9fff]+", "", value.lower())
+    if len(normalized) < 2:
+        return {normalized} if normalized else set()
+    return {normalized[index:index + 2] for index in range(len(normalized) - 1)}
 
 
 def _quality(row: AgentResearchQualityEvaluation, *, include_details: bool) -> dict[str, Any]:
