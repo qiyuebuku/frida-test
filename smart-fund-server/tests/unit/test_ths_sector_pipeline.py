@@ -1135,6 +1135,46 @@ def test_sector_overview_reads_persisted_rows_only() -> None:
     ] == "低硫燃油2609"
 
 
+def test_sector_ranking_uses_one_latest_common_trade_date() -> None:
+    class Repository:
+        def list_latest(self, **_kwargs):
+            current = _snapshot(
+                data_type="ths_sector_ranking",
+                subject_id="ths_native:industry:881129:change",
+                data={
+                    "provider_sector_code": "881129",
+                    "sector_type": "industry",
+                    "metric": "change",
+                    "rank": 4,
+                },
+            )
+            stale = _snapshot(
+                data_type="ths_sector_ranking",
+                subject_id="ths_native:industry:881999:change",
+                data={
+                    "provider_sector_code": "881999",
+                    "sector_type": "industry",
+                    "metric": "change",
+                    "rank": 1,
+                },
+            )
+            current["trade_date"] = date(2026, 8, 14)
+            stale["trade_date"] = date(2026, 8, 3)
+            return [stale, current]
+
+    result = MarketObservabilityService(
+        snapshot_repository=Repository(),  # type: ignore[arg-type]
+    ).sector_ranking(
+        data_type="ths_sector_ranking",
+        metric="change",
+        sector_type="industry",
+    )
+
+    assert result["trade_date"] == "2026-08-14"
+    assert result["total"] == 1
+    assert result["items"][0]["provider_sector_code"] == "881129"
+
+
 def test_sector_rotation_groups_by_type_metric_date_and_rank() -> None:
     rows = [
         _snapshot(

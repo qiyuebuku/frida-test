@@ -1706,7 +1706,7 @@ async def _read_sector_rankings(**kwargs) -> dict[str, Any]:
     )
     return {
         **{key: result.get(key) for key in (
-            "data_type", "metric", "sector_type", "total", "offset", "limit"
+            "data_type", "metric", "sector_type", "trade_date", "total", "offset", "limit"
         )},
         "items": [_compact_sector_row(item) for item in result.get("items") or []],
         "upstream_requested": False,

@@ -280,7 +280,7 @@ def _project_market_result(
         })
     if tool_name == "market_sector_rankings":
         return _nonempty(
-            _select(result, ("data_type", "metric", "total", "offset"))
+            _select(result, ("data_type", "metric", "trade_date", "total", "offset"))
             | {"items": [
                 projected
                 for item in result.get("items") or []

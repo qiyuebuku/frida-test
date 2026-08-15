@@ -444,6 +444,33 @@ class MarketObservabilityService:
                 item for item in items
                 if item.get("sector_type") == sector_type
             ]
+        trade_dates = [
+            str(value)[:10]
+            for item in items
+            if (
+                value := (
+                    item.get("trade_date")
+                    or item.get("source_date")
+                    or item.get("observed_at")
+                    or item.get("bucket_at")
+                )
+            )
+        ]
+        latest_trade_date = max(trade_dates) if trade_dates else None
+        if latest_trade_date:
+            # A ranking is one market cross-section. ``list_latest`` returns
+            # the last row per subject, so inactive subjects may otherwise
+            # contribute stale rows from older trading days to today's table.
+            items = [
+                item
+                for item in items
+                if str(
+                    item.get("trade_date")
+                    or item.get("source_date")
+                    or item.get("observed_at")
+                    or item.get("bucket_at")
+                )[:10] == latest_trade_date
+            ]
         items.sort(key=_sector_rank_sort_key)
         normalized_offset = max(0, int(offset))
         normalized_limit = max(1, min(int(limit), 200))
@@ -451,6 +478,7 @@ class MarketObservabilityService:
             "data_type": data_type,
             "metric": metric,
             "sector_type": sector_type,
+            "trade_date": latest_trade_date,
             "total": len(items),
             "offset": normalized_offset,
             "limit": normalized_limit,
