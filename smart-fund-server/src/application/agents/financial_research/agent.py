@@ -879,6 +879,10 @@ def _validate_and_serialize_draft(
         formal_proposal,
         wrapper.context,
     )
+    formal_proposal = _bind_opened_calibration_references(
+        formal_proposal,
+        wrapper.context,
+    )
     formal_proposal = prune_unopened_evidence_plan_references(
         formal_proposal,
         wrapper.context,
@@ -1169,6 +1173,74 @@ def _revision_citations(revision):
         yield from link.evidence
     if revision.market_structure is not None:
         yield from revision.market_structure.evidence
+
+
+def _bind_opened_calibration_references(
+    proposal: CurrentResearchReportProposal,
+    context: AgentRunContext,
+) -> CurrentResearchReportProposal:
+    """Attach complete opened calibration lineage for subjects used in a view.
+
+    Window statistics are deterministic tool products.  The model decides how
+    to interpret them, while Runtime makes sure a 3/5-day conclusion cannot
+    accidentally omit one of the analysis locators it actually opened.
+    """
+
+    analyses_by_code: dict[str, list[str]] = {}
+    for invocation in context.tool_invocations:
+        if (
+            invocation.name != "market_historical_analogue_open"
+            or invocation.finished_at is None
+            or invocation.result is None
+        ):
+            continue
+        result = _decode_tool_result_object(invocation.result)
+        if not result:
+            continue
+        reference = result.get("analysis_evidence_locator")
+        if not isinstance(reference, str):
+            continue
+        reference = context.evidence_aliases.get(reference, reference)
+        if not reference.startswith(LOCATOR_PREFIX):
+            continue
+        arguments = invocation.arguments if isinstance(invocation.arguments, dict) else {}
+        subject = str(result.get("subject_id") or arguments.get("code") or "")
+        for code in re.findall(r"(?<!\d)\d{6}(?!\d)", subject):
+            analyses_by_code.setdefault(code, []).append(reference)
+
+    payload = proposal.model_dump(mode="python")
+    for revision in payload.get("view_revisions") or []:
+        structure = revision.get("market_structure")
+        if not isinstance(structure, dict):
+            continue
+        view_text = " ".join(
+            [revision.get("title", ""), revision.get("thesis", "")]
+            + list(revision.get("scope") or [])
+            + [item.get("statement", "") for item in revision.get("hypotheses") or []]
+        )
+        references = list(structure.get("evidence") or [])
+        existing = {
+            str(item.get("reference") or "")
+            for item in references
+            if isinstance(item, dict)
+        }
+        for code in re.findall(r"(?<!\d)\d{6}(?!\d)", view_text):
+            for reference in analyses_by_code.get(code, []):
+                if reference in existing:
+                    continue
+                references.append(
+                    {
+                        "citation_id": f"runtime-calibration-{len(references) + 1:03d}",
+                        "kind": "market",
+                        "reference": reference,
+                        "support": "supports",
+                        "observed_at": None,
+                        "as_of": None,
+                    }
+                )
+                existing.add(reference)
+        structure["evidence"] = references
+    return CurrentResearchReportProposal.model_validate(payload)
 
 
 def _prune_unopened_citations(
