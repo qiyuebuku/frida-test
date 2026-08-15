@@ -11,6 +11,7 @@ from mcp.types import CallToolResult, TextContent
 from pydantic import ValidationError
 
 from src.application.agents.financial_research.agent import (
+    _append_structure_calibration_reference,
     _bind_research_draft,
     _renumber_citations,
     _bind_forecast_calibration_fields,
@@ -159,6 +160,27 @@ def test_model_schema_limits_research_claim_to_atomic_length() -> None:
     schema = submit_investment_view_revision.params_json_schema
 
     assert schema["$defs"]["ResearchClaim"]["properties"]["statement"]["maxLength"] == 180
+
+
+def test_runtime_calibration_binding_never_overflows_structure_contract() -> None:
+    references = [
+        {"reference": f"market:v1:existing-{index}"}
+        for index in range(14)
+    ]
+    existing = {item["reference"] for item in references}
+
+    for index in range(8):
+        _append_structure_calibration_reference(
+            references,
+            existing=existing,
+            reference=f"market:v1:calibration-{index}",
+        )
+
+    assert len(references) == 16
+    assert [item["reference"] for item in references[-2:]] == [
+        "market:v1:calibration-0",
+        "market:v1:calibration-1",
+    ]
 
 
 def test_historical_analogue_projection_keeps_leakage_and_sensitivity() -> None:

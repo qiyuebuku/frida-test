@@ -1179,7 +1179,7 @@ def _bind_opened_calibration_references(
     proposal: CurrentResearchReportProposal,
     context: AgentRunContext,
 ) -> CurrentResearchReportProposal:
-    """Attach complete opened calibration lineage for subjects used in a view.
+    """Attach opened calibration lineage within the structure contract bound.
 
     Window statistics are deterministic tool products.  The model decides how
     to interpret them, while Runtime makes sure a 3/5-day conclusion cannot
@@ -1226,21 +1226,37 @@ def _bind_opened_calibration_references(
         }
         for code in re.findall(r"(?<!\d)\d{6}(?!\d)", view_text):
             for reference in analyses_by_code.get(code, []):
-                if reference in existing:
-                    continue
-                references.append(
-                    {
-                        "citation_id": f"runtime-calibration-{len(references) + 1:03d}",
-                        "kind": "market",
-                        "reference": reference,
-                        "support": "supports",
-                        "observed_at": None,
-                        "as_of": None,
-                    }
+                _append_structure_calibration_reference(
+                    references,
+                    existing=existing,
+                    reference=reference,
                 )
-                existing.add(reference)
         structure["evidence"] = references
     return CurrentResearchReportProposal.model_validate(payload)
+
+
+def _append_structure_calibration_reference(
+    references: list[dict],
+    *,
+    existing: set[str],
+    reference: str,
+) -> bool:
+    """Add deterministic lineage without overflowing MarketStructure.evidence."""
+
+    if reference in existing or len(references) >= 16:
+        return False
+    references.append(
+        {
+            "citation_id": f"runtime-calibration-{len(references) + 1:03d}",
+            "kind": "market",
+            "reference": reference,
+            "support": "supports",
+            "observed_at": None,
+            "as_of": None,
+        }
+    )
+    existing.add(reference)
+    return True
 
 
 def _prune_unopened_citations(
