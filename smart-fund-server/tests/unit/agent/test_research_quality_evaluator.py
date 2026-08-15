@@ -5,6 +5,7 @@ import pytest
 
 from src.application.agents.financial_research.quality_evaluator import (
     _clarity_score,
+    _exploration_score,
     _temporal_language_failures,
     evaluate_research_quality,
     require_publishable_quality,
@@ -32,6 +33,18 @@ from src.application.agents.financial_research.schemas import (
 
 
 CUTOFF = datetime(2026, 8, 9, 6, 0, tzinfo=UTC)
+
+
+def test_exploration_scores_non_trading_day_sector_overview_as_dimension_layer() -> None:
+    tools = {
+        "market_frame_open",
+        "market_sector_overview",
+        "market_sector_compare_open",
+        "market_instrument_history",
+        "market_evidence_open",
+    }
+
+    assert _exploration_score(tools, set()) == 10.0
 
 
 def test_clarity_treats_one_subject_calibration_matrix_as_atomic() -> None:

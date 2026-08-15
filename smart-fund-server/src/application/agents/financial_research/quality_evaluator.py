@@ -428,6 +428,7 @@ def _exploration_score(tools: set[str], references: set[str]) -> float:
         {
             "market_dimension_open",
             "market_change_brief_open",
+            "market_sector_overview",
             "market_topic_open",
             "market_domain_open",
         },

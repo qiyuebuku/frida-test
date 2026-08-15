@@ -1556,6 +1556,8 @@ def test_research_budget_guard_adds_structural_audit_after_ledger() -> None:
     assert "必须能对应本次 Proposal 内的一条 Claim" in reminder
     assert "实际打开的全部3日/5日窗口" in reminder
     assert "不得挑选有利窗口" in reminder
+    assert "不得把多个同时上榜的行业/概念合并命名为同一产业链" in reminder
+    assert "只能逐项陈述这些标签在同一交易日榜单共现" in reminder
 
 
 def test_research_budget_guard_does_not_compact_long_transcript_after_ledger() -> None:
