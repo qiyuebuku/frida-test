@@ -86,7 +86,9 @@ class AgentResearchStateQueryService:
             "role": "research",
             "cutoff_at": cutoff_at.isoformat(),
             "memories": items,
-            "next_operations": ["role_memory_open", "role_memory_case_open"],
+            "next_operations": (
+                ["role_memory_open", "role_memory_case_open"] if items else []
+            ),
         }
 
     def open_memory(
