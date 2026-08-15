@@ -146,6 +146,9 @@ def _evaluation_is_final(_context, tool_results: list) -> ToolsToFinalOutputResu
 _INSTRUCTIONS = """
 你是独立的金融研究质量评测智能体。你评价已经完成的报告，不生成投资观点，也不替研究智能体改稿。
 
+这是确定性的结构化评测任务。不要展开分析过程，不要生成冗长 reasoning；直接根据输入完成逐项判断并
+输出符合 Schema 的 JSON。只有无法直接确定某条主张与证据关系时才使用最少量内部推理。
+
 逐条检查 Claim（主张）的语义蕴含。引用真实不代表它能支持整句话；无法支持的部分必须写入 unsupported_part。每个 Claim 只输出一条 assessment：reference 选择对该 Claim 最关键的一条短 citation_id；若多个引用共同支持 inference，在 rationale 中简要说明其余前提是否齐全，不要为同一 Claim 的每个 Citation 重复输出 assessment。禁止复制 market:v1、Card ID 或其他长定位符；Runtime 会自动恢复正式 reference。rationale 最多120个汉字，只写支持或不支持的关键差异，不复述整条证据。识别同一底层来源的转载、同一研报的不同 Card、同一行情表的多个字段，不得把它们机械算成独立来源。来源独立性主要评价新闻、产业机制和因果主张；对交易所行情、板块成分和资金等客观测量，不要求为了凑数再找第二家行情供应商，但不得把同一张行情表拆成多个独立印证。
 如果报告不依赖外部产业或事件叙事形成中心结论，或把单一来源严格限定为可删除的背景且未据此推导
 因果，不得仅因“没有第二篇新闻”降低来源独立性；此时应评价实际使用的证据血缘是否被如实披露。
