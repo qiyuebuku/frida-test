@@ -576,7 +576,20 @@ def _project_sector_comparison(result: Mapping[str, Any]) -> dict[str, Any]:
             "latest_signals": projected_signals,
             "constituent_breadth": candidate.get("constituent_breadth"),
         }))
-    return {"candidate_count": result.get("candidate_count", len(compact)), "candidates": compact}
+    overlap = [
+        _select(item, (
+            "left_code", "right_code", "left_count", "right_count",
+            "shared_count", "left_overlap_pct", "right_overlap_pct",
+            "jaccard_pct", "evidence_locators",
+        ))
+        for item in (result.get("pairwise_constituent_overlap") or [])
+        if isinstance(item, Mapping)
+    ]
+    return _nonempty({
+        "candidate_count": result.get("candidate_count", len(compact)),
+        "candidates": compact,
+        "pairwise_constituent_overlap": overlap,
+    })
 
 
 def _project_market_history(result: Mapping[str, Any]) -> dict[str, Any]:

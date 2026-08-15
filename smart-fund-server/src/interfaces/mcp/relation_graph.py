@@ -1238,7 +1238,9 @@ async def market_sector_open(
     description=(
         "Compare two to four candidate sectors in one bounded read. Returns "
         "standardized latest signals, multi-date history anchors, constituent "
-        "breadth and exact evidence locators. Prefer this after the market map "
+        "breadth, pairwise constituent overlap and exact evidence locators. "
+        "Use overlap before grouping co-occurring labels into one theme or chain. "
+        "Prefer this after the market map "
         "when deciding which candidate deserves deeper research."
     ),
     annotations=_READ_ONLY_ANNOTATIONS,
@@ -1797,6 +1799,7 @@ async def _read_sector_comparison(
         ]
     )
     candidates = []
+    constituent_memberships: list[tuple[str, set[str], str | None]] = []
     for detail in details:
         constituent_evidence = detail.get("constituent_evidence") or {}
         breadth_trade_date = (
@@ -1826,6 +1829,17 @@ async def _read_sector_comparison(
             if isinstance(item, dict)
             and isinstance(item.get("change_pct"), (int, float))
         ]
+        member_codes = {
+            str(
+                item.get("security_code")
+                or item.get("stock_code")
+                or item.get("code")
+                or ""
+            ).strip()
+            for item in constituents
+            if isinstance(item, dict)
+        }
+        member_codes.discard("")
         history = []
         ranked_series = sorted(
             detail.get("series") or [],
@@ -1884,10 +1898,50 @@ async def _read_sector_comparison(
                 },
             }
         )
+        constituent_memberships.append(
+            (
+                str(detail.get("provider_sector_code") or ""),
+                member_codes,
+                _sector_row_locator(constituent_evidence),
+            )
+        )
+    pairwise_overlap = []
+    for left_index, (left_code, left_members, left_ref) in enumerate(
+        constituent_memberships
+    ):
+        for right_code, right_members, right_ref in constituent_memberships[
+            left_index + 1:
+        ]:
+            if not left_members or not right_members:
+                continue
+            shared = left_members.intersection(right_members)
+            union = left_members.union(right_members)
+            pairwise_overlap.append(
+                {
+                    "left_code": left_code,
+                    "right_code": right_code,
+                    "left_count": len(left_members),
+                    "right_count": len(right_members),
+                    "shared_count": len(shared),
+                    "left_overlap_pct": round(
+                        len(shared) / len(left_members) * 100, 2
+                    ),
+                    "right_overlap_pct": round(
+                        len(shared) / len(right_members) * 100, 2
+                    ),
+                    "jaccard_pct": round(len(shared) / len(union) * 100, 2),
+                    "evidence_locators": [
+                        reference
+                        for reference in (left_ref, right_ref)
+                        if reference
+                    ],
+                }
+            )
     return {
         "operation": "sector_compare_open",
         "candidate_count": len(candidates),
         "candidates": candidates,
+        "pairwise_constituent_overlap": pairwise_overlap,
         "upstream_requested": False,
         "next_operations": ["market_evidence_open", "market_sector_open"],
     }
