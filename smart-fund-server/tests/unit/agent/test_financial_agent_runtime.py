@@ -1214,7 +1214,7 @@ def test_exact_market_evidence_requires_a_returned_locator_not_only_tool_name() 
 
     context.tool_invocations.append(
         ToolInvocation(
-            name="market_evidence_open",
+            name="market_sector_compare_open",
             call_id="opened",
             result='{"evidence_locator":"market_ref:M7"}',
         )

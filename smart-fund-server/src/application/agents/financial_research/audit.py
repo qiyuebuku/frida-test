@@ -5,7 +5,9 @@ from __future__ import annotations
 import json
 import re
 from collections.abc import Iterable
+from datetime import datetime
 from typing import Any
+from zoneinfo import ZoneInfo
 
 from src.application.agents.financial_research.context import (
     AgentRunContext,
@@ -225,12 +227,26 @@ def _market_claim_date_error(
     Aug-12 number or carry an unverified baseline out of the previous report.
     """
 
+    claim_type = getattr(claim, "claim_type", None)
+    claim_type_value = getattr(claim_type, "value", claim_type)
+    # Inferences may mention a formal view's lifecycle dates (created/expired)
+    # alongside a derived market conclusion. Those dates are authoritative
+    # research-state metadata, not separate observed market facts. Exact dated
+    # observations remain protected by this deterministic provenance check.
+    if claim_type_value == "inference":
+        return None
     claimed_dates = set(_ISO_DATE_PATTERN.findall(str(claim.statement)))
     market_citations = [item for item in claim.evidence if item.kind == "market"]
     if not claimed_dates or not market_citations:
         return None
     cited_dates: set[str] = set()
     for citation in market_citations:
+        # The opened result is authoritative even when its compact reversible
+        # locator omits time metadata or a provider-specific locator cannot be
+        # decoded by the generic codec.
+        cited_dates.update(
+            _opened_market_reference_dates(context, citation.reference)
+        )
         reference = context.evidence_aliases.get(
             citation.reference,
             citation.reference,
@@ -245,7 +261,17 @@ def _market_claim_date_error(
         if trade_date:
             cited_dates.add(str(trade_date)[:10])
         if identity.fact_time:
-            cited_dates.add(str(identity.fact_time)[:10])
+            fact_time = str(identity.fact_time)
+            cited_dates.add(fact_time[:10])
+            try:
+                parsed = datetime.fromisoformat(fact_time.replace("Z", "+00:00"))
+            except ValueError:
+                pass
+            else:
+                if parsed.tzinfo is not None and parsed.utcoffset() is not None:
+                    cited_dates.add(
+                        parsed.astimezone(ZoneInfo("Asia/Shanghai")).date().isoformat()
+                    )
     missing = sorted(claimed_dates - cited_dates)
     if missing:
         return (
@@ -254,6 +280,60 @@ def _market_claim_date_error(
             + "; remove the unverified dated fact or open its exact record"
         )
     return None
+
+
+def _opened_market_reference_dates(
+    context: AgentRunContext,
+    reference: str,
+) -> set[str]:
+    """Return dates attached to an exact reference in opened tool results."""
+
+    canonical = context.evidence_aliases.get(reference, reference)
+    aliases = {
+        str(reference),
+        str(canonical),
+        *(
+            alias
+            for alias, target in context.evidence_aliases.items()
+            if target == canonical
+        ),
+    }
+    dates: set[str] = set()
+
+    def visit(value: object) -> None:
+        if isinstance(value, list):
+            for item in value:
+                visit(item)
+            return
+        if not isinstance(value, dict):
+            return
+        locator_values: set[str] = set()
+        for key, item in value.items():
+            if key.endswith("evidence_locator") and isinstance(item, str):
+                locator_values.add(item)
+            elif key.endswith("evidence_locators") and isinstance(item, list):
+                locator_values.update(str(child) for child in item)
+        if aliases.intersection(locator_values):
+            for field in (
+                "trade_date",
+                "observed_at",
+                "as_of",
+                "fact_time",
+                "current_as_of",
+                "baseline_as_of",
+                "bucket_at",
+                "source_time",
+            ):
+                date_match = _ISO_DATE_PATTERN.search(str(value.get(field) or ""))
+                if date_match:
+                    dates.add(date_match.group(0))
+        for item in value.values():
+            visit(item)
+
+    for invocation in context.tool_invocations:
+        if invocation.name in _MARKET_EVIDENCE_TOOLS and invocation.result is not None:
+            visit(invocation.result)
+    return dates
 
 
 def _reference_was_opened(reference: str, opened: dict[str, object]) -> bool:
@@ -329,7 +409,8 @@ def validate_research_result(
     if result.status.value == "updated" and not _opened_exact_market_record(context):
         errors.append(
             "updated view requires at least one successfully opened record-level "
-            "market_evidence_open result; calling an unavailable record does not count"
+            "market result with a stable evidence locator; an unavailable result "
+            "or a navigation handle does not count"
         )
 
     plan_groups = [
@@ -392,10 +473,13 @@ def validate_research_result(
 
 
 def _opened_exact_market_record(context: AgentRunContext) -> bool:
-    """A tool name alone is not evidence; require a returned stable locator."""
+    """Accept a stable record locator from any formal market evidence tool."""
 
     for invocation in context.tool_invocations:
-        if invocation.name != "market_evidence_open" or invocation.result is None:
+        if (
+            invocation.name not in _MARKET_EVIDENCE_TOOLS
+            or invocation.result is None
+        ):
             continue
         text = _stringify(invocation.result)
         if LOCATOR_PREFIX in text or _MARKET_ALIAS_PATTERN.search(text):
