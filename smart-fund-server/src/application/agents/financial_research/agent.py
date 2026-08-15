@@ -340,6 +340,20 @@ def _merge_submission_objects(previous: object, current: object) -> object:
     for key, value in current.items():
         if key in merged and isinstance(merged[key], dict) and isinstance(value, dict):
             merged[key] = _merge_submission_objects(merged[key], value)
+        elif (
+            key == "view_revisions"
+            and isinstance(merged.get(key), list)
+            and isinstance(value, list)
+            and value
+        ):
+            previous_items = merged[key]
+            merged_items: list[object] = []
+            for index, item in enumerate(value):
+                prior = previous_items[index] if index < len(previous_items) else None
+                merged_items.append(_merge_submission_objects(prior, item))
+            if len(previous_items) > len(value):
+                merged_items.extend(deepcopy(previous_items[len(value) :]))
+            merged[key] = merged_items
         else:
             merged[key] = deepcopy(value)
     return merged

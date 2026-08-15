@@ -281,6 +281,33 @@ def test_submission_repair_merges_omitted_fields_and_honours_explicit_deletion()
     }
 
 
+def test_submission_repair_merges_partial_view_revision_by_position() -> None:
+    previous = {
+        "view_revisions": [
+            {
+                "view_id": "v1",
+                "title": "original",
+                "claims": [{"claim_id": "c1"}],
+                "confidence": {"overall": "low"},
+            }
+        ]
+    }
+
+    repaired = _merge_submission_objects(
+        previous,
+        {"view_revisions": [{"title": "repaired"}]},
+    )
+
+    assert repaired["view_revisions"] == [
+        {
+            "view_id": "v1",
+            "title": "repaired",
+            "claims": [{"claim_id": "c1"}],
+            "confidence": {"overall": "low"},
+        }
+    ]
+
+
 def test_glm53_role_settings_use_supported_reasoning_effort() -> None:
     main = research_model_settings(
         model="glm-5.3",
