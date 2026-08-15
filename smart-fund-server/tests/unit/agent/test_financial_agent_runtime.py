@@ -1512,6 +1512,10 @@ def test_research_budget_guard_adds_structural_audit_after_ledger() -> None:
     assert "observed_fact" in reminder
     assert "若提交返回错误，只修正错误指出的字段" in reminder
     assert "禁止使用‘由…转为’" in reminder
+    assert "盘中高点与收盘高点不得互换" in reminder
+    assert "单日记录不得写连续性" in reminder
+    assert "精确监测位必须能在账本定位" in reminder
+    assert "适用期限不得超过实际检验窗口" in reminder
 
 
 def test_research_budget_guard_does_not_compact_long_transcript_after_ledger() -> None:
