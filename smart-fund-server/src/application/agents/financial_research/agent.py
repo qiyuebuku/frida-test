@@ -1758,7 +1758,14 @@ def _bind_citation_times(payload: dict, *, context: AgentRunContext) -> None:
                 identity = None
             if identity is not None and identity.fact_time:
                 value["observed_at"] = identity.fact_time
-                value["as_of"] = identity.fact_time
+                # observed_at records when the provider snapshot was observed;
+                # as_of records the market fact's own date when the reversible
+                # identity carries one.  Weekend collection must not relabel a
+                # Friday close as a Saturday market fact.
+                value["as_of"] = (
+                    identity.identity.get("trade_date")
+                    or identity.fact_time
+                )
             else:
                 # Navigation aliases without a reversible locator remain
                 # explicitly timeless instead of trusting model-generated time.
