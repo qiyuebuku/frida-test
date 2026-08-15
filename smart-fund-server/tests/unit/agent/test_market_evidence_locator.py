@@ -7,6 +7,7 @@ from src.application.services.market_evidence_locator import (
     decode_market_evidence_locator,
     encode_market_evidence_locator,
     normalize_market_evidence_locator,
+    technical_state_evidence_locator,
     with_evidence_field,
 )
 from src.application.services.agent_research_commit_service import (
@@ -68,3 +69,17 @@ def test_market_evidence_locator_normalizes_optional_base64_padding() -> None:
 
     assert normalize_market_evidence_locator(locator + "==") == locator
     assert _normalized_evidence_reference(locator + "==") == locator
+
+
+def test_technical_state_locator_carries_latest_trade_date() -> None:
+    locator = technical_state_evidence_locator({
+        "subject_id": "ths:industry:881129",
+        "data_type": "ths_sector_daily",
+        "latest_trade_date": "2026-08-14",
+        "latest_close": 100.0,
+        "volume_confirmation": {"latest_to_prior_median_ratio": 1.2},
+    })
+
+    identity = decode_market_evidence_locator(locator)
+    assert identity.domain == "market_technical_state"
+    assert identity.fact_time == "2026-08-14"

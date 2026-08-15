@@ -189,6 +189,7 @@ def technical_state_evidence_locator(value: Mapping[str, Any]) -> str:
             data_type=str(value.get("data_type") or "technical_state"),
             subject_id=str(value.get("subject_id") or "") or None,
             provider="smart_fund_deterministic",
+            fact_time=str(value.get("latest_trade_date") or "") or None,
             version="v1",
         )
     )
