@@ -368,6 +368,23 @@ def test_market_frame_accepts_next_trade_date_during_futures_night_session() -> 
     )
 
 
+def test_market_frame_does_not_apply_a_share_calendar_to_global_dimensions() -> None:
+    service, snapshots, _collections = _service()
+    snapshots.rows = [{
+        **snapshots.rows[1],
+        "data_type": "global_index",
+        "subject_id": "us:index:spx",
+        "trade_date": date(2026, 8, 15),
+    }]
+
+    result = service.market_frame(cutoff_at=CUTOFF)
+
+    assert not any(
+        issue["issue_code"] == "trade_date_after_calendar_session"
+        for issue in result["quality_issues"]
+    )
+
+
 def test_market_frame_detects_material_same_session_metric_change() -> None:
     service, snapshots, _collections = _service()
 

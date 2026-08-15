@@ -219,6 +219,18 @@ FRAME_SIGNAL_SPECS = (
 )
 
 
+_A_SHARE_CALENDAR_DIMENSIONS = {
+    "a_share_market",
+    "stock_activity",
+    "sector_style",
+    "flow_liquidity",
+    "sentiment",
+    "valuation_rates_bonds",
+    "etf_fund",
+    "instrument_tracking",
+}
+
+
 class AgentMarketQueryService:
     """Build onion-style market catalogue, frame, and bounded drilldowns."""
 
@@ -408,7 +420,8 @@ class AgentMarketQueryService:
             item["dimension"]: [
                 value
                 for value in item.get("trade_dates", [])
-                if value > session.trade_date
+                if item["dimension"] in _A_SHARE_CALENDAR_DIMENSIONS
+                and value > session.trade_date
                 and not (
                     item["dimension"] == "futures_commodities"
                     and value in futures_night_trade_dates

@@ -37,6 +37,16 @@ from src.application.services.china_exchange_calendar_service import (
 
 logger = get_logger(__name__)
 CN_TIMEZONE = ZoneInfo("Asia/Shanghai")
+_A_SHARE_CALENDAR_DATA_TYPES = {
+    "stock_dynamic_group",
+    "ths_industry_opportunity",
+    "ths_sector_commodity_linkage",
+    "ths_etf_home_ranking",
+    "ths_etf_zone",
+    "ths_etf_ranking_universe",
+    "ths_etf_cross_border",
+    "ths_etf_hot_ranking",
+}
 REALTIME_TYPES = frozenset(
     {"market_breadth", "sector_quote", "sector_flow", "index_quote",
      "futures_quote", "forex_quote", "stock_change",
@@ -4035,6 +4045,18 @@ def _snapshot_from_response(
     resolved_trade_date = trade_date_override or _parse_date(
         response.get("trade_date")
     )
+    if data_type in _A_SHARE_CALENDAR_DATA_TYPES:
+        session = ChinaExchangeCalendarService().resolve(fetched_at)
+        calendar_trade_date = (
+            session.previous_trade_date
+            if session.market_session == "pre_open"
+            else session.trade_date
+        )
+        if (
+            resolved_trade_date is None
+            or resolved_trade_date > calendar_trade_date
+        ):
+            resolved_trade_date = calendar_trade_date
     if (
         resolved_trade_date is None
         and str(response.get("market") or "").lower() == "cn"

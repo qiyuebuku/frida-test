@@ -285,6 +285,25 @@ def test_cn_premarket_fetch_time_snapshot_belongs_to_previous_session() -> None:
     assert snapshot["trade_date"] == date(2026, 8, 11)
 
 
+def test_weekend_a_share_app_ranking_uses_latest_exchange_trade_date() -> None:
+    snapshot = _snapshot_from_response(
+        response={
+            "provider": "ths_app_http",
+            "market": "cn",
+            "timezone": "Asia/Shanghai",
+            "trade_date": "2026-08-15",
+            "fetched_at": "2026-08-15T10:00:00+00:00",
+            "data": {"category": "hot"},
+        },
+        data_type="ths_etf_hot_ranking",
+        subject_type="ranking",
+        subject_id="hot",
+        bucket_seconds=60,
+    )
+
+    assert snapshot["trade_date"] == date(2026, 8, 14)
+
+
 def test_gold_ai_events_are_normalized_for_ft_news() -> None:
     rows = _gold_ai_news_records(
         {
