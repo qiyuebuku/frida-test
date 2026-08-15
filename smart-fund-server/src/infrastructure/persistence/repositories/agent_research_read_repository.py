@@ -5,7 +5,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any
 
-from sqlalchemy import or_, select
+from sqlalchemy import case, or_, select
 
 from src.infrastructure.connections import get_session
 from src.infrastructure.persistence.models.agent_research import (
@@ -315,13 +315,26 @@ class AgentResearchReadRepository:
                 )
             )
         if subject_id:
+            parts = subject_id.split(":")
+            subject_family = ":".join(parts[:2]) if len(parts) >= 2 else subject_id
             filters.append(
-                AgentRoleMemoryItem.scope["subject_ids"].contains([subject_id])
+                or_(
+                    AgentRoleMemoryItem.scope["memory_type"].astext
+                    == "process_quality",
+                    AgentRoleMemoryItem.scope["subject_ids"].contains([subject_id]),
+                    AgentRoleMemoryItem.scope["subject_families"].contains(
+                        [subject_family]
+                    ),
+                )
             )
         if market_regime:
             filters.append(
-                AgentRoleMemoryItem.scope["market_regimes"].contains(
-                    [market_regime]
+                or_(
+                    AgentRoleMemoryItem.scope["memory_type"].astext
+                    == "process_quality",
+                    AgentRoleMemoryItem.scope["market_regimes"].contains(
+                        [market_regime]
+                    ),
                 )
             )
         normalized_limit = max(1, min(int(limit), 30))
@@ -331,7 +344,11 @@ class AgentResearchReadRepository:
                     select(AgentRoleMemoryItem)
                     .where(*filters)
                     .order_by(
-                        AgentRoleMemoryItem.confidence.desc(),
+                        case(
+                            (AgentRoleMemoryItem.confidence == "high", 0),
+                            (AgentRoleMemoryItem.confidence == "medium", 1),
+                            else_=2,
+                        ),
                         AgentRoleMemoryItem.updated_at.desc(),
                     )
                     .limit(normalized_limit)

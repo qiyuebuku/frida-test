@@ -90,6 +90,11 @@ class ResearchOutcomeEvaluator:
         ):
             return None
         delta = observation.actual_value - forecast.baseline_value
+        if (
+            forecast.benchmark_subject_id is not None
+            and observation.benchmark_value is not None
+        ):
+            delta -= observation.benchmark_value
         if forecast.expected_direction == "up":
             return delta > 0
         if forecast.expected_direction == "down":

@@ -341,6 +341,13 @@ SCHEDULES = [
         description="Research Forecast 到期结果评估 — 每小时第10分钟",
     ),
     Schedule(
+        name="research_memory_consolidation_hourly",
+        queue="consolidate_research_memory",
+        cron_expression="25 * * * *",
+        kwargs={},
+        description="Research 结果与质量经验聚合 — 每小时第25分钟",
+    ),
+    Schedule(
         name="research_agent_premarket",
         queue="run_research_agent",
         cron_expression="50 0 * * 1-5",

@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 
 from sqlalchemy import select
+from sqlalchemy.dialects.postgresql import insert
 
 from src.application.agents.financial_research.schemas import (
     ActiveViewSnapshot,
@@ -37,6 +38,8 @@ from src.infrastructure.persistence.models.agent_research import (
     AgentResearchQualityEvaluation,
     AgentResearchReportRevision,
     AgentResearchRun,
+    AgentRoleMemoryCase,
+    AgentRoleMemoryItem,
 )
 
 
@@ -593,6 +596,121 @@ class AgentResearchRepository:
             )
             for row in rows
         ]
+
+    def list_quality_memory_evidence(
+        self,
+        *,
+        since: datetime,
+        limit: int = 500,
+    ) -> list[dict]:
+        with get_session(self._target) as session:
+            rows = list(
+                session.scalars(
+                    select(AgentResearchQualityEvaluation)
+                    .where(AgentResearchQualityEvaluation.evaluated_at >= since)
+                    .order_by(AgentResearchQualityEvaluation.evaluated_at.desc())
+                    .limit(max(1, min(int(limit), 2000)))
+                ).all()
+            )
+        return [
+            {
+                "evaluation_id": row.evaluation_id,
+                "run_id": row.run_id,
+                "grade": row.grade,
+                "overall_score": row.overall_score,
+                "hard_failures": list(row.hard_failures or []),
+                "advisory_findings": list(row.advisory_findings or []),
+                "improvement_actions": list(row.improvement_actions or []),
+                "evaluated_at": row.evaluated_at,
+            }
+            for row in rows
+        ]
+
+    def list_outcome_memory_evidence(
+        self,
+        *,
+        since: datetime,
+        limit: int = 1000,
+    ) -> list[dict]:
+        with get_session(self._target) as session:
+            rows = session.execute(
+                select(
+                    AgentResearchOutcomeEvaluation,
+                    AgentResearchForecast,
+                    AgentInvestmentViewRevision,
+                )
+                .join(
+                    AgentResearchForecast,
+                    AgentResearchForecast.forecast_id
+                    == AgentResearchOutcomeEvaluation.forecast_id,
+                )
+                .join(
+                    AgentInvestmentViewRevision,
+                    AgentInvestmentViewRevision.revision_id
+                    == AgentResearchForecast.revision_id,
+                )
+                .where(AgentResearchOutcomeEvaluation.evaluated_at >= since)
+                .order_by(AgentResearchOutcomeEvaluation.evaluated_at.desc())
+                .limit(max(1, min(int(limit), 3000)))
+            ).all()
+        return [
+            {
+                "evaluation_id": evaluation.evaluation_id,
+                "forecast_id": forecast.forecast_id,
+                "run_id": revision.run_id,
+                "subject_id": forecast.subject_id,
+                "metric": forecast.metric,
+                "expected_direction": forecast.expected_direction,
+                "status": evaluation.status,
+                "summary": evaluation.summary,
+                "evaluated_at": evaluation.evaluated_at,
+            }
+            for evaluation, forecast, revision in rows
+        ]
+
+    def upsert_role_memory_with_cases(
+        self,
+        *,
+        memory: dict,
+        cases: list[dict],
+    ) -> None:
+        """Publish one governed memory snapshot and its auditable cases."""
+
+        with get_session(self._target) as session:
+            statement = insert(AgentRoleMemoryItem).values(memory)
+            session.execute(
+                statement.on_conflict_do_update(
+                    index_elements=["memory_id"],
+                    set_={
+                        "status": statement.excluded.status,
+                        "summary": statement.excluded.summary,
+                        "applicability": statement.excluded.applicability,
+                        "counterexample": statement.excluded.counterexample,
+                        "evidence_references": statement.excluded.evidence_references,
+                        "confidence": statement.excluded.confidence,
+                        "scope": statement.excluded.scope,
+                        "valid_from": statement.excluded.valid_from,
+                        "expires_at": statement.excluded.expires_at,
+                        "version": statement.excluded.version,
+                        "updated_at": datetime.now(UTC),
+                    },
+                )
+            )
+            if cases:
+                case_statement = insert(AgentRoleMemoryCase).values(cases)
+                session.execute(
+                    case_statement.on_conflict_do_update(
+                        index_elements=["case_id"],
+                        set_={
+                            "memory_id": case_statement.excluded.memory_id,
+                            "role": case_statement.excluded.role,
+                            "decision_ref": case_statement.excluded.decision_ref,
+                            "outcome_refs": case_statement.excluded.outcome_refs,
+                            "context": case_statement.excluded.context,
+                            "result": case_statement.excluded.result,
+                        },
+                    )
+                )
 
     @staticmethod
     def _refresh_outcome_adjusted_quality(session, *, run_ids: set[str]) -> None:

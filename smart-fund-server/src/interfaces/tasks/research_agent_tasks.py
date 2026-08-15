@@ -19,6 +19,9 @@ from src.application.services.china_exchange_calendar_service import (
 from src.application.services.research_outcome_evaluation_service import (
     ResearchOutcomeEvaluationService,
 )
+from src.application.services.research_memory_consolidation_service import (
+    ResearchMemoryConsolidationService,
+)
 
 
 router = TaskRouter()
@@ -77,3 +80,13 @@ async def run_research_agent(
 )
 async def evaluate_research_outcomes() -> dict:
     return ResearchOutcomeEvaluationService().evaluate_due()
+
+
+@router.task(
+    queue="consolidate_research_memory",
+    max_retries=2,
+    retry_backoff=60,
+    retry_backoff_max=300,
+)
+async def consolidate_research_memory() -> dict:
+    return ResearchMemoryConsolidationService().consolidate()

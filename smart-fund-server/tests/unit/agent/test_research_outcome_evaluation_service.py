@@ -63,3 +63,64 @@ def test_due_forecast_without_metric_remains_pending(monkeypatch) -> None:
 
     assert result["evaluated_count"] == 0
     assert result["unresolved"][0]["reason"] == "metric_not_available"
+
+
+def test_relative_return_forecast_uses_subject_and_benchmark_daily_bars(
+    monkeypatch,
+) -> None:
+    now = datetime(2026, 8, 15, 7, 0, tzinfo=UTC)
+    forecast = Forecast(
+        forecast_id="forecast-relative",
+        subject_id="cn:concept:886033",
+        metric="CPO概念相对上证指数累计超额收益方向",
+        expected_direction="up",
+        benchmark_subject_id="cn:index:000001",
+        evaluation_start_at=datetime(2026, 8, 12, 7, 0, tzinfo=UTC),
+        evaluation_end_at=now,
+        invalidation_condition="相对收益转负",
+    )
+    service = ResearchOutcomeEvaluationService()
+    monkeypatch.setattr(service._research, "list_due_forecasts", lambda **_: [forecast])
+
+    def history(*, subject_id, data_type, **_):
+        closes = (
+            [
+                ("2026-08-14", 5833.173, 4),
+                ("2026-08-12", 5721.673, 3),
+            ]
+            if subject_id == "ths:concept:886033"
+            else [
+                ("2026-08-14", 3927.18, 2),
+                ("2026-08-12", 3946.68, 1),
+            ]
+        )
+        return [
+            {
+                "id": row_id,
+                "subject_id": subject_id,
+                "data_type": data_type,
+                "trade_date": trade_date,
+                "bucket_at": datetime.fromisoformat(f"{trade_date}T07:00:00+00:00"),
+                "observed_at": datetime.fromisoformat(f"{trade_date}T07:00:00+00:00"),
+                "fetched_at": datetime.fromisoformat(f"{trade_date}T07:01:00+00:00"),
+                "data": {"close": close},
+            }
+            for trade_date, close, row_id in closes
+        ]
+
+    monkeypatch.setattr(service._market, "query_history", history)
+    captured = []
+    monkeypatch.setattr(
+        service._research,
+        "save_outcome_evaluations_batch",
+        lambda items: captured.extend(items) or len(items),
+    )
+
+    result = service.evaluate_due(evaluated_at=now)
+
+    assert result["evaluated_count"] == 1
+    observation, evaluation = captured[0]
+    assert observation.actual_value == 1.9487
+    assert evaluation.direction_correct is True
+    assert evaluation.status == "confirmed"
+    assert len(observation.evidence) == 4

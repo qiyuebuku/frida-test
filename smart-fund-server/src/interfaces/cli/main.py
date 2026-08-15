@@ -112,6 +112,7 @@ COLLECTION_WORKER_GROUPS = {
         "collect_market_daily_catchup",
         "run_research_agent",
         "evaluate_research_outcomes",
+        "consolidate_research_memory",
     ),
 }
 
