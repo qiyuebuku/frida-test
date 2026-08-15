@@ -402,6 +402,11 @@ def _project_market_result(
     if tool_name == "role_memory_search":
         return _nonempty({
             "status": result.get("status"),
+            "application_policy": (
+                "这里只是导航摘要，不能据此声称已应用经验。最多选择两条最相关记忆，"
+                "先用 role_memory_open 核对适用条件；需要判断是否适合当前情境时，"
+                "再用 role_memory_case_open 查看原始案例和反例。"
+            ),
             "memories": [
                 _select(item, (
                     "memory_id", "summary", "applicability", "counterexample",

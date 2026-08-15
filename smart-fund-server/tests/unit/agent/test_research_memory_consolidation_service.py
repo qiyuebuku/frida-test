@@ -132,6 +132,11 @@ def test_memory_search_projection_hides_audit_references_until_open() -> None:
 
     assert result == {
         "status": "available",
+        "application_policy": (
+            "这里只是导航摘要，不能据此声称已应用经验。最多选择两条最相关记忆，"
+            "先用 role_memory_open 核对适用条件；需要判断是否适合当前情境时，"
+            "再用 role_memory_case_open 查看原始案例和反例。"
+        ),
         "memories": [{
             "memory_id": "RM_1234",
             "summary": "对象证据必须对齐",
@@ -140,6 +145,28 @@ def test_memory_search_projection_hides_audit_references_until_open() -> None:
             "confidence": "high",
         }],
     }
+
+
+def test_exact_market_evidence_failure_can_form_quality_memory() -> None:
+    rows = [_quality(1, hard=True), _quality(2, hard=True), _quality(3)]
+    for row in rows:
+        row["hard_failures"] = (
+            ["missing_exact_market_evidence"]
+            if row["hard_failures"] else []
+        )
+        row["advisory_findings"] = (
+            [] if row["hard_failures"] else ["missing_exact_market_evidence"]
+        )
+    repository = _Repository(quality=rows)
+
+    result = ResearchMemoryConsolidationService(
+        repository=repository  # type: ignore[arg-type]
+    ).consolidate(now=NOW)
+
+    assert result["quality_memories"] == {"promoted": 1, "candidates": 0}
+    memory, _ = repository.saved[0]
+    assert memory["scope"]["finding_code"] == "missing_exact_market_evidence"
+    assert "记录级精确证据" in memory["summary"]
 
 
 def test_chinese_memory_search_uses_partial_terms_not_whole_sentence() -> None:

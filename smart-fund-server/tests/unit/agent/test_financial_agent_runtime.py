@@ -1464,6 +1464,34 @@ def test_ledger_does_not_require_narrative_source_for_market_only_research() -> 
     assert not any("可交易ETF表达" in item for item in missing)
 
 
+def test_research_budget_guard_requires_opening_selected_memory_after_search() -> None:
+    context = _context()
+    context.tool_invocations = [
+        _finished_invocation("market_change_brief_open", 1),
+        _finished_invocation("market_sector_compare_open", 2),
+        _finished_invocation("market_evidence_open", 3),
+        _finished_invocation("market_instrument_history", 4),
+        *[
+            _finished_invocation("market_dimension_open", index)
+            for index in range(5, 19)
+        ],
+        _finished_invocation("role_memory_search", 20),
+    ]
+    model_data = ModelInputData(
+        input=[{"role": "user", "content": "原始任务"}],
+        instructions="研究指令",
+    )
+    call_data = SimpleNamespace(model_data=model_data, context=context)
+
+    filtered = _apply_research_budget_guard(call_data)
+
+    reminder = filtered.input[-1]["content"]
+    assert "搜索结果只是导航摘要" in reminder
+    assert "最多选择两条最相关记忆" in reminder
+    assert "role_memory_open" in reminder
+    assert "不要为了流程强行打开" in reminder
+
+
 def test_research_budget_guard_adds_structural_audit_after_ledger() -> None:
     context = _context()
     context.tool_invocations = [
