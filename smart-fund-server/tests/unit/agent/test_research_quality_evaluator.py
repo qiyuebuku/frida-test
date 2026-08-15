@@ -58,6 +58,18 @@ def test_clarity_treats_one_horizon_calibration_with_tail_as_atomic() -> None:
     assert _clarity_score([claim]) == 10.0
 
 
+def test_clarity_treats_one_horizon_distribution_and_holdout_as_atomic() -> None:
+    claim = SimpleNamespace(
+        claim_type=SimpleNamespace(value="observed_fact"),
+        statement=(
+            "通信设备历史类比5日窗口全样本中位-0.65%、下十分位-5.15%"
+            "；时间留出方向不一致。"
+        ),
+    )
+
+    assert _clarity_score([claim]) == 10.0
+
+
 def _hypotheses():
     return [
         {

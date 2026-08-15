@@ -773,13 +773,13 @@ def _clarity_score(claims) -> float:
         # hides the relationship between its cells and rewards less complete
         # disclosure. Other prose keeps the strict atomicity rule.
         is_calibration_matrix = (
-            any(term in statement for term in ("绝对", "相对", "四格"))
-            and (
-                all(term in statement for term in ("3日", "5日"))
-                or (
-                    any(term in statement for term in ("历史类比", "时间留出"))
-                    and any(term in statement for term in ("3日", "5日", "前瞻"))
-                )
+            (
+                any(term in statement for term in ("历史类比", "时间留出"))
+                and any(term in statement for term in ("3日", "5日", "前瞻"))
+            )
+            or (
+                any(term in statement for term in ("绝对", "相对", "四格"))
+                and all(term in statement for term in ("3日", "5日"))
             )
         )
         if separators <= 1 or is_calibration_matrix:
