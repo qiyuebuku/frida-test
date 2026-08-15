@@ -945,6 +945,25 @@ def test_submit_boundary_removes_only_mixed_unknown_hypothesis_ids() -> None:
     ]
 
 
+def test_submit_boundary_maps_ordinal_hypothesis_aliases_by_role() -> None:
+    normalized = _normalize_provider_proposal({
+        "hypotheses": [
+            {"hypothesis_id": "h-mainline", "role": "primary"},
+            {"hypothesis_id": "h-rotation", "role": "alternative"},
+            {"hypothesis_id": "h-calendar", "role": "data_quality"},
+        ],
+        "evidence_plan": [
+            {"hypothesis_ids": ["H1", "H2", "H3"]},
+        ],
+    })
+
+    assert normalized["evidence_plan"][0]["hypothesis_ids"] == [
+        "h-mainline",
+        "h-rotation",
+        "h-calendar",
+    ]
+
+
 def test_submit_boundary_normalizes_provider_hypothesis_status_aliases() -> None:
     normalized = _normalize_provider_proposal({
         "hypotheses": [
@@ -1437,6 +1456,7 @@ def test_research_budget_guard_adds_structural_audit_after_ledger() -> None:
     assert "直接调用提交工具" in reminder
     assert "observed_fact" in reminder
     assert "若提交返回错误，只修正错误指出的字段" in reminder
+    assert "禁止使用‘由…转为’" in reminder
 
 
 def test_research_budget_guard_does_not_compact_long_transcript_after_ledger() -> None:

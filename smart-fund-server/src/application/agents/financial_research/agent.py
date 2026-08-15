@@ -539,14 +539,31 @@ def _remove_unknown_evidence_plan_hypothesis_ids(payload: dict) -> None:
     }
     if not valid_ids:
         return
+    role_to_id = {
+        str(item.get("role")): str(item.get("hypothesis_id"))
+        for item in payload.get("hypotheses") or []
+        if isinstance(item, dict)
+        and item.get("role")
+        and item.get("hypothesis_id")
+    }
+    ordinal_aliases = {
+        "h1": role_to_id.get("primary"),
+        "h2": role_to_id.get("alternative"),
+        "h3": role_to_id.get("data_quality"),
+    }
     for plan in payload.get("evidence_plan") or []:
         if not isinstance(plan, dict) or not isinstance(plan.get("hypothesis_ids"), list):
             continue
-        known = [
-            hypothesis_id
-            for hypothesis_id in plan["hypothesis_ids"]
-            if str(hypothesis_id) in valid_ids
-        ]
+        known: list[str] = []
+        for hypothesis_id in plan["hypothesis_ids"]:
+            candidate = str(hypothesis_id)
+            if candidate in valid_ids:
+                known.append(candidate)
+                continue
+            mapped = ordinal_aliases.get(candidate.strip().casefold())
+            if mapped:
+                known.append(mapped)
+        known = list(dict.fromkeys(known))
         if known:
             plan["hypothesis_ids"] = known
 
@@ -724,11 +741,11 @@ def _without_model_citation_times(schema: dict) -> dict:
     root_properties = schema.get("properties", {})
     for field, maximum in {
         "hypotheses": 3,
-        "evidence_plan": 8,
-        "claims": 16,
+        "evidence_plan": 6,
+        "claims": 12,
         "memory_application": 6,
         "view_revisions": 2,
-        "observation_requirements": 10,
+        "observation_requirements": 6,
         "evidence_gaps": 8,
     }.items():
         if field in root_properties:
