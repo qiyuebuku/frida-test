@@ -938,6 +938,26 @@ def test_submit_boundary_repairs_program_derivable_roles_and_claim_semantics() -
     assert normalized["claims"][0]["claim_type"] == "inference"
 
 
+def test_submit_boundary_binds_missing_hypothesis_ids_by_position() -> None:
+    normalized = _normalize_provider_proposal({
+        "hypotheses": [
+            {"hypothesis_id": "main", "role": "primary"},
+            {"hypothesis_id": "alternative", "role": "alternative"},
+            {"role": "data_quality"},
+        ],
+        "view_revisions": [{
+            "hypotheses": [
+                {"role": "primary"},
+                {"hypothesis_id": "custom", "role": "alternative"},
+            ],
+        }],
+    })
+
+    assert normalized["hypotheses"][2]["hypothesis_id"] == "H3"
+    assert normalized["view_revisions"][0]["hypotheses"][0]["hypothesis_id"] == "H1"
+    assert normalized["view_revisions"][0]["hypotheses"][1]["hypothesis_id"] == "custom"
+
+
 def test_submit_boundary_normalizes_instrument_expression_evidence_layers() -> None:
     normalized = _normalize_provider_proposal({
         "evidence_plan": [

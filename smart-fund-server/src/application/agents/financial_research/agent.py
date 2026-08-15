@@ -447,6 +447,7 @@ def _normalize_provider_proposal(value: object) -> object:
 
     remove_non_evidence_sentinels(normalized)
     normalize_evidence_plan(normalized)
+    _bind_missing_hypothesis_ids(normalized.get("hypotheses") or [])
     for index, hypothesis in enumerate(normalized.get("hypotheses") or []):
         if not isinstance(hypothesis, dict):
             continue
@@ -488,6 +489,7 @@ def _normalize_provider_proposal(value: object) -> object:
                 event,
             )
         normalize_evidence_plan(revision)
+        _bind_missing_hypothesis_ids(revision.get("hypotheses") or [])
         for index, hypothesis in enumerate(revision.get("hypotheses") or []):
             if not isinstance(hypothesis, dict):
                 continue
@@ -536,6 +538,28 @@ def _normalize_provider_proposal(value: object) -> object:
             if isinstance(link, dict) and isinstance(link.get("evidence"), list):
                 link["evidence"] = link["evidence"][:12]
     return normalized
+
+
+def _bind_missing_hypothesis_ids(hypotheses: object) -> None:
+    """Fill list-local hypothesis labels that carry no research judgment."""
+
+    if not isinstance(hypotheses, list):
+        return
+    used = {
+        str(item.get("hypothesis_id"))
+        for item in hypotheses
+        if isinstance(item, dict) and item.get("hypothesis_id")
+    }
+    for index, item in enumerate(hypotheses, start=1):
+        if not isinstance(item, dict) or item.get("hypothesis_id"):
+            continue
+        candidate = f"H{index}"
+        suffix = index
+        while candidate in used:
+            suffix += 1
+            candidate = f"H{suffix}"
+        item["hypothesis_id"] = candidate
+        used.add(candidate)
 
 
 def _remove_unknown_evidence_plan_hypothesis_ids(payload: dict) -> None:

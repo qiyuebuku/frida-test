@@ -470,6 +470,21 @@ def test_shallow_market_summary_is_rejected_with_actionable_failures() -> None:
     assert "incomplete_mechanism_chain" in evaluation.advisory_findings
 
 
+def test_non_trading_landscape_fallback_satisfies_market_coverage() -> None:
+    evaluation = evaluate_research_quality(
+        _proposal(deep=True),
+        tool_names={
+            "market_frame_open",
+            "market_global_overview_open",
+            "market_sector_overview",
+            "market_evidence_open",
+            "market_instrument_history",
+        },
+    )
+
+    assert "missing_full_market_landscape" not in evaluation.advisory_findings
+
+
 def test_no_change_without_auditable_claims_is_rejected() -> None:
     payload = _proposal(deep=True).model_dump(mode="python")
     payload.update(

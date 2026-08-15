@@ -239,9 +239,20 @@ def evaluate_research_quality(
     ):
         failures.append("no_change_has_critical_evidence_gap")
         actions.append("关键证据缺失时不能用 no_change 固化市场判断；应补齐证据或提交 insufficient_evidence")
-    if "market_change_brief_open" not in tools:
+    landscape_fallback = {
+        "market_frame_open",
+        "market_global_overview_open",
+        "market_sector_overview",
+    }
+    if (
+        "market_change_brief_open" not in tools
+        and not landscape_fallback.issubset(tools)
+    ):
         failures.append("missing_full_market_landscape")
-        actions.append("全市场复核先打开 overall 变化简报，覆盖全部已采集市场维度后再选择下钻方向")
+        actions.append(
+            "全市场复核应打开 overall 变化简报；非交易日简报没有可登记记录时，"
+            "至少同时核对市场框架、全球概览和板块概览后再选择下钻方向"
+        )
     if "market_evidence_open" not in tools:
         failures.append("missing_exact_market_evidence")
         actions.append("使用稳定定位符打开记录级市场证据和关键字段")
