@@ -341,25 +341,30 @@ def _opened_market_reference_dates(
         if aliases.intersection(locator_values) or normalized_aliases.intersection(
             normalized_locators
         ):
-            for field in (
-                "trade_date",
-                "observed_at",
-                "as_of",
-                "fact_time",
-                "current_as_of",
-                "baseline_as_of",
-                "bucket_at",
-                "source_time",
-            ):
-                date_match = _ISO_DATE_PATTERN.search(str(value.get(field) or ""))
-                if date_match:
-                    dates.add(date_match.group(0))
+            # A calculation locator covers the complete deterministic result,
+            # including nested window anchors such as
+            # ``intraday_high_trade_date``. Looking only at root fact_time made
+            # a correctly cited 120-day peak date appear unreferenced.
+            dates.update(_iso_dates_in_value(value))
         for item in value.values():
             visit(item)
 
     for invocation in context.tool_invocations:
         if invocation.name in _MARKET_EVIDENCE_TOOLS and invocation.result is not None:
             visit(invocation.result)
+    return dates
+
+
+def _iso_dates_in_value(value: object) -> set[str]:
+    dates: set[str] = set()
+    if isinstance(value, str):
+        dates.update(_ISO_DATE_PATTERN.findall(value))
+    elif isinstance(value, list):
+        for item in value:
+            dates.update(_iso_dates_in_value(item))
+    elif isinstance(value, dict):
+        for item in value.values():
+            dates.update(_iso_dates_in_value(item))
     return dates
 
 

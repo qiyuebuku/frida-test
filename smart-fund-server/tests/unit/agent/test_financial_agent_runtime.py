@@ -2761,6 +2761,39 @@ def test_dated_market_claim_uses_date_from_exact_opened_alias_record() -> None:
     assert _market_claim_date_error(claim, context) is None
 
 
+def test_dated_market_claim_accepts_nested_date_from_calculation_locator() -> None:
+    locator = "market:v1:technical-state-calculation"
+    context = _context()
+    context.tool_invocations.append(ToolInvocation(
+        name="market_technical_state_open",
+        call_id="technical-state",
+        result={
+            "analysis_evidence_locator": locator,
+            "as_of": "2026-08-14",
+            "windows": {
+                "120_bars": {
+                    "intraday_high": 11087.346,
+                    "intraday_high_trade_date": "2026-06-23",
+                }
+            },
+        },
+    ))
+    claim = SimpleNamespace(
+        claim_id="drawdown-120d",
+        claim_type="observed_fact",
+        statement="截至2026-08-14，收盘较2026-06-23盘中高点回撤15.16%。",
+        evidence=[EvidenceCitation(
+            citation_id="technical",
+            kind="market",
+            reference=locator,
+            claim="120日技术状态",
+            support="supports",
+        )],
+    )
+
+    assert _market_claim_date_error(claim, context) is None
+
+
 def test_dated_market_claim_accepts_compact_china_time_for_utc_record() -> None:
     context = _context()
     locator = encode_market_evidence_locator(MarketEvidenceIdentity(
