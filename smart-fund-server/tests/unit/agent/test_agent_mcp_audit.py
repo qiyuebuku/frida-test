@@ -1,6 +1,44 @@
+import json
+from datetime import datetime, timezone
+
+from src.application.agents.financial_research.audit import (
+    _opened_market_reference_dates,
+)
+from src.application.agents.financial_research.context import (
+    AgentRunContext,
+    ToolInvocation,
+)
+from src.application.agents.financial_research.schemas import ResearchTaskMode
 from src.infrastructure.persistence.repositories.agent_mcp_audit_repository import (
     _extract_opened_evidence,
 )
+
+
+def test_opened_market_reference_dates_parse_serialized_tool_results() -> None:
+    context = AgentRunContext(
+        run_id="run",
+        session_id="session",
+        task_mode=ResearchTaskMode.RESEARCH_REVIEW,
+        tool_invocations=[
+            ToolInvocation(
+                name="market_global_overview_open",
+                call_id="call",
+                result=json.dumps(
+                    {
+                        "us_market": {
+                            "trade_date": "2026-08-14",
+                            "indices_evidence_locator": "market_ref:M1",
+                        }
+                    }
+                ),
+                finished_at=datetime.now(timezone.utc),
+            )
+        ],
+    )
+
+    assert _opened_market_reference_dates(context, "market_ref:M1") == {
+        "2026-08-14"
+    }
 
 
 def test_evidence_ledger_records_only_opened_evidence_contracts() -> None:

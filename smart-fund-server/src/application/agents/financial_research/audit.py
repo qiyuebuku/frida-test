@@ -346,7 +346,13 @@ def _opened_market_reference_dates(
 
     for invocation in context.tool_invocations:
         if invocation.name in _MARKET_EVIDENCE_TOOLS and invocation.result is not None:
-            visit(invocation.result)
+            result = invocation.result
+            if isinstance(result, str):
+                try:
+                    result = json.loads(result)
+                except (TypeError, ValueError):
+                    pass
+            visit(result)
     return dates
 
 
