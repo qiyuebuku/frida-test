@@ -4,10 +4,12 @@ from datetime import UTC, datetime, timedelta
 import pytest
 
 from src.application.agents.financial_research.quality_evaluator import (
+    _clarity_score,
     _temporal_language_failures,
     evaluate_research_quality,
     require_publishable_quality,
 )
+from types import SimpleNamespace
 from src.application.agents.financial_research.audit import (
     collect_opened_evidence,
     prune_unopened_evidence_plan_references,
@@ -30,6 +32,18 @@ from src.application.agents.financial_research.schemas import (
 
 
 CUTOFF = datetime(2026, 8, 9, 6, 0, tzinfo=UTC)
+
+
+def test_clarity_treats_one_subject_calibration_matrix_as_atomic() -> None:
+    claim = SimpleNamespace(
+        claim_type=SimpleNamespace(value="inference"),
+        statement=(
+            "CPO的3日绝对留出不一致；3日相对不一致；"
+            "5日绝对不一致；5日相对一致。"
+        ),
+    )
+
+    assert _clarity_score([claim]) == 10.0
 
 
 def _hypotheses():
