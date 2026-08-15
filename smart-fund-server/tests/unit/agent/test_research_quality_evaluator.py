@@ -46,6 +46,18 @@ def test_clarity_treats_one_subject_calibration_matrix_as_atomic() -> None:
     assert _clarity_score([claim]) == 10.0
 
 
+def test_clarity_treats_one_horizon_calibration_with_tail_as_atomic() -> None:
+    claim = SimpleNamespace(
+        claim_type=SimpleNamespace(value="observed_fact"),
+        statement=(
+            "CPO概念3日前瞻历史类比中，绝对与相对口径时间留出"
+            "中位数方向均不一致；同窗口样本最小收益-10.83%。"
+        ),
+    )
+
+    assert _clarity_score([claim]) == 10.0
+
+
 def _hypotheses():
     return [
         {

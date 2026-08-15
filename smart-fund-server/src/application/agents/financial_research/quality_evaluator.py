@@ -767,15 +767,20 @@ def _clarity_score(claims) -> float:
         if len(statement) > 180:
             continue
         separators = len(re.findall(r"[；;。]", statement))
-        # A four-cell calibration matrix is one auditable proposition about a
-        # single subject (3/5-day × absolute/relative). Counting its compact
-        # separators as unrelated claims penalizes the exact disclosure that
-        # prevents cherry-picking. Other prose keeps the strict rule.
-        claim_type = getattr(claim.claim_type, "value", claim.claim_type)
+        # A calibration result for one subject and one horizon is one auditable
+        # proposition even when it compactly reports absolute/relative checks
+        # plus a tail statistic.  Requiring the model to split that matrix
+        # hides the relationship between its cells and rewards less complete
+        # disclosure. Other prose keeps the strict atomicity rule.
         is_calibration_matrix = (
-            claim_type == "inference"
-            and all(term in statement for term in ("3日", "5日"))
-            and any(term in statement for term in ("绝对", "相对", "四格", "留出"))
+            any(term in statement for term in ("绝对", "相对", "四格"))
+            and (
+                all(term in statement for term in ("3日", "5日"))
+                or (
+                    any(term in statement for term in ("历史类比", "时间留出"))
+                    and any(term in statement for term in ("3日", "5日", "前瞻"))
+                )
+            )
         )
         if separators <= 1 or is_calibration_matrix:
             atomic += 1
