@@ -1388,7 +1388,34 @@ def test_research_budget_guard_requests_convergence_after_broad_coverage() -> No
     assert "本轮已经完成的工具能力" in filtered.input[-1]["content"]
     assert "market_change_brief_open" in filtered.input[-1]["content"]
     assert "最多还可调用" not in filtered.input[-1]["content"]
+    assert "不是打开证据账本的固定前置条件" in filtered.input[-1]["content"]
+    assert "不得为了满足流程补查来源" in filtered.input[-1]["content"]
     assert filtered.instructions == "研究指令"
+
+
+def test_ledger_does_not_require_narrative_source_for_market_only_research() -> None:
+    context = _context()
+    context.tool_invocations = [
+        _finished_invocation("market_change_brief_open", index)
+        for index in range(12)
+    ]
+    context.tool_invocations.extend([
+        _finished_invocation("market_instrument_history", 20),
+        _finished_invocation("market_evidence_open", 21),
+        _finished_invocation("role_memory_search", 22),
+    ])
+
+    missing = research_ledger_missing_requirements(context)
+
+    assert not any(
+        token in item
+        for item in missing
+        for token in ("Card", "Edge", "外部原文", "转载")
+    )
+    assert not any("12次" in item for item in missing)
+    assert not any("三个板块" in item for item in missing)
+    assert not any("两个不同前瞻窗口" in item for item in missing)
+    assert not any("可交易ETF表达" in item for item in missing)
 
 
 def test_research_budget_guard_adds_structural_audit_after_ledger() -> None:

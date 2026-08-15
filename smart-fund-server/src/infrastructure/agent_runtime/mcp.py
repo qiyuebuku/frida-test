@@ -1119,56 +1119,15 @@ def _decode_tool_result_object(value: Any) -> dict[str, Any]:
 def research_ledger_missing_requirements(
     run_context: AgentRunContext,
 ) -> list[str]:
-    """Explain the remaining convergence work in terms the Agent can act on."""
+    """Return deterministic integrity prerequisites for opening the ledger.
+
+    Research breadth, candidate count, historical sample sufficiency and window
+    stability are facts for the model to interpret, not server-side decisions.
+    This function must therefore not turn research-method heuristics into hard
+    workflow gates.
+    """
 
     called = {item.name for item in run_context.tool_invocations}
-    completed_reads = sum(
-        invocation.name in RESEARCH_READ_TOOLS
-        for invocation in run_context.tool_invocations
-    )
-    analogue_calls = _completed_calls(
-        run_context, "market_historical_analogue_open"
-    )
-    analogue_subjects = {
-        str((invocation.arguments or {}).get("code") or "")
-        for invocation in analogue_calls
-        if isinstance(invocation.arguments, dict)
-    }
-    analogue_subjects.discard("")
-    calls_by_subject: dict[str, list[Any]] = {}
-    for invocation in analogue_calls:
-        if not isinstance(invocation.arguments, dict):
-            continue
-        subject = str(invocation.arguments.get("code") or "")
-        if subject:
-            calls_by_subject.setdefault(subject, []).append(invocation)
-    analogue_windows_by_subject = {
-        subject: {
-            int(invocation.arguments.get("forward_window") or 0)
-            for invocation in subject_calls
-            if isinstance(invocation.arguments, dict)
-        }
-        for subject, subject_calls in calls_by_subject.items()
-    }
-    historical_ready = bool(calls_by_subject) and all(
-        any(
-            _decoded_call_result(invocation).get("calibration_status")
-            != "insufficient_samples"
-            for invocation in subject_calls
-        )
-        or len(subject_calls) >= 2
-        for subject_calls in calls_by_subject.values()
-    )
-    source_calls = [
-        invocation
-        for candidate in {
-            "kg_card_open",
-            "kg_edge_open",
-            "external_content_read",
-            "external_web_read",
-        }
-        for invocation in _completed_calls(run_context, candidate)
-    ]
     quality_list_calls = _completed_calls(run_context, "research_quality_list")
     quality_detail_required = any(
         bool(_decoded_call_result(invocation).get("evaluations"))
@@ -1190,25 +1149,7 @@ def research_ledger_missing_requirements(
                 if isinstance(requirement, dict) and requirement.get("evidence_locator"):
                     required_comparison_refs.add(str(requirement["evidence_locator"]))
     unopened_comparison_refs = sorted(required_comparison_refs - opened_market_refs)
-    context_pack = run_context.research_context
-    is_broad_market_review = bool(
-        context_pack is not None
-        and "全市场" in str(context_pack.research_question or "")
-    )
     checks = [
-        (completed_reads >= 12, "至少完成12次有效读取"),
-        (
-            bool(
-                called.intersection(
-                    {"market_instrument_history", "market_technical_state_open"}
-                )
-            ),
-            "读取主候选的技术状态或对象历史",
-        ),
-        (
-            historical_ready,
-            "每个候选的历史类比样本不足时，保持对象和窗口不变并以更宽阈值重查一次",
-        ),
         (
             any(_completed_calls(run_context, "market_evidence_open")),
             "打开至少一条记录级精确市场证据",
@@ -1219,34 +1160,10 @@ def research_ledger_missing_requirements(
             + "、".join(unopened_comparison_refs),
         ),
         (
-            len(source_calls) >= 1,
-            "仅在与候选判断直接相关时打开至少一份Card、Edge或外部原文；市场数据已足够时不要为凑数引入转载",
-        ),
-        (
             not quality_detail_required or quality_detail_opened,
             "打开最近一次研究质量评测详情，把已知缺陷和改进动作纳入本轮工作记忆",
         ),
         ("role_memory_search" in called, "查询适用研究记忆"),
-        (
-            not is_broad_market_review or len(analogue_subjects) >= 3,
-            "全市场研究至少对三个板块候选完成同口径历史类比，且须覆盖至少两个异质候选族",
-        ),
-        (
-            not is_broad_market_review
-            or (
-                len(analogue_subjects) >= 3
-                and all(
-                    len(analogue_windows_by_subject.get(subject, set()) - {0}) >= 2
-                    for subject in analogue_subjects
-                )
-            ),
-            "全市场研究的每个正式候选都要完成两个不同前瞻窗口的历史类比；不要留下会影响结论的窗口缺口",
-        ),
-        (
-            not is_broad_market_review
-            or "market_expression_compare_open" in called,
-            "比较候选方向的可交易ETF表达",
-        ),
     ]
     return [message for passed, message in checks if not passed]
 
