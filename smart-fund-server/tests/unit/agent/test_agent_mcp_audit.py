@@ -24,12 +24,19 @@ def test_opened_market_reference_dates_parse_serialized_tool_results() -> None:
                 name="market_global_overview_open",
                 call_id="call",
                 result=json.dumps(
-                    {
-                        "us_market": {
-                            "trade_date": "2026-08-14",
-                            "indices_evidence_locator": "market_ref:M1",
+                    [
+                        {
+                            "type": "text",
+                            "text": json.dumps(
+                                {
+                                    "us_market": {
+                                        "trade_date": "2026-08-14",
+                                        "indices_evidence_locator": "market_ref:M1",
+                                    }
+                                }
+                            ),
                         }
-                    }
+                    ]
                 ),
                 finished_at=datetime.now(timezone.utc),
             )

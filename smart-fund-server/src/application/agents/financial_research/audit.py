@@ -307,12 +307,25 @@ def _opened_market_reference_dates(
     dates: set[str] = set()
 
     def visit(value: object) -> None:
+        if isinstance(value, str):
+            candidate = value.strip()
+            if candidate.startswith(("{", "[", '"')):
+                try:
+                    visit(json.loads(candidate))
+                except (TypeError, ValueError):
+                    pass
+            return
         if isinstance(value, list):
             for item in value:
                 visit(item)
             return
         if not isinstance(value, dict):
             return
+        structured = value.get("structuredContent")
+        if isinstance(structured, dict):
+            visit(structured)
+        if value.get("type") == "text" and "text" in value:
+            visit(value["text"])
         locator_values: set[str] = set()
         for key, item in value.items():
             if key.endswith("evidence_locator") and isinstance(item, str):
@@ -346,13 +359,7 @@ def _opened_market_reference_dates(
 
     for invocation in context.tool_invocations:
         if invocation.name in _MARKET_EVIDENCE_TOOLS and invocation.result is not None:
-            result = invocation.result
-            if isinstance(result, str):
-                try:
-                    result = json.loads(result)
-                except (TypeError, ValueError):
-                    pass
-            visit(result)
+            visit(invocation.result)
     return dates
 
 
