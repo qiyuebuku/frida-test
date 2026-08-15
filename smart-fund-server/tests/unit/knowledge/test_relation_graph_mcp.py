@@ -16,6 +16,56 @@ from src.infrastructure.agent_runtime.run_authorization import (
 TEST_SECRET = "unit-test-mcp-secret"
 
 
+@pytest.mark.asyncio
+async def test_sector_comparison_does_not_fill_current_cells_with_stale_signals(
+    monkeypatch,
+) -> None:
+    service = SimpleNamespace(
+        sector_detail=lambda **_kwargs: {
+            "provider_sector_code": "885517",
+            "found": True,
+            "latest": [
+                {
+                    "data_type": "ths_sector_ranking",
+                    "metric": "change_pct",
+                    "trade_date": "2026-08-03",
+                    "change_pct": 1.25,
+                },
+                {
+                    "data_type": "ths_sector_flow",
+                    "metric": "main_net_inflow",
+                    "trade_date": "2026-08-14",
+                    "main_net_inflow": -3.2,
+                },
+            ],
+            "series": [],
+            "constituents": [{"change_pct": -0.5}],
+            "constituent_evidence": {"trade_date": "2026-08-14"},
+        }
+    )
+    monkeypatch.setattr(
+        relation_graph,
+        "_sector_observability_service",
+        lambda: service,
+    )
+
+    result = await relation_graph._read_sector_comparison(
+        ["885517", "885517-copy"],
+        cutoff_at=datetime(2026, 8, 15, tzinfo=UTC),
+    )
+
+    assert all(
+        signal.get("trade_date") == "2026-08-14"
+        for candidate in result["candidates"]
+        for signal in candidate["latest_signals"]
+    )
+    assert all(
+        signal.get("metric") != "change_pct"
+        for candidate in result["candidates"]
+        for signal in candidate["latest_signals"]
+    )
+
+
 def test_compact_evidence_ledger_prefers_external_content_handle() -> None:
     result = relation_graph._compact_evidence_ledger(
         {

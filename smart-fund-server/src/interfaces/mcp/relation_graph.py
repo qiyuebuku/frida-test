@@ -1798,7 +1798,27 @@ async def _read_sector_comparison(
     )
     candidates = []
     for detail in details:
+        constituent_evidence = detail.get("constituent_evidence") or {}
+        breadth_trade_date = (
+            constituent_evidence.get("trade_date")
+            or constituent_evidence.get("source_date")
+            or constituent_evidence.get("observed_at")
+            or constituent_evidence.get("bucket_at")
+        )
+        comparison_trade_date = (
+            str(breadth_trade_date)[:10]
+            if breadth_trade_date is not None else None
+        )
         latest_rows = _prefer_specific_sector_type(detail.get("latest") or [])
+        if comparison_trade_date:
+            # This is a cross-sectional comparison, not a last-known-value
+            # join. A missing current metric must not be filled by an older
+            # observation because that makes stale moves look contemporaneous.
+            latest_rows = [
+                item
+                for item in latest_rows
+                if _sector_row_trade_date(item) == comparison_trade_date
+            ]
         constituents = detail.get("constituents") or []
         changes = [
             float(item["change_pct"])
@@ -1840,13 +1860,6 @@ async def _read_sector_comparison(
                     ],
                 }
             )
-        constituent_evidence = detail.get("constituent_evidence") or {}
-        breadth_trade_date = (
-            constituent_evidence.get("trade_date")
-            or constituent_evidence.get("source_date")
-            or constituent_evidence.get("observed_at")
-            or constituent_evidence.get("bucket_at")
-        )
         candidates.append(
             {
                 "provider_sector_code": detail.get("provider_sector_code"),
@@ -1858,8 +1871,7 @@ async def _read_sector_comparison(
                 "history": history,
                 "constituent_breadth": {
                     "trade_date": (
-                        str(breadth_trade_date)[:10]
-                        if breadth_trade_date is not None else None
+                        comparison_trade_date
                     ),
                     "count": detail.get("constituent_count"),
                     "advancers": sum(value > 0 for value in changes),
@@ -2017,6 +2029,17 @@ def _distinct_sector_signals(
         if len(selected) >= limit:
             break
     return selected
+
+
+def _sector_row_trade_date(item: dict[str, Any]) -> str | None:
+    value = (
+        item.get("trade_date")
+        or item.get("source_date")
+        or item.get("observed_at")
+        or item.get("bucket_at")
+        or item.get("fact_time")
+    )
+    return str(value)[:10] if value is not None else None
 
 
 def _compact_sector_tree(value: Any) -> Any:
