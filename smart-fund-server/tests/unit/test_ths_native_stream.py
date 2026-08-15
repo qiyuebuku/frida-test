@@ -125,6 +125,52 @@ def test_cn_market_breadth_push_definition_and_snapshot_mapping() -> None:
     assert rows[0]["data"]["limit_down_count"] == 4
 
 
+@pytest.mark.parametrize(
+    ("subscription_id", "payload"),
+    [
+        (
+            "cn_indices",
+            {"dataDict": {
+                "4": ["1A0001"],
+                "34338": ["16"],
+                "55": ["上证指数"],
+                "10": ["3919.51"],
+                "34818": ["0.49%"],
+            }},
+        ),
+        (
+            "cn_market_breadth",
+            {"hs_datacenter_ztdt": [{
+                "value": json.dumps({
+                    "all": {
+                        "data": {"zt": 60, "dt": 4},
+                        "total": {"up": 2353, "down": 3046, "deuce": 136},
+                    },
+                }),
+            }]},
+        ),
+    ],
+)
+def test_a_share_push_does_not_persist_repeated_weekend_payload(
+    subscription_id: str,
+    payload: dict,
+) -> None:
+    service = THSRealtimeStreamService(repository=object())
+
+    rows = service._unified_event_to_snapshots({
+        "subscription_id": subscription_id,
+        "sequence": 19,
+        # 2026-08-15 is Saturday in Asia/Shanghai.
+        "emitted_at": 1786774500000,
+        "data": {
+            "head": {"errorCode": 0},
+            "body": payload,
+        },
+    })
+
+    assert rows == []
+
+
 @pytest.mark.asyncio
 async def test_command_broker_serializes_same_native_interface() -> None:
     service = THSRealtimeStreamService(repository=object())

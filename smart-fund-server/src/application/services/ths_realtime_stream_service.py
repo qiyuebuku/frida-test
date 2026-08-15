@@ -14,6 +14,9 @@ from zoneinfo import ZoneInfo
 
 import redis.asyncio as async_redis
 
+from src.application.services.china_exchange_calendar_service import (
+    ChinaExchangeCalendarService,
+)
 from src.application.services.market_observation_service import (
     _native_chart_snapshots,
     _snapshot_from_response,
@@ -502,6 +505,7 @@ class THSRealtimeStreamService:
         batch_size: int = 1000,
         command_host: str | None = None,
         command_port: int | None = None,
+        china_exchange_calendar: ChinaExchangeCalendarService | None = None,
     ) -> None:
         self._definitions = {item.indicator: item for item in REALTIME_SERIES}
         self._event_definitions = {
@@ -513,6 +517,9 @@ class THSRealtimeStreamService:
             )
         }
         self._repository = repository or MarketSnapshotRepository()
+        self._china_exchange_calendar = (
+            china_exchange_calendar or ChinaExchangeCalendarService()
+        )
         self._task_states = CollectionStateRepositoryImpl()
         self._queue: asyncio.Queue[dict[str, Any]] = asyncio.Queue(
             maxsize=max(1, queue_size)
@@ -1838,6 +1845,17 @@ class THSRealtimeStreamService:
             if isinstance(emitted_at, (int, float))
             else datetime.now(timezone.utc)
         )
+        if subscription_id in {"cn_indices", "cn_market_breadth"}:
+            session = self._china_exchange_calendar.resolve(fetched_at)
+            if not session.is_trading_day:
+                logger.debug(
+                    "Ignore repeated A-share push outside a trading day "
+                    "subscription=%s fetched_at=%s latest_trade_date=%s",
+                    subscription_id,
+                    fetched_at.isoformat(),
+                    session.trade_date.isoformat(),
+                )
+                return []
         if subscription_id.startswith("etf_home_"):
             category = subscription_id.removeprefix("etf_home_")
             rows = THSClient._native_etf_home_rows({"data": decoded})
