@@ -5,6 +5,10 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any
 
+from src.domain.trading.research_quality_reference import (
+    run_id_from_quality_ref,
+)
+
 from src.infrastructure.persistence.repositories.agent_research_read_repository import (
     AgentResearchReadRepository,
 )
@@ -189,10 +193,11 @@ class AgentResearchStateQueryService:
         self,
         *,
         cutoff_at: datetime,
-        evaluation_id: str,
+        quality_ref: str,
     ) -> dict[str, Any]:
-        item = self._repository.open_quality_evaluation_at(
-            evaluation_id=_required(evaluation_id, "evaluation_id"),
+        run_id = run_id_from_quality_ref(_required(quality_ref, "quality_ref"))
+        item = self._repository.open_latest_quality_evaluation_for_run_at(
+            run_id=run_id,
             cutoff_at=cutoff_at,
         )
         return {

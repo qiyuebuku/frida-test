@@ -209,18 +209,21 @@ class AgentResearchReadRepository:
             )
         return [_quality(row, include_details=False) for row in rows]
 
-    def open_quality_evaluation_at(
+    def open_latest_quality_evaluation_for_run_at(
         self,
         *,
-        evaluation_id: str,
+        run_id: str,
         cutoff_at: datetime,
     ) -> dict[str, Any] | None:
         with get_session(self._target) as session:
             row = session.scalar(
-                select(AgentResearchQualityEvaluation).where(
-                    AgentResearchQualityEvaluation.evaluation_id == evaluation_id,
+                select(AgentResearchQualityEvaluation)
+                .where(
+                    AgentResearchQualityEvaluation.run_id == run_id,
                     AgentResearchQualityEvaluation.evaluated_at <= cutoff_at,
                 )
+                .order_by(AgentResearchQualityEvaluation.evaluated_at.desc())
+                .limit(1)
             )
         return _quality(row, include_details=True) if row is not None else None
 

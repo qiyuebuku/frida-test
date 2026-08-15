@@ -8,6 +8,10 @@ from decimal import Decimal
 from typing import Any
 from zoneinfo import ZoneInfo
 
+from src.domain.trading.research_quality_reference import (
+    quality_ref_from_run_id,
+)
+
 
 _MARKET_PROJECTIONS = {
     "market_frame_open",
@@ -381,10 +385,13 @@ def _project_market_result(
     if tool_name == "research_quality_list":
         return _nonempty({
             "evaluations": [
-                _select(item, (
-                    "evaluation_id", "overall_score", "outcome_adjusted_score",
-                    "grade", "passed", "hard_failures", "advisory_findings",
-                ))
+                _nonempty({
+                    "quality_ref": _quality_ref(item),
+                    **_select(item, (
+                        "overall_score", "outcome_adjusted_score", "grade",
+                        "passed", "hard_failures", "advisory_findings",
+                    )),
+                })
                 for item in result.get("evaluations") or []
                 if isinstance(item, Mapping)
             ]
@@ -398,8 +405,9 @@ def _project_market_result(
         semantic = item.get("semantic_evaluation")
         semantic = semantic if isinstance(semantic, Mapping) else {}
         return {"evaluation": _nonempty(
-            _select(item, (
-                "evaluation_id", "overall_score", "outcome_adjusted_score",
+            {"quality_ref": _quality_ref(item)}
+            | _select(item, (
+                "overall_score", "outcome_adjusted_score",
                 "grade", "passed", "hard_failures", "advisory_findings",
                 "scores", "improvement_actions", "tool_coverage",
                 "evidence_reference_count",
@@ -422,6 +430,16 @@ def _project_market_result(
             return _select(result, ("status",))
         return {"report": _project_current_research_report(report)}
     return dict(result)
+
+
+def _quality_ref(item: Mapping[str, Any]) -> str | None:
+    existing = item.get("quality_ref")
+    if isinstance(existing, str) and existing:
+        return existing
+    run_id = item.get("run_id")
+    if not isinstance(run_id, str) or not run_id:
+        return None
+    return quality_ref_from_run_id(run_id)
 
 
 _PREVIEW_INTERNAL_FIELDS = {

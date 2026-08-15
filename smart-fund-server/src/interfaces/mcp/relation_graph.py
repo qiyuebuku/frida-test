@@ -808,14 +808,14 @@ async def research_quality_list(
     annotations=_READ_ONLY_ANNOTATIONS,
 )
 async def research_quality_open(
-    evaluation_id: str,
+    quality_ref: str,
     context: Context,
 ) -> dict[str, Any]:
     return await _call_agent_market(
         tool_name="research_quality_open",
         context=context,
         function=_research_state_query_service().open_quality,
-        evaluation_id=evaluation_id,
+        quality_ref=quality_ref,
     )
 
 
