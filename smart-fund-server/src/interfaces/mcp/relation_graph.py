@@ -406,7 +406,8 @@ async def _call_agent_market(
         "topic=overview for semantic capability cards; reopen with one exact "
         "topic for its snapshot types, persisted domains and specialized tools; "
         "set domain to page every exact group handle in that domain. Use only "
-        "returned topic/domain names. This discovers data without dumping the WebUI payload."
+        "returned topic/domain names. This discovers data without dumping the "
+        "WebUI payload."
     ),
     annotations=_READ_ONLY_ANNOTATIONS,
 )
@@ -1984,9 +1985,15 @@ def _compact_research_data_catalog(result: dict[str, Any]) -> dict[str, Any]:
 
     domains = []
     detailed_domain = result.get("scope") == "domain"
+    overview = result.get("scope") == "overview"
     for item in result.get("domains") or []:
         groups = item.get("groups") or []
-        selected_groups = groups if detailed_domain else groups[:4]
+        if detailed_domain:
+            selected_groups = groups
+        elif overview:
+            selected_groups = []
+        else:
+            selected_groups = groups[:4]
         domains.append(
             {
                 key: item.get(key)
