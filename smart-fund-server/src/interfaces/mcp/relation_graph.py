@@ -860,8 +860,10 @@ async def research_quality_open(
 
 @mcp.tool(
     description=(
-        "Open the current Research account/position exposure summary. Returns "
-        "an explicit unavailable state until a broker projection is connected."
+        "Open the current Research account/position exposure summary from the "
+        "broker account projection (THS trade SDK, on-demand). Returns an "
+        "explicit unavailable state with reason when the device endpoint is "
+        "not ready."
     ),
     annotations=_READ_ONLY_ANNOTATIONS,
 )
@@ -872,16 +874,16 @@ async def research_exposure_summary_open(context: Context) -> dict[str, Any]:
     return await _call_agent_market(
         tool_name="research_exposure_summary_open",
         context=context,
-        function=_research_state_query_service().exposure_unavailable,
-        operation="research_exposure_summary_open",
+        function=_research_state_query_service().exposure_summary,
         account_ids=claims.account_ids,
     )
 
 
 @mcp.tool(
     description=(
-        "Open one Research-visible position. Returns unavailable rather than "
-        "inventing holdings until the broker projection is connected."
+        "Open one Research-visible position from the broker account "
+        "projection (THS trade SDK, on-demand). Returns not_found when the "
+        "account holds no such instrument; never invents holdings."
     ),
     annotations=_READ_ONLY_ANNOTATIONS,
 )
@@ -893,8 +895,7 @@ async def research_position_open(
     return await _call_agent_market(
         tool_name="research_position_open",
         context=context,
-        function=_research_state_query_service().exposure_unavailable,
-        operation="research_position_open",
+        function=_research_state_query_service().position_open,
         account_ids=claims.account_ids,
         instrument_id=instrument_id,
     )
@@ -902,8 +903,9 @@ async def research_position_open(
 
 @mcp.tool(
     description=(
-        "Open position performance and view linkage. Returns unavailable until "
-        "authoritative broker performance facts are connected."
+        "Open position performance from the broker account projection (THS "
+        "trade SDK, on-demand): profit, profit ratio, market value, cost and "
+        "current price per holding. Returns not_found without holdings."
     ),
     annotations=_READ_ONLY_ANNOTATIONS,
 )
@@ -917,8 +919,7 @@ async def research_position_performance_open(
     return await _call_agent_market(
         tool_name="research_position_performance_open",
         context=context,
-        function=_research_state_query_service().exposure_unavailable,
-        operation="research_position_performance_open",
+        function=_research_state_query_service().position_performance,
         account_ids=claims.account_ids,
         instrument_id=instrument_id,
     )

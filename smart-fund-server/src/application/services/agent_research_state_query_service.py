@@ -12,6 +12,9 @@ from src.domain.trading.research_quality_reference import (
 from src.infrastructure.persistence.repositories.agent_research_read_repository import (
     AgentResearchReadRepository,
 )
+from src.application.services.trade_account_projection_service import (
+    TradeAccountProjectionService,
+)
 
 
 class AgentResearchStateQueryService:
@@ -20,10 +23,12 @@ class AgentResearchStateQueryService:
         *,
         repository: AgentResearchReadRepository | None = None,
         target: str | None = None,
+        projection: TradeAccountProjectionService | None = None,
     ) -> None:
         self._repository = repository or AgentResearchReadRepository(
             target=target
         )
+        self._projection = projection or TradeAccountProjectionService()
 
     def current_report(self, *, cutoff_at: datetime) -> dict[str, Any]:
         report = self._repository.current_report_at(cutoff_at=cutoff_at)
@@ -207,26 +212,42 @@ class AgentResearchStateQueryService:
             "evaluation": item,
         }
 
-    @staticmethod
-    def exposure_unavailable(
+    def exposure_summary(
+        self,
         *,
-        operation: str,
         cutoff_at: datetime,
         account_ids: tuple[str, ...],
-        instrument_id: str = "",
     ) -> dict[str, Any]:
-        return {
-            "operation": operation,
-            "status": "unavailable",
-            "cutoff_at": cutoff_at.isoformat(),
-            "account_scope": list(account_ids),
-            "instrument_id": instrument_id or None,
-            "reason_code": "broker_account_projection_not_connected",
-            "reason": (
-                "券商账户、持仓和盈亏权威投影尚未接入服务端；"
-                "Research 不会用市场推测值伪造持仓。"
-            ),
-        }
+        """账户暴露摘要（券商权威数据；端点不可用时返回 unavailable+原因码）。"""
+        return self._projection.exposure_summary(
+            cutoff_at=cutoff_at, account_ids=account_ids
+        )
+
+    def position_open(
+        self,
+        *,
+        cutoff_at: datetime,
+        account_ids: tuple[str, ...],
+        instrument_id: str,
+    ) -> dict[str, Any]:
+        return self._projection.position_open(
+            cutoff_at=cutoff_at,
+            account_ids=account_ids,
+            instrument_id=instrument_id,
+        )
+
+    def position_performance(
+        self,
+        *,
+        cutoff_at: datetime,
+        account_ids: tuple[str, ...],
+        instrument_id: str,
+    ) -> dict[str, Any]:
+        return self._projection.position_performance(
+            cutoff_at=cutoff_at,
+            account_ids=account_ids,
+            instrument_id=instrument_id,
+        )
 
 
 def _required(value: str, name: str) -> str:
