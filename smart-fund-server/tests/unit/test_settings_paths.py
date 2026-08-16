@@ -73,10 +73,13 @@ def test_aiclient2api_openai_compatible_provider_is_configured() -> None:
     )
 
     assert provider["base_url"] == "http://119.23.227.187:13000/v1"
-    assert provider["default_model"] == "glm-5.2"
+    # The developer environment may deliberately pin 5.2 until its
+    # AIClient2API account advertises 5.3; capability is asserted below.
+    assert provider["default_model"] == settings.AICLIENT2API_LLM_DEFAULT_MODEL
     assert provider["timeout"] == 1800
     assert provider["model_mappings"]["glm-4.5"] == "glm-4.5"
     assert provider["model_mappings"]["glm-5.2"] == "glm-5.2"
+    assert provider["model_mappings"]["glm-5.3"] == "glm-5.3"
     assert provider["reasoning_style"] == "aiclient2api"
     assert provider["thinking_type"] == ""
     assert provider["reasoning_effort"] == ""
@@ -88,6 +91,11 @@ def test_glm_5_2_prefers_aiclient2api_provider() -> None:
         "aliyun",
     ]
     assert settings.LLM_PROXY_MODEL_ALIASES["glm5.2"] == "glm-5.2"
+
+
+def test_glm_5_3_prefers_aiclient2api_provider() -> None:
+    assert settings.LLM_PROXY_MODEL_ROUTES["glm-5.3"] == ["aiclient2api"]
+    assert settings.LLM_PROXY_MODEL_ALIASES["glm5.3"] == "glm-5.3"
 
 
 def test_custom_openai_compatible_provider_reads_key_from_named_env(monkeypatch) -> None:

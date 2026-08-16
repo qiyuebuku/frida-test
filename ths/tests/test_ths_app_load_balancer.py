@@ -1,4 +1,5 @@
 import importlib.util
+import sys
 from pathlib import Path
 
 
@@ -11,6 +12,7 @@ MODULE_PATH = (
 SPEC = importlib.util.spec_from_file_location("ths_app_load_balancer", MODULE_PATH)
 assert SPEC is not None and SPEC.loader is not None
 MODULE = importlib.util.module_from_spec(SPEC)
+sys.modules[SPEC.name] = MODULE
 SPEC.loader.exec_module(MODULE)
 
 
@@ -80,10 +82,10 @@ def test_backend_http_500_is_returned_without_app_quarantine(monkeypatch) -> Non
     assert backend.draining is False
 
 
-def test_hurricane_http_can_use_any_initialized_backend() -> None:
+def test_native_requests_pack_into_first_available_backend() -> None:
     owner = MODULE.Backend("owner", "127.0.0.1", 1, healthy=True)
     clone = MODULE.Backend("clone", "127.0.0.1", 2, healthy=True)
-    pool = MODULE.BackendPool([owner, clone], timeout=1)
+    pool = MODULE.BackendPool([owner, clone], timeout=1, elastic_pool=True)
 
     selected = []
     for _ in range(2):
@@ -91,4 +93,29 @@ def test_hurricane_http_can_use_any_initialized_backend() -> None:
         selected.append(backend.name)
         pool.release(backend, "/native/hurricane")
 
-    assert set(selected) == {"owner", "clone"}
+    assert selected == ["owner", "owner"]
+
+
+def test_native_request_spills_when_first_backend_is_full() -> None:
+    owner = MODULE.Backend(
+        "owner", "127.0.0.1", 1, healthy=True, active=1, active_native=1
+    )
+    clone = MODULE.Backend("clone", "127.0.0.1", 2, healthy=True)
+    pool = MODULE.BackendPool([owner, clone], timeout=1, elastic_pool=True)
+
+    backend = pool.reserve("/native/unified", timeout=0.1)
+
+    assert backend is clone
+
+
+def test_draining_backend_is_removed_from_new_reservations() -> None:
+    owner = MODULE.Backend("owner", "127.0.0.1", 1, healthy=True)
+    clone = MODULE.Backend("clone", "127.0.0.1", 2, healthy=True)
+    pool = MODULE.BackendPool([owner, clone], timeout=1)
+
+    state = pool.set_draining("owner", True)
+    selected = pool.reserve("/native/unified", timeout=0.1)
+
+    assert state["draining"] is True
+    assert state["healthy"] is False
+    assert selected is clone

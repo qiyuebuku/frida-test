@@ -127,10 +127,10 @@ class AgentSettings:
                 values,
                 "SMART_FUND_AGENT_MODEL",
                 "AICLIENT2API_LLM_DEFAULT_MODEL",
-                default="glm-5.2",
+                default="glm-5.3",
             ),
             llm_timeout=float(
-                _first(values, "SMART_FUND_AGENT_LLM_TIMEOUT", default="500")
+                _first(values, "SMART_FUND_AGENT_LLM_TIMEOUT", default="3600")
             ),
             max_turns=int(
                 _first(values, "SMART_FUND_AGENT_MAX_TURNS", default="24")

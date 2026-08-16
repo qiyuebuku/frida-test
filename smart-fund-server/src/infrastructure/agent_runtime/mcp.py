@@ -19,6 +19,7 @@ from src.application.services.market_evidence_locator import (
     encode_market_evidence_locator,
     historical_analogue_evidence_locator,
 )
+from src.interfaces.mcp.projection import project_tool_result
 
 
 RESEARCH_READ_TOOLS = frozenset(
@@ -441,18 +442,10 @@ def _compact_market_evidence(
     def visit(value: Any) -> Any:
         if isinstance(value, str) and value.startswith("market:v1:"):
             return alias_for(value)
-        if isinstance(value, str):
-            return _compact_model_timestamp(value)
         if isinstance(value, list):
             return [visit(child) for child in value]
         if isinstance(value, dict):
-            compacted = {
-                key: visit(child)
-                for key, child in value.items()
-                if key not in _SERVER_ONLY_TIME_FIELDS
-                and key not in _MODEL_HIDDEN_AMBIGUOUS_FIELDS
-            }
-            return _hoist_shared_fact_times(compacted)
+            return {key: visit(child) for key, child in value.items()}
         return value
 
     compacted = []
@@ -472,7 +465,7 @@ def _compact_market_evidence(
             TextContent(
                 type="text",
                 text=json.dumps(
-                    _project_model_tool_payload(visit(payload), tool_name),
+                    visit(payload),
                     ensure_ascii=False,
                 ),
             )
@@ -483,10 +476,7 @@ def _compact_market_evidence(
             result.structuredContent,
             tool_name,
         )
-        result.structuredContent = _project_model_tool_payload(
-            visit(result.structuredContent),
-            tool_name,
-        )
+        result.structuredContent = visit(result.structuredContent)
     return result
 
 
@@ -494,6 +484,8 @@ def _attach_calculation_evidence(value: Any, tool_name: str) -> Any:
     """Give deterministic aggregate analyses their own auditable identity."""
 
     if tool_name != "market_historical_analogue_open" or not isinstance(value, dict):
+        return value
+    if value.get("analysis_evidence_locator"):
         return value
     enriched = dict(value)
     enriched["analysis_evidence_locator"] = (
@@ -531,80 +523,22 @@ def _project_model_tool_payload(value: Any, tool_name: str) -> Any:
             "view": _project_research_view(value["view"]),
             "next_operations": value.get("next_operations", []),
         }
-    if tool_name == "market_instrument_history" and isinstance(value.get("items"), list):
-        return _project_market_history(value)
-    if tool_name in {"market_sector_compare_open", "market_sector_open"}:
-        value = _annotate_sector_comparison_evidence(value)
-    if tool_name == "market_historical_analogue_open":
-        signal = value.get("signal_definition")
-        robustness = value.get("robustness")
-        temporal = robustness.get("temporal_holdout") if isinstance(robustness, dict) else None
-        relative_temporal = (
-            robustness.get("relative_temporal_holdout")
-            if isinstance(robustness, dict) else None
-        )
-        return {
-            key: item
-            for key, item in {
-                "subject_id": value.get("subject_id"),
-                "benchmark_subject_id": value.get("benchmark_subject_id"),
-                "signal_definition": (
-                    {
-                        child_key: signal.get(child_key)
-                        for child_key in (
-                            "features",
-                            "match_distance_threshold",
-                            "current_signal",
-                        )
-                        if signal.get(child_key) is not None
-                    }
-                    if isinstance(signal, dict)
-                    else signal
-                ),
-                "forward_window_bars": value.get("forward_window_bars"),
-                "sample_count": value.get("sample_count"),
-                "minimum_sample_count": value.get("minimum_sample_count"),
-                "calibration_status": value.get("calibration_status"),
-                # Keep one explicitly named full-sample distribution.  The raw
-                # service payload also contains temporal/relative distributions;
-                # exposing all of them under generic ``statistics`` keys caused
-                # models to copy a development value as a holdout value.
-                "full_sample_distribution": value.get("statistics"),
-                "calibration_readout": {
-                    "absolute_return": _holdout_readout(temporal, relative=False),
-                    "relative_to_benchmark": _holdout_readout(
-                        relative_temporal, relative=True
-                    ),
-                    "usage_rule": (
-                        "预测超额/相对收益时只使用 relative_to_benchmark；"
-                        "预测对象自身涨跌时只使用 absolute_return。"
-                    ),
-                },
-                "distribution_stability_readout": _distribution_stability_readout(
-                    value.get("statistics"), robustness
-                ),
-                "robustness": (
-                    {
-                        child_key: robustness.get(child_key)
-                        for child_key in (
-                            "leakage_controls",
-                            "threshold_sensitivity",
-                            "strict_distance_threshold",
-                            "strict_sample_count",
-                            "strict_statistics",
-                            "trimmed_one_each_tail_statistics",
-                            "wide_match_share",
-                            "interpretation",
-                        )
-                        if robustness.get(child_key) is not None
-                    }
-                    if isinstance(robustness, dict)
-                    else robustness
-                ),
-                "analysis_evidence_locator": value.get("analysis_evidence_locator"),
-            }.items()
-            if item is not None
-        }
+    if tool_name in {
+        "market_frame_open",
+        "market_dimension_open",
+        "market_global_overview_open",
+        "market_sector_overview",
+        "market_sector_rankings",
+        "agent_evidence_ledger_open",
+        "market_sector_compare_open",
+        "market_sector_open",
+        "market_instrument_history",
+        "market_historical_analogue_open",
+        "market_evidence_open",
+        "research_quality_list",
+        "research_quality_open",
+    }:
+        return project_tool_result(tool_name, value)
     if value.get("metric") == "volume_ratio":
         return None
 
@@ -615,6 +549,10 @@ def _project_model_tool_payload(value: Any, tool_name: str) -> Any:
         "research_implication",
         "significant_change_count",
         "significant_changes_truncated",
+        "generated_at",
+        "upstream_requested",
+        "next_operations",
+        "read_path",
     }
     projected: dict[str, Any] = {}
     for key, item in value.items():
@@ -733,6 +671,314 @@ def _distribution_stability_readout(
             else "严格相似子集与完整样本未出现中位方向翻转"
         ),
     }
+
+
+def _project_market_frame(value: dict[str, Any]) -> dict[str, Any]:
+    """Expose a compact capability map instead of dashboard inventory metadata."""
+
+    dimensions: list[dict[str, Any]] = []
+    for item in value.get("dimensions") or []:
+        if not isinstance(item, dict):
+            continue
+        data_types = [
+            child.get("data_type")
+            for child in item.get("data_types") or []
+            if isinstance(child, dict) and child.get("data_type")
+        ]
+        trade_dates = item.get("trade_dates") or []
+        projected = {
+            "dimension": item.get("dimension"),
+            "latest_fact_time": item.get("as_of"),
+            "latest_trade_dates": trade_dates[:3],
+            "available_data_types": data_types,
+        }
+        if item.get("trade_dates_truncated"):
+            projected["more_trade_dates_available"] = True
+        if item.get("data_types_truncated"):
+            projected["more_data_types_available"] = True
+        dimensions.append({key: child for key, child in projected.items() if child})
+    projected = {
+        "market": value.get("market"),
+        "market_session": value.get("market_session"),
+        "is_trading_day": value.get("is_trading_day"),
+        "trade_date": value.get("trade_date"),
+        "previous_trade_date": value.get("previous_trade_date"),
+        "dimensions": dimensions,
+        "significant_changes": value.get("significant_changes"),
+        "quality_issues": value.get("quality_issues"),
+    }
+    return {
+        key: _project_model_tool_payload(child, "market_frame_fact")
+        for key, child in projected.items()
+        if child not in (None, [], {})
+    }
+
+
+_MARKET_PREVIEW_INTERNAL_FIELDS = {
+    "summary",
+    "indicator_key",
+    "response_type",
+    "stream_sequence",
+    "status_code",
+    "_field_count",
+    "_item_count",
+    "_omitted_field_count",
+}
+
+
+def _project_market_preview(value: Any) -> Any:
+    if isinstance(value, list):
+        return [_project_market_preview(item) for item in value]
+    if not isinstance(value, dict):
+        return value
+    return {
+        key: _project_market_preview(child)
+        for key, child in value.items()
+        if key not in _MARKET_PREVIEW_INTERNAL_FIELDS
+    }
+
+
+def _project_market_fact(value: Any) -> Any:
+    if not isinstance(value, dict):
+        return value
+    preview = _project_market_preview(value.get("data_preview") or {})
+    return {
+        key: child
+        for key, child in {
+            "data_type": value.get("data_type"),
+            "subject_id": value.get("subject_id"),
+            "market": value.get("market"),
+            "provider": value.get("provider"),
+            "trade_date": value.get("trade_date"),
+            "fact_time": value.get("observed_at") or value.get("bucket_at"),
+            "freshness": value.get("freshness_status"),
+            "values": preview,
+            "evidence_locator": value.get("evidence_locator"),
+        }.items()
+        if child not in (None, {}, [])
+    }
+
+
+def _project_market_dimension(value: dict[str, Any]) -> dict[str, Any]:
+    return {
+        key: child
+        for key, child in {
+            "dimension": value.get("dimension"),
+            "total": value.get("total"),
+            "truncated": value.get("truncated") or None,
+            "facts": [_project_market_fact(item) for item in value.get("facts") or []],
+        }.items()
+        if child not in (None, [], {})
+    }
+
+
+def _project_global_overview(value: dict[str, Any]) -> dict[str, Any]:
+    """Drop empty dashboard snapshots while retaining investable global facts."""
+
+    other_facts = []
+    for item in value.get("other_global_facts") or []:
+        if not isinstance(item, dict):
+            continue
+        preview = _project_market_preview(item.get("data_preview") or {})
+        # Catalogue-only snapshots contain no usable value, only counts such as
+        # ``_field_count``. They can be discovered later through dimension tools.
+        if not preview:
+            continue
+        projected = _project_market_fact({**item, "data_preview": preview})
+        other_facts.append(projected)
+    return {
+        key: child
+        for key, child in {
+            "us_market": value.get("us_market"),
+            "us_indices": value.get("us_indices"),
+            "us_breadth": value.get("us_breadth"),
+            "evidence": value.get("evidence"),
+            "other_global_facts": other_facts,
+            "other_global_truncated": value.get("other_global_truncated") or None,
+        }.items()
+        if child not in (None, [], {})
+    }
+_SECTOR_SIGNAL_FIELDS = (
+    "subject_id",
+    "provider_sector_code",
+    "sector_name",
+    "sector_type",
+    "metric",
+    "metric_value",
+    "rank",
+    "change_pct",
+    "main_net_inflow",
+    "limit_up_count",
+    "heat_rank",
+    "heat_score",
+    "representative_etf_code",
+    "representative_etf_name",
+    "trade_date",
+    "source_date",
+    "evidence_locator",
+    "comparison_role",
+    "citation_ready",
+    "required_action",
+)
+
+
+def _project_sector_signal(value: Any, *, include_identity: bool = True) -> Any:
+    if not isinstance(value, dict):
+        return value
+    identity_fields = {
+        "subject_id", "provider_sector_code", "sector_name", "sector_type"
+    }
+    return {
+        key: _project_model_tool_payload(value[key], "market_sector_signal")
+        for key in _SECTOR_SIGNAL_FIELDS
+        if key in value and (include_identity or key not in identity_fields)
+    }
+
+
+def _project_sector_overview(value: dict[str, Any]) -> dict[str, Any]:
+    """Keep ranked facts and evidence while dropping source-routing chrome."""
+
+    projected: dict[str, Any] = {}
+    for key in ("fact_highlights", "provider_signal_highlights"):
+        items = [
+            _project_sector_signal(item)
+            for item in value.get(key) or []
+            if isinstance(item, dict)
+        ]
+        if items:
+            projected[key] = items
+    return projected
+
+
+def _project_sector_rankings(value: dict[str, Any]) -> dict[str, Any]:
+    projected = {
+        "data_type": value.get("data_type"),
+        "metric": value.get("metric"),
+        "total": value.get("total"),
+        "offset": value.get("offset"),
+        "items": [
+            _project_sector_signal(item)
+            for item in value.get("items") or []
+            if isinstance(item, dict)
+        ],
+    }
+    return {key: child for key, child in projected.items() if child is not None}
+
+
+def _project_evidence_ledger(value: dict[str, Any]) -> dict[str, Any]:
+    """Group repeated tool entries and deduplicate aliases without losing any."""
+
+    grouped: dict[str, list[str]] = {}
+    seen: dict[str, set[str]] = {}
+    for entry in value.get("entries") or []:
+        if not isinstance(entry, dict) or not entry.get("tool_name"):
+            continue
+        tool_name = str(entry["tool_name"])
+        references = grouped.setdefault(tool_name, [])
+        known = seen.setdefault(tool_name, set())
+        for reference in entry.get("evidence_refs") or []:
+            if isinstance(reference, str) and reference not in known:
+                references.append(reference)
+                known.add(reference)
+    return {
+        "opened_evidence_by_tool": grouped,
+        "tool_count": len(grouped),
+        "reference_count": sum(len(items) for items in grouped.values()),
+    }
+
+
+def _project_sector_comparison(value: dict[str, Any]) -> dict[str, Any]:
+    """Normalize candidate identity once and omit identity-only history anchors."""
+
+    candidates = value.get("candidates") or []
+    if value.get("provider_sector_code") and value.get("latest"):
+        candidates = [value]
+    projected_candidates: list[dict[str, Any]] = []
+    for candidate in candidates:
+        if not isinstance(candidate, dict):
+            continue
+        signals = candidate.get("latest_signals") or candidate.get("latest") or []
+        first = next((item for item in signals if isinstance(item, dict)), {})
+        header = {
+            "subject_id": first.get("subject_id"),
+            "provider_sector_code": candidate.get("provider_sector_code")
+            or first.get("provider_sector_code"),
+            "sector_name": first.get("sector_name"),
+            "sector_type": first.get("sector_type"),
+            "found": candidate.get("found"),
+        }
+        compact_signals = []
+        for item in signals:
+            if not isinstance(item, dict):
+                continue
+            has_value = any(
+                key in item
+                for key in (
+                    "metric", "metric_value", "main_net_inflow", "change_pct",
+                    "limit_up_count", "heat_rank", "heat_score",
+                )
+            )
+            if has_value:
+                compact_signals.append(
+                    _project_sector_signal(item, include_identity=False)
+                )
+            elif item.get("evidence_locator") and item.get("trade_date"):
+                compact_signals.append({
+                    "trade_date": item["trade_date"],
+                    "evidence_locator": item["evidence_locator"],
+                    "comparison_role": "baseline_identity_only",
+                    "citation_ready": False,
+                    "required_action": "market_evidence_open",
+                })
+        breadth = candidate.get("constituent_breadth")
+        projected_candidate = {
+            **{key: child for key, child in header.items() if child is not None},
+            "latest_signals": compact_signals,
+            "constituent_breadth": _project_model_tool_payload(
+                breadth, "market_sector_fact"
+            ) if isinstance(breadth, dict) else None,
+        }
+        projected_candidates.append({
+            key: child
+            for key, child in projected_candidate.items()
+            if child not in (None, [], {})
+        })
+    return {
+        "candidate_count": value.get("candidate_count", len(projected_candidates)),
+        "candidates": projected_candidates,
+    }
+
+
+def _project_analogue_robustness(value: Any) -> Any:
+    """Retain decision-changing robustness facts without repeated prose/stats."""
+
+    if not isinstance(value, dict):
+        return value
+    sensitivity = []
+    for item in value.get("threshold_sensitivity") or []:
+        if not isinstance(item, dict):
+            continue
+        sensitivity.append({
+            key: item.get(key)
+            for key in (
+                "match_distance_threshold",
+                "sample_count",
+                "median_return_pct",
+                "positive_share",
+            )
+            if item.get(key) is not None
+        })
+    projected = {
+        "leakage_safe": all(
+            child is True
+            for child in (value.get("leakage_controls") or {}).values()
+        ) if isinstance(value.get("leakage_controls"), dict) else None,
+        "threshold_sensitivity": sensitivity,
+        "strict_distance_threshold": value.get("strict_distance_threshold"),
+        "strict_sample_count": value.get("strict_sample_count"),
+        "wide_match_share": value.get("wide_match_share"),
+    }
+    return {key: child for key, child in projected.items() if child is not None}
 
 
 def _annotate_sector_comparison_evidence(value: dict[str, Any]) -> dict[str, Any]:
@@ -864,22 +1110,8 @@ def _project_market_history(value: dict[str, Any]) -> dict[str, Any]:
         "order": "newest_first",
         "bar_fields": ["trade_date", "open", "high", "low", "close", "volume_raw"],
         "bars": bars[:10],
-        "bars_note": (
-            "Only the 10 newest bars are shown to the model; window_statistics "
-            "are deterministically computed from all requested bars. Full rows "
-            "remain in the server evidence audit."
-        ),
+        "bars_truncated": len(bars) > 10,
         "window_statistics": stats,
-        "window_statistics_note": (
-            "return_N_bars compares the newest close with the oldest close "
-            "inside those N bars. up/down_transitions count the N-1 adjacent "
-            "close-to-close moves inside that same window; they are not N "
-            "complete daily returns because the prior close before the oldest "
-            "bar is outside the window."
-            " close_high uses closing prices; intraday_high uses daily high "
-            "prices. Their drawdown fields are computed separately and must "
-            "not be mixed."
-        ),
         "window_evidence": value.get("window_evidence"),
         "series_semantics": value.get("series_semantics"),
     }

@@ -272,7 +272,10 @@ def knowledge_worker(stage: str, concurrency: int):
     app.start_worker(
         task_names=task_names,
         concurrency=concurrency,
-        prefetch=100,
+        # Graph refreshes may expand a large affected subgraph.  Reserving 100
+        # messages made one single-concurrency process retain a large stale
+        # backlog and repeat nearly identical aggregation work for hours.
+        prefetch=max(concurrency * 2, 4),
     )
 
 

@@ -240,6 +240,7 @@ def _trace_llm_cache_hit(
             "cache_hit": True,
             "cache_store": response.proxy.get("cache_store") or "memory",
             "duration_ms": response.duration_ms,
+            **_llm_usage_metadata(response.usage),
         },
         model=str(fields.get("model") or request.model or "-"),
         model_parameters={
@@ -248,7 +249,7 @@ def _trace_llm_cache_hit(
             "response_format": request.response_format,
             "json_schema": bool(request.json_schema),
         },
-        usage_details=_llm_usage_details(response.usage),
+        usage_details={"input": 0, "output": 0, "total": 0},
     ):
         pass
 
@@ -261,6 +262,7 @@ def _trace_llm_response(response: LLMProxyResponse) -> None:
             "duration_ms": response.duration_ms,
             "proxy": response.proxy,
             "session_id": response.session_id,
+            **_llm_usage_metadata(response.usage),
         },
         usage_details=_llm_usage_details(response.usage),
         level="DEFAULT",
@@ -340,20 +342,40 @@ def _clip_json_trace(value: Any, *, limit: int = 1_000_000) -> Any:
 
 
 def _llm_usage_details(usage: dict[str, Any] | None) -> dict[str, int]:
-    result: dict[str, int] = {}
-    for key in (
-        "input_tokens",
-        "output_tokens",
-        "total_tokens",
-        "prompt_cache_hit_tokens",
-        "prompt_cache_miss_tokens",
-    ):
-        value = (usage or {}).get(key)
-        if isinstance(value, int):
-            result[key] = value
-        elif isinstance(value, float):
-            result[key] = int(value)
-    return result
+    """Return only Langfuse's canonical usage dimensions.
+
+    Langfuse sums every usage-details value into its derived ``total``. Sending
+    total_tokens and cache hit/miss counters alongside input/output therefore
+    counted the same prompt up to three times.
+    """
+
+    raw = usage or {}
+    input_tokens = int(raw.get("input_tokens") or 0)
+    output_tokens = int(raw.get("output_tokens") or 0)
+    return {
+        "input": input_tokens,
+        "output": output_tokens,
+        "total": input_tokens + output_tokens,
+    }
+
+
+def _llm_usage_metadata(usage: dict[str, Any] | None) -> dict[str, int]:
+    """Keep cache diagnostics outside Langfuse's billable usage aggregation."""
+
+    raw = usage or {}
+    metadata = {
+        "logical_input_tokens": int(raw.get("input_tokens") or 0),
+        "logical_output_tokens": int(raw.get("output_tokens") or 0),
+        "prompt_cache_hit_tokens": int(raw.get("prompt_cache_hit_tokens") or 0),
+        "prompt_cache_miss_tokens": int(raw.get("prompt_cache_miss_tokens") or 0),
+    }
+    if "reasoning_tokens" in raw:
+        metadata["reasoning_tokens_reported"] = int(raw.get("reasoning_tokens") or 0)
+    if "reasoning_tokens_estimated" in raw:
+        metadata["reasoning_tokens_estimated"] = int(
+            raw.get("reasoning_tokens_estimated") or 0
+        )
+    return metadata
 
 
 class _TTLCache:

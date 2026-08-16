@@ -40,7 +40,32 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--max-batches", type=int, default=0)
     parser.add_argument("--max-record-attempts", type=int, default=3)
     parser.add_argument("--state-file", type=Path, required=True)
+    parser.add_argument(
+        "--allow-llm-reprocessing",
+        action="store_true",
+        help="明确允许重新执行新闻投影、Card 抽取和关系发现 LLM 链路。",
+    )
+    parser.add_argument(
+        "--confirm-prod-reprocess",
+        default="",
+        help="prod 环境必须精确传入 REPROCESS_PROD_WITH_LLM。",
+    )
     return parser.parse_args()
+
+
+def _validate_reprocessing_authorization(args: argparse.Namespace) -> None:
+    if not bool(getattr(args, "allow_llm_reprocessing", False)):
+        raise ValueError(
+            "该脚本会重跑 Card/关系 LLM 链路；必须显式传入 "
+            "--allow-llm-reprocessing"
+        )
+    if args.target == "prod" and str(
+        getattr(args, "confirm_prod_reprocess", "")
+    ) != "REPROCESS_PROD_WITH_LLM":
+        raise ValueError(
+            "prod 环境还必须传入 "
+            "--confirm-prod-reprocess REPROCESS_PROD_WITH_LLM"
+        )
 
 
 def _news_id_from_source_id(source_id: str) -> int | None:
@@ -123,6 +148,7 @@ def _save_state(
 
 
 async def _run(args: argparse.Namespace) -> None:
+    _validate_reprocessing_authorization(args)
     if args.batch_size < 1 or args.batch_size > 30:
         raise ValueError("batch-size 必须在 1..30 之间")
     max_record_attempts = int(getattr(args, "max_record_attempts", 3))

@@ -19,6 +19,7 @@ from src.domain.knowledge.relation_graph_community import (
     RelationGraphEdge,
     discover_relation_graph_components,
     discover_relation_graph_partition,
+    derive_community_relations_from_membership,
     project_edges_to_fact_representatives,
     relation_graph_community_id,
 )
@@ -99,6 +100,147 @@ def test_same_event_remains_a_business_edge_between_distinct_facts() -> None:
     )
 
     assert [edge.edge_id for edge in projected] == ["event"]
+
+
+def test_boundary_relation_rebinds_after_membership_split() -> None:
+    edges = [_edge("boundary", "a1", "outside", relation_kind="confirmation")]
+
+    before = derive_community_relations_from_membership(
+        edges=edges,
+        community_by_card={"a1": "community:a", "outside": "community:x"},
+    )
+    after = derive_community_relations_from_membership(
+        edges=edges,
+        community_by_card={"a1": "community:b", "outside": "community:x"},
+    )
+
+    assert before[0].source_community_id == "community:a"
+    assert after[0].source_community_id == "community:b"
+    assert before[0].relation_id != after[0].relation_id
+
+
+def test_boundary_relation_disappears_after_membership_merge() -> None:
+    relations = derive_community_relations_from_membership(
+        edges=[_edge("merged", "a1", "b1")],
+        community_by_card={"a1": "community:a", "b1": "community:a"},
+    )
+
+    assert relations == []
+
+
+@pytest.mark.parametrize(
+    ("before_edges", "after_edges", "changed_cards"),
+    [
+        ([], [_edge("e1", "a", "b")], {"a", "b"}),
+        (
+            [_edge("e1", "a", "b"), _edge("e2", "c", "d")],
+            [
+                _edge("e1", "a", "b"),
+                _edge("e2", "c", "d"),
+                _edge("bridge", "b", "c"),
+            ],
+            {"b", "c"},
+        ),
+        (
+            [_edge("e1", "a", "b"), _edge("e2", "b", "c")],
+            [_edge("e1", "a", "b")],
+            {"b", "c"},
+        ),
+        (
+            [
+                _edge("e1", "a", "b"),
+                _edge("e2", "b", "c"),
+                _edge("e3", "c", "d"),
+            ],
+            [_edge("e1", "a", "b"), _edge("e3", "c", "d")],
+            {"b", "c"},
+        ),
+    ],
+)
+def test_local_incremental_replay_matches_full_rebuild(
+    before_edges: list[RelationGraphEdge],
+    after_edges: list[RelationGraphEdge],
+    changed_cards: set[str],
+) -> None:
+    before = discover_relation_graph_partition(_graph(*before_edges))
+    touched = [
+        component
+        for component in before.communities
+        if changed_cards.intersection(component.member_card_ids)
+    ]
+    scoped_cards = set(changed_cards)
+    for component in touched:
+        scoped_cards.update(component.member_card_ids)
+    # Directly bridged existing Communities are included once.
+    for edge in after_edges:
+        if edge.source_card_id in scoped_cards or edge.target_card_id in scoped_cards:
+            for component in before.communities:
+                if {
+                    edge.source_card_id,
+                    edge.target_card_id,
+                }.intersection(component.member_card_ids):
+                    scoped_cards.update(component.member_card_ids)
+    local_edges = [
+        edge
+        for edge in after_edges
+        if edge.source_card_id in scoped_cards and edge.target_card_id in scoped_cards
+    ]
+    local = discover_relation_graph_partition(
+        AffectedRelationGraph(
+            adapter_name="financial",
+            seed_card_ids=tuple(sorted(changed_cards)),
+            touched_community_ids=tuple(item.community_id for item in touched),
+            edges=tuple(local_edges),
+            existing_communities=tuple(
+                ExistingRelationGraphCommunity(
+                    community_id=item.community_id,
+                    identity_anchor_card_id=item.identity_anchor_card_id,
+                    member_card_ids=item.member_card_ids,
+                )
+                for item in touched
+            ),
+        )
+    )
+    untouched = [
+        component
+        for component in before.communities
+        if component not in touched
+        and not scoped_cards.intersection(component.member_card_ids)
+    ]
+    incremental_members = sorted(
+        tuple(item.member_card_ids) for item in [*untouched, *local.communities]
+    )
+    full = discover_relation_graph_partition(_graph(*after_edges))
+    full_members = sorted(tuple(item.member_card_ids) for item in full.communities)
+
+    assert incremental_members == full_members
+    incremental_components = [*untouched, *local.communities]
+    incremental_membership = {
+        card_id: component.community_id
+        for component in incremental_components
+        for card_id in component.member_card_ids
+    }
+    incremental_relations = derive_community_relations_from_membership(
+        edges=after_edges,
+        community_by_card=incremental_membership,
+    )
+    assert [
+        (
+            item.source_community_id,
+            item.target_community_id,
+            item.relation_kind,
+            item.supporting_edge_ids,
+        )
+        for item in incremental_relations
+    ] == [
+        (
+            item.source_community_id,
+            item.target_community_id,
+            item.relation_kind,
+            item.supporting_edge_ids,
+        )
+        for item in full.community_relations
+    ]
 
 
 def test_chain_and_star_edges_use_connectivity_without_dropping_leaves() -> None:

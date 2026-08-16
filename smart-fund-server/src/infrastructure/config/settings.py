@@ -190,6 +190,9 @@ KG_RELATION_RERANK_TOP_N = int(os.getenv("KG_RELATION_RERANK_TOP_N", "12"))
 KG_RELATION_RERANK_MIN_SCORE = float(os.getenv("KG_RELATION_RERANK_MIN_SCORE", "0"))
 KG_RELATION_MERGED_CANDIDATE_LIMIT = int(os.getenv("KG_RELATION_MERGED_CANDIDATE_LIMIT", "40"))
 KG_RELATION_SCREEN_BATCH_SIZE = int(os.getenv("KG_RELATION_SCREEN_BATCH_SIZE", "20"))
+KG_RELATION_VERIFY_MAX_CANDIDATES_PER_CARD = int(
+    os.getenv("KG_RELATION_VERIFY_MAX_CANDIDATES_PER_CARD", "8")
+)
 KG_RELATION_VERIFY_CONCURRENCY = int(os.getenv("KG_RELATION_VERIFY_CONCURRENCY", "3"))
 KG_RELATION_MILVUS_CONCURRENCY = int(os.getenv("KG_RELATION_MILVUS_CONCURRENCY", "4"))
 KG_RELATION_RERANK_CONCURRENCY = int(os.getenv("KG_RELATION_RERANK_CONCURRENCY", "4"))
@@ -360,6 +363,9 @@ def _load_gateway_model_routes() -> dict[str, list[str]]:
         "opus": ["claude_tmux"],
         "glm-5.1": ["claude_tmux", "glm_http"],
         "glm-5.2": ["aiclient2api", "aliyun"],
+        # GLM-5.3 is currently a Coding Plan-only model; public Model API is
+        # not available yet, so routing must not silently fall back to Aliyun.
+        "glm-5.3": ["aiclient2api"],
         "deepseek-v4-flash": ["aliyun"],
         "deepseek-v4-pro": ["deepseek"],
         "qwen3.7-plus": ["aliyun"],
@@ -395,6 +401,8 @@ def _load_gateway_model_aliases() -> dict[str, str]:
             "GLM-5.1": "glm-5.1",
             "glm5.2": "glm-5.2",
             "GLM-5.2": "glm-5.2",
+            "glm5.3": "glm-5.3",
+            "GLM-5.3": "glm-5.3",
             "deepseek-flash": "deepseek-v4-flash",
             "deepseek-pro": "deepseek-v4-pro",
         }
@@ -463,7 +471,7 @@ AICLIENT2API_LLM_API_KEY = os.getenv(
 ) or os.getenv("AICLIENT2API_API_KEY", "")
 AICLIENT2API_LLM_DEFAULT_MODEL = os.getenv(
     "AICLIENT2API_LLM_DEFAULT_MODEL",
-    "glm-5.2",
+    "glm-5.3",
 )
 AICLIENT2API_LLM_TIMEOUT = float(os.getenv("AICLIENT2API_LLM_TIMEOUT", "1800"))
 AICLIENT2API_LLM_MAX_CONCURRENCY = int(
@@ -561,6 +569,7 @@ def _load_openai_compatible_provider_configs() -> list[dict]:
                 "glm-5-turbo": "glm-5-turbo",
                 "glm-5.1": "glm-5.1",
                 "glm-5.2": "glm-5.2",
+                "glm-5.3": "glm-5.3",
             },
         },
     }

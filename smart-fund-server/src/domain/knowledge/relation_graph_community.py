@@ -178,6 +178,16 @@ def discover_relation_graph_partition(
         if len(member_cards) >= 2
     ]
     partitions: list[set[str]] = []
+    existing_label_by_card = {
+        card_id: index
+        for index, community in enumerate(
+            sorted(
+                affected_graph.existing_communities,
+                key=lambda item: item.community_id,
+            )
+        )
+        for card_id in community.member_card_ids
+    }
     clustered_region_count = 0
     retained_region_count = 0
     for member_cards in sorted(regions, key=lambda item: min(item)):
@@ -199,6 +209,10 @@ def discover_relation_graph_partition(
             region_graph,
             edge_count=len(edge_ids),
             config=clustering,
+            starting_communities=_starting_communities_for_region(
+                member_cards,
+                existing_label_by_card=existing_label_by_card,
+            ),
         )
         if len(region_partitions) > 1:
             clustered_region_count += 1
@@ -276,6 +290,7 @@ def _partition_connected_region(
     *,
     edge_count: int,
     config: RelationGraphClusteringConfig,
+    starting_communities: dict[str, int] | None = None,
 ) -> list[set[str]]:
     nodes = set(graph.nodes)
     if (
@@ -295,13 +310,13 @@ def _partition_connected_region(
             for source, target in graph.edges()
         )
     ]
-    starting_communities = {
+    initial_communities = starting_communities or {
         node_id: index
         for index, node_id in enumerate(sorted(str(node) for node in nodes))
     }
     _, assignments = leiden(
         weighted_edges,
-        starting_communities=starting_communities,
+        starting_communities=initial_communities,
         resolution=config.resolution,
         randomness=config.randomness,
         iterations=config.iterations,
@@ -331,9 +346,27 @@ def _partition_connected_region(
                 child_graph,
                 edge_count=_weighted_edge_count(child_graph),
                 config=config,
+                starting_communities=None,
             )
         )
     return partitions
+
+
+def _starting_communities_for_region(
+    member_cards: set[str],
+    *,
+    existing_label_by_card: dict[str, int],
+) -> dict[str, int]:
+    labels = {
+        card_id: existing_label_by_card[card_id]
+        for card_id in member_cards
+        if card_id in existing_label_by_card
+    }
+    next_label = max(labels.values(), default=-1) + 1
+    for card_id in sorted(member_cards - set(labels)):
+        labels[card_id] = next_label
+        next_label += 1
+    return labels
 
 
 def _canonical_subgraph(
@@ -485,6 +518,19 @@ def _derive_community_relations(
         for component in components
         for card_id in component.member_card_ids
     }
+    return derive_community_relations_from_membership(
+        edges=edges,
+        community_by_card=community_by_card,
+    )
+
+
+def derive_community_relations_from_membership(
+    *,
+    edges,
+    community_by_card: dict[str, str],
+) -> list[RelationGraphCommunityRelation]:
+    """Aggregate cross-Community relations from normalized membership."""
+
     grouped: dict[tuple[str, str, str], list[RelationGraphEdge]] = {}
     for edge in edges:
         source_community_id = community_by_card.get(edge.source_card_id)

@@ -339,6 +339,10 @@ def _normalize_usage(usage: dict[str, Any]) -> dict[str, int]:
         normalized["completion_tokens_details"] = {
             "reasoning_tokens": int(usage.get("reasoning_tokens", 0) or 0),
         }
+    if "reasoning_tokens_estimated" in usage:
+        normalized.setdefault("completion_tokens_details", {})[
+            "reasoning_tokens_estimated"
+        ] = int(usage.get("reasoning_tokens_estimated", 0) or 0)
     return normalized
 
 

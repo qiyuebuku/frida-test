@@ -162,9 +162,26 @@ def test_aiclient2api_diagnostics_keep_raw_and_normalized_usage() -> None:
         "total_tokens": 2467,
         "prompt_cache_hit_tokens": 1664,
         "prompt_cache_miss_tokens": 554,
-        "reasoning_tokens": 0,
     }
     assert diagnostics["provider_usage"] == provider_usage
+
+
+def test_reasoning_token_estimate_subtracts_visible_content_from_output() -> None:
+    estimated = OpenAICompatibleProvider._estimate_reasoning_tokens(
+        {
+            "choices": [
+                {
+                    "message": {
+                        "content": '{"ok":true}',
+                        "reasoning_content": "先判断，再输出。",
+                    }
+                }
+            ],
+            "usage": {"completion_tokens": 100},
+        }
+    )
+
+    assert estimated == 97
 
 
 def test_volcengine_thinking_options_use_ark_parameter() -> None:

@@ -221,6 +221,16 @@ class OpenAICompatibleProvider:
                     cache_usage_style=self.cache_usage_style,
                 ),
             )
+        reasoning_tokens_estimated = sum(
+            self._estimate_reasoning_tokens(stage)
+            for stage in (primary_data, prefix_continuation_data, repair_data)
+            if stage is not None
+        )
+        if reasoning_content and not normalized_usage.get("reasoning_tokens"):
+            # AIClient2API currently returns readable reasoning_content while its
+            # OpenAI usage detail reports reasoning_tokens=0. Keep the provider
+            # value untouched and expose a clearly labelled estimate instead.
+            normalized_usage["reasoning_tokens_estimated"] = reasoning_tokens_estimated
         primary_diagnostics = self._response_diagnostics(primary_data)
         prefix_continuation_diagnostics = (
             self._response_diagnostics(prefix_continuation_data)
@@ -823,13 +833,28 @@ class OpenAICompatibleProvider:
             "prompt_cache_miss_tokens": cache_miss_tokens,
         }
         completion_details = usage.get("completion_tokens_details") or {}
-        if isinstance(completion_details, dict):
+        if isinstance(completion_details, dict) and "reasoning_tokens" in completion_details:
             normalized_usage["reasoning_tokens"] = int(completion_details.get("reasoning_tokens", 0) or 0)
         for key, value in usage.items():
             normalized_key = str(key).lower()
             if "cost" in normalized_key or normalized_key in {"currency", "cost_currency"}:
                 normalized_usage[str(key)] = value
         return normalized_usage
+
+    @staticmethod
+    def _estimate_reasoning_tokens(data: dict[str, Any]) -> int:
+        """Estimate hidden-output tokens when the upstream omits the split."""
+
+        usage = data.get("usage") or {}
+        output_tokens = int(usage.get("completion_tokens", 0) or 0)
+        message = ((data.get("choices") or [{}])[0].get("message") or {})
+        if not str(message.get("reasoning_content") or "").strip():
+            return 0
+        content = str(message.get("content") or "")
+        ascii_chars = sum(ord(char) < 128 for char in content)
+        non_ascii_chars = len(content) - ascii_chars
+        content_tokens_estimated = (ascii_chars + 3) // 4 + non_ascii_chars
+        return max(1, output_tokens - content_tokens_estimated)
 
     @staticmethod
     def _merge_usage(left: dict[str, Any], right: dict[str, Any]) -> dict[str, Any]:

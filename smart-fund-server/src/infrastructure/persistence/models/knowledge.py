@@ -191,6 +191,11 @@ class KnowledgeGraphCommunity(Base):
         Index("ix_kg_graph_communities_fact_status", "fact_report_status"),
         Index("ix_kg_graph_communities_projection_status", "projection_status"),
         Index("ix_kg_graph_communities_graph_fingerprint", "graph_fingerprint"),
+        Index(
+            "ix_kg_graph_communities_member_cards_gin",
+            "member_card_ids",
+            postgresql_using="gin",
+        ),
     )
 
     community_id: Mapped[str] = mapped_column(String(180), primary_key=True)
@@ -328,6 +333,30 @@ class KnowledgeGraphCommunityRelation(Base):
         DateTime(timezone=True),
         server_default=func.now(),
         onupdate=func.now(),
+    )
+
+
+class KnowledgeGraphCommunityMembership(Base):
+    """Normalized current Card-to-Graph-Community membership projection."""
+
+    __tablename__ = "kg_graph_community_memberships"
+    __table_args__ = (
+        Index("ix_kg_graph_community_memberships_community", "community_id"),
+        Index(
+            "ix_kg_graph_community_memberships_adapter_community",
+            "adapter_name",
+            "community_id",
+        ),
+    )
+
+    adapter_name: Mapped[str] = mapped_column(String(64), primary_key=True)
+    card_id: Mapped[str] = mapped_column(String(180), primary_key=True)
+    community_id: Mapped[str] = mapped_column(String(180), nullable=False)
+    created_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+    updated_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
     )
 
 

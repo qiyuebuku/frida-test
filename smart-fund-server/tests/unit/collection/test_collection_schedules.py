@@ -60,6 +60,7 @@ def test_generic_aggregator_sources_are_flat_jettask_schedules() -> None:
 def test_daily_and_boundary_schedules_remain_cron_based() -> None:
     cron_names = {
         "collect_market_daily_bars_after_close",
+        "collect_market_daily_bars_evening_catchup",
         "collect_market_reference_after_close",
         "scan_watchlist_daily_after_close",
         "scan_watchlist_reference_weekly",

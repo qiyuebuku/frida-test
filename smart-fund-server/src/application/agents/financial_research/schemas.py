@@ -199,7 +199,7 @@ class ResearchTriggerEnvelope(ResearchContract):
     cutoff_at: datetime
     run_mode: ResearchRunMode = ResearchRunMode.SHADOW
     max_tool_calls: int = Field(default=40, ge=1, le=200)
-    max_elapsed_seconds: int = Field(default=1200, ge=30, le=3600)
+    max_elapsed_seconds: int = Field(default=3600, ge=30, le=3600)
 
 
 class ActiveViewSnapshot(ResearchContract):

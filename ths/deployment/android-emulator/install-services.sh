@@ -15,9 +15,18 @@ install -m 0755 -o yuyangruan -g yuyangruan \
 install -m 0755 -o yuyangruan -g yuyangruan \
     "${SOURCE_DIR}/ths-app-load-balancer.py" \
     "${RUNTIME_DIR}/bin/ths-app-load-balancer.py"
+install -m 0755 -o root -g root \
+    "${SOURCE_DIR}/ths-android-watchdog.py" \
+    "${RUNTIME_DIR}/bin/ths-android-watchdog.py"
+install -m 0755 -o root -g root \
+    "${SOURCE_DIR}/ths-android-pool-manager.py" \
+    "${RUNTIME_DIR}/bin/ths-android-pool-manager.py"
 install -m 0755 -o yuyangruan -g yuyangruan \
     "${SOURCE_DIR}/ths-disable-bluetooth.sh" \
     "${RUNTIME_DIR}/bin/ths-disable-bluetooth.sh"
+install -m 0755 -o yuyangruan -g yuyangruan \
+    "${SOURCE_DIR}/ths-optimize-android.sh" \
+    "${RUNTIME_DIR}/bin/ths-optimize-android.sh"
 install -m 0644 "${SOURCE_DIR}/ths-android-emulator.service" \
     /etc/systemd/system/ths-android-emulator.service
 install -m 0644 "${SOURCE_DIR}/ths-collector-bridge.service" \
@@ -26,6 +35,10 @@ install -m 0644 "${SOURCE_DIR}/ths-collector-bridge@.service" \
     /etc/systemd/system/ths-collector-bridge@.service
 install -m 0644 "${SOURCE_DIR}/ths-app-load-balancer.service" \
     /etc/systemd/system/ths-app-load-balancer.service
+install -m 0644 "${SOURCE_DIR}/ths-android-watchdog.service" \
+    /etc/systemd/system/ths-android-watchdog.service
+install -m 0644 "${SOURCE_DIR}/ths-android-pool-manager.service" \
+    /etc/systemd/system/ths-android-pool-manager.service
 install -d -m 0755 /etc/smart-fund
 for lane in futures us-ranking us-etf pool5 pool6 pool7 pool8; do
     install -m 0644 "${SOURCE_DIR}/ths-bridge-${lane}.env" \
@@ -79,3 +92,4 @@ start_bridge_serially ths-collector-bridge@pool6.service 49361
 start_bridge_serially ths-collector-bridge@pool7.service 49371
 start_bridge_serially ths-collector-bridge@pool8.service 49381
 systemctl enable --now ths-app-load-balancer.service
+systemctl enable --now ths-android-watchdog.service

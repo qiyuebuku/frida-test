@@ -291,6 +291,7 @@ def test_chat_completion_helpers_map_messages_and_schema():
             "prompt_cache_hit_tokens": 1,
             "prompt_cache_miss_tokens": 2,
             "reasoning_tokens": 0,
+            "reasoning_tokens_estimated": 1,
         }
     )
 
@@ -300,7 +301,10 @@ def test_chat_completion_helpers_map_messages_and_schema():
     assert usage["total_tokens"] == 5
     assert usage["prompt_cache_hit_tokens"] == 1
     assert usage["prompt_cache_miss_tokens"] == 2
-    assert usage["completion_tokens_details"] == {"reasoning_tokens": 0}
+    assert usage["completion_tokens_details"] == {
+        "reasoning_tokens": 0,
+        "reasoning_tokens_estimated": 1,
+    }
 
 
 def test_chat_message_accepts_tool_call_without_text_content():

@@ -37,6 +37,8 @@ async def test_timeout_batch_is_moved_to_queue_tail(monkeypatch, tmp_path: Path)
     await recovery._run(
         Namespace(
             target="test",
+            allow_llm_reprocessing=True,
+            confirm_prod_reprocess="",
             batch_size=1,
             pause_seconds=0,
             retry_seconds=0,
@@ -73,6 +75,8 @@ async def test_permanent_record_failure_is_quarantined_without_stopping_queue(
     await recovery._run(
         Namespace(
             target="test",
+            allow_llm_reprocessing=True,
+            confirm_prod_reprocess="",
             batch_size=1,
             pause_seconds=0,
             retry_seconds=0,
@@ -88,3 +92,29 @@ async def test_permanent_record_failure_is_quarantined_without_stopping_queue(
     assert failures[3]["status"] == "quarantined"
     assert failures[3]["attempts"] == 2
     assert calls.count([3]) == 4
+
+
+def test_recovery_requires_explicit_llm_reprocessing_authorization() -> None:
+    with pytest.raises(ValueError, match="--allow-llm-reprocessing"):
+        recovery._validate_reprocessing_authorization(
+            Namespace(target="test", allow_llm_reprocessing=False)
+        )
+
+
+def test_prod_recovery_requires_exact_confirmation() -> None:
+    with pytest.raises(ValueError, match="REPROCESS_PROD_WITH_LLM"):
+        recovery._validate_reprocessing_authorization(
+            Namespace(
+                target="prod",
+                allow_llm_reprocessing=True,
+                confirm_prod_reprocess="wrong",
+            )
+        )
+
+    recovery._validate_reprocessing_authorization(
+        Namespace(
+            target="prod",
+            allow_llm_reprocessing=True,
+            confirm_prod_reprocess="REPROCESS_PROD_WITH_LLM",
+        )
+    )

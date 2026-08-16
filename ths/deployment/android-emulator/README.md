@@ -3,6 +3,8 @@
 该目录固化服务器上的同花顺采集运行时：
 
 - `ths-android-emulator.service`：启动 Android 30 x86_64 AVD；
+- `ths-android-watchdog.service`：探测 Android guest shell，并在半死状态下重建完整采集栈；
+- `ths-optimize-android.sh`：精简采集用户的无关 Google 后台组件、降低 Hook 日志并关闭无关系统扫描；
 - `ths-collector-bridge.service`：等待 Android 启动、拉起同花顺、维护 ADB 端口转发并执行健康检查；
 - `ths-collector-bridge.sh`：桥接进程实现；
 - `ths-native-proxy.py`：串行转发原生请求，并在连接超时后重启 App、等待连接恢复和重放请求；
@@ -17,6 +19,15 @@
 - `127.0.0.1:49301`：带串行控制与进程恢复能力的正式业务入口。
 
 `smart-fund-server` 必须使用 `49301`。不要将 ADB 或这两个端口直接暴露到公网。
+
+### 弹性实例池实验
+
+`ths-app-load-balancer.py --elastic-pool` 与
+`ths-android-pool-manager.service` 提供按等待队列扩容、显式 drain 和空闲缩容能力。
+该模式默认关闭，安装脚本不会启用 pool manager。生产实时服务会建立约 275 个长期订阅，
+不能把这些订阅全部压到单个 App；2026-08-16 的生产验证出现 owner 健康 502 和流重连后
+已回滚。再次启用前必须实现按实例订阅容量分片，并通过持续回放验证。默认网关仍连接并
+均匀分配到全部后端。
 
 桥接服务启动和进程恢复后会自动进入同花顺“行情”页，使该页面注册的
 `UnifiedRequestBridge` 可用于股票排行协议；该状态不依赖人工操作。
@@ -84,6 +95,31 @@ Base64 正文解析。
 
 `ths-collector-bridge` 每 15 秒检查一次接口。连续三次失败时会重启同花顺并等待 Hook 恢复；
 虚拟机进程退出时则由 `ths-android-emulator` 自动重启。
+
+仅检查 QEMU 进程或 `adb get-state` 无法识别“transport 在线但 guest shell
+卡死”的状态。watchdog 每 30 秒执行一次最长 15 秒的
+`adb shell echo ths-watchdog-ok`；连续 3 次失败后停止实时流、负载均衡和全部
+bridge，重启模拟器，等待 boot completed，再串行恢复 8 个 Android 用户。
+完整恢复后进入 15 分钟冷却，避免重启风暴。普通业务 ADB 命令使用 60 秒超时，
+不与短探针共用超时配置。
+
+模拟器在 8 个 Android 用户中仅保留同花顺采集所需能力。启动完成后会禁用 GMS、GSF、
+Google 搜索和输入法，关闭定位与后台 Wi-Fi/BLE 扫描，并将 `THSHook` 的生产 logcat 等级
+设为 `W`。所有 bridge 恢复后 watchdog 会让显示器进入休眠，避免 SwiftShader 持续绘制。
+模拟器 unit 使用 `CPUQuota=300%` 限制异常峰值；正常负载低于该值时不会限速。
+
+临时恢复 Hook 详细日志：
+
+```bash
+adb -s emulator-5554 shell setprop log.tag.THSHook V
+```
+
+恢复某个用户的 Google 服务时，将 `<user>` 替换为 Android user id：
+
+```bash
+adb -s emulator-5554 shell pm enable --user <user> com.google.android.gms
+adb -s emulator-5554 shell pm enable --user <user> com.google.android.gsf
+```
 
 日志：
 

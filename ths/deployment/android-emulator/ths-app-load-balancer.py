@@ -53,7 +53,7 @@ class Backend:
 
 
 class BackendPool:
-    HTTP_MAX_INFLIGHT_PER_BACKEND = 8
+    HTTP_MAX_INFLIGHT_PER_BACKEND = 1
     # These endpoints inspect/reset process-local debug buffers or depend on the
     # owner WebView. They must not jump between App processes.
     OWNER_AFFINITY_PREFIXES = (
@@ -63,13 +63,23 @@ class BackendPool:
         "/native/indicator-capture",
     )
 
-    def __init__(self, backends: list[Backend], timeout: float) -> None:
+    def __init__(
+        self,
+        backends: list[Backend],
+        timeout: float,
+        *,
+        elastic_pool: bool = False,
+    ) -> None:
         self.backends = backends
         self.timeout = timeout
+        self.elastic_pool = elastic_pool
+        self.http_max_inflight = 1 if elastic_pool else 8
         self._selection_lock = threading.Lock()
         self._capacity_changed = threading.Condition(self._selection_lock)
         self._cursor = 0
         self._stream_waiters = 0
+        self._native_waiters = 0
+        self._http_waiters = 0
         self._recovery_lock = threading.Lock()
         self._stop = threading.Event()
 
@@ -83,8 +93,11 @@ class BackendPool:
         threading.Thread(target=monitor, name="ths-lb-health", daemon=True).start()
 
     def _check_health(self, backend: Backend) -> None:
-        connection = http.client.HTTPConnection(backend.host, backend.port, timeout=3)
+        connection: http.client.HTTPConnection | None = None
         try:
+            connection = http.client.HTTPConnection(
+                backend.host, backend.port, timeout=3
+            )
             connection.request("GET", "/health", headers={"Connection": "close"})
             response = connection.getresponse()
             payload = json.loads(response.read())
@@ -94,7 +107,8 @@ class BackendPool:
             healthy = False
             error = f"{type(exc).__name__}: {exc}"
         finally:
-            connection.close()
+            if connection is not None:
+                connection.close()
         with backend.lock:
             backend.last_health_at = time.time()
             backend.last_error = error
@@ -156,57 +170,77 @@ class BackendPool:
         deadline = time.monotonic() + (self.timeout if timeout is None else timeout)
         native_request = self._is_native_request(path)
         with self._capacity_changed:
-            while True:
-                if preferred_backend is not None:
-                    candidates = [
-                        item for item in self.backends
-                        if item.name == preferred_backend and item.name not in excluded
+            if native_request:
+                self._native_waiters += 1
+            else:
+                self._http_waiters += 1
+            try:
+                while True:
+                    if preferred_backend is not None:
+                        candidates = [
+                            item for item in self.backends
+                            if item.name == preferred_backend
+                            and item.name not in excluded
+                        ]
+                    elif path.startswith(self.OWNER_AFFINITY_PREFIXES):
+                        candidates = [self.backends[0]]
+                    else:
+                        candidates = [
+                            item for item in self.backends
+                            if item.name not in excluded
+                        ]
+                    snapshots = [(item, item.snapshot()) for item in candidates]
+                    healthy = [
+                        (item, state)
+                        for item, state in snapshots
+                        if state["healthy"] and not state["draining"]
                     ]
-                elif path.startswith(self.OWNER_AFFINITY_PREFIXES):
-                    candidates = [self.backends[0]]
-                else:
-                    candidates = [
-                        item for item in self.backends if item.name not in excluded
+                    available = [
+                        (item, state)
+                        for item, state in healthy
+                        if (
+                            state["active_native"] == 0
+                            if native_request
+                            else state["active_http"] < self.http_max_inflight
+                        )
                     ]
-                snapshots = [(item, item.snapshot()) for item in candidates]
-                healthy = [
-                    (item, state)
-                    for item, state in snapshots
-                    if state["healthy"] and not state["draining"]
-                ]
-                if not healthy:
-                    raise RuntimeError("no healthy THS App backend")
-                available = [
-                    (item, state)
-                    for item, state in healthy
-                    if (
-                        state["active_native"] == 0
-                        if native_request
-                        else state["active_http"] < self.HTTP_MAX_INFLIGHT_PER_BACKEND
-                    )
-                ]
-                if available and self._stream_waiters == 0:
-                    start = self._cursor
-                    self._cursor = (self._cursor + 1) % max(1, len(self.backends))
-                    order = {
-                        item.name: (index - start) % len(self.backends)
-                        for index, item in enumerate(self.backends)
-                    }
-                    backend, _ = min(
-                        available,
-                        key=lambda pair: order[pair[0].name],
-                    )
-                    with backend.lock:
-                        backend.active += 1
-                        if native_request:
-                            backend.active_native += 1
+                    if available and self._stream_waiters == 0:
+                        if self.elastic_pool:
+                            backend, _ = min(
+                                available,
+                                key=lambda pair: self.backends.index(pair[0]),
+                            )
                         else:
-                            backend.active_http += 1
-                    return backend
-                remaining = deadline - time.monotonic()
-                if remaining <= 0:
-                    raise TimeoutError("timed out waiting for an idle THS App backend")
-                self._capacity_changed.wait(timeout=min(remaining, 0.5))
+                            start = self._cursor
+                            self._cursor = (
+                                self._cursor + 1
+                            ) % max(1, len(self.backends))
+                            order = {
+                                item.name: (index - start) % len(self.backends)
+                                for index, item in enumerate(self.backends)
+                            }
+                            backend, _ = min(
+                                available,
+                                key=lambda pair: order[pair[0].name],
+                            )
+                        with backend.lock:
+                            backend.active += 1
+                            if native_request:
+                                backend.active_native += 1
+                            else:
+                                backend.active_http += 1
+                        return backend
+                    remaining = deadline - time.monotonic()
+                    if remaining <= 0:
+                        if not healthy:
+                            raise RuntimeError("no healthy THS App backend")
+                        raise TimeoutError("timed out waiting for an idle THS App backend")
+                    self._capacity_changed.wait(timeout=min(remaining, 0.5))
+            finally:
+                if native_request:
+                    self._native_waiters = max(0, self._native_waiters - 1)
+                else:
+                    self._http_waiters = max(0, self._http_waiters - 1)
 
     def release(self, backend: Backend, path: str) -> None:
         with self._capacity_changed:
@@ -217,6 +251,22 @@ class BackendPool:
                 else:
                     backend.active_http = max(0, backend.active_http - 1)
             self._capacity_changed.notify_all()
+
+    def set_draining(self, backend_name: str, draining: bool) -> dict:
+        backend = next(
+            (item for item in self.backends if item.name == backend_name), None
+        )
+        if backend is None:
+            raise ValueError(f"unknown THS backend: {backend_name}")
+        with self._capacity_changed:
+            with backend.lock:
+                backend.draining = draining
+                if draining:
+                    backend.healthy = False
+                else:
+                    backend.consecutive_health_failures = 0
+            self._capacity_changed.notify_all()
+        return backend.snapshot()
 
     @classmethod
     def _is_native_request(cls, path: str) -> bool:
@@ -327,6 +377,8 @@ class BackendPool:
                 "ok": any(item["healthy"] for item in snapshots),
                 "mode": "least_inflight",
                 "healthy_backends": sum(item["healthy"] for item in snapshots),
+                "native_waiters": self._native_waiters,
+                "http_waiters": self._http_waiters,
                 "backends": snapshots,
             },
             ensure_ascii=False,
@@ -384,10 +436,12 @@ class TaskAwareStreamGateway:
         pool: BackendPool,
         listen_port: int,
         stream_ports: dict[str, int],
+        elastic_pool: bool = False,
     ) -> None:
         self.pool = pool
         self.listen_port = listen_port
         self.stream_ports = stream_ports
+        self.elastic_pool = elastic_pool
         self._session_lock = threading.Lock()
 
     def serve(self) -> None:
@@ -419,6 +473,8 @@ class TaskAwareStreamGateway:
         subscriptions: dict[str, Backend] = {}
         pending_lock = threading.Lock()
         downstream_lock = threading.Lock()
+        upstream_lock = threading.Lock()
+        detaching: set[str] = set()
         closed = threading.Event()
 
         def send_downstream(message: dict) -> None:
@@ -439,6 +495,10 @@ class TaskAwareStreamGateway:
                 request_id,
                 backend.name,
             )
+            if self.elastic_pool and backend is not self.pool.backends[0]:
+                timer = threading.Timer(60, detach_if_idle, args=(backend,))
+                timer.daemon = True
+                timer.start()
 
         def read_upstream(backend: Backend, stream_file: object) -> None:
             try:
@@ -452,34 +512,29 @@ class TaskAwareStreamGateway:
                         release_pending(request_id)
                     send_downstream(message)
             except Exception as exc:  # noqa: BLE001 - stream boundary
-                if not closed.is_set():
+                if not closed.is_set() and backend.name not in detaching:
                     LOGGER.warning(
                         "stream backend=%s disconnected error=%s", backend.name, exc
                     )
                     closed.set()
+            finally:
+                if backend.name in detaching:
+                    with upstream_lock:
+                        upstreams.pop(backend.name, None)
+                        upstream_files.pop(backend.name, None)
+                        detaching.discard(backend.name)
+                    with self.pool._capacity_changed:
+                        with backend.lock:
+                            backend.stream_sessions = max(
+                                0, backend.stream_sessions - 1
+                            )
+                        self.pool._capacity_changed.notify_all()
 
-        def choose_subscription_backend() -> Backend:
-            counts = {backend.name: 0 for backend in self.pool.backends}
-            for backend in subscriptions.values():
-                counts[backend.name] += 1
-            candidates = [
-                backend
-                for backend in self.pool.backends
-                if backend.name in upstreams and backend.snapshot()["healthy"]
-            ]
-            if not candidates:
-                raise RuntimeError("no connected THS App stream backend")
-            return min(candidates, key=lambda item: counts[item.name])
-
-        try:
-            downstream.settimeout(None)
-            downstream_file = downstream.makefile("rb")
-            protocol = downstream_file.readline().decode("utf-8").strip()
-            if protocol != "THSSTREAM/1":
-                raise ValueError(f"unsupported stream protocol: {protocol}")
-
-            hellos = []
-            for backend in self.pool.backends:
+        def connect_backend(backend: Backend) -> dict:
+            with upstream_lock:
+                existing = upstreams.get(backend.name)
+                if existing is not None:
+                    return {"type": "hello"}
                 upstream = socket.create_connection(
                     (backend.host, self.stream_ports[backend.name]), timeout=10
                 )
@@ -488,29 +543,82 @@ class TaskAwareStreamGateway:
                 upstream.sendall(b"THSSTREAM/1\n")
                 hello = json.loads(stream_file.readline())
                 if hello.get("type") != "hello":
+                    upstream.close()
                     raise RuntimeError(f"invalid stream hello from {backend.name}")
                 upstreams[backend.name] = upstream
                 upstream_files[backend.name] = stream_file
                 with backend.lock:
                     backend.stream_sessions += 1
-                hellos.append(hello)
+            threading.Thread(
+                target=read_upstream,
+                args=(backend, stream_file),
+                daemon=True,
+                name=f"ths-stream-read-{backend.name}",
+            ).start()
+            LOGGER.info("stream backend=%s connected lazily", backend.name)
+            return hello
+
+        def detach_if_idle(backend: Backend) -> None:
+            if backend is self.pool.backends[0] or closed.is_set():
+                return
+            with pending_lock:
+                has_pending = any(item[0] is backend for item in pending.values())
+            has_subscription = any(item is backend for item in subscriptions.values())
+            if has_pending or has_subscription or backend.snapshot()["active"] > 0:
+                return
+            with upstream_lock:
+                connection = upstreams.get(backend.name)
+                if connection is None or backend.name in detaching:
+                    return
+                detaching.add(backend.name)
+                try:
+                    connection.shutdown(socket.SHUT_RDWR)
+                except OSError:
+                    pass
+                connection.close()
+            LOGGER.info("stream backend=%s detached after idle task", backend.name)
+
+        def choose_subscription_backend() -> Backend:
+            if not self.elastic_pool:
+                counts = {backend.name: 0 for backend in self.pool.backends}
+                for backend in subscriptions.values():
+                    counts[backend.name] += 1
+                candidates = [
+                    backend
+                    for backend in self.pool.backends
+                    if backend.name in upstreams and backend.snapshot()["healthy"]
+                ]
+                if not candidates:
+                    raise RuntimeError("no connected THS App stream backend")
+                return min(candidates, key=lambda item: counts[item.name])
+            owner = self.pool.backends[0]
+            if owner.name not in upstreams or not owner.snapshot()["healthy"]:
+                raise RuntimeError("no connected THS App stream backend")
+            return owner
+
+        try:
+            downstream.settimeout(None)
+            downstream_file = downstream.makefile("rb")
+            protocol = downstream_file.readline().decode("utf-8").strip()
+            if protocol != "THSSTREAM/1":
+                raise ValueError(f"unsupported stream protocol: {protocol}")
+
+            owner = self.pool.backends[0]
+            if self.elastic_pool:
+                hello = connect_backend(owner)
+            else:
+                hellos = [connect_backend(backend) for backend in self.pool.backends]
+                hello = hellos[0]
             send_downstream(
                 {
                     "type": "hello",
                     "protocol": "THSSTREAM/1",
                     "gateway_session_id": uuid.uuid4().hex,
                     "backend_count": len(upstreams),
-                    "android_user_id": hellos[0].get("android_user_id"),
-                    "pid": hellos[0].get("pid"),
+                    "android_user_id": hello.get("android_user_id"),
+                    "pid": hello.get("pid"),
                 }
             )
-            for backend in self.pool.backends:
-                threading.Thread(
-                    target=read_upstream,
-                    args=(backend, upstream_files[backend.name]),
-                    daemon=True,
-                    name=f"ths-stream-read-{backend.name}",
-                ).start()
 
             while not closed.is_set():
                 raw = downstream_file.readline()
@@ -561,8 +669,9 @@ class TaskAwareStreamGateway:
                 try:
                     backend = self.pool.reserve(
                         "/native/stream",
-                        timeout=30,
+                        timeout=120,
                     )
+                    connect_backend(backend)
                     timeout_seconds = max(
                         1.0,
                         min(
@@ -635,12 +744,13 @@ class TaskAwareStreamGateway:
                         connection.close()
                     except OSError:
                         pass
-                    with self.pool._capacity_changed:
-                        with backend.lock:
-                            backend.stream_sessions = max(
-                                0, backend.stream_sessions - 1
-                            )
-                        self.pool._capacity_changed.notify_all()
+                    if backend.name not in detaching:
+                        with self.pool._capacity_changed:
+                            with backend.lock:
+                                backend.stream_sessions = max(
+                                    0, backend.stream_sessions - 1
+                                )
+                            self.pool._capacity_changed.notify_all()
             try:
                 downstream.close()
             except OSError:
@@ -658,7 +768,31 @@ class LoadBalancerHandler(BaseHTTPRequestHandler):
         self._proxy("GET")
 
     def do_POST(self) -> None:  # noqa: N802
+        if self.path.startswith("/admin/backend/"):
+            self._set_backend_drain()
+            return
         self._proxy("POST")
+
+    def _set_backend_drain(self) -> None:
+        parts = self.path.split("?")[0].strip("/").split("/")
+        if len(parts) != 3:
+            self.send_error(404)
+            return
+        backend_name = parts[2]
+        length = int(self.headers.get("Content-Length", "0"))
+        try:
+            payload = json.loads(self.rfile.read(length) if length else b"{}")
+            state = self.pool.set_draining(
+                backend_name,
+                bool(payload.get("draining", True)),
+            )
+            self._send(200, json.dumps(state).encode(), "application/json")
+        except (TypeError, ValueError, json.JSONDecodeError) as exc:
+            self._send(
+                400,
+                json.dumps({"success": False, "error": str(exc)}).encode(),
+                "application/json",
+            )
 
     def _proxy(self, method: str) -> None:
         started = time.monotonic()
@@ -720,13 +854,14 @@ def main() -> None:
     parser.add_argument("--health-interval", type=float, default=2)
     parser.add_argument("--stream-listen-port", type=int, default=49352)
     parser.add_argument("--stream-backend", action="append", required=True)
+    parser.add_argument("--elastic-pool", action="store_true")
     args = parser.parse_args()
     backends = []
     for item in args.backend:
         name, address = item.split("=", 1)
         host, port = address.rsplit(":", 1)
         backends.append(Backend(name=name, host=host, port=int(port)))
-    pool = BackendPool(backends, args.timeout)
+    pool = BackendPool(backends, args.timeout, elastic_pool=args.elastic_pool)
     for backend in backends:
         pool._check_health(backend)
     pool.start_health_monitor(args.health_interval)
@@ -736,7 +871,12 @@ def main() -> None:
         stream_ports[name] = int(port)
     if set(stream_ports) != {item.name for item in backends}:
         raise ValueError("stream backends must match HTTP backends")
-    stream_gateway = TaskAwareStreamGateway(pool, args.stream_listen_port, stream_ports)
+    stream_gateway = TaskAwareStreamGateway(
+        pool,
+        args.stream_listen_port,
+        stream_ports,
+        elastic_pool=args.elastic_pool,
+    )
     threading.Thread(
         target=stream_gateway.serve,
         daemon=True,

@@ -160,6 +160,22 @@ COMMENT ON TABLE public.kg_graph_community_relations IS
 COMMENT ON COLUMN public.kg_graph_community_relations.supporting_edge_ids IS
     '支持当前 Community 关系的 kg_card_relations.id 列表';
 
+CREATE TABLE IF NOT EXISTS public.kg_graph_community_memberships (
+    adapter_name character varying(64) NOT NULL,
+    card_id character varying(180) NOT NULL,
+    community_id character varying(180) NOT NULL,
+    created_at timestamp with time zone DEFAULT now(),
+    updated_at timestamp with time zone DEFAULT now(),
+    PRIMARY KEY (adapter_name, card_id)
+);
+CREATE INDEX IF NOT EXISTS ix_kg_graph_community_memberships_community
+    ON public.kg_graph_community_memberships(community_id);
+CREATE INDEX IF NOT EXISTS ix_kg_graph_community_memberships_adapter_community
+    ON public.kg_graph_community_memberships(adapter_name, community_id);
+
+COMMENT ON TABLE public.kg_graph_community_memberships IS
+    'Graph Community 当前 Card/Fact 代表成员的正规化归属投影，用于局部增量刷新';
+
 CREATE TABLE IF NOT EXISTS public.kg_community_insights (
     insight_id character varying(220) PRIMARY KEY,
     community_id character varying(180) NOT NULL,

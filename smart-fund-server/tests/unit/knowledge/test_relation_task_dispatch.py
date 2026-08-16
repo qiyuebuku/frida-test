@@ -150,6 +150,9 @@ async def test_graph_changed_message_contains_stable_edge_event(monkeypatch) -> 
             return None
 
     monkeypatch.setattr(dispatcher, "Jettask", FakeJettask)
+    async def fake_buffer(**_kwargs):
+        return True
+    monkeypatch.setattr(dispatcher, "buffer_kg_graph_change", fake_buffer)
     event_ids = await dispatcher.send_kg_graph_changed(
         adapter_name="financial",
         changed_edge_ids=["edge:1", "edge:1"],
@@ -162,11 +165,31 @@ async def test_graph_changed_message_contains_stable_edge_event(monkeypatch) -> 
     assert sent[0].queue == "kg_graph_changed"
     assert sent[0].kwargs == {
         "adapter_name": "financial",
-        "changed_edge_ids": ["edge:1"],
-        "affected_card_ids": ["card:1", "card:2"],
-        "changes": {"upserted_edge_ids": ["edge:1"], "invalidated_edge_ids": []},
-        "event_identity": "kg_graph_change:stable",
+        "changed_edge_ids": [],
+        "affected_card_ids": [],
+        "changes": {"coalesced": True},
+        "event_identity": sent[0].kwargs["event_identity"],
     }
+    assert sent[0].kwargs["event_identity"].startswith("kg_graph_batch:")
+    assert sent[0].delay == dispatcher.KG_GRAPH_CHANGE_COALESCE_SECONDS
+
+
+@pytest.mark.asyncio
+async def test_graph_changed_coalesces_into_existing_scheduled_batch(monkeypatch) -> None:
+    async def fake_buffer(**_kwargs):
+        return False
+
+    monkeypatch.setattr(dispatcher, "buffer_kg_graph_change", fake_buffer)
+
+    event_ids = await dispatcher.send_kg_graph_changed(
+        adapter_name="financial",
+        changed_edge_ids=["edge:2"],
+        affected_card_ids=["card:2", "card:3"],
+        changes={},
+        event_identity="event:2",
+    )
+
+    assert event_ids == []
 
 
 @pytest.mark.asyncio

@@ -115,6 +115,26 @@ def _content_text(content: Any) -> str:
     return "\n".join(parts)
 
 
+def _reasoning_summary_text(summary: Any) -> str:
+    """Extract readable Responses API reasoning summaries.
+
+    Providers may also return encrypted reasoning state.  That opaque state is
+    intentionally not persisted; only explicit ``summary_text`` is observable.
+    """
+
+    if not isinstance(summary, list):
+        return ""
+    parts: list[str] = []
+    for item in summary:
+        normalized = _trace_value(item)
+        if not isinstance(normalized, dict):
+            continue
+        text = normalized.get("text")
+        if text:
+            parts.append(str(text))
+    return "\n\n".join(parts)
+
+
 def _simplify_conversation_item(item: Any) -> dict[str, Any]:
     normalized = _trace_value(item)
     if not isinstance(normalized, dict):
@@ -145,10 +165,19 @@ def _simplify_conversation_item(item: Any) -> dict[str, Any]:
             "call_id": normalized.get("call_id"),
             "output": _decode_json_value(normalized.get("output")),
         }
+    if item_type == "reasoning":
+        readable_content = _content_text(normalized.get("content"))
+        return {
+            "type": "reasoning",
+            "summary": (
+                _reasoning_summary_text(normalized.get("summary"))
+                or readable_content
+            ),
+        }
     return {
         key: _decode_json_value(value)
         for key, value in normalized.items()
-        if key not in {"id", "status", "phase", "summary"}
+        if key not in {"id", "status", "phase", "summary", "encrypted_content"}
     }
 
 
@@ -156,6 +185,7 @@ def _llm_trace_output(output: Any) -> dict[str, Any]:
     normalized = _trace_value(output)
     items = normalized if isinstance(normalized, list) else [normalized]
     assistant_text: list[str] = []
+    reasoning_summaries: list[str] = []
     tool_calls: list[dict[str, Any]] = []
     other: list[Any] = []
     for item in items:
@@ -169,6 +199,8 @@ def _llm_trace_output(output: Any) -> dict[str, Any]:
                     "call_id": simplified.get("call_id"),
                 }
             )
+        elif simplified.get("type") == "reasoning" and simplified.get("summary"):
+            reasoning_summaries.append(str(simplified["summary"]))
         else:
             other.append(simplified)
     result: dict[str, Any] = {
@@ -177,6 +209,8 @@ def _llm_trace_output(output: Any) -> dict[str, Any]:
     }
     if other:
         result["other_items"] = other
+    if reasoning_summaries:
+        result["reasoning_summaries"] = reasoning_summaries
     return result
 
 

@@ -19,7 +19,9 @@ from src.infrastructure.observability.langfuse_tracing import (
     langfuse_update_span,
 )
 from src.infrastructure.tasks.jettask_dispatcher import (
+    ack_kg_graph_change_batch,
     build_kg_news_workflow_id,
+    claim_kg_graph_change_batch,
 )
 
 logger = logging.getLogger(__name__)
@@ -201,6 +203,15 @@ async def kg_graph_community_refresh(
     if _relation_graph_community is None:
         _relation_graph_community = RelationGraphCommunityService()
     t0 = time.time()
+    claimed_batch = False
+    if str(event_identity).startswith("kg_graph_batch:"):
+        buffered_edges, buffered_cards = await claim_kg_graph_change_batch(
+            adapter_name=adapter_name,
+            batch_identity=event_identity,
+        )
+        changed_edge_ids = buffered_edges
+        affected_card_ids = buffered_cards
+        claimed_batch = True
     metadata = {
         "task": "kg_graph_community_refresh",
         "queue": "kg_graph_changed",
@@ -240,6 +251,11 @@ async def kg_graph_community_refresh(
                         time.time() - t0,
                         result,
                     )
+                    if claimed_batch:
+                        await ack_kg_graph_change_batch(
+                            adapter_name=adapter_name,
+                            batch_identity=event_identity,
+                        )
                     return result
                 except Exception as exc:
                     langfuse_update_span(

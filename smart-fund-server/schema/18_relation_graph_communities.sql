@@ -64,6 +64,8 @@ CREATE INDEX ix_kg_graph_communities_projection_status
     ON public.kg_graph_communities(projection_status);
 CREATE INDEX ix_kg_graph_communities_graph_fingerprint
     ON public.kg_graph_communities(graph_fingerprint);
+CREATE INDEX ix_kg_graph_communities_member_cards_gin
+    ON public.kg_graph_communities USING gin(member_card_ids);
 
 COMMENT ON TABLE public.kg_graph_communities IS
     '由 active verified Card Edge 图聚类形成的平行 Graph Community 当前态';
@@ -109,3 +111,19 @@ COMMENT ON COLUMN public.kg_graph_community_relations.supporting_edge_ids IS
     '支持当前 Community 关系的 kg_card_relations.id 列表';
 COMMENT ON COLUMN public.kg_graph_community_relations.relation_fingerprint IS
     '由 Community 端点、关系类型及底层 Edge 当前版本计算的投影指纹';
+
+CREATE TABLE IF NOT EXISTS public.kg_graph_community_memberships (
+    adapter_name varchar(64) NOT NULL,
+    card_id varchar(180) NOT NULL,
+    community_id varchar(180) NOT NULL,
+    created_at timestamptz DEFAULT now(),
+    updated_at timestamptz DEFAULT now(),
+    PRIMARY KEY (adapter_name, card_id)
+);
+CREATE INDEX IF NOT EXISTS ix_kg_graph_community_memberships_community
+    ON public.kg_graph_community_memberships(community_id);
+CREATE INDEX IF NOT EXISTS ix_kg_graph_community_memberships_adapter_community
+    ON public.kg_graph_community_memberships(adapter_name, community_id);
+
+COMMENT ON TABLE public.kg_graph_community_memberships IS
+    'Graph Community 当前 Card/Fact 代表成员的正规化归属投影，用于局部增量刷新';

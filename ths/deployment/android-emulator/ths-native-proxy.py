@@ -19,6 +19,7 @@ LOGGER = logging.getLogger("ths-native-proxy")
 
 class AndroidNativeBridge:
     UPSTREAM_TIMEOUT_SECONDS = 75
+    ADB_COMMAND_TIMEOUT_SECONDS = 60
     RANKING_CALLBACK_COOLDOWN_SECONDS = 0.9
 
     def __init__(
@@ -318,7 +319,7 @@ class AndroidNativeBridge:
                 check=False,
                 capture_output=True,
                 text=True,
-                timeout=20,
+                timeout=self.ADB_COMMAND_TIMEOUT_SECONDS,
             )
             if result.stdout.strip() == str(user_id):
                 return
@@ -386,7 +387,7 @@ class AndroidNativeBridge:
             stdout=subprocess.DEVNULL,
             stderr=subprocess.PIPE,
             text=True,
-            timeout=20,
+            timeout=self.ADB_COMMAND_TIMEOUT_SECONDS,
         )
 
 

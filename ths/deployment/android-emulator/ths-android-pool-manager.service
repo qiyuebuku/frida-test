@@ -1,0 +1,18 @@
+[Unit]
+Description=THS Android elastic instance pool manager
+After=ths-app-load-balancer.service ths-android-emulator.service
+Requires=ths-app-load-balancer.service ths-android-emulator.service
+
+[Service]
+Type=simple
+User=root
+Group=root
+Environment=THS_POOL_IDLE_TIMEOUT_SECONDS=600
+ExecStart=/usr/bin/python3 /home/yuyangruan/android-runtime/bin/ths-android-pool-manager.py
+Restart=always
+RestartSec=3
+StandardOutput=append:/home/yuyangruan/android-runtime/logs/android-pool-manager.log
+StandardError=append:/home/yuyangruan/android-runtime/logs/android-pool-manager.log
+
+[Install]
+WantedBy=multi-user.target

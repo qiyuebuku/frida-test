@@ -49,7 +49,7 @@ def parse_args() -> argparse.Namespace:
         "--limit",
         type=int,
         default=0,
-        help="只选择最近 N 条 active Edge 作为变化种子；0 表示全部。闭包仍会完整展开。",
+        help="只选择最近 N 条 active Edge 作为变化种子；0 表示全图离线重建。",
     )
     parser.add_argument(
         "--dry-run",
@@ -128,10 +128,13 @@ def load_current_communities(
 
 async def run(args: argparse.Namespace) -> dict:
     session_id = args.session_id or f"relation-graph-community-{uuid4().hex[:12]}"
-    edge_ids, card_ids = load_changed_edge_seeds(
-        target=args.target,
-        limit=max(0, int(args.limit)),
-    )
+    if max(0, int(args.limit)) == 0:
+        edge_ids, card_ids = [], []
+    else:
+        edge_ids, card_ids = load_changed_edge_seeds(
+            target=args.target,
+            limit=max(0, int(args.limit)),
+        )
     metadata = {
         "adapter_name": args.adapter,
         "target": args.target,
@@ -155,11 +158,14 @@ async def run(args: argparse.Namespace) -> dict:
             repository = RelationGraphCommunityRepository(
                 target=args.target  # type: ignore[arg-type]
             )
+            full_rebuild = max(0, int(args.limit)) == 0
             if args.dry_run:
                 affected = await asyncio.to_thread(
-                    repository.load_affected_graph,
-                    adapter_name=args.adapter,
-                    seed_card_ids=card_ids,
+                    repository.load_full_graph if full_rebuild else repository.load_affected_graph,
+                    **({"adapter_name": args.adapter} if full_rebuild else {
+                        "adapter_name": args.adapter,
+                        "seed_card_ids": card_ids,
+                    }),
                 )
                 partition = discover_relation_graph_partition(
                     affected,
@@ -209,16 +215,41 @@ async def run(args: argparse.Namespace) -> dict:
                         for item in partition.community_relations
                     ]
             else:
-                result = await RelationGraphCommunityService(
-                    target=args.target,
-                    repository=repository,
-                ).refresh_from_graph_change(
-                    adapter_name=args.adapter,
-                    changed_edge_ids=edge_ids,
-                    affected_card_ids=card_ids,
-                    changes={"validation_replay": True},
-                    event_identity=f"validation:{session_id}",
-                )
+                if full_rebuild:
+                    affected = await asyncio.to_thread(
+                        repository.load_full_graph,
+                        adapter_name=args.adapter,
+                    )
+                    partition = discover_relation_graph_partition(affected)
+                    applied = await asyncio.to_thread(
+                        repository.apply_components,
+                        adapter_name=args.adapter,
+                        touched_community_ids=list(affected.touched_community_ids),
+                        components=list(partition.communities),
+                        community_relations=list(partition.community_relations),
+                        rebuild_boundary_relations=False,
+                    )
+                    result = {
+                        "status": "completed",
+                        "full_rebuild": True,
+                        "affected_edges": len(affected.edges),
+                        "components": len(partition.communities),
+                        "community_relations": len(partition.community_relations),
+                        "created_community_ids": list(applied.created_community_ids),
+                        "updated_community_ids": list(applied.updated_community_ids),
+                        "deleted_community_ids": list(applied.deleted_community_ids),
+                    }
+                else:
+                    result = await RelationGraphCommunityService(
+                        target=args.target,
+                        repository=repository,
+                    ).refresh_from_graph_change(
+                        adapter_name=args.adapter,
+                        changed_edge_ids=edge_ids,
+                        affected_card_ids=card_ids,
+                        changes={"validation_replay": True},
+                        event_identity=f"validation:{session_id}",
+                    )
                 current_communities = load_current_communities(
                     target=args.target,
                     adapter_name=args.adapter,

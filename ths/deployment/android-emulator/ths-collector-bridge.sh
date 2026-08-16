@@ -23,20 +23,28 @@ MAX_HEALTH_FAILURES="${THS_MAX_HEALTH_FAILURES:-3}"
 MARKET_TAB_X="${THS_MARKET_TAB_X:-245}"
 MARKET_TAB_Y="${THS_MARKET_TAB_Y:-2090}"
 OPEN_MARKET_PAGE="${THS_OPEN_MARKET_PAGE:-1}"
+ADB_COMMAND_TIMEOUT_SECONDS="${THS_ADB_COMMAND_TIMEOUT_SECONDS:-60}"
+ADB_HEALTH_TIMEOUT_SECONDS="${THS_ADB_HEALTH_TIMEOUT_SECONDS:-15}"
 
 log() {
     printf '%s %s\n' "$(date --iso-8601=seconds)" "$*"
 }
 
 adb_device() {
-    "${ADB}" -s "${SERIAL}" "$@"
+    timeout --signal=TERM --kill-after=5 "${ADB_COMMAND_TIMEOUT_SECONDS}" \
+        "${ADB}" -s "${SERIAL}" "$@"
+}
+
+adb_health() {
+    timeout --signal=TERM --kill-after=5 "${ADB_HEALTH_TIMEOUT_SECONDS}" \
+        "${ADB}" -s "${SERIAL}" "$@"
 }
 
 wait_for_android() {
     local deadline=$((SECONDS + STARTUP_TIMEOUT_SECONDS))
     while (( SECONDS < deadline )); do
-        if [[ "$(adb_device get-state 2>/dev/null || true)" == "device" ]] \
-            && [[ "$(adb_device shell getprop sys.boot_completed 2>/dev/null | tr -d '\r')" == "1" ]]; then
+        if [[ "$(adb_health get-state 2>/dev/null || true)" == "device" ]] \
+            && [[ "$(adb_health shell getprop sys.boot_completed 2>/dev/null | tr -d '\r')" == "1" ]]; then
             log "Android boot completed on ${SERIAL}"
             return 0
         fi
@@ -260,6 +268,7 @@ main() {
     open_market_page
     start_native_proxy
     wait_for_native_proxy
+    adb_device shell input keyevent KEYCODE_SLEEP >/dev/null 2>&1 || true
 
     local failures=0
     while true; do

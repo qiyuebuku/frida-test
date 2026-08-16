@@ -50,7 +50,10 @@ logger = logging.getLogger(__name__)
 RELATION_DISCOVERY_PIPELINE_VERSION = (
     "relation_discovery_v8_bidirectional_fact_identity"
 )
-RELATION_SCREEN_CACHE_VERSION = "relation_discovery_v2_edge_persistence"
+RELATION_SCREEN_CACHE_VERSION = "relation_discovery_v3_glm53_low_reasoning"
+RELATION_SCREEN_MAX_TOKENS = 16_000
+RELATION_VERIFY_MAX_TOKENS = 32_000
+RELATION_SAME_FACT_MAX_TOKENS = 16_000
 RELATION_VERIFICATION_PROMPT_VERSION = (
     "kg_relation_evidence_verify_v12_claim_list_fact_gate"
 )
@@ -471,10 +474,16 @@ class RelationDiscoveryService:
                 },
                 status_message="completed",
             )
-        kept_ids = await self._screen_candidates(
+        screened_related_ids = await self._screen_candidates(
             source_card_id=manifest.cognitive_card_id,
             source_summary=source_summary,
             candidates=selected,
+        )
+        kept_ids, verification_budget_dropped_ids = (
+            self._select_verification_budget(
+                selected,
+                related_candidate_ids=screened_related_ids,
+            )
         )
         candidate_manifests = (
             self._repository.list_atomic_cognitive_card_manifests_by_ids(
@@ -540,7 +549,15 @@ class RelationDiscoveryService:
             "same_fact_candidates_collapsed": len(same_fact_candidate_ids),
             "same_fact_candidate_ids_collapsed": same_fact_candidate_ids,
             "screened_candidates": len(selected),
+            "screen_related_candidates": len(screened_related_ids),
             "kept_for_evidence": len(kept_ids),
+            "verification_budget": max(
+                1, settings.KG_RELATION_VERIFY_MAX_CANDIDATES_PER_CARD
+            ),
+            "verification_budget_dropped": len(verification_budget_dropped_ids),
+            "verification_budget_dropped_candidate_ids": (
+                verification_budget_dropped_ids
+            ),
             "verified_pairs": len(decisions),
             "pair_data_errors": pair_errors,
             "focus_only_candidates": sum(
@@ -561,6 +578,9 @@ class RelationDiscoveryService:
                     "recall_per_view": settings.KG_RELATION_RECALL_PER_VIEW,
                     "rerank_top_n": settings.KG_RELATION_RERANK_TOP_N,
                     "merged_candidate_limit": settings.KG_RELATION_MERGED_CANDIDATE_LIMIT,
+                    "verify_max_candidates_per_card": (
+                        settings.KG_RELATION_VERIFY_MAX_CANDIDATES_PER_CARD
+                    ),
                 },
                 "routes": [
                     {
@@ -589,7 +609,8 @@ class RelationDiscoveryService:
                     item.candidate_card_id for item in fact_grouped
                 ],
                 "selected_candidate_ids": [item.candidate_card_id for item in selected],
-                "screened_related_candidate_ids": list(kept_ids),
+                "screened_related_candidate_ids": list(screened_related_ids),
+                "verification_candidate_ids": list(kept_ids),
                 "verified_candidate_ids": _ordered_candidate_ids(
                     _other_card_id(item, manifest.cognitive_card_id)
                     for item in decisions
@@ -818,6 +839,23 @@ class RelationDiscoveryService:
             return candidates
         return candidates[:limit]
 
+    @staticmethod
+    def _select_verification_budget(
+        candidates: list[MergedRelationCandidate],
+        *,
+        related_candidate_ids: list[str],
+    ) -> tuple[list[str], list[str]]:
+        """Cap expensive evidence verification while preserving RRF rank order."""
+
+        related = set(related_candidate_ids)
+        ranked_ids = [
+            item.candidate_card_id
+            for item in candidates
+            if item.candidate_card_id in related
+        ]
+        limit = max(1, settings.KG_RELATION_VERIFY_MAX_CANDIDATES_PER_CARD)
+        return ranked_ids[:limit], ranked_ids[limit:]
+
     def _group_candidates_by_existing_fact(
         self,
         candidates: list[MergedRelationCandidate],
@@ -891,8 +929,8 @@ class RelationDiscoveryService:
                     system_prompt=_SCREEN_SYSTEM_PROMPT,
                     payload=payload,
                     schema=_screen_schema([item.candidate_card_id for item in batch]),
-                    max_tokens=1000,
-                    reasoning_effort="disabled",
+                    max_tokens=RELATION_SCREEN_MAX_TOKENS,
+                    reasoning_effort="low",
                 )
                 expected_ids = [item.candidate_card_id for item in batch]
                 repaired_output = False
@@ -913,8 +951,8 @@ class RelationDiscoveryService:
                             },
                         },
                         schema=_screen_schema(expected_ids),
-                        max_tokens=1000,
-                        reasoning_effort="disabled",
+                        max_tokens=RELATION_SCREEN_MAX_TOKENS,
+                        reasoning_effort="low",
                         use_cache=False,
                     )
                     related_ids = _parse_screening_candidate_ids(
@@ -1031,8 +1069,8 @@ class RelationDiscoveryService:
                         system_prompt=_VERIFY_SYSTEM_PROMPT,
                         payload=_verification_payload(package),
                         schema=_verification_schema(package),
-                        max_tokens=5000,
-                        reasoning_effort="disabled",
+                        max_tokens=RELATION_VERIFY_MAX_TOKENS,
+                        reasoning_effort="low",
                     )
                     try:
                         decision = _parse_verified_decision(data, package)
@@ -1049,8 +1087,8 @@ class RelationDiscoveryService:
                                 },
                             },
                             schema=_verification_schema(package),
-                            max_tokens=5000,
-                            reasoning_effort="disabled",
+                            max_tokens=RELATION_VERIFY_MAX_TOKENS,
+                            reasoning_effort="low",
                             use_cache=False,
                         )
                         decision = _parse_verified_decision(repaired, package)
@@ -1085,8 +1123,8 @@ class RelationDiscoveryService:
             system_prompt=_SAME_FACT_GATE_SYSTEM_PROMPT,
             payload=payload,
             schema=_same_fact_gate_schema(),
-            max_tokens=500,
-            reasoning_effort="disabled",
+            max_tokens=RELATION_SAME_FACT_MAX_TOKENS,
+            reasoning_effort="low",
         )
         try:
             gate = _parse_same_fact_gate(data)
@@ -1103,8 +1141,8 @@ class RelationDiscoveryService:
                     },
                 },
                 schema=_same_fact_gate_schema(),
-                max_tokens=500,
-                reasoning_effort="disabled",
+                max_tokens=RELATION_SAME_FACT_MAX_TOKENS,
+                reasoning_effort="low",
                 use_cache=False,
             )
             gate = _parse_same_fact_gate(repaired)
@@ -1156,8 +1194,12 @@ class RelationDiscoveryService:
             if task == "kg_relation_candidate_screen"
             else RELATION_DISCOVERY_PIPELINE_VERSION
         )
-        provider_options = {}
+        provider_options: dict[str, Any] = {}
         if reasoning_effort != "disabled":
+            # GLM-5.3 requires thinking to remain enabled. Relation extraction
+            # is a bounded classification task, so use the lowest adaptive
+            # effort and preserve the remaining output budget for JSON.
+            provider_options["thinking_type"] = "enabled"
             provider_options["reasoning_effort"] = reasoning_effort
         request = LLMProxyRequest(
             model=model,

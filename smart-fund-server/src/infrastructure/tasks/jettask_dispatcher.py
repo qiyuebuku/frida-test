@@ -5,8 +5,10 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import logging
+from uuid import uuid4
 
 from jettask import Jettask, TaskMessage
+import redis.asyncio as async_redis
 
 from src.infrastructure.config.settings import JETTASK_PREFIX, REDIS_URL
 
@@ -22,6 +24,8 @@ KG_RELATION_DISCOVERY_MAX_RETRIES = 5
 KG_GRAPH_CHANGED_QUEUE = "kg_graph_changed"
 KG_GRAPH_CHANGED_TIMEOUT_SECONDS = 5000
 KG_GRAPH_CHANGED_MAX_RETRIES = 10
+KG_GRAPH_CHANGE_COALESCE_SECONDS = 3
+KG_GRAPH_CHANGE_BUFFER_TTL_SECONDS = 900
 KG_GRAPH_COMMUNITY_REPORT_QUEUE = "kg_graph_community_report"
 KG_GRAPH_COMMUNITY_PROJECTION_QUEUE = "kg_graph_community_projection"
 KG_GRAPH_COMMUNITY_DERIVATION_TIMEOUT_SECONDS = 1800
@@ -160,12 +164,20 @@ async def send_kg_graph_changed(
     card_ids = [item for item in dict.fromkeys(affected_card_ids) if str(item).strip()]
     if not edge_ids:
         return []
+    should_schedule = await buffer_kg_graph_change(
+        adapter_name=adapter_name,
+        changed_edge_ids=edge_ids,
+        affected_card_ids=card_ids,
+    )
+    if not should_schedule:
+        return []
+    batch_identity = f"kg_graph_batch:{uuid4().hex}"
     kwargs = {
         "adapter_name": adapter_name,
-        "changed_edge_ids": edge_ids,
-        "affected_card_ids": card_ids,
-        "changes": dict(changes),
-        "event_identity": event_identity,
+        "changed_edge_ids": [],
+        "affected_card_ids": [],
+        "changes": {"coalesced": True},
+        "event_identity": batch_identity,
     }
     identity = str(workflow_id or "").strip()
     if identity:
@@ -175,12 +187,103 @@ async def send_kg_graph_changed(
             TaskMessage(
                 queue=KG_GRAPH_CHANGED_QUEUE,
                 kwargs=kwargs,
+                delay=KG_GRAPH_CHANGE_COALESCE_SECONDS,
                 max_retries=KG_GRAPH_CHANGED_MAX_RETRIES,
                 timeout=KG_GRAPH_CHANGED_TIMEOUT_SECONDS,
             )
         ],
         queue=KG_GRAPH_CHANGED_QUEUE,
     )
+
+
+async def buffer_kg_graph_change(
+    *,
+    adapter_name: str,
+    changed_edge_ids: list[str],
+    affected_card_ids: list[str],
+) -> bool:
+    keys = _graph_change_buffer_keys(adapter_name)
+    client = async_redis.from_url(REDIS_URL, decode_responses=True)
+    try:
+        pipe = client.pipeline(transaction=True)
+        if changed_edge_ids:
+            pipe.sadd(keys["edges"], *changed_edge_ids)
+        if affected_card_ids:
+            pipe.sadd(keys["cards"], *affected_card_ids)
+        pipe.expire(keys["edges"], KG_GRAPH_CHANGE_BUFFER_TTL_SECONDS)
+        pipe.expire(keys["cards"], KG_GRAPH_CHANGE_BUFFER_TTL_SECONDS)
+        pipe.set(
+            keys["scheduled"],
+            "1",
+            ex=KG_GRAPH_CHANGE_BUFFER_TTL_SECONDS,
+            nx=True,
+        )
+        results = await pipe.execute()
+        return bool(results[-1])
+    finally:
+        await client.aclose()
+
+
+async def claim_kg_graph_change_batch(
+    *, adapter_name: str, batch_identity: str
+) -> tuple[list[str], list[str]]:
+    keys = _graph_change_buffer_keys(adapter_name, batch_identity=batch_identity)
+    client = async_redis.from_url(REDIS_URL, decode_responses=True)
+    script = """
+local function claim(active, processing, ttl)
+  if redis.call('EXISTS', processing) == 1 then
+    return redis.call('SMEMBERS', processing)
+  end
+  if redis.call('EXISTS', active) == 0 then return {} end
+  redis.call('RENAME', active, processing)
+  redis.call('EXPIRE', processing, ttl)
+  return redis.call('SMEMBERS', processing)
+end
+local edges = claim(KEYS[1], KEYS[3], ARGV[1])
+local cards = claim(KEYS[2], KEYS[4], ARGV[1])
+redis.call('DEL', KEYS[5])
+return {edges, cards}
+"""
+    try:
+        result = await client.eval(
+            script,
+            5,
+            keys["edges"],
+            keys["cards"],
+            keys["processing_edges"],
+            keys["processing_cards"],
+            keys["scheduled"],
+            KG_GRAPH_CHANGE_BUFFER_TTL_SECONDS,
+        )
+        return sorted(result[0] or []), sorted(result[1] or [])
+    finally:
+        await client.aclose()
+
+
+async def ack_kg_graph_change_batch(
+    *, adapter_name: str, batch_identity: str
+) -> None:
+    keys = _graph_change_buffer_keys(adapter_name, batch_identity=batch_identity)
+    client = async_redis.from_url(REDIS_URL, decode_responses=True)
+    try:
+        await client.delete(keys["processing_edges"], keys["processing_cards"])
+    finally:
+        await client.aclose()
+
+
+def _graph_change_buffer_keys(
+    adapter_name: str, *, batch_identity: str = ""
+) -> dict[str, str]:
+    adapter_digest = hashlib.sha256(adapter_name.encode("utf-8")).hexdigest()[:16]
+    batch_digest = hashlib.sha256(batch_identity.encode("utf-8")).hexdigest()[:16]
+    base = f"{JETTASK_PREFIX}:kg_graph_change:{adapter_digest}"
+    return {
+        "edges": f"{base}:edges",
+        "cards": f"{base}:cards",
+        "scheduled": f"{base}:scheduled",
+        "processing_edges": f"{base}:processing:{batch_digest}:edges",
+        "processing_cards": f"{base}:processing:{batch_digest}:cards",
+    }
 
 
 async def send_kg_graph_community_reports(

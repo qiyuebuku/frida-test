@@ -404,6 +404,7 @@ SCHEDULES = [
     # ── 盘后 ─────────────────────────────
     # jettask-rs 当前按 UTC 计算 cron；北京时间 15:30 对应 UTC 07:30。
     Schedule(name="collect_market_daily_bars_after_close", queue="collect_market_daily_bars", cron_expression="20 7 * * 1-5", description="板块、ETF、指数与商品日级数据 — 北京时间 15:20"),
+    Schedule(name="collect_market_daily_bars_evening_catchup", queue="collect_market_daily_bars", cron_expression="10 13 * * 1-5", description="板块、ETF、指数与商品日级数据补偿采集 — 北京时间 21:10（覆盖同花顺原生日 K 晚间发布）"),
     Schedule(name="collect_market_reference_after_close", queue="collect_market_reference_data", cron_expression="0 8 * * 1-5", description="板块、成分与 ETF 参考目录 — 北京时间 16:00"),
     Schedule(name="collect_market_valuation_1h", queue="collect_market_valuation", interval_seconds=3600, description="上证与深证市场 PE/PB 及同花顺估值阈值 — 每 1 小时追赶最新交易日"),
     Schedule(name="collect_bond_index_60s", queue="collect_bond_index", interval_seconds=60, description="中债指数及同花顺长短期国债主连 — 每 60 秒追赶当日行情"),

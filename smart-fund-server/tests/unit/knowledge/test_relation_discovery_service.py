@@ -29,6 +29,26 @@ from src.infrastructure.llm_proxy.types import LLMProxyResponse
 from src.infrastructure.vector_store.relation_candidate_store import RelationCardText
 
 
+def test_verification_budget_preserves_rank_and_caps_candidates(monkeypatch) -> None:
+    monkeypatch.setattr(settings, "KG_RELATION_VERIFY_MAX_CANDIDATES_PER_CARD", 2)
+    candidates = [
+        MergedRelationCandidate(
+            candidate_card_id=f"card:{index}",
+            candidate_summary=f"summary {index}",
+            candidate_published_at="2026-08-13",
+        )
+        for index in range(1, 5)
+    ]
+
+    selected, dropped = RelationDiscoveryService._select_verification_budget(
+        candidates,
+        related_candidate_ids=["card:4", "card:2", "card:3"],
+    )
+
+    assert selected == ["card:2", "card:3"]
+    assert dropped == ["card:4"]
+
+
 def _manifest(
     card_id: str,
     chunk_id: str,
@@ -534,7 +554,10 @@ async def test_same_fact_gate_downgrades_subset_relation_to_same_event() -> None
         "kg_same_fact_gate",
     ]
     gate_request = llm.requests[1]
-    assert gate_request.provider_options == {}
+    assert gate_request.provider_options == {
+        "thinking_type": "enabled",
+        "reasoning_effort": "low",
+    }
     assert json.loads(gate_request.prompt) == {
         "source_summary": "监管部门限制关键原材料出口。",
         "target_summary": "下游制造企业原材料库存下降。",
@@ -647,8 +670,18 @@ async def test_dual_view_recall_uses_summary_for_rerank_and_full_text_only_for_v
     assert "same_fact 必须满足双向完整等价" in verify_request.system_prompt
     assert "market_co_movement" in verify_request.system_prompt
     assert screen_request.metadata["_cache_key_metadata"]["pipeline_version"] == (
-        "relation_discovery_v2_edge_persistence"
+        "relation_discovery_v3_glm53_low_reasoning"
     )
+    assert screen_request.max_tokens == 16000
+    assert screen_request.provider_options == {
+        "thinking_type": "enabled",
+        "reasoning_effort": "low",
+    }
+    assert verify_request.max_tokens == 32000
+    assert verify_request.provider_options == {
+        "thinking_type": "enabled",
+        "reasoning_effort": "low",
+    }
     assert (
         verify_request.metadata["_cache_key_metadata"]["pipeline_version"]
         == RELATION_DISCOVERY_PIPELINE_VERSION

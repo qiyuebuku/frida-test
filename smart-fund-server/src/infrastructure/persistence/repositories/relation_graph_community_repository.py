@@ -5,8 +5,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime, timezone
 
-from sqlalchemy import delete, func, or_, select, update
-from sqlalchemy.dialects.postgresql import insert as pg_insert
+from sqlalchemy import and_, delete, func, or_, select, update
+from sqlalchemy.dialects.postgresql import array, insert as pg_insert
 
 from src.domain.knowledge.card_relation import RELATION_KINDS
 from src.domain.knowledge.atomic_cognitive_card import default_card_fact_id
@@ -16,6 +16,7 @@ from src.domain.knowledge.relation_graph_community import (
     RelationGraphCommunityComponent,
     RelationGraphCommunityRelation,
     RelationGraphEdge,
+    derive_community_relations_from_membership,
     project_edges_to_fact_representatives,
 )
 from src.infrastructure.connections import get_session
@@ -24,6 +25,7 @@ from src.infrastructure.persistence.models.knowledge import (
     KnowledgeCardRelation,
     KnowledgeCognitiveCard,
     KnowledgeGraphCommunity,
+    KnowledgeGraphCommunityMembership,
     KnowledgeGraphCommunityRelation,
 )
 
@@ -124,8 +126,6 @@ class RelationGraphCommunityRepository:
                 edges=(),
             )
 
-        pending_card_ids = set(seeds)
-        expanded_card_ids: set[str] = set()
         touched_communities: dict[str, KnowledgeGraphCommunity] = {}
         valid_edges: dict[str, RelationGraphEdge] = {}
         rejected_edge_ids: set[str] = set()
@@ -137,82 +137,90 @@ class RelationGraphCommunityRepository:
                 adapter_name=adapter,
                 card_ids=seeds,
             )
-            pending_card_ids.update(seed_representatives.values())
-            while True:
-                frontier = sorted(pending_card_ids - expanded_card_ids)
-                if not frontier:
-                    break
-                expanded_card_ids.update(frontier)
+            representative_seeds = set(seed_representatives.values()) | seeds
+            touched_ids = _community_ids_for_cards(
+                session,
+                adapter_name=adapter,
+                card_ids=representative_seeds,
+            )
 
-                for community in _load_communities_containing_cards(
+            # Unassigned/new seeds may directly bridge an existing Community.
+            # Inspect one incident hop only; never traverse existing cross-
+            # Community edges recursively.
+            seed_edges = _load_active_edges_touching_cards(
+                session,
+                card_ids=sorted(seeds),
+            )
+            direct_endpoint_ids = {
+                card_id
+                for edge in seed_edges
+                for card_id in (edge.source_card_id, edge.target_card_id)
+            }
+            direct_representatives = _fact_representatives_for_cards(
+                session,
+                adapter_name=adapter,
+                card_ids=direct_endpoint_ids,
+            )
+            touched_ids.update(
+                _community_ids_for_cards(
                     session,
                     adapter_name=adapter,
-                    card_ids=frontier,
-                ):
-                    if community.community_id in touched_communities:
-                        continue
-                    touched_communities[community.community_id] = community
-                    pending_card_ids.update(
-                        str(item).strip()
-                        for item in community.member_card_ids or []
-                        if str(item).strip()
-                    )
+                    card_ids=set(direct_representatives.values()),
+                )
+            )
+            touched_communities.update(
+                _load_communities_by_ids(
+                    session,
+                    adapter_name=adapter,
+                    community_ids=touched_ids,
+                )
+            )
 
-                edge_rows = list(
+            representative_scope = set(representative_seeds)
+            for community in touched_communities.values():
+                representative_scope.update(community.member_card_ids or [])
+            raw_scope = _raw_card_ids_for_representatives(
+                session,
+                adapter_name=adapter,
+                representative_card_ids=representative_scope,
+            )
+            edge_rows = _load_active_edges_within_cards(
+                session,
+                card_ids=raw_scope,
+            )
+            endpoint_ids = {
+                card_id
+                for edge in edge_rows
+                for card_id in (edge.source_card_id, edge.target_card_id)
+            }
+            if endpoint_ids:
+                rows = list(
                     session.scalars(
-                        select(KnowledgeCardRelation).where(
-                            KnowledgeCardRelation.status == "active",
-                            or_(
-                                KnowledgeCardRelation.source_card_id.in_(frontier),
-                                KnowledgeCardRelation.target_card_id.in_(frontier),
-                            ),
+                        select(KnowledgeCognitiveCard).where(
+                            KnowledgeCognitiveCard.cognitive_card_id.in_(endpoint_ids)
                         )
                     ).all()
                 )
-                endpoint_ids = {
-                    card_id
-                    for edge in edge_rows
-                    for card_id in (edge.source_card_id, edge.target_card_id)
-                }
-                missing_card_ids = sorted(endpoint_ids - set(card_cache))
-                if missing_card_ids:
-                    rows = list(
-                        session.scalars(
-                            select(KnowledgeCognitiveCard).where(
-                                KnowledgeCognitiveCard.cognitive_card_id.in_(
-                                    missing_card_ids
-                                )
-                            )
-                        ).all()
-                    )
-                    loaded = {row.cognitive_card_id: row for row in rows}
-                    for card_id in missing_card_ids:
-                        card_cache[card_id] = loaded.get(card_id)
-
-                for edge in edge_rows:
-                    if edge.id in valid_edges or edge.id in rejected_edge_ids:
-                        continue
-                    source = card_cache.get(edge.source_card_id)
-                    target = card_cache.get(edge.target_card_id)
-                    if not _is_valid_graph_edge(
-                        edge,
-                        source=source,
-                        target=target,
-                        adapter_name=adapter,
-                    ):
-                        rejected_edge_ids.add(edge.id)
-                        continue
-                    valid_edges[edge.id] = RelationGraphEdge(
-                        edge_id=edge.id,
-                        source_card_id=edge.source_card_id,
-                        target_card_id=edge.target_card_id,
-                        relation_kind=edge.relation_kind,
-                        decision_class=edge.decision_class,
-                        content_version=edge.content_version,
-                    )
-                    pending_card_ids.update(
-                        (edge.source_card_id, edge.target_card_id)
-                    )
+                card_cache.update({row.cognitive_card_id: row for row in rows})
+            for edge in edge_rows:
+                source = card_cache.get(edge.source_card_id)
+                target = card_cache.get(edge.target_card_id)
+                if not _is_valid_graph_edge(
+                    edge,
+                    source=source,
+                    target=target,
+                    adapter_name=adapter,
+                ):
+                    rejected_edge_ids.add(edge.id)
+                    continue
+                valid_edges[edge.id] = RelationGraphEdge(
+                    edge_id=edge.id,
+                    source_card_id=edge.source_card_id,
+                    target_card_id=edge.target_card_id,
+                    relation_kind=edge.relation_kind,
+                    decision_class=edge.decision_class,
+                    content_version=edge.content_version,
+                )
 
             representative_by_card = _fact_representatives_for_cards(
                 session,
@@ -279,6 +287,94 @@ class RelationGraphCommunityRepository:
             ),
         )
 
+    def load_full_graph(self, *, adapter_name: str) -> AffectedRelationGraph:
+        """Load a compact current graph for explicit offline reconciliation."""
+
+        adapter = str(adapter_name or "").strip()
+        if not adapter:
+            raise ValueError("Graph Community adapter_name 不能为空")
+        with get_session(self.target) as session:
+            card_rows = session.execute(
+                select(
+                    KnowledgeCognitiveCard.cognitive_card_id,
+                    KnowledgeCognitiveCard.fact_id,
+                    KnowledgeCognitiveCard.created_at,
+                ).where(
+                    KnowledgeCognitiveCard.adapter_name == adapter,
+                    KnowledgeCognitiveCard.status == "active",
+                )
+            ).all()
+            representative_by_fact: dict[str, str] = {}
+            for card_id, fact_id, _created_at in sorted(
+                card_rows,
+                key=lambda row: (row[2] is None, row[2], row[0]),
+            ):
+                representative_by_fact.setdefault(fact_id or card_id, card_id)
+            representative_by_card = {
+                card_id: representative_by_fact[fact_id or card_id]
+                for card_id, fact_id, _created_at in card_rows
+            }
+            edge_rows = session.execute(
+                select(
+                    KnowledgeCardRelation.id,
+                    KnowledgeCardRelation.source_card_id,
+                    KnowledgeCardRelation.target_card_id,
+                    KnowledgeCardRelation.relation_kind,
+                    KnowledgeCardRelation.decision_class,
+                    KnowledgeCardRelation.content_version,
+                ).where(KnowledgeCardRelation.status == "active")
+            ).all()
+            projected = project_edges_to_fact_representatives(
+                [
+                    RelationGraphEdge(
+                        edge_id=edge_id,
+                        source_card_id=source_card_id,
+                        target_card_id=target_card_id,
+                        relation_kind=relation_kind,
+                        decision_class=decision_class,
+                        content_version=content_version,
+                    )
+                    for (
+                        edge_id,
+                        source_card_id,
+                        target_card_id,
+                        relation_kind,
+                        decision_class,
+                        content_version,
+                    ) in edge_rows
+                    if source_card_id in representative_by_card
+                    and target_card_id in representative_by_card
+                    and relation_kind in RELATION_KINDS
+                    and decision_class in {"observed", "inferred"}
+                    and content_version
+                ],
+                representative_by_card_id=representative_by_card,
+            )
+            communities = list(
+                session.scalars(
+                    select(KnowledgeGraphCommunity).where(
+                        KnowledgeGraphCommunity.adapter_name == adapter,
+                        KnowledgeGraphCommunity.graph_status == "active",
+                    )
+                ).all()
+            )
+        return AffectedRelationGraph(
+            adapter_name=adapter,
+            seed_card_ids=(),
+            touched_community_ids=tuple(
+                sorted(item.community_id for item in communities)
+            ),
+            edges=tuple(sorted(projected, key=lambda item: item.edge_id)),
+            existing_communities=tuple(
+                ExistingRelationGraphCommunity(
+                    community_id=item.community_id,
+                    identity_anchor_card_id=item.identity_anchor_card_id,
+                    member_card_ids=tuple(item.member_card_ids or []),
+                )
+                for item in sorted(communities, key=lambda item: item.community_id)
+            ),
+        )
+
     def apply_components(
         self,
         *,
@@ -286,6 +382,7 @@ class RelationGraphCommunityRepository:
         touched_community_ids: list[str],
         components: list[RelationGraphCommunityComponent],
         community_relations: list[RelationGraphCommunityRelation] | None = None,
+        rebuild_boundary_relations: bool = True,
     ) -> GraphCommunityApplyResult:
         adapter = str(adapter_name or "").strip()
         desired_by_id = {item.community_id: item for item in components}
@@ -328,13 +425,9 @@ class RelationGraphCommunityRepository:
                     session.scalars(
                         select(KnowledgeGraphCommunityRelation).where(
                             KnowledgeGraphCommunityRelation.status == "active",
-                            or_(
-                                KnowledgeGraphCommunityRelation.source_community_id.in_(
-                                    scoped_ids
-                                ),
-                                KnowledgeGraphCommunityRelation.target_community_id.in_(
-                                    scoped_ids
-                                ),
+                            and_(
+                                KnowledgeGraphCommunityRelation.source_community_id.in_(scoped_ids),
+                                KnowledgeGraphCommunityRelation.target_community_id.in_(scoped_ids),
                             ),
                         )
                     ).all()
@@ -429,6 +522,40 @@ class RelationGraphCommunityRepository:
                     )
                 )
 
+            desired_memberships = [
+                {
+                    "adapter_name": adapter,
+                    "card_id": card_id,
+                    "community_id": component.community_id,
+                    "updated_at": now,
+                }
+                for component in components
+                for card_id in component.member_card_ids
+            ]
+            desired_card_ids = [item["card_id"] for item in desired_memberships]
+            membership_scope = []
+            if scoped_ids:
+                membership_scope.append(
+                    KnowledgeGraphCommunityMembership.community_id.in_(scoped_ids)
+                )
+            if desired_card_ids:
+                membership_scope.append(
+                    KnowledgeGraphCommunityMembership.card_id.in_(desired_card_ids)
+                )
+            if membership_scope:
+                session.execute(
+                    delete(KnowledgeGraphCommunityMembership).where(
+                        KnowledgeGraphCommunityMembership.adapter_name == adapter,
+                        or_(*membership_scope),
+                    )
+                )
+            if desired_memberships:
+                session.execute(
+                    pg_insert(KnowledgeGraphCommunityMembership).values(
+                        desired_memberships
+                    )
+                )
+
             changed_relation_values: list[dict] = []
             for relation_id, relation in desired_relations_by_id.items():
                 existing_relation = existing_relations_by_id.get(relation_id)
@@ -485,6 +612,64 @@ class RelationGraphCommunityRepository:
                     )
                 )
 
+            boundary_relations = (
+                _derive_boundary_community_relations(
+                    session,
+                    adapter_name=adapter,
+                    scoped_community_ids=set(scoped_ids),
+                    representative_card_ids=set(desired_card_ids),
+                )
+                if rebuild_boundary_relations
+                else list(desired_relations_by_id.values())
+            )
+            boundary_by_id = {
+                item.relation_id: item for item in boundary_relations
+            }
+            existing_boundary = list(
+                session.scalars(
+                    select(KnowledgeGraphCommunityRelation).where(
+                        KnowledgeGraphCommunityRelation.status == "active",
+                        or_(
+                            KnowledgeGraphCommunityRelation.source_community_id.in_(scoped_ids),
+                            KnowledgeGraphCommunityRelation.target_community_id.in_(scoped_ids),
+                        ),
+                    )
+                ).all()
+            ) if scoped_ids else []
+            obsolete_boundary_ids = sorted(
+                {row.id for row in existing_boundary} - set(boundary_by_id)
+            )
+            if obsolete_boundary_ids:
+                session.execute(
+                    delete(KnowledgeGraphCommunityRelation).where(
+                        KnowledgeGraphCommunityRelation.id.in_(obsolete_boundary_ids)
+                    )
+                )
+                deleted_relations.extend(obsolete_boundary_ids)
+            if boundary_relations:
+                boundary_insert = pg_insert(KnowledgeGraphCommunityRelation).values(
+                    [
+                        _community_relation_values(relation=item, now=now)
+                        for item in boundary_relations
+                    ]
+                )
+                session.execute(
+                    boundary_insert.on_conflict_do_update(
+                        index_elements=[KnowledgeGraphCommunityRelation.id],
+                        set_={
+                            "source_community_id": boundary_insert.excluded.source_community_id,
+                            "target_community_id": boundary_insert.excluded.target_community_id,
+                            "relation_kind": boundary_insert.excluded.relation_kind,
+                            "supporting_edge_ids": boundary_insert.excluded.supporting_edge_ids,
+                            "observed_edge_count": boundary_insert.excluded.observed_edge_count,
+                            "inferred_edge_count": boundary_insert.excluded.inferred_edge_count,
+                            "relation_fingerprint": boundary_insert.excluded.relation_fingerprint,
+                            "status": boundary_insert.excluded.status,
+                            "updated_at": now,
+                        },
+                    )
+                )
+
         return GraphCommunityApplyResult(
             created_community_ids=tuple(sorted(created)),
             updated_community_ids=tuple(sorted(updated)),
@@ -504,7 +689,6 @@ class RelationGraphCommunityRepository:
                 sorted(deleted_relations)
             ),
         )
-
     def load_derivation_snapshot(
         self,
         *,
@@ -1043,6 +1227,14 @@ class RelationGraphCommunityRepository:
             return bool(result.rowcount)
 
 
+def _ordered_unique(values) -> list[str]:
+    return [
+        item
+        for item in dict.fromkeys(str(value).strip() for value in values)
+        if item
+    ]
+
+
 def _load_communities_containing_cards(
     session,
     *,
@@ -1051,19 +1243,217 @@ def _load_communities_containing_cards(
 ) -> list[KnowledgeGraphCommunity]:
     if not card_ids:
         return []
-    predicates = [
-        KnowledgeGraphCommunity.member_card_ids.contains([card_id])
-        for card_id in card_ids
-    ]
     return list(
         session.scalars(
             select(KnowledgeGraphCommunity).where(
                 KnowledgeGraphCommunity.adapter_name == adapter_name,
                 KnowledgeGraphCommunity.graph_status == "active",
-                or_(*predicates),
+                KnowledgeGraphCommunity.member_card_ids.has_any(
+                    array(_ordered_unique(card_ids))
+                ),
             )
         ).all()
     )
+
+
+def _community_ids_for_cards(
+    session,
+    *,
+    adapter_name: str,
+    card_ids: set[str],
+) -> set[str]:
+    identities = sorted(card_ids)
+    if not identities:
+        return set()
+    membership_ids = set(
+        session.scalars(
+            select(KnowledgeGraphCommunityMembership.community_id).where(
+                KnowledgeGraphCommunityMembership.adapter_name == adapter_name,
+                KnowledgeGraphCommunityMembership.card_id.in_(identities),
+            )
+        ).all()
+    )
+    if membership_ids:
+        return membership_ids
+    # Migration compatibility only: once Membership is backfilled this path is
+    # not used by normal production refreshes.
+    return {
+        row.community_id
+        for row in _load_communities_containing_cards(
+            session,
+            adapter_name=adapter_name,
+            card_ids=identities,
+        )
+    }
+
+
+def _load_communities_by_ids(
+    session,
+    *,
+    adapter_name: str,
+    community_ids: set[str],
+) -> dict[str, KnowledgeGraphCommunity]:
+    if not community_ids:
+        return {}
+    rows = session.scalars(
+        select(KnowledgeGraphCommunity).where(
+            KnowledgeGraphCommunity.adapter_name == adapter_name,
+            KnowledgeGraphCommunity.graph_status == "active",
+            KnowledgeGraphCommunity.community_id.in_(sorted(community_ids)),
+        )
+    ).all()
+    return {row.community_id: row for row in rows}
+
+
+def _raw_card_ids_for_representatives(
+    session,
+    *,
+    adapter_name: str,
+    representative_card_ids: set[str],
+) -> list[str]:
+    if not representative_card_ids:
+        return []
+    representatives = list(
+        session.scalars(
+            select(KnowledgeCognitiveCard).where(
+                KnowledgeCognitiveCard.adapter_name == adapter_name,
+                KnowledgeCognitiveCard.status == "active",
+                KnowledgeCognitiveCard.cognitive_card_id.in_(
+                    sorted(representative_card_ids)
+                ),
+            )
+        ).all()
+    )
+    fact_ids = sorted({row.fact_id for row in representatives if row.fact_id})
+    if not fact_ids:
+        return sorted(representative_card_ids)
+    return list(
+        session.scalars(
+            select(KnowledgeCognitiveCard.cognitive_card_id).where(
+                KnowledgeCognitiveCard.adapter_name == adapter_name,
+                KnowledgeCognitiveCard.status == "active",
+                KnowledgeCognitiveCard.fact_id.in_(fact_ids),
+            )
+        ).all()
+    )
+
+
+def _load_active_edges_within_cards(
+    session,
+    *,
+    card_ids: list[str],
+    batch_size: int = 1_000,
+) -> list[KnowledgeCardRelation]:
+    identities = _ordered_unique(card_ids)
+    if not identities:
+        return []
+    allowed = set(identities)
+    edge_by_id: dict[str, KnowledgeCardRelation] = {}
+    for edge in _load_active_edges_touching_cards(
+        session,
+        card_ids=identities,
+        batch_size=batch_size,
+    ):
+        if edge.source_card_id in allowed and edge.target_card_id in allowed:
+            edge_by_id[edge.id] = edge
+    return [edge_by_id[edge_id] for edge_id in sorted(edge_by_id)]
+
+
+def _derive_boundary_community_relations(
+    session,
+    *,
+    adapter_name: str,
+    scoped_community_ids: set[str],
+    representative_card_ids: set[str],
+) -> list[RelationGraphCommunityRelation]:
+    if not scoped_community_ids or not representative_card_ids:
+        return []
+    raw_scope = _raw_card_ids_for_representatives(
+        session,
+        adapter_name=adapter_name,
+        representative_card_ids=representative_card_ids,
+    )
+    edge_rows = _load_active_edges_touching_cards(session, card_ids=raw_scope)
+    endpoint_ids = {
+        card_id
+        for edge in edge_rows
+        for card_id in (edge.source_card_id, edge.target_card_id)
+    }
+    representative_by_card = _fact_representatives_for_cards(
+        session,
+        adapter_name=adapter_name,
+        card_ids=endpoint_ids,
+    )
+    projected = project_edges_to_fact_representatives(
+        [
+            RelationGraphEdge(
+                edge_id=edge.id,
+                source_card_id=edge.source_card_id,
+                target_card_id=edge.target_card_id,
+                relation_kind=edge.relation_kind,
+                decision_class=edge.decision_class,
+                content_version=edge.content_version,
+            )
+            for edge in edge_rows
+            if edge.relation_kind in RELATION_KINDS
+            and edge.decision_class in {"observed", "inferred"}
+            and edge.content_version
+        ],
+        representative_by_card_id=representative_by_card,
+    )
+    projected_card_ids = {
+        card_id
+        for edge in projected
+        for card_id in (edge.source_card_id, edge.target_card_id)
+    }
+    memberships = session.execute(
+        select(
+            KnowledgeGraphCommunityMembership.card_id,
+            KnowledgeGraphCommunityMembership.community_id,
+        ).where(
+            KnowledgeGraphCommunityMembership.adapter_name == adapter_name,
+            KnowledgeGraphCommunityMembership.card_id.in_(projected_card_ids),
+        )
+    ).all()
+    community_by_card = {card_id: community_id for card_id, community_id in memberships}
+    return [
+        relation
+        for relation in derive_community_relations_from_membership(
+            edges=projected,
+            community_by_card=community_by_card,
+        )
+        if relation.source_community_id in scoped_community_ids
+        or relation.target_community_id in scoped_community_ids
+    ]
+
+
+def _load_active_edges_touching_cards(
+    session,
+    *,
+    card_ids: list[str],
+    batch_size: int = 1_000,
+) -> list[KnowledgeCardRelation]:
+    """Load incident edges through bounded, index-friendly endpoint scans."""
+
+    identities = _ordered_unique(card_ids)
+    if not identities:
+        return []
+    edge_by_id: dict[str, KnowledgeCardRelation] = {}
+    for offset in range(0, len(identities), batch_size):
+        batch = identities[offset : offset + batch_size]
+        for endpoint_column in (
+            KnowledgeCardRelation.source_card_id,
+            KnowledgeCardRelation.target_card_id,
+        ):
+            rows = session.scalars(
+                select(KnowledgeCardRelation).where(
+                    KnowledgeCardRelation.status == "active",
+                    endpoint_column.in_(batch),
+                )
+            ).all()
+            for row in rows:
+                edge_by_id[row.id] = row
+    return [edge_by_id[edge_id] for edge_id in sorted(edge_by_id)]
 
 
 def _fact_representatives_for_cards(

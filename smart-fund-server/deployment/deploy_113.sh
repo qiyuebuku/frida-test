@@ -358,6 +358,10 @@ install_production_config() {
     set_env_value "${plain_env}" "EMBEDDING_FILE_CACHE_DIR" "${DATA_DIR}/embedding_cache"
     set_env_value "${plain_env}" "LLM_PROXY_FILE_CACHE_DIR" "${DATA_DIR}/llm_proxy_cache"
     set_env_value "${plain_env}" "AICLIENT2API_LLM_BASE_URL" "http://127.0.0.1:3000/v1"
+    # Financial Agent uses the native OpenAI Responses route. GLM-5.3 keeps
+    # thinking enabled and the role-specific runtime selects low effort.
+    set_env_value "${plain_env}" "SMART_FUND_AGENT_LLM_BASE_URL" "http://127.0.0.1:3000/v1"
+    set_env_value "${plain_env}" "SMART_FUND_AGENT_MODEL" "glm-5.3"
     if [[ -f "${LOCAL_AICLIENT2API_ENV}" ]]; then
         copy_env_value \
             "${LOCAL_AICLIENT2API_ENV}" \
@@ -454,6 +458,11 @@ install_redis() {
         sudo_cmd "apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y redis-server tmux curl"
     fi
     sudo_cmd "systemctl enable --now redis-server"
+    # 生产数据集较大且写入频繁；默认 save 60 10000 会近乎每分钟全量生成 RDB。
+    # 保留 5/15 分钟快照，避免 BGSAVE 长时间周期性争用 CPU 与磁盘。
+    sudo_cmd "sed -i '/^save 60 10000$/d' /etc/redis/redis.conf"
+    ssh_cmd "REDISCLI_AUTH=\"\$(cat '${CONFIG_DIR}/redis-access.secret' 2>/dev/null || true)\" \
+        redis-cli -h 127.0.0.1 CONFIG SET save '900 1 300 10' | grep -q OK"
     ssh_cmd "REDISCLI_AUTH=\"\$(cat '${CONFIG_DIR}/redis-access.secret' 2>/dev/null || true)\" \
         redis-cli -h 127.0.0.1 ping | grep -q PONG"
     echo "系统依赖与 Redis 可用"
@@ -853,11 +862,14 @@ Group=${REMOTE_USER}
 WorkingDirectory=${SERVER_DIR}
 EnvironmentFile=${ENV_FILE}
 Environment=PYTHONUNBUFFERED=1
+Environment="PGOPTIONS=-c statement_timeout=300000"
 ExecStart=${PYTHON} -m src.interfaces.cli knowledge-worker --stage graph -c 1
 Restart=always
 RestartSec=5
 TimeoutStopSec=600
 KillSignal=SIGTERM
+MemoryMax=4G
+CPUQuota=100%
 UMask=0027
 StandardOutput=append:${LOG_DIR}/kg-graph.log
 StandardError=append:${LOG_DIR}/kg-graph.log
@@ -869,7 +881,7 @@ EOF
     cat > "${unit_dir}/${TARGET}" <<EOF
 [Unit]
 Description=Smart Fund Collection Stack
-Wants=${SVC_ETCD}.service ${SVC_MILVUS}.service ${SVC_API}.service ${SVC_PERSIST}.service ${SVC_SCHEDULER}.service ${SVC_WORKER_THS}.service ${SVC_WORKER_HTTP}.service ${SVC_WORKER_INTERNAL}.service ${SVC_THS_STREAM}.service ${SVC_KG_CARD}.service ${SVC_KG_RELATION}.service ${SVC_KG_GRAPH}.service
+Wants=${SVC_ETCD}.service ${SVC_MILVUS}.service ${SVC_API}.service ${SVC_PERSIST}.service ${SVC_SCHEDULER}.service ${SVC_WORKER_THS}.service ${SVC_WORKER_HTTP}.service ${SVC_WORKER_INTERNAL}.service ${SVC_THS_STREAM}.service ${SVC_KG_CARD}.service ${SVC_KG_RELATION}.service
 After=network-online.target
 
 [Install]
@@ -1021,9 +1033,8 @@ PY"
     wait_for_ths_command_broker
     sudo_cmd "systemctl start ${SVC_KG_CARD}.service"
     sudo_cmd "systemctl start ${SVC_KG_RELATION}.service"
-    sudo_cmd "systemctl start ${SVC_KG_GRAPH}.service"
     sudo_cmd "systemctl start ${TARGET}"
-    echo "全部服务已启动"
+    echo "核心服务已启动；KG Graph Worker 保持按需手动启动"
 }
 
 restart_all() {
@@ -1045,7 +1056,7 @@ restart_all() {
     wait_for_ths_command_broker
     sudo_cmd "systemctl restart ${SVC_KG_CARD}.service"
     sudo_cmd "systemctl restart ${SVC_KG_RELATION}.service"
-    sudo_cmd "systemctl restart ${SVC_KG_GRAPH}.service"
+    # KG Graph Worker 资源消耗较高，不随常规部署自动启动或重启。
 }
 
 show_status() {
