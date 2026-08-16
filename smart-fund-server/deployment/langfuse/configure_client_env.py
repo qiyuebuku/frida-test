@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Point the Smart Fund production environment at the local Langfuse."""
+"""Configure the explicit smart-fund-server project on local Langfuse."""
 
 from __future__ import annotations
 
@@ -62,11 +62,10 @@ def main() -> None:
     update_env(
         args.client_env,
         {
-            "LANGFUSE_PUBLIC_KEY": source["LANGFUSE_INIT_PROJECT_PUBLIC_KEY"],
-            "LANGFUSE_SECRET_KEY": source["LANGFUSE_INIT_PROJECT_SECRET_KEY"],
-            "LANGFUSE_BASE_URL": args.base_url.rstrip("/"),
-            "LANGFUSE_HOST": args.base_url.rstrip("/"),
-            "SMART_FUND_AGENT_LANGFUSE_ENABLED": "true",
+            "SMART_FUND_SERVER_LANGFUSE_PUBLIC_KEY": source["LANGFUSE_INIT_PROJECT_PUBLIC_KEY"],
+            "SMART_FUND_SERVER_LANGFUSE_SECRET_KEY": source["LANGFUSE_INIT_PROJECT_SECRET_KEY"],
+            "SMART_FUND_SERVER_LANGFUSE_BASE_URL": args.base_url.rstrip("/"),
+            "KG_LANGFUSE_ENABLED": "true",
         },
     )
 

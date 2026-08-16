@@ -375,6 +375,20 @@ install_production_config() {
     fi
     set_env_value "${plain_env}" "SKILL_DIR" "${FUND_TRADE_DIR}"
     set_env_value "${plain_env}" "SKILLS_DIR" "${REMOTE_SKILLS_DIR}"
+    copy_env_value \
+        "${LOCAL_ENV_FILE}" \
+        "${plain_env}" \
+        "SMART_FUND_AGENT_LANGFUSE_PUBLIC_KEY" \
+        "SMART_FUND_AGENT_LANGFUSE_PUBLIC_KEY"
+    copy_env_value \
+        "${LOCAL_ENV_FILE}" \
+        "${plain_env}" \
+        "SMART_FUND_AGENT_LANGFUSE_SECRET_KEY" \
+        "SMART_FUND_AGENT_LANGFUSE_SECRET_KEY"
+    set_env_value \
+        "${plain_env}" \
+        "SMART_FUND_AGENT_LANGFUSE_BASE_URL" \
+        "http://127.0.0.1:${LANGFUSE_WEB_PORT}"
 
     "${LOCAL_PYTHON}" - "${plain_env}" "${systemd_env}" <<'PY'
 from pathlib import Path

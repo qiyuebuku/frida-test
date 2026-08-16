@@ -153,18 +153,14 @@ class AgentSettings:
             langfuse_public_key=_first(
                 values,
                 "SMART_FUND_AGENT_LANGFUSE_PUBLIC_KEY",
-                "LANGFUSE_PUBLIC_KEY",
             ),
             langfuse_secret_key=_first(
                 values,
                 "SMART_FUND_AGENT_LANGFUSE_SECRET_KEY",
-                "LANGFUSE_SECRET_KEY",
             ),
             langfuse_base_url=_first(
                 values,
                 "SMART_FUND_AGENT_LANGFUSE_BASE_URL",
-                "LANGFUSE_BASE_URL",
-                "LANGFUSE_HOST",
                 default="",
             ).rstrip("/"),
             trace_sensitive_data=_as_bool(

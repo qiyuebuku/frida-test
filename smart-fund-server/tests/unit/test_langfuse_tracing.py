@@ -28,9 +28,9 @@ def test_client_is_pinned_to_self_hosted_endpoint(
         return client
 
     monkeypatch.setenv("KG_LANGFUSE_ENABLED", "true")
-    monkeypatch.setenv("LANGFUSE_BASE_URL", "http://127.0.0.1:3001/")
-    monkeypatch.setenv("LANGFUSE_PUBLIC_KEY", "pk-self-hosted")
-    monkeypatch.setenv("LANGFUSE_SECRET_KEY", "sk-self-hosted")
+    monkeypatch.setenv("SMART_FUND_SERVER_LANGFUSE_BASE_URL", "http://127.0.0.1:3001/")
+    monkeypatch.setenv("SMART_FUND_SERVER_LANGFUSE_PUBLIC_KEY", "pk-self-hosted")
+    monkeypatch.setenv("SMART_FUND_SERVER_LANGFUSE_SECRET_KEY", "sk-self-hosted")
     monkeypatch.setattr(langfuse_tracing, "_build_langfuse_client", fake_build)
 
     assert langfuse_tracing.langfuse_client_or_none() is client
@@ -74,9 +74,9 @@ def test_client_refuses_official_or_invalid_endpoint(
     base_url: str,
 ) -> None:
     monkeypatch.setenv("KG_LANGFUSE_ENABLED", "true")
-    monkeypatch.setenv("LANGFUSE_BASE_URL", base_url)
-    monkeypatch.setenv("LANGFUSE_PUBLIC_KEY", "pk")
-    monkeypatch.setenv("LANGFUSE_SECRET_KEY", "sk")
+    monkeypatch.setenv("SMART_FUND_SERVER_LANGFUSE_BASE_URL", base_url)
+    monkeypatch.setenv("SMART_FUND_SERVER_LANGFUSE_PUBLIC_KEY", "pk")
+    monkeypatch.setenv("SMART_FUND_SERVER_LANGFUSE_SECRET_KEY", "sk")
     monkeypatch.setattr(
         langfuse_tracing,
         "_build_langfuse_client",
@@ -86,7 +86,7 @@ def test_client_refuses_official_or_invalid_endpoint(
     assert langfuse_tracing.langfuse_client_or_none() is None
 
 
-def test_kg_endpoint_overrides_generic_langfuse_endpoint(
+def test_server_project_ignores_legacy_generic_langfuse_endpoint(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     captured: dict[str, str] = {}
@@ -96,10 +96,12 @@ def test_kg_endpoint_overrides_generic_langfuse_endpoint(
         return object()
 
     monkeypatch.setenv("KG_LANGFUSE_ENABLED", "true")
-    monkeypatch.setenv("KG_LANGFUSE_BASE_URL", "http://langfuse.internal:3000")
+    monkeypatch.setenv("SMART_FUND_SERVER_LANGFUSE_BASE_URL", "http://langfuse.internal:3000")
+    monkeypatch.setenv("SMART_FUND_SERVER_LANGFUSE_PUBLIC_KEY", "pk-server")
+    monkeypatch.setenv("SMART_FUND_SERVER_LANGFUSE_SECRET_KEY", "sk-server")
     monkeypatch.setenv("LANGFUSE_BASE_URL", "https://cloud.langfuse.com")
-    monkeypatch.setenv("LANGFUSE_PUBLIC_KEY", "pk")
-    monkeypatch.setenv("LANGFUSE_SECRET_KEY", "sk")
+    monkeypatch.setenv("LANGFUSE_PUBLIC_KEY", "pk-legacy")
+    monkeypatch.setenv("LANGFUSE_SECRET_KEY", "sk-legacy")
     monkeypatch.setattr(langfuse_tracing, "_build_langfuse_client", fake_build)
 
     assert langfuse_tracing.langfuse_client_or_none() is not None

@@ -1325,7 +1325,7 @@ def _settings_values() -> dict[str, str]:
     }
 
 
-def test_agent_langfuse_project_overrides_server_project() -> None:
+def test_agent_langfuse_uses_only_explicit_agent_project() -> None:
     values = {
         **_settings_values(),
         "SMART_FUND_AGENT_LANGFUSE_ENABLED": "true",
@@ -1342,6 +1342,23 @@ def test_agent_langfuse_project_overrides_server_project() -> None:
     assert resolved.langfuse_public_key == "pk-agent"
     assert resolved.langfuse_secret_key == "sk-agent"
     assert resolved.langfuse_base_url == "http://agent-langfuse:3001"
+
+
+def test_agent_langfuse_does_not_fall_back_to_legacy_generic_project() -> None:
+    values = {
+        **_settings_values(),
+        "SMART_FUND_AGENT_LANGFUSE_ENABLED": "true",
+        "LANGFUSE_PUBLIC_KEY": "pk-legacy",
+        "LANGFUSE_SECRET_KEY": "sk-legacy",
+        "LANGFUSE_BASE_URL": "https://cloud.langfuse.com",
+    }
+
+    resolved = AgentSettings.from_mapping(values)
+
+    assert resolved.langfuse_public_key == ""
+    assert resolved.langfuse_secret_key == ""
+    assert resolved.langfuse_base_url == ""
+    assert resolved.langfuse_configured is False
 
 
 def _hypotheses() -> list[CompetingHypothesis]:

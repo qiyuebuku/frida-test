@@ -38,7 +38,7 @@ def test_history_data_type_corrects_live_quote_type_for_canonical_index() -> Non
         == "ths_index_daily"
     )
     assert (
-        _history_data_type("ths:concept:886033", "sector_daily")
+        _history_data_type("ths:concept:886033", "ths_sector_quote")
         == "ths_sector_daily"
     )
 

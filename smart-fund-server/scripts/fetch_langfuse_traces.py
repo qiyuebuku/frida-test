@@ -31,6 +31,10 @@ DEFAULT_PAGE_SIZE = 100
 DEFAULT_TIMEOUT_SECONDS = 60
 DEFAULT_LOOKBACK_DAYS = 7
 DEFAULT_REQUEST_ATTEMPTS = 4
+PROJECT_ENV_PREFIXES = {
+    "agent": "SMART_FUND_AGENT_LANGFUSE",
+    "smart-fund-server": "SMART_FUND_SERVER_LANGFUSE",
+}
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_ENV_FILE = PROJECT_ROOT / ".env"
@@ -117,17 +121,23 @@ def load_env_file(path: Path) -> None:
         os.environ.setdefault(key.strip(), value.strip().strip('"').strip("'"))
 
 
-def client_from_env(*, env_file: Path, timeout: int = DEFAULT_TIMEOUT_SECONDS) -> LangfuseClient:
+def client_from_env(
+    *,
+    env_file: Path,
+    project: str,
+    timeout: int = DEFAULT_TIMEOUT_SECONDS,
+) -> LangfuseClient:
     load_env_file(env_file)
-    host = os.environ.get("LANGFUSE_BASE_URL") or os.environ.get("LANGFUSE_HOST")
-    public_key = os.environ.get("LANGFUSE_PUBLIC_KEY")
-    secret_key = os.environ.get("LANGFUSE_SECRET_KEY")
+    prefix = PROJECT_ENV_PREFIXES[project]
+    host = os.environ.get(f"{prefix}_BASE_URL")
+    public_key = os.environ.get(f"{prefix}_PUBLIC_KEY")
+    secret_key = os.environ.get(f"{prefix}_SECRET_KEY")
     missing = [
         name
         for name, value in {
-            "LANGFUSE_BASE_URL or LANGFUSE_HOST": host,
-            "LANGFUSE_PUBLIC_KEY": public_key,
-            "LANGFUSE_SECRET_KEY": secret_key,
+            f"{prefix}_BASE_URL": host,
+            f"{prefix}_PUBLIC_KEY": public_key,
+            f"{prefix}_SECRET_KEY": secret_key,
         }.items()
         if not value
     ]
@@ -366,6 +376,12 @@ def _safe_filename(value: str) -> str:
 
 def parse_args(argv: list[str]) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="从自建 Langfuse v4 下载观测记录并重建 Trace（链路）。")
+    parser.add_argument(
+        "--project",
+        required=True,
+        choices=tuple(PROJECT_ENV_PREFIXES),
+        help="必须明确选择 agent 或 smart-fund-server 项目，禁止使用模糊默认项目。",
+    )
     mode = parser.add_mutually_exclusive_group()
     mode.add_argument("--trace-id", help="按 ID 下载一条完整 Trace（链路）。")
     mode.add_argument("--session-id", help="下载一个 Session（会话）中的全部 Trace（链路）。")
@@ -383,7 +399,11 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
 
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv or sys.argv[1:])
-    client = client_from_env(env_file=args.env_file, timeout=args.timeout)
+    client = client_from_env(
+        env_file=args.env_file,
+        project=args.project,
+        timeout=args.timeout,
+    )
     if args.trace_id:
         trace_file = download_trace(
             client, trace_id=args.trace_id, out_dir=args.out_dir,

@@ -674,15 +674,12 @@ def _history_data_type(code: str, data_type: str) -> str:
     semantic instead of making the model memorize storage implementation names.
     """
 
-    if code.startswith("cn:index:") and data_type in {
-        "ths_cn_index_quote",
-        "index_daily",
-    }:
+    if code.startswith("cn:index:") and data_type == "ths_cn_index_quote":
         return "ths_index_daily"
-    if code.startswith(("ths:concept:", "ths:industry:")) and data_type in {
-        "sector_daily",
-        "ths_sector_quote",
-    }:
+    if (
+        code.startswith(("ths:concept:", "ths:industry:"))
+        and data_type == "ths_sector_quote"
+    ):
         return "ths_sector_daily"
     return data_type
 

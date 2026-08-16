@@ -4,6 +4,8 @@ import json
 import sys
 from pathlib import Path
 
+import pytest
+
 
 SCRIPT_PATH = Path(__file__).resolve().parents[2] / "scripts" / "fetch_langfuse_traces.py"
 
@@ -52,6 +54,32 @@ class _FakeLangfuseClient:
             }],
             "meta": {"cursor": "page_2"},
         }
+
+
+def test_client_configuration_requires_explicit_project_prefix(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    module = _load_script_module()
+    monkeypatch.setenv("SMART_FUND_AGENT_LANGFUSE_BASE_URL", "http://agent:3001")
+    monkeypatch.setenv("SMART_FUND_AGENT_LANGFUSE_PUBLIC_KEY", "pk-agent")
+    monkeypatch.setenv("SMART_FUND_AGENT_LANGFUSE_SECRET_KEY", "sk-agent")
+    monkeypatch.setenv("LANGFUSE_BASE_URL", "https://cloud.langfuse.com")
+    monkeypatch.setenv("LANGFUSE_PUBLIC_KEY", "pk-legacy")
+    monkeypatch.setenv("LANGFUSE_SECRET_KEY", "sk-legacy")
+
+    client = module.client_from_env(
+        env_file=tmp_path / "missing.env",
+        project="agent",
+    )
+
+    assert client._host == "http://agent:3001"
+
+
+def test_trace_cli_requires_project() -> None:
+    module = _load_script_module()
+    with pytest.raises(SystemExit):
+        module.parse_args(["--session-id", "session_1"])
 
 
 def test_download_latest_session_writes_reconstructed_trace_files(tmp_path):

@@ -24,12 +24,10 @@ def langfuse_client_or_none() -> Any | None:
     if not langfuse_enabled():
         return None
     base_url = (
-        os.getenv("KG_LANGFUSE_BASE_URL", "").strip()
-        or os.getenv("LANGFUSE_BASE_URL", "").strip()
-        or os.getenv("LANGFUSE_HOST", "").strip()
-    ).rstrip("/")
-    public_key = os.getenv("LANGFUSE_PUBLIC_KEY", "").strip()
-    secret_key = os.getenv("LANGFUSE_SECRET_KEY", "").strip()
+        os.getenv("SMART_FUND_SERVER_LANGFUSE_BASE_URL", "").strip().rstrip("/")
+    )
+    public_key = os.getenv("SMART_FUND_SERVER_LANGFUSE_PUBLIC_KEY", "").strip()
+    secret_key = os.getenv("SMART_FUND_SERVER_LANGFUSE_SECRET_KEY", "").strip()
     if not base_url or not public_key or not secret_key:
         logger.error(
             "KG Langfuse is enabled but self-hosted client configuration is incomplete"
