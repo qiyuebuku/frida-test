@@ -6155,6 +6155,27 @@ public class MainHook {
             Log.w(TAG, "r9h.o hook failed: " + e.getMessage());
         }
 
+        // 响应分发枢纽：native → receive → CommunicationService.notifyDataReceived
+        // → hrv.b（SocketConnectionPool 帧解析）→ 页面观察者
+        try {
+            Class<?> commSvc = cl.loadClass("com.hexin.plat.android.CommunicationService");
+            Method notify = commSvc.getDeclaredMethod("notifyDataReceived",
+                    byte[].class, int.class, int.class);
+            notify.setAccessible(true);
+            Pine.hook(notify, new MethodHook() {
+                @Override
+                public void beforeCall(Pine.CallFrame callFrame) {
+                    String logMsg = "TradeRecv.notifyDataReceived args="
+                            + describeTradeArguments(callFrame.args);
+                    Log.i(TAG, logMsg);
+                    addTradeLog(logMsg);
+                }
+            });
+            Log.i(TAG, "notifyDataReceived dispatch hook installed");
+        } catch (Throwable e) {
+            Log.w(TAG, "notifyDataReceived hook failed: " + e.getMessage());
+        }
+
         boolean anyFailure = false;
         Log.i(TAG, "Found MasterModuleBridge class!");
         for (Method m : bridgeClass.getDeclaredMethods()) {
@@ -6846,9 +6867,12 @@ public class MainHook {
 
                         // 如果是加密操作，记录明文输入
                         if (isEncrypt && cipherRateLimitCheck()) {
+                            // 只提取 cmd 命令名（结构信息），不记录任何业务值
+                            String tradeCmd = extractTradeCommand(inputStr);
                             Log.i(TAG, "CIPHER_ENCRYPT: algo=" + ctx.algorithm +
                                 " inputLen=" + input.length +
-                                " outputLen=" + output.length);
+                                " outputLen=" + output.length +
+                                (tradeCmd == null ? "" : " cmd=" + tradeCmd));
 
                             // 打印明文输入（可能是交易参数）
                             String preview = inputStr.length() > 500 ? inputStr.substring(0, 500) + "..." : inputStr;
