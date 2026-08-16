@@ -990,6 +990,29 @@ def test_submit_boundary_normalizes_instrument_expression_evidence_layers() -> N
     ]
 
 
+def test_submit_boundary_normalizes_pluralized_hypothesis_ids_key() -> None:
+    normalized = _normalize_provider_proposal({
+        "evidence_plan": [{
+            "plan_item_id": "p1",
+            "hypotheses_ids": ["H1", "H2"],
+            "layer": "history",
+        }],
+        "view_revisions": [{
+            "evidence_plan": [{
+                "plan_item_id": "p2",
+                "hypotheses_ids": ["H1"],
+                "layer": "object",
+            }],
+        }],
+    })
+
+    assert normalized["evidence_plan"][0]["hypothesis_ids"] == ["H1", "H2"]
+    assert "hypotheses_ids" not in normalized["evidence_plan"][0]
+    assert normalized["view_revisions"][0]["evidence_plan"][0][
+        "hypothesis_ids"
+    ] == ["H1"]
+
+
 def test_submit_boundary_removes_only_mixed_unknown_hypothesis_ids() -> None:
     normalized = _normalize_provider_proposal({
         "hypotheses": [

@@ -409,6 +409,14 @@ def _normalize_provider_proposal(value: object) -> object:
         for plan in container.get("evidence_plan") or []:
             if not isinstance(plan, dict):
                 continue
+            if "hypothesis_ids" not in plan and isinstance(
+                plan.get("hypotheses_ids"),
+                list,
+            ):
+                # GLM occasionally pluralizes both words in this field.  The
+                # list contents already express the model's decision; fixing
+                # the key spelling is protocol normalization, not research.
+                plan["hypothesis_ids"] = plan.pop("hypotheses_ids")
             layer = plan.get("layer")
             if isinstance(layer, str):
                 plan["layer"] = evidence_layer_aliases.get(
