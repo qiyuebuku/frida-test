@@ -6186,10 +6186,12 @@ public class MainHook {
             Pine.hook(gMethod, new MethodHook() {
                 @Override
                 public void beforeCall(Pine.CallFrame callFrame) {
-                    addTradeLog("TradeQuery.G pageId=" + callFrame.args[0]
+                    String logMsg = "TradeQuery.G pageId=" + callFrame.args[0]
                             + " protocolId=" + callFrame.args[1]
                             + " observer=" + callFrame.args[2]
-                            + " ext=" + describeTradeValue(callFrame.args[3]));
+                            + " ext=" + describeTradeValue(callFrame.args[3]);
+                    Log.i(TAG, logMsg);
+                    addTradeLog(logMsg);
                 }
             });
             Class<?> imvClass = cl.loadClass("imv");
@@ -6198,9 +6200,11 @@ public class MainHook {
             Pine.hook(hMethod, new MethodHook() {
                 @Override
                 public void beforeCall(Pine.CallFrame callFrame) {
-                    addTradeLog("TradeQuery.H pageId=" + callFrame.args[0]
+                    String logMsg = "TradeQuery.H pageId=" + callFrame.args[0]
                             + " protocolId=" + callFrame.args[1]
-                            + " params=" + describeTradeValue(callFrame.args[3]));
+                            + " params=" + describeTradeValue(callFrame.args[3]);
+                    Log.i(TAG, logMsg);
+                    addTradeLog(logMsg);
                 }
             });
             Method dMethod = rpvClass.getDeclaredMethod("D", String.class, Object.class);
@@ -6210,12 +6214,54 @@ public class MainHook {
                 public void beforeCall(Pine.CallFrame callFrame) {
                     String key = (String) callFrame.args[0];
                     String valueShape = key + ":" + describeTradeValue(callFrame.args[1]);
+                    Log.i(TAG, "TradeQuery.D param=" + valueShape);
                     addTradeLog("TradeQuery.D param=" + valueShape);
                 }
             });
             Log.i(TAG, "rpv query-builder hooks installed");
         } catch (Throwable e) {
             Log.w(TAG, "rpv query-builder hook failed: " + e.getMessage());
+        }
+
+        // 响应观察者有两套独立体系，都挂上：
+        // 1) ixm（sxh/fyh/rtl 继承）：receive → 抽象 a(StuffBaseStruct)
+        // 2) nxm implements jmv（pxm 当日委托等的父类）：自带 receive，内部按
+        //    c=pageId/d=protocolId 分发，StuffTableStruct → Handler → i() 解析
+        // 记录观察者类名与响应 schema：pageId/frameId、tableHead 列名、行数列数
+        // ——不记录单元格值。
+        try {
+            Class<?> stuffBaseClass = cl.loadClass("com.hexin.middleware.data.StuffBaseStruct");
+            Method receiveMethod = cl.loadClass("ixm").getDeclaredMethod("receive", stuffBaseClass);
+            receiveMethod.setAccessible(true);
+            Pine.hook(receiveMethod, new MethodHook() {
+                @Override
+                public void beforeCall(Pine.CallFrame callFrame) {
+                    String logMsg = "TradeResp.ixm observer="
+                            + (callFrame.thisObject == null ? "static" : callFrame.thisObject.getClass().getName())
+                            + " stuff=" + describeStuffStruct(callFrame.args[0]);
+                    Log.i(TAG, logMsg);
+                    addTradeLog(logMsg);
+                }
+            });
+            Log.i(TAG, "ixm.receive response-observer hook installed");
+
+            Class<?> nxmClass = cl.loadClass("nxm");
+            Method nxmReceive = nxmClass.getDeclaredMethod("receive", stuffBaseClass);
+            nxmReceive.setAccessible(true);
+            Pine.hook(nxmReceive, new MethodHook() {
+                @Override
+                public void beforeCall(Pine.CallFrame callFrame) {
+                    String logMsg = "TradeResp.nxm observer="
+                            + (callFrame.thisObject == null ? "static" : callFrame.thisObject.getClass().getName())
+                            + describeObserverIds(callFrame.thisObject)
+                            + " stuff=" + describeStuffStruct(callFrame.args[0]);
+                    Log.i(TAG, logMsg);
+                    addTradeLog(logMsg);
+                }
+            });
+            Log.i(TAG, "nxm.receive response-observer hook installed");
+        } catch (Throwable e) {
+            Log.w(TAG, "response-observer hook failed: " + e.getMessage());
         }
 
         boolean anyFailure = false;
@@ -6536,6 +6582,83 @@ public class MainHook {
             result.append(describeTradeValue(args[i]));
         }
         return result.append(']').toString();
+    }
+
+    /** nxm-family observers carry c=pageId/d=protocolId instance fields; surface
+     *  them so responses can be matched to the rpv query catalog without values. */
+    private static String describeObserverIds(Object observer) {
+        if (observer == null) return "";
+        try {
+            java.lang.reflect.Field pageIdF = findFieldInHierarchy(observer.getClass(), "c");
+            java.lang.reflect.Field protoF = findFieldInHierarchy(observer.getClass(), "d");
+            if (pageIdF == null || protoF == null) return "";
+            pageIdF.setAccessible(true);
+            protoF.setAccessible(true);
+            return " query(pageId=" + pageIdF.getInt(observer)
+                    + ",protocolId=" + protoF.getInt(observer) + ")";
+        } catch (Throwable e) {
+            return "";
+        }
+    }
+
+    private static java.lang.reflect.Field findFieldInHierarchy(Class<?> clazz, String name) {
+        for (Class<?> c = clazz; c != null; c = c.getSuperclass()) {
+            try {
+                return c.getDeclaredField(name);
+            } catch (NoSuchFieldException ignored) {
+            }
+        }
+        return null;
+    }
+
+    /** StuffBaseStruct/StuffTableStruct schema description: header ids, column names,
+     *  row/col counts. Cell values in dataTable must never enter logs. */
+    private static String describeStuffStruct(Object stuff) {
+        if (stuff == null) return "null";
+        try {
+            Class<?> c = stuff.getClass();
+            StringBuilder sb = new StringBuilder(c.getSimpleName());
+            sb.append("{pageId=").append(c.getField("pageId").getInt(stuff))
+                    .append(",frameId=").append(c.getField("frameId").getInt(stuff))
+                    .append(",packageId=").append(c.getField("packageId").getInt(stuff))
+                    .append(",headType=").append(c.getField("headType").getInt(stuff))
+                    .append(",real=").append(c.getField("isRealData").getBoolean(stuff));
+            if (c.getName().equals("com.hexin.middleware.data.mobile.StuffTableStruct")) {
+                String[] head = (String[]) c.getField("tableHead").get(stuff);
+                int row = c.getField("row").getInt(stuff);
+                int col = c.getField("col").getInt(stuff);
+                java.util.Hashtable<?, ?> dataTable =
+                        (java.util.Hashtable<?, ?>) c.getField("dataTable").get(stuff);
+                String caption = (String) c.getField("caption").get(stuff);
+                sb.append(",type=table,row=").append(row)
+                        .append(",col=").append(col)
+                        .append(",rows=").append(dataTable == null ? 0 : dataTable.size())
+                        .append(",caption=").append(caption == null ? "" : caption)
+                        .append(",head=").append(head == null ? "[]" : java.util.Arrays.toString(head));
+            } else if (c.getName().equals("com.hexin.middleware.data.mobile.StuffTextStruct")) {
+                // Text responses are page prompts (e.g. "no data"), not account rows:
+                // record reCode/id/type plus a short content prefix to identify semantics.
+                int reCode = c.getField("reCode").getInt(stuff);
+                int textId = c.getField("id").getInt(stuff);
+                int textType = c.getField("type").getInt(stuff);
+                String caption = (String) c.getField("caption").get(stuff);
+                String content = (String) c.getField("content").get(stuff);
+                String prefix = content == null ? "" : content.replaceAll("\\s+", " ").trim();
+                if (prefix.length() > 48) prefix = prefix.substring(0, 48) + "...";
+                sb.append(",type=text,reCode=").append(reCode)
+                        .append(",id=").append(textId)
+                        .append(",ttype=").append(textType)
+                        .append(",caption=").append(caption == null ? "" : caption)
+                        .append(",contentLen=").append(content == null ? 0 : content.length())
+                        .append(",contentPrefix=").append(prefix);
+            } else {
+                sb.append(",type=").append(c.getSimpleName());
+            }
+            sb.append('}');
+            return sb.toString();
+        } catch (Throwable e) {
+            return stuff.getClass().getName() + "(describe failed: " + e + ")";
+        }
     }
 
     /** Returns shape-only diagnostics. Values and credentials must never enter logs. */

@@ -93,3 +93,6 @@ trace-*.json
 /.pytest-tmp.*/
 
 18tv/video
+
+# THS zygisk 构建产物（每次 assembleDebug 重新生成；真 Pine dex 在 vendor/，勿用 extracted/ 部署）
+/ths/zygisk/extracted/

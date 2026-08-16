@@ -3,8 +3,10 @@
 #include <cerrno>
 #include <string>
 #include <vector>
+#include <algorithm>
 #include <unistd.h>
 #include <fcntl.h>
+#include <dirent.h>
 #include <sys/stat.h>
 #include <sys/mman.h>
 #include <android/log.h>
@@ -119,9 +121,15 @@ public:
 
         LOGI("postAppSpecialize: loading Pine and hook DEX");
 
-        // Files: [0] = classes.dex, [1] = classes2.dex, [2] = classes3.dex, [3] = libpine.so
-        if (files.size() < 4) {
-            LOGE("Expected 4 files, got %zu", files.size());
+        // Companion guarantees ordering: [0..n-1] = *.dex (sorted), [n] = libpine.so.
+        // DEX count varies between builds (incremental dexing may emit classes4+.dex).
+        if (files.size() < 2) {
+            LOGE("Expected >=2 files (>=1 dex + libpine.so), got %zu", files.size());
+            return;
+        }
+        size_t dexCount = files.size() - 1;
+        if (files.back().data.empty()) {
+            LOGE("libpine.so missing/empty on companion side");
             return;
         }
 
@@ -139,17 +147,17 @@ public:
                 return;
             }
         }
-        write_full(fd, files[3].data.data(), files[3].data.size());
+        write_full(fd, files.back().data.data(), files.back().data.size());
         close(fd);
         LOGI("libpine.so written to %s", pine_so_path.c_str());
 
         // Step 2: Create InMemoryDexClassLoader
         jclass byteBufferClass = env->FindClass("java/nio/ByteBuffer");
-        jobjectArray dexBuffers = env->NewObjectArray(3, byteBufferClass, nullptr);
+        jobjectArray dexBuffers = env->NewObjectArray((jsize) dexCount, byteBufferClass, nullptr);
 
-        for (int i = 0; i < 3; i++) {
+        for (size_t i = 0; i < dexCount; i++) {
             jobject buf = env->NewDirectByteBuffer(files[i].data.data(), files[i].data.size());
-            env->SetObjectArrayElement(dexBuffers, i, buf);
+            env->SetObjectArrayElement(dexBuffers, (jsize) i, buf);
         }
 
         jclass imClsLoaderClass = env->FindClass("dalvik/system/InMemoryDexClassLoader");
@@ -255,40 +263,86 @@ private:
 static void companion_handler(int fd) {
     const char *dex_dir = "/data/adb/modules/thshook_zygisk/dex";
 
-    const char *file_names[] = {
-        "classes.dex",
-        "classes2.dex",
-        "classes3.dex",
-        "libpine.so"
-    };
-    int32_t file_count = 4;
+    // Enumerate module dir dynamically: sorted *.dex first, libpine.so last.
+    // DEX count varies between builds (incremental dexing may emit classes4+.dex).
+    // Plain C arrays + insertion sort on purpose: ZygiskNext reserves a small
+    // address window for module dlopen, so the .so must stay tiny (no
+    // std::vector<std::string>/std::sort template bloat).
+    static const int MAX_DEX_FILES = 32;
+    char dex_names[MAX_DEX_FILES][64];
+    int dex_count = 0;
+    bool has_pine = false;
+    DIR *dir = opendir(dex_dir);
+    if (dir != nullptr) {
+        struct dirent *de;
+        while ((de = readdir(dir)) != nullptr) {
+            const char *name = de->d_name;
+            if (strcmp(name, ".") == 0 || strcmp(name, "..") == 0) continue;
+            if (strcmp(name, "libpine.so") == 0) {
+                has_pine = true;
+                continue;
+            }
+            if (dex_count < MAX_DEX_FILES) {
+                strncpy(dex_names[dex_count], name, 63);
+                dex_names[dex_count][63] = '\0';
+                dex_count++;
+            }
+        }
+        closedir(dir);
+    } else {
+        LOGE("Companion: opendir %s failed (errno=%d)", dex_dir, errno);
+    }
+    for (int i = 1; i < dex_count; i++) {
+        char key[64];
+        strncpy(key, dex_names[i], sizeof(key));
+        int j = i - 1;
+        while (j >= 0 && strcmp(dex_names[j], key) > 0) {
+            strncpy(dex_names[j + 1], dex_names[j], sizeof(dex_names[j + 1]));
+            j--;
+        }
+        strncpy(dex_names[j + 1], key, sizeof(dex_names[j + 1]));
+    }
 
+    int32_t file_count = dex_count + (has_pine ? 1 : 0);
     write_full(fd, &file_count, 4);
 
-    for (int i = 0; i < file_count; i++) {
-        char path[256];
-        snprintf(path, sizeof(path), "%s/%s", dex_dir, file_names[i]);
+    auto send_file = [&](const char *name) {
+        char path[512];
+        snprintf(path, sizeof(path), "%s/%s", dex_dir, name);
 
         int file_fd = open(path, O_RDONLY);
         if (file_fd < 0) {
-            __android_log_print(ANDROID_LOG_ERROR, LOG_TAG, "Companion: failed to open %s", path);
+            LOGE("Companion: failed to open %s", path);
             int32_t size = 0;
             write_full(fd, &size, 4);
-            continue;
+            return;
         }
 
         struct stat st;
         fstat(file_fd, &st);
-        int32_t size = (int32_t)st.st_size;
+        int32_t size = (int32_t) st.st_size;
 
         write_full(fd, &size, 4);
 
-        std::vector<uint8_t> buf(size);
-        read_full(file_fd, buf.data(), size);
-        write_full(fd, buf.data(), size);
+        if (size > 0) {
+            std::vector<uint8_t> buf(size);
+            read_full(file_fd, buf.data(), size);
+            write_full(fd, buf.data(), size);
+        }
         close(file_fd);
 
-        __android_log_print(ANDROID_LOG_INFO, LOG_TAG, "Companion: sent %s (%d bytes)", file_names[i], size);
+        LOGI("Companion: sent %s (%d bytes)", name, size);
+    };
+
+    for (int i = 0; i < dex_count; i++) {
+        send_file(dex_names[i]);
+    }
+    if (has_pine) {
+        send_file("libpine.so");
+    } else {
+        LOGE("Companion: libpine.so not found in %s", dex_dir);
+        int32_t size = 0;
+        write_full(fd, &size, 4);
     }
 }
 
