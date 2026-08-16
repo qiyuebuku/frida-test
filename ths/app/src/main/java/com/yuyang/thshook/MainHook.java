@@ -55,6 +55,7 @@ public class MainHook {
 
     private static final String TAG = "THSHook";
     private static volatile boolean hooksInstalled = false;
+    private static volatile long lastWithdrawClickMs = 0; // 撤单诊断：确认撤单点击时刻
     private static volatile ClassLoader appClassLoader = null;
     private static volatile Application appInstance = null;
     private static volatile boolean webViewBridgeResolverHooked = false;
@@ -86,6 +87,11 @@ public class MainHook {
     private static final ConcurrentHashMap<Integer, int[]> capturedQueryPageIds =
             new ConcurrentHashMap<>();
     private static final ConcurrentHashMap<Integer, String> capturedQueryParams =
+            new ConcurrentHashMap<>();
+    // 写交易协议（买入/卖出/撤单/转账）的完整请求捕获。key = "pageId_protocolId"，
+    // value = 完整 params（含 source 签名后缀）。股票代码/价格/数量 + 固定签名，
+    // 无账户凭据；仅供逆向分析与端点构造参考。
+    private static final ConcurrentHashMap<String, String> capturedWriteRequests =
             new ConcurrentHashMap<>();
     private static final AtomicBoolean proxyServerStarted = new AtomicBoolean(false);
     private static final AtomicInteger realtimeStreamSessions = new AtomicInteger(0);
@@ -1173,6 +1179,48 @@ public class MainHook {
             // GET /stock/trade/logs — 获取最近的交易日志
             if (requestLine.startsWith("GET /stock/trade/logs")) {
                 String result = getRecentTradeLogs();
+                sendResponse(out, 200, result);
+                client.close();
+                return;
+            }
+
+            // GET /stock/trade/write-captures — 导出写协议（买/卖/撤单/转账）捕获的
+            // 完整请求参数（含 source 签名），以及各查询协议当前缓存的 params。
+            if (requestLine.startsWith("GET /stock/trade/write-captures")) {
+                String result = getTradeWriteCaptures();
+                sendResponse(out, 200, result);
+                client.close();
+                return;
+            }
+
+            // POST /stock/trade/order — 买卖委托执行器（真实下单，confirm=true 必填）
+            if (requestLine.startsWith("POST /stock/trade/order")) {
+                String result = handleTradeOrder(body);
+                sendResponse(out, 200, result);
+                client.close();
+                return;
+            }
+
+            // POST /stock/trade/cancel — 撤单执行器（v3p 协议 25102，真机已验证：
+            // 撤 1401/1404 成功、假单号返回券商业务错误 250001）
+            if (requestLine.startsWith("POST /stock/trade/cancel")) {
+                String result = handleTradeCancel(body);
+                sendResponse(out, 200, result);
+                client.close();
+                return;
+            }
+
+            // GET /stock/trade/transfer/banks — 存管银行列表（只读）
+            if (requestLine.startsWith("GET /stock/trade/transfer/banks")) {
+                String result = handleTransferBanks();
+                sendResponse(out, 200, result);
+                client.close();
+                return;
+            }
+
+            // POST /stock/trade/transfer — 银证转账转入（源码参数，未重放验证）
+            if (requestLine.startsWith("POST /stock/trade/transfer")) {
+                String result = handleTradeTransfer(body);
                 sendResponse(out, 200, result);
                 client.close();
                 return;
@@ -4403,7 +4451,12 @@ public class MainHook {
             }
             return sb.toString();
         }
-        return null;
+        // 非引号值（true/false/数字）：读原始 token（支持 "confirm":true 裸布尔）
+        int end = idx;
+        while (end < json.length() && json.charAt(end) != ',' && json.charAt(end) != '}'
+                && json.charAt(end) != '\n' && json.charAt(end) != '\r') end++;
+        String raw = json.substring(idx, end).trim();
+        return raw.isEmpty() ? null : raw;
     }
 
     /**
@@ -6185,6 +6238,22 @@ public class MainHook {
                     String logMsg = "TradeSend.r9h.o args=" + describeTradeArguments(callFrame.args);
                     Log.i(TAG, logMsg);
                     addTradeLog(logMsg);
+                    // 撤单诊断：确认撤单点击后 3s 内的请求打印调用栈（撤单 Tab 的提交
+                    // 不经过 rpv.G/mrv.O，路径未知——栈是唯一定位手段）
+                    if (System.currentTimeMillis() - lastWithdrawClickMs < 3000) {
+                        StackTraceElement[] st = new Throwable().getStackTrace();
+                        StringBuilder sb = new StringBuilder("WithdrawSendStack:");
+                        int n = 0;
+                        for (StackTraceElement e : st) {
+                            String cn = e.getClassName();
+                            if (cn.startsWith("java.") || cn.startsWith("android.")
+                                    || cn.startsWith("com.yuyang.")) continue;
+                            sb.append(' ').append(cn).append('.').append(e.getMethodName());
+                            if (++n >= 18) break;
+                        }
+                        Log.i(TAG, sb.toString());
+                        addTradeLog(sb.toString());
+                    }
                 }
             });
             Log.i(TAG, "r9h.o request-entry hook installed");
@@ -6272,6 +6341,130 @@ public class MainHook {
             Log.i(TAG, "rpv query-builder hooks installed");
         } catch (Throwable e) {
             Log.w(TAG, "rpv query-builder hook failed: " + e.getMessage());
+        }
+
+        // 撤单差异诊断：mrv.O() 是写请求发送前最后一站（栈：request→X→mrv.O→mrv.k0→
+        // r9h.o）。dump 写协议 mhv 全字段，用于对比 App 端请求与端点重放请求的完整差异
+        // （params 逐字节一致但服务端结果不同 → 差异必在 mhv 其他字段/信封）
+        try {
+            Class<?> mrvClass = cl.loadClass("mrv");
+            Class<?> mhvClassD = cl.loadClass("mhv");
+            java.lang.reflect.Field fMhvOfMrv = mrvClass.getField("a"); // mhv 字段声明在父类 fhv，getField 走继承链
+            fMhvOfMrv.setAccessible(true);
+            java.lang.reflect.Field fProtoD = mhvClassD.getDeclaredField("c");
+            fProtoD.setAccessible(true);
+            Method oMethod = mrvClass.getDeclaredMethod("O");
+            oMethod.setAccessible(true);
+            Pine.hook(oMethod, new MethodHook() {
+                @Override
+                public void beforeCall(Pine.CallFrame callFrame) {
+                    try {
+                        Object mhv = fMhvOfMrv.get(callFrame.thisObject);
+                        if (mhv == null) return;
+                        int proto = fProtoD.getInt(mhv);
+                        // 25102=撤买/撤卖批量撤单（v3p QuanCheClient）, 25106=全撤,
+                        // 1823=闪电撤单（v1p）, 22157=b8p 旧链路（当前券商不走）
+                        if (proto != 22157 && proto != 1820 && proto != 1821
+                                && proto != 1823 && proto != 25102 && proto != 25106) return;
+                        StringBuilder sb = new StringBuilder("MhvDump proto=").append(proto).append(' ');
+                        String fullParams = null;
+                        int pageIdDump = -1;
+                        for (java.lang.reflect.Field f : mhvClassD.getFields()) {
+                            Object v;
+                            try { v = f.get(mhv); } catch (Throwable ignored) { continue; }
+                            String vs;
+                            if (v == null) vs = "null";
+                            else if (v instanceof byte[]) vs = "bytes(" + ((byte[]) v).length + ")";
+                            else vs = String.valueOf(v);
+                            if ("f".equals(f.getName()) && v instanceof String) {
+                                fullParams = (String) v; // params 全量留档
+                            }
+                            if ("b".equals(f.getName()) && v instanceof Integer) {
+                                pageIdDump = (Integer) v;
+                            }
+                            if (vs.length() > 500) vs = vs.substring(0, 500) + "..";
+                            sb.append(f.getName()).append('=').append(vs).append('|');
+                        }
+                        Log.i(TAG, sb.toString());
+                        addTradeLog(sb.toString());
+                        // 写协议 params 自动捕获（含 App 侧 G() 链路——G hook 实测拦不到
+                        // v1p 的调用，此处 O() 是发送必经点，更可靠）
+                        if (fullParams != null) {
+                            capturedQueryParams.put(proto, fullParams);
+                            capturedQueryPageIds.put(proto, new int[]{pageIdDump, proto});
+                        }
+                    } catch (Throwable t) {
+                        Log.i(TAG, "MhvDump fail: " + t);
+                    }
+                }
+            });
+            Log.i(TAG, "mrv.O mhv-dump hook installed");
+        } catch (Throwable e) {
+            Log.w(TAG, "mrv.O mhv-dump hook failed: " + e.getMessage());
+        }
+
+        // 通用发送点 aqv.a(mhv)：所有 rpv 构建的请求（含流式 P(pageId).U(protoId)
+        // .R(observer).c0(params).request() 链，如撤单 b8p 不经过 G/H）最终都汇入
+        // communicationManager.a(mhv)。mhv 字段：b=pageId c=protocolId d=observerId
+        // f=params（终态，含 gyh.a() 拼好的 source 签名）。
+        // 写协议全集在此完整记录；带 source 签名的未知交易区协议（如转账）也会命中，
+        // 用于发现尚未定位的写协议。查询协议静默兜底存储。
+        try {
+            Class<?> aqvClass = cl.loadClass("aqv");
+            Class<?> mhvClass = cl.loadClass("mhv");
+            java.lang.reflect.Field fPage = mhvClass.getDeclaredField("b");
+            java.lang.reflect.Field fProto = mhvClass.getDeclaredField("c");
+            java.lang.reflect.Field fParams = mhvClass.getDeclaredField("f");
+            fPage.setAccessible(true);
+            fProto.setAccessible(true);
+            fParams.setAccessible(true);
+            Method sendMhv = aqvClass.getDeclaredMethod("a", mhvClass);
+            sendMhv.setAccessible(true);
+            Pine.hook(sendMhv, new MethodHook() {
+                @Override
+                public void beforeCall(Pine.CallFrame callFrame) {
+                    try {
+                        Object mhv = callFrame.args[0];
+                        if (mhv == null) return;
+                        int pageId = fPage.getInt(mhv);
+                        int protoId = fProto.getInt(mhv);
+                        String params = (String) fParams.get(mhv);
+                        boolean isWrite = TRADE_WRITE_PROTOCOLS.contains(protoId);
+                        // source 签名目前只在写请求上出现（gyh.a 由买/卖/撤单客户端调用）
+                        boolean signedUnknown = !isWrite && params != null
+                                && params.contains("source=")
+                                && pageId >= 2600 && pageId <= 2860;
+                        if (isWrite || signedUnknown) {
+                            String safeParams = params == null ? "null"
+                                    : params.replace("\r", "\\r").replace("\n", "\\n");
+                            String logMsg = "TradeWrite.Send pageId=" + pageId
+                                    + " protocolId=" + protoId + " params=" + safeParams;
+                            Log.i(TAG, logMsg);
+                            addTradeLog(logMsg);
+                            capturedWriteRequests.put(pageId + "_" + protoId, params);
+                        } else if (params != null && protoId != 0) {
+                            boolean knownQuery = capturedQueryPageIds.containsKey(protoId);
+                            if (!knownQuery) {
+                                for (int[] pair : TRADE_QUERY_PROTOCOLS.values()) {
+                                    if (pair[0] == protoId) {
+                                        knownQuery = true;
+                                        break;
+                                    }
+                                }
+                            }
+                            if (knownQuery) {
+                                // 查询协议兜底：H/G 钩未就绪时错过的流式查询也能补上
+                                capturedQueryParams.put(protoId, params);
+                                capturedQueryPageIds.put(protoId, new int[]{pageId, protoId});
+                            }
+                        }
+                    } catch (Throwable ignored) {
+                    }
+                }
+            });
+            Log.i(TAG, "aqv.a universal send hook installed");
+        } catch (Throwable e) {
+            Log.w(TAG, "aqv.a hook failed: " + e.getMessage());
         }
 
         // 响应观察者有两套独立体系，都挂上：
@@ -6937,6 +7130,9 @@ public class MainHook {
                                 Log.i(TAG, ">>> performClick: " + viewClassName + " id=" + viewId
                                     + " text=\"" + text + "\" activity=" + currentActivityName);
                                 addTradeLog("PERFORM_CLICK: " + text + " in " + currentActivityName);
+                                if (text.contains("撤单")) {
+                                    lastWithdrawClickMs = System.currentTimeMillis();
+                                }
                             }
                         }
                     } catch (Throwable ignored) {}
@@ -7564,6 +7760,14 @@ public class MainHook {
         TRADE_QUERY_STATIC_PARAMS = java.util.Collections.unmodifiableMap(sp);
     }
 
+    /** 写交易协议号：买入 1820/1804/22915(闪电)，卖出 1821/1805/22917(闪电)，
+     *  撤单提交 22157，撤单列表 2015、撤单确认 2013（1820/1821 真机实发捕获，
+     *  1804/1805 为源码静态逆向的持仓刷新变体，22915/22917 闪电下单未实测） */
+    private static final java.util.Set<Integer> TRADE_WRITE_PROTOCOLS =
+            java.util.Collections.unmodifiableSet(
+                    new java.util.HashSet<>(java.util.Arrays.asList(
+                            1820, 1821, 1804, 1805, 22157, 22915, 22917, 2015, 2013)));
+
     private static String invokeZjccQuery() {
         return invokeTradeQuery(1891, 2624, null);
     }
@@ -7584,6 +7788,22 @@ public class MainHook {
      * fallbackPageId 仅在无捕获时兜底。
      */
     private static String invokeTradeQuery(int protocolId, int fallbackPageId, String fallbackParams) {
+        return invokeTradeQuery(protocolId, fallbackPageId, fallbackParams, true);
+    }
+
+    /**
+     * bindAccount=false 用于写交易（买/卖/撤单）：App 原始写请求链不带
+     * D("wt_account")（账户由交易模块会话态绑定），镜像原始链路以免改变路由。
+     * explicitParams 非空时直接使用（写执行器已在其中改写 code/price/qty），
+     * 跳过捕获缓存查找——否则 1820 模板缓存会覆盖改写后的参数。
+     */
+    private static String invokeTradeQuery(int protocolId, int fallbackPageId, String fallbackParams,
+                                           boolean bindAccount) {
+        return invokeTradeQuery(protocolId, fallbackPageId, fallbackParams, bindAccount, false);
+    }
+
+    private static String invokeTradeQuery(int protocolId, int fallbackPageId, String fallbackParams,
+                                           boolean bindAccount, boolean forceParams) {
         JSONObject resp = new JSONObject();
         try {
             resp.put("query", "proto_" + protocolId);
@@ -7596,7 +7816,7 @@ public class MainHook {
             return errorJson(resp, "trade account not captured (open trade tab first)");
         }
         int[] pageIds = capturedQueryPageIds.get(protocolId);
-        String params = capturedQueryParams.get(protocolId);
+        String params = forceParams ? fallbackParams : capturedQueryParams.get(protocolId);
         if (params == null) params = fallbackParams;
         if (params == null) {
             return errorJson(resp, "params for protocol " + protocolId
@@ -7658,9 +7878,11 @@ public class MainHook {
             java.lang.reflect.Method hMethod = builder.getClass()
                     .getMethod("H", int.class, int.class, imvClass, String.class);
             Object rpv = hMethod.invoke(builder, pageId, protocolId, observer, params);
-            java.lang.reflect.Method dMethod = rpv.getClass()
-                    .getMethod("D", String.class, Object.class);
-            dMethod.invoke(rpv, "wt_account", tradeAccountManagerInstance);
+            if (bindAccount) {
+                java.lang.reflect.Method dMethod = rpv.getClass()
+                        .getMethod("D", String.class, Object.class);
+                dMethod.invoke(rpv, "wt_account", tradeAccountManagerInstance);
+            }
             rpv.getClass().getMethod("request").invoke(rpv);
         } catch (Throwable e) {
             unregisterObserverQuietly(cl, observer);
@@ -7855,6 +8077,58 @@ public class MainHook {
             Object content = c.getField("content").get(first);
             out.put("caption", caption == null ? "" : caption);
             out.put("content", content == null ? "" : content);
+        } else if ("com.hexin.middleware.data.mobile.StuffResourceStruct".equals(c.getName())) {
+            // 写响应（撤单等）业务结果在 buffer：GBK 编码 JSON，retcode=="0" 成功、
+            // retmsg 为失败原因（源码 b8p.s 解析逻辑）
+            JSONObject generic = new JSONObject();
+            for (java.lang.reflect.Field f : c.getFields()) {
+                try {
+                    Object v = f.get(first);
+                    if (v instanceof byte[] && ((byte[]) v).length > 0
+                            && (f.getName().equals("buffer") || f.getName().equals("cacheBuffer"))) {
+                        byte[] bv = (byte[]) v;
+                        generic.put(f.getName(), "bytes(len=" + bv.length + ")");
+                        try {
+                            String dec = new String(bv, "GBK").trim();
+                            generic.put(f.getName() + "_gbk", dec);
+                            try {
+                                org.json.JSONObject j = new org.json.JSONObject(dec);
+                                if (j.has("retcode")) out.put("retcode", j.optString("retcode"));
+                                if (j.has("retmsg")) out.put("retmsg", j.optString("retmsg"));
+                                out.put("business_ok", "0".equals(j.optString("retcode")));
+                            } catch (Throwable ignored) { }
+                        } catch (Throwable ignored) { }
+                        continue;
+                    }
+                    String vs;
+                    if (v == null) vs = "";
+                    else if (v instanceof byte[]) vs = "bytes(len=" + ((byte[]) v).length + ")";
+                    else {
+                        vs = String.valueOf(v);
+                        if (vs.length() > 800) vs = vs.substring(0, 800) + "...(truncated)";
+                    }
+                    generic.put(f.getName(), vs);
+                } catch (Throwable ignored) { }
+            }
+            out.put("fields_dump", generic);
+        } else {
+            // 其余写响应载体（StuffInteractStruct/StuffCtrlStruct 等）：
+            // 通用反射导出 public 字段。byte[] 显示长度，String 截断 800 字符
+            JSONObject generic = new JSONObject();
+            for (java.lang.reflect.Field f : c.getFields()) {
+                try {
+                    Object v = f.get(first);
+                    String vs;
+                    if (v == null) vs = "";
+                    else if (v instanceof byte[]) vs = "bytes(len=" + ((byte[]) v).length + ")";
+                    else {
+                        vs = String.valueOf(v);
+                        if (vs.length() > 800) vs = vs.substring(0, 800) + "...(truncated)";
+                    }
+                    generic.put(f.getName(), vs);
+                } catch (Throwable ignored) { }
+            }
+            out.put("fields_dump", generic);
         }
         return out;
     }
@@ -7935,6 +8209,336 @@ public class MainHook {
         }
         sb.append("]}");
         return sb.toString();
+    }
+
+    /**
+     * 导出写协议捕获（买/卖/撤单/转账完整 params）与查询协议缓存 params。
+     * params 内换行转义为 \r\n 字面量，便于直接阅读与重放构造。
+     */
+    private static String getTradeWriteCaptures() throws org.json.JSONException {
+        org.json.JSONObject root = new org.json.JSONObject();
+        org.json.JSONObject writes = new org.json.JSONObject();
+        for (java.util.Map.Entry<String, String> e : capturedWriteRequests.entrySet()) {
+            String v = e.getValue() == null ? "null"
+                    : e.getValue().replace("\r", "\\r").replace("\n", "\\n");
+            writes.put(e.getKey(), v);
+        }
+        root.put("write_captures", writes);
+        org.json.JSONObject queries = new org.json.JSONObject();
+        for (java.util.Map.Entry<Integer, String> e : capturedQueryParams.entrySet()) {
+            int[] pageId = capturedQueryPageIds.get(e.getKey());
+            org.json.JSONObject q = new org.json.JSONObject();
+            q.put("pageId", pageId == null ? -1 : pageId[0]);
+            String v = e.getValue() == null ? "null"
+                    : e.getValue().replace("\r", "\\r").replace("\n", "\\n");
+            q.put("params", v);
+            queries.put(String.valueOf(e.getKey()), q);
+        }
+        root.put("query_captures", queries);
+        return root.toString();
+    }
+
+    // ============ 写交易执行器（买/卖/撤单/转账） ============
+
+    /** 委托方向 → {protocolId, pageId, 数量 ctrl 键}。协议号来自真机捕获
+     *  （App 实发 1820/1821，与反编译源码的 1804/1805 不同——以捕获为准） */
+    private static final java.util.Map<String, int[]> TRADE_ORDER_SPECS;
+    static {
+        java.util.Map<String, int[]> os = new java.util.LinkedHashMap<>();
+        os.put("buy",  new int[]{1820, 2682, 36615});
+        os.put("sell", new int[]{1821, 2604, 36621});
+        TRADE_ORDER_SPECS = java.util.Collections.unmodifiableMap(os);
+    }
+
+    /** 买卖委托静态模板兜底（2026-08-16 真机捕获）。source 签名经 DES 确定性验证
+     *  跨进程重启一致，且签名只覆盖页面标签串、不含订单参数——改 code/price/qty 后仍有效。
+     *  数量键：buy=36615 / sell=36621；代码=2102；价格=2127。 */
+    private static final java.util.Map<Integer, String> TRADE_ORDER_STATIC_TEMPLATES;
+    static {
+        java.util.Map<Integer, String> ts = new java.util.HashMap<>();
+        ts.put(1820, "reqctrl=2001\nctrlid_0=36615\nctrlvalue_0=100\nctrlid_1=2102\nctrlvalue_1=159740"
+                + "\nctrlid_2=2127\nctrlvalue_2=0.588\nctrlid_3=36641\nctrlvalue_3=1"
+                + "\nctrlid_4=36670\nctrlvalue_4=24\nctrlid_5=36669\nctrlvalue_5=1\nctrlcount=6"
+                + "\r\nsource=QFYIth3VsFsID1yEp9kVEgmmL3RO5g02nt7wZi7zPj2Y/fnztbRWFlZORElQS6dI");
+        ts.put(1821, "reqctrl=2002\nctrlid_0=36621\nctrlvalue_0=100\nctrlid_1=2102\nctrlvalue_1=159740"
+                + "\nctrlid_2=2127\nctrlvalue_2=0.587\nctrlid_3=36670\nctrlvalue_3=24"
+                + "\nctrlid_4=36669\nctrlvalue_4=1\nctrlcount=5"
+                + "\r\nsource=QFYIth3VsFtvnh6uA6/cclsubXPvwC7jwqEqNiO3NzMt/I1K4Sj1uJCw7WvfQ9OD");
+        TRADE_ORDER_STATIC_TEMPLATES = java.util.Collections.unmodifiableMap(ts);
+    }
+
+    /**
+     * eb6 ctrl 参数串中替换 ctrlid_N=key 对应的 ctrlvalue_N 值。
+     * 换行符原样保留（App 的 params 混用 \n 与 \r\n）。
+     */
+    private static String replaceCtrlValue(String params, String key, String newValue) {
+        if (params == null || key == null || newValue == null) return params;
+        String[] lines = params.split("\n", -1);
+        String idx = null;
+        for (String line : lines) {
+            int eq = line.indexOf('=');
+            if (eq <= 0 || !line.startsWith("ctrlid_")) continue;
+            if (key.equals(line.substring(eq + 1).trim())) {
+                idx = line.substring("ctrlid_".length(), eq);
+                break;
+            }
+        }
+        if (idx == null) return params;
+        StringBuilder sb = new StringBuilder();
+        boolean first = true;
+        for (String line : lines) {
+            if (!first) sb.append('\n');
+            first = false;
+            String trimmed = line.endsWith("\r") ? line.substring(0, line.length() - 1) : line;
+            if (trimmed.startsWith("ctrlvalue_" + idx + "=")) {
+                sb.append("ctrlvalue_").append(idx).append('=').append(newValue);
+            } else {
+                sb.append(line);
+            }
+        }
+        return sb.toString();
+    }
+
+    /**
+     * POST /stock/trade/order — 买卖委托执行器（真实下单！）。
+     * body: {"action":"buy|sell","code":"159740","price":"0.588","qty":"100","confirm":true}
+     * 模板取自真机捕获的 1820/1821 请求（含 source 签名，签名只覆盖页面标签串、
+     * 不含订单参数，改 code/price/qty 后签名仍有效）。confirm!=true 一律拒绝执行。
+     */
+    private static String handleTradeOrder(String body) throws org.json.JSONException {
+        JSONObject resp = new JSONObject();
+        resp.put("endpoint", "order");
+        String action = extractJsonString(body, "action");
+        String code = extractJsonString(body, "code");
+        String price = extractJsonString(body, "price");
+        String qty = extractJsonString(body, "qty");
+        String confirm = extractJsonString(body, "confirm");
+        if (action == null || code == null || price == null || qty == null) {
+            return errorJson(resp, "missing action/code/price/qty");
+        }
+        if (!"true".equals(confirm)) {
+            return errorJson(resp, "confirm!=true: write endpoints require explicit confirmation");
+        }
+        int[] spec = TRADE_ORDER_SPECS.get(action.trim().toLowerCase());
+        if (spec == null) {
+            return errorJson(resp, "unknown action '" + action + "', supported: " + TRADE_ORDER_SPECS.keySet());
+        }
+        int protoId = spec[0], pageId = spec[1], qtyKey = spec[2];
+        String template = capturedQueryParams.get(protoId);
+        if (template == null) template = TRADE_ORDER_STATIC_TEMPLATES.get(protoId);
+        if (template == null) {
+            return errorJson(resp, "order template (protocol " + protoId + ") unavailable");
+        }
+        String params = replaceCtrlValue(replaceCtrlValue(replaceCtrlValue(
+                template, "2102", code.trim()), "2127", price.trim()), String.valueOf(qtyKey), qty.trim());
+        resp.put("protocolId", protoId);
+        resp.put("pageId", pageId);
+        resp.put("action", action);
+        return invokeTradeQuery(protoId, pageId, params, false, true);
+    }
+
+    /**
+     * POST /stock/trade/cancel — 撤单执行器。
+     * body: {"entrust_no":"...","stock_code":"...","confirm":true}
+     * 协议源码逆向自 b8p：P(2684).U(22157).c0(eb6: 2135=委托号, 2167=第二键)。
+     * 参数与 App 真机撤单捕获逐字节一致（2026-08-16 验证）。
+     * 业务结果在 StuffResourceStruct.buffer（GBK JSON retcode/retmsg，响应已解码）。
+     * 注意：夜市委托（未报状态）撤单曾两次收到响应但订单未撤——retcode 待解码复测。
+     */
+    private static String handleTradeCancel(String body) throws org.json.JSONException {
+        JSONObject resp = new JSONObject();
+        resp.put("endpoint", "cancel");
+        String entrustNo = extractJsonString(body, "entrust_no");
+        String stockCode = extractJsonString(body, "stock_code");
+        String stockName = extractJsonString(body, "stock_name");
+        String marketCode = extractJsonString(body, "market_code");
+        String shareholderAccount = extractJsonString(body, "shareholder_account");
+        String withdrawableQty = extractJsonString(body, "withdrawable_qty");
+        String confirm = extractJsonString(body, "confirm");
+        if (!"true".equals(confirm)) {
+            return errorJson(resp, "confirm!=true: write endpoints require explicit confirmation");
+        }
+        // App 撤单 Tab 真实协议（v3p QuanCheClient 源码 + 真机捕获）：
+        //   uqv.e(true).P(2683).U(25102).R(observerId).c0(params).a0()
+        // params 为 eb6 格式：2103=撤单条数, 2102="code_名称_委托号_市场码_股东账号_可撤数量"
+        // （多单用 | 分隔）。全撤走 25106（格式不同）。此前 22157（b8p）被券商判"未知请求"。
+        String params;
+        if (entrustNo != null && stockCode != null && stockName != null
+                && marketCode != null && shareholderAccount != null) {
+            String qty = withdrawableQty == null ? "0" : withdrawableQty.trim();
+            String entry = stockCode.trim() + "_" + stockName.trim() + "_" + entrustNo.trim()
+                    + "_" + marketCode.trim() + "_" + shareholderAccount.trim() + "_" + qty;
+            params = "ctrlid_0=2103\nctrlvalue_0=1\nctrlid_1=2102\nctrlvalue_1="
+                    + entry + "\nctrlcount=2";
+        } else {
+            // 兜底：App UI 撤过一单后（MhvDump 自动捕获），复用捕获 params 原样重放
+            params = capturedQueryParams.get(25102);
+            if (params == null) {
+                return errorJson(resp, "missing trade fields (entrust_no/stock_code/stock_name/"
+                        + "market_code/shareholder_account) and no captured 25102 params "
+                        + "(cancel once in app UI after this deploy, then retry)");
+            }
+            resp.put("params_source", "captured_25102");
+        }
+        resp.put("protocolId", 25102);
+        resp.put("pageId", 2683);
+        return invokeWithdrawV3p(params, resp);
+    }
+
+    /** v3p 撤单发送链：uqv.e(true).P(2683).U(25102).R(kmv.c(observer)).c0(params).a0()。
+     *  R 需要 int 观察者 id（先 kmv.c(proxy) 注册）。响应 StuffResourceStruct：type=5、
+     *  buffer=GBK JSON（retcode/retmsg，v3p.t/w 解析；stuffTableToJson 已解码输出）。 */
+    private static String invokeWithdrawV3p(String params, JSONObject resp) {
+        ClassLoader cl = thsAppClassLoader;
+        if (cl == null) {
+            return errorJson(resp, "ths classloader not ready (wait for delayed hooks)");
+        }
+        if (tradeAccountManagerInstance == null) {
+            return errorJson(resp, "trade account not captured (open trade tab first)");
+        }
+        try {
+            Class<?> r9hClass = cl.loadClass("r9h");
+            java.lang.reflect.Field initFlag = r9hClass.getDeclaredField("d");
+            initFlag.setAccessible(true);
+            if (!(boolean) initFlag.get(null)) {
+                return errorJson(resp, "master module not ready (r9h.d=false)");
+            }
+        } catch (Throwable e) {
+            return errorJson(resp, "r9h readiness check failed: " + e);
+        }
+        final CountDownLatch latch = new CountDownLatch(1);
+        final java.util.List<Object> stuffList = java.util.Collections.synchronizedList(new ArrayList<>());
+        Object observer;
+        try {
+            Class<?> imvClass = cl.loadClass("imv");
+            observer = java.lang.reflect.Proxy.newProxyInstance(cl,
+                    new Class[]{imvClass},
+                    (proxy, method, args) -> {
+                        String name = method.getName();
+                        if ("receive".equals(name)) {
+                            if (args != null && args.length > 0 && args[0] != null) {
+                                stuffList.add(args[0]);
+                                latch.countDown();
+                            }
+                            return null;
+                        }
+                        if ("hashCode".equals(name)) return System.identityHashCode(proxy);
+                        if ("toString".equals(name)) return "THSHook.cancelObserver@" + Integer.toHexString(System.identityHashCode(proxy));
+                        if ("equals".equals(name)) return proxy == (args != null && args.length > 0 ? args[0] : null);
+                        return null;
+                    });
+        } catch (Throwable e) {
+            return errorJson(resp, "observer proxy failed: " + e);
+        }
+        long startMs = System.currentTimeMillis();
+        try {
+            Class<?> uqvClass = cl.loadClass("uqv");
+            Object builder = uqvClass.getMethod("e", boolean.class).invoke(null, Boolean.TRUE);
+            Class<?> imvClass = cl.loadClass("imv");
+            Class<?> kmvClass = cl.loadClass("kmv");
+            Integer observerId = (Integer) kmvClass.getMethod("c", imvClass).invoke(null, observer);
+            Object rpv = builder.getClass().getMethod("P", int.class).invoke(builder, 2683);
+            rpv = rpv.getClass().getMethod("U", int.class).invoke(rpv, 25102);
+            rpv = rpv.getClass().getMethod("R", int.class).invoke(rpv, observerId);
+            rpv = rpv.getClass().getMethod("c0", String.class).invoke(rpv, params);
+            rpv.getClass().getMethod("a0").invoke(rpv);
+        } catch (Throwable e) {
+            unregisterObserverQuietly(cl, observer);
+            return errorJson(resp, "cancel invoke failed: " + describeThrowableChain(e));
+        }
+        boolean arrived;
+        try {
+            arrived = latch.await(15, TimeUnit.SECONDS);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            arrived = false;
+        }
+        unregisterObserverQuietly(cl, observer);
+        long elapsed = System.currentTimeMillis() - startMs;
+        try {
+            resp.put("elapsed_ms", elapsed);
+        } catch (JSONException ignored) { }
+        if (stuffList.isEmpty()) {
+            return errorJson(resp, "timeout waiting response (15s)");
+        }
+        try {
+            JSONObject parsed = stuffTableToJson(stuffList, 25102);
+            resp.put("ok", true);
+            resp.put("data", parsed);
+            // 25102 响应结构：{count, stockArr:[{code, message, htbh}]}，
+            // 成功 = stockArr[0].code=="0"（真机验证：撤 1404 → code=0 message=合同编号）
+            try {
+                String gbk = parsed.optJSONObject("fields_dump") == null ? null
+                        : parsed.optJSONObject("fields_dump").optString("buffer_gbk", "");
+                if (!gbk.isEmpty()) {
+                    org.json.JSONObject j = new org.json.JSONObject(gbk);
+                    org.json.JSONArray arr = j.optJSONArray("stockArr");
+                    if (arr != null && arr.length() > 0) {
+                        resp.put("business_ok", "0".equals(arr.optJSONObject(0).optString("code")));
+                        resp.put("business_message", arr.optJSONObject(0).optString("message", ""));
+                    }
+                }
+            } catch (Throwable ignored) { }
+            return resp.toString();
+        } catch (Throwable e) {
+            return errorJson(resp, "parse response failed: " + e);
+        }
+    }
+
+    /**
+     * GET /stock/trade/transfer/banks — 存管银行列表（只读）。
+     * 协议 1830 reqctrl=6013（源码 d1m 内部类 d，真机页面打开时已捕获空参数版）。
+     */
+    private static String handleTransferBanks() throws org.json.JSONException {
+        JSONObject resp = new JSONObject();
+        resp.put("endpoint", "transfer_banks");
+        return invokeTradeQuery(1830, 1830, "reqctrl=6013", true);
+    }
+
+    /**
+     * POST /stock/trade/transfer — 银证转账（转入证券账户）。
+     * body: {"direction":"in","amount":"100","bank_password":"...","bank_index":"0","confirm":true}
+     * 协议 1826 reqctrl=6015：116=银行索引, 103=金额, 120=w0s.b(银行密码)（客户端加密）。
+     * 源码逆向自 c1m.J → d1m.a。⚠️ 未真机验证（需银行密码+交易日窗口）。
+     */
+    private static String handleTradeTransfer(String body) throws org.json.JSONException {
+        JSONObject resp = new JSONObject();
+        resp.put("endpoint", "transfer");
+        String direction = extractJsonString(body, "direction");
+        String amount = extractJsonString(body, "amount");
+        String bankPassword = extractJsonString(body, "bank_password");
+        String bankIndex = extractJsonString(body, "bank_index");
+        String confirm = extractJsonString(body, "confirm");
+        if (amount == null || bankPassword == null) {
+            return errorJson(resp, "missing amount/bank_password");
+        }
+        if (!"true".equals(confirm)) {
+            return errorJson(resp, "confirm!=true: write endpoints require explicit confirmation");
+        }
+        if (direction == null || !"in".equals(direction.trim())) {
+            return errorJson(resp, "only direction=in implemented (transfer-out protocol not yet reversed)");
+        }
+        String encPwd;
+        try {
+            Class<?> w0s = thsAppClassLoader.loadClass("w0s");
+            java.lang.reflect.Method b = w0s.getDeclaredMethod("b", String.class);
+            b.setAccessible(true);
+            Object r = b.invoke(null, bankPassword);
+            encPwd = r == null ? null : String.valueOf(r);
+        } catch (Throwable e) {
+            return errorJson(resp, "w0s.b password encrypt failed: " + e);
+        }
+        if (encPwd == null) {
+            return errorJson(resp, "w0s.b returned null");
+        }
+        String params = "ctrlcount=3\r\nctrlid_0=116\r\nctrlvalue_0=" + (bankIndex == null ? "0" : bankIndex.trim())
+                + "\r\nctrlid_1=103\r\nctrlvalue_1=" + amount.trim()
+                + "\r\nctrlid_2=120\r\nctrlvalue_2=" + encPwd
+                + "\r\nreqctrl=6015";
+        resp.put("protocolId", 1826);
+        resp.put("pageId", 1826);
+        resp.put("unverified", "source-derived params (d1m.a), not yet replay-verified");
+        return invokeTradeQuery(1826, 1826, params, true, true);
     }
 
     /**

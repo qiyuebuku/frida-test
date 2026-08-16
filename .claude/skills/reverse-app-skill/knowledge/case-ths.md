@@ -673,3 +673,48 @@ uqv.e(true).H(2605, 1807, observer,
 - 交易页可能弹"资产分析权限开通"推广页拦截导航——BACK 退出后重新 `dumpsys window`
   确认再继续（pitfalls #44）
 - 详细交接文档：`smart-fund-server/docs/6. 使用说明/5. Portfolio Agent第一阶段同花顺交易SDK逆向交接说明.md`
+
+### 15.11 写交易执行器：买/卖/撤单（2026-08-16 第九~十轮，真机验证 ✅）
+
+三个写端点全部经真实券商系统验证（模拟盘 **3857）：
+
+| 操作 | 协议 | 验证结果 |
+|---|---|---|
+| 买入 | `H(2682,1820)` reqctrl=2001 | ✅ 真实下单 6 单（合同号 1384~1410） |
+| 卖出 | `H(2604,1821)` reqctrl=2002 | ✅ 券商拒绝 `[251005][证券可用数量不足]`——参数直达券商 |
+| 撤单 | `P(2683).U(25102).R().c0().a0()` | ✅ 三单已撤（136ms），business_ok 判定正确 |
+
+**买卖 params**（eb6 格式）：数量键 buy=36615/sell=36621、代码=2102、价格=2127，附
+36641=1、36670=24（时效）、36669=1；尾部 `\r\nsource=` Base64(DES) 签名——**cmd 命令名
+编码在 source 内**（`gyh.a(params, hyh, protoId)` 拼接，hyh.p() 返回如 ".cmd_mairu_confirm"）。
+DES 确定性使签名跨进程重启一致；签名只覆盖页面标签不含订单参数，**改 code/price/qty
+后复用有效**。静态模板兜底（TRADE_ORDER_STATIC_TEMPLATES），App 重启后无需重新捕获。
+
+**撤单四链并存（核心教训——反编译源码协议 ≠ 券商实际部署协议）**：
+
+- `22157`：b8p 源码链，重放被判 `[250001][未知请求]`——**反编译看到的协议不一定部署**
+- `1823`：v1p 闪电撤单 `G(2683,1823)`，撤单 Tab 实际不走此链
+- `25102`：**v3p QuanCheClient 撤买/撤卖批量撤单，实际生效**。params：
+  `2103=撤单条数`、`2102="code_名称_委托号_市场码_股东账号_可撤数量"`（多单 `|` 分隔）；
+  实测 `159740_恒生科技ETF大成_1404_1_0926764077_0`（marketCode=1 深A）
+- `25106`：全撤（v3p `x(list,true)` 分支）
+
+发送链（与 G/H 不同的 fluent 风格）：
+```java
+uqv.e(true).P(2683).U(25102).R(kmv.c(observer)).c0(params).a0();
+```
+响应 StuffResourceStruct：type=5、buffer=GBK JSON `{count, stockArr:[{code,message,htbh}]}，
+成功=stockArr[0].code=="0"；假委托号返回明确的业务错误 `[250001][订单表记录不存在]`。
+
+**绕过 hook 点的发送路径定位法（可复用）**：App 撤单请求不经过 rpv.G/H → 在
+PERFORM_CLICK hook 检测"撤单"按钮文本更新 lastWithdrawClickMs → r9h.o hook 在 3 秒
+窗口内打印业务调用栈（WithdrawSendStack）→ 栈显示 `v3p.x → mrv.a0 → rpv.a0 → mrv.O →
+k7r.K0 → r9h.o` → 反编译 v3p 得 25102。
+
+**MhvDump（hook mrv.O）= 写协议自动捕获**：过滤集 {1820,1821,1823,22157,25102,25106}，
+命中时全量输出 params 并自动存入 capturedQueryParams；App 端任何写操作发生后即可从
+`/stock/trade/write-captures` 导出重放。
+
+**安全边界**：写端点必须 `confirm:"true"`；转账 1826 已实现未验证（需银行密码，禁止
+自动化）；写端点测试用 Python raw socket（WSL curl 对 cancel 假性挂起 25s 超时，服务端
+实际 84ms 完成）。
