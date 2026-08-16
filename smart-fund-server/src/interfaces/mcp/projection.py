@@ -634,10 +634,22 @@ def _project_market_history(result: Mapping[str, Any]) -> dict[str, Any]:
             if not isinstance(item, Mapping):
                 continue
             data = item.get("data") if isinstance(item.get("data"), Mapping) else {}
+            values = {
+                key: value
+                for key, value in _project_preview(data).items()
+                if key not in {
+                    "indicators",
+                    "market_code",
+                    "mapping_status",
+                    "provider_sector_code",
+                    "sector_name",
+                    "sector_type",
+                }
+            }
             points.append(_nonempty({
                 "trade_date": item.get("trade_date"),
                 "fact_time": item.get("observed_at"),
-                "values": _project_preview(data),
+                "values": values,
                 "evidence_locator": item.get("evidence_locator"),
             }))
         return _nonempty({

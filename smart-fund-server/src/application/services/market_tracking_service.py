@@ -519,6 +519,11 @@ class MarketTrackingService:
             [item.code for item in watchlist_items],
         )[0]
         if normalized_data_type in AGENT_HISTORY_SNAPSHOT_DATA_TYPES:
+            collapse_intraday_days = bool(start or end) and normalized_data_type in {
+                "ths_sector_flow",
+                "ths_sector_hot",
+                "ths_sector_ranking",
+            }
             snapshots = await asyncio.to_thread(
                 self._snapshots.query_history,
                 subject_id=normalized_code,
@@ -526,8 +531,10 @@ class MarketTrackingService:
                 date_start=start,
                 date_end=end,
                 cutoff_at=cutoff_at,
-                limit=limit,
+                limit=max(int(limit), 5000) if collapse_intraday_days else limit,
             )
+            if collapse_intraday_days:
+                snapshots = _latest_snapshot_per_trade_date(snapshots)[:limit]
             items = [
                 {
                     "id": item["id"],
@@ -680,6 +687,24 @@ def _history_subject_id(code: str, data_type: str) -> str | None:
             return code
         return f"cn:index:{code}"
     return None
+
+
+def _latest_snapshot_per_trade_date(
+    items: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Collapse intraday snapshots to the latest observation of each trade date."""
+
+    selected: dict[str, dict[str, Any]] = {}
+    for item in items:
+        trade_date = str(item.get("trade_date") or "")[:10]
+        if not trade_date:
+            continue
+        current = selected.get(trade_date)
+        current_time = current.get("observed_at") if current else None
+        item_time = item.get("observed_at")
+        if current is None or (item_time is not None and (current_time is None or item_time > current_time)):
+            selected[trade_date] = item
+    return [selected[key] for key in sorted(selected, reverse=True)]
 
 
 def _history_data_type(code: str, data_type: str) -> str:

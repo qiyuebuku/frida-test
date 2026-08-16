@@ -644,6 +644,48 @@ async def test_sector_flow_history_maps_semantic_sector_identity_to_native_store
 
 
 @pytest.mark.asyncio
+async def test_sector_flow_date_window_returns_one_latest_point_per_trade_date() -> None:
+    class SnapshotRepository(_FakeSnapshotRepository):
+        def query_history(self, **kwargs):
+            assert kwargs["limit"] == 5000
+            return [
+                {
+                    "id": index,
+                    "subject_id": kwargs["subject_id"],
+                    "data_type": "ths_sector_flow",
+                    "trade_date": trade_date,
+                    "observed_at": observed_at,
+                    "fetched_at": observed_at,
+                    "freshness_status": "historical",
+                    "data": {"main_net_inflow": value},
+                }
+                for index, trade_date, observed_at, value in [
+                    (1, date(2026, 8, 14), datetime(2026, 8, 14, 6, tzinfo=timezone.utc), 100.0),
+                    (2, date(2026, 8, 14), datetime(2026, 8, 14, 7, tzinfo=timezone.utc), 111.05),
+                    (3, date(2026, 8, 13), datetime(2026, 8, 13, 7, tzinfo=timezone.utc), -15.93),
+                ]
+            ]
+
+    result = await MarketTrackingService(
+        watchlist_service=_ReadableWatchlist(_watchlist_item(code="ths_native:concept:886033")),
+        data_repository=_ReadableDataRepository([]),
+        snapshot_repository=SnapshotRepository(),
+    ).instrument_history(
+        code="ths:concept:886033",
+        data_type="ths_sector_flow",
+        date_start="2026-08-13",
+        date_end="2026-08-14",
+        limit=10,
+    )
+
+    assert [item["trade_date"] for item in result["items"]] == [
+        date(2026, 8, 14),
+        date(2026, 8, 13),
+    ]
+    assert result["items"][0]["data"]["main_net_inflow"] == 111.05
+
+
+@pytest.mark.asyncio
 async def test_market_open_returns_fresh_data_without_refresh(
     monkeypatch,
 ) -> None:
