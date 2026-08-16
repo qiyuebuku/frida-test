@@ -280,7 +280,7 @@ App、等待通信初始化并只重放一次。探针和代理只监听 loopbac
 - Linux 虚拟机、故障恢复代理与 systemd 无人值守运行；
 - 事件级定时采集和数据库幂等入库；
 - Oplus Hans 冻结根因和调试命令参数定位；
-- 交易只读查询 5 端点（持仓/当日与历史委托成交）真实数据验证，含 38 条历史委托语义记录与 dataTable 列主序结论。
+- 交易只读查询 6 端点（持仓/资金/当日与历史委托成交）真实数据验证，含 38 条历史委托语义记录、dataTable 列主序结论与 funds 字段 ID 协议（§15.9）。
 
 未完成：
 
@@ -550,6 +550,7 @@ Cipher AES/ECB(Java 明文, 无 cmd= 字样) → r9h.o → jniRequest(Context,by
 | 当日成交 | `H(2609, 1810)` ⚠️ | nxm: jxm | today_deal |
 | 历史成交 | `G(2611, 1824)` | nxm: lxm | hist_deal |
 | 历史委托 | `H(2612, 1825)` | nxm: pxm | hist_order |
+| 资金（A股） | `H(2605, 1807)` + `D("wt_account",pzr)`，params 静态：`reqctrl=2012\nctrlid_0=36665\nctrlvalue_0=cc_capital\nctrlcount=1` | 自带 imv（字段 ID 取值） | funds |
 
 **today_deal 陷阱**：App 新统一方案发 `H(2001,2031)`，但**响应帧 frameId=1810**
 （旧协议号）。观察者按 protocolId 注册分发——按 2031 注册收不到（15s 超时）。
@@ -630,17 +631,32 @@ rpv.request();                   // → mrv → k7r.K0 → r9h.o → jniRequest
 **部署时序铁律**：重启 → **等满 90s 挂钩梯** → 再首次进交易页。交易首页批量查询
 `H(9001,1264)` 只在首次进入时发出（之后走缓存）；hook 未就绪时错过，只能 force-stop 重来。
 
-### 15.9 funds 端点受阻（9001 容器协议，未打通）
+### 15.9 funds 端点（9001 容器受阻 → 1807 专用协议打通，2026-08-16 第八轮）
 
 `H(9001,1264)` 的 params 可捕获可构造，但按 1264 注册的 proxy 15s 收不到任何响应帧；
 受控实验（清 logcat → 单次重放）中连 `r9h.o`（原生发送入口）日志都不出现——请求在
 Java 层容器内部被处理，或响应按子项拆帧后分发到交易首页各组件自己的观察者，不走
-protocolId 注册路径。
+protocolId 注册路径。结论：**可捕获 ≠ 可重放**，9001 容器本身放弃重放。
 
-结论：**可捕获 ≠ 可重放**。funds 已从 `TRADE_QUERY_PROTOCOLS` 移除；Account Projection
-先用 positions + hist_order/hist_deal 构建。后续路线：反编译 WeituoFirstPage 找子项
-观察者/frameId，或 hook 响应侧 receive 缓存资金 stuff 从缓存读。详见
-`docs/3. 实施方案/7. Agent工具/9. 待优化.md`（P2）。
+**破局**：反编译持仓页资产页卡组件（`rcm` / `WeiTuoChiCangPersonalCapitalItemView`）
+找到专门资金子协议：
+
+```java
+uqv.e(true).H(2605, 1807, observer,
+    new eb6().b("reqctrl=2012").a("36665", "cc_capital").toString())
+  .D("wt_account", pzr).request();
+```
+
+- `cc_capital` = `CapitalQuerySource.ACapital`（A股）；B股 `cc_b_capital`；reqctrl 变体
+  2012/2013/2014 见 rcm/kqi/iqi
+- 响应 StuffTableStruct：**dataTable 键=字段 ID**（非列号），`getData(fieldId)` 取
+  firstOrNull 即金额。字段：36628 总资产 / 36629 浮动盈亏 / 36625 可用资金 / 36626
+  总市值 / 36623 可取资金；36622/36624/36627/36630 无命名引用（field_366XX 输出），
+  36631-36633 仅港美股
+- 真机与 App 显示逐项一致（3139.80 / 0.00 / 0.00；空仓可用=可取=全额）
+
+**通用教训**：页面容器协议重放受阻时，不要硬啃容器——反编译页面里消费该数据的
+**具体组件**，往往存在可独立调用的专用子协议客户端，且 params 可从源码模板静态构造。
 
 ### 15.10 滚轮日期选择器 UI 自动化（自定义日期采集用）
 

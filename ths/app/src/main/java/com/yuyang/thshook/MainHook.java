@@ -7551,13 +7551,16 @@ public class MainHook {
         m.put("today_deal", new int[]{1810, 2609});  // 当日成交（旧协议；响应 frameId=1810）
         m.put("hist_order", new int[]{1825, 2612});  // 历史委托
         m.put("hist_deal", new int[]{1824, 2611});   // 历史成交
-        // funds(1264/9001) 未加入：交易首页批量查询是页面级容器协议，响应按子项
-        // 分发到页面组件自己的观察者，按 1264 注册的 proxy 收不到（15s 超时）。
-        // 见 docs/3. 实施方案/7. Agent工具/9. 待优化.md。
+        // 资金（A股）：持仓页资产页卡专用协议。源码 rcm.request()/WeiTuoChiCangPersonalCapitalItemView.request()：
+        //   uqv.e(true).H(2605, 1807, obs, new eb6().b("reqctrl=2012").a("36665", "cc_capital").toString())
+        // 不走 9001 页面容器（容器协议按 1264 注册收不到响应，见待优化历史记录）。
+        m.put("funds", new int[]{1807, 2605});
         TRADE_QUERY_PROTOCOLS = java.util.Collections.unmodifiableMap(m);
         java.util.Map<String, String> sp = new java.util.LinkedHashMap<>();
         // new eb6().a("36665", TodayDealSource.Query.getSource()).toString()
         sp.put("today_deal", "ctrlid_0=36665\nctrlvalue_0=today_chaxun\nctrlcount=1");
+        // new eb6().b("reqctrl=2012").a("36665", CapitalQuerySource.ACapital.getSource()).toString()
+        sp.put("funds", "reqctrl=2012\nctrlid_0=36665\nctrlvalue_0=cc_capital\nctrlcount=1");
         TRADE_QUERY_STATIC_PARAMS = java.util.Collections.unmodifiableMap(sp);
     }
 
@@ -7615,8 +7618,11 @@ public class MainHook {
         }
 
         final CountDownLatch latch = new CountDownLatch(1);
-        final java.util.concurrent.atomic.AtomicReference<Object> stuffRef =
-                new java.util.concurrent.atomic.AtomicReference<>(null);
+        // 响应可能拆多帧（zjcc 实测 58B+954B 两帧），收集全部 stuff；
+        // lastAddMs 支撑首帧后的静默宽限窗，避免只取第一帧丢后续行
+        final java.util.List<Object> stuffList = java.util.Collections.synchronizedList(new ArrayList<>());
+        final java.util.concurrent.atomic.AtomicLong lastAddMs =
+                new java.util.concurrent.atomic.AtomicLong(0);
         Object observer;
         try {
             Class<?> imvClass = cl.loadClass("imv");
@@ -7626,8 +7632,11 @@ public class MainHook {
                         String name = method.getName();
                         if ("receive".equals(name)) {
                             // xdv.receive(StuffBaseStruct)：响应回调，可能在通信线程
-                            stuffRef.set(args != null && args.length > 0 ? args[0] : null);
-                            latch.countDown();
+                            if (args != null && args.length > 0 && args[0] != null) {
+                                stuffList.add(args[0]);
+                                lastAddMs.set(System.currentTimeMillis());
+                                latch.countDown();
+                            }
                             return null;
                         }
                         // request() 与未知方法返回 null 安全（void/引用型）；
@@ -7665,20 +7674,32 @@ public class MainHook {
             Thread.currentThread().interrupt();
             arrived = false;
         }
+        if (arrived) {
+            // 静默宽限窗：末帧后 1.5s 内无新帧即认为响应结束（总上限仍受 request 发起后 15s 约束）。
+            // 文本响应（StuffTextStruct）是终态单帧，直接跳过宽限窗
+            boolean firstIsText = stuffList.get(0).getClass().getName()
+                    .endsWith("StuffTextStruct");
+            if (!firstIsText) {
+                long hardDeadline = startMs + 15000;
+                while (System.currentTimeMillis() - lastAddMs.get() < 1500
+                        && System.currentTimeMillis() < hardDeadline) {
+                    try { Thread.sleep(200); } catch (InterruptedException ie) {
+                        Thread.currentThread().interrupt();
+                        break;
+                    }
+                }
+            }
+        }
         unregisterObserverQuietly(cl, observer);
         long elapsed = System.currentTimeMillis() - startMs;
         try {
             resp.put("elapsed_ms", elapsed);
         } catch (JSONException ignored) { }
-        if (!arrived) {
+        if (stuffList.isEmpty()) {
             return errorJson(resp, "timeout waiting response (15s)");
         }
-        Object stuff = stuffRef.get();
-        if (stuff == null) {
-            return errorJson(resp, "response stuff is null");
-        }
         try {
-            JSONObject parsed = stuffTableToJson(stuff, protocolId);
+            JSONObject parsed = stuffTableToJson(stuffList, protocolId);
             resp.put("ok", true);
             resp.put("data", parsed);
             return resp.toString();
@@ -7709,48 +7730,97 @@ public class MainHook {
         TRADE_TABLE_KEY_COLUMNS = java.util.Collections.unmodifiableMap(k);
     }
 
-    private static JSONObject stuffTableToJson(Object stuff, int protocolId) throws Throwable {
+    // 按字段 ID 取值的协议（dataTable 键=字段 ID 而非列号）：字段 ID → 语义名。
+    // 1807 资金协议源码 gqi.receiveData：getData(fieldId) 取 firstOrNull 即金额。
+    // 语义名与 App 显示对应：36628 总资产 / 36629 浮动盈亏 / 36625 可用资金 /
+    // 36626 总市值 / 36623 可取资金；36631/36632/36633 仅港美股资金卡使用（A股为空）。
+    private static final java.util.Map<Integer, java.util.Map<Integer, String>> TRADE_FIELD_ID_PROTOCOLS;
+    static {
+        java.util.Map<Integer, String> f1807 = new java.util.LinkedHashMap<>();
+        f1807.put(36628, "total_assets");
+        f1807.put(36629, "float_profit");
+        f1807.put(36625, "available_amount");
+        f1807.put(36626, "total_market_value");
+        f1807.put(36623, "withdrawable_amount");
+        f1807.put(36631, "field_36631");
+        f1807.put(36632, "field_36632");
+        f1807.put(36633, "field_36633");
+        java.util.Map<Integer, java.util.Map<Integer, String>> fp = new java.util.LinkedHashMap<>();
+        fp.put(1807, java.util.Collections.unmodifiableMap(f1807));
+        TRADE_FIELD_ID_PROTOCOLS = java.util.Collections.unmodifiableMap(fp);
+    }
+
+    /** 多帧 stuff 合并解析：全部 StuffTableStruct 的 dataTable 按列拼接；
+     *  文本帧保留首个；1807 等字段 ID 协议额外输出 fields 单记录。 */
+    private static JSONObject stuffTableToJson(java.util.List<Object> stuffs, int protocolId) throws Throwable {
         JSONObject out = new JSONObject();
-        Class<?> c = stuff.getClass();
+        Object first = stuffs.get(0);
+        Class<?> c = first.getClass();
         out.put("struct", c.getSimpleName());
+        out.put("frames", stuffs.size());
         try {
-            out.put("pageId", c.getField("pageId").getInt(stuff));
-            out.put("frameId", c.getField("frameId").getInt(stuff));
-            out.put("real", c.getField("isRealData").getBoolean(stuff));
+            out.put("pageId", c.getField("pageId").getInt(first));
+            out.put("frameId", c.getField("frameId").getInt(first));
+            out.put("real", c.getField("isRealData").getBoolean(first));
         } catch (Throwable ignored) { }
-        if ("com.hexin.middleware.data.mobile.StuffTableStruct".equals(c.getName())) {
-            String[] head = (String[]) c.getField("tableHead").get(stuff);
-            java.util.Hashtable<?, ?> dataTable =
-                    (java.util.Hashtable<?, ?>) c.getField("dataTable").get(stuff);
-            out.put("caption", c.getField("caption").get(stuff));
-            out.put("row", c.getField("row").getInt(stuff));
-            out.put("col", c.getField("col").getInt(stuff));
+        boolean anyTable = false;
+        for (Object s : stuffs) {
+            if ("com.hexin.middleware.data.mobile.StuffTableStruct".equals(s.getClass().getName())) {
+                anyTable = true;
+                break;
+            }
+        }
+        if (anyTable) {
+            // 合并所有表格帧：tableHead/caption 取首个非空；dataTable 按列键拼接（多帧行延续）
+            String[] head = null;
+            Object caption = null;
+            java.util.Map<Integer, java.util.List<String>> merged = new java.util.TreeMap<>();
+            for (Object s : stuffs) {
+                if (!"com.hexin.middleware.data.mobile.StuffTableStruct".equals(s.getClass().getName())) {
+                    continue;
+                }
+                Class<?> sc = s.getClass();
+                if (head == null) {
+                    String[] h = (String[]) sc.getField("tableHead").get(s);
+                    if (h != null && h.length > 0) head = h;
+                }
+                if (caption == null) {
+                    Object cap = sc.getField("caption").get(s);
+                    if (cap != null) caption = cap;
+                }
+                java.util.Hashtable<?, ?> dataTable =
+                        (java.util.Hashtable<?, ?>) sc.getField("dataTable").get(s);
+                if (dataTable == null) continue;
+                for (java.util.Map.Entry<?, ?> e : dataTable.entrySet()) {
+                    Integer key = (Integer) e.getKey();
+                    String[] vals = (String[]) e.getValue();
+                    java.util.List<String> list = merged.get(key);
+                    if (list == null) {
+                        list = new ArrayList<>();
+                        merged.put(key, list);
+                    }
+                    if (vals != null) for (String v : vals) list.add(v);
+                }
+            }
+            out.put("caption", caption == null ? "" : caption);
+            out.put("col", merged.size());
             java.util.List<String> headList = new ArrayList<>();
             if (head != null) for (String h : head) headList.add(h);
             out.put("columns", new JSONArray(headList));
-            // dataTable 实测为列主序：外层 key=列号(0..col-1)，String[] 为该列全部行的值。
+            // dataTable 为列主序：外层 key=列号/字段 ID，String[] 为该列全部行的值。
             // 转置为行主序 rows[i][j]=dataTable[j][i]，与 columns 对齐。
             JSONArray rows = new JSONArray();
-            if (dataTable != null) {
-                java.util.List<Integer> keys = new ArrayList<>();
-                for (Object k : dataTable.keySet()) keys.add((Integer) k);
-                java.util.Collections.sort(keys);
-                java.util.List<String[]> colMajor = new ArrayList<>();
-                int maxLen = 0;
-                for (Integer k : keys) {
-                    String[] colVals = (String[]) dataTable.get(k);
-                    colMajor.add(colVals);
-                    if (colVals != null && colVals.length > maxLen) maxLen = colVals.length;
+            int rowCount = 0;
+            for (java.util.List<String> colVals : merged.values()) {
+                if (colVals.size() > rowCount) rowCount = colVals.size();
+            }
+            out.put("row", rowCount);
+            for (int r = 0; r < rowCount; r++) {
+                JSONArray rowArr = new JSONArray();
+                for (java.util.List<String> colVals : merged.values()) {
+                    rowArr.put(r < colVals.size() ? colVals.get(r) : "");
                 }
-                int rowCount = Math.max(out.optInt("row", 0), maxLen);
-                for (int r = 0; r < rowCount; r++) {
-                    JSONArray rowArr = new JSONArray();
-                    for (String[] colVals : colMajor) {
-                        String v = (colVals != null && r < colVals.length) ? colVals[r] : null;
-                        rowArr.put(v == null ? "" : v);
-                    }
-                    rows.put(rowArr);
-                }
+                rows.put(rowArr);
             }
             out.put("rows", rows);
             String[] keyCols = TRADE_TABLE_KEY_COLUMNS.get(protocolId);
@@ -7767,11 +7837,22 @@ public class MainHook {
                 }
                 out.put("records", records);
             }
+            // 字段 ID 协议：键=字段 ID，值数组 firstOrNull 即该字段值（单记录）
+            java.util.Map<Integer, String> fieldNames = TRADE_FIELD_ID_PROTOCOLS.get(protocolId);
+            if (fieldNames != null) {
+                JSONObject fields = new JSONObject();
+                for (java.util.Map.Entry<Integer, java.util.List<String>> e : merged.entrySet()) {
+                    String name = fieldNames.getOrDefault(e.getKey(), "field_" + e.getKey());
+                    java.util.List<String> vals = e.getValue();
+                    fields.put(name, vals == null || vals.isEmpty() ? "" : vals.get(0));
+                }
+                out.put("fields", fields);
+            }
         } else if ("com.hexin.middleware.data.mobile.StuffTextStruct".equals(c.getName())) {
-            out.put("reCode", c.getField("reCode").getInt(stuff));
-            out.put("textId", c.getField("id").getInt(stuff));
-            Object caption = c.getField("caption").get(stuff);
-            Object content = c.getField("content").get(stuff);
+            out.put("reCode", c.getField("reCode").getInt(first));
+            out.put("textId", c.getField("id").getInt(first));
+            Object caption = c.getField("caption").get(first);
+            Object content = c.getField("content").get(first);
             out.put("caption", caption == null ? "" : caption);
             out.put("content", content == null ? "" : content);
         }
