@@ -214,3 +214,75 @@
 - **原因**: 多个长时间工具会话、SSH、远端 Python 和大体积输出没有统一生命周期
 - **方案**: 一次只保留一个长任务；远端命令使用总 timeout；暂停服务必须配套 `trap` 恢复；输出计数和覆盖率，不打印完整大表；结束后检查残留进程
 - **适用范围**: WSL 到远端 Android/Hook 的容量测试和批量协议探针
+
+### 35. Pine.hook 强制执行 clinit，毒化依赖 App 状态的类（2026-08-16 同花顺实测两次崩溃）
+- **现象**: 启动期 Pine.hook 某类后 App 弹"运行异常"，logcat 显示 `ExceptionInInitializerError`，之后 App 自己使用该类时 `NoClassDefFoundError`
+- **原因**: Pine.hook 内部 `Method.invoke` 会**强制执行目标类 `<clinit>`**。若 clinit 依赖未就绪的 App 状态（如需要 context、需要先调 init 的单例），抛异常后 ART 将类标记为 erroneous，**永久失效**——不是本次崩溃，而是后续所有使用都崩
+- **方案**: ① 凡是 clinit 依赖 App 状态的类，绝不在其状态就绪前 hook；② 找该类体系内的"就绪标志"静态字段（如同花顺 `r9h.d` volatile boolean），延迟重试线程里先读标志再挂钩（读平凡静态字段只触发安全 clinit）；③ 延迟重试用 `Thread.sleep(15s/45s/90s)` 阶梯，成功后置标志不再重试
+- **适用范围**: 所有 Pine/ART hook；单例初始化型 SDK（交易、推送、支付）
+
+### 36. 动态代理观察者的 hashCode 等 primitive 方法返回 null（2026-08-16 同花顺实测）
+- **现象**: `Proxy.newProxyInstance` 实现回调接口后，把代理对象传给 App 的注册方法抛 `NullPointerException: Expected to unbox a 'int' primitive type but was returned null`
+- **原因**: InvocationHandler 里除目标方法外一律 `return null`。App 的观察者注册表（Vector/Hashtable/HashSet）会调用 `hashCode()`/`equals()`——它们返回 primitive int/boolean，null 无法 unbox
+- **方案**: handler 显式处理 Object 方法：`hashCode → System.identityHashCode(proxy)`、`toString → 描述串`、`equals → proxy == args[0]`；其余未知方法返回 null 前先确认返回类型不是 primitive
+- **适用范围**: 所有用动态代理实现 App 内部回调接口的场景（observer/listener/callback 注册）
+
+### 37. postAppSpecialize 时机主线程 Looper 未创建
+- **现象**: Zygisk 模块在 `postAppSpecialize` 里 `new Handler(Looper.getMainLooper())` 直接 NPE，后续初始化全部中断（连进程内 HTTP 服务器都起不来）
+- **原因**: postAppSpecialize 执行时 App 的主线程 Looper 尚未 prepare，`Looper.getMainLooper()` 返回 null
+- **方案**: 需要延迟执行的任务用后台线程 `Thread.sleep` 后直接执行（代码库内已有同款模式的 watcher 可复用）；不要依赖 Handler/Looper
+- **适用范围**: 所有 Zygisk 模块的 postAppSpecialize 阶段
+
+### 38. 把"某方法只在目标业务时被调用"当作安全触发器
+- **现象**: 计划用 A 方法的 afterCall 触发 B 模块挂钩，实测 A 在启动期（context 未就绪）就被调用，连带触发 #35 的 clinit 毒化
+- **原因**: 从反编译源码推断的调用时机不可靠——启动恢复流程（账户恢复、缓存回填）也会调用看似业务专属的方法
+- **方案**: 任何"用 X 触发 Y"的钩子链，先只挂 X 打日志实测完整触发时间线（含冷启动、热启动、杀进程重启），确认无启动期调用后再挂 Y；更稳妥的是用就绪标志字段（见 #35）代替业务方法做触发器
+- **适用范围**: 所有钩子链设计
+
+### 39. zygisksu（ZygiskNext/KernelSU）对模块 .so 有 ~356KB 预留地址空间限制（2026-08-16 实测）
+- **现象**: 换一版 main.cpp 后模块完全不加载，logcat 无任何模块日志；降级回旧 .so 立即恢复。magisk 日志有 `reserved address space ... smaller than ... bytes needed`
+- **原因**: ZygiskNext 在 zygote 启动时给模块 dlopen 预留的地址窗口有限。`std::vector<std::string>`、`std::sort` 等 STL 模板实例化会显著增大 .so，轻松超限
+- **方案**: companion/native 侧用纯 C 结构（定长二维数组 + 插入排序）替代 STL 容器；`-fvisibility=hidden -Os`；提交前检查 .so 体积（实测 346432B 可载、355680B 不可载）
+- **适用范围**: zygisksu/ZygiskNext 环境的所有原生模块；Magisk 官方 zygisk 无此限制
+
+### 40. zygisk 原生 .so 只在 zygote 启动时加载，DEX 不是
+- **现象**: 更新模块目录里的 .so 后 force-stop + 重启 App 不生效；更新 dex 立即生效
+- **原因**: zygisk 模块 .so 在 zygote 进程启动时 dlopen 并常驻；App 重启不重新 dlopen。DEX 是每次 fork 后经 companion 传输注入，随 App 重启刷新
+- **方案**: 改 .so 后必须 `su -c 'setprop ctl.restart zygote'`（会杀掉所有 App，开发机可接受）；只改 DEX 则 force-stop + monkey 启动即可。注意 zygote 重启后部分设备会弹 USB 模式选择框挡住屏幕，`input keyevent KEYCODE_BACK` 关闭
+- **适用范围**: 所有 zygisk 模块迭代
+
+### 41. 增量 dexing 使 MainHook 所在 classesN.dex 漂移，companion 硬编码文件名失效
+- **现象**: 一次编译后 MainHook 从 classes3.dex 移到 classes4.dex，硬编码"发送 classes/classes2/classes3/libpine.so"的 companion 把不含 MainHook 的 dex 注入，Hook 全部失效
+- **原因**: gradle 增量 dexing 会把类重新分布到任意数量的 dex 文件，文件数量和编号不保证稳定
+- **方案**: ① companion 侧动态枚举模块目录（排序后的 *.dex 全部发送、libpine.so 最后），协议带文件数；② 部署脚本每次用 `unzip -p apk classesN.dex | strings | grep <标志字符串>` 确认 MainHook 实际所在 dex 再推送
+- **适用范围**: 所有经 companion 传输 DEX 的 zygisk 模块
+
+### 42. 源码树里的桩类会让 so 的 JNI_OnLoad 失败（真库/桩库双源陷阱）
+- **现象**: `System.load(libpine.so)` 抛 `UnsatisfiedLinkError: JNI_ERR returned from JNI_OnLoad`，全部 Pine hook 失效；直接 dlopen 该 so 正常
+- **原因**: 项目源码里存在一个为 LSPosed 桥接写的同名桩类（只有三个普通方法，无 native 方法）。JNI_OnLoad 里 `RegisterNatives` 要注册真类的 `native` 方法（如 `init0(IZZZZZ)V`），FindClass 解析到桩类 → 注册失败 → JNI_ERR。曾因"模块目录恰好残留旧版真 dex"而掩盖数日
+- **方案**: ① 保留一份真库 dex（如 `zygisk/vendor/pine-classes.dex`）作为唯一部署源，写进部署流程；② 排查 UnsatisfiedLinkError 时先 `strings libX.so | grep -E "native方法签名"` 比对 Java 类是否有对应 native 声明；③ 部署清单固定"真库 dex 不动、只增量替换业务 dex"，防止全量推送覆盖
+- **适用范围**: 所有携带 JNI 库 + 源码树存在同名桥接桩的项目（Pine/lsplant 等）
+
+### 43. Windows adb 经 shell cat 拉二进制会 \n→\r\n 损坏
+- **现象**: `adb shell "su -c 'cat file'"` 拉出的 DEX/SO 反编译失败或 md5 与设备上不同
+- **原因**: Windows 版 adb 的 shell 输出做文本模式转换，0x0A 被展开成 0x0D0A
+- **方案**: 设备上先 `su -c 'cp <src> /data/local/tmp/ && chmod 644'`，再 `adb pull`。或统一用 `adb exec-out`（二进制安全）
+- **适用范围**: 所有从 Windows adb 拉取二进制的场景（DEX/SO/DB）
+
+### 44. UI 自动化导航前不确认前台 App，坐标全部打偏
+- **现象**: 依次 tap"交易Tab→持仓→查询"后日志毫无反应，OCR 发现屏幕在另一个 App（如快手）
+- **原因**: monkey 启动可能被首页弹窗/快捷方式切换打断，脚本盲打坐标在错误窗口执行
+- **方案**: ① 每轮导航前 `dumpsys window | grep mCurrentFocus` 确认目标包名在前台；② 导航后立即截图 OCR 验证预期元素出现再继续；③ OCR 坐标先确认截图是否全尺寸（screencap 直出的 1080x2378 不需要乘缩放系数；先打印图片尺寸再定坐标变换）；④ 底部 Tab 栏小字 OCR 识别不到时，裁剪该区域放大 2 倍再识别
+- **适用范围**: 所有基于 input tap 坐标的 UI 自动化
+
+### 45. 响应帧协议号 ≠ 请求协议号，按请求号注册的观察者收不到响应
+- **现象**: 进程内重放查询 `H(2001,2031,observer,...)`，请求发出成功但 15 秒超时无回调；App 自己同样的请求有响应（响应帧 frameId=1810）
+- **原因**: SDK 版本切换过渡期，新版用新协议号发请求，native 侧响应仍按旧协议号回帧；观察者注册表按协议号做分发键——按 2031 注册的观察者永远匹配不到 1810 的响应帧
+- **方案**: ① 先 hook 响应观察者的 receive（记录 query(pageId,protocolId) 与 stuff.frameId），建立"请求协议号 → 响应协议号"映射；② 重放一律用**响应侧的协议号**注册+发起（往往就是旧协议号）；③ 旧协议的 params 若 App 已不再发送，可从反编译源码找模板静态构造
+- **适用范围**: 所有带版本演进的请求/响应分发体系（协议号路由型 SDK）
+
+### 46. 高频方法的捕获日志刷屏，挤掉低频关键事件
+- **现象**: "manager captured"类 afterCall 日志每秒多条，100 条环形缓冲里全是它，TradeQuery/TradeResp 等真正要观察的事件全被冲掉，logcat 也难 grep
+- **原因**: 高频回调（账户刷新、轮询）持续命中同一日志点，没有静默机制
+- **方案**: ① 捕获成功后置 volatile 标志，后续调用静默或降为 Log.v；② 关键低频事件（请求/响应）单独 `Log.i` 直出 logcat，不只进内存缓冲；③ 观察时 `grep -v` 过滤噪音源
+- **适用范围**: 所有高频 hook + 事件缓冲的探针设计

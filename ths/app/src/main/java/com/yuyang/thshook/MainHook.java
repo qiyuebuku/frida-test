@@ -7551,6 +7551,9 @@ public class MainHook {
         m.put("today_deal", new int[]{1810, 2609});  // 当日成交（旧协议；响应 frameId=1810）
         m.put("hist_order", new int[]{1825, 2612});  // 历史委托
         m.put("hist_deal", new int[]{1824, 2611});   // 历史成交
+        // funds(1264/9001) 未加入：交易首页批量查询是页面级容器协议，响应按子项
+        // 分发到页面组件自己的观察者，按 1264 注册的 proxy 收不到（15s 超时）。
+        // 见 docs/3. 实施方案/7. Agent工具/9. 待优化.md。
         TRADE_QUERY_PROTOCOLS = java.util.Collections.unmodifiableMap(m);
         java.util.Map<String, String> sp = new java.util.LinkedHashMap<>();
         // new eb6().a("36665", TodayDealSource.Query.getSource()).toString()
@@ -7675,7 +7678,7 @@ public class MainHook {
             return errorJson(resp, "response stuff is null");
         }
         try {
-            JSONObject parsed = stuffTableToJson(stuff);
+            JSONObject parsed = stuffTableToJson(stuff, protocolId);
             resp.put("ok", true);
             resp.put("data", parsed);
             return resp.toString();
@@ -7695,7 +7698,18 @@ public class MainHook {
 
     /** StuffBaseStruct → JSON：表格输出列名+全部行（查询结果本体，经 HTTP 返回），
      *  文本输出语义提示；结构字段一并带上。 */
-    private static JSONObject stuffTableToJson(Object stuff) throws Throwable {
+    // dataTable 键序 -> 语义列名（按真机数据人工校准）。
+    // App 侧 dzh.Y1 用各观察者私有的 iArr 重排列序，stuff 本身不携带映射；
+    // 协议升级或列变化后需重新校准。无映射的协议输出 key_columns=null。
+    private static final java.util.Map<Integer, String[]> TRADE_TABLE_KEY_COLUMNS;
+    static {
+        java.util.Map<Integer, String[]> k = new java.util.LinkedHashMap<>();
+        k.put(1825, new String[]{"代码", "名称", "状态", "操作", "委托数量", "价格",
+                "成交数量", "成交均价", "交易市场", "合同编号", "日期", "时间"});
+        TRADE_TABLE_KEY_COLUMNS = java.util.Collections.unmodifiableMap(k);
+    }
+
+    private static JSONObject stuffTableToJson(Object stuff, int protocolId) throws Throwable {
         JSONObject out = new JSONObject();
         Class<?> c = stuff.getClass();
         out.put("struct", c.getSimpleName());
@@ -7714,19 +7728,45 @@ public class MainHook {
             java.util.List<String> headList = new ArrayList<>();
             if (head != null) for (String h : head) headList.add(h);
             out.put("columns", new JSONArray(headList));
+            // dataTable 实测为列主序：外层 key=列号(0..col-1)，String[] 为该列全部行的值。
+            // 转置为行主序 rows[i][j]=dataTable[j][i]，与 columns 对齐。
             JSONArray rows = new JSONArray();
             if (dataTable != null) {
                 java.util.List<Integer> keys = new ArrayList<>();
                 for (Object k : dataTable.keySet()) keys.add((Integer) k);
                 java.util.Collections.sort(keys);
+                java.util.List<String[]> colMajor = new ArrayList<>();
+                int maxLen = 0;
                 for (Integer k : keys) {
-                    String[] rowVals = (String[]) dataTable.get(k);
+                    String[] colVals = (String[]) dataTable.get(k);
+                    colMajor.add(colVals);
+                    if (colVals != null && colVals.length > maxLen) maxLen = colVals.length;
+                }
+                int rowCount = Math.max(out.optInt("row", 0), maxLen);
+                for (int r = 0; r < rowCount; r++) {
                     JSONArray rowArr = new JSONArray();
-                    if (rowVals != null) for (String v : rowVals) rowArr.put(v == null ? "" : v);
+                    for (String[] colVals : colMajor) {
+                        String v = (colVals != null && r < colVals.length) ? colVals[r] : null;
+                        rowArr.put(v == null ? "" : v);
+                    }
                     rows.put(rowArr);
                 }
             }
             out.put("rows", rows);
+            String[] keyCols = TRADE_TABLE_KEY_COLUMNS.get(protocolId);
+            out.put("key_columns", keyCols == null ? JSONObject.NULL : new JSONArray(java.util.Arrays.asList(keyCols)));
+            if (keyCols != null) {
+                JSONArray records = new JSONArray();
+                for (int r = 0; r < rows.length(); r++) {
+                    JSONArray rowArr = rows.getJSONArray(r);
+                    JSONObject rec = new JSONObject();
+                    for (int j = 0; j < keyCols.length && j < rowArr.length(); j++) {
+                        rec.put(keyCols[j], rowArr.optString(j, ""));
+                    }
+                    records.put(rec);
+                }
+                out.put("records", records);
+            }
         } else if ("com.hexin.middleware.data.mobile.StuffTextStruct".equals(c.getName())) {
             out.put("reCode", c.getField("reCode").getInt(stuff));
             out.put("textId", c.getField("id").getInt(stuff));

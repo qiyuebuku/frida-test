@@ -16,6 +16,7 @@
 12. 当前边界
 13. Hook APK 生产签名
 14. 板块 QueryClient 路由与性能优化
+15. 交易 SDK 只读查询逆向（查询目录/双观察者/进程内调用器/防崩铁律）
 
 ## 1. 基本信息与目标
 
@@ -495,3 +496,104 @@ MobileHQ 会分多帧返回字段。收盘后涨速指标 `36251` 合法为空�
 - `hot_block_list` 每次返回多个历史交易日的轮动榜，但某日掉出新榜单的旧板块快照仍会留在数据库。读取时必须按 `sector_type + metric + source_date` 选择最新 `fetched_at` 的完整批次，再按 `rank` 排序；不能把各板块代码的 latest 行直接拼接。App 首页一屏为最近 3 个交易日。
 - 热门板块的热度是用户关注度信号，不是收盘即冻结的价格指标。实机在 00:21 后仍持续改变概念、行业、指数热度，因此 `hot` 三个任务不能套用 A 股开盘窗口；应保持独立的 60 秒调度。涨幅字段可以维持收盘值，热度与排名继续更新。
 - 热度目前来自主动 Hurricane 查询而非稳定推送。生产采用自适应轮询：交易时段 60 秒、普通闭市和午休 5 分钟、01:00–07:00 深夜 30 分钟；分钟调度未到期时仅检查本地最新 `fetched_at` 后跳过，不占用 Native QueryClient。真正的实时订阅流则全天保持连接，仅对回调内容按快照键去重，不使用交易窗口拦截。
+
+## 15. 交易 SDK 只读查询逆向（2026-08-16，11.58.03）
+
+目标：不脱离 App 进程，复用同花顺自己的交易查询管道，为 Portfolio Agent 提供
+持仓/委托/成交的只读数据端点。安全边界：日志只记结构不记值；只重放查询协议，
+绝不触碰买入/卖出/撤单/转账。
+
+### 15.1 关键类锚点（11.58.03 混淆名，升级会变）
+
+| 类 | 角色 | 关键成员 |
+|---|---|---|
+| `MasterModuleBridge`（唯一非混淆锚点） | libweituo.so 唯一引用的 Java 类 | `jniRequest(Context,byte[])` 发请求；`receive(byte[])` 响应；`receiveWTModulePush` 推送；`receiveLog` GBK 日志 |
+| `r9h`（WtModuleInitProcessor） | 交易模块初始化器 | `r9h.d` volatile boolean = **唯一安全就绪探针**（读它只触发平凡 clinit）；`r9h.o(byte[])` 请求入口；`r9h.c` context |
+| `rpv`（抽象，uqv.e(true) 返回） | fluent 请求构建器 | `H(int pageId,int protocolId,imv observer,String params)`；`D(String key,Object value)`；`request()` |
+| `uqv` | 构建器工厂 | `uqv.e(true)` 返回 A 股交易 builder |
+| `pzr`/`fzr` | 账户对象（fzr extends pzr） | `d()` 券商账号 `q()` qsid `x()` wtid；`p0s.F(119)` 返回实例 |
+| `ixm` | 抽象观察者基类（sxh/fyh/rtl 继承） | `receive(StuffBaseStruct)` → 抽象 `a()`；持仓响应走此体系 |
+| `nxm` | 观察者基类（pxm/lxm/jxm 父类） | 字段 `c=pageId d=protocolId g=pzr`；自有 receive 分发 |
+| `kmv` | 观察者注册表 | `c(imv)` 注册返回 ID；`l(imv)` 注销 |
+
+### 15.2 数据流与加密结论
+
+```
+Cipher AES/ECB(Java 明文, 无 cmd= 字样) → r9h.o → jniRequest(Context,bytes)
+  → libweituo.so（cmd=cmd_zijin_query&... 在 native 组装, Java hook 拿不到）
+  → receive/receiveWTModulePush → CommunicationService.notifyDataReceived
+  → hrv.b(SocketConnectionPool 帧解析) → ixm/nxm 观察者 → 页面
+```
+
+- cmd 明文映射在 native 侧，**不需要**破解——Java 层直接复用查询构建器即可绕开
+- 交易首页批量查询 2276B（H(9001,1264)）；定时刷新 420B；持仓刷新 440B
+
+### 15.3 响应双观察者体系（重要架构发现）
+
+交易响应有两条独立投递路径，**必须都挂**才能覆盖全部页面：
+
+1. **ixm 体系**：`receive(StuffBaseStruct)` → 子类实现抽象 `a()`。持仓页（sxh$b）走此
+2. **nxm 体系**：自有 `receive()`，instanceof 分发——`StuffTableStruct` → Handler(msg=1) → `i()` → `dzh.Y1()` 解析 → `receiveTableData(String[][],...)`；`StuffTextStruct` → Handler(msg=2) → `j()` → `receiveTextData(id,content,caption)`。当日/历史委托成交页走此
+
+响应载体语义（实测确认）：
+- `StuffTextStruct` = **纯提示文本**（caption=系统信息，如"没有成交数据。"），字段 reCode/id/type/caption/content。**不是账户数据**
+- `StuffTableStruct` = 数据表：`tableHead`(String[] 列名)、`row/col`、`dataTable`(Hashtable<Integer,String[]>)、caption
+- 持仓表 14 列：`[名称,盈亏,市值,盈亏率,成本,现价,数量,可卖,冻结,代码,刷新,交易市场,股东账号,实际数量]`
+
+### 15.4 已验证查询目录（请求 → 响应配对，真机实测）
+
+| 查询 | 请求 | 响应观察者 | 端点名 |
+|---|---|---|---|
+| 持仓（股票列表） | `H(2606或2624, 1891)` + `D("wt_account",pzr)` | ixm: sxh$b | positions |
+| 当日委托 | `H(2683, 1811)` | nxm: pxm | today_order |
+| 当日成交 | `H(2609, 1810)` ⚠️ | nxm: jxm | today_deal |
+| 历史成交 | `G(2611, 1824)` | nxm: lxm | hist_deal |
+| 历史委托 | `H(2612, 1825)` | nxm: pxm | hist_order |
+
+**today_deal 陷阱**：App 新统一方案发 `H(2001,2031)`，但**响应帧 frameId=1810**
+（旧协议号）。观察者按 protocolId 注册分发——按 2031 注册收不到（15s 超时）。
+必须按 `H(2609,1810)` 发起注册；params 静态构造（源码 u2i HSTodayDealClient 模板）：
+`ctrlid_0=36665\nctrlvalue_0=today_chaxun\nctrlcount=1`（eb6 格式：`a(key,value)`
+生成 ctrlid_N/ctrlvalue_N 对，toString 补 ctrlcount）
+
+**eb6 参数格式**：`ctrlid_0=值\nctrlvalue_0=值\nctrlcount=N`。新构造器可带初始串
+（sxh 的 `new eb6(R.e())`），空构造器也可用（u2i 模式）
+
+### 15.5 进程内只读调用器模板（已验证 139~275ms）
+
+```java
+// 1. 前置：thsAppClassLoader / tradeAccountManagerInstance(p0s.F(119)捕获)
+//    / capturedQueryParams(protocolId→params, hook rpv.G/H 分存) / r9h.d==true
+// 2. Proxy 实现 imv 接口（imv = xdv.receive(StuffBaseStruct) + request()）
+//    ⚠️ hashCode/toString/equals 必须返回正确类型，见 pitfalls #36
+Object observer = Proxy.newProxyInstance(cl, new Class[]{imvClass}, handler);
+// 3. 反射链（H 内部自动注册观察者 eev.i().f()，无需手工 kmv.c）
+Object rpv = uqv.e(true).H(pageId, protoId, observer, params);
+rpv.D("wt_account", account);   // 绑定账户
+rpv.request();                   // → mrv → k7r.K0 → r9h.o → jniRequest
+// 4. CountDownLatch 等响应(15s)，receive 回调在通信线程 set stuff + countDown
+// 5. 结束后 kmv.l(observer) 注销，防注册表泄漏
+```
+
+### 15.6 防崩铁律（两次真实崩溃换来）
+
+- **clinit 毒化**：MasterModuleBridge 的 clinit 要 context，启动期 Pine.hook 它 →
+  ExceptionInInitializerError → 类永久 erroneous → App 后续 NoClassDefFoundError
+  （pitfalls #35）。解决：15/45/90s 延迟重试 + `r9h.d` 门控
+- **F(119) 不是安全触发器**：启动期账户恢复流程就会调它（context 未就绪时），
+  不能用它的 afterCall 触发 bridge 挂钩（pitfalls #38）
+- postAppSpecialize 无主线程 Looper（pitfalls #37）
+- installAllHooks 会被多 classLoader 多次调用；App 类挂钩放 firstRun 外可重试区
+
+### 15.7 部署与环境备忘
+
+- 解壳 DEX（360 加壳运行时解密）：`/data/user/0/com.hexin.plat.android/files/dex/classes{1-7}.dex`，
+  拉取方法见 pitfalls #43；反编译到 /tmp/ths-jadx-rt{1,2,4,5,6}/runtime
+- Zygisk 模块目录三文件：classes.dex(真 Pine 49320B，vendor 固化) + classes3.dex(MainHook，
+  增量替换) + libpine.so。**真 Pine dex 被 APK 桩覆盖 = 全部 hook 失效**（pitfalls #42）
+- 交易页 UI 坐标（1080x2378 原始分辨率直接用，OCR 坐标不缩放）：买入(108,1073) 卖出(323,1073)
+  撤单(538,1073) 持仓(755,1073) 查询(971,1072)；Tab 栏 y≈2290：交易(629) 资讯(810)；
+  查询页项：当日成交(144,457) 当日委托(145,602) 历史成交(145,776) 历史委托(144,920)
+- Hook HTTP 端点：`GET /stock/trade/query?name=positions|today_order|today_deal|
+  hist_order|hist_deal`（各查询需 App 内进过对应页面一次以捕获 params；today_deal 除外）
+- 详细交接文档：`smart-fund-server/docs/6. 使用说明/5. Portfolio Agent第一阶段同花顺交易SDK逆向交接说明.md`
