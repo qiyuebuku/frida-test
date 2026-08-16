@@ -1225,7 +1225,11 @@ async def market_sector_rankings(
 @mcp.tool(
     description=(
         "Open one persisted THS sector by provider code. Returns compact "
-        "latest facts and a bounded history; it does not call the upstream App."
+        "latest facts plus short per-trade-date history for the highest-value "
+        "available types (daily bars, flow, heat and ranking). Check "
+        "history_series before declaring history unavailable; use "
+        "market_instrument_history only when a longer or exact-date window is "
+        "needed. It does not call the upstream App."
     ),
     annotations=_READ_ONLY_ANNOTATIONS,
 )
@@ -1740,14 +1744,52 @@ async def _read_sector_detail(**kwargs) -> dict[str, Any]:
         **kwargs,
     )
     series = []
-    for group in (result.get("series") or [])[:3]:
+    history_priority = {
+        data_type: priority
+        for priority, data_type in enumerate(
+            (
+                "ths_sector_daily",
+                "ths_sector_flow",
+                "ths_sector_hot",
+                "ths_sector_ranking",
+            )
+        )
+    }
+    history_groups = sorted(
+        (
+            group
+            for group in (result.get("series") or [])
+            if isinstance(group, dict)
+        ),
+        key=lambda group: (
+            history_priority.get(str(group.get("data_type") or ""), 99),
+            str(group.get("data_type") or ""),
+        ),
+    )[:4]
+    for group in history_groups:
+        history_items = [
+            item for item in (group.get("items") or [])
+            if isinstance(item, dict)
+        ]
+        latest_by_trade_date: dict[str, dict[str, Any]] = {}
+        for item in history_items:
+            trade_date = str(item.get("trade_date") or item.get("bucket_at") or "")[:10]
+            if trade_date:
+                latest_by_trade_date[trade_date] = item
+        if len(latest_by_trade_date) >= 2:
+            sampled_items = [
+                latest_by_trade_date[key]
+                for key in sorted(latest_by_trade_date)[-3:]
+            ]
+        else:
+            sampled_items = history_items[-3:]
         series.append(
             {
                 "data_type": group.get("data_type"),
                 "subject_id": group.get("subject_id"),
                 "items": [
                     _compact_sector_history_item(item)
-                    for item in (group.get("items") or [])[:3]
+                    for item in sampled_items
                 ],
             }
         )

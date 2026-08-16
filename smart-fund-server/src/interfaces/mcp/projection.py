@@ -312,6 +312,12 @@ def _project_market_result(
                 for item in latest if isinstance(item, Mapping)
                 if (projected := _project_sector_signal(item, identity=False))
             ],
+            "history_series": [
+                projected
+                for group in result.get("series") or []
+                if isinstance(group, Mapping)
+                if (projected := _project_sector_history_group(group))
+            ],
             "representative_etf": result.get("representative_etf"),
             "constituent_count": result.get("constituent_count"),
             "top_gainers": result.get("top_gainers"),
@@ -537,6 +543,27 @@ def _project_sector_signal(value: Any, *, identity: bool = True) -> Any:
         "subject_id", "provider_sector_code", "sector_name", "sector_type"
     }
     return _select(value, (field for field in _SECTOR_FIELDS if field not in hidden))
+
+
+def _project_sector_history_group(value: Mapping[str, Any]) -> dict[str, Any]:
+    """Keep bounded multi-date sector evidence without storage metadata."""
+
+    points = []
+    for item in value.get("items") or []:
+        if not isinstance(item, Mapping):
+            continue
+        data = item.get("data") if isinstance(item.get("data"), Mapping) else {}
+        point = _nonempty({
+            "trade_date": item.get("trade_date") or data.get("date"),
+            "values": _project_preview(data),
+            "evidence_locator": item.get("evidence_locator"),
+        })
+        if point:
+            points.append(point)
+    return _nonempty({
+        "data_type": value.get("data_type"),
+        "points": points,
+    })
 
 
 def _project_sector_comparison(result: Mapping[str, Any]) -> dict[str, Any]:

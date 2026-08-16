@@ -141,6 +141,48 @@ def test_compact_evidence_ledger_prefers_external_content_handle() -> None:
     ]
 
 
+def test_sector_open_projection_keeps_compact_history_series() -> None:
+    result = project_tool_result(
+        "market_sector_open",
+        {
+            "provider_sector_code": "886033",
+            "found": True,
+            "latest": [],
+            "series": [
+                {
+                    "data_type": "ths_sector_flow",
+                    "subject_id": "ths_native:concept:886033",
+                    "items": [
+                        {
+                            "id": 12,
+                            "trade_date": "2026-08-14",
+                            "bucket_at": "2026-08-14T07:00:00Z",
+                            "data": {"main_net_inflow": 111.05},
+                            "evidence_locator": "market:v1:flow-12",
+                        }
+                    ],
+                }
+            ],
+        },
+    )
+
+    assert result["history_series"] == [
+        {
+            "data_type": "ths_sector_flow",
+            "points": [
+                {
+                    "trade_date": "2026-08-14",
+                    "values": {"main_net_inflow": 111.05},
+                    "evidence_locator": "market:v1:flow-12",
+                }
+            ],
+        }
+    ]
+    point = result["history_series"][0]["points"][0]
+    assert "id" not in point
+    assert "bucket_at" not in point
+
+
 @pytest.mark.asyncio
 async def test_sector_detail_samples_latest_row_per_trade_date(monkeypatch) -> None:
     service = SimpleNamespace(

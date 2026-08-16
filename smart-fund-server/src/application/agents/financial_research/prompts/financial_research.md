@@ -141,6 +141,10 @@ domain 时，再用同一工具的 `domain` 参数分页取得精确 group。目
     写成数据缺口。旧观点可以定义待复核问题，不能充当本轮证据。
     板块资金等分钟快照需要跨交易日比较时，使用 `market_instrument_history` 并显式填写 `data_type`、
     `date_start` 和 `date_end` 读取目标交易日；不要只增大 `limit`，否则高频分钟记录仍会挤掉前一日。
+    `market_sector_open` 返回的 `history_series` 已提供板块日线、资金、热度或排名的有界跨日入口；先检查
+    其中是否已有所需日期。只有它的短序列不足以支持结论时，才调用 `market_instrument_history` 扩大窗口。
+    两个工具均未返回所需范围后，才能把该数据写成 Evidence Gap（证据缺口），不能因最新快照没有历史
+    就声称系统未采集或能力不可得。
     如果只能打开变化后的当前端，就只能写“当前为净流出/当前走弱”，不得在标题、摘要、Thesis
     （论点）、Claim（主张）或 invalidate（失效）事件中写“由正转负/旧观点已证伪”。旧报告中的精确
     数值即使出现在 Evidence Ledger（证据账本）里，也仍然不是本轮重新打开的证据。
