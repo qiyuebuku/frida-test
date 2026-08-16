@@ -718,7 +718,7 @@ class FinancialAgentRuntime:
         evaluator_input = _semantic_evaluator_input(proposal, context)
         metadata = {
             "research_run_id": proposal.run_id,
-            "evaluator_version": "research-semantic-v1",
+            "evaluator_version": "research-semantic-v2",
             "model": self.settings.model,
             "isolation_policy": "never_feed_back_to_same_research_run",
         }

@@ -1287,10 +1287,11 @@ def test_sector_detail_returns_persisted_constituents_and_etf() -> None:
     assert result["upstream_requested"] is False
     assert result["constituent_count"] == 54
     assert result["constituents"][0]["security_name"] == "华数传媒"
-    assert result["representative_etf"] == {
+    assert result["etf_navigation_candidates"] == [{
         "code": "159869",
         "name": "游戏ETF",
-    }
+    }]
+    assert "不是稳定板块代理" in result["etf_navigation_note"]
     assert all(
         item["data_type"] != "ths_sector_constituents"
         for item in result["latest"]

@@ -15,8 +15,8 @@ from src.application.agents.financial_research.model_settings import (
 )
 
 
-SEMANTIC_EVALUATOR_VERSION = "research-semantic-v1"
-SEMANTIC_PROMPT_VERSION = "research-semantic-prompt-v1"
+SEMANTIC_EVALUATOR_VERSION = "research-semantic-v2"
+SEMANTIC_PROMPT_VERSION = "research-semantic-prompt-v2"
 logger = logging.getLogger(__name__)
 
 
@@ -41,11 +41,13 @@ class ClaimCitationAssessment(ResearchContract):
 
 
 class SemanticResearchScores(ResearchContract):
+    exploration_depth: float = Field(ge=0, le=10)
     evidence_entailment: float = Field(ge=0, le=10)
+    clarity_and_structure: float = Field(ge=0, le=10)
     counterevidence_directness: float = Field(ge=0, le=10)
     forecast_calibration: float = Field(ge=0, le=10)
     source_independence: float = Field(ge=0, le=10)
-    narrative_selection_bias: float = Field(ge=0, le=10)
+    market_structure_and_pricing: float = Field(ge=0, le=10)
     mechanism_completeness: float = Field(ge=0, le=10)
     decision_value: float = Field(ge=0, le=10)
 
@@ -58,14 +60,15 @@ class SemanticResearchEvaluationDraft(ResearchContract):
     evidence_lineage_groups: list[str] = Field(default_factory=list, max_length=30)
     strengths: list[str] = Field(default_factory=list, max_length=12)
     defects: list[str] = Field(default_factory=list, max_length=20)
+    non_scoring_limitations: list[str] = Field(default_factory=list, max_length=20)
     recommended_research_actions: list[str] = Field(default_factory=list, max_length=20)
     confidence: float = Field(ge=0, le=1)
 
 
 class SemanticResearchEvaluation(SemanticResearchEvaluationDraft):
     run_id: str = Field(min_length=1, max_length=180)
-    evaluator_version: Literal["research-semantic-v1"] = SEMANTIC_EVALUATOR_VERSION
-    prompt_version: Literal["research-semantic-prompt-v1"] = SEMANTIC_PROMPT_VERSION
+    evaluator_version: Literal["research-semantic-v2"] = SEMANTIC_EVALUATOR_VERSION
+    prompt_version: Literal["research-semantic-prompt-v2"] = SEMANTIC_PROMPT_VERSION
     model: str = Field(min_length=1, max_length=180)
 
 
@@ -157,7 +160,15 @@ _INSTRUCTIONS = """
 人为寻找第二家供应商而机械限制在7分。
 对一篇同时包含正反观点的来源，要检查报告是否对称呈现，而不是只摘取有利一侧。
 
-七个分项均为0至10分：证据蕴含、直接反证、预测校准、来源独立性、叙事选择偏差控制、机制完整性、决策价值。预测仅有当前行情外推最高3分；普通多窗口历史最高5分；历史相似场景最高8分；同时具备条件样本、基准、分布和已经到期的样本外验证才可高于8分。若预测验证窗口尚未结束，样本外结果属于未来待评估事项，不得把“当前不可能取得结果”列为本次报告缺陷或额外扣分；此时按条件样本、基准、分布和稳健性本身评分，最高8分。只有背景风险不能获得直接反证高分。只挑有利窗口、把局部高点写成长周期高点、用长期上涨推出短期上涨，都应降低叙事选择偏差控制分。
+九个固定分项均为0至10分，后续版本不得改名、合并或删除：探索深度、证据蕴含、清晰度与结构、
+预测校准、组合决策价值、直接反证、市场结构与定价、机制完整性、来源独立性。探索深度不仅计算工具
+数量，还要评价是否从全市场导航到候选比较、对象深读、历史校准和精确证据，并避免无目的重复调用。
+清晰度评价结论、依据、反证、边界能否被不同职责直接消费，不因报告诚实披露必要限制而扣分。
+预测仅有当前行情外推最高3分；普通多窗口历史最高5分；历史相似场景最高8分；同时具备条件样本、
+基准、分布和已经到期的样本外验证才可高于8分。若预测验证窗口尚未结束，样本外结果属于未来待评估
+事项，不得把“当前不可能取得结果”列为本次报告缺陷或额外扣分；此时按条件样本、基准、分布和稳健性
+本身评分，最高8分。只有背景风险不能获得直接反证高分。只挑有利窗口、把局部高点写成长周期高点、
+用长期上涨推出短期上涨，都应降低市场结构与定价分。
 已失效旧观点中保留的 Forecast 是历史审计记录，不是本轮新预测；除非报告继续依赖它作前瞻判断，
 不得用它拉低本轮预测校准分。一个高质量的“当前无可用方向”观点，如果明确说明候选淘汰链、共同市场
 约束、何种证据会解除限制、组合当前不应做什么和何时重新研究，机制完整性与决策价值都可以达到8分
@@ -179,7 +190,12 @@ trade_date 一致，不得把采集时间不同当作时间纪律缺陷。
 预测区间是否绑定错窗口等机械事实，以该字段为准；不得因多个窗口数字相邻出现而自行推断串绑。
 
 评测结果不会反馈给本次 Research Agent，因此应客观记录缺陷与后续研究动作，不要为了让报告通过而宽松打分。
+`defects` 只能填写实际降低某个分项分数的问题；未进入中心结论、已被正确降级且不影响当前决策边界的
+数据限制必须放入 `non_scoring_limitations`，不得重复扣分。具体而言：未输出具体 ETF/基金代码时，
+代表 ETF 导航候选不稳定不是本轮报告缺陷；非核心替代对象某一期限样本不足，若已披露并未据此推导
+方向，不是中心校准缺陷；成交量原始单位未确认，但报告只使用同对象同字段的无量纲比值或完全未使用时，
+不是证据或机制缺陷。只有模型越过这些边界作出表达、方向或因果结论时才记入 defects 并扣对应分数。
 不要在隐藏推理中重写报告或逐字复述全部证据。完成必要判断后立即调用 submit_semantic_evaluation；
-工具参数的第一个顶层字段必须是完整的 scores，先填写七项分数，再填写每个 Claim 一条的精简 assessment。
+工具参数的第一个顶层字段必须是完整的 scores，先填写九项分数，再填写每个 Claim 一条的精简 assessment。
 每条 rationale 只写一个关键差异，strengths、defects 和 recommended_research_actions 只保留会影响评分的项目。
 """.strip()

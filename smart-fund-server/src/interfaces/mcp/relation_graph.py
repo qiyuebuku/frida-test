@@ -40,6 +40,7 @@ from src.application.services.market_observability_service import (
 from src.application.services.market_evidence_locator import (
     MarketEvidenceIdentity,
     encode_market_evidence_locator,
+    historical_analogue_evidence_locator,
 )
 from src.application.services.relation_graph_agent_retrieval_service import (
     create_relation_graph_agent_retrieval_service,
@@ -345,13 +346,18 @@ async def _call_market(
             },
         ):
             result = await awaitable
+            if tool_name == "market_historical_analogue_open":
+                result = dict(result)
+                result["analysis_evidence_locator"] = (
+                    historical_analogue_evidence_locator(result)
+                )
             await _record_tool_result(
                 claims=claims,
                 tool_name=tool_name,
                 called_at=called_at,
                 result=result,
             )
-            return result
+            return project_tool_result(tool_name, result)
     except (ValueError, RuntimeError) as exc:
         raise ToolError(str(exc)) from exc
     except Exception as exc:
@@ -391,7 +397,7 @@ async def _call_agent_market(
                 called_at=called_at,
                 result=result,
             )
-            return result
+            return project_tool_result(tool_name, result)
     except (ValueError, RuntimeError) as exc:
         raise ToolError(str(exc)) from exc
     except Exception as exc:
@@ -503,6 +509,22 @@ async def market_premarket_context_open(
         context=context,
         function=_agent_market_query_service().premarket_context,
         limit_per_dimension=limit_per_dimension,
+    )
+
+
+@mcp.tool(
+    description=(
+        "Open a compact global-market overview with explicit US major-index quotes, "
+        "US advance/decline breadth, leading US industries/concepts, and bounded "
+        "non-US global facts. Use this instead of searching arbitrary global rows."
+    ),
+    annotations=_READ_ONLY_ANNOTATIONS,
+)
+async def market_global_overview_open(context: Context) -> dict[str, Any]:
+    return await _call_agent_market(
+        tool_name="market_global_overview_open",
+        context=context,
+        function=_agent_market_query_service().global_market_overview,
     )
 
 
@@ -957,7 +979,10 @@ async def agent_evidence_ledger_open(
         called_at=called_at,
         result=result,
     )
-    return _compact_evidence_ledger(result)
+    return project_tool_result(
+        "agent_evidence_ledger_open",
+        _compact_evidence_ledger(result),
+    )
 
 
 @mcp.tool(
@@ -1379,14 +1404,17 @@ async def market_expression_compare_open(
 
 @mcp.tool(
     description=(
-        "Read one persisted historical market series, up to 120 rows. Use "
+        "Read one persisted historical market series, up to 500 rows. Use "
         "data_type=ths_index_daily with code=cn:index:000001 (or a native "
         "index code), and data_type=ths_sector_daily with "
         "code=ths:industry:881xxx / ths:concept:886xxx. Use "
         "northbound_turnover only as turnover, never directional net flow. "
         "For a trend, persistence or new-high claim, request a window long "
         "enough for that exact claim; otherwise explicitly limit the claim "
-        "to the opened interval. THS K-line volume is provider-native raw "
+        "to the opened interval. For intraday snapshot types such as "
+        "ths_sector_flow, set date_start and date_end when comparing trading "
+        "days; increasing limit alone can still return only the newest day. "
+        "THS K-line volume is provider-native raw "
         "volume with an unconfirmed unit, so compare direction or ratios but "
         "do not label it shares/lots/手. Historical rows are not live quotes."
     ),
@@ -1859,7 +1887,8 @@ async def _read_sector_detail(**kwargs) -> dict[str, Any]:
             for item in (result.get("latest") or [])[:8]
         ],
         "series": series,
-        "representative_etf": result.get("representative_etf"),
+        "etf_navigation_candidates": result.get("etf_navigation_candidates"),
+        "etf_navigation_note": result.get("etf_navigation_note"),
         "constituent_count": result.get("constituent_count"),
         "top_gainers": [
             compact_constituent(item)
@@ -2110,7 +2139,6 @@ def _compact_research_data_catalog(result: dict[str, Any]) -> dict[str, Any]:
             "topic",
             "domain",
             "as_of",
-            "read_path",
             "domain_count",
             "available_domain_count",
         )
@@ -2292,6 +2320,8 @@ def _compact_sector_row(item: Any) -> Any:
     if not isinstance(item, dict):
         return item
     fields = (
+        "data_type",
+        "subject_id",
         "provider_sector_code",
         "sector_name",
         "sector_type",

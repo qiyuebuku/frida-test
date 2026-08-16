@@ -565,18 +565,24 @@ class MarketObservabilityService:
         constituent_data = (
             constituent_row.get("data") or {} if constituent_row else {}
         )
-        representative = next(
-            (
-                {
-                    "code": data.get("representative_etf_code"),
-                    "name": data.get("representative_etf_name"),
-                }
-                for data in (row.get("data") or {} for row in matched)
-                if data.get("representative_etf_code")
-                or data.get("representative_etf_name")
-            ),
-            None,
-        )
+        # THS embeds a related ETF in several sector payloads, but that value
+        # is a navigation recommendation rather than a stable sector identity.
+        # Different payloads and collection times can legitimately nominate
+        # different funds.  Preserve every distinct candidate and force the
+        # caller to validate identity/holdings instead of arbitrarily selecting
+        # whichever row happens to be first.
+        etf_candidates_by_code: dict[str, dict[str, Any]] = {}
+        for row in matched:
+            data = row.get("data") or {}
+            etf_code = str(data.get("representative_etf_code") or "").strip()
+            if not etf_code:
+                continue
+            candidate = etf_candidates_by_code.setdefault(
+                etf_code,
+                {"code": etf_code, "name": data.get("representative_etf_name")},
+            )
+            if not candidate.get("name") and data.get("representative_etf_name"):
+                candidate["name"] = data["representative_etf_name"]
         return {
             "provider_sector_code": code,
             "sector_type": sector_type,
@@ -592,7 +598,13 @@ class MarketObservabilityService:
                 if constituent_row is not None
                 else None
             ),
-            "representative_etf": representative,
+            "etf_navigation_candidates": [
+                etf_candidates_by_code[key] for key in sorted(etf_candidates_by_code)
+            ],
+            "etf_navigation_note": (
+                "同花顺关联ETF仅用于导航，不是稳定板块代理；输出具体表达前必须调用"
+                " market_expression_compare_open 核验身份、跟踪指数、持仓和流动性。"
+            ),
             "upstream_requested": False,
         }
 

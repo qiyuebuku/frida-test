@@ -318,7 +318,8 @@ def _project_market_result(
                 if isinstance(group, Mapping)
                 if (projected := _project_sector_history_group(group))
             ],
-            "representative_etf": result.get("representative_etf"),
+            "etf_navigation_candidates": result.get("etf_navigation_candidates"),
+            "etf_navigation_note": result.get("etf_navigation_note"),
             "constituent_count": result.get("constituent_count"),
             "top_gainers": result.get("top_gainers"),
             "top_losers": result.get("top_losers"),

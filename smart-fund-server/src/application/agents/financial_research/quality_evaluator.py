@@ -23,14 +23,15 @@ from src.application.services.market_evidence_locator import (
 )
 
 
-QUALITY_EVALUATOR_VERSION = "research-quality-v3"
+QUALITY_EVALUATOR_VERSION = "research-quality-v4"
 
 
 class ResearchQualityScores(ResearchContract):
     evidence_entailment: float = Field(ge=0, le=10)
     historical_calibration: float = Field(ge=0, le=10)
     counterevidence_directness: float = Field(ge=0, le=10)
-    mechanism_and_source_quality: float = Field(ge=0, le=10)
+    mechanism_completeness: float = Field(ge=0, le=10)
+    source_independence: float = Field(ge=0, le=10)
     market_structure_and_pricing: float = Field(ge=0, le=10)
     portfolio_decision_value: float = Field(ge=0, le=10)
     exploration_depth: float = Field(ge=0, le=10)
@@ -40,7 +41,7 @@ class ResearchQualityScores(ResearchContract):
 class ResearchQualityEvaluation(ResearchContract):
     evaluation_id: str = Field(min_length=1, max_length=220)
     run_id: str = Field(min_length=1, max_length=180)
-    evaluator_version: Literal["research-quality-v3"] = QUALITY_EVALUATOR_VERSION
+    evaluator_version: Literal["research-quality-v4"] = QUALITY_EVALUATOR_VERSION
     evaluated_at: datetime
     overall_score: float = Field(ge=0, le=100)
     grade: Literal["excellent", "good", "needs_improvement", "rejected"]
@@ -192,9 +193,8 @@ def evaluate_research_quality(
         evidence_entailment=round((factual_integrity + evidence_coverage) / 2, 2),
         historical_calibration=forecast_calibration,
         counterevidence_directness=_counterevidence_score(proposal),
-        mechanism_and_source_quality=round(
-            (mechanism_score + evidence_independence) / 2, 2
-        ),
+        mechanism_completeness=mechanism_score,
+        source_independence=evidence_independence,
         market_structure_and_pricing=structure_score,
         portfolio_decision_value=decision_score,
         exploration_depth=_exploration_score(tools, references),
@@ -386,23 +386,12 @@ def merge_semantic_quality(
         evidence_entailment=semantic_scores.evidence_entailment,
         historical_calibration=semantic_scores.forecast_calibration,
         counterevidence_directness=semantic_scores.counterevidence_directness,
-        mechanism_and_source_quality=round(
-            (
-                semantic_scores.mechanism_completeness
-                + semantic_scores.source_independence
-            ) / 2,
-            2,
-        ),
-        market_structure_and_pricing=round(
-            (
-                deterministic_scores.market_structure_and_pricing
-                + semantic_scores.narrative_selection_bias
-            ) / 2,
-            2,
-        ),
+        mechanism_completeness=semantic_scores.mechanism_completeness,
+        source_independence=semantic_scores.source_independence,
+        market_structure_and_pricing=semantic_scores.market_structure_and_pricing,
         portfolio_decision_value=semantic_scores.decision_value,
-        exploration_depth=deterministic_scores.exploration_depth,
-        clarity_and_structure=deterministic_scores.clarity_and_structure,
+        exploration_depth=semantic_scores.exploration_depth,
+        clarity_and_structure=semantic_scores.clarity_and_structure,
     )
     overall = _overall(merged)
     key_floor = min(
@@ -707,7 +696,8 @@ def _overall(scores: ResearchQualityScores) -> float:
         "evidence_entailment": 0.20,
         "historical_calibration": 0.20,
         "counterevidence_directness": 0.15,
-        "mechanism_and_source_quality": 0.15,
+        "mechanism_completeness": 0.075,
+        "source_independence": 0.075,
         "market_structure_and_pricing": 0.10,
         "portfolio_decision_value": 0.10,
         "exploration_depth": 0.05,

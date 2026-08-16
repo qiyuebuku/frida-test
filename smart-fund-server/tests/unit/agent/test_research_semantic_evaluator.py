@@ -15,11 +15,13 @@ def _evaluation() -> SemanticResearchEvaluation:
         "run_id": "research-run-1",
         "model": "glm-5.2",
         "scores": {
+            "exploration_depth": 9,
             "evidence_entailment": 8,
+            "clarity_and_structure": 9,
             "counterevidence_directness": 7,
             "forecast_calibration": 5,
             "source_independence": 6,
-            "narrative_selection_bias": 8,
+            "market_structure_and_pricing": 8,
             "mechanism_completeness": 7,
             "decision_value": 8,
         },
@@ -33,6 +35,7 @@ def _evaluation() -> SemanticResearchEvaluation:
         "evidence_lineage_groups": ["行情快照组：market_ref:M1"],
         "strengths": ["事实对象明确"],
         "defects": ["预测校准不足"],
+        "non_scoring_limitations": ["未使用的原始成交量单位未确认"],
         "recommended_research_actions": ["补充历史条件样本"],
         "confidence": 0.8,
     })
@@ -43,6 +46,19 @@ def test_semantic_evaluator_tool_schema_requires_substantive_scores() -> None:
 
     assert "scores" in schema["required"]
     assert "claim_citation_assessments" in schema["properties"]
+    assert "non_scoring_limitations" in schema["properties"]
+    score_schema = schema["$defs"]["SemanticResearchScores"]
+    assert set(score_schema["required"]) == {
+        "exploration_depth",
+        "evidence_entailment",
+        "clarity_and_structure",
+        "counterevidence_directness",
+        "forecast_calibration",
+        "source_independence",
+        "market_structure_and_pricing",
+        "mechanism_completeness",
+        "decision_value",
+    }
 
 
 def test_semantic_evaluator_limits_output_and_requires_scores_first() -> None:
@@ -50,6 +66,8 @@ def test_semantic_evaluator_limits_output_and_requires_scores_first() -> None:
 
     assert agent.model_settings.max_tokens == 18_000
     assert "第一个顶层字段必须是完整的 scores" in agent.instructions
+    assert "后续版本不得改名、合并或删除" in agent.instructions
+    assert "non_scoring_limitations" in agent.instructions
     assert "每个 Claim 只输出一条 assessment" in agent.instructions
 
 
@@ -68,7 +86,8 @@ def test_semantic_scores_replace_heuristic_semantic_dimensions() -> None:
         evidence_entailment=10,
         historical_calibration=8,
         counterevidence_directness=10,
-        mechanism_and_source_quality=10,
+        mechanism_completeness=10,
+        source_independence=10,
         market_structure_and_pricing=10,
         portfolio_decision_value=10,
         exploration_depth=10,
