@@ -6176,6 +6176,48 @@ public class MainHook {
             Log.w(TAG, "notifyDataReceived hook failed: " + e.getMessage());
         }
 
+        // 查询构建器 rpv：G(pageId, protocolId, callback, extJson)/H(...)/D(key, value)
+        // 是所有交易查询的统一入口（sxh/pxm 等页面客户端全部经过）。只记录
+        // pageId/protocolId/参数键名与值类型，不记录值。
+        try {
+            Class<?> rpvClass = cl.loadClass("rpv");
+            Method gMethod = rpvClass.getDeclaredMethod("G", int.class, int.class, int.class, String.class);
+            gMethod.setAccessible(true);
+            Pine.hook(gMethod, new MethodHook() {
+                @Override
+                public void beforeCall(Pine.CallFrame callFrame) {
+                    addTradeLog("TradeQuery.G pageId=" + callFrame.args[0]
+                            + " protocolId=" + callFrame.args[1]
+                            + " observer=" + callFrame.args[2]
+                            + " ext=" + describeTradeValue(callFrame.args[3]));
+                }
+            });
+            Class<?> imvClass = cl.loadClass("imv");
+            Method hMethod = rpvClass.getDeclaredMethod("H", int.class, int.class, imvClass, String.class);
+            hMethod.setAccessible(true);
+            Pine.hook(hMethod, new MethodHook() {
+                @Override
+                public void beforeCall(Pine.CallFrame callFrame) {
+                    addTradeLog("TradeQuery.H pageId=" + callFrame.args[0]
+                            + " protocolId=" + callFrame.args[1]
+                            + " params=" + describeTradeValue(callFrame.args[3]));
+                }
+            });
+            Method dMethod = rpvClass.getDeclaredMethod("D", String.class, Object.class);
+            dMethod.setAccessible(true);
+            Pine.hook(dMethod, new MethodHook() {
+                @Override
+                public void beforeCall(Pine.CallFrame callFrame) {
+                    String key = (String) callFrame.args[0];
+                    String valueShape = key + ":" + describeTradeValue(callFrame.args[1]);
+                    addTradeLog("TradeQuery.D param=" + valueShape);
+                }
+            });
+            Log.i(TAG, "rpv query-builder hooks installed");
+        } catch (Throwable e) {
+            Log.w(TAG, "rpv query-builder hook failed: " + e.getMessage());
+        }
+
         boolean anyFailure = false;
         Log.i(TAG, "Found MasterModuleBridge class!");
         for (Method m : bridgeClass.getDeclaredMethods()) {
