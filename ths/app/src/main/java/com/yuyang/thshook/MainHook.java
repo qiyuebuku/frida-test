@@ -43,6 +43,10 @@ import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
 
+import org.json.JSONArray;
+import org.json.JSONException;
+import org.json.JSONObject;
+
 import top.canyie.pine.Pine;
 import top.canyie.pine.PineConfig;
 import top.canyie.pine.callback.MethodHook;
@@ -76,6 +80,10 @@ public class MainHook {
     private static volatile Object tradeAccountManagerInstance = null;
     private static volatile Class<?> tradeAccountManagerClass = null;
     private static volatile List<Class<?>> tradeAccountClassChain = new ArrayList<>();
+    // 解壳 ClassLoader 与最近一次资金持仓(1891)查询参数，供进程内只读调用器重放。
+    // params 只在内存暂存，绝不写日志。
+    private static volatile ClassLoader thsAppClassLoader = null;
+    private static volatile String lastZjccParams = null;
     private static final AtomicBoolean proxyServerStarted = new AtomicBoolean(false);
     private static final AtomicInteger realtimeStreamSessions = new AtomicInteger(0);
     private static final AtomicInteger directMarketInstanceId = new AtomicInteger(10000);
@@ -1171,6 +1179,16 @@ public class MainHook {
             // 不返回账户、令牌、请求参数或业务数据。
             if (requestLine.startsWith("GET /stock/trade/sdk-schema")) {
                 String result = getTradeSdkSchema();
+                sendResponse(out, 200, result);
+                client.close();
+                return;
+            }
+
+            // GET /stock/trade/positions — 进程内只读调用器：重放 App 自己的
+            // 资金持仓查询（H(2624,1891)+wt_account），返回持仓表格数据。
+            // 前置条件：App 已进过一次持仓页（捕获账户与参数）。
+            if (requestLine.startsWith("GET /stock/trade/positions")) {
+                String result = invokeZjccQuery();
                 sendResponse(out, 200, result);
                 client.close();
                 return;
@@ -6110,6 +6128,7 @@ public class MainHook {
      */
     private static synchronized void hookTradingSdkBridge(ClassLoader cl) {
         if (tradingSdkBridgeHooked.get()) return;
+        thsAppClassLoader = cl;
 
         Class<?> bridgeClass;
         try {
@@ -6205,6 +6224,10 @@ public class MainHook {
                             + " params=" + describeTradeValue(callFrame.args[3]);
                     Log.i(TAG, logMsg);
                     addTradeLog(logMsg);
+                    if (Integer.valueOf(1891).equals(callFrame.args[1])
+                            && callFrame.args[3] instanceof String) {
+                        lastZjccParams = (String) callFrame.args[3];
+                    }
                 }
             });
             Method dMethod = rpvClass.getDeclaredMethod("D", String.class, Object.class);
@@ -7486,6 +7509,189 @@ public class MainHook {
         sb.append(",\"log_count\":").append(recentTradeLogs.size());
         sb.append("}");
         return sb.toString();
+    }
+
+    /**
+     * 进程内只读调用器：反射复用 App 自己的资金持仓查询管道。
+     * 链路：uqv.e(true).H(2624,1891,proxyObserver,capturedParams)
+     *       .D("wt_account",capturedManager).request() → jniRequest → receive。
+     * 只读：仅重放查询协议 1891，不触碰任何写交易协议。
+     */
+    private static String invokeZjccQuery() {
+        JSONObject resp = new JSONObject();
+        try {
+            resp.put("query", "zjcc_1891");
+        } catch (JSONException ignored) { }
+        ClassLoader cl = thsAppClassLoader;
+        if (cl == null) {
+            return errorJson(resp, "ths classloader not ready (wait for delayed hooks)");
+        }
+        if (tradeAccountManagerInstance == null) {
+            return errorJson(resp, "trade account not captured (open trade tab first)");
+        }
+        if (lastZjccParams == null) {
+            return errorJson(resp, "zjcc params not captured (open positions page once)");
+        }
+        try {
+            Class<?> r9hClass = cl.loadClass("r9h");
+            java.lang.reflect.Field initFlag = r9hClass.getDeclaredField("d");
+            initFlag.setAccessible(true);
+            if (!(boolean) initFlag.get(null)) {
+                return errorJson(resp, "master module not ready (r9h.d=false)");
+            }
+        } catch (Throwable e) {
+            return errorJson(resp, "r9h readiness check failed: " + e);
+        }
+
+        final CountDownLatch latch = new CountDownLatch(1);
+        final java.util.concurrent.atomic.AtomicReference<Object> stuffRef =
+                new java.util.concurrent.atomic.AtomicReference<>(null);
+        Object observer;
+        try {
+            Class<?> imvClass = cl.loadClass("imv");
+            observer = java.lang.reflect.Proxy.newProxyInstance(cl,
+                    new Class[]{imvClass},
+                    (proxy, method, args) -> {
+                        String name = method.getName();
+                        if ("receive".equals(name)) {
+                            // xdv.receive(StuffBaseStruct)：响应回调，可能在通信线程
+                            stuffRef.set(args != null && args.length > 0 ? args[0] : null);
+                            latch.countDown();
+                            return null;
+                        }
+                        // request() 与未知方法返回 null 安全（void/引用型）；
+                        // 但 hashCode 等 primitive 返回值绝不能是 null（unbox NPE）
+                        if ("hashCode".equals(name)) return System.identityHashCode(proxy);
+                        if ("toString".equals(name)) return "THSHook.zjccObserver@" + Integer.toHexString(System.identityHashCode(proxy));
+                        if ("equals".equals(name)) return proxy == (args != null && args.length > 0 ? args[0] : null);
+                        return null;
+                    });
+        } catch (Throwable e) {
+            return errorJson(resp, "observer proxy failed: " + e);
+        }
+
+        long startMs = System.currentTimeMillis();
+        try {
+            Class<?> uqvClass = cl.loadClass("uqv");
+            Object builder = uqvClass.getMethod("e", boolean.class).invoke(null, Boolean.TRUE);
+            Class<?> imvClass = cl.loadClass("imv");
+            java.lang.reflect.Method hMethod = builder.getClass()
+                    .getMethod("H", int.class, int.class, imvClass, String.class);
+            Object rpv = hMethod.invoke(builder, 2624, 1891, observer, lastZjccParams);
+            java.lang.reflect.Method dMethod = rpv.getClass()
+                    .getMethod("D", String.class, Object.class);
+            dMethod.invoke(rpv, "wt_account", tradeAccountManagerInstance);
+            rpv.getClass().getMethod("request").invoke(rpv);
+        } catch (Throwable e) {
+            unregisterObserverQuietly(cl, observer);
+            return errorJson(resp, "query invoke failed: " + describeThrowableChain(e));
+        }
+
+        boolean arrived;
+        try {
+            arrived = latch.await(15, TimeUnit.SECONDS);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            arrived = false;
+        }
+        unregisterObserverQuietly(cl, observer);
+        long elapsed = System.currentTimeMillis() - startMs;
+        try {
+            resp.put("elapsed_ms", elapsed);
+        } catch (JSONException ignored) { }
+        if (!arrived) {
+            return errorJson(resp, "timeout waiting response (15s)");
+        }
+        Object stuff = stuffRef.get();
+        if (stuff == null) {
+            return errorJson(resp, "response stuff is null");
+        }
+        try {
+            JSONObject parsed = stuffTableToJson(stuff);
+            resp.put("ok", true);
+            resp.put("data", parsed);
+            return resp.toString();
+        } catch (Throwable e) {
+            return errorJson(resp, "parse response failed: " + e);
+        }
+    }
+
+    private static void unregisterObserverQuietly(ClassLoader cl, Object observer) {
+        if (observer == null) return;
+        try {
+            Class<?> kmvClass = cl.loadClass("kmv");
+            Class<?> imvClass = cl.loadClass("imv");
+            kmvClass.getMethod("l", imvClass).invoke(null, observer);
+        } catch (Throwable ignored) { }
+    }
+
+    /** StuffBaseStruct → JSON：表格输出列名+全部行（查询结果本体，经 HTTP 返回），
+     *  文本输出语义提示；结构字段一并带上。 */
+    private static JSONObject stuffTableToJson(Object stuff) throws Throwable {
+        JSONObject out = new JSONObject();
+        Class<?> c = stuff.getClass();
+        out.put("struct", c.getSimpleName());
+        try {
+            out.put("pageId", c.getField("pageId").getInt(stuff));
+            out.put("frameId", c.getField("frameId").getInt(stuff));
+            out.put("real", c.getField("isRealData").getBoolean(stuff));
+        } catch (Throwable ignored) { }
+        if ("com.hexin.middleware.data.mobile.StuffTableStruct".equals(c.getName())) {
+            String[] head = (String[]) c.getField("tableHead").get(stuff);
+            java.util.Hashtable<?, ?> dataTable =
+                    (java.util.Hashtable<?, ?>) c.getField("dataTable").get(stuff);
+            out.put("caption", c.getField("caption").get(stuff));
+            out.put("row", c.getField("row").getInt(stuff));
+            out.put("col", c.getField("col").getInt(stuff));
+            java.util.List<String> headList = new ArrayList<>();
+            if (head != null) for (String h : head) headList.add(h);
+            out.put("columns", new JSONArray(headList));
+            JSONArray rows = new JSONArray();
+            if (dataTable != null) {
+                java.util.List<Integer> keys = new ArrayList<>();
+                for (Object k : dataTable.keySet()) keys.add((Integer) k);
+                java.util.Collections.sort(keys);
+                for (Integer k : keys) {
+                    String[] rowVals = (String[]) dataTable.get(k);
+                    JSONArray rowArr = new JSONArray();
+                    if (rowVals != null) for (String v : rowVals) rowArr.put(v == null ? "" : v);
+                    rows.put(rowArr);
+                }
+            }
+            out.put("rows", rows);
+        } else if ("com.hexin.middleware.data.mobile.StuffTextStruct".equals(c.getName())) {
+            out.put("reCode", c.getField("reCode").getInt(stuff));
+            out.put("textId", c.getField("id").getInt(stuff));
+            Object caption = c.getField("caption").get(stuff);
+            Object content = c.getField("content").get(stuff);
+            out.put("caption", caption == null ? "" : caption);
+            out.put("content", content == null ? "" : content);
+        }
+        return out;
+    }
+
+    /** 展开反射调用的完整异常链（含每层消息与栈顶），用于诊断进程内调用失败 */
+    private static String describeThrowableChain(Throwable e) {
+        StringBuilder sb = new StringBuilder();
+        int depth = 0;
+        for (Throwable t = e; t != null && depth < 6; t = t.getCause(), depth++) {
+            if (depth > 0) sb.append(" <- ");
+            sb.append(t.getClass().getName());
+            if (t.getMessage() != null) sb.append("(").append(t.getMessage()).append(")");
+            StackTraceElement[] st = t.getStackTrace();
+            if (st.length > 0) sb.append(" @").append(st[0]);
+            if (t.getCause() == t) break;
+        }
+        Log.w(TAG, "zjcc invoke failed: " + sb);
+        return sb.toString();
+    }
+
+    private static String errorJson(JSONObject resp, String message) {
+        try {
+            resp.put("ok", false);
+            resp.put("error", message);
+        } catch (JSONException ignored) { }
+        return resp.toString();
     }
 
     private static String getTradeSdkSchema() {
