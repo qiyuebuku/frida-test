@@ -80,10 +80,13 @@ public class MainHook {
     private static volatile Object tradeAccountManagerInstance = null;
     private static volatile Class<?> tradeAccountManagerClass = null;
     private static volatile List<Class<?>> tradeAccountClassChain = new ArrayList<>();
-    // 解壳 ClassLoader 与最近一次资金持仓(1891)查询参数，供进程内只读调用器重放。
-    // params 只在内存暂存，绝不写日志。
+    // 解壳 ClassLoader 与各交易查询协议最近一次的 (pageId,params)，供进程内
+    // 只读调用器重放。params 只在内存暂存，绝不写日志。key = protocolId。
     private static volatile ClassLoader thsAppClassLoader = null;
-    private static volatile String lastZjccParams = null;
+    private static final ConcurrentHashMap<Integer, int[]> capturedQueryPageIds =
+            new ConcurrentHashMap<>();
+    private static final ConcurrentHashMap<Integer, String> capturedQueryParams =
+            new ConcurrentHashMap<>();
     private static final AtomicBoolean proxyServerStarted = new AtomicBoolean(false);
     private static final AtomicInteger realtimeStreamSessions = new AtomicInteger(0);
     private static final AtomicInteger directMarketInstanceId = new AtomicInteger(10000);
@@ -1189,6 +1192,21 @@ public class MainHook {
             // 前置条件：App 已进过一次持仓页（捕获账户与参数）。
             if (requestLine.startsWith("GET /stock/trade/positions")) {
                 String result = invokeZjccQuery();
+                sendResponse(out, 200, result);
+                client.close();
+                return;
+            }
+
+            // GET /stock/trade/query?name=positions|today_order|today_deal|hist_order|hist_deal
+            // — 通用只读查询调用器（按协议名重放捕获的查询）
+            if (requestLine.startsWith("GET /stock/trade/query")) {
+                int qIdx = requestLine.indexOf("?name=");
+                String name = qIdx == -1 ? null
+                        : requestLine.substring(qIdx + 6, requestLine.indexOf(" ", qIdx) == -1
+                                ? requestLine.length() : requestLine.indexOf(" ", qIdx));
+                String result = name == null
+                        ? errorJson(new JSONObject(), "missing ?name= parameter")
+                        : invokeTradeQueryByName(name.trim());
                 sendResponse(out, 200, result);
                 client.close();
                 return;
@@ -6211,6 +6229,13 @@ public class MainHook {
                             + " ext=" + describeTradeValue(callFrame.args[3]);
                     Log.i(TAG, logMsg);
                     addTradeLog(logMsg);
+                    Object protoArg = callFrame.args[1];
+                    if (protoArg instanceof Integer && callFrame.args[3] instanceof String) {
+                        int proto = (Integer) protoArg;
+                        capturedQueryPageIds.put(proto,
+                                new int[]{(Integer) callFrame.args[0], proto});
+                        capturedQueryParams.put(proto, (String) callFrame.args[3]);
+                    }
                 }
             });
             Class<?> imvClass = cl.loadClass("imv");
@@ -6224,9 +6249,12 @@ public class MainHook {
                             + " params=" + describeTradeValue(callFrame.args[3]);
                     Log.i(TAG, logMsg);
                     addTradeLog(logMsg);
-                    if (Integer.valueOf(1891).equals(callFrame.args[1])
-                            && callFrame.args[3] instanceof String) {
-                        lastZjccParams = (String) callFrame.args[3];
+                    Object protoArg = callFrame.args[1];
+                    if (protoArg instanceof Integer && callFrame.args[3] instanceof String) {
+                        int proto = (Integer) protoArg;
+                        capturedQueryPageIds.put(proto,
+                                new int[]{(Integer) callFrame.args[0], proto});
+                        capturedQueryParams.put(proto, (String) callFrame.args[3]);
                     }
                 }
             });
@@ -7511,16 +7539,48 @@ public class MainHook {
         return sb.toString();
     }
 
-    /**
-     * 进程内只读调用器：反射复用 App 自己的资金持仓查询管道。
-     * 链路：uqv.e(true).H(2624,1891,proxyObserver,capturedParams)
-     *       .D("wt_account",capturedManager).request() → jniRequest → receive。
-     * 只读：仅重放查询协议 1891，不触碰任何写交易协议。
-     */
+    /** 查询名 → {protocolId, fallbackPageId}。均为只读查询协议 */
+    private static final java.util.Map<String, int[]> TRADE_QUERY_PROTOCOLS;
+    /** 静态兜底 params（eb6 格式，源码逆向自 u2i/sxh 的构造模板）。
+     *  当日成交的响应帧 frameId=1810（旧协议号），按 2031 注册收不到，必须走 1810。 */
+    private static final java.util.Map<String, String> TRADE_QUERY_STATIC_PARAMS;
+    static {
+        java.util.Map<String, int[]> m = new java.util.LinkedHashMap<>();
+        m.put("positions", new int[]{1891, 2624});   // 资金持仓
+        m.put("today_order", new int[]{1811, 2683}); // 当日委托
+        m.put("today_deal", new int[]{1810, 2609});  // 当日成交（旧协议；响应 frameId=1810）
+        m.put("hist_order", new int[]{1825, 2612});  // 历史委托
+        m.put("hist_deal", new int[]{1824, 2611});   // 历史成交
+        TRADE_QUERY_PROTOCOLS = java.util.Collections.unmodifiableMap(m);
+        java.util.Map<String, String> sp = new java.util.LinkedHashMap<>();
+        // new eb6().a("36665", TodayDealSource.Query.getSource()).toString()
+        sp.put("today_deal", "ctrlid_0=36665\nctrlvalue_0=today_chaxun\nctrlcount=1");
+        TRADE_QUERY_STATIC_PARAMS = java.util.Collections.unmodifiableMap(sp);
+    }
+
     private static String invokeZjccQuery() {
+        return invokeTradeQuery(1891, 2624, null);
+    }
+
+    private static String invokeTradeQueryByName(String name) {
+        int[] proto = TRADE_QUERY_PROTOCOLS.get(name);
+        if (proto == null) {
+            JSONObject resp = new JSONObject();
+            return errorJson(resp, "unknown query name '" + name
+                    + "', supported: " + TRADE_QUERY_PROTOCOLS.keySet());
+        }
+        return invokeTradeQuery(proto[0], proto[1], TRADE_QUERY_STATIC_PARAMS.get(name));
+    }
+
+    /**
+     * 通用交易查询调用器：name 对应协议见 TRADE_QUERY_PROTOCOLS。
+     * pageId/params 取 hook 捕获的最近一次真实值（App 自己发起过该查询才有），
+     * fallbackPageId 仅在无捕获时兜底。
+     */
+    private static String invokeTradeQuery(int protocolId, int fallbackPageId, String fallbackParams) {
         JSONObject resp = new JSONObject();
         try {
-            resp.put("query", "zjcc_1891");
+            resp.put("query", "proto_" + protocolId);
         } catch (JSONException ignored) { }
         ClassLoader cl = thsAppClassLoader;
         if (cl == null) {
@@ -7529,9 +7589,17 @@ public class MainHook {
         if (tradeAccountManagerInstance == null) {
             return errorJson(resp, "trade account not captured (open trade tab first)");
         }
-        if (lastZjccParams == null) {
-            return errorJson(resp, "zjcc params not captured (open positions page once)");
+        int[] pageIds = capturedQueryPageIds.get(protocolId);
+        String params = capturedQueryParams.get(protocolId);
+        if (params == null) params = fallbackParams;
+        if (params == null) {
+            return errorJson(resp, "params for protocol " + protocolId
+                    + " not captured (open the corresponding page in app once)");
         }
+        int pageId = pageIds != null ? pageIds[0] : fallbackPageId;
+        try {
+            resp.put("pageId", pageId);
+        } catch (JSONException ignored) { }
         try {
             Class<?> r9hClass = cl.loadClass("r9h");
             java.lang.reflect.Field initFlag = r9hClass.getDeclaredField("d");
@@ -7562,7 +7630,7 @@ public class MainHook {
                         // request() 与未知方法返回 null 安全（void/引用型）；
                         // 但 hashCode 等 primitive 返回值绝不能是 null（unbox NPE）
                         if ("hashCode".equals(name)) return System.identityHashCode(proxy);
-                        if ("toString".equals(name)) return "THSHook.zjccObserver@" + Integer.toHexString(System.identityHashCode(proxy));
+                        if ("toString".equals(name)) return "THSHook.queryObserver@" + Integer.toHexString(System.identityHashCode(proxy));
                         if ("equals".equals(name)) return proxy == (args != null && args.length > 0 ? args[0] : null);
                         return null;
                     });
@@ -7577,7 +7645,7 @@ public class MainHook {
             Class<?> imvClass = cl.loadClass("imv");
             java.lang.reflect.Method hMethod = builder.getClass()
                     .getMethod("H", int.class, int.class, imvClass, String.class);
-            Object rpv = hMethod.invoke(builder, 2624, 1891, observer, lastZjccParams);
+            Object rpv = hMethod.invoke(builder, pageId, protocolId, observer, params);
             java.lang.reflect.Method dMethod = rpv.getClass()
                     .getMethod("D", String.class, Object.class);
             dMethod.invoke(rpv, "wt_account", tradeAccountManagerInstance);
