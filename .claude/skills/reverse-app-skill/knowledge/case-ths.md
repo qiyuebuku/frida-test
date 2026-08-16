@@ -718,3 +718,32 @@ k7r.K0 → r9h.o` → 反编译 v3p 得 25102。
 **安全边界**：写端点必须 `confirm:"true"`；转账 1826 已实现未验证（需银行密码，禁止
 自动化）；写端点测试用 Python raw socket（WSL curl 对 cancel 假性挂起 25s 超时，服务端
 实际 84ms 完成）。
+
+### 15.12 零 UI 依赖闭环：账户恢复 + 静默重登 + 静态 params（2026-08-17 第十一轮）
+
+用户明确要求"不能接受需要 UI 驱动的功能"。本轮消除全部 UI 依赖后验收：force-stop 重启 →
+monkey 拉起（只落首页）→ 等 ~3.5 分钟预热 → **6/6 只读端点全部返回真实数据**
+（today_deal 166ms / funds 1798ms / positions 1865ms / today_order 1766ms /
+hist_order 1785ms / hist_deal 128ms）。
+
+**三层依赖解法**（`ensureTradeRuntimeReady` + `TRADE_QUERY_STATIC_PARAMS`）：
+
+1. **params 层**：4 个捕获端点全部静态模板化（源码推导）——positions
+   `addAccount=1\n36665=zjcc_home`；today_order `addGaiDan=1\n36716=1\n36665=today_chaxun`；
+   hist_order `reqctrl=2026\n36633={start}\n36634={end}\n36665=his_chaxun`（t4m.a）；
+   hist_deal `reqctrl=4223\n...\n36665=his_dryk\ntotalMoney=1\nrowcount=40`（sxh.d）。
+   `{start}=20250101`、`{end}=yyyyMMdd 今天`
+2. **账户对象层**：`n0s.s().B()` 填充列表 → `izr.a.x(fzr)` 置激活打分（`w5s.v(119)`
+   按 `izr.a.j(pzr)>0` 选账户；`x()` 是交易页激活账户的标准调用，mnq.s 同款）
+3. **登录态层**（mrv.k0 门控反编译实锤，mrv.java:149-168）：请求带 wt_account 且
+   `izr.a.l()`=false 时被**静默丢弃**（正在重登）或触发重登后丢弃。解法：
+   `x0s.F(false,false,14)` 触发 WeituoReloginManager 静默 token 重登 + 轮询 `izr.a.l(fzr)`
+
+**预热**：MasterModuleBridge 挂钩成功后 `trade-warmup` 线程循环 ensure（最多 6 次）。
+静默重登实测 2~3.5 分钟（token 链路慢，非故障）；预热期 HTTP 调用阻塞在登录门（45s/次）
+返回明确错误。诊断口诀：**构建点有日志、r9h.o 无日志 = mrv 层登录门丢弃**。
+
+**陷阱**：`n0s.A(false)` 幂等检查（2ms 提前返回不加载）→ 用 B()；`c1s.m().G()` 强制重载
+YYB 仓库会把账户数据清掉，禁用；激活 ≠ 登录，激活后立即发的首请求仍被吞。
+
+遗留（9. 待优化.md）：多账户场景取"第一个 fzr"未验证；重登窗口偏长（P2）。

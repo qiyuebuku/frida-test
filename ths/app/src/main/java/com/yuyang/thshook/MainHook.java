@@ -6585,6 +6585,21 @@ public class MainHook {
         if (!anyFailure) {
             tradingSdkBridgeHooked.set(true);
             Log.i(TAG, "MasterModuleBridge hooks installed");
+            // 后台预热交易运行态（激活账户 + 等静默重登），首个 HTTP 请求无需
+            // 再等 ensure 流程。静默重登实测可能耗时 ~2 分钟，失败后循环重试
+            new Thread(() -> {
+                for (int attempt = 1; attempt <= 6; attempt++) {
+                    try {
+                        Thread.sleep(3000);
+                        boolean ok = ensureTradeRuntimeReady(cl);
+                        Log.i(TAG, "trade runtime warmup attempt=" + attempt + ": " + ok);
+                        if (ok) return;
+                    } catch (Throwable e) {
+                        Log.w(TAG, "trade runtime warmup failed: " + e);
+                    }
+                }
+                Log.w(TAG, "trade runtime warmup exhausted");
+            }, "trade-warmup").start();
         }
 
         // 猜测性交易接口类只尝试一次（当前版本均不存在）
@@ -7757,6 +7772,18 @@ public class MainHook {
         sp.put("today_deal", "ctrlid_0=36665\nctrlvalue_0=today_chaxun\nctrlcount=1");
         // new eb6().b("reqctrl=2012").a("36665", CapitalQuerySource.ACapital.getSource()).toString()
         sp.put("funds", "reqctrl=2012\nctrlid_0=36665\nctrlvalue_0=cc_capital\nctrlcount=1");
+        // 以下四条 2026-08-16 静态化（消除 App 重启后需 UI 进页面捕获的依赖）。
+        // positions：真机捕获（write-captures 导出），zjcc_home=交易首页资金持仓入口
+        sp.put("positions", "addAccount=1\nctrlid_0=36665\nctrlvalue_0=zjcc_home\nctrlcount=1");
+        // today_order：源码推导 l6p → t6p.g(false,true) + pxm.o() 附加 36665；
+        // UnifiedHsTodayOrderPage: ct9 第三段 = TodayOrderSource.Query("today_chaxun")
+        sp.put("today_order", "addGaiDan=1\nctrlid_0=36716\nctrlvalue_0=1\nctrlid_1=36665\nctrlvalue_1=today_chaxun\nctrlcount=2");
+        // hist_order：t4m.a() 源码模板——new eb6("reqctrl=2026").a(36633,start).a(36634,end)
+        //   .a("36665", HistoryOrderSource.Query)；日期 yyyyMMdd（y6n.e 格式），占位符调用时展开
+        sp.put("hist_order", "reqctrl=2026\nctrlid_0=36633\nctrlvalue_0={start}\nctrlid_1=36634\nctrlvalue_1={end}\nctrlid_2=36665\nctrlvalue_2=his_chaxun\nctrlcount=3");
+        // hist_deal：sxh.d() 源码模板——new eb6("reqctrl=4223").a("36633",s).a("36634",e)
+        //   .a("36665", HistoryDealSource.Dryk).b("totalMoney=1").b("rowcount=40")
+        sp.put("hist_deal", "reqctrl=4223\nctrlid_0=36633\nctrlvalue_0={start}\nctrlid_1=36634\nctrlvalue_1={end}\nctrlid_2=36665\nctrlvalue_2=his_dryk\ntotalMoney=1\nrowcount=40\nctrlcount=3");
         TRADE_QUERY_STATIC_PARAMS = java.util.Collections.unmodifiableMap(sp);
     }
 
@@ -7772,6 +7799,212 @@ public class MainHook {
         return invokeTradeQuery(1891, 2624, null);
     }
 
+    /** ensureTradeRuntimeReady 最近一次失败原因（仅结构信息，无业务值） */
+    private static volatile String lastEnsureTradeError = "not run";
+    private static volatile boolean tradeRuntimeReadyOnce = false;
+
+    private static boolean r9hReady(ClassLoader cl) {
+        try {
+            Class<?> r9hClass = cl.loadClass("r9h");
+            java.lang.reflect.Field initFlag = r9hClass.getDeclaredField("d");
+            initFlag.setAccessible(true);
+            return (boolean) initFlag.get(null);
+        } catch (Throwable e) {
+            return false;
+        }
+    }
+
+    /**
+     * 零 UI 交易运行时恢复：App 冷启动后交易模块懒加载未激活时（未进过交易 Tab），
+     * 主动走 App 官方初始化入口补齐两前置条件，替代此前"必须进一次交易页"的依赖：
+     *   1. master module：k7r.m().A(null) → s9r.w()（notifyInitWTModule，内部幂等——
+     *      hasInitWtModule 分支直接返回）→ r9h.g().m(...) → initMasterModule → r9h.d=true
+     *   2. 账户列表：n0s.s().A(false)（WeituoAccountManager "init account"，官方入口）
+     *      → c1s.m().G() 加密仓库加载 → B() 填充 → p0s.F(119) 可返回 pzr
+     * 恢复后 F(119) 捕获 manager，并轮询等待两个标志就绪。
+     */
+    private static synchronized boolean ensureTradeRuntimeReady(ClassLoader cl) {
+        Log.i(TAG, "ensure: enter mgr=" + (tradeAccountManagerInstance != null)
+                + " r9h=" + r9hReady(cl));
+        if (tradeRuntimeReadyOnce && tradeAccountManagerInstance != null && r9hReady(cl)) return true;
+        try {
+            // 1) 激活交易模块（libweituo.so 的 initMasterModule）
+            if (!r9hReady(cl)) {
+                try {
+                    Class<?> k7rClass = cl.loadClass("k7r");
+                    Object k7rInst = k7rClass.getMethod("m").invoke(null);
+                    k7rClass.getMethod("A", cl.loadClass("x6r")).invoke(k7rInst, new Object[]{null});
+                    Log.i(TAG, "ensure: k7r.A(null) invoked");
+                } catch (Throwable e) {
+                    Log.w(TAG, "trade module activate failed: " + e);
+                }
+                for (int i = 0; i < 20 && !r9hReady(cl); i++) Thread.sleep(500);
+                if (!r9hReady(cl)) {
+                    lastEnsureTradeError = "master module not ready after activate (r9h.d=false)";
+                    Log.w(TAG, "ensure: fail r9h not ready");
+                    return false;
+                }
+            }
+            // 2) 恢复账户列表并捕获 manager
+            if (tradeAccountManagerInstance == null) {
+                Class<?> p0sClass = cl.loadClass("p0s");
+                java.lang.reflect.Method f119 = p0sClass.getDeclaredMethod("F", int.class);
+                f119.setAccessible(true);
+                Object mgr = f119.invoke(null, 119);
+                Log.i(TAG, "ensure: F(119) first=" + (mgr != null));
+                // 诊断：当前主账号用户与仓库账户数（区分"仓库无账户"与"列表未填充"）
+                try {
+                    Object userId = cl.loadClass("ulm").getMethod("e").invoke(null);
+                    Object c1sInst2 = cl.loadClass("c1s").getMethod("m").invoke(null);
+                    Object b1sInst = cl.loadClass("c1s").getMethod("p").invoke(c1sInst2);
+                    java.util.List<?> accts = (java.util.List<?>) b1sInst.getClass()
+                            .getMethod("H").invoke(b1sInst);
+                    Log.i(TAG, "ensure: diag user=" + (userId == null ? "null"
+                            : (String.valueOf(userId).isEmpty() ? "empty" : "set"))
+                            + " repoAccounts=" + (accts == null ? -1 : accts.size()));
+                } catch (Throwable e) {
+                    Log.w(TAG, "ensure: diag failed: " + e);
+                }
+                if (mgr == null) {
+                    // n0s.A(false) 有幂等检查（I() 判断端口/用户未变即提前 return，实测 2ms
+                    // 返回且不加载）。仓库（b1s.H()）实测有账户，直接调 n0s.s().B()
+                    // （initCurrentUserAccounts：重读 c1s.m().l() 填充 n0s.c 账户列表）。
+                    // 注意不能先调 c1s.m().G()——它会强制重载 yyb 仓库，实测反而把数据清掉。
+                    try {
+                        Class<?> n0sClass = cl.loadClass("n0s");
+                        Object n0sInst = n0sClass.getMethod("s").invoke(null);
+                        n0sClass.getMethod("B").invoke(n0sInst);
+                        Log.i(TAG, "ensure: n0s.s().B() invoked");
+                        java.util.List<?> after = (java.util.List<?>) n0sClass
+                                .getMethod("i").invoke(n0sInst);
+                        StringBuilder cn = new StringBuilder();
+                        if (after != null) {
+                            for (int k = 0; k < after.size() && k < 5; k++) {
+                                cn.append(after.get(k) == null ? "null"
+                                        : after.get(k).getClass().getSimpleName()).append(',');
+                            }
+                        }
+                        Log.i(TAG, "ensure: n0s.i() size=" + (after == null ? -1 : after.size())
+                                + " classes=" + cn);
+                    } catch (Throwable e) {
+                        Log.w(TAG, "account list refresh failed: " + e);
+                    }
+                    for (int i = 0; i < 20 && mgr == null; i++) {
+                        Thread.sleep(500);
+                        try {
+                            mgr = f119.invoke(null, 119);
+                        } catch (Throwable e) {
+                            Log.w(TAG, "ensure: poll F(119) throw: " + e.getCause());
+                            break;
+                        }
+                    }
+                    Log.i(TAG, "ensure: after poll mgr=" + (mgr != null));
+                }
+                // F(119)=w5s.v(119) 按 izr.a.j(pzr)（账户被激活时间打分）>0 选账户；
+                // 不进交易页时打分恒 0，列表里有 fzr 也选不出。镜像 mnq.s 的标准激活
+                // 链：izr.a.x(fzr) —— 设打分 + 发账户活跃事件 + 更新当前账户。
+                if (mgr == null) {
+                    try {
+                        Class<?> n0sClass = cl.loadClass("n0s");
+                        Object n0sInst = n0sClass.getMethod("s").invoke(null);
+                        java.util.List<?> accounts = (java.util.List<?>) n0sClass
+                                .getMethod("i").invoke(n0sInst);
+                        Class<?> fzrClass = cl.loadClass("fzr");
+                        Object target = null;
+                        if (accounts != null) {
+                            for (int k = 0; k < accounts.size(); k++) {
+                                Object cand = accounts.get(k);
+                                if (cand != null && fzrClass.isInstance(cand)) {
+                                    target = cand;
+                                    break;
+                                }
+                            }
+                        }
+                        Log.i(TAG, "ensure: activate target="
+                                + (target == null ? "null" : target.getClass().getSimpleName()));
+                        if (target != null) {
+                            Class<?> izrClass = cl.loadClass("izr");
+                            Object izrInst = izrClass.getField("a").get(null);
+                            izrClass.getMethod("x",
+                                    cl.loadClass("pzr")).invoke(izrInst, target);
+                            Log.i(TAG, "ensure: izr.a.x(fzr) invoked");
+                            for (int i = 0; i < 6 && mgr == null; i++) {
+                                Thread.sleep(500);
+                                mgr = f119.invoke(null, 119);
+                            }
+                            Log.i(TAG, "ensure: after activate mgr=" + (mgr != null));
+                            if (mgr != null) {
+                                // 激活事件触发的 WT 会话建立是异步的；激活后立即发出的
+                                // 首个交易请求会被吞（today_deal 实测 4ms 后超时）。
+                                Thread.sleep(5000);
+                                Log.i(TAG, "ensure: post-activation grace done");
+                            }
+                        }
+                    } catch (Throwable e) {
+                        Log.w(TAG, "account activate failed: " + e);
+                    }
+                }
+                if (mgr == null) {
+                    lastEnsureTradeError = "trade account not restored (F(119)=null after init)";
+                    return false;
+                }
+                captureTradeAccountManager(mgr);
+            }
+            // 登录门（mrv.k0 实测反编译）：请求携带 wt_account 时，若 izr.a.l(account)
+            // 为 false 且 App 正在静默重登（isWeituoLogining），请求会被静默丢弃
+            // （进程内首个交易请求实测被吞、无 r9h.o 发送）。账户激活事件会驱动
+            // App 自己的静默重登并在成功后置位登录态，这里等它置位。
+            {
+                boolean loggedIn = false;
+                try {
+                    Class<?> izrClass = cl.loadClass("izr");
+                    Object izrInst = izrClass.getField("a").get(null);
+                    java.lang.reflect.Method lM = izrClass.getMethod("l", cl.loadClass("pzr"));
+                    // 镜像 mrv.k0 的恢复路径：被吞的请求靠 x0s.F(false,false,14)
+                    // 触发 WeituoReloginManager 静默重登（token 重登）
+                    Class<?> x0sClass = cl.loadClass("x0s");
+                    java.lang.reflect.Method relogin = x0sClass
+                            .getMethod("F", boolean.class, boolean.class, int.class);
+                    long start = System.currentTimeMillis();
+                    int triggered = 0;
+                    while (System.currentTimeMillis() - start < 45000) {
+                        if (Boolean.TRUE.equals(lM.invoke(izrInst, tradeAccountManagerInstance))) {
+                            loggedIn = true;
+                            break;
+                        }
+                        if (triggered < 3
+                                && System.currentTimeMillis() - start >= triggered * 15000L) {
+                            triggered++;
+                            try {
+                                relogin.invoke(null, false, false, 14);
+                                Log.i(TAG, "ensure: silent relogin triggered #" + triggered);
+                            } catch (Throwable e2) {
+                                Log.w(TAG, "silent relogin invoke failed: " + e2);
+                            }
+                        }
+                        Thread.sleep(500);
+                    }
+                } catch (Throwable e) {
+                    Log.w(TAG, "login gate check failed: " + e);
+                }
+                Log.i(TAG, "ensure: login-ready=" + loggedIn);
+                if (!loggedIn) {
+                    lastEnsureTradeError = "trade account not logged in after silent relogin attempts";
+                    return false;
+                }
+            }
+            tradeRuntimeReadyOnce = true;
+            return true;
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            lastEnsureTradeError = "interrupted";
+            return false;
+        } catch (Throwable e) {
+            lastEnsureTradeError = "ensure failed: " + e;
+            return false;
+        }
+    }
+
     private static String invokeTradeQueryByName(String name) {
         int[] proto = TRADE_QUERY_PROTOCOLS.get(name);
         if (proto == null) {
@@ -7779,7 +8012,15 @@ public class MainHook {
             return errorJson(resp, "unknown query name '" + name
                     + "', supported: " + TRADE_QUERY_PROTOCOLS.keySet());
         }
-        return invokeTradeQuery(proto[0], proto[1], TRADE_QUERY_STATIC_PARAMS.get(name));
+        return invokeTradeQuery(proto[0], proto[1], expandStaticParams(TRADE_QUERY_STATIC_PARAMS.get(name)));
+    }
+
+    /** 历史类模板占位符展开：{start}=20250101（账户全历史起点，见交接说明 §3.9 日期窗口教训），
+     *  {end}=今天（yyyyMMdd，与 App y6n.e 格式一致）。每次调用动态生成，无需 UI 捕获。 */
+    private static String expandStaticParams(String tpl) {
+        if (tpl == null || tpl.indexOf("{start}") < 0) return tpl;
+        String today = new java.text.SimpleDateFormat("yyyyMMdd").format(new java.util.Date());
+        return tpl.replace("{start}", "20250101").replace("{end}", today);
     }
 
     /**
@@ -7812,8 +8053,8 @@ public class MainHook {
         if (cl == null) {
             return errorJson(resp, "ths classloader not ready (wait for delayed hooks)");
         }
-        if (tradeAccountManagerInstance == null) {
-            return errorJson(resp, "trade account not captured (open trade tab first)");
+        if (!ensureTradeRuntimeReady(cl)) {
+            return errorJson(resp, lastEnsureTradeError);
         }
         int[] pageIds = capturedQueryPageIds.get(protocolId);
         String params = forceParams ? fallbackParams : capturedQueryParams.get(protocolId);
@@ -7826,16 +8067,6 @@ public class MainHook {
         try {
             resp.put("pageId", pageId);
         } catch (JSONException ignored) { }
-        try {
-            Class<?> r9hClass = cl.loadClass("r9h");
-            java.lang.reflect.Field initFlag = r9hClass.getDeclaredField("d");
-            initFlag.setAccessible(true);
-            if (!(boolean) initFlag.get(null)) {
-                return errorJson(resp, "master module not ready (r9h.d=false)");
-            }
-        } catch (Throwable e) {
-            return errorJson(resp, "r9h readiness check failed: " + e);
-        }
 
         final CountDownLatch latch = new CountDownLatch(1);
         // 响应可能拆多帧（zjcc 实测 58B+954B 两帧），收集全部 stuff；
@@ -8393,18 +8624,8 @@ public class MainHook {
         if (cl == null) {
             return errorJson(resp, "ths classloader not ready (wait for delayed hooks)");
         }
-        if (tradeAccountManagerInstance == null) {
-            return errorJson(resp, "trade account not captured (open trade tab first)");
-        }
-        try {
-            Class<?> r9hClass = cl.loadClass("r9h");
-            java.lang.reflect.Field initFlag = r9hClass.getDeclaredField("d");
-            initFlag.setAccessible(true);
-            if (!(boolean) initFlag.get(null)) {
-                return errorJson(resp, "master module not ready (r9h.d=false)");
-            }
-        } catch (Throwable e) {
-            return errorJson(resp, "r9h readiness check failed: " + e);
+        if (!ensureTradeRuntimeReady(cl)) {
+            return errorJson(resp, lastEnsureTradeError);
         }
         final CountDownLatch latch = new CountDownLatch(1);
         final java.util.List<Object> stuffList = java.util.Collections.synchronizedList(new ArrayList<>());
