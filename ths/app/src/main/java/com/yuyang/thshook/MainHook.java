@@ -6206,7 +6206,13 @@ public class MainHook {
                             Throwable t = new Throwable();
                             for (StackTraceElement e : t.getStackTrace()) {
                                 String cn = e.getClassName();
-                                if (cn.contains("hexin") || cn.contains("weituo")) {
+                                // 默认包的混淆短名类（无 '.'）正是查询 API 所在层，
+                                // 必须保留；排除自身与 Pine 框架
+                                boolean defaultPkg = !cn.contains(".");
+                                if (cn.contains("hexin") || cn.contains("weituo")
+                                        || (defaultPkg && !cn.startsWith("com.")
+                                            && !cn.startsWith("java")
+                                            && !cn.startsWith("top.canyie"))) {
                                     Log.i(TAG, "  -> " + cn + "." + e.getMethodName() + ":" + e.getLineNumber());
                                 }
                             }
@@ -6441,9 +6447,13 @@ public class MainHook {
             try {
                 method.setAccessible(true);
                 final String signature = compactMethodSignature(method);
+                // 无参身份 getter（d()/q()/e()/x() 等）页面刷新时高频触发，会把
+                // 请求/响应事件挤出 100 条缓冲；只观察带参调用与复杂返回
+                final boolean hasArgs = method.getParameterTypes().length > 0;
                 Pine.hook(method, new MethodHook() {
                     @Override
                     public void beforeCall(Pine.CallFrame frame) {
+                        if (!hasArgs) return;
                         StringBuilder event = new StringBuilder("SDK_CALL ").append(signature);
                         event.append(" args=");
                         event.append(describeTradeArguments(frame.args));
@@ -6452,6 +6462,7 @@ public class MainHook {
 
                     @Override
                     public void afterCall(Pine.CallFrame frame) {
+                        if (!hasArgs) return;
                         addTradeLog("SDK_RETURN " + signature + " result="
                                 + describeTradeValue(frame.getResult()));
                     }
