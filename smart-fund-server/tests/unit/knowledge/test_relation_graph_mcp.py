@@ -183,6 +183,40 @@ def test_sector_open_projection_keeps_compact_history_series() -> None:
     assert "bucket_at" not in point
 
 
+def test_sector_flow_history_projection_keeps_business_values() -> None:
+    result = project_tool_result(
+        "market_instrument_history",
+        {
+            "code": "ths_native:concept:886033",
+            "data_type": "ths_sector_flow",
+            "items": [
+                {
+                    "trade_date": "2026-08-14",
+                    "observed_at": "2026-08-14T07:00:00Z",
+                    "data": {"main_net_inflow": 111.05, "rank": 3},
+                    "evidence_locator": "market:v1:flow-1",
+                    "id": 1,
+                }
+            ],
+        },
+    )
+
+    assert result == {
+        "code": "ths_native:concept:886033",
+        "data_type": "ths_sector_flow",
+        "point_count": 1,
+        "order": "newest_first",
+        "points": [
+            {
+                "trade_date": "2026-08-14",
+                "fact_time": "2026-08-14 15:00",
+                "values": {"main_net_inflow": 111.05, "rank": 3},
+                "evidence_locator": "market:v1:flow-1",
+            }
+        ],
+    }
+
+
 @pytest.mark.asyncio
 async def test_sector_detail_samples_latest_row_per_trade_date(monkeypatch) -> None:
     service = SimpleNamespace(

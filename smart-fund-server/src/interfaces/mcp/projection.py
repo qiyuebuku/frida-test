@@ -288,7 +288,7 @@ def _project_market_result(
             ]}
         )
     if tool_name == "market_instrument_history":
-        if "bars" in result:
+        if "bars" in result or "points" in result:
             return dict(result)
         return _project_market_history(result)
     if tool_name == "market_historical_analogue_open":
@@ -622,6 +622,32 @@ def _project_sector_comparison(result: Mapping[str, Any]) -> dict[str, Any]:
 
 
 def _project_market_history(result: Mapping[str, Any]) -> dict[str, Any]:
+    data_type = str(result.get("data_type") or "")
+    if data_type not in {
+        "ths_index_daily",
+        "ths_sector_daily",
+        "benchmark_daily",
+        "commodity_daily",
+    }:
+        points = []
+        for item in result.get("items") or []:
+            if not isinstance(item, Mapping):
+                continue
+            data = item.get("data") if isinstance(item.get("data"), Mapping) else {}
+            points.append(_nonempty({
+                "trade_date": item.get("trade_date"),
+                "fact_time": item.get("observed_at"),
+                "values": _project_preview(data),
+                "evidence_locator": item.get("evidence_locator"),
+            }))
+        return _nonempty({
+            "code": result.get("code"),
+            "data_type": data_type,
+            "point_count": len(points),
+            "order": "newest_first",
+            "points": points,
+            "series_semantics": result.get("series_semantics"),
+        })
     bars = []
     for item in result.get("items") or []:
         if not isinstance(item, Mapping):

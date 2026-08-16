@@ -551,6 +551,11 @@ class MarketTrackingService:
                 cutoff_at=cutoff_at,
                 limit=limit,
             )
+        items = _history_items_with_locators({
+            "code": normalized_code,
+            "data_type": normalized_data_type,
+            "items": items,
+        })
         return {
             "operation": "market_instrument_history",
             "code": normalized_code,
@@ -659,6 +664,17 @@ def _history_subject_id(code: str, data_type: str) -> str | None:
             return f"ths:concept:{code}"
         if code.startswith("881"):
             return f"ths:industry:{code}"
+    if data_type in {"ths_sector_flow", "ths_sector_hot", "ths_sector_ranking"}:
+        if code.startswith("ths_native:"):
+            return code
+        if code.startswith("ths:concept:"):
+            return code.replace("ths:concept:", "ths_native:concept:", 1)
+        if code.startswith("ths:industry:"):
+            return code.replace("ths:industry:", "ths_native:industry:", 1)
+        if code.startswith("886"):
+            return f"ths_native:concept:{code}"
+        if code.startswith("881"):
+            return f"ths_native:industry:{code}"
     if data_type == "ths_index_daily":
         if code.startswith("cn:index:"):
             return code
