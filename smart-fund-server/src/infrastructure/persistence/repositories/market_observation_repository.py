@@ -376,6 +376,99 @@ class MarketSnapshotRepository:
                 "items": [self._snapshot_to_dict(row) for row in rows],
             }
 
+    def list_latest_per_data_type_for_agent(
+        self,
+        *,
+        cutoff_at: datetime,
+        data_types: list[str],
+        per_data_type_limit: int = 1,
+    ) -> dict[str, Any]:
+        """Return a bounded representative sample without source starvation.
+
+        A newest-N query can be filled by a high-frequency feed and hide every
+        slower data family in the same research dimension.  Rank after the
+        normal subject/provider deduplication so each requested data type gets
+        an equal opportunity to appear in an Agent navigation response.
+        """
+
+        ordered_types = list(dict.fromkeys(str(item) for item in data_types if item))
+        if not ordered_types:
+            return {"total": 0, "items": [], "counts_by_data_type": {}}
+        normalized_per_type = max(1, min(int(per_data_type_limit), 5))
+        latest = (
+            select(
+                MarketSnapshot.id.label("snapshot_id"),
+                MarketSnapshot.data_type.label("data_type"),
+                MarketSnapshot.bucket_at.label("bucket_at"),
+            )
+            .where(
+                MarketSnapshot.bucket_at <= cutoff_at,
+                MarketSnapshot.data_type.in_(ordered_types),
+            )
+            .order_by(
+                MarketSnapshot.data_type,
+                MarketSnapshot.subject_id,
+                MarketSnapshot.provider,
+                MarketSnapshot.bucket_at.desc(),
+            )
+            .distinct(
+                MarketSnapshot.data_type,
+                MarketSnapshot.subject_id,
+                MarketSnapshot.provider,
+            )
+            .subquery()
+        )
+        ranked = select(
+            latest.c.snapshot_id,
+            latest.c.data_type,
+            latest.c.bucket_at,
+            func.row_number()
+            .over(
+                partition_by=latest.c.data_type,
+                order_by=latest.c.bucket_at.desc(),
+            )
+            .label("type_rank"),
+            func.count()
+            .over(partition_by=latest.c.data_type)
+            .label("type_total"),
+        ).subquery()
+        with get_session() as session:
+            selected = list(
+                session.execute(
+                    select(
+                        ranked.c.snapshot_id,
+                        ranked.c.data_type,
+                        ranked.c.type_total,
+                    ).where(ranked.c.type_rank <= normalized_per_type)
+                ).all()
+            )
+            counts = {str(row.data_type): int(row.type_total) for row in selected}
+            selected_ids = [int(row.snapshot_id) for row in selected]
+            if not selected_ids:
+                return {"total": 0, "items": [], "counts_by_data_type": {}}
+            snapshots = {
+                row.id: row
+                for row in session.scalars(
+                    select(MarketSnapshot).where(MarketSnapshot.id.in_(selected_ids))
+                ).all()
+            }
+            type_order = {data_type: index for index, data_type in enumerate(ordered_types)}
+            items = [
+                self._snapshot_to_dict(snapshots[snapshot_id])
+                for snapshot_id in selected_ids
+                if snapshot_id in snapshots
+            ]
+            items.sort(
+                key=lambda item: type_order.get(
+                    str(item.get("data_type")), len(type_order)
+                )
+            )
+            return {
+                "total": sum(counts.values()),
+                "items": items,
+                "counts_by_data_type": counts,
+            }
+
     def query_latest_series_at(
         self,
         *,

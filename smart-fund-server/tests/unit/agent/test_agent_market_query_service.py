@@ -218,6 +218,26 @@ class _SnapshotRepository:
         rows = [row for row in self.rows if row["data_type"] in data_types]
         return {"total": len(rows), "items": rows[:limit]}
 
+    def list_latest_per_data_type_for_agent(
+        self,
+        *,
+        data_types,
+        cutoff_at,
+        per_data_type_limit,
+    ):
+        self.cutoffs.append(cutoff_at)
+        selected = []
+        counts = {}
+        for data_type in data_types:
+            rows = [row for row in self.rows if row["data_type"] == data_type]
+            counts[data_type] = len(rows)
+            selected.extend(rows[:per_data_type_limit])
+        return {
+            "total": sum(counts.values()),
+            "items": selected,
+            "counts_by_data_type": counts,
+        }
+
     def query_latest_series_at(self, *, series, cutoff_at, available_at=None):
         return {}
 
@@ -319,6 +339,34 @@ def test_data_catalog_is_cutoff_aware_and_hides_storage_errors() -> None:
     assert result["domains"][1]["unavailable_reason"] == "storage_not_ready"
     assert "database detail" not in str(result)
     assert result["evidence_domains"][0]["domain"] == "knowledge_graph"
+
+
+def test_data_catalog_exposes_semantic_topic_then_exact_domain_groups() -> None:
+    service, _snapshots, _collections = _service()
+
+    topic = service.data_catalog(cutoff_at=CUTOFF, topic="news_research")
+    domain = service.data_catalog(
+        cutoff_at=CUTOFF,
+        topic="news_research",
+        domain="news",
+        group_limit=10,
+    )
+
+    assert topic["scope"] == "topic"
+    assert topic["topic_detail"]["questions"]
+    assert topic["topic_detail"]["specialized_tools"] == [
+        "market_domain_open",
+        "kg_relation_graph_search",
+    ]
+    assert domain["scope"] == "domain"
+    assert domain["domains"][0]["groups"] == [{"name": "ths", "count": 10}]
+
+
+def test_data_catalog_rejects_unknown_domain_instead_of_encouraging_guessing() -> None:
+    service, _snapshots, _collections = _service()
+
+    with pytest.raises(ValueError, match="unknown collection domain"):
+        service.data_catalog(cutoff_at=CUTOFF, domain="sector_style")
 
 
 def test_market_frame_is_bounded_and_exposes_mixed_trade_date_quality() -> None:
@@ -526,6 +574,41 @@ def test_market_dimension_returns_compact_facts_and_evidence_locator() -> None:
     }
     assert "large_rows" in result["facts"][0]["data_fields"]
     assert result["read_path"] == "database"
+
+
+def test_market_dimension_can_select_exact_data_families_without_newest_feed_starvation() -> None:
+    service, snapshots, _collections = _service()
+    snapshots.rows.extend([
+        {
+            **snapshots.rows[0],
+            "id": 10,
+            "data_type": "ths_cn_index_quote",
+            "subject_id": "cn:index:000001",
+        },
+        {
+            **snapshots.rows[0],
+            "id": 11,
+            "data_type": "market_anomaly",
+            "subject_id": "cn:a_share:ths_anomaly",
+        },
+    ])
+
+    result = service.market_dimension(
+        dimension="a_share_market",
+        cutoff_at=CUTOFF,
+        data_types=["ths_cn_market_breadth", "ths_cn_index_quote", "market_anomaly"],
+    )
+
+    assert [item["data_type"] for item in result["facts"]] == [
+        "ths_cn_market_breadth",
+        "ths_cn_index_quote",
+        "market_anomaly",
+    ]
+    assert result["selected_data_types"] == [
+        "ths_cn_market_breadth",
+        "ths_cn_index_quote",
+        "market_anomaly",
+    ]
 
 
 def test_global_market_overview_selects_us_indices_not_arbitrary_latest_rows() -> None:

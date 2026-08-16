@@ -275,9 +275,11 @@ class _FakeSectorObservabilityService:
 class _FakeAgentMarketQueryService:
     def __init__(self) -> None:
         self.cutoff_at = None
+        self.catalog_kwargs = {}
 
-    def data_catalog(self, *, cutoff_at):
+    def data_catalog(self, *, cutoff_at, **_kwargs):
         self.cutoff_at = cutoff_at
+        self.catalog_kwargs = _kwargs
         return {
             "operation": "research_data_catalog_open",
             "status": "available",
@@ -424,9 +426,21 @@ async def test_research_catalog_calls_agent_market_service_with_aware_cutoff(
         lambda: service,
     )
 
-    result = await relation_graph.research_data_catalog_open(_FakeContext())
+    result = await relation_graph.research_data_catalog_open(
+        _FakeContext(),
+        topic="news_research",
+        domain="news",
+        group_offset=40,
+        group_limit=20,
+    )
 
     assert service.cutoff_at.tzinfo is not None
+    assert service.catalog_kwargs == {
+        "topic": "news_research",
+        "domain": "news",
+        "group_offset": 40,
+        "group_limit": 20,
+    }
     assert "operation" not in result
     assert result["domains"] == []
 

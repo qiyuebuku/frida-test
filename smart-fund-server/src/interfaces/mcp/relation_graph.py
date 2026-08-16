@@ -402,20 +402,34 @@ async def _call_agent_market(
 
 @mcp.tool(
     description=(
-        "Open the Research Agent data catalogue at an explicit decision "
-        "cutoff. Returns all persisted domains, coverage, latest fact time, "
-        "availability, bounded group handles, and the next drilldown tools. "
-        "Use this to discover what data exists; it never calls a WebUI API."
+        "Explore the Research data catalogue as an onion. Start with "
+        "topic=overview for semantic capability cards; reopen with one exact "
+        "topic for its snapshot types, persisted domains and specialized tools; "
+        "set domain to page every exact group handle in that domain. Use only "
+        "returned topic/domain names. This discovers data without dumping the WebUI payload."
     ),
     annotations=_READ_ONLY_ANNOTATIONS,
 )
 async def research_data_catalog_open(
     context: Context,
+    topic: Literal[
+        "overview", "a_share", "stock", "sector", "etf",
+        "futures_commodities", "gold", "global_us_hk_fx", "fund",
+        "flow_liquidity", "sentiment", "macro_valuation",
+        "news_research", "data_health",
+    ] = "overview",
+    domain: str = "",
+    group_offset: int = 0,
+    group_limit: int = 40,
 ) -> dict[str, Any]:
     result = await _call_agent_market(
         tool_name="research_data_catalog_open",
         context=context,
         function=_agent_market_query_service().data_catalog,
+        topic=topic,
+        domain=domain or None,
+        group_offset=group_offset,
+        group_limit=group_limit,
     )
     return _compact_research_data_catalog(result)
 
@@ -516,6 +530,7 @@ async def market_dimension_open(
     ],
     context: Context,
     limit: int = 8,
+    data_types: list[str] | None = None,
 ) -> dict[str, Any]:
     return await _call_agent_market(
         tool_name="market_dimension_open",
@@ -523,6 +538,7 @@ async def market_dimension_open(
         function=_agent_market_query_service().market_dimension,
         dimension=dimension,
         limit=limit,
+        data_types=data_types or [],
     )
 
 
@@ -1967,8 +1983,10 @@ def _compact_research_data_catalog(result: dict[str, Any]) -> dict[str, Any]:
     """Keep the catalogue useful as a map without dumping its whole inventory."""
 
     domains = []
+    detailed_domain = result.get("scope") == "domain"
     for item in result.get("domains") or []:
         groups = item.get("groups") or []
+        selected_groups = groups if detailed_domain else groups[:4]
         domains.append(
             {
                 key: item.get(key)
@@ -1984,28 +2002,32 @@ def _compact_research_data_catalog(result: dict[str, Any]) -> dict[str, Any]:
                 if item.get(key) is not None
             }
             | {
-                "group_count": len(groups),
-                "top_groups": [
+                "group_count": item.get("group_count", len(groups)),
+                "groups" if detailed_domain else "top_groups": [
                     {
                         key: group.get(key)
                         for key in ("name", "count")
                         if group.get(key) is not None
                     }
-                    for group in groups[:6]
+                    for group in selected_groups
                 ],
-                "groups_truncated": len(groups) > 6,
+                "group_offset": item.get("group_offset") if detailed_domain else None,
+                "groups_truncated": (
+                    item.get("groups_truncated")
+                    if detailed_domain else len(groups) > 4
+                ),
             }
         )
     return {
         key: result.get(key)
         for key in (
-            "operation",
-            "status",
+            "scope",
+            "topic",
+            "domain",
             "as_of",
             "read_path",
             "domain_count",
             "available_domain_count",
-            "snapshot_type_mapping",
         )
         if result.get(key) is not None
     } | {
@@ -2014,12 +2036,18 @@ def _compact_research_data_catalog(result: dict[str, Any]) -> dict[str, Any]:
         "research_topics": [
             {
                 "topic": item.get("topic"),
-                "entry_tool": item.get("entry_tool"),
+                "title": item.get("title"),
+                "questions": item.get("questions"),
+                "specialized_tools": item.get("specialized_tools"),
             }
             for item in (result.get("research_topics") or [])
-        ],
-        "next_operations": result.get("next_operations") or [],
-        "note": "需要某领域完整分组时再调用 market_domain_open 下钻。",
+        ] if result.get("scope") == "overview" else [],
+        "topic_detail": result.get("topic_detail"),
+        "snapshot_mapping_issue": (
+            result.get("snapshot_type_mapping")
+            if (result.get("snapshot_type_mapping") or {}).get("status") != "complete"
+            else None
+        ),
     }
 
 

@@ -170,6 +170,111 @@ RESEARCH_TOPICS: dict[str, dict[str, tuple[str, ...]]] = {
     "data_health": {"dimensions": (), "domains": ("collection_state", "collection_run")},
 }
 
+RESEARCH_TOPIC_GUIDANCE: dict[str, dict[str, Any]] = {
+    "a_share": {
+        "title": "A股全市场",
+        "questions": ("指数方向", "市场宽度", "涨跌停", "集合竞价", "异常事件"),
+        "specialized_tools": ("market_change_brief_open", "market_dimension_open"),
+    },
+    "stock": {
+        "title": "股票活动与个股",
+        "questions": ("异动排行", "大单资金", "个股画像", "实时行情与历史"),
+        "specialized_tools": ("market_instrument_realtime_open", "market_instrument_history"),
+    },
+    "sector": {
+        "title": "行业、概念与风格",
+        "questions": ("涨幅与热度", "对象对齐资金", "轮动", "景气", "成分重叠", "多日趋势"),
+        "specialized_tools": (
+            "market_sector_overview",
+            "market_sector_rankings",
+            "market_sector_compare_open",
+            "market_sector_open",
+        ),
+    },
+    "etf": {
+        "title": "ETF与基金表达",
+        "questions": ("ETF排名", "份额", "估值", "业绩", "持仓", "管理人", "表达重叠"),
+        "specialized_tools": (
+            "market_expression_compare_open",
+            "market_instrument_realtime_open",
+            "market_domain_open",
+        ),
+    },
+    "futures_commodities": {
+        "title": "期货与商品",
+        "questions": ("国内外期货", "商品日线", "跨市场风险先验"),
+        "specialized_tools": ("market_topic_open", "market_instrument_history"),
+    },
+    "gold": {
+        "title": "黄金",
+        "questions": ("金价", "黄金产品", "黄金资讯与驱动"),
+        "specialized_tools": ("market_topic_open", "market_evidence_open"),
+    },
+    "global_us_hk_fx": {
+        "title": "全球市场、美股、港股与外汇",
+        "questions": ("全球指数", "美股宽度", "美股行业概念", "港股", "汇率"),
+        "specialized_tools": ("market_global_overview_open", "market_instrument_history"),
+    },
+    "fund": {
+        "title": "基金基本面与披露",
+        "questions": ("基金经理", "规模", "持仓", "资产配置", "净值", "回撤"),
+        "specialized_tools": ("market_domain_open", "market_instrument_realtime_open"),
+    },
+    "flow_liquidity": {
+        "title": "资金与流动性",
+        "questions": ("全市场资金", "北向成交额", "逆回购", "龙虎榜", "板块资金"),
+        "specialized_tools": ("market_dimension_open", "market_domain_open"),
+    },
+    "sentiment": {
+        "title": "市场情绪",
+        "questions": ("市场温度", "涨跌停池", "热门股票与话题", "股吧情绪"),
+        "specialized_tools": ("market_dimension_open", "market_domain_open"),
+    },
+    "macro_valuation": {
+        "title": "宏观、估值、利率与债券",
+        "questions": ("宏观指标", "宏观状态", "估值", "利率", "债券"),
+        "specialized_tools": ("market_topic_open", "market_domain_open"),
+    },
+    "news_research": {
+        "title": "新闻与研究材料",
+        "questions": ("新闻原文", "研报", "政策与监管材料", "知识图谱"),
+        "specialized_tools": ("market_domain_open", "kg_relation_graph_search"),
+    },
+    "data_health": {
+        "title": "数据健康",
+        "questions": ("采集检查点", "任务成功率", "数据缺失与延迟"),
+        "specialized_tools": ("market_domain_open",),
+    },
+}
+
+# Navigation reads use this order so high-value semantic families appear before
+# implementation-detail feeds.  Exact candidate ranking remains the model's
+# responsibility and is handled by specialized tools, not by this ordering.
+MARKET_DIMENSION_PRIORITY: dict[str, tuple[str, ...]] = {
+    name: tuple(sorted(data_types)) for name, data_types in MARKET_DIMENSIONS.items()
+}
+MARKET_DIMENSION_PRIORITY.update({
+    "a_share_market": (
+        "ths_cn_index_quote", "ths_cn_market_breadth", "ths_cn_market_summary",
+        "ths_market_profile", "market_breadth", "call_auction",
+        "market_anomaly", "ths_index_daily",
+    ),
+    "sector_style": (
+        "ths_sector_ranking", "ths_sector_flow", "ths_sector_hot",
+        "ths_sector_rotation", "ths_industry_opportunity",
+        "ths_sector_prosperity", "ths_sector_commodity_linkage",
+        "ths_sector_anomaly", "sector_quote", "sector_flow",
+        "ths_sector_constituents", "sector_constituents", "sector_reference",
+        "ths_sector_daily",
+    ),
+    "global_us_hk_fx": (
+        "ths_us_market_module", "global_index", "index_quote", "hk_quote",
+        "forex_quote", "forex_intraday", "forex", "benchmark_daily",
+        "ths_us_sector_period", "ths_us_market_zone", "us_quote",
+        "ths_us_security_quote", "hk_us_kline",
+    ),
+})
+
 MARKET_CHANGE_FOCUS_DIMENSIONS: dict[str, tuple[str, ...]] = {
     "overall": (
         # “整体市场复核”必须先获得全市场地图。每个维度只返回少量摘要，
@@ -249,9 +354,27 @@ class AgentMarketQueryService:
         self._calendar = calendar_service or ChinaExchangeCalendarService()
         self._now = now or (lambda: datetime.now(UTC))
 
-    def data_catalog(self, *, cutoff_at: datetime) -> dict[str, Any]:
+    def data_catalog(
+        self,
+        *,
+        cutoff_at: datetime,
+        topic: str = "overview",
+        domain: str | None = None,
+        group_offset: int = 0,
+        group_limit: int = 40,
+    ) -> dict[str, Any]:
         cutoff = self._validate_cutoff(cutoff_at)
+        normalized_topic = str(topic or "overview")
+        if normalized_topic != "overview" and normalized_topic not in RESEARCH_TOPICS:
+            raise ValueError(f"unknown research topic: {normalized_topic}")
+        normalized_domain = str(domain or "").strip() or None
+        normalized_group_offset = max(0, int(group_offset))
+        normalized_group_limit = max(1, min(int(group_limit), 80))
         inventory = self._collections.inventory(cutoff_at=cutoff)
+        if normalized_domain and normalized_domain not in {
+            str(item.get("domain")) for item in inventory
+        }:
+            raise ValueError(f"unknown collection domain: {normalized_domain}")
         domains = []
         latest_values: list[datetime | date] = []
         for row in inventory:
@@ -260,6 +383,12 @@ class AgentMarketQueryService:
             if isinstance(latest_at, (datetime, date)):
                 latest_values.append(latest_at)
             available = bool(row.get("available"))
+            all_groups = groups
+            if normalized_domain == row.get("domain"):
+                groups = all_groups[
+                    normalized_group_offset:
+                    normalized_group_offset + normalized_group_limit
+                ]
             domains.append(
                 {
                     "domain": row.get("domain"),
@@ -271,8 +400,18 @@ class AgentMarketQueryService:
                     ),
                     "record_count": int(row.get("total") or 0),
                     "latest_at": latest_at,
-                    "groups": groups[:40],
-                    "groups_truncated": len(groups) > 40,
+                    "groups": groups[:40] if normalized_domain != row.get("domain") else groups,
+                    "group_count": len(all_groups),
+                    "group_offset": (
+                        normalized_group_offset
+                        if normalized_domain == row.get("domain")
+                        else 0
+                    ),
+                    "groups_truncated": (
+                        normalized_group_offset + len(groups) < len(all_groups)
+                        if normalized_domain == row.get("domain")
+                        else len(all_groups) > 40
+                    ),
                     "entry_tool": "market_domain_open",
                     "unavailable_reason": (
                         "storage_not_ready" if not available else None
@@ -304,9 +443,30 @@ class AgentMarketQueryService:
         unmapped_snapshot_types = sorted(
             observed_snapshot_types - mapped_snapshot_types
         )
+        selected_topic = (
+            RESEARCH_TOPICS.get(normalized_topic)
+            if normalized_topic != "overview"
+            else None
+        )
+        selected_domains = (
+            [item for item in domains if item["domain"] == normalized_domain]
+            if normalized_domain
+            else [
+                item for item in domains
+                if selected_topic is None or item["domain"] in selected_topic["domains"]
+            ]
+        )
+        topic_dimensions = list((selected_topic or {}).get("dimensions") or [])
+        topic_data_types = {
+            dimension: list(MARKET_DIMENSION_PRIORITY[dimension])
+            for dimension in topic_dimensions
+        }
         return {
             "operation": "research_data_catalog_open",
             "status": status,
+            "scope": "domain" if normalized_domain else "topic" if selected_topic else "overview",
+            "topic": normalized_topic,
+            "domain": normalized_domain,
             "as_of": _latest_time(latest_values),
             "cutoff_at": cutoff,
             "read_path": "database",
@@ -319,7 +479,7 @@ class AgentMarketQueryService:
                 ),
                 "unmapped_types": unmapped_snapshot_types,
             },
-            "domains": domains,
+            "domains": selected_domains,
             "evidence_domains": [
                 {
                     "domain": "knowledge_graph",
@@ -338,12 +498,29 @@ class AgentMarketQueryService:
             "research_topics": [
                 {
                     "topic": topic,
+                    "title": RESEARCH_TOPIC_GUIDANCE[topic]["title"],
+                    "questions": list(RESEARCH_TOPIC_GUIDANCE[topic]["questions"]),
                     "dimensions": list(spec["dimensions"]),
                     "domains": list(spec["domains"]),
+                    "specialized_tools": list(
+                        RESEARCH_TOPIC_GUIDANCE[topic]["specialized_tools"]
+                    ),
                     "entry_tool": "market_topic_open",
                 }
                 for topic, spec in RESEARCH_TOPICS.items()
             ],
+            "topic_detail": (
+                {
+                    "title": RESEARCH_TOPIC_GUIDANCE[normalized_topic]["title"],
+                    "questions": list(RESEARCH_TOPIC_GUIDANCE[normalized_topic]["questions"]),
+                    "snapshot_data_types_by_dimension": topic_data_types,
+                    "domains": list(selected_topic["domains"]),
+                    "specialized_tools": list(
+                        RESEARCH_TOPIC_GUIDANCE[normalized_topic]["specialized_tools"]
+                    ),
+                }
+                if selected_topic else None
+            ),
             "next_operations": [
                 "market_frame_open",
                 "market_topic_open",
@@ -604,6 +781,7 @@ class AgentMarketQueryService:
         dimension: str,
         cutoff_at: datetime,
         limit: int = 8,
+        data_types: list[str] | None = None,
     ) -> dict[str, Any]:
         cutoff = self._validate_cutoff(cutoff_at)
         if dimension not in {*MARKET_DIMENSIONS, "other_market"}:
@@ -622,15 +800,28 @@ class AgentMarketQueryService:
                     == "other_market"
                 }
             )
+            requested_types = list(data_types[:normalized_limit])
         else:
-            data_types = sorted(MARKET_DIMENSIONS[dimension])
-        result = self._snapshots.list_latest_for_agent(
-            data_types=data_types,
+            available_types = MARKET_DIMENSION_PRIORITY[dimension]
+            requested_types = list(dict.fromkeys(data_types or []))
+            unknown_types = sorted(set(requested_types) - set(available_types))
+            if unknown_types:
+                raise ValueError(
+                    f"data types do not belong to {dimension}: {unknown_types}"
+                )
+            data_types = requested_types or list(available_types)
+        result = self._snapshots.list_latest_per_data_type_for_agent(
+            data_types=list(data_types),
             cutoff_at=cutoff,
-            limit=normalized_limit,
+            per_data_type_limit=1,
         )
         selected = list(result.get("items") or [])
+        if not requested_types:
+            selected = selected[:normalized_limit]
         total = int(result.get("total") or 0)
+        selected_data_types = list(dict.fromkeys(
+            str(row.get("data_type") or "") for row in selected
+        ))
         return {
             "operation": "market_dimension_open",
             "status": "available" if selected else "empty",
@@ -639,6 +830,8 @@ class AgentMarketQueryService:
             "cutoff_at": cutoff,
             "total": total,
             "limit": normalized_limit,
+            "selected_data_types": selected_data_types,
+            "counts_by_data_type": result.get("counts_by_data_type") or {},
             "truncated": total > len(selected),
             "facts": [_project_snapshot(row) for row in selected],
             "read_path": "database",
@@ -846,17 +1039,16 @@ class AgentMarketQueryService:
             raise ValueError(f"unknown research topic: {topic}")
         normalized_limit = max(1, min(int(limit), 20))
         dimensions = list(spec["dimensions"])
-        data_types = sorted(
-            {
-                data_type
-                for dimension in dimensions
-                for data_type in MARKET_DIMENSIONS[dimension]
-            }
-        )
-        snapshot_result = self._snapshots.list_latest_for_agent(
-            data_types=data_types,
+        data_types = list(dict.fromkeys(
+            data_type
+            for dimension in dimensions
+            for data_type in MARKET_DIMENSION_PRIORITY[dimension]
+        ))
+        selected_data_types = data_types[:normalized_limit]
+        snapshot_result = self._snapshots.list_latest_per_data_type_for_agent(
+            data_types=selected_data_types,
             cutoff_at=cutoff,
-            limit=normalized_limit,
+            per_data_type_limit=1,
         )
         inventory = {
             str(row.get("domain")): row
@@ -920,9 +1112,12 @@ class AgentMarketQueryService:
             "cutoff_at": cutoff,
             "dimensions": dimensions,
             "snapshot_data_types": data_types,
+            "selected_snapshot_data_types": selected_data_types,
             "snapshot_total": total,
             "snapshot_facts": facts,
-            "snapshot_truncated": total > len(facts),
+            "snapshot_truncated": (
+                len(selected_data_types) < len(data_types) or total > len(facts)
+            ),
             "related_domains": related_domains,
             "read_path": "database",
             "next_operations": [

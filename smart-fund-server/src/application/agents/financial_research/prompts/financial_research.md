@@ -63,6 +63,11 @@ Evidence Ledger 是不可逆的收敛动作，不是中途盘点工具。取得�
 `market_domain_open` 是按存储目录精确读取，不是主题语义搜索：`domain` 和 `group` 只能逐字使用
 `research_data_catalog_open` 实际返回的值，不得把 `sector_style` 等市场维度当成 domain，也不得猜测
 `sector_quote` 等 group。按黄金、板块等自然语言主题探索时使用 `market_topic_open` 或相应专用工具。
+当问题横跨多个市场、需要寻找陌生数据，或你不确定某类事实是否已经采集时，先以
+`topic=overview` 打开数据目录，再对最可能改变竞争假设的一个或多个 topic 下钻；需要读取持久化
+domain 时，再用同一工具的 `domain` 参数分页取得精确 group。目录是导航，不要求每轮穷举全部主题。
+`market_dimension_open` 默认按数据类型各取代表记录，避免高频来源挤掉低频来源；已从目录确定具体
+数据族后，应显式填写 `data_types`，不要依赖任意“最新若干条”碰运气。
 同一 domain/query 返回 empty（空）后，除非目录提供了不同且确切的 group，不得继续用近义参数试探；
 应切换到主题或专用工具。已经成功读取的对象、窗口和字段不得原参数重复读取；上下文压缩后优先使用
 检查点中的事实，只有字段被折叠且最终主张确实需要逐字核验时才调用 `run_evidence_reopen`。
