@@ -255,6 +255,70 @@ async def test_sector_detail_samples_latest_row_per_trade_date(monkeypatch) -> N
     assert items[0]["data_type"] == "ths_sector_flow"
 
 
+@pytest.mark.asyncio
+async def test_sector_detail_fills_cross_day_flow_when_short_history_has_one_day(
+    monkeypatch,
+) -> None:
+    observability = SimpleNamespace(
+        sector_detail=lambda **_kwargs: {
+            "provider_sector_code": "886033",
+            "sector_type": "concept",
+            "found": True,
+            "latest": [],
+            "series": [{
+                "data_type": "ths_sector_flow",
+                "subject_id": "ths_native:concept:886033",
+                "items": [{
+                    "id": 1,
+                    "trade_date": "2026-08-14",
+                    "data": {"main_net_inflow": 111.05},
+                }],
+            }],
+            "constituents": [],
+        },
+    )
+
+    class TrackingService:
+        async def instrument_history(self, **kwargs):
+            assert kwargs["code"] == "ths:concept:886033"
+            assert kwargs["data_type"] == "ths_sector_flow"
+            assert kwargs["limit"] == 3
+            return {
+                "code": "ths_native:concept:886033",
+                "items": [
+                    {
+                        "id": index,
+                        "trade_date": trade_date,
+                        "data": {"main_net_inflow": value},
+                        "evidence_locator": f"market:v1:flow-{index}",
+                    }
+                    for index, trade_date, value in [
+                        (3, "2026-08-14", 111.05),
+                        (2, "2026-08-13", -15.93),
+                        (1, "2026-08-12", 134.53),
+                    ]
+                ],
+            }
+
+    monkeypatch.setattr(relation_graph, "_sector_observability_service", lambda: observability)
+    monkeypatch.setattr(relation_graph, "_market_service", lambda: TrackingService())
+
+    result = await relation_graph._read_sector_detail(
+        provider_sector_code="886033",
+        history_limit=5,
+        constituent_limit=0,
+        cutoff_at=datetime(2026, 8, 16, tzinfo=UTC),
+    )
+
+    flow = next(item for item in result["series"] if item["data_type"] == "ths_sector_flow")
+    assert [item["trade_date"] for item in flow["items"]] == [
+        "2026-08-12",
+        "2026-08-13",
+        "2026-08-14",
+    ]
+    assert flow["items"][0]["evidence_locator"] == "market:v1:flow-1"
+
+
 def _run_authorization() -> str:
     now = datetime.now(UTC)
     return issue_run_authorization(

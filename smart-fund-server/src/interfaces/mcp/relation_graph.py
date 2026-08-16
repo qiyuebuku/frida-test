@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import hmac
-from datetime import UTC, date, datetime
+from datetime import UTC, date, datetime, timedelta
 from typing import Any, Literal
 
 from mcp.server.auth.provider import AccessToken
@@ -1739,10 +1739,46 @@ async def _read_sector_rankings(**kwargs) -> dict[str, Any]:
 
 async def _read_sector_detail(**kwargs) -> dict[str, Any]:
     constituent_limit = int(kwargs.pop("constituent_limit", 20))
+    cutoff_at = kwargs.get("cutoff_at")
     result = await asyncio.to_thread(
         _sector_observability_service().sector_detail,
         **kwargs,
     )
+    raw_series = [
+        dict(group)
+        for group in (result.get("series") or [])
+        if isinstance(group, dict)
+    ]
+    flow_group = next(
+        (
+            group
+            for group in raw_series
+            if group.get("data_type") == "ths_sector_flow"
+        ),
+        None,
+    )
+    flow_dates = {
+        str(item.get("trade_date") or "")[:10]
+        for item in ((flow_group or {}).get("items") or [])
+        if isinstance(item, dict) and item.get("trade_date")
+    }
+    if flow_group is not None and len(flow_dates) < 2:
+        provider_code = str(result.get("provider_sector_code") or "")
+        sector_type = str(result.get("sector_type") or kwargs.get("sector_type") or "")
+        if sector_type not in {"concept", "industry"}:
+            sector_type = "concept" if provider_code.startswith("886") else "industry"
+        end_date = cutoff_at.date() if isinstance(cutoff_at, datetime) else date.today()
+        flow_history = await _market_service().instrument_history(
+            code=f"ths:{sector_type}:{provider_code}",
+            data_type="ths_sector_flow",
+            date_start=(end_date - timedelta(days=14)).isoformat(),
+            date_end=end_date.isoformat(),
+            limit=3,
+            cutoff_at=cutoff_at,
+        )
+        if flow_history.get("items"):
+            flow_group["subject_id"] = flow_history.get("code")
+            flow_group["items"] = flow_history["items"]
     series = []
     history_priority = {
         data_type: priority
@@ -1758,7 +1794,7 @@ async def _read_sector_detail(**kwargs) -> dict[str, Any]:
     history_groups = sorted(
         (
             group
-            for group in (result.get("series") or [])
+            for group in raw_series
             if isinstance(group, dict)
         ),
         key=lambda group: (
@@ -2291,7 +2327,7 @@ def _compact_sector_row(item: Any) -> Any:
         for key in fields
         if item.get(key) is not None
     }
-    locator = _sector_row_locator(item)
+    locator = item.get("evidence_locator") or _sector_row_locator(item)
     if locator is not None:
         compacted["evidence_locator"] = locator
     return compacted
@@ -2355,12 +2391,15 @@ def _compact_sector_history_item(item: Any) -> Any:
     compacted = {
         **{
             key: item[key]
-            for key in ("trade_date", "observed_at", "bucket_at", "freshness_status")
+            for key in (
+                "data_type", "subject_id", "trade_date", "observed_at",
+                "bucket_at", "freshness_status",
+            )
             if item.get(key) is not None
         },
         "data": _compact_sector_row(data),
     }
-    locator = _sector_row_locator(item)
+    locator = item.get("evidence_locator") or _sector_row_locator(item)
     if locator is not None:
         compacted["evidence_locator"] = locator
     return compacted
