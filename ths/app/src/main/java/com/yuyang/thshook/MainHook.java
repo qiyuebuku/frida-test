@@ -67,6 +67,15 @@ public class MainHook {
     private static final AtomicInteger marketWireCaptureActive = new AtomicInteger(0);
     private static volatile String marketWireCaptureId = null;
     private static final ConcurrentHashMap<String, Boolean> hookedBridgeMethods = new ConcurrentHashMap<>();
+    private static final AtomicBoolean tradeAccountRegistryHooked = new AtomicBoolean(false);
+    private static final AtomicBoolean tradingSdkBridgeHooked = new AtomicBoolean(false);
+    private static final AtomicInteger bridgeRetryAttempts = new AtomicInteger(0);
+    private static final AtomicBoolean speculativeTradeClassesHooked = new AtomicBoolean(false);
+    private static final ConcurrentHashMap<String, Boolean> hookedTradeAccountMethods =
+            new ConcurrentHashMap<>();
+    private static volatile Object tradeAccountManagerInstance = null;
+    private static volatile Class<?> tradeAccountManagerClass = null;
+    private static volatile List<Class<?>> tradeAccountClassChain = new ArrayList<>();
     private static final AtomicBoolean proxyServerStarted = new AtomicBoolean(false);
     private static final AtomicInteger realtimeStreamSessions = new AtomicInteger(0);
     private static final AtomicInteger directMarketInstanceId = new AtomicInteger(10000);
@@ -351,10 +360,9 @@ public class MainHook {
     private static volatile long httpLogWindowStart = 0;
     private static final int HTTP_LOG_LIMIT = 100;
 
-    // 股票数据：捕获的 SQLite 数据库引用
+    // 股票数据：旧版本曾从本地 SQLite 读取交易数据。11.58.03 已不再使用该路径，
+    // 这里只保留引用以协助确认版本迁移，禁止在代码中保存账户密钥。
     private static volatile Object stockDatabase = null;
-    // 股票账户 fund_key（AES加密）
-    private static final String STOCK_FUND_KEY = "7qZ1IO8msos2SsiJgFqWREwrMVnGfXlV974+tulFq0k=";
 
     // XHR Hook JavaScript - 注入到 WebView 捕获所有 AJAX 请求
     private static final String XHR_HOOK_SCRIPT =
@@ -565,6 +573,26 @@ public class MainHook {
             }
         }
 
+        // 交易账户探针 — 允许重试：360 加固下首次 ClassLoader 缺少 p0s，
+        // 必须等解壳后的 App ClassLoader 到达再安装
+        if (!tradeAccountRegistryHooked.get()) {
+            try {
+                hookTradeAccountRegistry(cl);
+                Log.i(TAG, "hookTradeAccountRegistry done");
+            } catch (Throwable e) {
+                Log.e(TAG, "hookTradeAccountRegistry failed (will retry with next classLoader)", e);
+            }
+        }
+
+        // MasterModuleBridge（libweituo.so 唯一 Java 入口）：其 <clinit> 需要 App 上下文，
+        // 启动期直接挂钩会把类标记为 erroneous 导致 App 崩溃（已实测）。
+        // 只通过延迟重试 + F(119) 交易事件触发。
+        try {
+            scheduleTradingSdkBridgeRetry(cl);
+        } catch (Throwable e) {
+            Log.e(TAG, "scheduleTradingSdkBridgeRetry failed", e);
+        }
+
         // 以下 hooks 只在首次运行时安装
         if (firstRun) {
             try { hookHttpURLConnection(); Log.i(TAG, "hookHttpURLConnection done"); }
@@ -579,8 +607,8 @@ public class MainHook {
             try { hookSQLiteDatabase(); Log.i(TAG, "hookSQLiteDatabase done"); }
             catch (Throwable e) { Log.e(TAG, "hookSQLiteDatabase failed", e); }
 
-            try { hookTradingSDK(cl); Log.i(TAG, "hookTradingSDK done"); }
-            catch (Throwable e) { Log.e(TAG, "hookTradingSDK failed", e); }
+            try { hookTradeUIMessages(); Log.i(TAG, "hookTradeUIMessages done"); }
+            catch (Throwable e) { Log.e(TAG, "hookTradeUIMessages failed", e); }
 
             try { hookCipher(); Log.i(TAG, "hookCipher done"); }
             catch (Throwable e) { Log.e(TAG, "hookCipher failed", e); }
@@ -1134,6 +1162,15 @@ public class MainHook {
             // GET /stock/trade/logs — 获取最近的交易日志
             if (requestLine.startsWith("GET /stock/trade/logs")) {
                 String result = getRecentTradeLogs();
+                sendResponse(out, 200, result);
+                client.close();
+                return;
+            }
+
+            // GET /stock/trade/sdk-schema — 只返回运行时交易 SDK 的类型和方法签名。
+            // 不返回账户、令牌、请求参数或业务数据。
+            if (requestLine.startsWith("GET /stock/trade/sdk-schema")) {
+                String result = getTradeSdkSchema();
                 sendResponse(out, 200, result);
                 client.close();
                 return;
@@ -4501,41 +4538,41 @@ public class MainHook {
      * 查询持仓
      */
     private static String queryStockPositions() {
-        String sql = "SELECT * FROM stock_position WHERE fund_key = ?";
-        return executeStockQuery(sql, new String[]{ STOCK_FUND_KEY });
+        return legacyStockDatabaseUnavailable("positions");
     }
 
     /**
      * 查询资产
      */
     private static String queryStockAssets() {
-        // account_d 表包含资金信息
-        String sql = "SELECT * FROM account_d WHERE fund_key = ?";
-        return executeStockQuery(sql, new String[]{ STOCK_FUND_KEY });
+        return legacyStockDatabaseUnavailable("assets");
     }
 
     /**
      * 查询委托
      */
     private static String queryStockOrders() {
-        String sql = "SELECT * FROM stock_entrust WHERE fund_key = ? ORDER BY entrust_date DESC, entrust_time DESC";
-        return executeStockQuery(sql, new String[]{ STOCK_FUND_KEY });
+        return legacyStockDatabaseUnavailable("orders");
     }
 
     /**
      * 查询历史成交
      */
     private static String queryStockHistory() {
-        String sql = "SELECT * FROM stock_history WHERE fund_key = ? ORDER BY trans_date DESC";
-        return executeStockQuery(sql, new String[]{ STOCK_FUND_KEY });
+        return legacyStockDatabaseUnavailable("history");
     }
 
     /**
      * 查询当日成交
      */
     private static String queryStockDaily() {
-        String sql = "SELECT * FROM daily_trans WHERE fund_key = ?";
-        return executeStockQuery(sql, new String[]{ STOCK_FUND_KEY });
+        return legacyStockDatabaseUnavailable("daily_deals");
+    }
+
+    private static String legacyStockDatabaseUnavailable(String capability) {
+        return "{\"status\":\"legacy_unavailable\",\"capability\":\""
+                + escapeJson(capability)
+                + "\",\"reason\":\"THS 11.58.03 obtains broker account data through the trading SDK, not xcs2.db\"}";
     }
 
     /**
@@ -4543,7 +4580,7 @@ public class MainHook {
      */
     private static String getStockDbStatus() {
         StringBuilder sb = new StringBuilder("{");
-        sb.append("\"fund_key\":\"").append(STOCK_FUND_KEY).append("\"");
+        sb.append("\"status\":\"legacy_probe_only\"");
 
         Object db = getStockDatabase();
         if (db == null) {
@@ -6062,78 +6099,92 @@ public class MainHook {
     }
 
     /**
-     * Hook 股票交易 SDK，捕获买入/卖出操作
-     * 目标包：com.hexin.android.weituo.hstrade.*
+     * Hook 股票交易 SDK（可重试部分）：MasterModuleBridge 是 libweituo.so 唯一引用的
+     * Java 入口。日志只记录结构（类型/长度/命令名），不记录业务值。
+     *
+     * 重要：Pine.hook 内部的 Method.invoke 会强制执行该类 <clinit>。若 App 上下文
+     * 尚未就绪，clinit 抛 "context must not be null"，类被 ART 标记为 erroneous，
+     * App 之后自己使用时会 NoClassDefFoundError 崩溃（已实测）。因此本方法只能由
+     * 延迟重试（App 启动完成后）或 F(119) 事件（交易模块活跃）触发，绝不能在
+     * installAllHooks 里直接调用。
      */
-    private static void hookTradingSDK(ClassLoader cl) throws Throwable {
-        // 核心：Hook MasterModuleBridge (libweituo.so 的 Java 入口)
+    private static synchronized void hookTradingSdkBridge(ClassLoader cl) {
+        if (tradingSdkBridgeHooked.get()) return;
+
+        Class<?> bridgeClass;
         try {
-            Class<?> bridgeClass = cl.loadClass("com.hexin.android.mastermodule.MasterModuleBridge");
-            Log.i(TAG, "Found MasterModuleBridge class!");
+            bridgeClass = cl.loadClass("com.hexin.android.mastermodule.MasterModuleBridge");
+        } catch (ClassNotFoundException e) {
+            Log.w(TAG, "MasterModuleBridge not found in this classLoader");
+            return;
+        }
 
-            // Hook 所有方法来分析接口
-            for (Method m : bridgeClass.getDeclaredMethods()) {
-                String methodName = m.getName();
-                Log.i(TAG, "MasterModuleBridge method: " + methodName + " params=" + java.util.Arrays.toString(m.getParameterTypes()));
+        // 就绪检查：r9h.d 是 MasterModule 初始化完成标志（r9h.l 设置上下文后，
+        // initMasterModule 成功才置 true）。读它只触发 r9h 的平凡 clinit，安全；
+        // 而 MasterModuleBridge 此时必然已完成初始化，Pine.hook 不会再触发失败
+        // 的 <clinit>。
+        try {
+            Class<?> r9h = cl.loadClass("r9h");
+            java.lang.reflect.Field initFlag = r9h.getDeclaredField("d");
+            initFlag.setAccessible(true);
+            if (!(boolean) initFlag.get(null)) {
+                Log.i(TAG, "MasterModule not initialized yet (r9h.d=false), skip hook attempt");
+                return;
+            }
+            Log.i(TAG, "MasterModule initialized (r9h.d=true), safe to hook");
+        } catch (Throwable e) {
+            Log.w(TAG, "r9h ready-check unavailable: " + e + " — skip hook attempt");
+            return;
+        }
 
-                // 跳过常见的无关方法
-                if (methodName.equals("hashCode") || methodName.equals("equals")
-                    || methodName.equals("toString") || methodName.equals("getClass")) {
-                    continue;
+        // 挂钩请求入口 r9h.o(byte[])：this.j().jniRequest(f(), bArr)
+        try {
+            Class<?> r9h = cl.loadClass("r9h");
+            Method sendMethod = r9h.getDeclaredMethod("o", byte[].class);
+            sendMethod.setAccessible(true);
+            Pine.hook(sendMethod, new MethodHook() {
+                @Override
+                public void beforeCall(Pine.CallFrame callFrame) {
+                    String logMsg = "TradeSend.r9h.o args=" + describeTradeArguments(callFrame.args);
+                    Log.i(TAG, logMsg);
+                    addTradeLog(logMsg);
                 }
+            });
+            Log.i(TAG, "r9h.o request-entry hook installed");
+        } catch (Throwable e) {
+            Log.w(TAG, "r9h.o hook failed: " + e.getMessage());
+        }
 
+        boolean anyFailure = false;
+        Log.i(TAG, "Found MasterModuleBridge class!");
+        for (Method m : bridgeClass.getDeclaredMethods()) {
+            String methodName = m.getName();
+            Log.i(TAG, "MasterModuleBridge method: " + methodName + " params=" + java.util.Arrays.toString(m.getParameterTypes()));
+
+            if (methodName.equals("hashCode") || methodName.equals("equals")
+                || methodName.equals("toString") || methodName.equals("getClass")) {
+                continue;
+            }
+
+            try {
                 Pine.hook(m, new MethodHook() {
                     @Override
                     public void beforeCall(Pine.CallFrame callFrame) {
-                        // 捕获实例
                         if (masterModuleBridgeInstance == null && callFrame.thisObject != null) {
                             masterModuleBridgeInstance = callFrame.thisObject;
                             Log.i(TAG, "MasterModuleBridge instance captured!");
                         }
 
-                        StringBuilder sb = new StringBuilder();
-                        sb.append("MasterBridge.").append(methodName).append("(");
-                        if (callFrame.args != null && callFrame.args.length > 0) {
-                            for (int i = 0; i < callFrame.args.length; i++) {
-                                if (i > 0) sb.append(", ");
-                                Object arg = callFrame.args[i];
-                                if (arg == null) {
-                                    sb.append("null");
-                                } else if (arg instanceof String) {
-                                    String s = (String) arg;
-                                    sb.append("\"").append(s.length() > 500 ? s.substring(0, 500) + "..." : s).append("\"");
-                                } else if (arg instanceof byte[]) {
-                                    byte[] bytes = (byte[]) arg;
-                                    sb.append("byte[").append(bytes.length).append("]");
-                                    // 解码 byte[] 内容（最多显示 2000 字节）
-                                    if (bytes.length > 0) {
-                                        try {
-                                            int len = Math.min(bytes.length, 2000);
-                                            String content = new String(bytes, 0, len, "UTF-8");
-                                            // 替换不可打印字符
-                                            content = content.replaceAll("[\\x00-\\x1F\\x7F]", ".");
-                                            sb.append("=\"").append(content);
-                                            if (bytes.length > 2000) sb.append("...");
-                                            sb.append("\"");
-                                        } catch (Throwable ignored) {}
-                                    }
-                                } else {
-                                    sb.append(arg.getClass().getSimpleName()).append("@").append(Integer.toHexString(System.identityHashCode(arg)));
-                                }
-                            }
-                        }
-                        sb.append(")");
-                        String logMsg = sb.toString();
+                        String logMsg = "MasterBridge." + methodName
+                                + " args=" + describeTradeArguments(callFrame.args);
                         Log.i(TAG, logMsg);
                         addTradeLog("REQ: " + logMsg);
 
-                        // 打印调用栈（直接使用 Throwable 获取完整调用栈）
                         if (methodName.equals("jniRequest")) {
                             Log.i(TAG, "=== jniRequest CALL STACK ===");
                             Throwable t = new Throwable();
                             for (StackTraceElement e : t.getStackTrace()) {
                                 String cn = e.getClassName();
-                                // 只打印同花顺的类
                                 if (cn.contains("hexin") || cn.contains("weituo")) {
                                     Log.i(TAG, "  -> " + cn + "." + e.getMethodName() + ":" + e.getLineNumber());
                                 }
@@ -6144,45 +6195,69 @@ public class MainHook {
 
                     @Override
                     public void afterCall(Pine.CallFrame callFrame) {
-                        Object result = callFrame.getResult();
-                        if (result != null && !(result instanceof Void)) {
-                            String resultStr;
-                            if (result instanceof byte[]) {
-                                byte[] bytes = (byte[]) result;
-                                resultStr = "byte[" + bytes.length + "]";
-                                if (bytes.length < 500) {
-                                    try {
-                                        resultStr += "=\"" + new String(bytes, "UTF-8") + "\"";
-                                    } catch (Throwable ignored) {}
-                                }
-                            } else {
-                                resultStr = result.toString();
-                                if (resultStr.length() > 500) {
-                                    resultStr = resultStr.substring(0, 500) + "...";
-                                }
-                            }
-                            Log.i(TAG, "  → " + resultStr);
-                            addTradeLog("RSP: " + methodName + " → " + resultStr);
-                        }
+                        String logMsg = "RSP: " + methodName + " result="
+                                + describeTradeValue(callFrame.getResult());
+                        Log.i(TAG, logMsg);
+                        addTradeLog(logMsg);
                     }
                 });
+            } catch (Throwable e) {
+                anyFailure = true;
+                Log.e(TAG, "MasterModuleBridge hook failed on " + methodName
+                        + " (class init not ready; will retry later)", e);
+                if (e instanceof ExceptionInInitializerError
+                        || e instanceof NoClassDefFoundError
+                        || e.getCause() instanceof ExceptionInInitializerError) {
+                    break;
+                }
+                continue;
+            }
 
-                // 保存请求方法引用（用于发起交易）
-                if (methodName.contains("request") || methodName.contains("Request")
-                    || methodName.contains("send") || methodName.contains("Send")
-                    || methodName.contains("call") || methodName.contains("Call")) {
-                    if (masterModuleBridgeRequestMethod == null) {
-                        masterModuleBridgeRequestMethod = m;
-                        Log.i(TAG, "MasterModuleBridge request method captured: " + methodName);
-                    }
+            if (methodName.contains("request") || methodName.contains("Request")
+                || methodName.contains("send") || methodName.contains("Send")
+                || methodName.contains("call") || methodName.contains("Call")) {
+                if (masterModuleBridgeRequestMethod == null) {
+                    masterModuleBridgeRequestMethod = m;
+                    Log.i(TAG, "MasterModuleBridge request method captured: " + methodName);
                 }
             }
-            Log.i(TAG, "MasterModuleBridge hooks installed");
-        } catch (ClassNotFoundException e) {
-            Log.w(TAG, "MasterModuleBridge not found");
         }
 
-        // 尝试 Hook 常见的交易接口类
+        if (!anyFailure) {
+            tradingSdkBridgeHooked.set(true);
+            Log.i(TAG, "MasterModuleBridge hooks installed");
+        }
+
+        // 猜测性交易接口类只尝试一次（当前版本均不存在）
+        if (speculativeTradeClassesHooked.compareAndSet(false, true)) {
+            hookSpeculativeTradeClasses(cl);
+        }
+    }
+
+    /** 延迟重试：等 App 完全启动、上下文就绪后再触发 bridge 挂钩。
+     *  注意不能用 Handler——postAppSpecialize 时机主线程 Looper 尚未创建。 */
+    private static void scheduleTradingSdkBridgeRetry(final ClassLoader cl) {
+        final int attempt = bridgeRetryAttempts.incrementAndGet();
+        if (attempt > 3) return;
+        final long delayMs = attempt == 1 ? 15000L : (attempt == 2 ? 45000L : 90000L);
+        Log.i(TAG, "MasterModuleBridge hook retry #" + attempt + " in " + delayMs + "ms");
+        Thread retryThread = new Thread(() -> {
+            try { Thread.sleep(delayMs); } catch (InterruptedException e) { return; }
+            if (tradingSdkBridgeHooked.get()) return;
+            try {
+                hookTradingSdkBridge(cl);
+                if (tradingSdkBridgeHooked.get()) {
+                    Log.i(TAG, "MasterModuleBridge hooked on retry #" + attempt);
+                }
+            } catch (Throwable e) {
+                Log.e(TAG, "MasterModuleBridge retry #" + attempt + " failed", e);
+            }
+        }, "ths-bridge-retry-" + attempt);
+        retryThread.setDaemon(true);
+        retryThread.start();
+    }
+
+    private static void hookSpeculativeTradeClasses(ClassLoader cl) {
         String[] tradeClassNames = {
             "com.hexin.android.weituo.hstrade.base.api.TradeApi",
             "com.hexin.android.weituo.hstrade.base.api.TradeApiImpl",
@@ -6208,7 +6283,10 @@ public class MainHook {
                 // 类不存在，继续尝试下一个
             }
         }
+    }
 
+    /** 框架类 UI 消息 Hook（一次性，无需 App ClassLoader） */
+    private static void hookTradeUIMessages() {
         // Hook Dialog 显示，捕获错误消息
         try {
             Class<?> alertDialogClass = Class.forName("android.app.AlertDialog$Builder");
@@ -6267,8 +6345,176 @@ public class MainHook {
         } catch (Throwable e) {
             Log.w(TAG, "Toast hook failed: " + e.getMessage());
         }
+    }
 
-        Log.i(TAG, "Trading SDK hooks installed");
+    /**
+     * 交易模块通过 p0s.F(119) 暴露当前账户管理对象。这里仅观察服务定位和
+     * 方法调用的结构，不读取字段、不记录参数值，也不主动调用任何交易方法。
+     */
+    private static void hookTradeAccountRegistry(ClassLoader cl) throws Throwable {
+        if (!tradeAccountRegistryHooked.compareAndSet(false, true)) return;
+
+        try {
+            Class<?> registryClass = cl.loadClass("p0s");
+            Method lookup = registryClass.getDeclaredMethod("F", int.class);
+            lookup.setAccessible(true);
+            Pine.hook(lookup, new MethodHook() {
+                @Override
+                public void afterCall(Pine.CallFrame frame) {
+                    try {
+                        if (frame.args == null || frame.args.length != 1
+                                || !(frame.args[0] instanceof Integer)
+                                || ((Integer) frame.args[0]) != 119) {
+                            return;
+                        }
+                        captureTradeAccountManager(frame.getResult());
+                        // 注意：不能在此触发 MasterModuleBridge 挂钩——启动期账户
+                        // 恢复流程也会调用 F(119)，此时 r9h.d 仍为 false，过早挂钩
+                        // 会毒化类导致 App 崩溃（已实测两次）。
+                    } catch (Throwable e) {
+                        Log.w(TAG, "Trade account registry observation failed: " + e.getMessage());
+                    }
+                }
+            });
+            Log.i(TAG, "Trade account service locator hooked: p0s.F(119)");
+
+            // F(119) 是只读服务定位，不会发送交易请求。主动定位一次可避免必须
+            // 等待用户重新进入交易首页后才能安装观察 Hook。
+            try {
+                captureTradeAccountManager(lookup.invoke(null, 119));
+            } catch (Throwable e) {
+                Log.i(TAG, "Trade account manager not ready; waiting for App lookup");
+            }
+        } catch (Throwable e) {
+            tradeAccountRegistryHooked.set(false);
+            throw e;
+        }
+    }
+
+    private static synchronized void captureTradeAccountManager(Object manager) {
+        if (manager == null) return;
+        tradeAccountManagerInstance = manager;
+        tradeAccountManagerClass = manager.getClass();
+        Log.i(TAG, "Trade account manager captured: " + tradeAccountManagerClass.getName());
+
+        // pzr 型 API（d()/q()/u()）声明在混淆父类上，getDeclaredMethods 看不到，
+        // 必须沿 App 自有类链逐层挂钩；遇到框架类即停（上方不会再有 App 类）。
+        List<Class<?>> chain = new ArrayList<>();
+        for (Class<?> clazz = tradeAccountManagerClass; clazz != null; clazz = clazz.getSuperclass()) {
+            String name = clazz.getName();
+            if (name.startsWith("java.") || name.startsWith("android.") || name.startsWith("androidx.")) {
+                break;
+            }
+            chain.add(clazz);
+        }
+        tradeAccountClassChain = chain;
+        for (Class<?> clazz : chain) {
+            hookTradeAccountMethods(clazz);
+        }
+    }
+
+    private static void hookTradeAccountMethods(Class<?> clazz) {
+        for (Method method : clazz.getDeclaredMethods()) {
+            String key = method.toGenericString();
+            if (hookedTradeAccountMethods.putIfAbsent(key, true) != null) continue;
+            try {
+                method.setAccessible(true);
+                final String signature = compactMethodSignature(method);
+                Pine.hook(method, new MethodHook() {
+                    @Override
+                    public void beforeCall(Pine.CallFrame frame) {
+                        StringBuilder event = new StringBuilder("SDK_CALL ").append(signature);
+                        event.append(" args=");
+                        event.append(describeTradeArguments(frame.args));
+                        addTradeLog(event.toString());
+                    }
+
+                    @Override
+                    public void afterCall(Pine.CallFrame frame) {
+                        addTradeLog("SDK_RETURN " + signature + " result="
+                                + describeTradeValue(frame.getResult()));
+                    }
+                });
+            } catch (Throwable e) {
+                hookedTradeAccountMethods.remove(key);
+                Log.w(TAG, "Trade account method hook failed: " + method.getName());
+            }
+        }
+    }
+
+    private static String compactMethodSignature(Method method) {
+        StringBuilder result = new StringBuilder();
+        result.append(method.getReturnType().getSimpleName()).append(' ')
+                .append(method.getName()).append('(');
+        Class<?>[] parameterTypes = method.getParameterTypes();
+        for (int i = 0; i < parameterTypes.length; i++) {
+            if (i > 0) result.append(',');
+            result.append(parameterTypes[i].getSimpleName());
+        }
+        return result.append(')').toString();
+    }
+
+    private static String describeTradeArguments(Object[] args) {
+        if (args == null || args.length == 0) return "[]";
+        StringBuilder result = new StringBuilder("[");
+        for (int i = 0; i < args.length; i++) {
+            if (i > 0) result.append(',');
+            result.append(describeTradeValue(args[i]));
+        }
+        return result.append(']').toString();
+    }
+
+    /** Returns shape-only diagnostics. Values and credentials must never enter logs. */
+    private static String describeTradeValue(Object value) {
+        if (value == null) return "null";
+        if (value instanceof byte[]) {
+            byte[] bytes = (byte[]) value;
+            String command = extractTradeCommandFromBytes(bytes);
+            return "bytes(len=" + bytes.length
+                    + (command == null ? "" : ",command=" + command) + ")";
+        }
+        if (value instanceof CharSequence) {
+            String text = value.toString();
+            String command = extractTradeCommand(text);
+            return "string(len=" + text.length()
+                    + (command == null ? "" : ",command=" + command) + ")";
+        }
+        if (value instanceof Collection) {
+            return value.getClass().getSimpleName() + "(size=" + ((Collection<?>) value).size() + ")";
+        }
+        if (value instanceof Map) {
+            return value.getClass().getSimpleName() + "(keys=" + ((Map<?, ?>) value).keySet().size() + ")";
+        }
+        if (value.getClass().isArray()) {
+            return value.getClass().getComponentType().getSimpleName() + "[](len="
+                    + java.lang.reflect.Array.getLength(value) + ")";
+        }
+        if (value instanceof Number || value instanceof Boolean || value instanceof Character) {
+            return value.getClass().getSimpleName();
+        }
+        return value.getClass().getName();
+    }
+
+    private static String extractTradeCommand(String text) {
+        if (text == null || text.isEmpty()) return null;
+        java.util.regex.Matcher matcher = java.util.regex.Pattern
+                .compile("(?:^|[&|])cmd(?:=|\\*)([A-Za-z0-9_]+)")
+                .matcher(text);
+        if (!matcher.find()) return null;
+        String command = matcher.group(1);
+        return command.length() > 80 ? command.substring(0, 80) : command;
+    }
+
+    /** 从二进制请求载荷中只提取 cmd 命令名，不记录任何业务值 */
+    private static String extractTradeCommandFromBytes(byte[] bytes) {
+        if (bytes == null || bytes.length == 0) return null;
+        int limit = Math.min(bytes.length, 512);
+        StringBuilder printable = new StringBuilder(limit);
+        for (int i = 0; i < limit; i++) {
+            int b = bytes[i] & 0xFF;
+            printable.append(b >= 0x20 && b < 0x7F ? (char) b : '\n');
+        }
+        return extractTradeCommand(printable.toString());
     }
 
     /**
@@ -6288,36 +6534,15 @@ public class MainHook {
                 Pine.hook(m, new MethodHook() {
                     @Override
                     public void beforeCall(Pine.CallFrame callFrame) {
-                        StringBuilder sb = new StringBuilder();
-                        sb.append("Trade.").append(clazz.getSimpleName()).append(".")
-                          .append(methodName).append("(");
-                        if (callFrame.args != null && callFrame.args.length > 0) {
-                            for (int i = 0; i < callFrame.args.length; i++) {
-                                if (i > 0) sb.append(", ");
-                                Object arg = callFrame.args[i];
-                                if (arg == null) {
-                                    sb.append("null");
-                                } else if (arg instanceof String) {
-                                    String s = (String) arg;
-                                    sb.append("\"").append(s.length() > 200 ? s.substring(0, 200) + "..." : s).append("\"");
-                                } else {
-                                    sb.append(arg.getClass().getSimpleName()).append("@").append(Integer.toHexString(System.identityHashCode(arg)));
-                                }
-                            }
-                        }
-                        sb.append(")");
-                        Log.i(TAG, sb.toString());
+                        Log.i(TAG, "Trade." + clazz.getSimpleName() + "." + methodName
+                                + " args=" + describeTradeArguments(callFrame.args));
                     }
 
                     @Override
                     public void afterCall(Pine.CallFrame callFrame) {
                         Object result = callFrame.getResult();
                         if (result != null && !(result instanceof Void)) {
-                            String resultStr = result.toString();
-                            if (resultStr.length() > 300) {
-                                resultStr = resultStr.substring(0, 300) + "...";
-                            }
-                            Log.i(TAG, "  → " + resultStr);
+                            Log.i(TAG, "  → " + describeTradeValue(result));
                         }
                     }
                 });
@@ -7058,11 +7283,46 @@ public class MainHook {
             ));
         }
 
-        sb.append(",\"fund_key\":\"").append(STOCK_FUND_KEY).append("\"");
-        sb.append(",\"stock_account\":\"0926764077\"");
         sb.append(",\"log_count\":").append(recentTradeLogs.size());
         sb.append("}");
         return sb.toString();
+    }
+
+    private static String getTradeSdkSchema() {
+        Class<?> managerClass = tradeAccountManagerClass;
+        if (managerClass == null) {
+            return "{\"status\":\"not_captured\",\"hint\":\"open the broker trading home once\"}";
+        }
+        List<Class<?>> chain = tradeAccountClassChain;
+        if (chain.isEmpty()) {
+            chain = java.util.Collections.singletonList(managerClass);
+        }
+
+        StringBuilder result = new StringBuilder("{\"status\":\"captured\",\"manager_class\":\"")
+                .append(escapeJson(managerClass.getName()))
+                .append("\",\"class_chain\":[");
+        for (int i = 0; i < chain.size(); i++) {
+            if (i > 0) result.append(',');
+            result.append('\"').append(escapeJson(chain.get(i).getName())).append('\"');
+        }
+        result.append("],\"methods\":[");
+        boolean firstClass = true;
+        for (Class<?> clazz : chain) {
+            List<String> signatures = new ArrayList<>();
+            for (Method method : clazz.getDeclaredMethods()) {
+                signatures.add(compactMethodSignature(method));
+            }
+            java.util.Collections.sort(signatures);
+            if (!firstClass) result.append(',');
+            firstClass = false;
+            result.append("{\"class\":\"").append(escapeJson(clazz.getName())).append("\",\"methods\":[");
+            for (int i = 0; i < signatures.size(); i++) {
+                if (i > 0) result.append(',');
+                result.append('\"').append(escapeJson(signatures.get(i))).append('\"');
+            }
+            result.append("]}");
+        }
+        return result.append("]}").toString();
     }
 
     /**
