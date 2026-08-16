@@ -1,0 +1,36 @@
+{
+  "active": "official",
+  "priority": ["official"],
+  "env_unset": [
+    "ANTHROPIC_BASE_URL",
+    "ANTHROPIC_AUTH_TOKEN",
+    "ANTHROPIC_MODEL",
+    "ANTHROPIC_DEFAULT_OPUS_MODEL",
+    "ANTHROPIC_DEFAULT_SONNET_MODEL",
+    "ANTHROPIC_DEFAULT_HAIKU_MODEL",
+    "ANTHROPIC_REASONING_MODEL",
+    "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC",
+    "API_TIMEOUT_MS"
+  ],
+  "model_map": {
+    "ANTHROPIC_DEFAULT_OPUS_MODEL": "claude-opus-4-7",
+    "ANTHROPIC_DEFAULT_SONNET_MODEL": "claude-sonnet-4-6"
+  },
+  "backends": {
+    "official": {
+      "description": "Claude 官方 OAuth",
+      "type": "oauth",
+      "env": {},
+      "model": "claude-opus-4-7"
+    },
+    "third-party": {
+      "description": "第三方 API 模板",
+      "type": "api",
+      "env": {
+        "ANTHROPIC_AUTH_TOKEN": "replace-me",
+        "ANTHROPIC_BASE_URL": "https://example.com"
+      },
+      "model": "claude-sonnet-4-6"
+    }
+  }
+}

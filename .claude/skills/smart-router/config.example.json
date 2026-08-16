@@ -1,0 +1,18 @@
+{
+  "port": 8462,
+  "auth_tokens": ["replace-with-a-random-local-token"],
+  "routes": [
+    {
+      "name": "GLM（智谱）",
+      "patterns": ["GLM-*", "glm-*"],
+      "base_url": "https://open.bigmodel.cn/api/anthropic",
+      "api_key": "replace-me"
+    },
+    {
+      "name": "Claude 官方",
+      "patterns": ["claude-*"],
+      "base_url": "https://api.anthropic.com"
+    }
+  ],
+  "default_route": 0
+}

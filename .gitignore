@@ -47,6 +47,20 @@ smart-fund-server/config.json
 # fund-trade 敏感文件
 .claude/skills/fund-trade/config.json
 
+# Claude Skills 本地凭据、账户配置与运行状态
+.claude/skills/claude-planner/backends.json
+.claude/skills/claude-planner/planner.db
+.claude/skills/claude-planner/planner.db-shm
+.claude/skills/claude-planner/planner.db-wal
+.claude/skills/smart-router/config.json
+.claude/skills/stock-trade/config.json
+
+# Claude Skills 生成物与一次性调试记录
+.claude/skills/apifox-manager/output/
+.claude/skills/novel-kb/seg_*_world_classify.json
+.claude/skills/novel-kb/world_classify_result.json
+.claude/skills/stock-trade/*command-message*.txt
+
 # 采集的文档（体积大）
 scraped_docs/
 

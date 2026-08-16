@@ -1,0 +1,39 @@
+{
+  "account": {
+    "broker_name": "replace-me",
+    "broker_id": 0,
+    "user_id": "replace-me",
+    "account": "replace-me",
+    "fund_key_encrypted": "replace-me"
+  },
+  "proxy": {
+    "phone_ip": "127.0.0.1",
+    "proxy_port": 18900,
+    "note": "使用本地真实配置覆盖"
+  },
+  "database": {
+    "tables": {
+      "position": "stock_position",
+      "entrust": "stock_entrust",
+      "history": "stock_history",
+      "daily_trans": "daily_trans",
+      "money_history": "money_history"
+    },
+    "fields": {},
+    "business_codes": {}
+  },
+  "jsbridge": {
+    "interface_name": "replace-me",
+    "method": "replace-me",
+    "handlers": {}
+  },
+  "risk": {
+    "max_single_position_pct": 0,
+    "max_daily_trade_count": 0,
+    "stop_loss_pct": 0,
+    "take_profit_pct": 0,
+    "min_trade_amount": 0,
+    "trade_hours": {}
+  },
+  "total_capital": 0
+}
