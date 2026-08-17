@@ -13,6 +13,7 @@ from src.interfaces.api.routes import (
     skill,
     strategy,
     task,
+    ths_token,
     trade,
     watchlist,
 )
@@ -29,3 +30,4 @@ router.include_router(file.router)
 router.include_router(watchlist.router)
 router.include_router(llm_proxy.router)
 router.include_router(knowledge.router)
+router.include_router(ths_token.router)

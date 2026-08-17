@@ -1249,6 +1249,23 @@ public class MainHook {
                 return;
             }
 
+            // GET /stock/trade/token/report — token 自动上报状态与当前配置（打码）
+            if (requestLine.startsWith("GET /stock/trade/token/report")) {
+                String result = handleTokenReportStatus();
+                sendResponse(out, 200, result);
+                client.close();
+                return;
+            }
+
+            // POST /stock/trade/token/report — 配置自动上报（url/api_key/enabled，
+            // force=true 立即触发一次导出上报；持久化到 filesDir）
+            if (requestLine.startsWith("POST /stock/trade/token/report")) {
+                String result = handleTokenReportConfig(body);
+                sendResponse(out, 200, result);
+                client.close();
+                return;
+            }
+
             // POST /stock/trade/order — 买卖委托执行器（真实下单，confirm=true 必填）
             if (requestLine.startsWith("POST /stock/trade/order")) {
                 String result = handleTradeOrder(body);
@@ -6658,6 +6675,9 @@ public class MainHook {
                                     capturedWtTokenTime = (String) tm;
                                     Log.i(TAG, "z7m.w token captured (len="
                                             + ((String) t).length() + ")");
+                                    // 触发点1：token 明文唯一经过点，直接上报
+                                    reportTokenAsync((String) t, (String) tm,
+                                            "z7m_w_capture");
                                 }
                             }
                         });
@@ -7890,6 +7910,22 @@ public class MainHook {
     private static volatile String capturedWtToken;
     private static volatile String capturedWtTokenTime;
 
+    // ---- token 自动上报（2026-08-17）：真机打开 App / 主动登录刷新 token 后，
+    // 自动 POST 到服务端 /api/ths/token 入库，服务端自愈取用。用户免数据线操作。
+    private static volatile boolean tokenReportConfigLoaded = false;
+    private static volatile boolean tokenReportEnabled = false;
+    private static volatile String tokenReportUrl;        // 完整 URL（含 /api/ths/token）
+    private static volatile String tokenReportApiKey;
+    private static volatile String lastReportedTokenHash; // sha256 去重：同 token 不重发
+    private static volatile String lastTokenReportStatus = "not run"; // 结构信息，无 token
+    private static volatile String deviceIdCache;
+    private static final java.util.concurrent.ExecutorService tokenReportExecutor =
+            java.util.concurrent.Executors.newSingleThreadExecutor(r -> {
+                Thread t = new Thread(r, "ths-token-report");
+                t.setDaemon(true);
+                return t;
+            });
+
     private static boolean r9hReady(ClassLoader cl) {
         try {
             Class<?> r9hClass = cl.loadClass("r9h");
@@ -8264,6 +8300,301 @@ public class MainHook {
         return out.toString();
     }
 
+    // ==================================================================
+    // token 自动上报（2026-08-17）：真机打开 App / 主动登录后自动把有效 token
+    // POST 到服务端 /api/ths/token（X-Api-Key 认证），服务端入库 ft_ths_tokens，
+    // 过期自愈时 import 回设备。配置来源：filesDir/thshook_report.json（端点可写）
+    // 或 /data/local/tmp/thshook_report.json（adb push 只读）。token 明文仅进
+    // HTTPS/受控通道请求体，禁止写日志/文件。
+    // ==================================================================
+
+    private static File tokenReportConfigFileApp() {
+        Context app = appInstance;
+        if (app == null) return null;
+        return new File(app.getFilesDir(), "thshook_report.json");
+    }
+
+    private static File tokenReportConfigFileTmp() {
+        return new File("/data/local/tmp/thshook_report.json");
+    }
+
+    /** 懒加载上报配置：filesDir 优先（端点写入的持久配置），tmp 兜底（adb push）。 */
+    private static void loadTokenReportConfig() {
+        if (tokenReportConfigLoaded) return;
+        synchronized (tokenReportExecutor) {
+            if (tokenReportConfigLoaded) return;
+            for (File f : new File[]{tokenReportConfigFileApp(), tokenReportConfigFileTmp()}) {
+                if (f == null || !f.exists() || !f.canRead()) continue;
+                try (FileInputStream fis = new FileInputStream(f)) {
+                    byte[] buf = new byte[(int) f.length()];
+                    int read = fis.read(buf);
+                    JSONObject cfg = new JSONObject(new String(buf, 0, Math.max(read, 0),
+                            java.nio.charset.StandardCharsets.UTF_8));
+                    String url = cfg.optString("url", "").trim();
+                    String key = cfg.optString("api_key", "").trim();
+                    if (!url.isEmpty() && !key.isEmpty()) {
+                        tokenReportUrl = url;
+                        tokenReportApiKey = key;
+                        tokenReportEnabled = cfg.optBoolean("enabled", true);
+                        Log.i(TAG, "token report config loaded from "
+                                + f.getName() + " url host="
+                                + java.net.URI.create(url).getHost());
+                        break;
+                    }
+                } catch (Throwable e) {
+                    Log.w(TAG, "token report config read failed (" + f + "): " + e);
+                }
+            }
+            tokenReportConfigLoaded = true;
+        }
+    }
+
+    /** 端点写入配置：更新内存 + 持久化到 filesDir（重启仍生效）。 */
+    private static void saveTokenReportConfig(String url, String apiKey, Boolean enabled)
+            throws JSONException, java.io.IOException {
+        if (url != null) tokenReportUrl = url.trim();
+        if (apiKey != null && !apiKey.trim().isEmpty()) tokenReportApiKey = apiKey.trim();
+        if (enabled != null) tokenReportEnabled = enabled;
+        tokenReportConfigLoaded = true;
+        File f = tokenReportConfigFileApp();
+        if (f != null) {
+            JSONObject cfg = new JSONObject();
+            cfg.put("url", tokenReportUrl == null ? "" : tokenReportUrl);
+            cfg.put("api_key", tokenReportApiKey == null ? "" : tokenReportApiKey);
+            cfg.put("enabled", tokenReportEnabled);
+            try (FileOutputStream fos = new FileOutputStream(f, false)) {
+                fos.write(cfg.toString().getBytes(java.nio.charset.StandardCharsets.UTF_8));
+            }
+        }
+    }
+
+    private static String getDeviceId() {
+        if (deviceIdCache != null) return deviceIdCache;
+        try {
+            Context app = appInstance;
+            if (app != null) {
+                String id = android.provider.Settings.Secure.getString(
+                        app.getContentResolver(),
+                        android.provider.Settings.Secure.ANDROID_ID);
+                if (id != null && !id.isEmpty()) {
+                    deviceIdCache = android.os.Build.MODEL + "-" + id.substring(
+                            Math.max(0, id.length() - 6));
+                    return deviceIdCache;
+                }
+            }
+        } catch (Throwable e) {
+            Log.w(TAG, "getDeviceId failed: " + e);
+        }
+        deviceIdCache = android.os.Build.MODEL + "-unknown";
+        return deviceIdCache;
+    }
+
+    private static String sha256Hex(String s) {
+        try {
+            java.security.MessageDigest md = java.security.MessageDigest.getInstance("SHA-256");
+            byte[] d = md.digest(s.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+            StringBuilder sb = new StringBuilder();
+            for (byte b : d) sb.append(String.format(Locale.US, "%02x", b));
+            return sb.toString();
+        } catch (Throwable e) {
+            return null;
+        }
+    }
+
+    /** 补齐 payload 元数据（executor 线程内执行，反射失败静默缺省）。 */
+    private static void enrichTokenReportPayload(JSONObject payload) {
+        try {
+            ClassLoader cl = resolveAppClassLoader(null);
+            if (cl != null) {
+                payload.put("user_id", cl.loadClass("ulm").getMethod("e").invoke(null));
+                Class<?> z7mClass = cl.loadClass("z7m");
+                Object z7mInst = z7mClass.getMethod("k").invoke(null);
+                Object mgr = tradeAccountManagerInstance;
+                if (z7mInst != null && mgr != null) {
+                    Object userId = payload.opt("user_id");
+                    Object tokenInfo = z7mClass
+                            .getMethod("i", String.class, cl.loadClass("pzr"))
+                            .invoke(z7mInst, userId, mgr);
+                    if (tokenInfo != null) {
+                        Class<?> bindingCls = tokenInfo.getClass().getSuperclass();
+                        payload.put("qsid", String.valueOf(
+                                bindingCls.getField("qsId").get(tokenInfo)));
+                        payload.put("account", String.valueOf(
+                                bindingCls.getField("accountStr").get(tokenInfo)));
+                        payload.put("wtid", String.valueOf(
+                                bindingCls.getField("wtId").get(tokenInfo)));
+                        Object acctType = bindingCls.getField("accountType").get(tokenInfo);
+                        if (acctType instanceof Integer) payload.put("accounttype", acctType);
+                        Object natureType = bindingCls.getField("accountNatureType").get(tokenInfo);
+                        if (natureType instanceof Integer) {
+                            payload.put("accountNatureType", natureType);
+                        }
+                        Object live = tokenInfo.getClass().getField("mLiveTime").get(tokenInfo);
+                        if (live instanceof Integer) payload.put("livetime", live);
+                    }
+                }
+            }
+        } catch (Throwable e) {
+            Log.w(TAG, "token report enrich failed: " + e);
+        }
+        try {
+            payload.put("device_id", getDeviceId());
+        } catch (JSONException ignored) {
+        }
+    }
+
+    /**
+     * 异步上报 token（sha256 去重 + 单线程串行 + 3 次退避重试 5s/15s）。
+     * 401/503（认证/未配置）不重试——重试也不会成功，等配置修复。
+     * 永不抛出、永不把 token 写进日志。
+     */
+    private static void reportTokenAsync(String token, String time, String source) {
+        if (token == null || token.isEmpty() || time == null || time.isEmpty()) return;
+        try {
+            loadTokenReportConfig();
+            if (!tokenReportEnabled || tokenReportUrl == null || tokenReportUrl.isEmpty()) {
+                lastTokenReportStatus = "disabled (no config)";
+                return;
+            }
+            String hash = sha256Hex(token);
+            if (hash != null && hash.equals(lastReportedTokenHash)) return;
+            lastTokenReportStatus = "pending";
+            final String fToken = token, fTime = time, fSource = source;
+            tokenReportExecutor.execute(() -> {
+                JSONObject payload = new JSONObject();
+                try {
+                    payload.put("token", fToken);
+                    payload.put("time", fTime);
+                    payload.put("source", fSource == null ? "device" : fSource);
+                    enrichTokenReportPayload(payload);
+                } catch (JSONException e) {
+                    lastTokenReportStatus = "payload build failed";
+                    return;
+                }
+                byte[] body = payload.toString()
+                        .getBytes(java.nio.charset.StandardCharsets.UTF_8);
+                String hash2 = sha256Hex(fToken);
+                for (int attempt = 1; attempt <= 3; attempt++) {
+                    HttpURLConnection conn = null;
+                    try {
+                        conn = (HttpURLConnection) new URL(tokenReportUrl).openConnection();
+                        conn.setRequestMethod("POST");
+                        conn.setConnectTimeout(10000);
+                        conn.setReadTimeout(20000);
+                        conn.setDoOutput(true);
+                        conn.setInstanceFollowRedirects(false);
+                        conn.setRequestProperty("Content-Type", "application/json; charset=utf-8");
+                        conn.setRequestProperty("X-Api-Key",
+                                tokenReportApiKey == null ? "" : tokenReportApiKey);
+                        conn.setRequestProperty("Connection", "close");
+                        try (OutputStream os = conn.getOutputStream()) {
+                            os.write(body);
+                        }
+                        int code = conn.getResponseCode();
+                        if (code >= 200 && code < 300) {
+                            lastReportedTokenHash = hash2;
+                            lastTokenReportStatus = "ok http=" + code
+                                    + " attempt=" + attempt + " t=" + System.currentTimeMillis();
+                            Log.i(TAG, "token report ok (http=" + code
+                                    + " attempt=" + attempt + ")");
+                            return;
+                        }
+                        if (code == 401 || code == 503) {
+                            lastTokenReportStatus = "rejected http=" + code
+                                    + " (check api key / server config)";
+                            Log.w(TAG, "token report rejected http=" + code);
+                            return;
+                        }
+                        lastTokenReportStatus = "http=" + code + " attempt=" + attempt;
+                        Log.w(TAG, "token report http=" + code + " attempt=" + attempt);
+                    } catch (Throwable e) {
+                        lastTokenReportStatus = "error attempt=" + attempt + ": " + e;
+                        Log.w(TAG, "token report attempt=" + attempt + " failed: " + e);
+                    } finally {
+                        if (conn != null) try {
+                            conn.disconnect();
+                        } catch (Throwable ignored) {
+                        }
+                    }
+                    if (attempt < 3) {
+                        try {
+                            Thread.sleep(attempt == 1 ? 5000L : 15000L);
+                        } catch (InterruptedException e) {
+                            Thread.currentThread().interrupt();
+                            return;
+                        }
+                    }
+                }
+                lastTokenReportStatus = "failed after 3 attempts"
+                        + " t=" + System.currentTimeMillis();
+            });
+        } catch (Throwable e) {
+            Log.w(TAG, "reportTokenAsync submit failed: " + e);
+        }
+    }
+
+    /** 登录成功后的兜底上报：延迟 3s（等 z7m.w 先报，同 token 去重跳过）再导出上报。 */
+    private static void schedulePostLoginTokenReport() {
+        tokenReportExecutor.execute(() -> {
+            try {
+                Thread.sleep(3000);
+                String result = handleTradeTokenExport();
+                JSONObject jo = new JSONObject(result);
+                if (jo.optBoolean("ok")) {
+                    reportTokenAsync(jo.optString("token"), jo.optString("time"),
+                            "post_login_export:" + jo.optString("source", "unknown"));
+                } else {
+                    Log.i(TAG, "post-login token export not available: "
+                            + jo.optString("error"));
+                }
+            } catch (Throwable e) {
+                Log.w(TAG, "post-login token report failed: " + e);
+            }
+        });
+    }
+
+    /** GET /stock/trade/token/report — 上报状态 + 当前配置（api_key 打码）。 */
+    private static String handleTokenReportStatus() throws JSONException {
+        loadTokenReportConfig();
+        JSONObject out = new JSONObject();
+        out.put("endpoint", "token_report");
+        out.put("enabled", tokenReportEnabled);
+        out.put("url", tokenReportUrl == null ? "" : tokenReportUrl);
+        String key = tokenReportApiKey;
+        out.put("api_key_masked", key == null || key.isEmpty() ? ""
+                : key.substring(0, Math.min(4, key.length())) + "****");
+        out.put("last_status", lastTokenReportStatus);
+        out.put("last_token_hash_prefix", lastReportedTokenHash == null ? null
+                : lastReportedTokenHash.substring(0, 8));
+        return out.toString();
+    }
+
+    /**
+     * POST /stock/trade/token/report body={"url","api_key","enabled","force"}
+     * 配置并（可选 force）立即触发一次导出上报。url/api_key 留空表示不改。
+     */
+    private static String handleTokenReportConfig(String body) throws JSONException {
+        JSONObject out = new JSONObject();
+        out.put("endpoint", "token_report_config");
+        try {
+            JSONObject req = new JSONObject(body == null || body.isEmpty() ? "{}" : body);
+            String url = req.optString("url", "");
+            String apiKey = req.optString("api_key", "");
+            Boolean enabled = req.has("enabled") ? req.optBoolean("enabled") : null;
+            saveTokenReportConfig(url.isEmpty() ? null : url,
+                    apiKey.isEmpty() ? null : apiKey, enabled);
+            if (req.optBoolean("force", false)) {
+                schedulePostLoginTokenReport();
+                out.put("force_triggered", true);
+            }
+            out.put("ok", true);
+            out.put("status", handleTokenReportStatus());
+            return out.toString();
+        } catch (Throwable e) {
+            return errorJson(out, "token report config failed: " + e);
+        }
+    }
+
     /**
      * 主动登录核心（唯一登录发起链，预热与 HTTP 端点共用）。
      * 全进程只从这里发 f2s.q 登录：预热线程的 x0s.F 触发已移除——2026-08-17 实测
@@ -8274,7 +8605,14 @@ public class MainHook {
      */
     private static boolean doActiveTradeLogin(ClassLoader cl, JSONObject report) {
         synchronized (tradeRuntimeLock) {
-            return doActiveTradeLoginLocked(cl, report);
+            boolean ok = doActiveTradeLoginLocked(cl, report);
+            if (ok) {
+                // 触发点2：登录成功后异步导出 token 上报（锁外调度，不阻塞登录链）。
+                // z7m.w 若已在本链触发过则由 sha256 去重跳过；此处兜住"重启后
+                // already_logged_in（持久化 token）无新登录响应"的场景。
+                schedulePostLoginTokenReport();
+            }
+            return ok;
         }
     }
 

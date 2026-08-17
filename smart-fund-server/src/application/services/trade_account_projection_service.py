@@ -15,6 +15,10 @@ import logging
 from datetime import datetime
 from typing import Any
 
+from src.application.services.trade_token_service import (
+    _TOKEN_ERROR_CODES,
+    TradeTokenService,
+)
 from src.infrastructure.clients.ths_trade import (
     THSTradeClient,
     THSTradeError,
@@ -26,6 +30,7 @@ logger = logging.getLogger(__name__)
 _UNAVAILABLE_REASONS = {
     "trade_endpoint_unreachable": "trade_device_unreachable",
     "trade_runtime_not_ready": "trade_runtime_warming_up",
+    "trade_token_unavailable": "trade_token_unavailable",
     "trade_account_not_logged_in": "trade_account_not_logged_in",
     "trade_account_not_recovered": "trade_account_not_recovered",
     "trade_response_timeout": "trade_response_timeout",
@@ -57,6 +62,7 @@ class TradeAccountProjectionService:
 
     def __init__(self, client: THSTradeClient | None = None) -> None:
         self._client = client or THSTradeClient.shared()
+        self._token_service = TradeTokenService()
 
     # ------------------------------------------------------------------
     # 内部
@@ -69,11 +75,24 @@ class TradeAccountProjectionService:
         cutoff_at: datetime,
         account_scope: list[str],
     ) -> tuple[dict[str, Any], dict[str, Any]] | dict[str, Any]:
-        """一次取 positions + funds（无缓存，逐次直调）。失败返回 unavailable。"""
+        """一次取 positions + funds（无缓存，逐次直调）。失败返回 unavailable。
+
+        token 类失败（过期/未登录）先走 ensure_device_logged_in 自愈
+        （库中最新有效 token import + 主动登录），成功后重试一次。
+        """
         try:
             positions_payload = self._client.positions()
             funds_payload = self._client.funds()
         except THSTradeError as exc:
+            if exc.reason_code in _TOKEN_ERROR_CODES:
+                healed = self._self_heal(operation)
+                if healed:
+                    try:
+                        positions_payload = self._client.positions()
+                        funds_payload = self._client.funds()
+                        return positions_payload, funds_payload
+                    except THSTradeError as retry_exc:
+                        exc = retry_exc
             logger.warning("trade projection %s unavailable: %s", operation, exc)
             return _unavailable(
                 operation=operation,
@@ -85,6 +104,24 @@ class TradeAccountProjectionService:
                 reason=f"券商账户端点当前不可用：{exc}",
             )
         return positions_payload, funds_payload
+
+    def _self_heal(self, operation: str) -> bool:
+        """token 类失败时用库中最新 token 自愈；返回是否恢复登录。"""
+        try:
+            result = self._token_service.ensure_device_logged_in(self._client)
+        except THSTradeError as exc:
+            logger.warning(
+                "trade projection %s self-heal failed: %s", operation, exc
+            )
+            return False
+        ok = result.get("logged_in") is True
+        logger.info(
+            "trade projection %s self-heal via=%s logged_in=%s",
+            operation,
+            result.get("via"),
+            ok,
+        )
+        return ok
 
     @staticmethod
     def _position_rows(positions_payload: dict[str, Any]) -> list[dict[str, Any]]:

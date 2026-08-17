@@ -287,3 +287,40 @@ class FundLimit(Base):
 
     def __repr__(self) -> str:
         return f"<FundLimit {self.fund_code} suspended={self.is_suspended}>"
+
+
+# ==================== ft_ths_tokens ====================
+
+
+class ThsTokenReport(Base):
+    """同花顺交易 token 上报记录（敏感：token 为明文登录凭证）
+
+    真机探针自动上报（z7m.w 捕获 / 登录后解密自校验）；服务端自愈时取
+    最新有效记录调设备端 token import 端点注入并重新登录。
+    expire_at = token_time + livetime_min。
+    """
+
+    __tablename__ = "ft_ths_tokens"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    user_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    device_id: Mapped[str] = mapped_column(String(128), nullable=False)
+    token: Mapped[str] = mapped_column(Text, nullable=False)
+    token_time: Mapped[str] = mapped_column(String(32), nullable=False)
+    livetime_min: Mapped[int | None] = mapped_column(Integer)
+    expire_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    qsid: Mapped[str | None] = mapped_column(String(16))
+    account: Mapped[str | None] = mapped_column(String(32))
+    wtid: Mapped[str | None] = mapped_column(String(32))
+    accounttype: Mapped[int | None] = mapped_column(Integer)
+    account_nature_type: Mapped[int | None] = mapped_column(Integer)
+    source: Mapped[str | None] = mapped_column(String(32))
+    reported_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+
+    def __repr__(self) -> str:
+        return (
+            f"<ThsTokenReport id={self.id} user={self.user_id} "
+            f"device={self.device_id} expire={self.expire_at}>"
+        )

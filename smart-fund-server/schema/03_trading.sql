@@ -385,3 +385,34 @@ ALTER TABLE ONLY public.ft_positions ALTER COLUMN id SET DEFAULT nextval('public
 --
 
 ALTER TABLE ONLY public.ft_trades ALTER COLUMN id SET DEFAULT nextval('public.ft_trades_id_seq'::regclass);
+
+-- ==================== ft_ths_tokens ====================
+-- 同花顺交易 token 上报存储（2026-08-17 token 跨设备共享）
+-- 真机探针自动上报（z7m.w 捕获 / 登录后解密），服务端自愈时取最新有效
+-- token 调设备端 import 端点注入并登录。token 为敏感凭证，仅限内网/加密通道。
+
+CREATE TABLE IF NOT EXISTS public.ft_ths_tokens (
+    id integer NOT NULL,
+    user_id character varying(64) NOT NULL,
+    device_id character varying(128) NOT NULL,
+    token text NOT NULL,
+    token_time character varying(32) NOT NULL,
+    livetime_min integer,
+    expire_at timestamp with time zone,
+    qsid character varying(16),
+    account character varying(32),
+    wtid character varying(32),
+    accounttype integer,
+    account_nature_type integer,
+    source character varying(32),
+    reported_at timestamp with time zone DEFAULT now()
+);
+
+CREATE SEQUENCE IF NOT EXISTS public.ft_ths_tokens_id_seq
+    AS integer START WITH 1 INCREMENT BY 1 NO MINVALUE NO MAXVALUE CACHE 1;
+ALTER SEQUENCE public.ft_ths_tokens_id_seq OWNED BY public.ft_ths_tokens.id;
+ALTER TABLE ONLY public.ft_ths_tokens ALTER COLUMN id SET DEFAULT nextval('public.ft_ths_tokens_id_seq'::regclass);
+
+COMMENT ON TABLE public.ft_ths_tokens IS '同花顺交易 token 上报存储（敏感：token 明文）';
+CREATE INDEX IF NOT EXISTS idx_ft_ths_tokens_user_reported ON public.ft_ths_tokens (user_id, reported_at DESC);
+CREATE INDEX IF NOT EXISTS idx_ft_ths_tokens_expire ON public.ft_ths_tokens (expire_at);

@@ -66,6 +66,12 @@ SERVER_PORT = int(os.getenv("SERVER_PORT", "8900"))
 # 本服务的外部可访问地址（供客户端内部互调用）
 SERVICE_BASE_URL = os.getenv("SERVICE_BASE_URL", "http://119.23.227.187:8900")
 
+# ==================== THS token 上报 ====================
+
+# 真机探针自动上报交易 token 的接收接口认证（X-Api-Key）。token 为敏感
+# 登录凭证，公网部署必须配置强随机值；留空时接口拒绝所有上报。
+THS_TOKEN_REPORT_API_KEY = os.getenv("THS_TOKEN_REPORT_API_KEY", "").strip()
+
 # ==================== MCP ====================
 
 # 关系图 MCP 与现有 FastAPI 共用 8900 端口。生产环境应配置 Bearer Token；

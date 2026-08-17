@@ -51,6 +51,8 @@ class THSTradeError(Exception):
 def _classify_device_error(message: str) -> str:
     """把设备端 error 文本映射为稳定原因码（映射子串见 MainHook ensureTradeRuntimeReady）。"""
     text = (message or "").lower()
+    if "token unavailable" in text or "token expired" in text:
+        return "trade_token_unavailable"
     if "not logged in" in text or "relogin" in text:
         return "trade_account_not_logged_in"
     if "classloader not ready" in text or "runtime" in text:
@@ -299,6 +301,32 @@ class THSTradeClient:
         trade_account_not_logged_in 后可先 login 再重试原查询。
         """
         return self._request("POST", "/stock/trade/login", json_body={})
+
+    def export_token(self) -> dict[str, Any]:
+        """导出设备端当前 token 明文（GET /stock/trade/token/export）。
+
+        ⚠ 返回含敏感登录凭证，仅限受控通道内部使用，禁止入库/记日志。
+        失败（过期/未存储）抛 THSTradeError（trade_token_unavailable）。
+        """
+        return self._request("GET", "/stock/trade/token/export")
+
+    def import_token(
+        self, *, token: str, time: str, login: bool = True
+    ) -> dict[str, Any]:
+        """注入明文 token 并登录（POST /stock/trade/token/import）。
+
+        走设备端官方入口 z7m.o 用本机密钥重新加密入库；login=True（默认）
+        随即走主动登录链验证可用性。用于跨设备 token 共享与服务端自愈。
+        """
+        return self._request(
+            "POST",
+            "/stock/trade/token/import",
+            json_body={
+                "token": token,
+                "time": time,
+                "login": "true" if login else "false",
+            },
+        )
 
     def transfer_banks(self) -> dict[str, Any]:
         """存管银行列表（只读，协议 1830）。"""
