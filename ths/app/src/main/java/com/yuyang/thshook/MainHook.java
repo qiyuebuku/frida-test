@@ -1231,6 +1231,24 @@ public class MainHook {
                 return;
             }
 
+            // GET /stock/trade/token/export — 导出当前交易 token 明文（跨设备共享
+            // 实验：生产 VM 复用手机端刷新的 token，避免 VM 内人工登录）
+            if (requestLine.startsWith("GET /stock/trade/token/export")) {
+                String result = handleTradeTokenExport();
+                sendResponse(out, 200, result);
+                client.close();
+                return;
+            }
+
+            // POST /stock/trade/token/import — 写回明文 token 并验证登录（body
+            // {"token","time","login":true}，走官方 z7m.o 入口本机重加密入库）
+            if (requestLine.startsWith("POST /stock/trade/token/import")) {
+                String result = handleTradeTokenImport(body);
+                sendResponse(out, 200, result);
+                client.close();
+                return;
+            }
+
             // POST /stock/trade/order — 买卖委托执行器（真实下单，confirm=true 必填）
             if (requestLine.startsWith("POST /stock/trade/order")) {
                 String result = handleTradeOrder(body);
@@ -6623,6 +6641,30 @@ public class MainHook {
         if (!anyFailure) {
             tradingSdkBridgeHooked.set(true);
             Log.i(TAG, "MasterModuleBridge hooks installed");
+            // z7m.w(pzr, WtToken, Time) — token 明文唯一经过点（持久化前会被
+            // 本机密钥加密成 encryptedPwd），捕获供 token 导出端点兜底
+            try {
+                Class<?> z7mClass = cl.loadClass("z7m");
+                Pine.hook(z7mClass.getDeclaredMethod("w",
+                                cl.loadClass("pzr"), String.class, String.class),
+                        new MethodHook() {
+                            @Override
+                            public void beforeCall(Pine.CallFrame callFrame) {
+                                Object t = callFrame.args[1];
+                                Object tm = callFrame.args[2];
+                                if (t instanceof String && tm instanceof String
+                                        && !((String) t).isEmpty()) {
+                                    capturedWtToken = (String) t;
+                                    capturedWtTokenTime = (String) tm;
+                                    Log.i(TAG, "z7m.w token captured (len="
+                                            + ((String) t).length() + ")");
+                                }
+                            }
+                        });
+                Log.i(TAG, "z7m.w hook installed");
+            } catch (Throwable e) {
+                Log.w(TAG, "z7m.w hook failed: " + e);
+            }
             // 后台预热交易运行态（激活账户 + 等静默重登），首个 HTTP 请求无需
             // 再等 ensure 流程。静默重登实测可能耗时 ~2 分钟，失败后循环重试
             new Thread(() -> {
@@ -7843,6 +7885,10 @@ public class MainHook {
     /** 交易运行时/主动登录专用锁：登录等待可达 ~60s，与类锁分离——主线程 hook
      *  回调（captureTradeAccountManager 等 synchronized 方法）不能被它阻塞（ANR）。 */
     private static final Object tradeRuntimeLock = new Object();
+    /** z7m.w（TokenManager 写入）捕获的最近一次明文 WtToken/Time（登录响应
+     *  经过点；跨设备共享实验的导出双保险，App 重启即清空）。 */
+    private static volatile String capturedWtToken;
+    private static volatile String capturedWtTokenTime;
 
     private static boolean r9hReady(ClassLoader cl) {
         try {
@@ -8051,6 +8097,169 @@ public class MainHook {
         if (!ensureTradeRuntimeBase(cl)) return errorJson(out, lastEnsureTradeError);
         boolean ok = doActiveTradeLogin(cl, out);
         out.put("ok", ok);
+        out.put("elapsed_ms", System.currentTimeMillis() - t0);
+        return out.toString();
+    }
+
+    /**
+     * GET /stock/trade/token/export — 导出当前交易 token 明文（跨设备共享实验）。
+     * token 持久化形态：z7m.c 把登录响应的 WtToken 当密码材料，用本机密钥
+     * n6m.K(n6m.r().s()) 加密成 encryptedPwd 存 authorization.bat（明文不落盘）。
+     * 这里进程内手工解密回明文，并用 n6m.a(明文)==mediumPwdId 自校验；解密
+     * 校验失败 fallback 用 z7m.w hook 暂存的最近一次登录响应明文。
+     * ⚠ 输出含登录凭证，仅限受控局域网实验通道，禁止入库/提交/记日志。
+     */
+    private static String handleTradeTokenExport() throws org.json.JSONException {
+        JSONObject out = new JSONObject();
+        out.put("endpoint", "token_export");
+        ClassLoader cl = resolveAppClassLoader(null);
+        if (cl == null) return errorJson(out, "classloader not ready");
+        if (!ensureTradeRuntimeBase(cl)) return errorJson(out, lastEnsureTradeError);
+        try {
+            String userId = (String) cl.loadClass("ulm").getMethod("e").invoke(null);
+            Class<?> z7mClass = cl.loadClass("z7m");
+            Object z7mInst = z7mClass.getMethod("k").invoke(null);
+            Object tokenInfo = z7mClass
+                    .getMethod("i", String.class, cl.loadClass("pzr"))
+                    .invoke(z7mInst, userId, tradeAccountManagerInstance);
+            if (tokenInfo == null) {
+                return errorJson(out, "token unavailable (expired or not stored)");
+            }
+            Class<?> bindingCls = tokenInfo.getClass().getSuperclass();
+            byte[] encPwd = (byte[]) bindingCls.getField("encryptedPwd").get(tokenInfo);
+            String mediumPwdId = (String) bindingCls.getField("mediumPwdId").get(tokenInfo);
+            String lastBindingTime = (String) bindingCls.getField("lastBindingTime").get(tokenInfo);
+            String plain = null;
+            boolean verified = false;
+            String verifyKeyPath = null;
+            Class<?> n6mClass = cl.loadClass("n6m");
+            if (encPwd != null && encPwd.length > 0) {
+                Class<?> hexinUtils = cl.loadClass(
+                        "com.hexin.android.base_common_utils.HexinUtils");
+                java.lang.reflect.Method decipher = hexinUtils.getMethod(
+                        "getRunDecipheringString", byte[].class, byte[].class);
+                java.lang.reflect.Method hashOf = n6mClass.getMethod("a", String.class);
+                // key 路径 A：TokenInfo.getBindingMediumPwd 覆写版（UDID 解密）
+                try {
+                    String cand = (String) tokenInfo.getClass()
+                            .getMethod("getBindingMediumPwd", int.class)
+                            .invoke(tokenInfo, 0);
+                    String expect = (String) hashOf.invoke(null, cand);
+                    if (cand != null && !cand.isEmpty()
+                            && expect != null && expect.equals(mediumPwdId)) {
+                        plain = cand;
+                        verified = true;
+                        verifyKeyPath = "udid(TokenInfo.getBindingMediumPwd)";
+                    }
+                } catch (Throwable e) {
+                    Log.w(TAG, "token export try-A failed: " + e);
+                }
+                // key 路径 B：BindingWTInfo 标准链（K(n6m.r().s()) 解密）
+                if (!verified) {
+                    try {
+                        Object n6mInst = n6mClass.getMethod("r").invoke(null);
+                        String quickKey = (String) n6mClass.getMethod("s").invoke(n6mInst);
+                        String key = (String) n6mClass.getMethod("K", String.class)
+                                .invoke(null, quickKey);
+                        if (key != null && !key.isEmpty()) {
+                            String cand = (String) decipher.invoke(null, encPwd, key.getBytes());
+                            String expect = (String) hashOf.invoke(null, cand);
+                            if (cand != null && !cand.isEmpty()
+                                    && expect != null && expect.equals(mediumPwdId)) {
+                                plain = cand;
+                                verified = true;
+                                verifyKeyPath = "K(n6m.r().s())";
+                            }
+                        }
+                    } catch (Throwable e) {
+                        Log.w(TAG, "token export try-B failed: " + e);
+                    }
+                }
+            }
+            String source = null;
+            if (verified) {
+                source = "decrypt";
+            } else if (capturedWtToken != null) {
+                // fallback：z7m.w hook 暂存的最近一次登录响应明文
+                plain = capturedWtToken;
+                if (capturedWtTokenTime != null) lastBindingTime = capturedWtTokenTime;
+                source = "hook_capture";
+            } else {
+                return errorJson(out, "decrypt verify failed and no hook capture"
+                        + " (plain=" + (plain == null ? "null" : "len" + plain.length())
+                        + " mediumPwdId=" + (mediumPwdId == null ? "null"
+                                : "len" + mediumPwdId.length()) + ")");
+            }
+            JSONObject info = new JSONObject();
+            info.put("qsid", bindingCls.getField("qsId").get(tokenInfo));
+            info.put("account", bindingCls.getField("accountStr").get(tokenInfo));
+            info.put("wtid", bindingCls.getField("wtId").get(tokenInfo));
+            info.put("accounttype", bindingCls.getField("accountType").get(tokenInfo));
+            info.put("accountNatureType",
+                    bindingCls.getField("accountNatureType").get(tokenInfo));
+            info.put("livetime", tokenInfo.getClass().getField("mLiveTime").get(tokenInfo));
+            info.put("lastBindingTime", lastBindingTime);
+            out.put("ok", true);
+            out.put("token", plain);
+            out.put("time", lastBindingTime);
+            out.put("verify", verified);
+            out.put("source", source);
+            out.put("key_path", verifyKeyPath);
+            out.put("info", info);
+            return out.toString();
+        } catch (Throwable e) {
+            return errorJson(out, "token export failed: " + e);
+        }
+    }
+
+    /**
+     * POST /stock/trade/token/import body={"token","time","login":true}
+     * 跨设备共享实验：把（手机端导出的）明文 WtToken 写回本机 token 仓库——
+     * 走官方入口 z7m.o(mgr, {"WtToken","Time"})，用本机密钥重新加密入库并
+     * 持久化；login=true（默认）随即走 doActiveTradeLogin 验证可用性。
+     */
+    private static String handleTradeTokenImport(String body) throws org.json.JSONException {
+        JSONObject out = new JSONObject();
+        out.put("endpoint", "token_import");
+        long t0 = System.currentTimeMillis();
+        ClassLoader cl = resolveAppClassLoader(null);
+        if (cl == null) return errorJson(out, "classloader not ready");
+        if (!ensureTradeRuntimeBase(cl)) return errorJson(out, lastEnsureTradeError);
+        JSONObject req;
+        try {
+            req = new JSONObject(body);
+        } catch (Throwable e) {
+            return errorJson(out, "bad json body: " + e.getMessage());
+        }
+        String token = req.optString("token", "");
+        String time = req.optString("time", "");
+        if (token.isEmpty() || time.isEmpty()) {
+            return errorJson(out, "token and time required");
+        }
+        try {
+            Class<?> z7mClass = cl.loadClass("z7m");
+            Object z7mInst = z7mClass.getMethod("k").invoke(null);
+            JSONObject userInfo = new JSONObject();
+            userInfo.put("WtToken", token);
+            userInfo.put("Time", time);
+            z7mClass.getMethod("o",
+                            cl.loadClass("pzr"), org.json.JSONObject.class)
+                    .invoke(z7mInst, tradeAccountManagerInstance, userInfo);
+            out.put("stored", true);
+            String userId = (String) cl.loadClass("ulm").getMethod("e").invoke(null);
+            Object tokenInfo = z7mClass
+                    .getMethod("i", String.class, cl.loadClass("pzr"))
+                    .invoke(z7mInst, userId, tradeAccountManagerInstance);
+            out.put("readback_available", tokenInfo != null);
+            if (req.optBoolean("login", true)) {
+                boolean ok = doActiveTradeLogin(cl, out);
+                out.put("ok", ok);
+            } else {
+                out.put("ok", true);
+            }
+        } catch (Throwable e) {
+            return errorJson(out, "token import failed: " + e);
+        }
         out.put("elapsed_ms", System.currentTimeMillis() - t0);
         return out.toString();
     }
