@@ -74,6 +74,7 @@ public class MainHook {
     private static final ConcurrentHashMap<String, Boolean> hookedBridgeMethods = new ConcurrentHashMap<>();
     private static final AtomicBoolean tradeAccountRegistryHooked = new AtomicBoolean(false);
     private static final AtomicBoolean tradingSdkBridgeHooked = new AtomicBoolean(false);
+    private static final AtomicBoolean tradeLoginDialogHooked = new AtomicBoolean(false);
     private static final AtomicInteger bridgeRetryAttempts = new AtomicInteger(0);
     private static final AtomicBoolean speculativeTradeClassesHooked = new AtomicBoolean(false);
     private static final ConcurrentHashMap<String, Boolean> hookedTradeAccountMethods =
@@ -610,6 +611,20 @@ public class MainHook {
             Log.e(TAG, "scheduleTradingSdkBridgeRetry failed", e);
         }
 
+        // 无人值守加固：阻断交易登录失败弹窗（x0s.S → TradeFeedback 一键反馈框）。
+        // 实测 App 自身静默重登失败会循环弹"登录失败/登录超时"挡屏；登录态由
+        // POST /stock/trade/login 主动端点管理（2026-08-17 真机验证 success），
+        // UI 反馈在无人值守场景无价值。
+        if (!tradeLoginDialogHooked.get()) {
+            try {
+                hookTradeLoginDialogSuppress(cl);
+                tradeLoginDialogHooked.set(true);
+                Log.i(TAG, "hookTradeLoginDialogSuppress done");
+            } catch (Throwable e) {
+                Log.e(TAG, "hookTradeLoginDialogSuppress failed (will retry with next classLoader)", e);
+            }
+        }
+
         // 以下 hooks 只在首次运行时安装
         if (firstRun) {
             try { hookHttpURLConnection(); Log.i(TAG, "hookHttpURLConnection done"); }
@@ -649,6 +664,20 @@ public class MainHook {
         }
 
         Log.i(TAG, "=== installAllHooks complete ===");
+    }
+
+    /** 无人值守加固：阻断交易登录失败弹窗（x0s.S，@MainThread）。 */
+    private static void hookTradeLoginDialogSuppress(ClassLoader cl) throws Exception {
+        Class<?> x0sClass = cl.loadClass("x0s");
+        Method sM = x0sClass.getDeclaredMethod("S", int.class);
+        Pine.hook(sM, new MethodHook() {
+            @Override
+            public void beforeCall(Pine.CallFrame callFrame) {
+                callFrame.setResult(null);
+                Log.i(TAG, "trade login dialog suppressed (recode=" + callFrame.args[0] + ")");
+            }
+        });
+        Log.i(TAG, "x0s.S login-dialog suppress hook installed");
     }
 
     private static void hookUnifiedRequestModels(ClassLoader cl) throws Exception {
@@ -1188,6 +1217,15 @@ public class MainHook {
             // 完整请求参数（含 source 签名），以及各查询协议当前缓存的 params。
             if (requestLine.startsWith("GET /stock/trade/write-captures")) {
                 String result = getTradeWriteCaptures();
+                sendResponse(out, 200, result);
+                client.close();
+                return;
+            }
+
+            // POST /stock/trade/login — 主动登录执行器（token 方式，替代盲等 App
+            // 静默重登；2026-08-17 开盘实测 App 自身重登也会超时弹"登录失败"）
+            if (requestLine.startsWith("POST /stock/trade/login")) {
+                String result = handleTradeLogin(body);
                 sendResponse(out, 200, result);
                 client.close();
                 return;
@@ -7802,6 +7840,9 @@ public class MainHook {
     /** ensureTradeRuntimeReady 最近一次失败原因（仅结构信息，无业务值） */
     private static volatile String lastEnsureTradeError = "not run";
     private static volatile boolean tradeRuntimeReadyOnce = false;
+    /** 交易运行时/主动登录专用锁：登录等待可达 ~60s，与类锁分离——主线程 hook
+     *  回调（captureTradeAccountManager 等 synchronized 方法）不能被它阻塞（ANR）。 */
+    private static final Object tradeRuntimeLock = new Object();
 
     private static boolean r9hReady(ClassLoader cl) {
         try {
@@ -7823,10 +7864,16 @@ public class MainHook {
      *      → c1s.m().G() 加密仓库加载 → B() 填充 → p0s.F(119) 可返回 pzr
      * 恢复后 F(119) 捕获 manager，并轮询等待两个标志就绪。
      */
-    private static synchronized boolean ensureTradeRuntimeReady(ClassLoader cl) {
-        Log.i(TAG, "ensure: enter mgr=" + (tradeAccountManagerInstance != null)
-                + " r9h=" + r9hReady(cl));
-        if (tradeRuntimeReadyOnce && tradeAccountManagerInstance != null && r9hReady(cl)) return true;
+    private static boolean ensureTradeRuntimeBase(ClassLoader cl) {
+        synchronized (tradeRuntimeLock) {
+            return ensureTradeRuntimeBaseLocked(cl);
+        }
+    }
+
+    private static boolean ensureTradeRuntimeBaseLocked(ClassLoader cl) {
+        // 运行时基础：模块激活 + 账户列表恢复 + manager 捕获（不含登录门）。
+        // 供 ensureTradeRuntimeReady 与主动登录端点 handleTradeLogin 共用。
+        if (tradeAccountManagerInstance != null && r9hReady(cl)) return true;
         try {
             // 1) 激活交易模块（libweituo.so 的 initMasterModule）
             if (!r9hReady(cl)) {
@@ -7950,57 +7997,203 @@ public class MainHook {
                 }
                 captureTradeAccountManager(mgr);
             }
-            // 登录门（mrv.k0 实测反编译）：请求携带 wt_account 时，若 izr.a.l(account)
-            // 为 false 且 App 正在静默重登（isWeituoLogining），请求会被静默丢弃
-            // （进程内首个交易请求实测被吞、无 r9h.o 发送）。账户激活事件会驱动
-            // App 自己的静默重登并在成功后置位登录态，这里等它置位。
-            {
-                boolean loggedIn = false;
-                try {
-                    Class<?> izrClass = cl.loadClass("izr");
-                    Object izrInst = izrClass.getField("a").get(null);
-                    java.lang.reflect.Method lM = izrClass.getMethod("l", cl.loadClass("pzr"));
-                    // 镜像 mrv.k0 的恢复路径：被吞的请求靠 x0s.F(false,false,14)
-                    // 触发 WeituoReloginManager 静默重登（token 重登）
-                    Class<?> x0sClass = cl.loadClass("x0s");
-                    java.lang.reflect.Method relogin = x0sClass
-                            .getMethod("F", boolean.class, boolean.class, int.class);
-                    long start = System.currentTimeMillis();
-                    int triggered = 0;
-                    while (System.currentTimeMillis() - start < 45000) {
-                        if (Boolean.TRUE.equals(lM.invoke(izrInst, tradeAccountManagerInstance))) {
-                            loggedIn = true;
-                            break;
-                        }
-                        if (triggered < 3
-                                && System.currentTimeMillis() - start >= triggered * 15000L) {
-                            triggered++;
-                            try {
-                                relogin.invoke(null, false, false, 14);
-                                Log.i(TAG, "ensure: silent relogin triggered #" + triggered);
-                            } catch (Throwable e2) {
-                                Log.w(TAG, "silent relogin invoke failed: " + e2);
-                            }
-                        }
-                        Thread.sleep(500);
-                    }
-                } catch (Throwable e) {
-                    Log.w(TAG, "login gate check failed: " + e);
-                }
-                Log.i(TAG, "ensure: login-ready=" + loggedIn);
-                if (!loggedIn) {
-                    lastEnsureTradeError = "trade account not logged in after silent relogin attempts";
-                    return false;
-                }
-            }
-            tradeRuntimeReadyOnce = true;
-            return true;
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
             lastEnsureTradeError = "interrupted";
             return false;
         } catch (Throwable e) {
             lastEnsureTradeError = "ensure failed: " + e;
+            return false;
+        }
+        return true;
+    }
+
+    private static boolean ensureTradeRuntimeReady(ClassLoader cl) {
+        synchronized (tradeRuntimeLock) {
+            return ensureTradeRuntimeReadyLocked(cl);
+        }
+    }
+
+    private static boolean ensureTradeRuntimeReadyLocked(ClassLoader cl) {
+        Log.i(TAG, "ensure: enter mgr=" + (tradeAccountManagerInstance != null)
+                + " r9h=" + r9hReady(cl));
+        if (tradeRuntimeReadyOnce && tradeAccountManagerInstance != null && r9hReady(cl)) return true;
+        if (!ensureTradeRuntimeBase(cl)) return false;
+        // 登录门：统一走主动登录执行器（唯一登录发起链，同步等回调结果）。
+        // 旧实现（x0s.F 触发 + 45s 盲轮询）已移除——2026-08-17 实测预热/App/端点
+        // 三链并发登录会在券商服务器侧互顶会话（"正在登录中，请稍后再试!"），
+        // App 链因此反复失败循环弹"登录失败"。
+        JSONObject loginReport = new JSONObject();
+        boolean loggedIn = doActiveTradeLogin(cl, loginReport);
+        Log.i(TAG, "ensure: login-ready=" + loggedIn + " report=" + loginReport);
+        if (!loggedIn) return false;
+        tradeRuntimeReadyOnce = true;
+        return true;
+    }
+
+    /**
+     * 主动登录执行器（POST /stock/trade/login）：不依赖 App 自身静默重登的盲轮询，
+     * 直接调用登录执行器并同步等待回调结果（2026-08-17 用户指示：登录要可控）。
+     * 链路（rt5/f2s.java、rt7/z7m.java、runtime/x0s.java 反编译）：
+     *   z7m.k().i(userId, mgr) 取 TokenInfo（内部 isAvailable 检查，过期返回 null）
+     *   → q3s.a().s(1).q(2).v(0).n(2).p(false).u(true)（镜像 x0s.i 的 token 方式参数）
+     *   → f2s.d().q(tokenInfo, q3s, g8m回调) → e2s TCP 客户端发送登录
+     * 回调：onWeituoLoginSuccess(String,String,g6m) / onWeituoLoginFail(StuffBaseStruct,g6m)。
+     * 拦截规则（f2s.q + k2s.b）：isWeituoLogining（r0s.u().H()）时新登录被静默丢弃，
+     * 发送前先等 App 的在途登录尝试结束。
+     */
+    private static String handleTradeLogin(String body) throws org.json.JSONException {
+        JSONObject out = new JSONObject();
+        out.put("endpoint", "login");
+        long t0 = System.currentTimeMillis();
+        ClassLoader cl = resolveAppClassLoader(null);
+        if (cl == null) return errorJson(out, "classloader not ready");
+        if (!ensureTradeRuntimeBase(cl)) return errorJson(out, lastEnsureTradeError);
+        boolean ok = doActiveTradeLogin(cl, out);
+        out.put("ok", ok);
+        out.put("elapsed_ms", System.currentTimeMillis() - t0);
+        return out.toString();
+    }
+
+    /**
+     * 主动登录核心（唯一登录发起链，预热与 HTTP 端点共用）。
+     * 全进程只从这里发 f2s.q 登录：预热线程的 x0s.F 触发已移除——2026-08-17 实测
+     * 三链并发（预热 F + 本端点 + App 组件自发重登）会在券商服务器侧互顶会话
+     * （"正在登录中，请稍后再试!"），App 链因此反复失败循环弹"登录失败"。
+     * 返回 true=已登录（含 already_logged_in / success-after-timeout）。
+     * 细节（result/error/via）写入 report。
+     */
+    private static boolean doActiveTradeLogin(ClassLoader cl, JSONObject report) {
+        synchronized (tradeRuntimeLock) {
+            return doActiveTradeLoginLocked(cl, report);
+        }
+    }
+
+    private static boolean doActiveTradeLoginLocked(ClassLoader cl, JSONObject report) {
+        Object mgr = tradeAccountManagerInstance;
+        try {
+            Class<?> izrClass = cl.loadClass("izr");
+            Object izrInst = izrClass.getField("a").get(null);
+            java.lang.reflect.Method lM = izrClass.getMethod("l", cl.loadClass("pzr"));
+            if (Boolean.TRUE.equals(lM.invoke(izrInst, mgr))) {
+                report.put("result", "already_logged_in");
+                return true;
+            }
+            // isWeituoLogining 时 f2s.q 被 k2s.b 静默丢弃（"could not login wt"），
+            // 先等 App 的在途登录结束；期间登录态置位则直接复用
+            Class<?> r0sClass = cl.loadClass("r0s");
+            Object r0sInst = r0sClass.getMethod("u").invoke(null);
+            java.lang.reflect.Method hM = r0sClass.getMethod("H");
+            for (int i = 0; i < 20 && Boolean.TRUE.equals(hM.invoke(r0sInst)); i++) {
+                Thread.sleep(500);
+                if (Boolean.TRUE.equals(lM.invoke(izrInst, mgr))) {
+                    report.put("result", "already_logged_in");
+                    report.put("via", "app-concurrent-login");
+                    return true;
+                }
+            }
+            String userId = (String) cl.loadClass("ulm").getMethod("e").invoke(null);
+            Class<?> z7mClass = cl.loadClass("z7m");
+            Object z7mInst = z7mClass.getMethod("k").invoke(null);
+            Object tokenInfo = z7mClass
+                    .getMethod("i", String.class, cl.loadClass("pzr"))
+                    .invoke(z7mInst, userId, mgr);
+            if (tokenInfo == null) {
+                report.put("result", "fail");
+                report.put("error", "token unavailable (expired or not stored); "
+                        + "password login not implemented — open trade tab in app once to refresh token");
+                lastEnsureTradeError = "trade login: token unavailable";
+                return false;
+            }
+            Class<?> q3sClass = cl.loadClass("q3s");
+            Object params = q3sClass.getMethod("a").invoke(null);
+            params = q3sClass.getMethod("s", int.class).invoke(params, 1);
+            params = q3sClass.getMethod("q", int.class).invoke(params, 2);
+            params = q3sClass.getMethod("v", int.class).invoke(params, 0);
+            params = q3sClass.getMethod("n", int.class).invoke(params, 2);
+            params = q3sClass.getMethod("p", boolean.class).invoke(params, false);
+            params = q3sClass.getMethod("u", boolean.class).invoke(params, true);
+            CountDownLatch latch = new CountDownLatch(1);
+            AtomicReference<String> result = new AtomicReference<>("pending");
+            AtomicReference<String> failDetail = new AtomicReference<>();
+            Object callback = Proxy.newProxyInstance(cl,
+                    new Class[]{cl.loadClass("g8m")},
+                    (proxy, method, mArgs) -> {
+                        String name = method.getName();
+                        if ("onWeituoLoginSuccess".equals(name)) {
+                            result.set("success");
+                            latch.countDown();
+                            return null;
+                        }
+                        if ("onWeituoLoginFail".equals(name)) {
+                            result.set("fail");
+                            failDetail.set(mArgs[0] == null ? "null stuff"
+                                    : describeStuffStruct(mArgs[0]));
+                            latch.countDown();
+                            return null;
+                        }
+                        if ("interceptTimeout".equals(name)
+                                || "onlyMeHandleReceiveData".equals(name)) {
+                            return Boolean.FALSE;
+                        }
+                        if ("hashCode".equals(name)) return System.identityHashCode(proxy);
+                        if ("equals".equals(name)) return proxy == mArgs[0];
+                        if ("toString".equals(name)) return "TradeLoginCallback";
+                        return null;
+                    });
+            Class<?> tokenCls = cl.loadClass(
+                    "com.hexin.android.weituo.hstrade.feature.login.bindlogin.model.TokenInfo");
+            Class<?> f2sClass = cl.loadClass("f2s");
+            Object f2sInst = f2sClass.getMethod("d").invoke(null);
+            f2sClass.getMethod("q", tokenCls, q3sClass, cl.loadClass("g8m"))
+                    .invoke(f2sInst, tokenInfo, params, callback);
+            boolean done = latch.await(35, TimeUnit.SECONDS);
+            if (!done) {
+                // 超时但登录可能已生效（同写端点超时铁律：先查状态再定论）
+                boolean loggedIn = Boolean.TRUE.equals(lM.invoke(izrInst, mgr));
+                report.put("result", loggedIn ? "success-after-timeout" : "timeout");
+                if (loggedIn) tradeRuntimeReadyOnce = true;
+                else lastEnsureTradeError = "trade login: no response in 35s and not logged in";
+                return loggedIn;
+            }
+            String r = result.get();
+            report.put("result", r);
+            if (!"success".equals(r)) {
+                String err = failDetail.get() == null ? "onWeituoLoginFail" : failDetail.get();
+                report.put("error", err);
+                lastEnsureTradeError = "trade login failed: " + err;
+                return false;
+            }
+            // 登录标志（izr.a.l）由 receive 处理链异步置位，短暂确认；
+            // 未置位则补一发官方单账户静默重登（x0s$b/c 回调无弹窗）
+            boolean loggedIn = false;
+            for (int i = 0; i < 10 && !loggedIn; i++) {
+                loggedIn = Boolean.TRUE.equals(lM.invoke(izrInst, mgr));
+                if (!loggedIn) Thread.sleep(500);
+            }
+            if (!loggedIn) {
+                try {
+                    cl.loadClass("x0s")
+                            .getMethod("w", cl.loadClass("pzr")).invoke(null, mgr);
+                    for (int i = 0; i < 10 && !loggedIn; i++) {
+                        Thread.sleep(500);
+                        loggedIn = Boolean.TRUE.equals(lM.invoke(izrInst, mgr));
+                    }
+                    report.put("fallback_relogin_sent", true);
+                } catch (Throwable e) {
+                    Log.w(TAG, "fallback x0s.w failed: " + e);
+                }
+            }
+            report.put("logged_in_state", loggedIn);
+            if (loggedIn) tradeRuntimeReadyOnce = true;
+            else lastEnsureTradeError = "trade login: callback success but izr.a.l not set";
+            return loggedIn;
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            lastEnsureTradeError = "trade login interrupted";
+            return false;
+        } catch (Throwable e) {
+            lastEnsureTradeError = "trade login invoke failed: " + e;
             return false;
         }
     }
@@ -8180,6 +8373,15 @@ public class MainHook {
         java.util.Map<Integer, String[]> k = new java.util.LinkedHashMap<>();
         k.put(1825, new String[]{"代码", "名称", "状态", "操作", "委托数量", "价格",
                 "成交数量", "成交均价", "交易市场", "合同编号", "日期", "时间"});
+        // 2026-08-17 开盘实测（买 0.596 成交/卖 0.594 成交/挂单撤单闭环）校准：
+        k.put(1891, new String[]{"代码", "名称", "交易市场", "刷新", "股东账号", "数量",
+                "冻结", "可卖", "成本", "现价", "市值", "盈亏", "实际数量", "盈亏率"});
+        k.put(1811, new String[]{"代码", "名称", "状态", "股东账号", "操作", "委托数量",
+                "价格", "成交数量", "成交均价", "交易市场", "合同编号", "委托日期",
+                "委托时间", "备注", "委托状态码"});
+        k.put(1810, new String[]{"代码", "名称", "unknown_2", "股东账号", "操作",
+                "unknown_5", "成交数量", "成交价", "交易市场", "成交额", "unknown_10",
+                "成交日期", "成交时间", "合同编号", "成交编号", "unknown_15"});
         TRADE_TABLE_KEY_COLUMNS = java.util.Collections.unmodifiableMap(k);
     }
 
@@ -8187,6 +8389,9 @@ public class MainHook {
     // 1807 资金协议源码 gqi.receiveData：getData(fieldId) 取 firstOrNull 即金额。
     // 语义名与 App 显示对应：36628 总资产 / 36629 浮动盈亏 / 36625 可用资金 /
     // 36626 总市值 / 36623 可取资金；36631/36632/36633 仅港美股资金卡使用（A股为空）。
+    // 2026-08-17 持仓实测补充：36622 持仓期间恒为 3139.80（=昨日收盘总资产）而
+    // 36628 变为 3138.90 → 36622=期初总资产；36630 与 36625 同值（空仓 3139.80/
+    // 持仓 3079.50）→ 36630=可用资金镜像。36624/36627 持仓期间仍为 0.00，语义未知。
     private static final java.util.Map<Integer, java.util.Map<Integer, String>> TRADE_FIELD_ID_PROTOCOLS;
     static {
         java.util.Map<Integer, String> f1807 = new java.util.LinkedHashMap<>();
@@ -8195,6 +8400,10 @@ public class MainHook {
         f1807.put(36625, "available_amount");
         f1807.put(36626, "total_market_value");
         f1807.put(36623, "withdrawable_amount");
+        f1807.put(36622, "open_total_assets");
+        f1807.put(36630, "available_amount_alt");
+        f1807.put(36624, "field_36624");
+        f1807.put(36627, "field_36627");
         f1807.put(36631, "field_36631");
         f1807.put(36632, "field_36632");
         f1807.put(36633, "field_36633");

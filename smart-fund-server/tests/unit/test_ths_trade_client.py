@@ -252,6 +252,66 @@ def test_business_error_payload_maps_reason() -> None:
     assert "251005" in str(exc_info.value)
 
 
+def test_login_already_logged_in_returns_fast() -> None:
+    captured = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured["method"] = request.method
+        captured["path"] = request.url.path
+        return httpx.Response(
+            200,
+            json={
+                "endpoint": "login",
+                "result": "already_logged_in",
+                "ok": True,
+                "elapsed_ms": 0,
+            },
+        )
+
+    client = make_client(handler)
+    result = client.login()
+    assert captured["method"] == "POST"
+    assert captured["path"] == "/stock/trade/login"
+    assert result["result"] == "already_logged_in"
+    assert result["ok"] is True
+
+
+def test_login_active_success_and_failure_paths() -> None:
+    """主动登录成功返回 result=success；失败（ok=false）抛 THSTradeError。"""
+    state = {"fail": True}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if state["fail"]:
+            return httpx.Response(
+                200,
+                json={
+                    "endpoint": "login",
+                    "result": "fail",
+                    "error": "trade login: token unavailable",
+                    "ok": False,
+                },
+            )
+        return httpx.Response(
+            200,
+            json={
+                "endpoint": "login",
+                "result": "success",
+                "logged_in_state": True,
+                "ok": True,
+                "elapsed_ms": 40347,
+            },
+        )
+
+    client = make_client(handler)
+    with pytest.raises(THSTradeError):
+        client.login()
+
+    state["fail"] = False
+    result = client.login()
+    assert result["result"] == "success"
+    assert result["logged_in_state"] is True
+
+
 def test_serial_lock_covers_request_roundtrip() -> None:
     """全部请求经全局锁（并发下 handler 观察不到交错请求）。"""
     active = {"count": 0, "max": 0}

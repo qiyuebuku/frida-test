@@ -4,6 +4,9 @@
 - GET  /stock/trade/query?name={name}
        → {"query":"proto_NNNN","pageId":N,"ok":true,"elapsed_ms":N,"data":{...}}
        → 失败 {"ok":false,"error":"..."}（预热期/登录门/超时等原因文本）
+- POST /stock/trade/login   → {"result":"already_logged_in"|"success"|"fail",...}
+       主动登录（统一登录链）：预热线程与查询登录门同链，冷启动后可主动调
+       用替代等待 App 自发静默重登（实测 40s+ vs 旧机制盲等 2~3.5 分钟）
 - POST /stock/trade/order   body={"action","code","price","qty","confirm":"true"}
 - POST /stock/trade/cancel  body={"entrust_no","stock_code","stock_name",
        "market_code","shareholder_account","withdrawable_qty","confirm":"true"}
@@ -87,7 +90,7 @@ class THSTradeClient:
     执行（固定协议页不能并发）。写端点客户端强制 confirm=True 门控。
     """
 
-    DEFAULT_BASE_URL = "http://10.168.1.158:18900"
+    DEFAULT_BASE_URL = "http://192.168.31.162:18900"
     READ_QUERIES = (
         "positions",
         "funds",
@@ -114,7 +117,12 @@ class THSTradeClient:
             os.getenv("THS_TRADE_TIMEOUT", "30")
         )
         self._lock = threading.Lock()
-        self._client = httpx.Client(timeout=self._timeout)
+        # Connection: close — 设备端是自研 LightweightHTTP，keep-alive 长连接
+        # 空闲后被服务端单方面关闭，httpx 连接池复用死连接会 RemoteProtocolError
+        self._client = httpx.Client(
+            timeout=self._timeout,
+            headers={"Connection": "close"},
+        )
 
     @classmethod
     def shared(cls) -> "THSTradeClient":
@@ -140,11 +148,18 @@ class THSTradeClient:
         *,
         json_body: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
-        """在全局串行锁内发请求；设备端 ok=false 抛 THSTradeError。"""
+        """在全局串行锁内发请求；设备端 ok=false 抛 THSTradeError。
+
+        写请求（POST）用更长超时（≥60s）：实测撤单响应可超 30s 而操作已在
+        设备端执行——写超时后必须先查委托状态再决定是否重试，禁止盲目重发。
+        """
         url = f"{self._base_url}{path}"
+        timeout = max(self._timeout, 60.0) if method == "POST" else self._timeout
         with self._lock:
             try:
-                resp = self._client.request(method, url, json=json_body)
+                resp = self._client.request(
+                    method, url, json=json_body, timeout=timeout
+                )
             except httpx.HTTPError as exc:
                 raise THSTradeError(
                     f"trade endpoint unreachable: {exc}",
@@ -275,6 +290,15 @@ class THSTradeClient:
             "confirm": "true",
         }
         return self._request("POST", "/stock/trade/cancel", json_body=body)
+
+    def login(self) -> dict[str, Any]:
+        """主动登录（POST /stock/trade/login，设备端唯一登录发起链）。
+
+        已登录时秒回 already_logged_in；冷启动后直接调 f2s.q 登录执行器并
+        同步等回调（实测 40s+，POST 长超时规则覆盖）。收到
+        trade_account_not_logged_in 后可先 login 再重试原查询。
+        """
+        return self._request("POST", "/stock/trade/login", json_body={})
 
     def transfer_banks(self) -> dict[str, Any]:
         """存管银行列表（只读，协议 1830）。"""
