@@ -84,39 +84,29 @@ def make_client(handler, **kwargs) -> THSTradeClient:
 
 
 # ----------------------------------------------------------------------
-# THSTradeClient：只读 + 缓存
+# THSTradeClient：只读（无缓存，每次直调）
 # ----------------------------------------------------------------------
 
 
-def test_read_query_returns_payload_and_caches_ok_result() -> None:
+def test_read_query_calls_device_every_time() -> None:
     calls = []
 
     def handler(request: httpx.Request) -> httpx.Response:
         calls.append(request.url.path)
         return httpx.Response(200, json=FUNDS_PAYLOAD)
 
-    client = make_client(handler, read_cache_ttl=60)
+    client = make_client(handler)
     first = client.funds()
     second = client.funds()
 
     assert first["ok"] is True
-    assert second.get("from_cache") is True
-    assert len(calls) == 1
+    assert second["ok"] is True
+    assert "from_cache" not in second
+    assert len(calls) == 2
     assert calls[0] == "/stock/trade/query"
 
 
-def test_read_cache_expires_after_ttl() -> None:
-    def handler(request: httpx.Request) -> httpx.Response:
-        return httpx.Response(200, json=FUNDS_PAYLOAD)
-
-    client = make_client(handler, read_cache_ttl=0)
-    client.funds()
-    # TTL=0 → 不缓存
-    result = client.funds()
-    assert "from_cache" not in result
-
-
-def test_read_error_is_not_cached() -> None:
+def test_read_error_then_recovery() -> None:
     state = {"fail": True}
 
     def handler(request: httpx.Request) -> httpx.Response:
@@ -131,7 +121,7 @@ def test_read_error_is_not_cached() -> None:
             )
         return httpx.Response(200, json=FUNDS_PAYLOAD)
 
-    client = make_client(handler, read_cache_ttl=60)
+    client = make_client(handler)
     with pytest.raises(THSTradeError) as exc_info:
         client.funds()
     assert exc_info.value.reason_code == "trade_account_not_logged_in"
@@ -272,7 +262,7 @@ def test_serial_lock_covers_request_roundtrip() -> None:
         active["count"] -= 1
         return httpx.Response(200, json=FUNDS_PAYLOAD)
 
-    client = make_client(handler, read_cache_ttl=0)
+    client = make_client(handler)
     import threading
 
     threads = [

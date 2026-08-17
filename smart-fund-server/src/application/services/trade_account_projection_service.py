@@ -1,8 +1,8 @@
 """券商账户投影服务 — Research Exposure Pack 的权威数据源。
 
-按需直调（2026-08-17 用户决策）：不挂调度、不建快照表，每次工具调用
-直接经 THSTradeClient 请求真机端点（positions 1891 + funds 1807），
-在内存中组装暴露摘要与单标的持仓视图。
+按需直调（2026-08-17 用户决策）：不挂调度、不建快照表、不做任何缓存，
+每次工具调用直接经 THSTradeClient 请求真机端点（positions 1891 +
+funds 1807），在内存中组装暴露摘要与单标的持仓视图。
 
 失败降级：设备端不可达 / 预热未完成 / 登录门未过时返回 unavailable
 （携带原因码），绝不用市场数据伪造持仓——与 Research Agent 的
@@ -69,7 +69,7 @@ class TradeAccountProjectionService:
         cutoff_at: datetime,
         account_scope: list[str],
     ) -> tuple[dict[str, Any], dict[str, Any]] | dict[str, Any]:
-        """一次取 positions + funds（各走各的短 TTL 缓存）。失败返回 unavailable。"""
+        """一次取 positions + funds（无缓存，逐次直调）。失败返回 unavailable。"""
         try:
             positions_payload = self._client.positions()
             funds_payload = self._client.funds()
@@ -167,8 +167,6 @@ class TradeAccountProjectionService:
                 "protocols": {"funds": 1807, "positions": 1891},
                 "positions_elapsed_ms": positions_payload.get("elapsed_ms"),
                 "funds_elapsed_ms": funds_payload.get("elapsed_ms"),
-                "positions_from_cache": positions_payload.get("from_cache", False),
-                "funds_from_cache": funds_payload.get("from_cache", False),
             },
         }
 

@@ -11,8 +11,8 @@
 - GET  /stock/trade/transfer/banks（只读）
 - POST /stock/trade/transfer（已实现未验证，默认禁用）
 
-设计决策（2026-08-17，用户指定）：交易型接口不挂调度任务、不建快照表，
-每次有需求直接调用设备端点；仅对成功的只读查询做短 TTL 内存缓存。
+设计决策（2026-08-17，用户指定）：交易型接口不挂调度任务、不建快照表、
+不做任何缓存，每次有需求直接调用设备端点取最新数据。
 
 串行铁律：设备端交易协议按 protocolId 注册观察者（固定协议页路由），
 并发请求会互相覆盖/串帧（逆向 pitfalls #24）——全部请求经全局锁串行。
@@ -23,7 +23,6 @@ from __future__ import annotations
 import logging
 import os
 import threading
-import time
 from typing import Any
 
 import httpx
@@ -71,14 +70,6 @@ FUNDS_FIELD_NAMES = {
     "36623": "withdrawable_amount",
 }
 
-FUNDS_SEMANTIC_KEYS = (
-    "total_assets",
-    "float_profit",
-    "available_amount",
-    "total_market_value",
-    "withdrawable_amount",
-)
-
 
 def parse_money(value: Any) -> float | None:
     if value in (None, ""):
@@ -90,7 +81,7 @@ def parse_money(value: Any) -> float | None:
 
 
 class THSTradeClient:
-    """同花顺交易 SDK 端点的服务端客户端（同步实现，线程安全）。
+    """同花顺交易 SDK 端点的服务端客户端（同步实现，线程安全，无缓存）。
 
     MCP 层经 asyncio.to_thread 调用；所有请求在全局 threading.Lock 内串行
     执行（固定协议页不能并发）。写端点客户端强制 confirm=True 门控。
@@ -113,7 +104,6 @@ class THSTradeClient:
         self,
         base_url: str | None = None,
         timeout: float | None = None,
-        read_cache_ttl: float | None = None,
     ) -> None:
         self._base_url = (
             base_url
@@ -123,13 +113,7 @@ class THSTradeClient:
         self._timeout = timeout if timeout is not None else float(
             os.getenv("THS_TRADE_TIMEOUT", "30")
         )
-        self._read_cache_ttl = (
-            read_cache_ttl
-            if read_cache_ttl is not None
-            else float(os.getenv("THS_TRADE_READ_CACHE_TTL", "20"))
-        )
         self._lock = threading.Lock()
-        self._cache: dict[str, tuple[float, dict[str, Any]]] = {}
         self._client = httpx.Client(timeout=self._timeout)
 
     @classmethod
@@ -187,22 +171,13 @@ class THSTradeClient:
             )
         return payload
 
-    def _read_query(self, name: str, *, skip_cache: bool = False) -> dict[str, Any]:
-        """只读查询：短 TTL 内存缓存，仅缓存 ok 结果（错误/空不缓存）。"""
+    def _read_query(self, name: str) -> dict[str, Any]:
+        """只读查询（无缓存，每次直调设备端点取最新数据）。"""
         if name not in self.READ_QUERIES:
             raise ValueError(
                 f"unknown query name '{name}', supported: {self.READ_QUERIES}"
             )
-        if not skip_cache and self._read_cache_ttl > 0:
-            cached = self._cache.get(name)
-            if cached and time.monotonic() - cached[0] < self._read_cache_ttl:
-                result = dict(cached[1])
-                result["from_cache"] = True
-                return result
-        payload = self._request("GET", f"/stock/trade/query?name={name}")
-        if self._read_cache_ttl > 0:
-            self._cache[name] = (time.monotonic(), payload)
-        return payload
+        return self._request("GET", f"/stock/trade/query?name={name}")
 
     # ------------------------------------------------------------------
     # 只读端点（六查询）
