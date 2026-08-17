@@ -2,6 +2,16 @@
 
 ## 🔴 致命级
 
+### 0a. 增量 `adb install -r` 不杀进程——新代码根本没生效（2026-08-17 实测连坑两轮）
+- **现象**: 改代码→部署"Success"（输出含 "Performing Incremental Install"，几十 ms 完成）→行为完全不变，日志还是旧逻辑
+- **原因**: 增量安装只替换 APK 文件，运行中的进程继续用旧 dex，直到进程重启
+- **方案**: **每次 install 后必 `am force-stop <pkg>` + 重新拉起**；用响应里的新版本指纹字段确认新代码在跑。详见 `debugging-methodology.md` §1
+
+### 0b. logcat 切片（head/tail/grep 窗口）会制造"事件不存在"的假象（2026-08-17 多次误导）
+- **现象**: 明明发生了的事件（请求/回调）在过滤结果里看不到，据此推翻正确假设
+- **原因**: 环形缓冲被高频日志刷爆+grep 管道只取了头尾，事件在被裁掉的中段；或 `logcat -c` 清掉了安装期日志
+- **方案**: 关键结论必须基于 `logcat -d > 本地文件` 全量分析；长观察用 `nohup adb logcat -s TAG > file &`。详见 `debugging-methodology.md` §5
+
 ### 0. 不同机器的默认 debug 签名不能覆盖同一个 Hook APK
 - **现象**: `adb install -r` 返回 `INSTALL_FAILED_UPDATE_INCOMPATIBLE`，或者部署人员准备通过卸载解决签名冲突
 - **原因**: 每台机器的 `~/.android/debug.keystore` 可能不同；“debug APK”不是一个统一签名身份

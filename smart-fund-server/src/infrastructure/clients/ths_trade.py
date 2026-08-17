@@ -156,7 +156,10 @@ class THSTradeClient:
         设备端执行——写超时后必须先查委托状态再决定是否重试，禁止盲目重发。
         """
         url = f"{self._base_url}{path}"
-        timeout = max(self._timeout, 60.0) if method == "POST" else self._timeout
+        # POST（写）≥60s：撤单响应可超 30s 而操作已执行。GET（查询）≥75s：
+        # 设备端会话过期时查询走"首查超时→等重登(约20s)→重试"路径，最坏
+        # 15+20+15=50s（新鲜会话路径仍为 0.1~3s）。
+        timeout = max(self._timeout, 60.0) if method == "POST" else max(self._timeout, 75.0)
         with self._lock:
             try:
                 resp = self._client.request(

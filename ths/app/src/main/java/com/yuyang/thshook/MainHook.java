@@ -76,6 +76,21 @@ public class MainHook {
     private static final AtomicBoolean tradingSdkBridgeHooked = new AtomicBoolean(false);
     private static final AtomicBoolean tradeLoginDialogHooked = new AtomicBoolean(false);
     private static final AtomicInteger bridgeRetryAttempts = new AtomicInteger(0);
+    // hrv.r 在请求风暴期间会被并发频繁调用。必须跨 Hook 回调实例限频，不能在
+    // MethodHook 的实例字段中计时（Pine 可能为每次调用创建独立回调状态）。
+    private static final AtomicLong lastTradeSessionCheckLogMs = new AtomicLong(0L);
+    // 最近一次 resetCbasServer 记录（host:port），/stock/trade/cbas/status 回显
+    private static volatile String lastCbasServerReset = "never";
+    // 最近一次 MasterBridge.getConfigInfo 的 query/result 原文（native→Java 要
+    // 设备配置的唯一通道，设备指纹观测与伪造的核心数据源）
+    private static volatile String lastGetConfigInfoQuery = "";
+    private static volatile String lastGetConfigInfoResult = "";
+    // 设备指纹伪造状态（filesDir/thshook_spoof.json 持久化）：
+    // udids=绑定设备ID(n6m.l)、udidKey=加密key(n6m.s)、getconfiginfo=整段替换
+    private static volatile String spoofUdidL = "";
+    private static volatile String spoofUdidS = "";
+    private static volatile String spoofGetConfigInfo = "";
+    private static volatile boolean deviceSpoofInstalled = false;
     private static final AtomicBoolean speculativeTradeClassesHooked = new AtomicBoolean(false);
     private static final ConcurrentHashMap<String, Boolean> hookedTradeAccountMethods =
             new ConcurrentHashMap<>();
@@ -456,6 +471,7 @@ public class MainHook {
                     || normalizedArchitecture.contains("amd64")
                     || normalizedArchitecture.contains("i386")
                     || normalizedArchitecture.contains("i686")) {
+                injectedViaLsposed = true;
                 Log.i(TAG, "Using LSPosed hook bridge on " + architecture);
             } else {
                 System.load(pineSoPath);
@@ -1197,6 +1213,18 @@ public class MainHook {
                 return;
             }
 
+            // 交易主实例门禁：未配置 thshook_trade_role.json 的实例拒绝全部交易
+            // 端点（登录/查询/下单/token），防止多实例并发登录互顶会话。
+            // /stock/trade/role 自身豁免，否则无法在本实例开启。
+            if (requestLine.contains("/stock/trade/")
+                    && !requestLine.contains("/stock/trade/role")
+                    && !isTradeRoleEnabled()) {
+                sendResponse(out, 403,
+                        "{\"ok\":false,\"error\":\"trade disabled on this instance\"}");
+                client.close();
+                return;
+            }
+
             // GET /stock/trade/status — 获取交易 SDK 状态
             if (requestLine.startsWith("GET /stock/trade/status")) {
                 String result = getTradeStatus();
@@ -1249,6 +1277,24 @@ public class MainHook {
                 return;
             }
 
+            // GET /stock/trade/account/export — 导出交易账户对象（官方 B() 序列化
+            // + 元数据），供另一台设备 seed。⚠ 含 compwd/资金账号，受控通道专用。
+            if (requestLine.startsWith("GET /stock/trade/account/export")) {
+                String result = handleTradeAccountExport();
+                sendResponse(out, 200, result);
+                client.close();
+                return;
+            }
+
+            // POST /stock/trade/account/seed — 写入导出的交易账户（C() 反序列化 →
+            // n0s.b 仓库 → izr.a.x 激活 → 轮询 F(119)），供 token import 前置。
+            if (requestLine.startsWith("POST /stock/trade/account/seed")) {
+                String result = handleTradeAccountSeed(body);
+                sendResponse(out, 200, result);
+                client.close();
+                return;
+            }
+
             // GET /stock/trade/token/report — token 自动上报状态与当前配置（打码）
             if (requestLine.startsWith("GET /stock/trade/token/report")) {
                 String result = handleTokenReportStatus();
@@ -1261,6 +1307,63 @@ public class MainHook {
             // force=true 立即触发一次导出上报；持久化到 filesDir）
             if (requestLine.startsWith("POST /stock/trade/token/report")) {
                 String result = handleTokenReportConfig(body);
+                sendResponse(out, 200, result);
+                client.close();
+                return;
+            }
+
+            // GET /stock/trade/role — 交易主实例角色状态（本实例是否启用交易）
+            if (requestLine.startsWith("GET /stock/trade/role")) {
+                String result = handleTradeRoleStatus();
+                sendResponse(out, 200, result);
+                client.close();
+                return;
+            }
+
+            // POST /stock/trade/role — 启用/停用本实例交易能力（body
+            // {"enabled":bool}，持久化 filesDir/thshook_trade_role.json）。
+            // 主实例运维端点：只有配置过的实例可登录/查询/下单。
+            if (requestLine.startsWith("POST /stock/trade/role")) {
+                String result = handleTradeRoleConfig(body);
+                sendResponse(out, 200, result);
+                client.close();
+                return;
+            }
+
+            // GET /stock/trade/cbas — CBAS（交易通道）诊断：地址列表与最近设置记录
+            if (requestLine.startsWith("GET /stock/trade/cbas")) {
+                String result = handleTradeCbasStatus();
+                sendResponse(out, 200, result);
+                client.close();
+                return;
+            }
+
+            // POST /stock/trade/cbas — 手动设置 CBAS 服务器（body {"host","port"}）。
+            // AVD 无头环境推送组件可能不设置 CBAS 地址（o2u.p()=null → hrv.C no-op），
+            // 交易通道永远建立不了；从真机抓地址后由此注入（调用官方
+            // CommunicationService.resetCbasServer，与 PushConnect 同一路径）。
+            if (requestLine.startsWith("POST /stock/trade/cbas")) {
+                String result = handleTradeCbasSet(body);
+                sendResponse(out, 200, result);
+                client.close();
+                return;
+            }
+
+            // GET /stock/trade/device-info — 设备指纹观测（UDID/机型/最近一次
+            // getConfigInfo query+result 原文），跨设备 diff 用
+            if (requestLine.startsWith("GET /stock/trade/device-info")) {
+                String result = handleTradeDeviceInfo();
+                sendResponse(out, 200, result);
+                client.close();
+                return;
+            }
+
+            // POST /stock/trade/device-spoof — 设备指纹伪造（body {udid_l, udid_s,
+            // getconfiginfo, model, brand, enabled}，持久化 filesDir/thshook_spoof.json）。
+            // 用途：让 AVD 向券商呈现真机的设备标识（跨设备 token 绑定校验实验）。
+            // 注意 udid 同时是 token 加密 key——必须先 spoof 再 import token。
+            if (requestLine.startsWith("POST /stock/trade/device-spoof")) {
+                String result = handleTradeDeviceSpoof(body);
                 sendResponse(out, 200, result);
                 client.close();
                 return;
@@ -6279,6 +6382,9 @@ public class MainHook {
             bridgeClass = cl.loadClass("com.hexin.android.mastermodule.MasterModuleBridge");
         } catch (ClassNotFoundException e) {
             Log.w(TAG, "MasterModuleBridge not found in this classLoader");
+            // 失败路径自续重试（installAllHooks 每个ClassLoader只调度一次，
+            // 若不加此链，真机 2 次调用都错过 r9h.d=true 即永久放弃）
+            scheduleTradingSdkBridgeRetry(cl);
             return;
         }
 
@@ -6292,11 +6398,13 @@ public class MainHook {
             initFlag.setAccessible(true);
             if (!(boolean) initFlag.get(null)) {
                 Log.i(TAG, "MasterModule not initialized yet (r9h.d=false), skip hook attempt");
+                scheduleTradingSdkBridgeRetry(cl);
                 return;
             }
             Log.i(TAG, "MasterModule initialized (r9h.d=true), safe to hook");
         } catch (Throwable e) {
             Log.w(TAG, "r9h ready-check unavailable: " + e + " — skip hook attempt");
+            scheduleTradingSdkBridgeRetry(cl);
             return;
         }
 
@@ -6353,6 +6461,14 @@ public class MainHook {
             Log.i(TAG, "notifyDataReceived dispatch hook installed");
         } catch (Throwable e) {
             Log.w(TAG, "notifyDataReceived hook failed: " + e.getMessage());
+        }
+
+        // 登录路径诊断（AVD 排查用，W 级保证 logcat 可见）：登录请求在
+        // mrv 会话检查层被静默吞（无 jniRequest 无回调），需要定位卡点
+        try {
+            hookTradeLoginPathDiagnostics(cl);
+        } catch (Throwable e) {
+            Log.w(TAG, "login-path diagnostics hook failed: " + e);
         }
 
         // 查询构建器 rpv：G(pageId, protocolId, callback, extJson)/H(...)/D(key, value)
@@ -6631,6 +6747,42 @@ public class MainHook {
                                 + describeTradeValue(callFrame.getResult());
                         Log.i(TAG, logMsg);
                         addTradeLog(logMsg);
+                        // getConfigInfo：native 向 Java 要设备配置——存原文供
+                        // /stock/trade/device-info 观测；spoofGetConfigInfo 为
+                        // 字段级覆盖 JSON（{"Userid":"...","MobileType":"..."}），
+                        // 动态字段（SysBootTime/SessionId 等）保持本机值
+                        if ("getConfigInfo".equals(methodName)) {
+                            Object q = callFrame.args != null && callFrame.args.length > 0
+                                    ? callFrame.args[0] : null;
+                            if (q instanceof String) lastGetConfigInfoQuery = (String) q;
+                            Object r = callFrame.getResult();
+                            if (r instanceof String) lastGetConfigInfoResult = (String) r;
+                            if (!spoofGetConfigInfo.isEmpty()
+                                    && r instanceof String) {
+                                try {
+                                    org.json.JSONObject resp =
+                                            new org.json.JSONObject((String) r);
+                                    org.json.JSONObject data = resp.optJSONObject("data");
+                                    if (data != null) {
+                                        org.json.JSONObject patch =
+                                                new org.json.JSONObject(spoofGetConfigInfo);
+                                        java.util.Iterator<String> it = patch.keys();
+                                        int applied = 0;
+                                        while (it.hasNext()) {
+                                            String k = it.next();
+                                            data.put(k, patch.get(k));
+                                            applied++;
+                                        }
+                                        callFrame.setResult(resp.toString());
+                                        Log.w(TAG, "DeviceSpoof.getConfigInfo patched fields="
+                                                + applied);
+                                    }
+                                } catch (Throwable patchEx) {
+                                    Log.w(TAG, "DeviceSpoof.getConfigInfo patch failed: "
+                                            + patchEx);
+                                }
+                            }
+                        }
                     }
                 });
             } catch (Throwable e) {
@@ -6685,21 +6837,33 @@ public class MainHook {
             } catch (Throwable e) {
                 Log.w(TAG, "z7m.w hook failed: " + e);
             }
+            // 设备指纹伪造恢复（filesDir/thshook_spoof.json）：必须在 token
+            // import/登录前生效（udid 同时是 token 加密 key）
+            try {
+                loadDeviceSpoofConfig(cl);
+            } catch (Throwable e) {
+                Log.w(TAG, "loadDeviceSpoofConfig failed: " + e);
+            }
             // 后台预热交易运行态（激活账户 + 等静默重登），首个 HTTP 请求无需
-            // 再等 ensure 流程。静默重登实测可能耗时 ~2 分钟，失败后循环重试
-            new Thread(() -> {
-                for (int attempt = 1; attempt <= 6; attempt++) {
-                    try {
-                        Thread.sleep(3000);
-                        boolean ok = ensureTradeRuntimeReady(cl);
-                        Log.i(TAG, "trade runtime warmup attempt=" + attempt + ": " + ok);
-                        if (ok) return;
-                    } catch (Throwable e) {
-                        Log.w(TAG, "trade runtime warmup failed: " + e);
+            // 再等 ensure 流程。静默重登实测可能耗时 ~2 分钟，失败后循环重试。
+            // 仅主实例（trade role 已启用）预热，其余实例禁止向券商发登录。
+            if (isTradeRoleEnabled()) {
+                new Thread(() -> {
+                    for (int attempt = 1; attempt <= 6; attempt++) {
+                        try {
+                            Thread.sleep(3000);
+                            boolean ok = ensureTradeRuntimeReady(cl);
+                            Log.i(TAG, "trade runtime warmup attempt=" + attempt + ": " + ok);
+                            if (ok) return;
+                        } catch (Throwable e) {
+                            Log.w(TAG, "trade runtime warmup failed: " + e);
+                        }
                     }
-                }
-                Log.w(TAG, "trade runtime warmup exhausted");
-            }, "trade-warmup").start();
+                    Log.w(TAG, "trade runtime warmup exhausted");
+                }, "trade-warmup").start();
+            } else {
+                Log.i(TAG, "trade role disabled, skip trade-warmup");
+            }
         }
 
         // 猜测性交易接口类只尝试一次（当前版本均不存在）
@@ -6708,12 +6872,403 @@ public class MainHook {
         }
     }
 
+    /** 登录路径诊断（AVD 排查）：登录请求在 mrv 会话检查层被静默吞时定位卡点。
+     *  全部 W 级日志（AVD logcat 只显示 W/E）+ recentTradeLogs 缓冲。 */
+    private static void hookTradeLoginPathDiagnostics(ClassLoader cl) {
+        // 1. r9h.r = notifyUserChanged 实际入口：定位高频刷屏源（栈每 10s 一次）
+        try {
+            Class<?> r9hClass = cl.loadClass("r9h");
+            Method rMethod = r9hClass.getDeclaredMethod("r");
+            rMethod.setAccessible(true);
+            Pine.hook(rMethod, new MethodHook() {
+                private long lastStackMs;
+
+                @Override
+                public void beforeCall(Pine.CallFrame callFrame) {
+                    long now = System.currentTimeMillis();
+                    if (now - lastStackMs > 10000) {
+                        lastStackMs = now;
+                        String msg = "TradeUserChange.r9h.r called" + tradeStackSnippet("UserChangeStack");
+                        Log.w(TAG, msg);
+                        addTradeLog(msg);
+                    }
+                }
+            });
+            Log.i(TAG, "r9h.r user-change hook installed");
+        } catch (Throwable e) {
+            Log.w(TAG, "r9h.r hook failed: " + e);
+        }
+        // 2. f2s.q 登录入口：确认登录调用到达
+        try {
+            Class<?> f2sClass = cl.loadClass("f2s");
+            Class<?> tokenCls = cl.loadClass(
+                    "com.hexin.android.weituo.hstrade.feature.login.bindlogin.model.TokenInfo");
+            Class<?> q3sClass = cl.loadClass("q3s");
+            Class<?> g8mClass = cl.loadClass("g8m");
+            Method qMethod = f2sClass.getDeclaredMethod("q", tokenCls, q3sClass, g8mClass);
+            qMethod.setAccessible(true);
+            Pine.hook(qMethod, new MethodHook() {
+                @Override
+                public void beforeCall(Pine.CallFrame callFrame) {
+                    String msg = "TradeLogin.f2s.q entry tokenInfo="
+                            + (callFrame.args[0] == null ? "null" : "present");
+                    Log.w(TAG, msg);
+                    addTradeLog(msg);
+                }
+            });
+            Log.i(TAG, "f2s.q login-entry hook installed");
+        } catch (Throwable e) {
+            Log.w(TAG, "f2s.q hook failed: " + e);
+        }
+        // 2.5 k2s.b：isWeituoLogining 判定入口，true=f2s.q 将被静默丢弃
+        try {
+            Class<?> k2sClass = cl.loadClass("k2s");
+            Class<?> q3sClass2 = cl.loadClass("q3s");
+            Method bMethod = k2sClass.getDeclaredMethod("b", q3sClass2);
+            bMethod.setAccessible(true);
+            Pine.hook(bMethod, new MethodHook() {
+                @Override
+                public void afterCall(Pine.CallFrame callFrame) {
+                    String msg = "TradeLogin.k2s.b drop-will-happen=" + callFrame.getResult();
+                    Log.w(TAG, msg);
+                    addTradeLog(msg);
+                }
+            });
+            Log.i(TAG, "k2s.b drop-check hook installed");
+        } catch (Throwable e) {
+            Log.w(TAG, "k2s.b hook failed: " + e);
+        }
+        // 3. k7r.Q：true=走 jniRequest 直发，false=走 socket 会话检查（可能被吞）
+        try {
+            Class<?> k7rClass = cl.loadClass("k7r");
+            Class<?> mhvClass = cl.loadClass("mhv");
+            Method qMethod = k7rClass.getDeclaredMethod("Q", mhvClass);
+            qMethod.setAccessible(true);
+            Pine.hook(qMethod, new MethodHook() {
+                @Override
+                public void afterCall(Pine.CallFrame callFrame) {
+                    String msg = "TradeLogin.k7r.Q jniPath=" + callFrame.getResult()
+                            + " (false=socket session-check path)";
+                    Log.w(TAG, msg);
+                    addTradeLog(msg);
+                }
+            });
+            Log.i(TAG, "k7r.Q path hook installed");
+        } catch (Throwable e) {
+            Log.w(TAG, "k7r.Q hook failed: " + e);
+        }
+        // 4. mrv$b.onChannelBad：请求在此被静默丢弃（"donot executeRequest"）
+        try {
+            Class<?> bClass = cl.loadClass("mrv$b");
+            Method badMethod = bClass.getDeclaredMethod("onChannelBad", int.class);
+            badMethod.setAccessible(true);
+            Pine.hook(badMethod, new MethodHook() {
+                @Override
+                public void beforeCall(Pine.CallFrame callFrame) {
+                    String msg = "TradeChannel.onChannelBad code=" + callFrame.args[0]
+                            + " REQUEST DROPPED";
+                    Log.w(TAG, msg);
+                    addTradeLog(msg);
+                }
+            });
+            Log.i(TAG, "onChannelBad hook installed");
+        } catch (Throwable e) {
+            Log.w(TAG, "onChannelBad hook failed: " + e);
+        }
+        // 5. mrv$a.onChannelOk：通道就绪，请求继续执行
+        try {
+            Class<?> aClass = cl.loadClass("mrv$a");
+            Method okMethod = aClass.getDeclaredMethod("onChannelOk");
+            okMethod.setAccessible(true);
+            Pine.hook(okMethod, new MethodHook() {
+                @Override
+                public void beforeCall(Pine.CallFrame callFrame) {
+                    Log.w(TAG, "TradeChannel.onChannelOk executing request");
+                    addTradeLog("TradeChannel.onChannelOk executing request");
+                }
+            });
+            Log.i(TAG, "onChannelOk hook installed");
+        } catch (Throwable e) {
+            Log.w(TAG, "onChannelOk hook failed: " + e);
+        }
+        // 6. hrv.r：会话检查入口（sessionType 0=行情通道 1=交易通道）
+        try {
+            Class<?> hrvClass = cl.loadClass("hrv");
+            Class<?> hClass = cl.loadClass("hrv$h");
+            Method rMethod = hrvClass.getDeclaredMethod("r", hClass);
+            rMethod.setAccessible(true);
+            Pine.hook(rMethod, new MethodHook() {
+                @Override
+                public void beforeCall(Pine.CallFrame callFrame) {
+                    String st;
+                    try {
+                        Object cb = callFrame.args[0];
+                        st = String.valueOf(cb.getClass().getMethod("sessionType")
+                                .invoke(cb));
+                    } catch (Throwable t) {
+                        st = "?" + t.getClass().getSimpleName();
+                    }
+                    long now = System.currentTimeMillis();
+                    // hrv.r 位于请求热路径；诊断不能因高频 Log.w 放大 ANR/重启风暴。
+                    long previous = lastTradeSessionCheckLogMs.get();
+                    if (now - previous < 5000L
+                            || !lastTradeSessionCheckLogMs.compareAndSet(previous, now)) return;
+                    String msg = "TradeChannel.hrv.r check sessionType=" + st;
+                    Log.w(TAG, msg);
+                    addTradeLog(msg);
+                }
+            });
+            Log.i(TAG, "hrv.r session-check hook installed");
+        } catch (Throwable e) {
+            Log.w(TAG, "hrv.r hook failed: " + e);
+        }
+        // 7. Socket.connect：验证 CBAS(9528) 是否实际发起连接，以及连接是否抛错。
+        // 仅记录目标端口，且所有日志均不包含认证报文或账户信息。
+        try {
+            Method connectMethod = Socket.class.getDeclaredMethod(
+                    "connect", java.net.SocketAddress.class, int.class);
+            Pine.hook(connectMethod, new MethodHook() {
+                @Override
+                public void beforeCall(Pine.CallFrame callFrame) {
+                    Object endpoint = callFrame.args[0];
+                    if (endpoint instanceof java.net.InetSocketAddress
+                            && ((java.net.InetSocketAddress) endpoint).getPort() == 9528) {
+                        String msg = "TradeChannel.Socket.connect start endpoint=" + endpoint;
+                        Log.w(TAG, msg);
+                        addTradeLog(msg);
+                    }
+                }
+
+                @Override
+                public void afterCall(Pine.CallFrame callFrame) {
+                    Object endpoint = callFrame.args[0];
+                    if (endpoint instanceof java.net.InetSocketAddress
+                            && ((java.net.InetSocketAddress) endpoint).getPort() == 9528) {
+                        // 桩 CallFrame 不暴露异常：失败时 Socket.isConnected()=false
+                        boolean ok = false;
+                        try {
+                            ok = callFrame.thisObject instanceof Socket
+                                    && ((Socket) callFrame.thisObject).isConnected();
+                        } catch (Throwable ignored) { }
+                        String msg = "TradeChannel.Socket.connect "
+                                + (ok ? "success" : "FAILED(endpoint refused/timeout)")
+                                + " endpoint=" + endpoint;
+                        Log.w(TAG, msg);
+                        addTradeLog(msg);
+                    }
+                }
+            });
+            Log.i(TAG, "Socket.connect CBAS hook installed");
+        } catch (Throwable e) {
+            Log.w(TAG, "Socket.connect CBAS hook failed: " + e);
+        }
+        // 8. hrv.u：CBAS（交易通道 sessionType=1）同步检查——无 Ok/Bad 之外的状态
+        try {
+            Class<?> hrvCls = cl.loadClass("hrv");
+            Class<?> hCls = cl.loadClass("hrv$h");
+            Method uMethod = hrvCls.getDeclaredMethod("u", hCls);
+            uMethod.setAccessible(true);
+            Pine.hook(uMethod, new MethodHook() {
+                private long lastLogMs;
+
+                @Override
+                public void beforeCall(Pine.CallFrame callFrame) {
+                    long now = System.currentTimeMillis();
+                    if (now - lastLogMs < 5000) return;
+                    lastLogMs = now;
+                    String cb = callFrame.args[0] == null ? "null"
+                            : callFrame.args[0].getClass().getName();
+                    String msg = "TradeChannel.hrv.u CBAS-check cb=" + cb;
+                    Log.w(TAG, msg);
+                    addTradeLog(msg);
+                }
+            });
+            Log.i(TAG, "hrv.u CBAS-check hook installed");
+        } catch (Throwable e) {
+            Log.w(TAG, "hrv.u hook failed: " + e);
+        }
+        // 9. hrv.C：CBAS 连接动作——o2u.p() 为 null 时静默 no-op（AVD 疑似病灶）。
+        //    读 hrv.d(o2u).p() 的返回即可判断地址列表是否为空。
+        try {
+            Class<?> hrvCls = cl.loadClass("hrv");
+            Method cMethod = hrvCls.getDeclaredMethod("C");
+            cMethod.setAccessible(true);
+            Pine.hook(cMethod, new MethodHook() {
+                private long lastLogMs;
+
+                @Override
+                public void beforeCall(Pine.CallFrame callFrame) {
+                    long now = System.currentTimeMillis();
+                    if (now - lastLogMs < 5000) return;
+                    lastLogMs = now;
+                    String addr;
+                    try {
+                        Object hrvInst = callFrame.thisObject;
+                        java.lang.reflect.Field dField = hrvCls.getDeclaredField("d");
+                        dField.setAccessible(true);
+                        Object o2u = dField.get(hrvInst);
+                        Object n2u = o2u.getClass().getMethod("p").invoke(o2u);
+                        addr = n2u == null ? "NULL(no-cbas-list)" : String.valueOf(n2u);
+                    } catch (Throwable t) {
+                        addr = "?" + t.getClass().getSimpleName();
+                    }
+                    String msg = "TradeChannel.hrv.C connect-cbas addr=" + addr;
+                    Log.w(TAG, msg);
+                    addTradeLog(msg);
+                }
+            });
+            Log.i(TAG, "hrv.C cbas-connect hook installed");
+        } catch (Throwable e) {
+            Log.w(TAG, "hrv.C hook failed: " + e);
+        }
+        // 10. CommunicationService.resetCbasServer(host,port)：CBAS 地址设置入口。
+        //     真机由此抓真实 CBAS 地址；AVD 上若从不出现即为推送组件缺位的实锤
+        try {
+            Class<?> commSvc = cl.loadClass("com.hexin.plat.android.CommunicationService");
+            Method reset = commSvc.getDeclaredMethod("resetCbasServer", String.class, int.class);
+            reset.setAccessible(true);
+            Pine.hook(reset, new MethodHook() {
+                @Override
+                public void beforeCall(Pine.CallFrame callFrame) {
+                    String msg = "TradeChannel.resetCbasServer host=" + callFrame.args[0]
+                            + " port=" + callFrame.args[1];
+                    Log.w(TAG, msg);
+                    addTradeLog(msg);
+                    lastCbasServerReset = msg;
+                }
+            });
+            Log.i(TAG, "resetCbasServer hook installed");
+        } catch (Throwable e) {
+            Log.w(TAG, "resetCbasServer hook failed: " + e);
+        }
+        // 11. 登录拦截器链（s8m：t9m→j9m→m9m→v9m→o9m→i9m→x9m→…异步责任链）。
+        //     任一环节不回调即"无发送无失败"地挂起（AVD 病灶定位关键）。
+        //     h9m.c() 是链的"继续"调用；每个 intercept() 入口打点。
+        String[] chainClasses = {"t9m", "j9m", "m9m", "v9m", "o9m", "i9m", "x9m",
+                "z9m", "p9m", "w9m", "u9m", "y9m", "n9m", "r9m", "s9m"};
+        for (String chainName : chainClasses) {
+            try {
+                Class<?> chainCls = cl.loadClass(chainName);
+                Method intercept = chainCls.getDeclaredMethod("intercept");
+                intercept.setAccessible(true);
+                Pine.hook(intercept, new MethodHook() {
+                    @Override
+                    public void beforeCall(Pine.CallFrame callFrame) {
+                        String b = "?";
+                        try {
+                            b = String.valueOf(chainCls.getMethod("b")
+                                    .invoke(callFrame.thisObject));
+                        } catch (Throwable ignored) { }
+                        String msg = "TradeLoginChain." + chainName + " enter (" + b + ")";
+                        Log.w(TAG, msg);
+                        addTradeLog(msg);
+                    }
+                });
+            } catch (Throwable e) {
+                Log.w(TAG, "chain hook " + chainName + " failed: " + e.getMessage());
+            }
+        }
+        try {
+            Class<?> h9mClass = cl.loadClass("h9m");
+            Method proceed = h9mClass.getDeclaredMethod("c");
+            proceed.setAccessible(true);
+            Pine.hook(proceed, new MethodHook() {
+                @Override
+                public void beforeCall(Pine.CallFrame callFrame) {
+                    String name = callFrame.thisObject == null ? "?"
+                            : callFrame.thisObject.getClass().getSimpleName();
+                    String next = "?", cb = "?";
+                    try {
+                        java.lang.reflect.Field aField = h9mClass.getDeclaredField("a");
+                        aField.setAccessible(true);
+                        Object aVal = aField.get(callFrame.thisObject);
+                        next = aVal == null ? "null" : aVal.getClass().getSimpleName();
+                        java.lang.reflect.Field bField = h9mClass.getDeclaredField("b");
+                        bField.setAccessible(true);
+                        Object bVal = bField.get(callFrame.thisObject);
+                        cb = bVal == null ? "null" : bVal.getClass().getSimpleName();
+                    } catch (Throwable t) {
+                        next = "?" + t.getClass().getSimpleName();
+                    }
+                    String msg = "TradeLoginChain.h9m.c proceed from=" + name
+                            + " next=" + next + " cb=" + cb
+                            + " thread=" + Thread.currentThread().getName();
+                    Log.w(TAG, msg);
+                    addTradeLog(msg);
+                }
+            });
+            Log.i(TAG, "login chain hooks installed");
+        } catch (Throwable e) {
+            Log.w(TAG, "h9m.c hook failed: " + e);
+        }
+        // 12. e2s.a0：拦截器链完成后的实际登录发送（s9m 链 + 超时任务）。
+        //     若 a0 未运行=链未完成；运行了=卡点在 s9m 发送阶段。
+        try {
+            Class<?> e2sClass = cl.loadClass("e2s");
+            Class<?> v3sClass = cl.loadClass("v3s");
+            Method a0Method = e2sClass.getDeclaredMethod("a0", v3sClass);
+            a0Method.setAccessible(true);
+            Pine.hook(a0Method, new MethodHook() {
+                @Override
+                public void beforeCall(Pine.CallFrame callFrame) {
+                    Log.w(TAG, "TradeLoginChain.e2s.a0 send-phase start (s9m chain)");
+                    addTradeLog("TradeLoginChain.e2s.a0 send-phase start (s9m chain)");
+                }
+            });
+            Log.i(TAG, "e2s.a0 send-phase hook installed");
+        } catch (Throwable e) {
+            Log.w(TAG, "e2s.a0 hook failed: " + e);
+        }
+        // 13. z9m（ZLBindWTPhoneInterceptor，r8m.e=智联分支时进入）：基类模板
+        //     intercept() 里 a()=true 即停链等"绑定手机号"流程。a() 判定依据是
+        //     **本设备**的智联绑定手机号（pzh.g().e()）——真机有历史绑定记录
+        //     判 false 放行；AVD/新设备无记录判 true，无头环境绑定流程永不
+        //     完成 → 登录链无限挂起（本次 AVD 登录超时的最终根因）。
+        //     账户实际已在手机端绑定过，此处强制 a()=false 等价"设备已绑定"。
+        try {
+            Class<?> z9mClass = cl.loadClass("z9m");
+            Method aMethod = z9mClass.getDeclaredMethod("a");
+            aMethod.setAccessible(true);
+            Pine.hook(aMethod, new MethodHook() {
+                @Override
+                public void afterCall(Pine.CallFrame callFrame) {
+                    if (Boolean.TRUE.equals(callFrame.getResult())) {
+                        callFrame.setResult(false);
+                        Log.w(TAG, "TradeLoginChain.z9m phone-bind gate bypassed");
+                        addTradeLog("TradeLoginChain.z9m phone-bind gate bypassed");
+                    }
+                }
+            });
+            Log.i(TAG, "z9m phone-bind bypass hook installed");
+        } catch (Throwable e) {
+            Log.w(TAG, "z9m hook failed: " + e);
+        }
+    }
+
+    /** 交易事件栈摘录：过滤 java/android 框架帧，最多 12 帧（诊断刷屏源用） */
+    private static String tradeStackSnippet(String label) {
+        StackTraceElement[] st = new Throwable().getStackTrace();
+        StringBuilder sb = new StringBuilder(" ").append(label).append(":");
+        int n = 0;
+        for (StackTraceElement e : st) {
+            String cn = e.getClassName();
+            if (cn.startsWith("java.") || cn.startsWith("android.")
+                    || cn.startsWith("com.yuyang.")) continue;
+            sb.append(' ').append(cn).append('.').append(e.getMethodName());
+            if (++n >= 12) break;
+        }
+        return sb.toString();
+    }
+
     /** 延迟重试：等 App 完全启动、上下文就绪后再触发 bridge 挂钩。
      *  注意不能用 Handler——postAppSpecialize 时机主线程 Looper 尚未创建。 */
     private static void scheduleTradingSdkBridgeRetry(final ClassLoader cl) {
         final int attempt = bridgeRetryAttempts.incrementAndGet();
-        if (attempt > 3) return;
-        final long delayMs = attempt == 1 ? 15000L : (attempt == 2 ? 45000L : 90000L);
+        // AVD x86 转译下 r9h.d 就绪可能远慢于真机（负载高时 >90s），
+        // 重试窗口放宽到 6 档共 ~15 分钟，避免错过即永久放弃
+        if (attempt > 6) return;
+        final long delayMs = attempt <= 3 ? (attempt == 1 ? 15000L : attempt == 2 ? 45000L : 90000L)
+                : (attempt == 4 ? 180000L : 300000L);
         Log.i(TAG, "MasterModuleBridge hook retry #" + attempt + " in " + delayMs + "ms");
         Thread retryThread = new Thread(() -> {
             try { Thread.sleep(delayMs); } catch (InterruptedException e) { return; }
@@ -7846,6 +8401,8 @@ public class MainHook {
         }
 
         sb.append(",\"log_count\":").append(recentTradeLogs.size());
+        sb.append(",\"ensure_error\":\"").append(lastEnsureTradeError)
+                .append("\",\"trade_role\":").append(isTradeRoleEnabled());
         sb.append("}");
         return sb.toString();
     }
@@ -7926,6 +8483,23 @@ public class MainHook {
                 return t;
             });
 
+    // ---- 交易主实例门禁（2026-08-17）：生产同一 AVD 多 user 各跑一份 App，
+    // 只允许主实例登录券商（并发登录会互顶会话）。filesDir 按 user 隔离，
+    // thshook_trade_role.json 写 {"enabled":true} 的实例才启用交易功能：
+    // 预热线程不启动、/stock/trade/* 端点全 403（role 端点自身豁免）。
+    // 无配置文件时按 user 数推断：单 user 设备（真机）默认启用，
+    // 多 user 环境（生产 AVD）默认禁用、必须显式配置主实例。
+    private static volatile boolean tradeRoleEnabled = false;
+    private static volatile boolean tradeRoleLoaded = false;
+    private static final Object tradeRoleLock = new Object();
+    // 注入路线标记：true=LSPosed 桥（生产 AVD 多实例环境），false=zygisksu
+    // 原生 Pine（真机单实例）。UserManager.getUserCount() 在 ColorOS 上不可靠
+    // （实测单 user 设备返回失败），改按注入路线推断默认角色。
+    private static volatile boolean injectedViaLsposed = false;
+    // 账户 seed 自动重播（每进程一次）：AVD 的 yyb 券商库未初始化时 App 账户
+    // 仓库不落盘，重启即失；ensure 阶段从 filesDir/thshook_trade_seed.json 重播。
+    private static volatile boolean tradeSeedAutoPlayed = false;
+
     private static boolean r9hReady(ClassLoader cl) {
         try {
             Class<?> r9hClass = cl.loadClass("r9h");
@@ -7952,13 +8526,22 @@ public class MainHook {
         }
     }
 
-    private static boolean ensureTradeRuntimeBaseLocked(ClassLoader cl) {
-        // 运行时基础：模块激活 + 账户列表恢复 + manager 捕获（不含登录门）。
-        // 供 ensureTradeRuntimeReady 与主动登录端点 handleTradeLogin 共用。
-        if (tradeAccountManagerInstance != null && r9hReady(cl)) return true;
-        try {
-            // 1) 激活交易模块（libweituo.so 的 initMasterModule）
-            if (!r9hReady(cl)) {
+    /** seed 前置：只保证 master module 就绪（账户恢复正是 seed 的目标，不能作为前置）。 */
+    private static boolean ensureTradeMasterModule(ClassLoader cl) {
+        synchronized (tradeRuntimeLock) {
+            try {
+                return ensureTradeMasterModuleLocked(cl);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                lastEnsureTradeError = "interrupted";
+                return false;
+            }
+        }
+    }
+
+    private static boolean ensureTradeMasterModuleLocked(ClassLoader cl) throws InterruptedException {
+        // 1) 激活交易模块（libweituo.so 的 initMasterModule）
+        if (!r9hReady(cl)) {
                 try {
                     Class<?> k7rClass = cl.loadClass("k7r");
                     Object k7rInst = k7rClass.getMethod("m").invoke(null);
@@ -7969,11 +8552,63 @@ public class MainHook {
                 }
                 for (int i = 0; i < 20 && !r9hReady(cl); i++) Thread.sleep(500);
                 if (!r9hReady(cl)) {
+                    // 兜底（AVD 首次启用交易）：s9r.w() 在 E()=true（WT lua 脚本
+                    // 未提取或版本记录不匹配）时静默跳过初始化——filesDir 无
+                    // resources/scripts/wt_handleclientreq.lua 即此症状。调官方
+                    // 修复入口 s9r.x()（initWTModuleConfigFile，异步解压 lua），
+                    // 等 E() 翻转后重触发激活。
+                    try {
+                        Class<?> k7rClass = cl.loadClass("k7r");
+                        Object k7rInst = k7rClass.getMethod("m").invoke(null);
+                        Object s9rInst = k7rClass.getField("p").get(k7rInst);
+                        Class<?> s9rClass = cl.loadClass("s9r");
+                        boolean needRepair = (boolean) s9rClass.getMethod("E")
+                                .invoke(s9rInst);
+                        Log.i(TAG, "ensure: s9r.E()=" + needRepair);
+                        if (needRepair) {
+                            s9rClass.getMethod("x").invoke(s9rInst);
+                            // 解压在后台线程，转译环境慢，最多等 120s
+                            for (int i = 0; i < 120
+                                    && (boolean) s9rClass.getMethod("E").invoke(s9rInst); i++) {
+                                Thread.sleep(1000);
+                            }
+                            Log.i(TAG, "ensure: after s9r.x() E()=" + s9rClass
+                                    .getMethod("E").invoke(s9rInst));
+                            // 版本 sp 修复（z() 分支）：解压成功回调会写版本；
+                            // 仍不匹配时手动写当前版本再重触发
+                            if ((boolean) s9rClass.getMethod("E").invoke(s9rInst)) {
+                                try {
+                                    s9rClass.getMethod("N").invoke(s9rInst);
+                                    Log.i(TAG, "ensure: s9r.N() version fix invoked");
+                                } catch (Throwable e2) {
+                                    Log.w(TAG, "ensure: s9r.N() failed: " + e2);
+                                }
+                            }
+                            k7rClass.getMethod("A", cl.loadClass("x6r"))
+                                    .invoke(k7rInst, new Object[]{null});
+                            Log.i(TAG, "ensure: k7r.A(null) re-invoked after repair");
+                        }
+                    } catch (Throwable e) {
+                        Log.w(TAG, "wt resource repair failed: " + e);
+                    }
+                    // initMasterModule native 转译执行慢，等待窗口放大到 60s
+                    for (int i = 0; i < 60 && !r9hReady(cl); i++) Thread.sleep(1000);
+                }
+                if (!r9hReady(cl)) {
                     lastEnsureTradeError = "master module not ready after activate (r9h.d=false)";
                     Log.w(TAG, "ensure: fail r9h not ready");
                     return false;
                 }
             }
+            return true;
+        }
+
+    private static boolean ensureTradeRuntimeBaseLocked(ClassLoader cl) {
+        // 运行时基础：模块激活 + 账户列表恢复 + manager 捕获（不含登录门）。
+        // 供 ensureTradeRuntimeReady 与主动登录端点 handleTradeLogin 共用。
+        if (tradeAccountManagerInstance != null && r9hReady(cl)) return true;
+        try {
+            if (!r9hReady(cl) && !ensureTradeMasterModuleLocked(cl)) return false;
             // 2) 恢复账户列表并捕获 manager
             if (tradeAccountManagerInstance == null) {
                 Class<?> p0sClass = cl.loadClass("p0s");
@@ -7991,8 +8626,12 @@ public class MainHook {
                     Log.i(TAG, "ensure: diag user=" + (userId == null ? "null"
                             : (String.valueOf(userId).isEmpty() ? "empty" : "set"))
                             + " repoAccounts=" + (accts == null ? -1 : accts.size()));
+                    lastEnsureTradeError = "F119=null user=" + (userId == null
+                            ? "null" : (String.valueOf(userId).isEmpty() ? "empty" : "set"))
+                            + " repo=" + (accts == null ? -1 : accts.size());
                 } catch (Throwable e) {
                     Log.w(TAG, "ensure: diag failed: " + e);
+                    lastEnsureTradeError = "F119=null diagFailed=" + e;
                 }
                 if (mgr == null) {
                     // n0s.A(false) 有幂等检查（I() 判断端口/用户未变即提前 return，实测 2ms
@@ -8015,6 +8654,8 @@ public class MainHook {
                         }
                         Log.i(TAG, "ensure: n0s.i() size=" + (after == null ? -1 : after.size())
                                 + " classes=" + cn);
+                        lastEnsureTradeError = lastEnsureTradeError
+                                + " afterB=" + (after == null ? -1 : after.size());
                     } catch (Throwable e) {
                         Log.w(TAG, "account list refresh failed: " + e);
                     }
@@ -8028,6 +8669,38 @@ public class MainHook {
                         }
                     }
                     Log.i(TAG, "ensure: after poll mgr=" + (mgr != null));
+                }
+                // AVD 环境账户仓库不持久化（yyb 券商库未初始化）：从
+                // filesDir/thshook_trade_seed.json 自动重播 seed（成功才消耗
+                // 一次性标志——模块未就绪等失败场景下允许下次 ensure 重试，
+                // 否则进程会永久卡在 F119=null 无自愈路径）。
+                if (mgr == null && !tradeSeedAutoPlayed) {
+                    try {
+                        File seedFile = appInstance == null ? null : new File(
+                                appInstance.getFilesDir(), "thshook_trade_seed.json");
+                        if (seedFile != null && seedFile.exists() && seedFile.canRead()) {
+                            byte[] buf = new byte[(int) seedFile.length()];
+                            int r;
+                            try (FileInputStream fis = new FileInputStream(seedFile)) {
+                                r = fis.read(buf);
+                            }
+                            JSONObject seedCfg = new JSONObject(new String(buf, 0,
+                                    Math.max(r, 0), java.nio.charset.StandardCharsets.UTF_8));
+                            Log.i(TAG, "ensure: auto reseed trade account from seed file");
+                            lastEnsureTradeError = lastEnsureTradeError + " reseed";
+                            mgr = applyTradeAccountSeed(cl, seedCfg.optString("qsid"),
+                                    seedCfg.getJSONObject("json"),
+                                    seedCfg.optJSONObject("broker"), null);
+                            if (mgr != null) {
+                                tradeSeedAutoPlayed = true;
+                                Thread.sleep(5000);
+                            }
+                            Log.i(TAG, "ensure: auto reseed mgr=" + (mgr != null)
+                                    + (mgr == null ? " (will retry next ensure)" : ""));
+                        }
+                    } catch (Throwable e) {
+                        Log.w(TAG, "ensure: auto reseed failed: " + e);
+                    }
                 }
                 // F(119)=w5s.v(119) 按 izr.a.j(pzr)（账户被激活时间打分）>0 选账户；
                 // 不进交易页时打分恒 0，列表里有 fzr 也选不出。镜像 mnq.s 的标准激活
@@ -8051,6 +8724,10 @@ public class MainHook {
                         }
                         Log.i(TAG, "ensure: activate target="
                                 + (target == null ? "null" : target.getClass().getSimpleName()));
+                        if (target == null) {
+                            lastEnsureTradeError = lastEnsureTradeError
+                                    + " noFzrInList=" + (accounts == null ? -1 : accounts.size());
+                        }
                         if (target != null) {
                             Class<?> izrClass = cl.loadClass("izr");
                             Object izrInst = izrClass.getField("a").get(null);
@@ -8062,6 +8739,10 @@ public class MainHook {
                                 mgr = f119.invoke(null, 119);
                             }
                             Log.i(TAG, "ensure: after activate mgr=" + (mgr != null));
+                            if (mgr == null) {
+                                lastEnsureTradeError = lastEnsureTradeError
+                                        + " afterActivate=null";
+                            }
                             if (mgr != null) {
                                 // 激活事件触发的 WT 会话建立是异步的；激活后立即发出的
                                 // 首个交易请求会被吞（today_deal 实测 4ms 后超时）。
@@ -8281,12 +8962,88 @@ public class MainHook {
             z7mClass.getMethod("o",
                             cl.loadClass("pzr"), org.json.JSONObject.class)
                     .invoke(z7mInst, tradeAccountManagerInstance, userInfo);
+            // token 明文并入 seed 文件（thshook_trade_seed.json 增 token/time 字段）：
+            // AVD 读取路径 x7m livetime 重算使 z7m.i 恒 null（重启后 token 不可用），
+            // 登录门在 token 不可用时自动重播（applyTokenSeedToken，见 doActiveTradeLogin）
+            try {
+                File seedFile = new File(appInstance.getFilesDir(),
+                        "thshook_trade_seed.json");
+                JSONObject persist = seedFile.exists()
+                        ? new JSONObject(readFileToString(seedFile)) : new JSONObject();
+                persist.put("token", token);
+                persist.put("token_time", time);
+                java.io.FileWriter sw = new java.io.FileWriter(seedFile, false);
+                sw.write(persist.toString());
+                sw.close();
+            } catch (Throwable persistEx) {
+                Log.w(TAG, "token seed persist failed: " + persistEx);
+            }
+            // AVD 实测 x7m.i(pzr)=0（keep-login 全局开关 ehi.m().n() 未开）→
+            // TokenInfo.mLiveTime=0 → isAvailable 恒 false；对齐真机行为补
+            // 1440 分钟并回写 authorization.bat（livetime 随 TokenInfo 序列化）。
+            try {
+                String uid2 = (String) cl.loadClass("ulm").getMethod("e").invoke(null);
+                java.util.List<?> tis = (java.util.List<?>) z7mClass
+                        .getMethod("m", String.class).invoke(z7mInst, uid2);
+                String expQsid = String.valueOf(tradeAccountManagerInstance.getClass()
+                        .getMethod("q").invoke(tradeAccountManagerInstance));
+                String expAcc = String.valueOf(tradeAccountManagerInstance.getClass()
+                        .getMethod("d").invoke(tradeAccountManagerInstance));
+                if (tis != null) {
+                    for (Object ti : tis) {
+                        Class<?> tiC = ti.getClass();
+                        if (expQsid.equals(String.valueOf(tiC.getField("qsId").get(ti)))
+                                && expAcc.equals(String.valueOf(
+                                        tiC.getField("accountStr").get(ti)))) {
+                            java.lang.reflect.Field ltF = tiC.getField("mLiveTime");
+                            if (((Integer) ltF.get(ti)) <= 0) {
+                                ltF.setInt(ti, 1440);
+                                z7mClass.getMethod("t", String.class)
+                                        .invoke(z7mInst, uid2);
+                                out.put("livetime_fixed", true);
+                            }
+                            break;
+                        }
+                    }
+                }
+            } catch (Throwable e) {
+                Log.w(TAG, "token import livetime fix failed: " + e);
+            }
             out.put("stored", true);
             String userId = (String) cl.loadClass("ulm").getMethod("e").invoke(null);
             Object tokenInfo = z7mClass
                     .getMethod("i", String.class, cl.loadClass("pzr"))
                     .invoke(z7mInst, userId, tradeAccountManagerInstance);
             out.put("readback_available", tokenInfo != null);
+            if (tokenInfo == null) {
+                // 诊断（结构信息，无 token 值）：列表是否为空、匹配字段、livetime
+                try {
+                    java.util.List<?> list = (java.util.List<?>) z7mClass
+                            .getMethod("m", String.class).invoke(z7mInst, userId);
+                    JSONArray arr = new JSONArray();
+                    if (list != null) {
+                        for (Object ti : list) {
+                            JSONObject o = new JSONObject();
+                            Class<?> tiC = ti.getClass();
+                            o.put("qsId", tiC.getField("qsId").get(ti));
+                            o.put("accountStr", tiC.getField("accountStr").get(ti));
+                            o.put("natureType", tiC.getField("accountNatureType").get(ti));
+                            o.put("accountType", tiC.getField("accountType").get(ti));
+                            try {
+                                o.put("mLiveTime", tiC.getField("mLiveTime").get(ti));
+                            } catch (Throwable ignore) { }
+                            try {
+                                o.put("available", tiC.getMethod("isAvailable").invoke(ti));
+                            } catch (Throwable ignore) { }
+                            arr.put(o);
+                        }
+                    }
+                    out.put("token_list_size", list == null ? -1 : list.size());
+                    out.put("token_list_diag", arr);
+                } catch (Throwable e) {
+                    out.put("diag_error", String.valueOf(e));
+                }
+            }
             if (req.optBoolean("login", true)) {
                 boolean ok = doActiveTradeLogin(cl, out);
                 out.put("ok", ok);
@@ -8298,6 +9055,235 @@ public class MainHook {
         }
         out.put("elapsed_ms", System.currentTimeMillis() - t0);
         return out.toString();
+    }
+
+    /**
+     * GET /stock/trade/account/export — 导出当前交易账户对象（跨设备 seed 用）。
+     * 用官方序列化 pzr.B(JSONObject, true)（与仓库持久化 C() 对称），附带
+     * q()/d()/w()/e()/f()/x() 运行时元数据供 seed 后比对校准。
+     * ⚠ 输出含 compwd（通讯密码材料）与资金账号，敏感度与 token 同级：
+     * 仅限受控通道，禁止入库/提交/记日志。
+     */
+    private static String handleTradeAccountExport() throws org.json.JSONException {
+        JSONObject out = new JSONObject();
+        out.put("endpoint", "account_export");
+        ClassLoader cl = resolveAppClassLoader(null);
+        if (cl == null) return errorJson(out, "classloader not ready");
+        if (!ensureTradeRuntimeBase(cl)) return errorJson(out, lastEnsureTradeError);
+        Object mgr = tradeAccountManagerInstance;
+        if (mgr == null) return errorJson(out, "trade account manager not captured (F(119)=null)");
+        try {
+            JSONObject json = new JSONObject();
+            mgr.getClass().getMethod("B", org.json.JSONObject.class, boolean.class)
+                    .invoke(mgr, json, true);
+            JSONObject meta = new JSONObject();
+            Method[] getters = {
+                    mgr.getClass().getMethod("q"),   // qsid
+                    mgr.getClass().getMethod("d"),   // 券商账号
+                    mgr.getClass().getMethod("w"),   // 营业部/类别串
+                    mgr.getClass().getMethod("x"),   // 资金账号 zjzh
+                    mgr.getClass().getMethod("f"),   // 字符串元数据
+            };
+            String[] keys = {"qsid", "account", "w", "zjzh", "f"};
+            for (int i = 0; i < getters.length; i++) {
+                meta.put(keys[i], String.valueOf(getters[i].invoke(mgr)));
+            }
+            meta.put("e", mgr.getClass().getMethod("e").invoke(mgr)); // int 类型
+            // a1s 券商信息对象（n0s.E 入库前置：v()!=null）。按 a1s.y() 解析键序列化，
+            // AVD 端本地 yyb 库缺该券商时用 y(json, false, Proxy回调) 重建。
+            Object broker = mgr.getClass().getMethod("v").invoke(mgr);
+            if (broker != null) {
+                JSONObject brokerJson = new JSONObject();
+                Class<?> a1sC = broker.getClass();
+                String[] fieldToKey = {
+                        "a", "yybname", "b", "accounttype", "f", "wtid", "g", "qsid",
+                        "h", "area", "i", "qsname", "j", "pinyin", "k", "dtkltype",
+                        "l", "getzb", "m", "zztype", "q", "yybfunc",
+                        "s", "pluginurlandroid", "t", "pluginverandroid",
+                };
+                for (int i = 0; i < fieldToKey.length; i += 2) {
+                    try {
+                        Object v = a1sC.getField(fieldToKey[i]).get(broker);
+                        brokerJson.put(fieldToKey[i + 1], v == null ? "" : String.valueOf(v));
+                    } catch (Throwable ignore) { }
+                }
+                try {
+                    brokerJson.put("last_select", a1sC.getField("u").get(broker));
+                } catch (Throwable ignore) { }
+                JSONObject extra = new JSONObject();
+                for (String fn : new String[]{"c", "d", "e", "n"}) {
+                    try {
+                        Object v = a1sC.getField(fn).get(broker);
+                        extra.put(fn, v == null ? "" : String.valueOf(v));
+                    } catch (Throwable ignore) { }
+                }
+                brokerJson.put("_extra", extra);
+                out.put("broker", brokerJson);
+            }
+            out.put("ok", true);
+            out.put("qsid", meta.optString("qsid"));
+            out.put("json", json);
+            out.put("meta", meta);
+        } catch (Throwable e) {
+            return errorJson(out, "account export failed: " + e);
+        }
+        return out.toString();
+    }
+
+    /**
+     * POST /stock/trade/account/seed body={"qsid","json"}
+     * 把（真机导出的）交易账户写进本机账户仓库：new fzr(0) → C(qsid,json)
+     * 官方反序列化 → n0s.s().b(pzr) 官方添加入口（内存+加密仓库持久化）→
+     * izr.a.x(fzr) 激活打分 → 轮询 F(119) 捕获。响应回显 seed 后实际
+     * q()/d()/w()/e()/f()/x() 供与真机 meta 对比校准。
+     */
+    private static String handleTradeAccountSeed(String body) throws org.json.JSONException {
+        JSONObject out = new JSONObject();
+        out.put("endpoint", "account_seed");
+        long t0 = System.currentTimeMillis();
+        ClassLoader cl = resolveAppClassLoader(null);
+        if (cl == null) return errorJson(out, "classloader not ready");
+        if (!ensureTradeMasterModule(cl)) return errorJson(out, lastEnsureTradeError);
+        JSONObject req;
+        try {
+            req = new JSONObject(body);
+        } catch (Throwable e) {
+            return errorJson(out, "bad json body: " + e.getMessage());
+        }
+        String qsid = req.optString("qsid", "");
+        JSONObject json = req.optJSONObject("json");
+        if (qsid.isEmpty() || json == null) {
+            return errorJson(out, "qsid and json required");
+        }
+        try {
+            JSONObject brokerJson = req.optJSONObject("broker");
+            Object captured = applyTradeAccountSeed(cl, qsid, json, brokerJson, out);
+            JSONObject echo = new JSONObject();
+            if (captured != null) {
+                echo.put("qsid", captured.getClass().getMethod("q").invoke(captured));
+                echo.put("account", captured.getClass().getMethod("d").invoke(captured));
+                echo.put("w", captured.getClass().getMethod("w").invoke(captured));
+                echo.put("zjzh", captured.getClass().getMethod("x").invoke(captured));
+                echo.put("f", captured.getClass().getMethod("f").invoke(captured));
+                echo.put("e", captured.getClass().getMethod("e").invoke(captured));
+            }
+            out.put("ok", captured != null);
+            out.put("captured", captured != null);
+            out.put("echo", echo);
+            if (captured == null) {
+                out.put("error", String.valueOf(out.opt("seed_error")));
+            } else {
+                // App 自己的账户仓库在 yyb 券商库未初始化的环境（AVD 实测）不会
+                // 落盘，重启即失；seed body 存 filesDir，ensure 阶段自动重播。
+                JSONObject persist = new JSONObject();
+                persist.put("qsid", qsid);
+                persist.put("json", json);
+                if (brokerJson != null) persist.put("broker", brokerJson);
+                File seedFile = new File(appInstance.getFilesDir(),
+                        "thshook_trade_seed.json");
+                try (FileOutputStream fos = new FileOutputStream(seedFile, false)) {
+                    fos.write(persist.toString()
+                            .getBytes(java.nio.charset.StandardCharsets.UTF_8));
+                }
+                out.put("persisted", true);
+            }
+        } catch (Throwable e) {
+            return errorJson(out, "account seed failed: " + e);
+        }
+        out.put("elapsed_ms", System.currentTimeMillis() - t0);
+        return out.toString();
+    }
+
+    /**
+     * seed 核心（端点与 ensure 自动重播共用）：new fzr(0) → C(qsid,json) 官方
+     * 反序列化 → a1s 解析（本地 yyb 库 b1s.W(qsid)，缺则用导出 JSON 经
+     * a1s.y(json,false,Proxy回调) 重建）→ V(a1s) 填充 → n0s.s().b() 官方
+     * 添加入口 → izr.a.x() 激活 → 轮询 F(119)。返回捕获的 manager（null=失败）。
+     */
+    private static Object applyTradeAccountSeed(ClassLoader cl, String qsid,
+            JSONObject json, JSONObject brokerJson, JSONObject out) throws Exception {
+        Class<?> fzrClass = cl.loadClass("fzr");
+        Object f = fzrClass.getConstructor(int.class).newInstance(0);
+        fzrClass.getMethod("C", String.class, org.json.JSONObject.class)
+                .invoke(f, qsid, json);
+        // n0s.E(pzr) 要求 v()!=null（a1s 券商信息对象）才入库；V(a1s) 同时填
+        // s/g(qsid)/d(券商名)/h(wtid)。先查本机 yyb 券商库（b1s.W）。
+        Object broker = null;
+        try {
+            Object c1sInst = cl.loadClass("c1s").getMethod("m").invoke(null);
+            Object b1sInst = cl.loadClass("c1s").getMethod("p").invoke(c1sInst);
+            Class<?> b1sClass = b1sInst.getClass();
+            try {
+                b1sClass.getMethod("K0").invoke(b1sInst);
+            } catch (Throwable e) {
+                Log.w(TAG, "seed: b1s.K0() load yyb db failed: " + e);
+            }
+            broker = b1sClass.getMethod("W", String.class).invoke(b1sInst, qsid);
+        } catch (Throwable e) {
+            Log.w(TAG, "seed: local yyb db lookup failed: " + e);
+        }
+        if (out != null) out.put("broker_found", broker != null);
+        if (broker == null) {
+            // 本地 yyb 库无该券商（未下载）：用真机导出的 a1s JSON 重建。
+            // a1s.y(json, false, cb) 的 cb（a1s$a 接口）在 accountlist 缺省时
+            // 只需 a/c/d 三个回调；Proxy 返回空实现。
+            if (brokerJson == null || !brokerJson.has("qsid")) {
+                if (out != null) out.put("seed_error",
+                        "broker (a1s) unavailable: local yyb db empty for qsid="
+                                + qsid + " and no broker json");
+                return null;
+            }
+            Class<?> cbClass = cl.loadClass("a1s$a");
+            Object cb = Proxy.newProxyInstance(cl, new Class[]{cbClass},
+                    (p, m, args) -> {
+                        switch (m.getName()) {
+                            case "a": case "h": return null;
+                            case "e": return 0;
+                            case "g": return false;
+                            case "b": case "i": return "";
+                            case "getContext": return appInstance;
+                            case "hashCode": return System.identityHashCode(p);
+                            case "toString": return p.getClass().getName();
+                            case "equals": return p == args[0];
+                            default: return null; // c/d/f void no-op
+                        }
+                    });
+            broker = cl.loadClass("a1s")
+                    .getMethod("y", org.json.JSONObject.class, boolean.class, cbClass)
+                    .invoke(null, brokerJson, false, cb);
+            JSONObject extra = brokerJson.optJSONObject("_extra");
+            if (extra != null && broker != null) {
+                Class<?> a1sC = broker.getClass();
+                for (String fn : new String[]{"c", "d", "e", "n"}) {
+                    try {
+                        a1sC.getField(fn).set(broker, extra.optString(fn, ""));
+                    } catch (Throwable ignore) { }
+                }
+            }
+            if (out != null) out.put("broker_rebuilt", broker != null);
+            Log.i(TAG, "seed: a1s rebuilt from export json, ok=" + (broker != null));
+        }
+        if (broker == null) {
+            if (out != null) out.put("seed_error", "broker (a1s) rebuild failed for qsid=" + qsid);
+            return null;
+        }
+        fzrClass.getMethod("V", cl.loadClass("a1s")).invoke(f, broker);
+        cl.loadClass("n0s").getMethod("b", cl.loadClass("pzr"))
+                .invoke(cl.loadClass("n0s").getMethod("s").invoke(null), f);
+        Class<?> izrClass = cl.loadClass("izr");
+        Object izrInst = izrClass.getField("a").get(null);
+        izrClass.getMethod("x", cl.loadClass("pzr")).invoke(izrInst, f);
+        // 主动轮询 F(119)（w5s.v(119) 按 izr 打分选择），不能只读静态捕获字段
+        Class<?> p0sClass = cl.loadClass("p0s");
+        java.lang.reflect.Method f119 = p0sClass.getDeclaredMethod("F", int.class);
+        f119.setAccessible(true);
+        Object captured = null;
+        for (int i = 0; i < 30 && captured == null; i++) {
+            Thread.sleep(1000);
+            captured = f119.invoke(null, 119);
+        }
+        if (captured != null) captureTradeAccountManager(captured);
+        return captured;
     }
 
     // ==================================================================
@@ -8595,6 +9581,332 @@ public class MainHook {
         }
     }
 
+    // ==================================================================
+    // 交易主实例角色（2026-08-17）：filesDir/thshook_trade_role.json
+    // {"enabled":true}。filesDir 按 Android user 隔离，生产同一 AVD 8 实例
+    // 只有配置过的主实例启用交易功能（预热/登录/查询/下单/token 端点）。
+    // ==================================================================
+
+    private static File tradeRoleConfigFile() {
+        Context app = appInstance;
+        if (app == null) return null;
+        return new File(app.getFilesDir(), "thshook_trade_role.json");
+    }
+
+    private static void loadTradeRoleConfig() {
+        if (tradeRoleLoaded) return;
+        synchronized (tradeRoleLock) {
+            if (tradeRoleLoaded) return;
+            File f = tradeRoleConfigFile();
+            if (f != null && f.exists() && f.canRead()) {
+                try (FileInputStream fis = new FileInputStream(f)) {
+                    byte[] buf = new byte[(int) f.length()];
+                    int read = fis.read(buf);
+                    JSONObject cfg = new JSONObject(new String(buf, 0,
+                            Math.max(read, 0), java.nio.charset.StandardCharsets.UTF_8));
+                    tradeRoleEnabled = cfg.optBoolean("enabled", false);
+                    tradeRoleLoaded = true;
+                    Log.i(TAG, "trade role loaded: enabled=" + tradeRoleEnabled);
+                    return;
+                } catch (Throwable e) {
+                    Log.w(TAG, "trade role config read failed: " + e);
+                }
+            }
+            // 无配置文件：zygisksu 真机（单实例）默认启用；LSPosed 桥环境
+            // （生产 AVD 多实例）默认禁用，防止并发登录互顶。
+            tradeRoleEnabled = !injectedViaLsposed;
+            tradeRoleLoaded = true;
+            Log.i(TAG, "trade role default (no config): enabled=" + tradeRoleEnabled
+                    + " lsposed=" + injectedViaLsposed);
+        }
+    }
+
+    private static boolean isTradeRoleEnabled() {
+        loadTradeRoleConfig();
+        return tradeRoleEnabled;
+    }
+
+    /** GET /stock/trade/device-info — 设备指纹观测（真机/AVD diff 数据源）。 */
+    private static String handleTradeDeviceInfo() throws JSONException {
+        JSONObject out = new JSONObject();
+        out.put("endpoint", "device_info");
+        out.put("ok", true);
+        out.put("model", android.os.Build.MODEL);
+        out.put("brand", android.os.Build.BRAND);
+        out.put("device", android.os.Build.DEVICE);
+        out.put("manufacturer", android.os.Build.MANUFACTURER);
+        try {
+            out.put("android_id", android.provider.Settings.Secure.getString(
+                    appInstance.getContentResolver(),
+                    android.provider.Settings.Secure.ANDROID_ID));
+        } catch (Throwable ignored) { }
+        ClassLoader cl = thsAppClassLoader;
+        if (cl != null) {
+            try {
+                Class<?> n6mClass = cl.loadClass("n6m");
+                Object l = n6mClass.getMethod("l").invoke(null);
+                out.put("udid_l", l == null ? "" : l.toString());
+                Object n6mInst = n6mClass.getMethod("r").invoke(null);
+                Object s = n6mClass.getMethod("s").invoke(n6mInst);
+                out.put("udid_s", s == null ? "" : s.toString());
+            } catch (Throwable t) {
+                out.put("udid_error", String.valueOf(t));
+            }
+        }
+        out.put("getconfiginfo_query", lastGetConfigInfoQuery);
+        out.put("getconfiginfo_result", lastGetConfigInfoResult);
+        out.put("spoof_active", !spoofUdidL.isEmpty() || !spoofUdidS.isEmpty()
+                || !spoofGetConfigInfo.isEmpty());
+        return out.toString();
+    }
+
+    /** POST /stock/trade/device-spoof — 安装/更新设备指纹伪造。 */
+    private static String handleTradeDeviceSpoof(String body) throws JSONException {
+        JSONObject out = new JSONObject();
+        out.put("endpoint", "device_spoof");
+        JSONObject req = body == null || body.isEmpty() ? new JSONObject() : new JSONObject(body);
+        String udidL = req.optString("udid_l", "");
+        String udidS = req.optString("udid_s", "");
+        String gcInfo = req.optString("getconfiginfo", "");
+        String model = req.optString("model", "");
+        String brand = req.optString("brand", "");
+        boolean enabled = req.optBoolean("enabled", true);
+        if (!enabled) {
+            spoofUdidL = "";
+            spoofUdidS = "";
+            spoofGetConfigInfo = "";
+            persistSpoofConfig("", "", "", "", "");
+            out.put("ok", true);
+            out.put("result", "spoof cleared (restart app to fully reset)");
+            return out.toString();
+        }
+        ClassLoader cl = thsAppClassLoader;
+        if (cl == null) {
+            out.put("ok", false);
+            out.put("error", "app classloader not captured");
+            return out.toString();
+        }
+        try {
+            spoofUdidL = udidL;
+            spoofUdidS = udidS;
+            spoofGetConfigInfo = gcInfo;
+            if (!model.isEmpty()) setStaticStringField(android.os.Build.class, "MODEL", model);
+            if (!brand.isEmpty()) setStaticStringField(android.os.Build.class, "BRAND", brand);
+            boolean hooked = installDeviceSpoofHooks(cl);
+            persistSpoofConfig(udidL, udidS, gcInfo, model, brand);
+            out.put("ok", hooked);
+            out.put("udid_l_len", udidL.length());
+            out.put("udid_s_len", udidS.length());
+            out.put("getconfiginfo_len", gcInfo.length());
+            out.put("note", "udid spoof must be active BEFORE token import "
+                    + "(udid is also the token encryption key)");
+            return out.toString();
+        } catch (Throwable e) {
+            out.put("ok", false);
+            out.put("error", String.valueOf(e));
+            return out.toString();
+        }
+    }
+
+    /** 启动期从 filesDir 恢复 spoof 配置并安装 hooks（bridge hook 安装后调用）。 */
+    private static void loadDeviceSpoofConfig(ClassLoader cl) {
+        try {
+            if (appInstance == null) return;
+            File f = new File(appInstance.getFilesDir(), "thshook_spoof.json");
+            if (!f.exists()) return;
+            JSONObject cfg = new JSONObject(readFileToString(f));
+            if (!cfg.optBoolean("enabled", false)) return;
+            spoofUdidL = cfg.optString("udid_l", "");
+            spoofUdidS = cfg.optString("udid_s", "");
+            spoofGetConfigInfo = cfg.optString("getconfiginfo", "");
+            String model = cfg.optString("model", "");
+            String brand = cfg.optString("brand", "");
+            if (!model.isEmpty()) setStaticStringField(android.os.Build.class, "MODEL", model);
+            if (!brand.isEmpty()) setStaticStringField(android.os.Build.class, "BRAND", brand);
+            installDeviceSpoofHooks(cl);
+            Log.w(TAG, "DeviceSpoof restored from config (udid_l_len="
+                    + spoofUdidL.length() + ")");
+        } catch (Throwable e) {
+            Log.w(TAG, "loadDeviceSpoofConfig failed: " + e);
+        }
+    }
+
+    private static void persistSpoofConfig(String udidL, String udidS, String gcInfo,
+                                           String model, String brand) {
+        try {
+            if (appInstance == null) return;
+            JSONObject cfg = new JSONObject();
+            boolean any = !udidL.isEmpty() || !udidS.isEmpty() || !gcInfo.isEmpty();
+            cfg.put("enabled", any);
+            cfg.put("udid_l", udidL);
+            cfg.put("udid_s", udidS);
+            cfg.put("getconfiginfo", gcInfo);
+            cfg.put("model", model);
+            cfg.put("brand", brand);
+            java.io.FileWriter w = new java.io.FileWriter(
+                    new File(appInstance.getFilesDir(), "thshook_spoof.json"));
+            w.write(cfg.toString());
+            w.close();
+        } catch (Throwable e) {
+            Log.w(TAG, "persistSpoofConfig failed: " + e);
+        }
+    }
+
+    /** n6m.l()（绑定设备SUID）/n6m.s()（加密key）返回值伪造。 */
+    private static boolean installDeviceSpoofHooks(ClassLoader cl) {
+        if (deviceSpoofInstalled) {
+            // 已装：只更新静态值即可（hook 读的是 volatile 字段）
+            return true;
+        }
+        boolean any = false;
+        try {
+            Class<?> n6mClass = cl.loadClass("n6m");
+            Method lM = n6mClass.getDeclaredMethod("l");
+            lM.setAccessible(true);
+            Pine.hook(lM, new MethodHook() {
+                @Override
+                public void afterCall(Pine.CallFrame callFrame) {
+                    if (!spoofUdidL.isEmpty()) callFrame.setResult(spoofUdidL);
+                }
+            });
+            any = true;
+            Method sM = n6mClass.getDeclaredMethod("s");
+            sM.setAccessible(true);
+            Pine.hook(sM, new MethodHook() {
+                @Override
+                public void afterCall(Pine.CallFrame callFrame) {
+                    if (!spoofUdidS.isEmpty()) callFrame.setResult(spoofUdidS);
+                }
+            });
+            deviceSpoofInstalled = true;
+            Log.w(TAG, "DeviceSpoof n6m.l/s hooks installed");
+        } catch (Throwable e) {
+            Log.w(TAG, "DeviceSpoof n6m hooks failed: " + e);
+        }
+        return any;
+    }
+
+    private static void setStaticStringField(Class<?> cls, String name, String value) {
+        try {
+            java.lang.reflect.Field f = cls.getDeclaredField(name);
+            f.setAccessible(true);
+            f.set(null, value);
+        } catch (Throwable e) {
+            Log.w(TAG, "setStaticStringField " + name + " failed: " + e);
+        }
+    }
+
+    private static String readFileToString(File f) throws Exception {
+        java.io.FileInputStream in = new java.io.FileInputStream(f);
+        java.io.ByteArrayOutputStream bos = new java.io.ByteArrayOutputStream();
+        byte[] buf = new byte[4096];
+        int n;
+        while ((n = in.read(buf)) > 0) bos.write(buf, 0, n);
+        in.close();
+        return new String(bos.toByteArray(), "UTF-8");
+    }
+    private static String handleTradeCbasStatus() throws JSONException {
+        JSONObject out = new JSONObject();
+        out.put("endpoint", "cbas_status");
+        out.put("ok", true);
+        out.put("last_reset", lastCbasServerReset);
+        ClassLoader cl = thsAppClassLoader;
+        if (cl != null) {
+            try {
+                Class<?> commSvcClass = cl.loadClass("com.hexin.plat.android.CommunicationService");
+                Object commSvc = commSvcClass.getMethod("getCommunicationService")
+                        .invoke(null);
+                out.put("comm_service", commSvc != null ? "running" : "null");
+            } catch (Throwable t) {
+                out.put("comm_service", "?" + t.getClass().getSimpleName());
+            }
+        }
+        return out.toString();
+    }
+
+    /** POST /stock/trade/cbas {"host","port"} — 手动注入 CBAS 服务器地址。
+     *  走官方 CommunicationService.resetCbasServer（PushConnect 同款路径）。 */
+    private static String handleTradeCbasSet(String body) throws JSONException {
+        JSONObject out = new JSONObject();
+        out.put("endpoint", "cbas_set");
+        JSONObject req = body == null || body.isEmpty() ? new JSONObject() : new JSONObject(body);
+        String host = req.optString("host", "");
+        int port = req.optInt("port", 0);
+        if (host.isEmpty() || port <= 0) {
+            out.put("ok", false);
+            out.put("error", "body requires host(string) and port(int)");
+            return out.toString();
+        }
+        ClassLoader cl = thsAppClassLoader;
+        if (cl == null) {
+            out.put("ok", false);
+            out.put("error", "app classloader not captured");
+            return out.toString();
+        }
+        try {
+            Class<?> commSvcClass = cl.loadClass("com.hexin.plat.android.CommunicationService");
+            Object commSvc = commSvcClass.getMethod("getCommunicationService").invoke(null);
+            if (commSvc == null) {
+                out.put("ok", false);
+                out.put("error", "CommunicationService instance null (not started)");
+                return out.toString();
+            }
+            commSvcClass.getMethod("resetCbasServer", String.class, int.class)
+                    .invoke(commSvc, host, port);
+            lastCbasServerReset = "manual host=" + host + " port=" + port;
+            out.put("ok", true);
+            out.put("host", host);
+            out.put("port", port);
+            out.put("result", "resetCbasServer invoked; CBAS connect will be "
+                    + "triggered by next session-check (hrv.C)");
+            return out.toString();
+        } catch (Throwable e) {
+            out.put("ok", false);
+            out.put("error", String.valueOf(e));
+            return out.toString();
+        }
+    }
+
+    /** GET /stock/trade/role — 本实例交易角色状态。 */
+    private static String handleTradeRoleStatus() throws JSONException {
+        JSONObject out = new JSONObject();
+        out.put("endpoint", "trade_role_status");
+        out.put("ok", true);
+        out.put("enabled", isTradeRoleEnabled());
+        out.put("config_file", "filesDir/thshook_trade_role.json");
+        return out.toString();
+    }
+
+    /** POST /stock/trade/role body={"enabled":bool} — 启用/停用本实例交易能力。 */
+    private static String handleTradeRoleConfig(String body) throws JSONException {
+        JSONObject out = new JSONObject();
+        out.put("endpoint", "trade_role_config");
+        try {
+            JSONObject req = new JSONObject(body == null || body.isEmpty() ? "{}" : body);
+            if (!req.has("enabled")) {
+                return errorJson(out, "missing field: enabled");
+            }
+            boolean enabled = req.optBoolean("enabled", false);
+            File f = tradeRoleConfigFile();
+            if (f == null) {
+                return errorJson(out, "app context not ready");
+            }
+            JSONObject cfg = new JSONObject();
+            cfg.put("enabled", enabled);
+            try (java.io.FileOutputStream fos = new java.io.FileOutputStream(f)) {
+                fos.write(cfg.toString().getBytes(java.nio.charset.StandardCharsets.UTF_8));
+            }
+            tradeRoleEnabled = enabled;
+            tradeRoleLoaded = true;
+            Log.i(TAG, "trade role set: enabled=" + enabled);
+            out.put("ok", true);
+            out.put("enabled", tradeRoleEnabled);
+            return out.toString();
+        } catch (Throwable e) {
+            return errorJson(out, "trade role config failed: " + e);
+        }
+    }
+
     /**
      * 主动登录核心（唯一登录发起链，预热与 HTTP 端点共用）。
      * 全进程只从这里发 f2s.q 登录：预热线程的 x0s.F 触发已移除——2026-08-17 实测
@@ -8604,8 +9916,15 @@ public class MainHook {
      * 细节（result/error/via）写入 report。
      */
     private static boolean doActiveTradeLogin(ClassLoader cl, JSONObject report) {
+        return doActiveTradeLogin(cl, report, false);
+    }
+
+    /** force=true：跳过 already_logged_in 短路，强制重发 f2s.q 重建服务端会话。
+     *  用于查询超时重试前——本地 izr.a.l=true 但服务端会话已失效（90B 踢）的
+     *  场景，被动等 App 自愈不可靠，主动登录实测 18s 内恢复。 */
+    private static boolean doActiveTradeLogin(ClassLoader cl, JSONObject report, boolean force) {
         synchronized (tradeRuntimeLock) {
-            boolean ok = doActiveTradeLoginLocked(cl, report);
+            boolean ok = doActiveTradeLoginLocked(cl, report, force);
             if (ok) {
                 // 触发点2：登录成功后异步导出 token 上报（锁外调度，不阻塞登录链）。
                 // z7m.w 若已在本链触发过则由 sha256 去重跳过；此处兜住"重启后
@@ -8616,13 +9935,13 @@ public class MainHook {
         }
     }
 
-    private static boolean doActiveTradeLoginLocked(ClassLoader cl, JSONObject report) {
+    private static boolean doActiveTradeLoginLocked(ClassLoader cl, JSONObject report, boolean force) {
         Object mgr = tradeAccountManagerInstance;
         try {
             Class<?> izrClass = cl.loadClass("izr");
             Object izrInst = izrClass.getField("a").get(null);
             java.lang.reflect.Method lM = izrClass.getMethod("l", cl.loadClass("pzr"));
-            if (Boolean.TRUE.equals(lM.invoke(izrInst, mgr))) {
+            if (!force && Boolean.TRUE.equals(lM.invoke(izrInst, mgr))) {
                 report.put("result", "already_logged_in");
                 return true;
             }
@@ -8639,12 +9958,67 @@ public class MainHook {
                     return true;
                 }
             }
+            // 僵尸登录标志清除：AVD 冷环境非静默登录走上 CBAS 死路后 H() 永不
+            // 复位（官方复位在 r0s.o()/1小时超时 TimerTask），等待超时后用 App
+            // 同款 i0(false) 强制清除，否则本次 f2s.q 仍被 k2s.b 静默丢弃
+            if (Boolean.TRUE.equals(hM.invoke(r0sInst))) {
+                r0sClass.getMethod("i0", boolean.class).invoke(r0sInst, false);
+                report.put("stuck_logining_cleared", true);
+                Thread.sleep(200);
+            }
             String userId = (String) cl.loadClass("ulm").getMethod("e").invoke(null);
             Class<?> z7mClass = cl.loadClass("z7m");
             Object z7mInst = z7mClass.getMethod("k").invoke(null);
             Object tokenInfo = z7mClass
                     .getMethod("i", String.class, cl.loadClass("pzr"))
                     .invoke(z7mInst, userId, mgr);
+            if (tokenInfo == null) {
+                // AVD 读取路径缺陷兜底：x7m.i(pzr) 的 livetime 重算使 z7m.i 恒
+                // null（重启后 token 不可用，文件实际有效）。从 seed 文件
+                // （thshook_trade_seed.json 的 token/token_time）自动重播官方
+                // 导入链 z7m.o + livetime 修复，再重读一次。
+                try {
+                    File seedFile = new File(appInstance.getFilesDir(),
+                            "thshook_trade_seed.json");
+                    if (seedFile.exists()) {
+                        JSONObject persist = new JSONObject(readFileToString(seedFile));
+                        String tok = persist.optString("token", "");
+                        String tokTime = persist.optString("token_time", "");
+                        long tokAgeMin = tokTime.isEmpty() ? Long.MAX_VALUE
+                                : (System.currentTimeMillis() / 1000
+                                        - Long.parseLong(tokTime)) / 60;
+                        if (!tok.isEmpty() && tokAgeMin < 1440) {
+                            JSONObject userInfo = new JSONObject();
+                            userInfo.put("WtToken", tok);
+                            userInfo.put("Time", tokTime);
+                            z7mClass.getMethod("o",
+                                            cl.loadClass("pzr"), org.json.JSONObject.class)
+                                    .invoke(z7mInst, mgr, userInfo);
+                            java.util.List<?> tis = (java.util.List<?>) z7mClass
+                                    .getMethod("m", String.class).invoke(z7mInst, userId);
+                            if (tis != null) {
+                                for (Object ti : tis) {
+                                    try {
+                                        java.lang.reflect.Field lt = ti.getClass()
+                                                .getField("mLiveTime");
+                                        if (((Integer) lt.get(ti)) <= 0) {
+                                            lt.setInt(ti, 1440);
+                                        }
+                                    } catch (Throwable ignore) { }
+                                }
+                            }
+                            z7mClass.getMethod("t", String.class).invoke(z7mInst, userId);
+                            tokenInfo = z7mClass
+                                    .getMethod("i", String.class, cl.loadClass("pzr"))
+                                    .invoke(z7mInst, userId, mgr);
+                            report.put("token_replayed_from_seed",
+                                    tokenInfo != null);
+                        }
+                    }
+                } catch (Throwable t) {
+                    Log.w(TAG, "token seed replay failed: " + t);
+                }
+            }
             if (tokenInfo == null) {
                 report.put("result", "fail");
                 report.put("error", "token unavailable (expired or not stored); "
@@ -8690,6 +10064,22 @@ public class MainHook {
                     });
             Class<?> tokenCls = cl.loadClass(
                     "com.hexin.android.weituo.hstrade.feature.login.bindlogin.model.TokenInfo");
+            // AVD 冷环境（seed 账户从未成功登录）：lzr.e（native 路径支持标志）
+            // 默认 false 且不持久化（只在登录成功回调 n2s.b 里置位），此时
+            // k7r.Q→q9r.l 判定走 CBAS socket 会话检查路径——AVD 上 CBAS 地址
+            // 未被 PushConnect 设置，请求排队至死（35s 无回调）。主动置位
+            // lzr.e=true 等价于登录成功回调的效果，登录请求即路由到
+            // jniRequest native 路径（真机同款，warmup 实测 attempt=1 成功）。
+            try {
+                Class<?> mzrClass = cl.loadClass("mzr");
+                Object mzrA = mzrClass.getField("a").get(null);
+                Object lzr = mzrClass.getMethod("b", cl.loadClass("pzr"))
+                        .invoke(mzrA, mgr);
+                lzr.getClass().getMethod("p", boolean.class).invoke(lzr, true);
+                report.put("native_path_forced", true);
+            } catch (Throwable t) {
+                Log.w(TAG, "force lzr.e=true failed: " + t);
+            }
             Class<?> f2sClass = cl.loadClass("f2s");
             Object f2sInst = f2sClass.getMethod("d").invoke(null);
             f2sClass.getMethod("q", tokenCls, q3sClass, cl.loadClass("g8m"))
@@ -8699,6 +10089,10 @@ public class MainHook {
                 // 超时但登录可能已生效（同写端点超时铁律：先查状态再定论）
                 boolean loggedIn = Boolean.TRUE.equals(lM.invoke(izrInst, mgr));
                 report.put("result", loggedIn ? "success-after-timeout" : "timeout");
+                try {
+                    report.put("weituo_logining_stuck",
+                            Boolean.TRUE.equals(hM.invoke(r0sInst)));
+                } catch (Throwable ignore) { }
                 if (loggedIn) tradeRuntimeReadyOnce = true;
                 else lastEnsureTradeError = "trade login: no response in 35s and not logged in";
                 return loggedIn;
@@ -8706,6 +10100,20 @@ public class MainHook {
             String r = result.get();
             report.put("result", r);
             if (!"success".equals(r)) {
+                // fail 回调 ≠ 登录失败：App 内部重登链与本次登录并发竞争时，
+                // 竞争中超时一方会以 fail(null)（"null stuff"）回调，而 App 侧
+                // 的登录可能已实际成功（实测 fail 后 15s funds 查询直接可用）。
+                // 先轮询 izr.a.l 确认真实登录态，置位则按成功收编。
+                boolean loggedInAfterFail = false;
+                for (int i = 0; i < 10 && !loggedInAfterFail; i++) {
+                    loggedInAfterFail = Boolean.TRUE.equals(lM.invoke(izrInst, mgr));
+                    if (!loggedInAfterFail) Thread.sleep(500);
+                }
+                if (loggedInAfterFail) {
+                    report.put("result", "success-via-concurrent-login");
+                    tradeRuntimeReadyOnce = true;
+                    return true;
+                }
                 String err = failDetail.get() == null ? "onWeituoLoginFail" : failDetail.get();
                 report.put("error", err);
                 lastEnsureTradeError = "trade login failed: " + err;
@@ -8752,7 +10160,29 @@ public class MainHook {
             return errorJson(resp, "unknown query name '" + name
                     + "', supported: " + TRADE_QUERY_PROTOCOLS.keySet());
         }
-        return invokeTradeQuery(proto[0], proto[1], expandStaticParams(TRADE_QUERY_STATIC_PARAMS.get(name)));
+        String result = invokeTradeQuery(proto[0], proto[1],
+                expandStaticParams(TRADE_QUERY_STATIC_PARAMS.get(name)));
+        // 会话过期场景（本地已登录但服务端会话被 90B 踢失效）：首查超时后
+        // 强制重发登录重建服务端会话（实测 ~18s），再重试查询一次。只读查询
+        // 幂等，重试安全。
+        if (result != null && result.contains("timeout waiting response")) {
+            try {
+                ClassLoader cl = resolveAppClassLoader(null);
+                if (cl != null) {
+                    JSONObject loginReport = new JSONObject();
+                    doActiveTradeLogin(cl, loginReport, true);
+                    // 登录回调确认后会话分发仍需短暂就绪窗口（实测紧随其后的
+                    // 重试偶发落空、下一个查询成功——即本重试修的会话被后续
+                    // 查询吃到），等 3s 消竞态
+                    Thread.sleep(3000);
+                }
+            } catch (Throwable loginEx) {
+                Log.w(TAG, "query-retry force login failed: " + loginEx);
+            }
+            result = invokeTradeQuery(proto[0], proto[1],
+                    expandStaticParams(TRADE_QUERY_STATIC_PARAMS.get(name)));
+        }
+        return result;
     }
 
     /** 历史类模板占位符展开：{start}=20250101（账户全历史起点，见交接说明 §3.9 日期窗口教训），

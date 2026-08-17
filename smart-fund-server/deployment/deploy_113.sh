@@ -337,6 +337,9 @@ install_production_config() {
     set_env_value "${plain_env}" "SERVER_PORT" "8900"
     set_env_value "${plain_env}" "SERVICE_BASE_URL" "http://127.0.0.1:8900"
     set_env_value "${plain_env}" "THS_NATIVE_BRIDGE_URL" "http://127.0.0.1:49350"
+    # 交易通道固定路由 owner 实例专用 proxy（49301→设备18900/user0，主实例
+    # 单登录架构：role 门禁保证其余 7 实例 403，LB /stock/trade 亲和兜底）
+    set_env_value "${plain_env}" "THS_TRADE_BASE_URL" "http://127.0.0.1:49301"
     remove_env_value "${plain_env}" "THS_NATIVE_BRIDGE_ROUTES"
     set_env_value "${plain_env}" "THS_APP_HTTP_BRIDGE_URL" "http://127.0.0.1:49350"
     set_env_value "${plain_env}" "THS_NATIVE_LOAD_BALANCED" "1"

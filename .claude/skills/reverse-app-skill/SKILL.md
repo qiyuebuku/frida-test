@@ -569,6 +569,10 @@ Step 4: Playwright context.cookies() 获取完整 cookie（含 httpOnly）
 2. 将新发现的加固特征添加到 `protection-signatures.md`
 3. 将新的 Hook 策略添加到 `hook-strategies.md`
 4. 将踩坑记录添加到 `pitfalls.md`
+5. 部署到设备/模拟器、排查"改了没生效/挂起无回调/环境差异"类问题时，
+   先读 `knowledge/debugging-methodology.md`（部署铁律、观测方法论、
+   自愈模式、设备指纹移植三层、并发互踢）——两条铁律直接决定排查成败：
+   增量 install 不杀进程、logcat 切片不可信
 
 ---
 

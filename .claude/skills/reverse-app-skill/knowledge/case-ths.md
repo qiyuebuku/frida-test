@@ -17,6 +17,7 @@
 13. Hook APK 生产签名
 14. 板块 QueryClient 路由与性能优化
 15. 交易 SDK 只读查询逆向（查询目录/双观察者/进程内调用器/防崩铁律/真实数据/列主序/funds 受阻/滚轮 UI）
+16. 登录链全图、跨设备 token 设备指纹移植与生产部署（14 级拦截器/五大阻断修复/互踢/自愈）
 
 ## 1. 基本信息与目标
 
@@ -747,3 +748,82 @@ hist_order 1785ms / hist_deal 128ms）。
 YYB 仓库会把账户数据清掉，禁用；激活 ≠ 登录，激活后立即发的首请求仍被吞。
 
 遗留（9. 待优化.md）：多账户场景取"第一个 fzr"未验证；重登窗口偏长（P2）。
+
+---
+
+## 16. 交易登录链全图、跨设备 token 与生产部署（第十六轮，2026-08-18）
+
+### 16.1 登录 14 级拦截器链（f2s.q → s9m 全图，逐点实测）
+
+```
+f2s.q(tokenInfo, q3s, g8m)
+ └ s8m.c → t9m(SixPassportDecrypt) ——外层：解密六位护照/建上下文 r8m
+    └ 完成回调 p8m → s8m.f 建主链（r8m.e=智联分支决定 z9m 或 r9m）：
+    j9m → m9m → v9m → o9m → i9m(AppUpdate) → x9m(WTModule 等 r9h.d=true)
+    → [e=true] z9m(ZLBindWTPhone) → p9m(RZRQ) → w9m(VIPStation 异步HTTP) 
+      → u9m(SslCert) → y9m(YYbNature) → n9m
+      [e=false] → p9m → w9m → y9m → r9m(Session)
+    └ 链完成 m1s → e2s.a0 → s9m(SilentLogin) → t1s → mrv → r9h.o → 券商
+```
+
+- **基类 h9m 是模板方法**：`intercept(){ a() ? e() : c() }`——多数子类只覆写
+  条件 a()/名字 b()，**不覆写 intercept**！hook intercept 打点时这些子类不命中，
+  链上"凭空消失"的下一节点往往就是它们（z9m 即如此，卡了数小时）。
+  `c()`=继续（next.intercept() 或完成回调）；`e()`=停链等本环节异步流程。
+- **诊断探针**（hookTradeLoginPathDiagnostics）：每节点 enter + h9m.c 的
+  proceed（含 this.a/this.b 反射+线程名）。真机完整链 6ms 走完可作对照。
+
+### 16.2 五大阻断点与修复（AVD 无头环境实测定位）
+
+| 阻断点 | 机制 | 修复 |
+| --- | --- | --- |
+| lzr.e=false | native 路径标志仅登录成功回调（n2s.b）置位、内存不持久化 → k7r.Q→q9r.l 判走 CBAS socket 死路（AVD 无 CBAS 地址，PushConnect 缺位） | 登录前 `mzr.a.b(mgr).p(true)` 强制（=成功回调效果） |
+| z9m 绑定门禁 | a() 查**本设备**智联绑定手机号（pzh.g().e()），新设备无记录 → 停链等绑定 UI | hook z9m.a() 强制 false |
+| isWeituoLogining 僵尸 | r0s.u().j 非静默登录置位、官方复位在 r0s.o()/1h 超时 TimerTask；卡住后 k2s.b 静默丢所有 f2s.q（"could not login wt"） | 等待 10s 后 `i0(false)` 强清 |
+| 模块初始化竞态 | x9m 等 r9h.d；AVD 慢初始化（分钟级）+原重试仅 3 档错过即永久放弃 | 失败路径自续排（6 档共 ~15 分钟） |
+| fail(null)="null stuff" | App 内部重登与主动登录并发，竞争超时方回调 fail(null) | fail 后轮询 izr.a.l 5s 收编 |
+
+### 16.3 跨设备 token：设备指纹移植（券商设备绑定的构成）
+
+直接 import 真机 token → 券商拒："非交易密码方式登录失败，请输入交易密码
+登录并重新绑定"。**移植设备标识后接受**（登录 498ms，六端点真实数据）：
+
+| 层 | 键/字段 | 说明 |
+| --- | --- | --- |
+| SP `hardwareinfo.dat.xml` | `sp_key_wt_hardware_unique`（WT 层设备 ID，头号因子）、`sp_key_hardware_unique`、`sp_key_hardware_unique_server`（服务端签发）、`sp_key_hardware_mac` | 真机值直接写入（属主改回 app uid） |
+| Build | MODEL/BRAND | 反射改写；端点 `POST /stock/trade/device-spoof`（filesDir/thshook_spoof.json 持久化+启动恢复） |
+| getConfigInfo | native→Java 配置回调（26 键：IMEI/IMSI/Mac/UDID/Userid/MobileType/SessionId/...） | MobileType 随 Build 自动；**Userid 不可伪造**（须与本机 THS 会话一致，实测伪造后登录失败） |
+
+观测端点 `GET /stock/trade/device-info`（UDID/机型/最近 getConfigInfo 原文）。
+**token 单活会话**：同 token 双端并发登录互踢（1Hz 重登风暴实测）——
+真机/AVD 只能一端在线，切换时先停另一端。
+
+### 16.4 会话生命周期与自愈
+
+- **90B 帧 = 会话失效推送**：查询发在失效会话上→响应是 90B 错误帧（观察者
+  不识别→超时）→App 自动重登。被动等不可靠（重登 ~18s 且有竞态）。
+- **自愈方案**：查询超时 → `doActiveTradeLogin(force=true)`（跳过
+  already_logged_in 短路强制重发 f2s.q 重建服务端会话）→ 3s 稳定窗 →
+  重试一次。冷启动首查 ~20s，稳定窗 0~3s。客户端 GET 超时 ≥75s。
+- **token 读取坑**：z7m.i 反序列化后 x7m.i(pzr) 重算 livetime（ehi.m().n()
+  开关），AVD 恒 0 → isAvailable 恒 false（文件有效但"token unavailable"）。
+  解法：seed 文件（thshook_trade_seed.json={qsid,json,broker,token,token_time}）
+  登录门自动重播官方 import 链 + livetime 1440 修复；一次性标志成功才消耗。
+
+### 16.5 生产形态（8 实例 AVD，LSPosed 注入）
+
+- **单登录三层**：trade role 门禁（owner/user0 唯一启用，filesDir 持久化，
+  未配置实例 /stock/trade/* 全 403；`injectedViaLsposed` 判据：LSPosed 默认
+  禁用、zygisksu 默认启用）+ `THS_TRADE_BASE_URL=http://127.0.0.1:49301`
+  （owner 专用 proxy）+ LB 49350 OWNER_AFFINITY_PREFIXES 加 /stock/trade。
+- **实例端口**：18900+userId×10（owner=18900，proxy 493X1→forward 493X0）。
+- **owner 上报**：`http://10.0.2.2:8900/api/ths/token`（emulator→宿主）。
+- **AVD 特有环境**：yyb 券商库未初始化 → App 账户仓库不落盘（seed 是唯一
+  持久层）；模块初始化分钟级；8 实例 x86 高负载 ANR 风暴（load 39 实测，
+  AudioUploadService/CommunicationService/广播饥饿）——但 **owner（user 0）
+  几乎不 ANR**（前台用户优先）。
+- 验收：六端点 6/6；E2E api→49301→owner→券商 funds 3138.60 与真机一致；
+  投影 exposure_summary=available；重启 already_logged_in。
+
+详细文档：`smart-fund-server/docs/3. 实施方案/7. Agent工具/7. 生产环境交易能力
+部署与主实例单登录实施方案.md`；交接说明 §3.15。
