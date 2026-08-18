@@ -2,10 +2,10 @@
 
 ## 🔴 致命级
 
-### 0a. 增量 `adb install -r` 不杀进程——新代码根本没生效（2026-08-17 实测连坑两轮）
-- **现象**: 改代码→部署"Success"（输出含 "Performing Incremental Install"，几十 ms 完成）→行为完全不变，日志还是旧逻辑
-- **原因**: 增量安装只替换 APK 文件，运行中的进程继续用旧 dex，直到进程重启
-- **方案**: **每次 install 后必 `am force-stop <pkg>` + 重新拉起**；用响应里的新版本指纹字段确认新代码在跑。详见 `debugging-methodology.md` §1
+### 0a. 增量 `adb install -r` 双陷阱：不杀进程 + staged 永不生效（2026-08-17/18 实测连坑多轮）
+- **现象**: 改代码→部署"Success"（输出含 "Performing Incremental Install"，几十 ms 完成）→行为完全不变；即使随后 force-stop 重启**仍然跑旧代码**
+- **原因**: ①增量安装不杀运行中进程（继续用旧 dex）；②更狠的：进程运行时安装进入 **staging 状态且永不 commit**——force-stop 重启加载的还是旧版（2026-08-18 实测：只有特征字段能识别新旧）
+- **方案**: **部署流程固定为：先 `am force-stop <pkg>` → 再 `install -r --no-incremental` → 拉起**；每次部署给关键端点加版本特征字段（如响应新增字段），用特征字段确认新代码在跑。详见 `debugging-methodology.md` §1
 
 ### 0b. logcat 切片（head/tail/grep 窗口）会制造"事件不存在"的假象（2026-08-17 多次误导）
 - **现象**: 明明发生了的事件（请求/回调）在过滤结果里看不到，据此推翻正确假设

@@ -95,6 +95,10 @@ public class MainHook {
     private static final java.util.ArrayDeque<String> wtPushEvents = new java.util.ArrayDeque<>();
     private static final Object wtPushLock = new Object();
     private static volatile long wtPushCount = 0;
+    // 最近一次成功查询的时间戳（会话新鲜度信号）：写前 60s 内有成功查询
+    // 则跳过强制登录（写时长从 ~35s 压到 ~0.2s）；写失败的重试轮仍会强制
+    // 登录兜底，跳过判断错误也能自愈
+    private static volatile long lastSuccessfulQueryMs = 0L;
     // 最近一次 MasterBridge.getConfigInfo 的 query/result 原文（native→Java 要
     // 设备配置的唯一通道，设备指纹观测与伪造的核心数据源）
     private static volatile String lastGetConfigInfoQuery = "";
@@ -10391,6 +10395,8 @@ public class MainHook {
         }
         if (isWritePath) { pendingWriteLatch.remove(protocolId); pendingWriteStuff.remove(protocolId); }
         if (arrived) {
+            // 会话新鲜度信号：成功收到响应=会话可用，写前据此跳过强制登录
+            lastSuccessfulQueryMs = System.currentTimeMillis();
             // 静默宽限窗：末帧后 1.5s 内无新帧即认为响应结束（总上限仍受 request 发起后 15s 约束）。
             // 文本响应（StuffTextStruct）是终态单帧，直接跳过宽限窗
             boolean firstIsText = stuffList.get(0).getClass().getName()
@@ -10876,16 +10882,23 @@ public class MainHook {
         // 老化会话上的写会触发服务端安全重置（实测：查询恒稳、写间歇引发
         // 会话失效后全超时再自愈；真机写测试均在刚登录后成功）。force=true
         // 重发 f2s.q 拿新鲜会话后再写（实测登录 4~18s）。
+        // 会话新鲜度优化：60s 内有成功查询（lastSuccessfulQueryMs）则跳过——
+        // 写时长从 ~35s 压到 ~0.2s；跳过判断错误时由重试轮的强制登录兜底。
         try {
-            ClassLoader cl = resolveAppClassLoader(null);
-            if (cl != null) {
-                JSONObject lr = new JSONObject();
-                boolean fresh = doActiveTradeLogin(cl, lr, true);
-                out.put("pre_write_login", lr.opt("result"));
-                if (!fresh) {
-                    return errorJson(out, "pre-write login failed: " + lr.opt("error"));
+            long sinceOk = System.currentTimeMillis() - lastSuccessfulQueryMs;
+            if (lastSuccessfulQueryMs > 0 && sinceOk < 60000) {
+                out.put("pre_write_login", "skipped-fresh(" + (sinceOk / 1000) + "s)");
+            } else {
+                ClassLoader cl = resolveAppClassLoader(null);
+                if (cl != null) {
+                    JSONObject lr = new JSONObject();
+                    boolean fresh = doActiveTradeLogin(cl, lr, true);
+                    out.put("pre_write_login", lr.opt("result"));
+                    if (!fresh) {
+                        return errorJson(out, "pre-write login failed: " + lr.opt("error"));
+                    }
+                    Thread.sleep(1500);
                 }
-                Thread.sleep(1500);
             }
         } catch (Throwable loginEx) {
             Log.w(TAG, "pre-write login failed: " + loginEx);
@@ -10926,6 +10939,27 @@ public class MainHook {
                 }
                 if (executedViaState) {
                     return writeConfirmed(out, true, "order-state", arr, round, t0);
+                }
+                // 撤单在途二次确认（2026-08-18 user17 实测）：撤单请求被券商执行
+                // 但响应帧丢失（旁路亦未捕获）时，首查（超时后 2.5s）常仍"已报"，
+                // 判未执行进入重发轮 + 强制登录（最坏 40s）→ 总时长超客户端上限。
+                // 撤单落库通常在数秒内：等 4s 重查一次即"已撤"，典型时长从
+                // ~60-120s 压到 ~26s；仍未见"已撤"才进 round 2 重发。
+                if (!isBuy && entrustNo != null && round < 2) {
+                    try { Thread.sleep(4000); } catch (InterruptedException ie) {
+                        Thread.currentThread().interrupt(); }
+                    JSONObject orders2 = queryTodayOrdersBestEffort();
+                    Object recs2 = orders2 != null && orders2.optJSONObject("data") != null
+                            ? orders2.optJSONObject("data").opt("records") : null;
+                    if (recs2 == null && orders2 != null
+                            && orders2.optJSONObject("data") != null) {
+                        recs2 = orders2.optJSONObject("data").opt("rows");
+                    }
+                    if (recs2 instanceof org.json.JSONArray
+                            && orderStatusCancelled((org.json.JSONArray) recs2, entrustNo)) {
+                        return writeConfirmed(out, true, "order-state-2nd",
+                                recs2, round, t0);
+                    }
                 }
                 if (round == 2) {
                     return writeUnconfirmed(out, arr, orders, t0);
