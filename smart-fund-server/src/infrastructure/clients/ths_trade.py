@@ -26,6 +26,7 @@ from __future__ import annotations
 import logging
 import os
 import threading
+import time
 from typing import Any
 
 import httpx
@@ -156,10 +157,11 @@ class THSTradeClient:
         设备端执行——写超时后必须先查委托状态再决定是否重试，禁止盲目重发。
         """
         url = f"{self._base_url}{path}"
-        # POST（写）≥60s：撤单响应可超 30s 而操作已执行。GET（查询）≥75s：
-        # 设备端会话过期时查询走"首查超时→等重登(约20s)→重试"路径，最坏
-        # 15+20+15=50s（新鲜会话路径仍为 0.1~3s）。
-        timeout = max(self._timeout, 60.0) if method == "POST" else max(self._timeout, 75.0)
+        # POST（写）≥200s：撤单为单轮 fire（pre-login 判断 + 一轮 15s 写等待 +
+        # 状态快照，最坏 ~35s；响应帧丢失时由本层 async 轮询确认，不占此超时）。
+        # GET（查询）≥75s：设备端会话过期时查询走"首查超时→等重登(约20s)→
+        # 重试"路径，最坏 15+20+15=50s（新鲜会话路径仍为 0.1~3s）。
+        timeout = max(self._timeout, 200.0) if method == "POST" else max(self._timeout, 75.0)
         with self._lock:
             try:
                 resp = self._client.request(
@@ -294,7 +296,56 @@ class THSTradeClient:
             "withdrawable_qty": withdrawable_qty.strip(),
             "confirm": "true",
         }
-        return self._request("POST", "/stock/trade/cancel", json_body=body)
+        result = self._request("POST", "/stock/trade/cancel", json_body=body)
+        # 异步确认协议（2026-08-18 fire-and-forget）：设备端只负责发出（<1s
+        # 返回 fired），连续写场景同步响应帧在券商通道层不可得（onChannelBad
+        # 丢帧）。唯一可靠信源是 today_order 终态——轮询确认"已撤"；60s 未
+        # 确认（首次 fire 可能落在死会话上被丢）则再 fire 一次并续轮询 30s。
+        if not result.get("async_confirm"):
+            return result
+        fired = result
+        for attempt in (1, 2):
+            if attempt == 2:
+                fired = self._request("POST", "/stock/trade/cancel", json_body=body)
+                fired["refired"] = True
+            deadline = (
+                time.monotonic() + 60.0 if attempt == 1 else time.monotonic() + 30.0
+            )
+            while time.monotonic() < deadline:
+                time.sleep(3.0)
+                orders = self.today_orders()
+                for rec in orders.get("data", {}).get("records") or []:
+                    if rec.get("合同编号") == entrust_no.strip():
+                        state = rec.get("状态", "")
+                        if "已撤" in state:
+                            fired.update(
+                                {
+                                    "executed": True,
+                                    "confirmed_via": "async-order-state",
+                                    "final_state": state,
+                                    "attempts": attempt,
+                                }
+                            )
+                            return fired
+                        if "废" in state:
+                            fired.update(
+                                {
+                                    "executed": False,
+                                    "confirmed_via": "async-order-state",
+                                    "final_state": state,
+                                    "error": f"order became invalid: {state}",
+                                    "attempts": attempt,
+                                }
+                            )
+                            return fired
+        fired.update(
+            {
+                "executed": False,
+                "confirmed_via": "async-timeout",
+                "error": "cancel fired twice but order state not confirmed in 90s",
+            }
+        )
+        return fired
 
     def login(self) -> dict[str, Any]:
         """主动登录（POST /stock/trade/login，设备端唯一登录发起链）。

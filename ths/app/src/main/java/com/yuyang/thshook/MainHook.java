@@ -99,6 +99,11 @@ public class MainHook {
     // 则跳过强制登录（写时长从 ~35s 压到 ~0.2s）；写失败的重试轮仍会强制
     // 登录兜底，跳过判断错误也能自愈
     private static volatile long lastSuccessfulQueryMs = 0L;
+    // 最近一次成功写响应的时间戳（2026-08-18 连续写实测）：写后服务端会话即
+    // 失效并进入恢复期——期内再写（如 BUY 后撤单）被 onChannelBad(code=1)
+    // 静默丢弃，期内强制登录也持续 fail(null)（竞争）。写前等待冷却窗
+    // （45s，实测 round2 在 ~77s 发出即成功）避开恢复期。
+    private static volatile long lastSuccessfulWriteMs = 0L;
     // 最近一次 MasterBridge.getConfigInfo 的 query/result 原文（native→Java 要
     // 设备配置的唯一通道，设备指纹观测与伪造的核心数据源）
     private static volatile String lastGetConfigInfoQuery = "";
@@ -931,24 +936,45 @@ public class MainHook {
         }, "THSHook-Proxy").start();
     }
 
+    /** 逐字节读一行（去 \r\n；EOF 且无内容返回 null）。字节层面读取，
+     *  与后续 body 的字节精确读保持同一流位置（不走 Reader 的预读）。 */
+    private static String readRawLine(java.io.InputStream in) throws java.io.IOException {
+        StringBuilder sb = new StringBuilder(96);
+        int c;
+        while ((c = in.read()) != -1) {
+            if (c == '\n') break;
+            sb.append((char) c);
+        }
+        if (c == -1 && sb.length() == 0) return null;
+        int len = sb.length();
+        if (len > 0 && sb.charAt(len - 1) == '\r') sb.setLength(len - 1);
+        return sb.toString();
+    }
+
     private static void handleProxyRequest(Socket client, ClassLoader cl) {
         try {
             // 180s：写端点全流程（pre-login+写+状态确认）实测可达 ~90s，
             // 30s 读超时会在慢 handler 期间因缓冲读的隐蔽阻塞掐断连接
             // （客户端表现为 30.0s "Server disconnected"）
-            client.setSoTimeout(180000);
-            BufferedReader reader = new BufferedReader(new InputStreamReader(client.getInputStream()));
+            client.setSoTimeout(300000);
+            // 2026-08-18 关键修复：body 必须按字节流读。此前用 BufferedReader
+            // 的 char[] 按 Content-Length（字节数）读——body 含中文（如撤单的
+            // stock_name，UTF-8 3字节/字）时 char 数 < 字节数，read 永久阻塞
+            // 等待不存在的数据（实测含中文的 POST 全部挂起、纯 ASCII 的 BUY
+            // 正常）。请求行/headers 逐字节读避免 BufferedReader 预读越界。
+            java.io.BufferedInputStream rawIn = new java.io.BufferedInputStream(
+                    client.getInputStream());
             OutputStream out = client.getOutputStream();
 
             // 读取 HTTP 请求行
-            String requestLine = reader.readLine();
+            String requestLine = readRawLine(rawIn);
             if (requestLine == null) { client.close(); return; }
 
             if ("THSSTREAM/1".equals(requestLine)) {
                 client.setSoTimeout(0);
                 handleNativeRealtimeStream(
                         client,
-                        reader,
+                        new BufferedReader(new InputStreamReader(rawIn, "UTF-8")),
                         out,
                         resolveAppClassLoader(cl));
                 return;
@@ -957,23 +983,23 @@ public class MainHook {
             // 读取 headers
             int contentLength = 0;
             String line;
-            while ((line = reader.readLine()) != null && !line.isEmpty()) {
+            while ((line = readRawLine(rawIn)) != null && !line.isEmpty()) {
                 if (line.toLowerCase().startsWith("content-length:")) {
                     contentLength = Integer.parseInt(line.substring(15).trim());
                 }
             }
 
-            // 读取 body
+            // 读取 body（字节精确读 + UTF-8 解码）
             String body = "";
             if (contentLength > 0) {
-                char[] buf = new char[contentLength];
+                byte[] buf = new byte[contentLength];
                 int read = 0;
                 while (read < contentLength) {
-                    int n = reader.read(buf, read, contentLength - read);
+                    int n = rawIn.read(buf, read, contentLength - read);
                     if (n == -1) break;
                     read += n;
                 }
-                body = new String(buf, 0, read);
+                body = new String(buf, 0, read, "UTF-8");
             }
 
             Log.i(TAG, "Proxy request: " + requestLine + " body=" + body.substring(0, Math.min(200, body.length())));
@@ -10347,6 +10373,20 @@ public class MainHook {
         final CountDownLatch bypassLatch;
         final java.util.List<Object> bypassStuff;
         if (isWritePath) {
+            // lzr.e（native 路径标志）不持久化且会被 App 内部重置（实测 BUY 后
+            // 20s 的 CANCEL 时 k7r.Q 已从 true 翻回 false）→ 请求走 socket
+            // session-check 死路被 onChannelBad(code=1) 静默丢弃（无响应无失败
+            // 回调）。写路径每次发送前强制置位，等价登录成功回调的效果。
+            try {
+                Class<?> mzrClass = cl.loadClass("mzr");
+                Object mzrA = mzrClass.getField("a").get(null);
+                Object lzr = mzrClass.getMethod("b", cl.loadClass("pzr"))
+                        .invoke(mzrA, tradeAccountManagerInstance);
+                lzr.getClass().getMethod("p", boolean.class).invoke(lzr, true);
+                Log.w(TAG, "WritePath forced lzr.e=true (native jniRequest)");
+            } catch (Throwable t) {
+                Log.w(TAG, "WritePath force lzr.e failed: " + t);
+            }
             bypassLatch = new CountDownLatch(1);
             bypassStuff = java.util.Collections.synchronizedList(new ArrayList<>());
             pendingWriteLatch.put(protocolId, bypassLatch);
@@ -10397,6 +10437,7 @@ public class MainHook {
         if (arrived) {
             // 会话新鲜度信号：成功收到响应=会话可用，写前据此跳过强制登录
             lastSuccessfulQueryMs = System.currentTimeMillis();
+            if (isWritePath) lastSuccessfulWriteMs = lastSuccessfulQueryMs;
             // 静默宽限窗：末帧后 1.5s 内无新帧即认为响应结束（总上限仍受 request 发起后 15s 约束）。
             // 文本响应（StuffTextStruct）是终态单帧，直接跳过宽限窗
             boolean firstIsText = stuffList.get(0).getClass().getName()
@@ -10884,6 +10925,11 @@ public class MainHook {
         // 重发 f2s.q 拿新鲜会话后再写（实测登录 4~18s）。
         // 会话新鲜度优化：60s 内有成功查询（lastSuccessfulQueryMs）则跳过——
         // 写时长从 ~35s 压到 ~0.2s；跳过判断错误时由重试轮的强制登录兜底。
+        // 写后恢复期（2026-08-18 连续写实测）：写成功后服务端会话即失效，
+        // 紧随的写被 onChannelBad(code=1) 静默丢弃——恢复期"冷却等待"实测
+        // 无效（App 自动重登在无 UI 态恢复不了会话）；有效路径是 round1 快
+        // 试 → 超时确认 → round2 前强制登录重发（~60-90s 全链），依赖
+        // 客户端超时 ≥200s 与设备端 SoTimeout 300s 兜住。
         try {
             long sinceOk = System.currentTimeMillis() - lastSuccessfulQueryMs;
             if (lastSuccessfulQueryMs > 0 && sinceOk < 60000) {
@@ -11147,25 +11193,33 @@ public class MainHook {
         }
         resp.put("protocolId", 25102);
         resp.put("pageId", 2683);
-        // 2026-08-18 压测修正：fluent 链（P/U/R/c0/a0，invokeWithdrawV3p）在
-        // AVD 上 handler 挂死（真机 136ms 正常）；改走与买入完全同款的
-        // H(pageId,protocolId,observer,params) 链（invokeTradeQuery bindAccount=
-        // false + 显式参数）——买入实测可稳定到达券商。响应解析同路径
-        // （StuffResourceStruct 的 buffer GBK 解码在 stuffTableToJson 内）。
-        String result = executeWriteWithConfirm(25102, 2683, params,
-                false, stockCode, null, entrustNo);
-        if (resp.length() > 0) {
+        // 2026-08-18 终版协议（fire-and-forget）：撤单链路上任何同步等待都会
+        // 拖死 handler——连续写场景同步响应帧被 onChannelBad 丢、ensure 链
+        // 按档自续（15/45/90s...）、强制登录在锁上竞争，实测单轮同步也要
+        // >200s。而撤单请求本身 100% 能到达券商（压测 8/8 实际执行成功，
+        // 唯一可靠信源是 today_order 终态）。因此本端点只负责"发出"（异步
+        // 线程，<1s 返回 fired），执行确认完全由调用方（服务端 cancel_order）
+        // 轮询 today_order 完成；未确认时由服务端再次 fire。
+        Thread fireThread = new Thread(() -> {
             try {
-                JSONObject merged = new JSONObject(result);
-                java.util.Iterator<String> keys = resp.keys();
-                while (keys.hasNext()) {
-                    String k = keys.next();
-                    if (!merged.has(k)) merged.put(k, resp.get(k));
-                }
-                result = merged.toString();
-            } catch (Throwable ignore) { }
-        }
-        return result;
+                String r = invokeTradeQuery(25102, 2683, params, false, true);
+                Log.w(TAG, "cancel-fire done: " + (r == null ? "null"
+                        : r.substring(0, Math.min(120, r.length()))));
+            } catch (Throwable t) {
+                Log.w(TAG, "cancel-fire failed: " + t);
+            }
+        }, "cancel-fire");
+        fireThread.setDaemon(true);
+        fireThread.start();
+        try {
+            resp.put("ok", true);
+            resp.put("fired", true);
+            resp.put("async_confirm", true);
+            resp.put("executed", (Object) null);
+            resp.put("confirm_hint", "poll today_order for 已撤");
+            resp.put("elapsed_ms", 0);
+        } catch (Throwable ignore) { }
+        return resp.toString();
     }
 
     /** v3p 撤单发送链：uqv.e(true).P(2683).U(25102).R(kmv.c(observer)).c0(params).a0()。

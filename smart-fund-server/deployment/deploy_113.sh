@@ -40,6 +40,7 @@ THS_WORKER_CONCURRENCY="${THS_WORKER_CONCURRENCY:-8}"
 THS_SECTOR_WORKER_CONCURRENCY="${THS_SECTOR_WORKER_CONCURRENCY:-4}"
 HTTP_WORKER_CONCURRENCY="${HTTP_WORKER_CONCURRENCY:-8}"
 INTERNAL_WORKER_CONCURRENCY="${INTERNAL_WORKER_CONCURRENCY:-4}"
+KG_RELATION_WORKER_CONCURRENCY="${KG_RELATION_WORKER_CONCURRENCY:-3}"
 
 CONDA_BASE="/home/${REMOTE_USER}/anaconda3"
 CONDA_ENV="smart-fund"
@@ -339,7 +340,7 @@ install_production_config() {
     set_env_value "${plain_env}" "THS_NATIVE_BRIDGE_URL" "http://127.0.0.1:49350"
     # 交易通道固定路由 trade 专属实例（user17，forward 49390→设备18980；2026-08-18
     # 起交易与采集解耦：owner/其余 8 实例 role 门禁全关，交易会话独占 user17）
-    set_env_value "${plain_env}" "THS_TRADE_BASE_URL" "http://127.0.0.1:49390"
+    set_env_value "${plain_env}" "THS_TRADE_BASE_URL" "http://127.0.0.1:49391"
     remove_env_value "${plain_env}" "THS_NATIVE_BRIDGE_ROUTES"
     set_env_value "${plain_env}" "THS_APP_HTTP_BRIDGE_URL" "http://127.0.0.1:49350"
     set_env_value "${plain_env}" "THS_NATIVE_LOAD_BALANCED" "1"
@@ -838,7 +839,7 @@ Group=${REMOTE_USER}
 WorkingDirectory=${SERVER_DIR}
 EnvironmentFile=${ENV_FILE}
 Environment=PYTHONUNBUFFERED=1
-ExecStart=${PYTHON} -m src.interfaces.cli knowledge-worker --stage relation -c 1
+ExecStart=${PYTHON} -m src.interfaces.cli knowledge-worker --stage relation -c ${KG_RELATION_WORKER_CONCURRENCY}
 Restart=always
 RestartSec=5
 TimeoutStopSec=600
