@@ -81,6 +81,14 @@ public class MainHook {
     private static final AtomicLong lastTradeSessionCheckLogMs = new AtomicLong(0L);
     // 最近一次 resetCbasServer 记录（host:port），/stock/trade/cbas/status 回显
     private static volatile String lastCbasServerReset = "never";
+    // 写端点响应旁路捕获（2026-08-18 压测发现：写协议响应帧被 App 常驻观察者
+    // 竞争消费，自注册 observer 大概率收不到——操作执行成功但响应丢失）。
+    // 写请求发出前按 protocolId 登记 pending，ixm/nxm receive hook 检测到
+    // frameId 匹配的帧时旁路复制一份，等待期结束后以旁路结果兜底。
+    private static final ConcurrentHashMap<Integer, java.util.List<Object>> pendingWriteStuff =
+            new ConcurrentHashMap<>();
+    private static final ConcurrentHashMap<Integer, CountDownLatch> pendingWriteLatch =
+            new ConcurrentHashMap<>();
     // 最近一次 MasterBridge.getConfigInfo 的 query/result 原文（native→Java 要
     // 设备配置的唯一通道，设备指纹观测与伪造的核心数据源）
     private static volatile String lastGetConfigInfoQuery = "";
@@ -6669,6 +6677,7 @@ public class MainHook {
             Pine.hook(receiveMethod, new MethodHook() {
                 @Override
                 public void beforeCall(Pine.CallFrame callFrame) {
+                    capturePendingWrite(callFrame.args[0], "ixm");
                     String logMsg = "TradeResp.ixm observer="
                             + (callFrame.thisObject == null ? "static" : callFrame.thisObject.getClass().getName())
                             + " stuff=" + describeStuffStruct(callFrame.args[0]);
@@ -6684,6 +6693,7 @@ public class MainHook {
             Pine.hook(nxmReceive, new MethodHook() {
                 @Override
                 public void beforeCall(Pine.CallFrame callFrame) {
+                    capturePendingWrite(callFrame.args[0], "nxm");
                     String logMsg = "TradeResp.nxm observer="
                             + (callFrame.thisObject == null ? "static" : callFrame.thisObject.getClass().getName())
                             + describeObserverIds(callFrame.thisObject)
@@ -10272,6 +10282,20 @@ public class MainHook {
         }
 
         long startMs = System.currentTimeMillis();
+        // 写协议（bindAccount=false 路径=写执行器）登记旁路捕获：响应帧被 App
+        // 常驻观察者竞争消费时，ixm/nxm hook 旁路兜底（frameId 匹配 protocolId）
+        final boolean isWritePath = !bindAccount;
+        final CountDownLatch bypassLatch;
+        final java.util.List<Object> bypassStuff;
+        if (isWritePath) {
+            bypassLatch = new CountDownLatch(1);
+            bypassStuff = java.util.Collections.synchronizedList(new ArrayList<>());
+            pendingWriteLatch.put(protocolId, bypassLatch);
+            pendingWriteStuff.put(protocolId, bypassStuff);
+        } else {
+            bypassLatch = null;
+            bypassStuff = null;
+        }
         try {
             Class<?> uqvClass = cl.loadClass("uqv");
             Object builder = uqvClass.getMethod("e", boolean.class).invoke(null, Boolean.TRUE);
@@ -10286,6 +10310,7 @@ public class MainHook {
             }
             rpv.getClass().getMethod("request").invoke(rpv);
         } catch (Throwable e) {
+            if (isWritePath) { pendingWriteLatch.remove(protocolId); pendingWriteStuff.remove(protocolId); }
             unregisterObserverQuietly(cl, observer);
             return errorJson(resp, "query invoke failed: " + describeThrowableChain(e));
         }
@@ -10297,6 +10322,19 @@ public class MainHook {
             Thread.currentThread().interrupt();
             arrived = false;
         }
+        // 自注册 observer 超时 → 旁路等 2s；旁路有帧=App 观察者抢走了响应，
+        // 用旁路结果继续（写响应丢失问题的修复）
+        if (!arrived && isWritePath) {
+            try { arrived = bypassLatch.await(2, TimeUnit.SECONDS); } catch (InterruptedException ignore) { }
+            if (arrived && !bypassStuff.isEmpty()) {
+                stuffList.addAll(bypassStuff);
+                lastAddMs.set(System.currentTimeMillis());
+                try { resp.put("via_bypass", true); } catch (JSONException ignore) { }
+                Log.w(TAG, "WriteBypass rescued protocol=" + protocolId
+                        + " frames=" + bypassStuff.size());
+            }
+        }
+        if (isWritePath) { pendingWriteLatch.remove(protocolId); pendingWriteStuff.remove(protocolId); }
         if (arrived) {
             // 静默宽限窗：末帧后 1.5s 内无新帧即认为响应结束（总上限仍受 request 发起后 15s 约束）。
             // 文本响应（StuffTextStruct）是终态单帧，直接跳过宽限窗
@@ -10751,7 +10789,53 @@ public class MainHook {
         resp.put("protocolId", protoId);
         resp.put("pageId", pageId);
         resp.put("action", action);
-        return invokeTradeQuery(protoId, pageId, params, false, true);
+        String result = invokeTradeQuery(protoId, pageId, params, false, true);
+        return appendWriteConfirmation(result, code.trim());
+    }
+
+    /** 写响应旁路捕获：响应帧经任一观察者体系分发时，frameId 匹配 pending
+     *  登记的写协议即复制一份（不参与 App 观察者的消费竞争）。 */
+    private static void capturePendingWrite(Object stuff, String via) {
+        if (stuff == null || pendingWriteLatch.isEmpty()) return;
+        try {
+            int frameId = stuff.getClass().getField("frameId").getInt(stuff);
+            java.util.List<Object> sink = pendingWriteStuff.get(frameId);
+            if (sink != null) {
+                sink.add(stuff);
+                CountDownLatch l = pendingWriteLatch.get(frameId);
+                if (l != null) l.countDown();
+                Log.w(TAG, "WriteBypass captured frameId=" + frameId
+                        + " via=" + via + " stuff=" + stuff.getClass().getSimpleName());
+            }
+        } catch (Throwable ignored) { }
+    }
+
+    /** 写端点兜底确认（2026-08-18 压测发现：写操作 100% 执行但响应观察者
+     *  2/3 概率收不到帧，客户端拿到超时无法定论）。响应超时时自动查当日委托
+     *  附最新状态——"操作已执行与否"以委托列表为准（写超时铁律的设备端实现）。 */
+    private static String appendWriteConfirmation(String result, String code) {
+        if (result == null || !result.contains("timeout waiting response")) return result;
+        try {
+            Thread.sleep(3000);
+            String orders = invokeTradeQueryByName("today_order");
+            JSONObject out = new JSONObject(result);
+            out.put("write_unconfirmed", true);
+            out.put("note", "write likely executed but response frame lost; "
+                    + "today_order attached as ground truth");
+            try {
+                JSONObject od = new JSONObject(orders);
+                JSONObject dd = od.optJSONObject("data");
+                if (dd != null) {
+                    Object recs = dd.opt("records");
+                    if (recs == null) recs = dd.opt("rows");
+                    if (recs != null) out.put("followup_orders", recs);
+                }
+                out.put("followup_ok", od.opt("ok"));
+            } catch (Throwable ignore) { }
+            return out.toString();
+        } catch (Throwable t) {
+            return result;
+        }
     }
 
     /**
@@ -10799,7 +10883,24 @@ public class MainHook {
         }
         resp.put("protocolId", 25102);
         resp.put("pageId", 2683);
-        return invokeWithdrawV3p(params, resp);
+        // 2026-08-18 压测修正：fluent 链（P/U/R/c0/a0，invokeWithdrawV3p）在
+        // AVD 上 handler 挂死（真机 136ms 正常）；改走与买入完全同款的
+        // H(pageId,protocolId,observer,params) 链（invokeTradeQuery bindAccount=
+        // false + 显式参数）——买入实测可稳定到达券商。响应解析同路径
+        // （StuffResourceStruct 的 buffer GBK 解码在 stuffTableToJson 内）。
+        String result = invokeTradeQuery(25102, 2683, params, false, true);
+        if (resp.length() > 0) {
+            try {
+                JSONObject merged = new JSONObject(result);
+                java.util.Iterator<String> keys = resp.keys();
+                while (keys.hasNext()) {
+                    String k = keys.next();
+                    if (!merged.has(k)) merged.put(k, resp.get(k));
+                }
+                result = merged.toString();
+            } catch (Throwable ignore) { }
+        }
+        return appendWriteConfirmation(result, stockCode);
     }
 
     /** v3p 撤单发送链：uqv.e(true).P(2683).U(25102).R(kmv.c(observer)).c0(params).a0()。
