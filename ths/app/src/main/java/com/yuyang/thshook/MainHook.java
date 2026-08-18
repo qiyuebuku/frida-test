@@ -89,6 +89,12 @@ public class MainHook {
             new ConcurrentHashMap<>();
     private static final ConcurrentHashMap<Integer, CountDownLatch> pendingWriteLatch =
             new ConcurrentHashMap<>();
+    // WT 模块推送事件缓冲（receiveWTModulePush→GBK 明文，kbr.d 已证实）：
+    // 委托/成交状态变化的被动通知，写确认从轮询变事件驱动的数据源。
+    // 环形 100 条，/stock/trade/push-events 读取。
+    private static final java.util.ArrayDeque<String> wtPushEvents = new java.util.ArrayDeque<>();
+    private static final Object wtPushLock = new Object();
+    private static volatile long wtPushCount = 0;
     // 最近一次 MasterBridge.getConfigInfo 的 query/result 原文（native→Java 要
     // 设备配置的唯一通道，设备指纹观测与伪造的核心数据源）
     private static volatile String lastGetConfigInfoQuery = "";
@@ -1361,6 +1367,15 @@ public class MainHook {
             // getConfigInfo query+result 原文），跨设备 diff 用
             if (requestLine.startsWith("GET /stock/trade/device-info")) {
                 String result = handleTradeDeviceInfo();
+                sendResponse(out, 200, result);
+                client.close();
+                return;
+            }
+
+            // GET /stock/trade/push-events — WT 模块推送事件（委托/成交状态变化
+            // 的被动通知，GBK 明文环形缓冲 100 条）
+            if (requestLine.startsWith("GET /stock/trade/push-events")) {
+                String result = handleTradePushEvents();
                 sendResponse(out, 200, result);
                 client.close();
                 return;
@@ -6731,6 +6746,26 @@ public class MainHook {
                                 + " args=" + describeTradeArguments(callFrame.args);
                         Log.i(TAG, logMsg);
                         addTradeLog("REQ: " + logMsg);
+                        // WT 推送（GBK 明文：委托/成交状态变化通知）进环形缓冲，
+                        // /stock/trade/push-events 读取——写确认事件驱动的数据源
+                        if ("receiveWTModulePush".equals(methodName)
+                                && callFrame.args != null && callFrame.args.length > 0
+                                && callFrame.args[0] instanceof byte[]) {
+                            try {
+                                String push = new String((byte[]) callFrame.args[0], "GBK");
+                                synchronized (wtPushLock) {
+                                    wtPushCount++;
+                                    wtPushEvents.addLast(
+                                            new java.text.SimpleDateFormat("HH:mm:ss.SSS")
+                                                    .format(new java.util.Date()) + " " + push);
+                                    while (wtPushEvents.size() > 100) wtPushEvents.pollFirst();
+                                }
+                                Log.w(TAG, "WTPush[" + wtPushCount + "]: "
+                                        + push.substring(0, Math.min(push.length(), 120)));
+                            } catch (Throwable pushEx) {
+                                Log.w(TAG, "WTPush decode failed: " + pushEx);
+                            }
+                        }
 
                         if (methodName.equals("jniRequest")) {
                             Log.i(TAG, "=== jniRequest CALL STACK ===");
@@ -9636,6 +9671,21 @@ public class MainHook {
         return tradeRoleEnabled;
     }
 
+    /** GET /stock/trade/push-events — WT 推送事件缓冲。 */
+    private static String handleTradePushEvents() throws JSONException {
+        JSONObject out = new JSONObject();
+        out.put("endpoint", "push_events");
+        out.put("ok", true);
+        out.put("total_received", wtPushCount);
+        java.util.List<String> events = new ArrayList<>();
+        synchronized (wtPushLock) {
+            events.addAll(wtPushEvents);
+        }
+        out.put("count", events.size());
+        out.put("events", new org.json.JSONArray(events));
+        return out.toString();
+    }
+
     /** GET /stock/trade/device-info — 设备指纹观测（真机/AVD diff 数据源）。 */
     private static String handleTradeDeviceInfo() throws JSONException {
         JSONObject out = new JSONObject();
@@ -10821,7 +10871,7 @@ public class MainHook {
             JSONObject out = new JSONObject(result);
             out.put("write_unconfirmed", true);
             out.put("note", "write likely executed but response frame lost; "
-                    + "today_order attached as ground truth");
+                    + "today_order + push events attached as ground truth");
             try {
                 JSONObject od = new JSONObject(orders);
                 JSONObject dd = od.optJSONObject("data");
@@ -10831,6 +10881,16 @@ public class MainHook {
                     if (recs != null) out.put("followup_orders", recs);
                 }
                 out.put("followup_ok", od.opt("ok"));
+            } catch (Throwable ignore) { }
+            // 推送事件（事件驱动确认）：写后到达的委托/成交状态推送
+            try {
+                java.util.List<String> recent = new ArrayList<>();
+                synchronized (wtPushLock) {
+                    java.util.Iterator<String> it = wtPushEvents.descendingIterator();
+                    int n = 0;
+                    while (it.hasNext() && n < 5) { recent.add(it.next()); n++; }
+                }
+                if (!recent.isEmpty()) out.put("push_events", new org.json.JSONArray(recent));
             } catch (Throwable ignore) { }
             return out.toString();
         } catch (Throwable t) {
