@@ -929,7 +929,10 @@ public class MainHook {
 
     private static void handleProxyRequest(Socket client, ClassLoader cl) {
         try {
-            client.setSoTimeout(30000);
+            // 180s：写端点全流程（pre-login+写+状态确认）实测可达 ~90s，
+            // 30s 读超时会在慢 handler 期间因缓冲读的隐蔽阻塞掐断连接
+            // （客户端表现为 30.0s "Server disconnected"）
+            client.setSoTimeout(180000);
             BufferedReader reader = new BufferedReader(new InputStreamReader(client.getInputStream()));
             OutputStream out = client.getOutputStream();
 
@@ -10003,6 +10006,8 @@ public class MainHook {
             java.lang.reflect.Method lM = izrClass.getMethod("l", cl.loadClass("pzr"));
             if (!force && Boolean.TRUE.equals(lM.invoke(izrInst, mgr))) {
                 report.put("result", "already_logged_in");
+                // 陈旧错误清除：会话漂移期残留的 ensure_error 在登录态确认后失效
+                lastEnsureTradeError = null;
                 return true;
             }
             // isWeituoLogining 时 f2s.q 被 k2s.b 静默丢弃（"could not login wt"），
@@ -10839,8 +10844,173 @@ public class MainHook {
         resp.put("protocolId", protoId);
         resp.put("pageId", pageId);
         resp.put("action", action);
-        String result = invokeTradeQuery(protoId, pageId, params, false, true);
-        return appendWriteConfirmation(result, code.trim());
+        return executeWriteWithConfirm(protoId, pageId, params,
+                "buy".equals(action.trim().toLowerCase()), code.trim(), price.trim());
+    }
+
+    /**
+     * 有状态确认的写执行器（2026-08-18 写不稳定根因修复）：
+     * 写落在会话死窗口时既无响应也无执行（实测 3 单 1 丢失），而写不能盲目
+     * 重发。解法：超时后查当日委托定论——
+     *   buy：新委托已出现 = 已执行（不重发）；未出现 = 确认未执行 = 安全重发一次
+     *   cancel：委托状态已变（已撤*）= 已执行；状态未变 = 安全重发
+     * 两轮后仍无定论则返回未确认状态+最新委托列表（客户端/人工定论）。
+     */
+    private static String executeWriteWithConfirm(int protoId, int pageId, String params,
+                                                  boolean isBuy, String code, String price) {
+        return executeWriteWithConfirm(protoId, pageId, params, isBuy, code, price, null);
+    }
+
+    private static String executeWriteWithConfirm(int protoId, int pageId, String params,
+                                                  boolean isBuy, String code, String price,
+                                                  String entrustNo) {
+        long t0 = System.currentTimeMillis();
+        JSONObject out = new JSONObject();
+        try {
+            out.put("query", "proto_" + protoId);
+            out.put("pageId", pageId);
+            out.put("write", true);
+        } catch (JSONException ignored) { }
+
+        // 写前强制刷新登录（2026-08-18 根因修复）：券商对写操作要求新鲜会话，
+        // 老化会话上的写会触发服务端安全重置（实测：查询恒稳、写间歇引发
+        // 会话失效后全超时再自愈；真机写测试均在刚登录后成功）。force=true
+        // 重发 f2s.q 拿新鲜会话后再写（实测登录 4~18s）。
+        try {
+            ClassLoader cl = resolveAppClassLoader(null);
+            if (cl != null) {
+                JSONObject lr = new JSONObject();
+                boolean fresh = doActiveTradeLogin(cl, lr, true);
+                out.put("pre_write_login", lr.opt("result"));
+                if (!fresh) {
+                    return errorJson(out, "pre-write login failed: " + lr.opt("error"));
+                }
+                Thread.sleep(1500);
+            }
+        } catch (Throwable loginEx) {
+            Log.w(TAG, "pre-write login failed: " + loginEx);
+        }
+
+        for (int round = 1; round <= 2; round++) {
+            String result = invokeTradeQuery(protoId, pageId, params, false, true);
+            boolean timeout = result != null && result.contains("timeout waiting response");
+            if (!timeout) {
+                // 有响应（含旁路救回）——直接返回；超时兜底仍附委托状态
+                try {
+                    JSONObject r = new JSONObject(result);
+                    r.put("executed", true);
+                    r.put("confirmed_via", round == 1 ? "response" : "retry-response");
+                    return r.toString();
+                } catch (Throwable e) { return result; }
+            }
+            // 超时 → 查当日委托定论
+            try { Thread.sleep(2500); } catch (InterruptedException ie) {
+                Thread.currentThread().interrupt(); }
+            JSONObject orders = queryTodayOrdersBestEffort();
+            Object recs = orders != null
+                    ? orders.optJSONObject("data") != null
+                        ? orders.optJSONObject("data").opt("records") : null : null;
+            if (recs == null && orders != null && orders.optJSONObject("data") != null) {
+                recs = orders.optJSONObject("data").opt("rows");
+            }
+            boolean queryOk = orders != null && Boolean.TRUE.equals(orders.opt("ok"));
+            if (queryOk && recs instanceof org.json.JSONArray) {
+                org.json.JSONArray arr = (org.json.JSONArray) recs;
+                boolean executedViaState;
+                if (isBuy) {
+                    executedViaState = orderListContains(arr, code, price);
+                } else {
+                    // cancel：目标委托状态含"已撤"即已执行
+                    executedViaState = entrustNo != null
+                            && orderStatusCancelled(arr, entrustNo);
+                }
+                if (executedViaState) {
+                    return writeConfirmed(out, true, "order-state", arr, round, t0);
+                }
+                if (round == 2) {
+                    return writeUnconfirmed(out, arr, orders, t0);
+                }
+                // 未执行确认 → 会话恢复后重发（第 2 轮）
+                try {
+                    ClassLoader cl = resolveAppClassLoader(null);
+                    if (cl != null) doActiveTradeLogin(cl, new JSONObject(), true);
+                    Thread.sleep(2000);
+                } catch (Throwable ignore) { }
+            } else {
+                // 委托查询也失败（会话死透）→ 强制登录后重试
+                try {
+                    ClassLoader cl = resolveAppClassLoader(null);
+                    if (cl != null) doActiveTradeLogin(cl, new JSONObject(), true);
+                    Thread.sleep(2000);
+                } catch (Throwable ignore) { }
+                if (round == 2) {
+                    return writeUnconfirmed(out, null, orders, t0);
+                }
+            }
+        }
+        return errorJson(out, "write rounds exhausted");
+    }
+
+    private static JSONObject queryTodayOrdersBestEffort() {
+        try {
+            String r = invokeTradeQueryByName("today_order");
+            return r == null ? null : new JSONObject(r);
+        } catch (Throwable t) {
+            return null;
+        }
+    }
+
+    private static boolean orderListContains(org.json.JSONArray arr, String code, String price) {
+        int n = arr.length();
+        for (int i = 0; i < n; i++) {
+            org.json.JSONObject o = arr.optJSONObject(i);
+            if (o == null) continue;
+            String c = o.optString("代码", "");
+            String p = o.optString("价格", "");
+            if (code.equals(c) && price.equals(p)) return true;
+        }
+        return false;
+    }
+
+    private static boolean orderStatusCancelled(org.json.JSONArray arr, String entrustNo) {
+        int n = arr.length();
+        for (int i = 0; i < n; i++) {
+            org.json.JSONObject o = arr.optJSONObject(i);
+            if (o == null) continue;
+            if (entrustNo.equals(o.optString("合同编号", ""))) {
+                String st = o.optString("状态", "");
+                if (st.contains("已撤")) return true;
+            }
+        }
+        return false;
+    }
+
+    private static String writeConfirmed(JSONObject out, boolean executed, String via,
+                                         Object orders, int round, long t0) {
+        try {
+            out.put("ok", true);
+            out.put("executed", executed);
+            out.put("confirmed_via", via);
+            out.put("rounds", round);
+            if (orders != null) out.put("orders", orders);
+            out.put("elapsed_ms", System.currentTimeMillis() - t0);
+        } catch (JSONException ignored) { }
+        return out.toString();
+    }
+
+    private static String writeUnconfirmed(JSONObject out, Object orders,
+                                           JSONObject ordersResp, long t0) {
+        try {
+            out.put("ok", false);
+            out.put("executed", false);
+            out.put("confirmed_via", "none");
+            out.put("error", "write unconfirmed after 2 rounds (session window); "
+                    + "treat orders list as ground truth");
+            if (orders != null) out.put("orders", orders);
+            if (ordersResp != null) out.put("followup_ok", ordersResp.opt("ok"));
+            out.put("elapsed_ms", System.currentTimeMillis() - t0);
+        } catch (JSONException ignored) { }
+        return out.toString();
     }
 
     /** 写响应旁路捕获：响应帧经任一观察者体系分发时，frameId 匹配 pending
@@ -10948,7 +11118,8 @@ public class MainHook {
         // H(pageId,protocolId,observer,params) 链（invokeTradeQuery bindAccount=
         // false + 显式参数）——买入实测可稳定到达券商。响应解析同路径
         // （StuffResourceStruct 的 buffer GBK 解码在 stuffTableToJson 内）。
-        String result = invokeTradeQuery(25102, 2683, params, false, true);
+        String result = executeWriteWithConfirm(25102, 2683, params,
+                false, stockCode, null, entrustNo);
         if (resp.length() > 0) {
             try {
                 JSONObject merged = new JSONObject(result);
@@ -10960,7 +11131,7 @@ public class MainHook {
                 result = merged.toString();
             } catch (Throwable ignore) { }
         }
-        return appendWriteConfirmation(result, stockCode);
+        return result;
     }
 
     /** v3p 撤单发送链：uqv.e(true).P(2683).U(25102).R(kmv.c(observer)).c0(params).a0()。
