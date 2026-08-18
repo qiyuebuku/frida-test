@@ -827,3 +827,34 @@ f2s.q(tokenInfo, q3s, g8m)
 
 详细文档：`smart-fund-server/docs/3. 实施方案/7. Agent工具/7. 生产环境交易能力
 部署与主实例单登录实施方案.md`；交接说明 §3.15。
+
+## 17. 多用户交易专属实例（第十七轮，2026-08-18）
+
+**场景**：交易会话与采集实例解耦——同 emulator 增第 9 个 user（17/trade）专管交易。
+
+### 全新 user 的"三层状态移植"（核心经验，缺一层一种死法）
+
+| 层 | 文件 | 缺失症状 |
+| --- | --- | --- |
+| ①设备指纹 | shared_prefs/hardwareinfo.dat.xml | token 被券商拒（非交易密码方式登录失败） |
+| ②THS 身份 | user_md5.xml、_sp_last_username.xml、sp_key_newuser.xml、sp_default_group.xml、sp_wt_expected_login_account.xml + files/{userId}_authorization.bat | z7m.i 读回恒 null → "token unavailable"（authorization.bat 文件名含 ulm.e() 的 userId，身份 SP 缺则 userId 空、文件名不匹配） |
+| ③交易通道 | files/cbas_mt_*.txt、cbas_temp_username.txt、_weituo_yybinfo.dat、_weituonew_third_new.dat、mt_*_weituo_*.dat、yybnature_cached.dat、user_info.dat、files/{userId}/ + sp_weituo_login.xml、sp_user_sid.xml、push_setting.dat.xml | 登录链 14 级拦截器卡死 y9m(YYbNature)、hrv 检查 sessionType=0 后无 Socket.connect（CBAS 地址 null→hrv.C no-op） |
+
+另配 files/thshook_trade_role.json {"enabled":true} + thshook_trade_seed.json；**不复制** thshook_report.json（上报防双跑）。
+
+### 多用户启动坑（Android 11 实测）
+
+1. 新建 user 默认 `user_setup_complete=0` → am start **静默无效**（dumpsys 可见 task 建立、ActivityRecord 存在但 app=null，crash buffer 空）。修：`settings put --user N secure user_setup_complete 1`
+2. **后台 user 无法启动 activity**（START 后无 Start proc）：必须 `am switch-user N`（等 get-current-user=N）→ `wm dismiss-keyguard` + `input keyevent 82` → `am start -n pkg/.Hexin` → 等 /health → 切回原前台 user
+3. am start 报 "its current task has been brought to the front" = 残留 task 无进程，先 force-stop
+4. `.LogoEmptyActivity` 是 launcher 入口但主 activity 是 `.Hexin`
+
+### LSPosed scope 变更铁律（事故换来的）
+
+scope 表 INSERT（mid,app_pkg_name,user_id）后 **daemon 内存缓存不重读**。手动 `kill lspd` + service.sh 拉起 = **system_server 崩溃软重启**（全部 App 被杀），且手动拉起的 lspd **注入功能失效**（App 起来零 hook 日志）。唯一正解：**重启 emulator**（Magisk service.sh 正常序拉起 lspd，采集框架 systemd lane 自动恢复全部实例，实测 8/8 全回）。
+
+### 写操作实测结论（user17）
+
+- BUY 挂单：response 确认 120-170ms 稳定（confirmed_via=response）
+- CANCEL：实际执行成功（today_order 终态"已撤"）但响应链最坏 120s——写响应帧丢失（App 观察者竞争消费，ixm/nxm 旁路兜不住）+ 两轮×(15s 写等待+登录 40s)。优化=撤单在途二次确认（首查"已报"后等 4s 重查"已撤"即返回，~26s）
+- 废单边界：撤"废单"类终态委托无意义（券商不响应撤单请求）→ 确认逻辑只认"已撤"
