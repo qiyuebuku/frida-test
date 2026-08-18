@@ -10356,6 +10356,7 @@ public class MainHook {
             String r = result.get();
             report.put("pwd_result", r);
             if (!"success".equals(r)) {
+                if (failDetail.get() != null) report.put("pwd_fail_detail", failDetail.get());
                 lastEnsureTradeError = "trade pwd login fail: " + failDetail.get();
                 return false;
             }
