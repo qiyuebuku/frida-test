@@ -304,6 +304,7 @@ class THSTradeClient:
         if not result.get("async_confirm"):
             return result
         fired = result
+        missing_rounds = 0
         for attempt in (1, 2):
             if attempt == 2:
                 fired = self._request("POST", "/stock/trade/cancel", json_body=body)
@@ -314,8 +315,10 @@ class THSTradeClient:
             while time.monotonic() < deadline:
                 time.sleep(3.0)
                 orders = self.today_orders()
+                found = False
                 for rec in orders.get("data", {}).get("records") or []:
                     if rec.get("合同编号") == entrust_no.strip():
+                        found = True
                         state = rec.get("状态", "")
                         if "已撤" in state:
                             fired.update(
@@ -338,6 +341,22 @@ class THSTradeClient:
                                 }
                             )
                             return fired
+                # 委托号在当日委托列表中不存在（假单号/隔日单）——连续两轮
+                # 缺失即快速失败，不再空耗轮询窗口（压测实测假单号曾等 97s）
+                if not found:
+                    missing_rounds += 1
+                    if missing_rounds >= 2:
+                        fired.update(
+                            {
+                                "executed": False,
+                                "confirmed_via": "async-order-missing",
+                                "error": f"entrust_no {entrust_no} not in today_order "
+                                "(bogus or stale entrust_no)",
+                            }
+                        )
+                        return fired
+                else:
+                    missing_rounds = 0
         fired.update(
             {
                 "executed": False,
