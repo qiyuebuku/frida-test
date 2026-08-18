@@ -340,7 +340,7 @@ install_production_config() {
     set_env_value "${plain_env}" "THS_NATIVE_BRIDGE_URL" "http://127.0.0.1:49350"
     # 交易通道固定路由 trade 专属实例（user17，forward 49390→设备18980；2026-08-18
     # 起交易与采集解耦：owner/其余 8 实例 role 门禁全关，交易会话独占 user17）
-    set_env_value "${plain_env}" "THS_TRADE_BASE_URL" "http://127.0.0.1:49391"
+    set_env_value "${plain_env}" "THS_TRADE_BASE_URL" "http://127.0.0.1:49350"
     remove_env_value "${plain_env}" "THS_NATIVE_BRIDGE_ROUTES"
     set_env_value "${plain_env}" "THS_APP_HTTP_BRIDGE_URL" "http://127.0.0.1:49350"
     set_env_value "${plain_env}" "THS_NATIVE_LOAD_BALANCED" "1"
