@@ -1339,6 +1339,16 @@ public class MainHook {
                 return;
             }
 
+            // POST /stock/trade/pwd — 设置/清除交易密码（token 过期时自动密码登录）；
+            // GET 查询是否已配置。密码不回显不进日志。
+            if (requestLine.startsWith("POST /stock/trade/pwd")
+                    || requestLine.startsWith("GET /stock/trade/pwd")) {
+                String result = handleTradePassword(body);
+                sendResponse(out, 200, result);
+                client.close();
+                return;
+            }
+
             // GET /stock/trade/token/export — 导出当前交易 token 明文（跨设备共享
             // 实验：生产 VM 复用手机端刷新的 token，避免 VM 内人工登录）
             if (requestLine.startsWith("GET /stock/trade/token/export")) {
@@ -6560,6 +6570,50 @@ public class MainHook {
             Log.w(TAG, "login-path diagnostics hook failed: " + e);
         }
 
+        // 2026-08-18 crash 防护：rpv.X/Y/C 对 this.d（mqv 通信服务）裸调用，
+        // 冷启动窗口 uqv.e() 从 Map<Integer,mqv> 取不到服务注入 null →
+        // request() → this.d.a() 主线程 NPE，App 每分钟 crash 循环
+        // （dropbox: rpv.X(SourceFile:4) ← mrv.request ← sov.run）。
+        // 防护两件套：① X/Y/C beforeCall 检查 d==null 时丢弃请求防崩；
+        // ② uqv.e afterCall 对创建出的 rpv 补注入（从注册表重取非空 mqv）。
+        try {
+            hookTradeCommServiceGuard(cl);
+        } catch (Throwable e) {
+            Log.w(TAG, "comm-service guard hook failed: " + e);
+        }
+
+        // 2026-08-18 token 时间源防护：TokenInfo.isAvailable 用 ghi.m().p()
+        // （yb6.a.b() App 时间源）校验过期——模拟器环境该时间源异常（未同步/
+        // 返回 0）时 token 永远判过期，z7m.i 恒 null，登录死锁。改用系统时钟
+        // 等价校验：mLiveTime>0 且按 System.currentTimeMillis 计算未过期则
+        // 强制返回 true。真过期场景由券商登录回调明确拒绝，无安全风险。
+        try {
+            Class<?> tokenInfoClass = cl.loadClass(
+                    "com.hexin.android.weituo.hstrade.feature.login.bindlogin.model.TokenInfo");
+            Method isAvail = tokenInfoClass.getDeclaredMethod("isAvailable");
+            isAvail.setAccessible(true);
+            Pine.hook(isAvail, new MethodHook() {
+                @Override
+                public void beforeCall(Pine.CallFrame callFrame) {
+                    try {
+                        Object ti = callFrame.thisObject;
+                        int liveTime = ti.getClass().getField("mLiveTime").getInt(ti);
+                        String lbt = (String) ti.getClass().getField("lastBindingTime").get(ti);
+                        if (liveTime <= 0 || lbt == null || lbt.isEmpty()) return;
+                        long ageMs = System.currentTimeMillis()
+                                - Long.parseLong(lbt) * 1000L;
+                        if (ageMs >= 0 && ageMs < liveTime * 60000L) {
+                            callFrame.setResult(Boolean.TRUE);
+                        }
+                    } catch (Throwable ignored) {
+                    }
+                }
+            });
+            Log.w(TAG, "token isAvailable clock-guard installed");
+        } catch (Throwable e) {
+            Log.w(TAG, "token isAvailable guard failed: " + e.getMessage());
+        }
+
         // 查询构建器 rpv：G(pageId, protocolId, callback, extJson)/H(...)/D(key, value)
         // 是所有交易查询的统一入口（sxh/pxm 等页面客户端全部经过）。只记录
         // pageId/protocolId/参数键名与值类型，不记录值。
@@ -6980,6 +7034,80 @@ public class MainHook {
         // 猜测性交易接口类只尝试一次（当前版本均不存在）
         if (speculativeTradeClassesHooked.compareAndSet(false, true)) {
             hookSpeculativeTradeClasses(cl);
+        }
+    }
+
+    /** crash 防护（2026-08-18）：rpv.X/Y/C 裸调 this.d（mqv）——uqv.e() 在
+     *  通信服务注册表 Map<Integer,mqv> 未填充的冷启动窗口创建出的 rpv 带
+     *  null d，request() 即主线程 NPE crash（每分钟循环）。防护：
+     *  ① X/Y/C beforeCall d==null → setResult 丢弃请求（防崩）；
+     *  ② uqv.e afterCall → d==null 的 rpv 从注册表补注入非空 mqv。 */
+    private static void hookTradeCommServiceGuard(ClassLoader cl) throws Exception {
+        Class<?> rpvClass = cl.loadClass("rpv");
+        Class<?> mqvClass = cl.loadClass("mqv");
+        java.lang.reflect.Field dField = rpvClass.getField("d");
+        dField.setAccessible(true);
+
+        // ① 三个裸调用 this.d 的方法全部防护（参数均为 Context）
+        Class<?> ctxClass = android.content.Context.class;
+        String[] guardMethods = {"X", "Y", "C"};
+        int guarded = 0;
+        for (String mn : guardMethods) {
+            final String methodName = mn;
+            try {
+                Method m = rpvClass.getDeclaredMethod(mn, ctxClass);
+                m.setAccessible(true);
+                Pine.hook(m, new MethodHook() {
+                    @Override
+                    public void beforeCall(Pine.CallFrame callFrame) {
+                        try {
+                            Object d = dField.get(callFrame.thisObject);
+                            if (d == null) {
+                                callFrame.setResult(null);
+                                Log.w(TAG, "rpv guard: dropped " + methodName
+                                        + " request, comm service(mqv) null (pre-init window)");
+                            }
+                        } catch (Throwable ignored) {
+                        }
+                    }
+                });
+                guarded++;
+            } catch (NoSuchMethodException ignored) {
+            }
+        }
+        Log.w(TAG, "rpv crash guard installed on " + guarded + " methods");
+
+        // ② uqv.e(boolean) 创建 rpv 后补注入：d==null 时从注册表重取
+        try {
+            Class<?> uqvClass = cl.loadClass("uqv");
+            java.lang.reflect.Field registryField = uqvClass.getDeclaredField("a");
+            registryField.setAccessible(true);
+            Method eMethod = uqvClass.getDeclaredMethod("e", boolean.class);
+            eMethod.setAccessible(true);
+            java.lang.reflect.Method e0Method = rpvClass.getDeclaredMethod("e0", mqvClass);
+            e0Method.setAccessible(true);
+            Pine.hook(eMethod, new MethodHook() {
+                @Override
+                public void afterCall(Pine.CallFrame callFrame) {
+                    try {
+                        Object rpvInst = callFrame.getResult();
+                        if (rpvInst == null || dField.get(rpvInst) != null) return;
+                        Object registry = registryField.get(null);
+                        if (!(registry instanceof java.util.Map)) return;
+                        for (Object v : ((java.util.Map<?, ?>) registry).values()) {
+                            if (v != null) {
+                                e0Method.invoke(rpvInst, v);
+                                Log.w(TAG, "rpv guard: backfilled comm service via e0");
+                                return;
+                            }
+                        }
+                    } catch (Throwable ignored) {
+                    }
+                }
+            });
+            Log.w(TAG, "uqv.e backfill hook installed");
+        } catch (Throwable t) {
+            Log.w(TAG, "uqv.e backfill hook failed: " + t.getMessage());
         }
     }
 
@@ -8617,6 +8745,9 @@ public class MainHook {
     // 原生 Pine（真机单实例）。UserManager.getUserCount() 在 ColorOS 上不可靠
     // （实测单 user 设备返回失败），改按注入路线推断默认角色。
     private static volatile boolean injectedViaLsposed = false;
+    // 交易密码（密码登录用）：pendingTradePassword 为单次请求传入（用后即清），
+    // 持久化在 filesDir/thshook_pwd.json。绝不写日志/绝不出现在任何响应中。
+    private static volatile String pendingTradePassword = null;
     // 账户 seed 自动重播（每进程一次）：AVD 的 yyb 券商库未初始化时 App 账户
     // 仓库不落盘，重启即失；ensure 阶段从 filesDir/thshook_trade_seed.json 重播。
     private static volatile boolean tradeSeedAutoPlayed = false;
@@ -8932,10 +9063,49 @@ public class MainHook {
         long t0 = System.currentTimeMillis();
         ClassLoader cl = resolveAppClassLoader(null);
         if (cl == null) return errorJson(out, "classloader not ready");
+        // 可选 body {"password": "..."}：本次登录用密码（一次性，不落盘）
+        try {
+            if (body != null && !body.trim().isEmpty()) {
+                String p = extractJsonString(body, "password");
+                if (p != null && !p.isEmpty()) pendingTradePassword = p;
+            }
+        } catch (Throwable ignored) { }
         if (!ensureTradeRuntimeBase(cl)) return errorJson(out, lastEnsureTradeError);
         boolean ok = doActiveTradeLogin(cl, out);
+        pendingTradePassword = null;
         out.put("ok", ok);
         out.put("elapsed_ms", System.currentTimeMillis() - t0);
+        return out.toString();
+    }
+
+    /** POST /stock/trade/pwd — 设置/清除交易密码（body {"password":...} 或
+     *  {"clear":true}）。密码持久化 filesDir/thshook_pwd.json（不回显、不进日志），
+     *  供 token 过期时自动密码登录。GET 返回是否已配置。 */
+    private static String handleTradePassword(String body) throws org.json.JSONException {
+        JSONObject out = new JSONObject();
+        out.put("endpoint", "pwd");
+        ClassLoader cl = resolveAppClassLoader(null);
+        if (cl == null) return errorJson(out, "classloader not ready");
+        try {
+            if (body != null && !body.trim().isEmpty()) {
+                if (body.contains("\"clear\"")) {
+                    File f = new File(appInstance.getFilesDir(), "thshook_pwd.json");
+                    if (f.exists()) f.delete();
+                    out.put("cleared", true);
+                } else {
+                    String p = extractJsonString(body, "password");
+                    if (p == null || p.isEmpty()) return errorJson(out, "password required");
+                    JSONObject o = new JSONObject();
+                    o.put("password", p);
+                    writeFileString(new File(appInstance.getFilesDir(), "thshook_pwd.json"), o.toString());
+                    out.put("stored", true);
+                }
+            }
+        } catch (Throwable t) {
+            return errorJson(out, "pwd store failed: " + t.getMessage());
+        }
+        out.put("ok", true);
+        out.put("configured", loadTradePassword() != null);
         return out.toString();
     }
 
@@ -9933,14 +10103,28 @@ public class MainHook {
     }
 
     private static String readFileToString(File f) throws Exception {
-        java.io.FileInputStream in = new java.io.FileInputStream(f);
-        java.io.ByteArrayOutputStream bos = new java.io.ByteArrayOutputStream();
-        byte[] buf = new byte[4096];
-        int n;
-        while ((n = in.read(buf)) > 0) bos.write(buf, 0, n);
-        in.close();
-        return new String(bos.toByteArray(), "UTF-8");
+        java.io.FileInputStream fis = new java.io.FileInputStream(f);
+        try {
+            java.io.ByteArrayOutputStream bos = new java.io.ByteArrayOutputStream();
+            byte[] buf = new byte[4096];
+            int n;
+            while ((n = fis.read(buf)) > 0) bos.write(buf, 0, n);
+            return new String(bos.toByteArray(), "UTF-8");
+        } finally {
+            fis.close();
+        }
     }
+
+    private static void writeFileString(File f, String content) throws Exception {
+        java.io.FileOutputStream fos = new java.io.FileOutputStream(f);
+        try {
+            fos.write(content.getBytes("UTF-8"));
+            fos.getFD().sync();
+        } finally {
+            fos.close();
+        }
+    }
+
     private static String handleTradeCbasStatus() throws JSONException {
         JSONObject out = new JSONObject();
         out.put("endpoint", "cbas_status");
@@ -10071,6 +10255,125 @@ public class MainHook {
         }
     }
 
+    /** 交易密码来源：本次请求（pendingTradePassword，一次性）或
+     *  filesDir/thshook_pwd.json（持久化 {"password":...}）。绝不写日志。 */
+    private static String loadTradePassword() {
+        try {
+            String p = pendingTradePassword;
+            if (p != null && !p.isEmpty()) return p;
+            if (appInstance == null) return null;
+            File f = new File(appInstance.getFilesDir(), "thshook_pwd.json");
+            if (!f.exists()) return null;
+            JSONObject o = new JSONObject(readFileToString(f));
+            return o.optString("password", "");
+        } catch (Throwable t) {
+            return null;
+        }
+    }
+
+    /** 密码登录（2026-08-18）：镜像 SimpleWeituoLogin.weituoLoginRequest 链——
+     *  g6m.a() builder：N(资金账号)/S(密码→h)/R(accountType)/T(yyb索引)/
+     *  Q(空)/U(yyb串=g6m.a(a1s))/M(keepLogin=true)/P("1")/X(true)/H(acctype)/G()
+     *  → f2s.d().o(g6m, null, q3s.a().s(0).q(1).v(1).o(true), g8m回调)。
+     *  keepLogin=true 使券商下发新 token（z7m.w hook 自动捕获上报）。 */
+    private static boolean doPasswordTradeLoginLocked(ClassLoader cl,
+            JSONObject report, String password) {
+        try {
+            Object mgr = tradeAccountManagerInstance;
+            if (mgr == null) {
+                report.put("pwd_error", "no account");
+                return false;
+            }
+            Object broker = mgr.getClass().getMethod("v").invoke(mgr);
+            if (broker == null) {
+                report.put("pwd_error", "no broker info");
+                return false;
+            }
+            Class<?> g6mClass = cl.loadClass("g6m");
+            String yybStr = (String) g6mClass
+                    .getMethod("a", cl.loadClass("a1s")).invoke(null, broker);
+            if (yybStr == null || yybStr.isEmpty()) {
+                report.put("pwd_error", "yyb string empty");
+                return false;
+            }
+            Class<?> builderClass = cl.loadClass("g6m$a");
+            Object b = builderClass.newInstance();
+            String account = (String) mgr.getClass().getMethod("d").invoke(mgr);
+            int accType = (Integer) mgr.getClass().getMethod("e").invoke(mgr);
+            b.getClass().getMethod("N", String.class).invoke(b, account);
+            b.getClass().getMethod("S", String.class).invoke(b, password);
+            b.getClass().getMethod("R", String.class).invoke(b, "0");
+            b.getClass().getMethod("T", String.class).invoke(b, "0");
+            b.getClass().getMethod("O", String.class).invoke(b, "0");
+            b.getClass().getMethod("Q", String.class).invoke(b, "");
+            b.getClass().getMethod("U", String.class).invoke(b, yybStr);
+            b.getClass().getMethod("M", boolean.class).invoke(b, Boolean.TRUE);
+            b.getClass().getMethod("P", String.class).invoke(b, "1");
+            b.getClass().getMethod("X", boolean.class).invoke(b, Boolean.TRUE);
+            b.getClass().getMethod("H", int.class).invoke(b, accType);
+            Object info = b.getClass().getMethod("G").invoke(b);
+
+            Class<?> q3sClass = cl.loadClass("q3s");
+            Object q = q3sClass.getMethod("a").invoke(null);
+            q = q3sClass.getMethod("s", int.class).invoke(q, 0);
+            q = q3sClass.getMethod("q", int.class).invoke(q, 1);
+            q = q3sClass.getMethod("v", int.class).invoke(q, 1);
+            q = q3sClass.getMethod("o", boolean.class).invoke(q, Boolean.TRUE);
+
+            CountDownLatch latch = new CountDownLatch(1);
+            AtomicReference<String> result = new AtomicReference<>("pending");
+            AtomicReference<String> failDetail = new AtomicReference<>();
+            Object callback = Proxy.newProxyInstance(cl,
+                    new Class[]{cl.loadClass("g8m")},
+                    (proxy, method, mArgs) -> {
+                        String name = method.getName();
+                        if ("onWeituoLoginSuccess".equals(name)) {
+                            result.set("success");
+                            latch.countDown();
+                        } else if ("onWeituoLoginFail".equals(name)) {
+                            result.set("fail");
+                            failDetail.set(describeStuffStruct(mArgs != null && mArgs.length > 0 ? mArgs[0] : null));
+                            latch.countDown();
+                        } else if ("interceptTimeout".equals(name) || "onlyMeHandleReceiveData".equals(name)) {
+                            return Boolean.FALSE;
+                        }
+                        if ("hashCode".equals(name)) return System.identityHashCode(proxy);
+                        if ("toString".equals(name)) return "THSHook.pwdLogin@" + Integer.toHexString(System.identityHashCode(proxy));
+                        if ("equals".equals(name)) return proxy == (mArgs != null && mArgs.length > 0 ? mArgs[0] : null);
+                        return null;
+                    });
+            Object f2sInst = cl.loadClass("f2s").getMethod("d").invoke(null);
+            cl.loadClass("f2s").getMethod("o",
+                            cl.loadClass("g6m"), cl.loadClass("a1s"),
+                            cl.loadClass("q3s"), cl.loadClass("g8m"))
+                    .invoke(f2sInst, info, null, q, callback);
+            boolean done = latch.await(40, TimeUnit.SECONDS);
+            if (!done) {
+                report.put("pwd_result", "timeout");
+                lastEnsureTradeError = "trade pwd login: no response in 40s";
+                return false;
+            }
+            String r = result.get();
+            report.put("pwd_result", r);
+            if (!"success".equals(r)) {
+                lastEnsureTradeError = "trade pwd login fail: " + failDetail.get();
+                return false;
+            }
+            lastEnsureTradeError = null;
+            return true;
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            return false;
+        } catch (Throwable t) {
+            Throwable cause = t.getCause() != null ? t.getCause() : t;
+            try {
+                report.put("pwd_error", String.valueOf(cause).substring(0, Math.min(160, String.valueOf(cause).length())));
+            } catch (Throwable ignored) { }
+            lastEnsureTradeError = "trade pwd login error: " + cause;
+            return false;
+        }
+    }
+
     private static boolean doActiveTradeLoginLocked(ClassLoader cl, JSONObject report, boolean force) {
         Object mgr = tradeAccountManagerInstance;
         try {
@@ -10158,9 +10461,28 @@ public class MainHook {
                 }
             }
             if (tokenInfo == null) {
+                // 2026-08-18 密码登录：token 过期/缺失时用交易密码直接登录
+                // （设备指纹已伪装成真机，券商侧视为同一设备）。密码来自本次
+                // 请求 body 或 filesDir/thshook_pwd.json，成功后 z7m.w hook
+                // 自动捕获新 token 并上报+并入 seed。
+                String pwd = loadTradePassword();
+                if (pwd != null && !pwd.isEmpty()) {
+                    boolean pwdOk = doPasswordTradeLoginLocked(cl, report, pwd);
+                    report.put("pwd_login", pwdOk);
+                    if (pwdOk) {
+                        tokenInfo = z7mClass
+                                .getMethod("i", String.class, cl.loadClass("pzr"))
+                                .invoke(z7mInst, userId, mgr);
+                        if (tokenInfo != null) {
+                            schedulePostLoginTokenReport();
+                        }
+                    }
+                }
+            }
+            if (tokenInfo == null) {
                 report.put("result", "fail");
                 report.put("error", "token unavailable (expired or not stored); "
-                        + "password login not implemented — open trade tab in app once to refresh token");
+                        + "set trade password via POST /stock/trade/pwd to enable password login");
                 lastEnsureTradeError = "trade login: token unavailable";
                 return false;
             }
