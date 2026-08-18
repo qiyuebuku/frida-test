@@ -858,3 +858,31 @@ scope 表 INSERT（mid,app_pkg_name,user_id）后 **daemon 内存缓存不重读
 - BUY 挂单：response 确认 120-170ms 稳定（confirmed_via=response）
 - CANCEL：实际执行成功（today_order 终态"已撤"）但响应链最坏 120s——写响应帧丢失（App 观察者竞争消费，ixm/nxm 旁路兜不住）+ 两轮×(15s 写等待+登录 40s)。优化=撤单在途二次确认（首查"已报"后等 4s 重查"已撤"即返回，~26s）
 - 废单边界：撤"废单"类终态委托无意义（券商不响应撤单请求）→ 确认逻辑只认"已撤"
+
+## 18. 写协议 fire-and-forget + CBAS 通道与查询事件驱动重试（第十八轮，2026-08-18）
+
+### 写操作的确认协议演进（四代）
+
+| 代 | 协议 | 结果 |
+| --- | --- | --- |
+| 1 | 同步等响应帧（读路径同款） | 连续写场景响应被 onChannelBad(code=1) 丢 → 200s+ 挂死 |
+| 2 | 两轮重试 + 状态确认 + 写前强制登录 | 实际执行成功但响应 60~120s（客户端超时） |
+| 3 | 单轮 fire + 服务端轮询 | HTTP 层被中文 body bug 卡死（与协议无关） |
+| 4 | **fire-and-forget + 服务端轮询 today_order 终态** | BUY 163ms 同步确认 / CANCEL 4.7s 异步确认 ✅ |
+
+**第 4 代要点**：设备端只负责发出（异步线程，<10ms 返回 `fired/async_confirm`）；
+服务端 cancel_order 轮询 today_order（3s 间隔）确认"已撤"（60s 未确认再 fire 一次，
+委托号连续缺失 2 轮即快速失败=假单号 9.4s）。**写请求 100% 能到达券商**（10/10
+实测执行成功），拿不到的只是响应帧——所以状态轮询是唯一可靠信源。
+
+### CBAS 通道周期断开与查询慢（收盘时段）
+
+- 现象实锤：App 原生每 7~8s 一轮"hrv 检查(sessionType=0)→断开→Socket.connect 重建"（多服务器 IP 轮换 114.116.x/101.200.x/8.134.x）；撞上断开窗口的查询丢失且**无 onChannelBad 回调**（暗丢）
+- 断开发起方未实锤（券商清场是推断）；上午交易时段全 1.7s 是对照样本
+- 自愈旧链（超时 15s→强制登录→sleep 3s→重试，代码注释自认 ~18s）在"登录态其实活着（already_logged_in）"时全是浪费——误判
+- **v11 事件驱动重试**：Socket.connect(9528) hook 维护 `cbasReconnecting/lastCbasReadyMs`，onChannelBad 记 `lastCbasBadMs`；invokeTradeQuery 等待循环监听两类重发信号（丢帧事件 / 请求发出后通道重建=暗丢推断），超时分级自愈（先等通道就绪重试 ≤5s，仍败才登录）
+
+### hook HTTP 层修复与诊断工具
+
+- body 字节流读（中文 bug，见 pitfalls #58）；SoTimeout 300s（慢 handler 不被掐）
+- 诊断武器：响应带 elapsed_ms（分层计时）；`logcat --pid=N`（多实例日志洪流中过滤单进程，普通 grep 会被缓冲冲掉）；设备内 nc 直测（绕过全链路一击定位）；/health 全链路延迟探针

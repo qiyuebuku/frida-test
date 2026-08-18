@@ -363,3 +363,27 @@
 - **方案**: 零 UI 恢复三件套（全部反射）：① `n0s.s().B()` 从仓库填充账户列表；② `izr.a.x(fzr)` 激活打分（交易页激活账户的标准调用）；③ `x0s.F(false,false,14)` 触发静默重登 + 轮询 `izr.a.l(fzr)` 直至 true 才放行请求。诊断口诀："构建点有日志、发送入口无日志 = 发送层门控丢弃，查登录态"
 - **注意**: 静默重登（token 链路）可能耗时 2~3.5 分钟，预热需循环重试而非单次等待；激活（打分置位）≠ 登录（登录态置位），激活后立即发的请求仍会被吞
 - **适用范围**: 所有带账户/会话状态的 SDK 逆向；"请求无声消失"类问题的排查路径
+
+### 58. 自研 HTTP 服务器按 char[] 读 body：含中文的 POST 全部挂死（2026-08-18 同花顺实测）
+- **现象**: 纯 ASCII body 的 POST（下单）一直正常（120ms 级），含中文 body 的 POST（撤单 stock_name）100% 挂死到超时；GET 全正常
+- **原因**: `BufferedReader.read(char[contentLength])` 按 Content-Length（**字节数**）申请 char 数组——UTF-8 中文 1 字 3 字节，char 数 < 字节数，read 永久阻塞等待不存在的数据。GET 无 body 所以无感
+- **方案**: 请求行/headers 逐字节读（自定义 readRawLine），body 用 `byte[contentLength]` 从 BufferedInputStream 精确读 + `new String(bytes, UTF-8)`。修复后中文 POST 7ms
+- **注意**: BufferedReader 有预读缓冲，读完 headers 再从同一 Reader 读 body 会错位——必须全程字节流
+- **适用范围**: 所有自研/手写 HTTP 服务端（注入 hook 起的本地服务器是高发区）
+
+### 59. 裸 adb forward 对自研 HTTP 服务器的 POST 可能有响应兼容问题（2026-08-18）
+- **现象**: forward 直连 GET 正常、POST 挂起；经 recovery-proxy（HTTP 层重组转发）同请求正常；设备内 localhost 直测全部正常
+- **方案**: 生产流量一律走 native-recovery-proxy 类 HTTP 代理，裸 forward 只用于调试
+- **适用范围**: adb forward + App 内自研 HTTP 服务器的组合
+
+### 60. recovery-proxy 的自动恢复参数陷阱（2026-08-18 血泪）
+- **现象**: 多用户实例的 proxy 起动时漏 `--activate-foreground-user`：请求失败触发 recovery → force-stop 杀掉 App → `am start`（后台 user 起不了 activity）→ health 等待失败 → 无限杀循环，且伴随 user 系统进程批量清理（switch-user 风暴），App 永远起不来
+- **原因**: ①后台 Android user 无法启动 activity（必须切前台）；②proxy 的 health 等待超时若短于 App 冷启动+登录自愈时长（实测 60~100s），即使参数正确也会反复杀启动中的 App
+- **方案**: 调试/不稳定期用 `--disable-automatic-recovery` 纯转发 + 手动拉活；生产用完整参数（--activate-foreground-user --return-foreground-user 0）且确保 health 超时 ≥120s
+- **注意**: 模拟器重启后所有 adb forward 丢失（会话级），必须重建
+- **适用范围**: 服务器侧 Android sidecar 的保活代理
+
+### 61. 券商 token 24h 硬生命周期 + 写后会话即失效（2026-08-18）
+- **现象**: token（livetime 1440min）到期后 z7m.i 读回恒 null / available:false / 登录 "null stuff"；连续写（下单后马上撤单）第二个写的响应帧被 onChannelBad(code=1) 静默丢弃
+- **方案**: token 刷新唯一路径=源设备交易密码登录（export→import）；连续写不依赖同步响应帧——fire-and-forget + 轮询业务状态（委托列表终态）确认
+- **适用范围**: 有状态长连接 SDK 的写操作确认设计
