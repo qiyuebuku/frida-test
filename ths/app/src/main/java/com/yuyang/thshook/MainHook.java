@@ -104,6 +104,15 @@ public class MainHook {
     // 静默丢弃，期内强制登录也持续 fail(null)（竞争）。写前等待冷却窗
     // （45s，实测 round2 在 ~77s 发出即成功）避开恢复期。
     private static volatile long lastSuccessfulWriteMs = 0L;
+    // CBAS 通道事件状态（2026-08-18 事件驱动重试）：App 原生每 7~8s 检查通道、
+    // 断开即重连。此前查询撞上"断开→重连"窗口会白等 15s 再误判强制登录。
+    // Socket.connect hook（端口 9528）维护 reconnecting/ready 时间戳，
+    // onChannelBad（请求被丢）记录丢帧时刻；查询据此实现：发送前等就绪、
+    // 在途被丢等重连完成立即重发（不登录不持锁）。
+    private static volatile boolean cbasReconnecting = false;
+    private static volatile long lastCbasReadyMs = 0L;
+    private static volatile long lastCbasBadMs = 0L;
+    private static final Object cbasSignal = new Object();
     // 最近一次 MasterBridge.getConfigInfo 的 query/result 原文（native→Java 要
     // 设备配置的唯一通道，设备指纹观测与伪造的核心数据源）
     private static volatile String lastGetConfigInfoQuery = "";
@@ -949,6 +958,30 @@ public class MainHook {
         int len = sb.length();
         if (len > 0 && sb.charAt(len - 1) == '\r') sb.setLength(len - 1);
         return sb.toString();
+    }
+
+    /** 等待 CBAS 通道重连完成（事件驱动：Socket.connect success 的 notifyAll
+     *  唤醒；上限 maxMs）。返回时若 lastCbasReadyMs 更新过即视为就绪。 */
+    private static void waitForCbasReady(long maxMs) {
+        long deadline = System.currentTimeMillis() + maxMs;
+        while (System.currentTimeMillis() < deadline) {
+            if (!cbasReconnecting && lastCbasReadyMs > 0) return;
+            long left = deadline - System.currentTimeMillis();
+            if (left <= 0) break;
+            synchronized (cbasSignal) {
+                try { cbasSignal.wait(Math.min(500, left)); } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                    return;
+                }
+            }
+        }
+    }
+
+    /** 发送前检查：App 正在重连 CBAS 时等待就绪再发。返回是否真的等待过。 */
+    private static boolean waitForCbasReadyIfReconnecting(long maxMs) {
+        if (!cbasReconnecting) return false;
+        waitForCbasReady(maxMs);
+        return true;
     }
 
     private static void handleProxyRequest(Socket client, ClassLoader cl) {
@@ -7043,6 +7076,10 @@ public class MainHook {
             Pine.hook(badMethod, new MethodHook() {
                 @Override
                 public void beforeCall(Pine.CallFrame callFrame) {
+                    // 事件驱动重试信号：在途请求被通道丢弃——等待中的查询
+                    // 据此立即放弃本轮等待，走"等重连→重发"快速路径
+                    lastCbasBadMs = System.currentTimeMillis();
+                    synchronized (cbasSignal) { cbasSignal.notifyAll(); }
                     String msg = "TradeChannel.onChannelBad code=" + callFrame.args[0]
                             + " REQUEST DROPPED";
                     Log.w(TAG, msg);
@@ -7111,6 +7148,7 @@ public class MainHook {
                     Object endpoint = callFrame.args[0];
                     if (endpoint instanceof java.net.InetSocketAddress
                             && ((java.net.InetSocketAddress) endpoint).getPort() == 9528) {
+                        cbasReconnecting = true;
                         String msg = "TradeChannel.Socket.connect start endpoint=" + endpoint;
                         Log.w(TAG, msg);
                         addTradeLog(msg);
@@ -7128,6 +7166,11 @@ public class MainHook {
                             ok = callFrame.thisObject instanceof Socket
                                     && ((Socket) callFrame.thisObject).isConnected();
                         } catch (Throwable ignored) { }
+                        if (ok) {
+                            cbasReconnecting = false;
+                            lastCbasReadyMs = System.currentTimeMillis();
+                            synchronized (cbasSignal) { cbasSignal.notifyAll(); }
+                        }
                         String msg = "TradeChannel.Socket.connect "
                                 + (ok ? "success" : "FAILED(endpoint refused/timeout)")
                                 + " endpoint=" + endpoint;
@@ -10257,9 +10300,21 @@ public class MainHook {
         }
         String result = invokeTradeQuery(proto[0], proto[1],
                 expandStaticParams(TRADE_QUERY_STATIC_PARAMS.get(name)));
-        // 会话过期场景（本地已登录但服务端会话被 90B 踢失效）：首查超时后
-        // 强制重发登录重建服务端会话（实测 ~18s），再重试查询一次。只读查询
-        // 幂等，重试安全。
+        // 超时分级自愈（2026-08-18 重做）：此前"超时→强制登录→sleep 3s→重试"
+        // 恒定 ~20s，且收盘后实测登录多为误判（already_logged_in，会话没坏，
+        // 只是 CBAS socket 断开重连窗口内请求丢失、无 onChannelBad 事件）。
+        // 分级：①等通道就绪（事件驱动 ≤5s）直接重试——App 原生 7~8s 周期
+        // 重连完成后重发即成功；②仍超时才强制登录重建服务端会话（真会话
+        // 过期场景，90B 踢）+3s 就绪窗 + 重试。只读查询幂等，重试安全。
+        if (result != null && result.contains("timeout waiting response")) {
+            try {
+                waitForCbasReady(5000);
+                result = invokeTradeQuery(proto[0], proto[1],
+                        expandStaticParams(TRADE_QUERY_STATIC_PARAMS.get(name)));
+            } catch (Throwable retryEx) {
+                Log.w(TAG, "query fast-retry failed: " + retryEx);
+            }
+        }
         if (result != null && result.contains("timeout waiting response")) {
             try {
                 ClassLoader cl = resolveAppClassLoader(null);
@@ -10395,31 +10450,95 @@ public class MainHook {
             bypassLatch = null;
             bypassStuff = null;
         }
+        boolean arrived = false;
         try {
+            // 发送前通道就绪检查（2026-08-18 事件驱动重试）：App 正在重连 CBAS
+            // （7~8s 周期检查触发）时请求会发到死连接上石沉大海——等重连完成
+            // 再发（事件触发，Socket.connect success 的 notifyAll 唤醒，上限 6s）
+            if (waitForCbasReadyIfReconnecting(6000)) {
+                try { resp.put("waited_cbas_reconnect", true); } catch (JSONException ignore) { }
+            }
             Class<?> uqvClass = cl.loadClass("uqv");
             Object builder = uqvClass.getMethod("e", boolean.class).invoke(null, Boolean.TRUE);
             Class<?> imvClass = cl.loadClass("imv");
             java.lang.reflect.Method hMethod = builder.getClass()
                     .getMethod("H", int.class, int.class, imvClass, String.class);
-            Object rpv = hMethod.invoke(builder, pageId, protocolId, observer, params);
-            if (bindAccount) {
-                java.lang.reflect.Method dMethod = rpv.getClass()
-                        .getMethod("D", String.class, Object.class);
-                dMethod.invoke(rpv, "wt_account", tradeAccountManagerInstance);
+            final String sendParams = params;
+            java.util.concurrent.Callable<Object> sendOnce = () -> {
+                Object rpv = hMethod.invoke(builder, pageId, protocolId, observer, sendParams);
+                if (bindAccount) {
+                    java.lang.reflect.Method dMethod = rpv.getClass()
+                            .getMethod("D", String.class, Object.class);
+                    dMethod.invoke(rpv, "wt_account", tradeAccountManagerInstance);
+                }
+                rpv.getClass().getMethod("request").invoke(rpv);
+                return rpv;
+            };
+            sendOnce.call();
+            // 事件驱动等待（2026-08-18）：不再对 15s 傻等——本请求在途期间
+            // onChannelBad（请求被丢）触发后：等 CBAS 重连完成（事件）→ 立即
+            // 重发（observer 仍注册，响应照常回调）。最多重发 2 次；全部无
+            // 响应才走外层强制登录自愈（真会话问题）。写路径保持原 15s 直等
+            // （fire-and-forget 的撤单不依赖此等待；BUY 响应本来就快）。
+            long attemptStart = System.currentTimeMillis();
+            int resend = 0;
+            boolean done = false;
+            while (!done) {
+                if (isWritePath) {
+                    arrived = latch.await(15, TimeUnit.SECONDS);
+                    done = true;
+                    break;
+                }
+                long waited = 0;
+                while (waited < 15000 && latch.getCount() > 0) {
+                    long badAt = lastCbasBadMs;
+                    long readyAt = lastCbasReadyMs;
+                    if (resend < 2) {
+                        // 信号一（onChannelBad 事件）：在途请求被通道显式丢弃
+                        if (badAt > attemptStart && badAt >= readyAt) {
+                            Log.w(TAG, "QueryDropped protocol=" + protocolId
+                                    + " resend#" + (resend + 1) + " after channelBad");
+                            waitForCbasReady(6000);
+                            if (System.currentTimeMillis() - lastCbasBadMs > 500
+                                    && lastCbasReadyMs >= badAt) {
+                                attemptStart = System.currentTimeMillis();
+                                sendOnce.call();
+                                resend++;
+                                try { resp.put("event_resends", resend); } catch (JSONException ignore) { }
+                                waited = 0;
+                                continue;
+                            }
+                        }
+                        // 信号二（通道重建推断）：本请求发出 2s 后通道发生过重建
+                        // （发出时撞上断开窗口，请求发到死连接石沉大海且无丢帧
+                        // 回调）——原响应永不到达，通道已就绪，立即重发
+                        if (readyAt > attemptStart + 2000) {
+                            Log.w(TAG, "QueryStaleSend protocol=" + protocolId
+                                    + " resend#" + (resend + 1)
+                                    + " after cbas rebuilt (no drop event)");
+                            attemptStart = System.currentTimeMillis();
+                            sendOnce.call();
+                            resend++;
+                            try { resp.put("event_resends", resend); } catch (JSONException ignore) { }
+                            waited = 0;
+                            continue;
+                        }
+                    }
+                    // 无事件 → 短轮询等待（cbasSignal 的通知会提前唤醒检查）
+                    long slice = Math.min(1000, 15000 - waited);
+                    synchronized (cbasSignal) {
+                        cbasSignal.wait(slice);
+                    }
+                    waited += slice;
+                    if (latch.getCount() == 0) break;
+                }
+                done = true;
             }
-            rpv.getClass().getMethod("request").invoke(rpv);
+            arrived = latch.getCount() == 0;
         } catch (Throwable e) {
             if (isWritePath) { pendingWriteLatch.remove(protocolId); pendingWriteStuff.remove(protocolId); }
             unregisterObserverQuietly(cl, observer);
             return errorJson(resp, "query invoke failed: " + describeThrowableChain(e));
-        }
-
-        boolean arrived;
-        try {
-            arrived = latch.await(15, TimeUnit.SECONDS);
-        } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
-            arrived = false;
         }
         // 自注册 observer 超时 → 旁路等 2s；旁路有帧=App 观察者抢走了响应，
         // 用旁路结果继续（写响应丢失问题的修复）
