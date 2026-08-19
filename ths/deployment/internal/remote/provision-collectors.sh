@@ -39,7 +39,7 @@ for user_id in {10..17}; do
     fi
     adb_shell cmd package install-existing --user "${user_id}" "${THS_PACKAGE}" >/dev/null
     if ! printf '%s\n' "${users_to_provision[@]}" | grep -qx "${user_id}"; then
-        if adb_shell su -c "find /data/user/${user_id}/${THS_PACKAGE} -mindepth 1 -print -quit" \
+        if adb_shell su -c "find /data/user/${user_id}/${THS_PACKAGE} -mindepth 1 -print" \
             | grep -q .; then
             echo "preserving existing collector data for user=${user_id}"
         else
@@ -49,10 +49,9 @@ for user_id in {10..17}; do
 done
 
 app_id="$(package_app_id)"
-# This rooted production image labels /data/local/tmp as shell_data_file and
-# rejects chmod even for Magisk uid 0.  mkdir's 0755 directory is sufficient:
-# artifacts are short-lived, checksummed before use, and removed by the trap.
-adb_shell su -c "mkdir -p ${device_dir}"
+# adb push runs as Android's shell user, so that user must own the staging
+# directory. Root consumes the files below and the cleanup trap removes them.
+adb_shell mkdir -p "${device_dir}"
 "${ADB_BIN}" -s "${THS_ANDROID_SERIAL}" push "${tmp_dir}/collector-ce.tar" "${device_dir}/ce.tar" >/dev/null
 "${ADB_BIN}" -s "${THS_ANDROID_SERIAL}" push "${tmp_dir}/collector-de.tar" "${device_dir}/de.tar" >/dev/null
 
