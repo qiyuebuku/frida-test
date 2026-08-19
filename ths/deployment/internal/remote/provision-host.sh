@@ -39,8 +39,10 @@ install -d -o "${DEPLOY_USER}" -g "${DEPLOY_USER}" \
 
 # Both archives have a stable, path-independent layout: SDK files are rooted
 # directly in android-sdk/ and AVD files directly in .android/avd/.
-tar -xzf "${THS_ANDROID_SDK_ARCHIVE}" -C "${DEPLOY_HOME}/android-sdk"
-tar -xzf "${THS_AVD_ARCHIVE}" -C "${DEPLOY_HOME}/.android/avd"
+# Let tar detect gzip/zstd from the artifact itself. Production bundles use
+# zstd for sparse AVD images, while older bundles may still be gzip archives.
+tar -xf "${THS_ANDROID_SDK_ARCHIVE}" -C "${DEPLOY_HOME}/android-sdk"
+tar -xf "${THS_AVD_ARCHIVE}" -C "${DEPLOY_HOME}/.android/avd"
 chown -R "${DEPLOY_USER}:${DEPLOY_USER}" \
     "${DEPLOY_HOME}/android-sdk" "${DEPLOY_HOME}/.android"
 
