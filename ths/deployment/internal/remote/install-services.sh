@@ -103,7 +103,9 @@ start_bridge_serially() {
     local unit="$1"
     local health_port="$2"
     systemctl enable --now "${unit}"
-    for _ in {1..90}; do
+    # A lane may first wait for the previous lane to release the global Android
+    # user-switch lock. Keep enough budget for that wait plus its own cold boot.
+    for _ in {1..180}; do
         if curl -fsS --max-time 2 "http://127.0.0.1:${health_port}/health" >/dev/null; then
             return 0
         fi
@@ -114,15 +116,33 @@ start_bridge_serially() {
 }
 
 ensure_trade_runtime() {
-    local payload
+    local payload status login_payload
     systemctl enable --now ths-trade-bridge.service
     for _ in {1..90}; do
         if curl -fsS --max-time 5 "http://127.0.0.1:49500/health" >/dev/null; then
+            curl -fsS --max-time 10 -X POST -H 'Content-Type: application/json' \
+                -d '{"enabled":true}' http://127.0.0.1:49500/stock/trade/role >/dev/null
+            status="$(curl -fsS --max-time 10 \
+                http://127.0.0.1:49500/stock/trade/runtime/status || true)"
+            if grep -q '"write_ready":true' <<<"${status}"; then
+                return 0
+            fi
             payload="$(curl -fsS --max-time 120 -X POST \
                 -H 'Content-Type: application/json' -d '{}' \
                 http://127.0.0.1:49500/stock/trade/runtime/ensure || true)"
             if grep -q '"write_ready":true' <<<"${payload}"; then
                 return 0
+            fi
+            # An expired token is expected after a cold deployment. The Hook
+            # keeps the password in app-private storage and never returns it.
+            login_payload="$(curl -fsS --max-time 120 -X POST \
+                -H 'Content-Type: application/json' -d '{"method":"pwd"}' \
+                http://127.0.0.1:49500/stock/trade/login || true)"
+            if grep -q '"ok":true' <<<"${login_payload}"; then
+                status="$(curl -fsS --max-time 30 -X POST \
+                    -H 'Content-Type: application/json' -d '{}' \
+                    http://127.0.0.1:49500/stock/trade/runtime/ensure || true)"
+                grep -q '"write_ready":true' <<<"${status}" && return 0
             fi
         fi
         sleep 2
