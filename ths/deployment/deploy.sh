@@ -77,6 +77,8 @@ fi
 
 if [[ ",${COMPONENTS}," == *,ths-hook,* ]]; then
     "${SSH[@]}" "set -euo pipefail
+export ANDROID_HOME=/home/${REMOTE_USER}/android-sdk
+export ANDROID_SDK_ROOT=/home/${REMOTE_USER}/android-sdk
 cd '${REMOTE_GIT_DIR}/ths'
 ./gradlew --no-daemon :app:assembleDebug
 unsigned=app/build/outputs/apk/debug/app-debug.apk
