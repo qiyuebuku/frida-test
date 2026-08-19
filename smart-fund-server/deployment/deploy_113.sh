@@ -465,14 +465,14 @@ apply_schema_migrations() {
         PGPASSWORD=\"\${DB_PASSWORD:-}\" psql -v ON_ERROR_STOP=1 \
         -h \"\${DB_HOST:-127.0.0.1}\" -p \"\${DB_PORT:-5432}\" \
         -U \"\${DB_USER:-postgres}\" -d \"\${DB_NAME}\" \
-        -f '${remote_migration}'; rm -f '${remote_migration}'"
+        -f '${remote_migration}' && rm -f '${remote_migration}'"
     ssh_cmd "cat '${SERVER_DIR}'/schema/jettask_migrations/*.sql \
         > '${remote_jettask_migration}' && chmod 644 '${remote_jettask_migration}'"
     ssh_cmd "set -a; . '${ENV_FILE}'; set +a; \
         PGPASSWORD=\"\${DB_PASSWORD:-}\" psql -v ON_ERROR_STOP=1 \
         -h \"\${DB_HOST:-127.0.0.1}\" -p \"\${DB_PORT:-5432}\" \
         -U \"\${DB_USER:-postgres}\" -d \"\${JETTASK_DB_NAME:-jettask_queue}\" \
-        -f '${remote_jettask_migration}'; rm -f '${remote_jettask_migration}'"
+        -f '${remote_jettask_migration}' && rm -f '${remote_jettask_migration}'"
     echo "数据库迁移完成"
 }
 
@@ -1218,7 +1218,11 @@ deploy_components() {
         return
     fi
     sync_code
-    apply_schema_migrations
+    if [[ "${SKIP_SCHEMA_MIGRATIONS:-0}" == "1" ]]; then
+        echo "显式跳过数据库迁移（仅允许已确认本次 revision 无 schema 变化时使用）"
+    else
+        apply_schema_migrations
+    fi
     build_server_image
     install_compose_service
     migrate_systemd_to_compose
