@@ -7,6 +7,7 @@ SOURCE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "${SOURCE_DIR}/../tools/collector-template-common.sh"
 
 TEMPLATE="${1:-${THS_COLLECTOR_TEMPLATE:-}}"
+HOOK_PACKAGE="${THS_HOOK_PACKAGE:-com.yuyang.thshook}"
 [[ -n "${TEMPLATE}" && -f "${TEMPLATE}" ]] || die "collector template artifact is required"
 assert_device_ready
 ensure_adb_root
@@ -39,6 +40,9 @@ for user_id in {10..17}; do
         users_to_provision+=("${user_id}")
     fi
     adb_shell cmd package install-existing --user "${user_id}" "${THS_PACKAGE}" >/dev/null
+    # LSPosed only loads a module into users where the module package itself is
+    # installed. Scope rows alone are insufficient for newly-created users.
+    adb_shell cmd package install-existing --user "${user_id}" "${HOOK_PACKAGE}" >/dev/null
     if ! printf '%s\n' "${users_to_provision[@]}" | grep -qx "${user_id}"; then
         if adb_shell find "/data/user/${user_id}/${THS_PACKAGE}" -mindepth 1 -print \
             | grep -q .; then
