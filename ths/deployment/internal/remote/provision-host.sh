@@ -98,6 +98,7 @@ for user_id in 0 10 11 12 13 14 15 16 17; do
     "${ADB_BIN}" -s "${THS_ANDROID_SERIAL}" shell cmd package install-existing \
         --user "${user_id}" com.yuyang.thshook >/dev/null
 done
+"${SOURCE_DIR}/../tools/configure-lsposed.sh"
 "${ADB_BIN}" -s "${THS_ANDROID_SERIAL}" shell sync
 "${ADB_BIN}" -s "${THS_ANDROID_SERIAL}" reboot
 for _ in {1..60}; do

@@ -109,6 +109,7 @@ for _ in {1..60}; do
     for user_id in 0 10 11 12 13 14 15 16 17; do
       /home/${REMOTE_USER}/android-sdk/platform-tools/adb -s emulator-5556 shell cmd package install-existing --user \${user_id} com.yuyang.thshook >/dev/null
     done
+    ADB_BIN=/home/${REMOTE_USER}/android-sdk/platform-tools/adb '${REMOTE_GIT_DIR}/ths/deployment/internal/tools/configure-lsposed.sh'
     /home/${REMOTE_USER}/android-sdk/platform-tools/adb -s emulator-5556 shell sync
     /home/${REMOTE_USER}/android-sdk/platform-tools/adb -s emulator-5556 reboot
     break
