@@ -61,7 +61,13 @@ for user_id in "${users_to_provision[@]}"; do
     ce="/data/user/${user_id}/${THS_PACKAGE}"
     de="/data/user_de/${user_id}/${THS_PACKAGE}"
     adb_shell am force-stop --user "${user_id}" "${THS_PACKAGE}" >/dev/null
-    adb_shell sh -c "mkdir -p '${ce}' '${de}'; find '${ce}' -mindepth 1 -delete; find '${de}' -mindepth 1 -delete; tar -xf '${device_dir}/ce.tar' -C '${ce}'; tar -xf '${device_dir}/de.tar' -C '${de}'; chown -R '${app_uid}:${app_uid}' '${ce}' '${de}'; restorecon -RF '${ce}' '${de}' >/dev/null"
+    adb_shell mkdir -p "${ce}" "${de}"
+    adb_shell find "${ce}" -mindepth 1 -delete
+    adb_shell find "${de}" -mindepth 1 -delete
+    adb_shell tar -xf "${device_dir}/ce.tar" -C "${ce}"
+    adb_shell tar -xf "${device_dir}/de.tar" -C "${de}"
+    adb_shell chown -R "${app_uid}:${app_uid}" "${ce}" "${de}"
+    adb_shell restorecon -RF "${ce}" "${de}" >/dev/null
     echo "provisioned collector user=${user_id} uid=${app_uid}"
 done
 if ((${#users_to_provision[@]} == 0)); then

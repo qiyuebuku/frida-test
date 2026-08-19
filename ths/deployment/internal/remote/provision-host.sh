@@ -82,6 +82,16 @@ done
 systemctl daemon-reload
 "${SOURCE_DIR}/provision-collectors.sh" "${THS_COLLECTOR_TEMPLATE}"
 
+# LSPosed loads per-user scope at zygote boot. The users above did not exist
+# when this AVD booted, so restart once before launching their App processes.
+systemctl restart ths-android-emulator.service
+for _ in {1..60}; do
+    [[ "$("${ADB_BIN}" -s "${THS_ANDROID_SERIAL}" shell getprop sys.boot_completed 2>/dev/null | tr -d '\r')" == "1" ]] && break
+    sleep 2
+done
+[[ "$("${ADB_BIN}" -s "${THS_ANDROID_SERIAL}" shell getprop sys.boot_completed 2>/dev/null | tr -d '\r')" == "1" ]] \
+    || { echo "Android failed to reboot after collector provisioning" >&2; exit 1; }
+
 # Hook enablement/scope must be installed by the AVD image or an explicitly
 # supplied repository script. Never mutate an unknown LSPosed database here.
 "${SOURCE_DIR}/install-services.sh" --start-only
