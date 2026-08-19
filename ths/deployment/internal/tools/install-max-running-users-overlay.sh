@@ -38,22 +38,3 @@ EOF
     /data/local/tmp/ths_multiuser_overlay.zip >/dev/null
 "${ADB}" -s "${SERIAL}" shell su -c \
     'magisk --install-module /data/local/tmp/ths_multiuser_overlay.zip'
-
-# Updating an already-mounted Magisk module through /data/adb/modules can hit
-# the module's active bind mount instead of its backing file.  Root adbd gives
-# us Magisk's data mirror, which is the stable backing path used on the next
-# boot.  Re-copy the two generated files there so upgrades (for example 4 ->
-# 10 users) cannot silently retain the previous overlay.
-"${ADB}" -s "${SERIAL}" root >/dev/null
-"${ADB}" -s "${SERIAL}" wait-for-device
-MAGISK_MODULE_ROOT="/debug_ramdisk/.magisk/mirror/data/adb/modules/ths_multiuser_overlay"
-if "${ADB}" -s "${SERIAL}" shell test -d "${MAGISK_MODULE_ROOT}"; then
-    "${ADB}" -s "${SERIAL}" push "${TEMP_DIR}/THSMaxRunningUsersOverlay.apk" \
-        "${MAGISK_MODULE_ROOT}/system/product/overlay/THSMaxRunningUsersOverlay.apk" \
-        >/dev/null
-    "${ADB}" -s "${SERIAL}" push "${TEMP_DIR}/module/module.prop" \
-        "${MAGISK_MODULE_ROOT}/module.prop" >/dev/null
-    "${ADB}" -s "${SERIAL}" shell chmod 0644 \
-        "${MAGISK_MODULE_ROOT}/module.prop" \
-        "${MAGISK_MODULE_ROOT}/system/product/overlay/THSMaxRunningUsersOverlay.apk"
-fi

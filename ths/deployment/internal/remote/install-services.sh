@@ -98,6 +98,14 @@ for _ in {1..60}; do
     fi
     sleep 2
 done
+maximum_users="$("${ADB_BIN}" -s emulator-5556 shell cmd overlay lookup \
+    android android:integer/config_multiuserMaximumUsers 2>/dev/null | tr -d '\r')"
+running_users="$("${ADB_BIN}" -s emulator-5556 shell cmd overlay lookup \
+    android android:integer/config_multiuserMaxRunningUsers 2>/dev/null | tr -d '\r')"
+[[ "${maximum_users}" == "10" && "${running_users}" == "10" ]] || {
+    echo "THS multi-user overlay is inactive: maximum=${maximum_users:-missing} running=${running_users:-missing}" >&2
+    exit 1
+}
 [[ "${MODE}" != "--prepare" ]] || exit 0
 start_bridge_serially() {
     local unit="$1"
