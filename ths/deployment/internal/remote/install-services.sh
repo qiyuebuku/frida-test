@@ -11,8 +11,8 @@ TOOLS_SOURCE="${INTERNAL_DIR}/tools"
 RUNTIME_DIR="/home/yuyangruan/android-runtime"
 ADB_BIN="${ADB_BIN:-/home/yuyangruan/android-sdk/platform-tools/adb}"
 MODE="${1:-all}"
-[[ "${MODE}" == "all" || "${MODE}" == "--runtime-only" || "${MODE}" == "--start-only" ]] || {
-    echo "usage: $0 [--runtime-only|--start-only]" >&2
+[[ "${MODE}" == "all" || "${MODE}" == "--runtime-only" || "${MODE}" == "--prepare" || "${MODE}" == "--start-only" ]] || {
+    echo "usage: $0 [--runtime-only|--prepare|--start-only]" >&2
     exit 2
 }
 
@@ -98,6 +98,7 @@ for _ in {1..60}; do
     fi
     sleep 2
 done
+[[ "${MODE}" != "--prepare" ]] || exit 0
 start_bridge_serially() {
     local unit="$1"
     local health_port="$2"

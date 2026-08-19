@@ -77,6 +77,13 @@ if ! "${SSH[@]}" "test -x /home/${REMOTE_USER}/android-sdk/emulator/emulator && 
     bootstrapped=1
 fi
 
+if [[ ",${COMPONENTS}," == *,ths-runtime,* && ${bootstrapped} -eq 0 ]]; then
+    # Install runtime assets and perform the one required emulator restart
+    # before installing Hook. Installing Hook first would target the old AVD
+    # process and leave the restarted production instance without the package.
+    remote_sudo "'${REMOTE_GIT_DIR}/ths/deployment/internal/remote/install-services.sh' --prepare"
+fi
+
 if [[ ",${COMPONENTS}," == *,ths-hook,* ]]; then
     "${SSH[@]}" "set -euo pipefail
 export ANDROID_HOME=/home/${REMOTE_USER}/android-sdk
@@ -93,18 +100,25 @@ rm -f \"\${signed}\"
 fingerprint=\"\$(\"\${apksigner}\" verify --print-certs \"\${signed}\" | sed -n 's/^Signer #1 certificate SHA-256 digest: //p')\"
 [[ \"\${fingerprint,,}\" == '9505d29aca6006eef0fe473b68e4eea03afd41019cf5435a5ee6963262559dbf' ]]
 /home/${REMOTE_USER}/android-sdk/platform-tools/adb -s emulator-5556 install -r \"\${signed}\""
+    # LSPosed loads module code in zygote. Reboot only after the signed Hook is
+    # installed on the systemd-owned AVD, then wait for Android before bridges.
+    remote_sudo "systemctl restart ths-android-emulator.service
+for _ in {1..60}; do
+  if [[ \$(/home/${REMOTE_USER}/android-sdk/platform-tools/adb -s emulator-5556 shell getprop sys.boot_completed 2>/dev/null | tr -d '\\r') == 1 ]]; then exit 0; fi
+  sleep 2
+done
+exit 1"
 fi
 
 if [[ ",${COMPONENTS}," == *,ths-runtime,* ]]; then
-    # Missing SDK/AVD means a fresh host. Existing hosts only update runtime;
-    # collector data is never overwritten by an ordinary deployment.
+    # Collector data is never overwritten by an ordinary deployment. A fresh
+    # host was fully provisioned above; start-only is idempotent in both cases.
     if (( bootstrapped == 0 )); then
-        remote_sudo "'${REMOTE_GIT_DIR}/ths/deployment/internal/remote/install-services.sh'"
+        remote_sudo "'${REMOTE_GIT_DIR}/ths/deployment/internal/remote/install-services.sh' --start-only"
     fi
 fi
 
-# Hook-only updates do not reinstall the AVD. Restart user 0 and let the
-# repository-managed trade bridge restore the runtime idempotently.
+# Hook-only updates also rebooted the AVD above, so explicitly restore trade.
 if [[ ",${COMPONENTS}," == *,ths-hook,* && ",${COMPONENTS}," != *,ths-runtime,* ]]; then
     remote_sudo "systemctl restart ths-trade-bridge.service"
 fi
