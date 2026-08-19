@@ -5,6 +5,7 @@ DEPLOYMENT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 WORKSPACE="$(cd "${DEPLOYMENT_DIR}/../.." && pwd)"
 COMPONENTS="ths-hook,ths-runtime"
 ENV_FILE="${WORKSPACE}/deployment/production.env"
+CALLER_SSH_KEY="${SSH_KEY:-}"
 while (($#)); do
     case "$1" in
         --component) COMPONENTS="${2:?missing component list}"; shift 2 ;;
@@ -15,6 +16,7 @@ done
 [[ -f "${ENV_FILE}" ]] || { echo "missing deployment env: ${ENV_FILE}" >&2; exit 1; }
 # shellcheck disable=SC1090
 source "${ENV_FILE}"
+[[ -z "${CALLER_SSH_KEY}" ]] || SSH_KEY="${CALLER_SSH_KEY}"
 : "${REMOTE_HOST:?required}"
 : "${REMOTE_PORT:?required}"
 : "${REMOTE_USER:?required}"
