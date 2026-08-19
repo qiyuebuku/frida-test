@@ -49,7 +49,10 @@ for user_id in {10..17}; do
 done
 
 app_id="$(package_app_id)"
-adb_shell su -c "mkdir -p ${device_dir} && chmod 700 ${device_dir}"
+# This rooted production image labels /data/local/tmp as shell_data_file and
+# rejects chmod even for Magisk uid 0.  mkdir's 0755 directory is sufficient:
+# artifacts are short-lived, checksummed before use, and removed by the trap.
+adb_shell su -c "mkdir -p ${device_dir}"
 "${ADB_BIN}" -s "${THS_ANDROID_SERIAL}" push "${tmp_dir}/collector-ce.tar" "${device_dir}/ce.tar" >/dev/null
 "${ADB_BIN}" -s "${THS_ANDROID_SERIAL}" push "${tmp_dir}/collector-de.tar" "${device_dir}/de.tar" >/dev/null
 
