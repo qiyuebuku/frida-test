@@ -98,6 +98,14 @@ for user_id in 0 10 11 12 13 14 15 16 17; do
     "${ADB_BIN}" -s "${THS_ANDROID_SERIAL}" shell cmd package install-existing \
         --user "${user_id}" com.yuyang.thshook >/dev/null
 done
+"${ADB_BIN}" -s "${THS_ANDROID_SERIAL}" shell sync
+"${ADB_BIN}" -s "${THS_ANDROID_SERIAL}" reboot
+for _ in {1..60}; do
+    [[ "$("${ADB_BIN}" -s "${THS_ANDROID_SERIAL}" shell getprop sys.boot_completed 2>/dev/null | tr -d '\r')" == "1" ]] && break
+    sleep 2
+done
+[[ "$("${ADB_BIN}" -s "${THS_ANDROID_SERIAL}" shell getprop sys.boot_completed 2>/dev/null | tr -d '\r')" == "1" ]] \
+    || { echo "Android failed to reboot after Hook user activation" >&2; exit 1; }
 
 # Hook enablement/scope must be installed by the AVD image or an explicitly
 # supplied repository script. Never mutate an unknown LSPosed database here.
