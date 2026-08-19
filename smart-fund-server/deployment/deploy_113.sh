@@ -1107,7 +1107,7 @@ build_server_image() {
     ssh_cmd "set -euo pipefail
 test -s '${ARTIFACT_DIR}/jettask_python-0.1.0-py3-none-any.whl'
 mkdir -p '${SERVER_DIR}/.docker-build'
-cp '${ARTIFACT_DIR}/jettask_python-0.1.0-py3-none-any.whl' '${SERVER_DIR}/.docker-build/jettask.whl'
+cp '${ARTIFACT_DIR}/jettask_python-0.1.0-py3-none-any.whl' '${SERVER_DIR}/.docker-build/jettask_python-0.1.0-py3-none-any.whl'
 if ! docker image inspect '${image}' >/dev/null 2>&1; then
   if [[ -e /home/${REMOTE_USER}/.docker/cli-plugins/docker-buildx ]] \
       && [[ ! -s /home/${REMOTE_USER}/.docker/cli-plugins/docker-buildx ]]; then

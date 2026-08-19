@@ -18,10 +18,10 @@ COPY . /app
 
 # jettask-python is an internal release artifact. The production deployer
 # stages the pinned wheel into .docker-build instead of committing it to Git.
-RUN test -s /app/.docker-build/jettask.whl \
+RUN test -s /app/.docker-build/jettask_python-0.1.0-py3-none-any.whl \
     && python deployment/docker/render_requirements.py
 RUN python -m pip install --upgrade pip wheel 'setuptools<81' \
-    && python -m pip install /app/.docker-build/jettask.whl -r /tmp/requirements.txt \
+    && python -m pip install /app/.docker-build/jettask_python-0.1.0-py3-none-any.whl -r /tmp/requirements.txt \
     && rm -rf /app/.docker-build /tmp/requirements.txt
 
 ARG APP_UID=10001
