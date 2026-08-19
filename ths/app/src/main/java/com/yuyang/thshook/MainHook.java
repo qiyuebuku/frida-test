@@ -9128,19 +9128,51 @@ public class MainHook {
         long t0 = System.currentTimeMillis();
         ClassLoader cl = resolveAppClassLoader(null);
         if (cl == null) return errorJson(out, "classloader not ready");
-        // 可选 body {"password": "..."}：本次登录用密码（一次性，不落盘）
+        // 可选 body {"password": "..."}：本次登录用密码（一次性，不落盘）；
+        // {"force": true}：绕过 already_logged_in 短路强制重登（会话被 90B 踢/
+        //   真机互踢后本地登录标志仍在的场景），token 优先、过期自动密码 fallback；
+        // {"method": "pwd"}：跳过 token 路径直接密码登录（最强重建：无论 token
+        //   状态如何都用交易密码拿全新会话+新 token）。
+        String pendingPwd = null;
+        boolean force = false;
+        boolean preferPwd = false;
         try {
             if (body != null && !body.trim().isEmpty()) {
-                String p = extractJsonString(body, "password");
-                if (p != null && !p.isEmpty()) pendingTradePassword = p;
+                JSONObject req = new JSONObject(body);
+                String p = req.optString("password", "");
+                if (!p.isEmpty()) pendingPwd = p;
+                force = req.optBoolean("force", false);
+                preferPwd = "pwd".equals(req.optString("method", ""));
+                out.put("force", force);
+                out.put("method", preferPwd ? "pwd" : "auto");
             }
         } catch (Throwable ignored) { }
-        if (!ensureTradeRuntimeBase(cl)) return errorJson(out, lastEnsureTradeError);
-        boolean ok = doActiveTradeLogin(cl, out);
+        if (pendingPwd != null) pendingTradePassword = pendingPwd;
+        if (!ensureTradeRuntimeBase(cl)) {
+            pendingTradePassword = null;
+            return errorJson(out, lastEnsureTradeError);
+        }
+        boolean ok;
+        if (preferPwd) {
+            ok = doPwdLogin(cl, out);
+        } else {
+            ok = doActiveTradeLogin(cl, out, force);
+        }
         pendingTradePassword = null;
         out.put("ok", ok);
         out.put("elapsed_ms", System.currentTimeMillis() - t0);
         return out.toString();
+    }
+
+    /** method=pwd：密码直登入口。复用 doActiveTradeLoginLocked 的全部前置
+     *  （在途登录等待、僵尸 isWeituoLogining 清除、账户就绪），仅跳过 token
+     *  读取/seed 重播，直接走密码登录分支拿全新会话。 */
+    private static boolean doPwdLogin(ClassLoader cl, JSONObject report) {
+        synchronized (tradeRuntimeLock) {
+            boolean ok = doActiveTradeLoginLocked(cl, report, true, true);
+            if (ok) schedulePostLoginTokenReport();
+            return ok;
+        }
     }
 
     /** POST /stock/trade/pwd — 设置/清除交易密码（body {"password":...} 或
@@ -10324,7 +10356,7 @@ public class MainHook {
      *  场景，被动等 App 自愈不可靠，主动登录实测 18s 内恢复。 */
     private static boolean doActiveTradeLogin(ClassLoader cl, JSONObject report, boolean force) {
         synchronized (tradeRuntimeLock) {
-            boolean ok = doActiveTradeLoginLocked(cl, report, force);
+            boolean ok = doActiveTradeLoginLocked(cl, report, force, false);
             if (ok) {
                 // 触发点2：登录成功后异步导出 token 上报（锁外调度，不阻塞登录链）。
                 // z7m.w 若已在本链触发过则由 sha256 去重跳过；此处兜住"重启后
@@ -10458,7 +10490,8 @@ public class MainHook {
         }
     }
 
-    private static boolean doActiveTradeLoginLocked(ClassLoader cl, JSONObject report, boolean force) {
+    private static boolean doActiveTradeLoginLocked(ClassLoader cl, JSONObject report, boolean force,
+                                                    boolean preferPwd) {
         Object mgr = tradeAccountManagerInstance;
         try {
             Class<?> izrClass = cl.loadClass("izr");
@@ -10494,10 +10527,15 @@ public class MainHook {
             String userId = (String) cl.loadClass("ulm").getMethod("e").invoke(null);
             Class<?> z7mClass = cl.loadClass("z7m");
             Object z7mInst = z7mClass.getMethod("k").invoke(null);
-            Object tokenInfo = z7mClass
+            // preferPwd（POST /stock/trade/login {"method":"pwd"}）：跳过 token
+            // 读取与 seed 重播，直接密码登录拿全新会话（最强重建，用户显式要求）
+            Object tokenInfo = preferPwd ? null : z7mClass
                     .getMethod("i", String.class, cl.loadClass("pzr"))
                     .invoke(z7mInst, userId, mgr);
-            if (tokenInfo == null) {
+            if (preferPwd) {
+                report.put("skip_token", true);
+            }
+            if (tokenInfo == null && !preferPwd) {
                 // AVD 读取路径缺陷兜底：x7m.i(pzr) 的 livetime 重算使 z7m.i 恒
                 // null（重启后 token 不可用，文件实际有效）。从 seed 文件
                 // （thshook_trade_seed.json 的 token/token_time）自动重播官方
@@ -10554,11 +10592,52 @@ public class MainHook {
                     boolean pwdOk = doPasswordTradeLoginLocked(cl, report, pwd);
                     report.put("pwd_login", pwdOk);
                     if (pwdOk) {
+                        // 密码登录成功=会话已建立。z7m.i 读回仍可能因 x7m.i 的
+                        // livetime 重算坑返回 null（AVD 冷启动 ehi.m().n() 未
+                        // 就绪）——先用 seed 重播同款 livetime 修复再读；仍 null
+                        // 时以 izr.l 登录态为准判成功，不得误报 token unavailable
+                        try {
+                            java.util.List<?> tis = (java.util.List<?>) z7mClass
+                                    .getMethod("m", String.class).invoke(z7mInst, userId);
+                            if (tis != null) {
+                                for (Object ti : tis) {
+                                    try {
+                                        java.lang.reflect.Field lt = ti.getClass()
+                                                .getField("mLiveTime");
+                                        if (((Integer) lt.get(ti)) <= 0) {
+                                            lt.setInt(ti, 1440);
+                                        }
+                                    } catch (Throwable ignore) { }
+                                }
+                            }
+                        } catch (Throwable ignore) { }
                         tokenInfo = z7mClass
                                 .getMethod("i", String.class, cl.loadClass("pzr"))
                                 .invoke(z7mInst, userId, mgr);
                         if (tokenInfo != null) {
                             schedulePostLoginTokenReport();
+                        } else {
+                            // z7m.i 仍 null（livetime 坑）：onWeituoLoginSuccess 回调
+                            // 本身就是券商确认（2026-08-19 实测：此分支下 funds
+                            // 2s 成功，会话已建立，izr.l 置位有异步延迟）——轮询
+                            // izr.l 最多 5s 作参考，无论真假都判成功，绝不再误报
+                            // token unavailable
+                            boolean loggedInState = false;
+                            try {
+                                for (int i = 0; i < 10 && !loggedInState; i++) {
+                                    loggedInState = Boolean.TRUE.equals(
+                                            izrInst.getClass()
+                                                    .getMethod("l", cl.loadClass("pzr"))
+                                                    .invoke(izrInst, mgr));
+                                    if (!loggedInState) Thread.sleep(500);
+                                }
+                            } catch (Throwable ignore) { }
+                            report.put("logged_in_state", loggedInState);
+                            report.put("result", "success");
+                            report.put("via", "pwd_login_callback_confirmed");
+                            lastEnsureTradeError = null;
+                            schedulePostLoginTokenReport();
+                            return true;
                         }
                     }
                 }
@@ -10630,8 +10709,16 @@ public class MainHook {
                     .invoke(f2sInst, tokenInfo, params, callback);
             boolean done = latch.await(35, TimeUnit.SECONDS);
             if (!done) {
-                // 超时但登录可能已生效（同写端点超时铁律：先查状态再定论）
-                boolean loggedIn = Boolean.TRUE.equals(lM.invoke(izrInst, mgr));
+                // 超时但登录可能已生效（同写端点超时铁律：先查状态再定论）。
+                // 2026-08-19 实测：35s 无回调但会话实际建立，izr.l 在超时后
+                // 数秒才异步置位（随后 funds 2s 成功）——轮询 5s 再定论
+                boolean loggedIn = false;
+                try {
+                    for (int i = 0; i < 10 && !loggedIn; i++) {
+                        loggedIn = Boolean.TRUE.equals(lM.invoke(izrInst, mgr));
+                        if (!loggedIn) Thread.sleep(500);
+                    }
+                } catch (Throwable ignore) { }
                 report.put("result", loggedIn ? "success-after-timeout" : "timeout");
                 try {
                     report.put("weituo_logining_stuck",
