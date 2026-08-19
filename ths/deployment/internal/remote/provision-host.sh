@@ -67,6 +67,7 @@ done
     || { echo "Android failed to boot" >&2; exit 1; }
 "${ADB_BIN}" -s "${THS_ANDROID_SERIAL}" install -r "${THS_APP_APK}" >/dev/null
 "${ADB_BIN}" -s "${THS_ANDROID_SERIAL}" install -r "${THS_HOOK_APK}" >/dev/null
+"${SOURCE_DIR}/../tools/install-max-running-users-overlay.sh"
 app_version="$("${ADB_BIN}" -s "${THS_ANDROID_SERIAL}" shell dumpsys package com.hexin.plat.android \
     | tr -d '\r' | grep -oE 'versionCode=[0-9]+' | head -n 1 | cut -d= -f2)"
 [[ "${app_version}" =~ ^[0-9]+$ ]] || { echo "cannot resolve installed THS version" >&2; exit 1; }

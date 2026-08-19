@@ -78,17 +78,19 @@ rm -f /etc/smart-fund/ths-bridge-realtime.env \
 
 systemctl daemon-reload
 systemctl enable --now ths-android-emulator.service
-"${TOOLS_SOURCE}/install-max-running-users-overlay.sh"
-# The first migration may still have emulator-5556 running outside systemd.
-# Stop the old managed AVD, terminate any unmanaged 5556 instance, then let the
-# updated unit become the sole owner of the production AVD.
-systemctl stop ths-android-emulator.service
-"${ADB_BIN}" -s emulator-5556 emu kill >/dev/null 2>&1 || true
-for _ in {1..30}; do
-    [[ "$("${ADB_BIN}" -s emulator-5556 get-state 2>/dev/null || true)" != "device" ]] && break
-    sleep 1
-done
-systemctl start ths-android-emulator.service
+if [[ "${MODE}" != "--start-only" ]]; then
+    "${TOOLS_SOURCE}/install-max-running-users-overlay.sh"
+    # The first migration may still have emulator-5556 running outside systemd.
+    # Stop the old managed AVD, terminate any unmanaged 5556 instance, then let
+    # the updated unit become the sole owner of the production AVD.
+    systemctl stop ths-android-emulator.service
+    "${ADB_BIN}" -s emulator-5556 emu kill >/dev/null 2>&1 || true
+    for _ in {1..30}; do
+        [[ "$("${ADB_BIN}" -s emulator-5556 get-state 2>/dev/null || true)" != "device" ]] && break
+        sleep 1
+    done
+    systemctl start ths-android-emulator.service
+fi
 for _ in {1..60}; do
     if [[ "$("${ADB_BIN}" -s emulator-5556 get-state 2>/dev/null || true)" == "device" ]] \
         && [[ "$("${ADB_BIN}" -s emulator-5556 shell getprop sys.boot_completed 2>/dev/null | tr -d '\r')" == "1" ]]; then
