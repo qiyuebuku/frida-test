@@ -45,7 +45,10 @@ source "${DEPLOY_ENV}"
 : "${REMOTE_USER:?required in production.env}"
 SSH_KEY="${SSH_KEY:-/mnt/c/Users/阮雨阳/.ssh/id_rsa}"
 : "${SSH_KEY:?required in production.env}"
-SSH=(ssh -i "${SSH_KEY}" -p "${REMOTE_PORT}" -o StrictHostKeyChecking=no "${REMOTE_USER}@${REMOTE_HOST}")
+SSH_KEY_RUNTIME="/tmp/frida-test-production-deploy-key"
+cp "${SSH_KEY}" "${SSH_KEY_RUNTIME}"
+chmod 0600 "${SSH_KEY_RUNTIME}"
+SSH=(ssh -i "${SSH_KEY_RUNTIME}" -p "${REMOTE_PORT}" -o StrictHostKeyChecking=no "${REMOTE_USER}@${REMOTE_HOST}")
 STATE_FILE="${REMOTE_STATE_FILE:-/home/${REMOTE_USER}/smart-fund/deployment-state.env}"
 
 state="$("${SSH[@]}" "cat '${STATE_FILE}' 2>/dev/null || true")"
@@ -122,7 +125,7 @@ echo "components: ${COMPONENTS}"
 (( DRY_RUN == 0 )) || exit 0
 
 if [[ ",${COMPONENTS}," == *,ths-hook,* || ",${COMPONENTS}," == *,ths-runtime,* ]]; then
-    SSH_KEY="${SSH_KEY}" DEPLOY_REVISION="${REVISION}" "${WORKSPACE}/ths/deployment/deploy.sh" \
+    SSH_KEY="${SSH_KEY_RUNTIME}" DEPLOY_REVISION="${REVISION}" "${WORKSPACE}/ths/deployment/deploy.sh" \
         --component "${COMPONENTS}" --env-file "${DEPLOY_ENV}"
 fi
 server_components=()
@@ -131,7 +134,7 @@ for component in ${COMPONENTS//,/ }; do
 done
 if ((${#server_components[@]} > 0)); then
     server_component_csv="$(IFS=,; echo "${server_components[*]}")"
-    SSH_KEY="${SSH_KEY}" DEPLOY_REVISION="${REVISION}" LOCAL_DEPLOY_ENV="${DEPLOY_ENV}" \
+    SSH_KEY="${SSH_KEY_RUNTIME}" DEPLOY_REVISION="${REVISION}" LOCAL_DEPLOY_ENV="${DEPLOY_ENV}" \
         "${WORKSPACE}/smart-fund-server/deployment/deploy_113.sh" --components "${server_component_csv}"
 fi
 

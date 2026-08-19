@@ -1109,6 +1109,10 @@ test -s '${ARTIFACT_DIR}/jettask_python-0.1.0-py3-none-any.whl'
 mkdir -p '${SERVER_DIR}/.docker-build'
 cp '${ARTIFACT_DIR}/jettask_python-0.1.0-py3-none-any.whl' '${SERVER_DIR}/.docker-build/jettask.whl'
 if ! docker image inspect '${image}' >/dev/null 2>&1; then
+  if [[ -e /home/${REMOTE_USER}/.docker/cli-plugins/docker-buildx ]] \
+      && [[ ! -s /home/${REMOTE_USER}/.docker/cli-plugins/docker-buildx ]]; then
+    rm -f /home/${REMOTE_USER}/.docker/cli-plugins/docker-buildx
+  fi
   docker build --pull --build-arg APP_UID=\$(id -u) --build-arg APP_GID=\$(id -g) -f '${SERVER_DIR}/deployment/docker/Dockerfile' -t '${image}' '${SERVER_DIR}'
 fi
 rm -rf '${SERVER_DIR}/.docker-build'"
