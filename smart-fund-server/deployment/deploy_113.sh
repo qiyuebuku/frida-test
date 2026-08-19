@@ -25,7 +25,7 @@ set -euo pipefail
 
 DEPLOYMENT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 LOCAL_SERVER_DIR="$(cd "${DEPLOYMENT_DIR}/.." && pwd)"
-LOCAL_DEPLOY_ENV="${LOCAL_DEPLOY_ENV:-${DEPLOYMENT_DIR}/.deployment.local.env}"
+LOCAL_DEPLOY_ENV="${LOCAL_DEPLOY_ENV:-${DEPLOYMENT_DIR}/../../deployment/production.env}"
 if [[ -f "${LOCAL_DEPLOY_ENV}" ]]; then
     # shellcheck disable=SC1090
     source "${LOCAL_DEPLOY_ENV}"

@@ -34,9 +34,6 @@ git merge-base --is-ancestor "${REVISION}" origin/main || {
 }
 
 DEPLOY_ENV="${DEPLOY_ENV:-${WORKSPACE}/deployment/production.env}"
-if [[ ! -f "${DEPLOY_ENV}" && -f "${WORKSPACE}/smart-fund-server/deployment/.deployment.local.env" ]]; then
-    DEPLOY_ENV="${WORKSPACE}/smart-fund-server/deployment/.deployment.local.env"
-fi
 [[ -f "${DEPLOY_ENV}" ]] || {
     echo "missing local deployment connection config: ${DEPLOY_ENV}" >&2
     exit 1
