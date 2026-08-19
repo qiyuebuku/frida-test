@@ -9,11 +9,12 @@ source "${SOURCE_DIR}/../tools/collector-template-common.sh"
 TEMPLATE="${1:-${THS_COLLECTOR_TEMPLATE:-}}"
 [[ -n "${TEMPLATE}" && -f "${TEMPLATE}" ]] || die "collector template artifact is required"
 assert_device_ready
+ensure_adb_root
 
 tmp_dir="$(mktemp -d)"
 device_dir="/data/local/tmp/ths-collector-provision-$$"
 cleanup() {
-    adb_shell su -c "rm -rf ${device_dir}" >/dev/null 2>&1 || true
+    adb_shell rm -rf "${device_dir}" >/dev/null 2>&1 || true
     rm -rf -- "${tmp_dir}"
 }
 trap cleanup EXIT
@@ -39,7 +40,7 @@ for user_id in {10..17}; do
     fi
     adb_shell cmd package install-existing --user "${user_id}" "${THS_PACKAGE}" >/dev/null
     if ! printf '%s\n' "${users_to_provision[@]}" | grep -qx "${user_id}"; then
-        if adb_shell su -c "find /data/user/${user_id}/${THS_PACKAGE} -mindepth 1 -print" \
+        if adb_shell find "/data/user/${user_id}/${THS_PACKAGE}" -mindepth 1 -print \
             | grep -q .; then
             echo "preserving existing collector data for user=${user_id}"
         else
@@ -60,10 +61,10 @@ for user_id in "${users_to_provision[@]}"; do
     ce="/data/user/${user_id}/${THS_PACKAGE}"
     de="/data/user_de/${user_id}/${THS_PACKAGE}"
     adb_shell am force-stop --user "${user_id}" "${THS_PACKAGE}" >/dev/null
-    adb_shell su -c "mkdir -p '${ce}' '${de}'; find '${ce}' -mindepth 1 -delete; find '${de}' -mindepth 1 -delete; tar -xf '${device_dir}/ce.tar' -C '${ce}'; tar -xf '${device_dir}/de.tar' -C '${de}'; chown -R '${app_uid}:${app_uid}' '${ce}' '${de}'; restorecon -RF '${ce}' '${de}' >/dev/null"
+    adb_shell sh -c "mkdir -p '${ce}' '${de}'; find '${ce}' -mindepth 1 -delete; find '${de}' -mindepth 1 -delete; tar -xf '${device_dir}/ce.tar' -C '${ce}'; tar -xf '${device_dir}/de.tar' -C '${de}'; chown -R '${app_uid}:${app_uid}' '${ce}' '${de}'; restorecon -RF '${ce}' '${de}' >/dev/null"
     echo "provisioned collector user=${user_id} uid=${app_uid}"
 done
 if ((${#users_to_provision[@]} == 0)); then
     echo "all collector users already contain app data; nothing was overwritten"
 fi
-adb_shell su -c sync
+adb_shell sync

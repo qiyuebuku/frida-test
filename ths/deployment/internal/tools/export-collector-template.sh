@@ -12,6 +12,7 @@ OUTPUT="${1:-${SOURCE_DIR}/artifacts/ths-collector-template.tar.gz}"
 [[ "${SOURCE_USER_ID}" =~ ^[0-9]+$ ]] || die "invalid source user id"
 (( SOURCE_USER_ID >= 10 )) || die "collector template must never be exported from trade user 0"
 assert_device_ready
+ensure_adb_root
 
 adb_shell pm list packages --user "${SOURCE_USER_ID}" "${THS_PACKAGE}" \
     | tr -d '\r' | grep -qx "package:${THS_PACKAGE}" \
@@ -26,7 +27,7 @@ for relative in \
     files/thshook_trade_role.json \
     shared_prefs/sp_weituo_login.xml \
     shared_prefs/sp_wt_expected_login_account.xml; do
-    if adb_shell su -c "test -e /data/user/${SOURCE_USER_ID}/${THS_PACKAGE}/${relative}"; then
+    if adb_shell test -e "/data/user/${SOURCE_USER_ID}/${THS_PACKAGE}/${relative}"; then
         die "collector source contains forbidden trading state: ${relative}"
     fi
 done
@@ -34,14 +35,14 @@ done
 tmp_dir="$(mktemp -d)"
 device_prefix="/data/local/tmp/ths-collector-template-${SOURCE_USER_ID}-$$"
 cleanup() {
-    adb_shell su -c "rm -f ${device_prefix}-ce.tar ${device_prefix}-de.tar" >/dev/null 2>&1 || true
+    adb_shell rm -f "${device_prefix}-ce.tar" "${device_prefix}-de.tar" >/dev/null 2>&1 || true
     rm -rf -- "${tmp_dir}"
 }
 trap cleanup EXIT
 
 adb_shell am force-stop --user "${SOURCE_USER_ID}" "${THS_PACKAGE}" >/dev/null
-adb_shell su -c "tar -cf ${device_prefix}-ce.tar -C /data/user/${SOURCE_USER_ID}/${THS_PACKAGE} ."
-adb_shell su -c "tar -cf ${device_prefix}-de.tar -C /data/user_de/${SOURCE_USER_ID}/${THS_PACKAGE} ."
+adb_shell tar -cf "${device_prefix}-ce.tar" -C "/data/user/${SOURCE_USER_ID}/${THS_PACKAGE}" .
+adb_shell tar -cf "${device_prefix}-de.tar" -C "/data/user_de/${SOURCE_USER_ID}/${THS_PACKAGE}" .
 "${ADB_BIN}" -s "${THS_ANDROID_SERIAL}" pull "${device_prefix}-ce.tar" "${tmp_dir}/ce.tar" >/dev/null
 "${ADB_BIN}" -s "${THS_ANDROID_SERIAL}" pull "${device_prefix}-de.tar" "${tmp_dir}/de.tar" >/dev/null
 

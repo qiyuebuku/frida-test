@@ -20,8 +20,21 @@ assert_device_ready() {
         || die "Android device is not ready: ${THS_ANDROID_SERIAL}"
     [[ "$(adb_shell getprop sys.boot_completed 2>/dev/null | tr -d '\r')" == "1" ]] \
         || die "Android has not completed boot"
-    adb_shell su -c id 2>/dev/null | grep -q 'uid=0' \
-        || die "root shell is required for app-data provisioning"
+}
+
+ensure_adb_root() {
+    "${ADB_BIN}" -s "${THS_ANDROID_SERIAL}" root >/dev/null
+    for _ in {1..30}; do
+        if adb_shell id 2>/dev/null | grep -q 'uid=0'; then
+            local caps
+            caps="$(adb_shell sh -c "grep '^CapEff:' /proc/self/status" | tr -d '\r')"
+            [[ "${caps}" != 'CapEff:'$'\t''0000000000000000' ]] \
+                || die "root adbd has no effective capabilities"
+            return 0
+        fi
+        sleep 1
+    done
+    die "root adbd is required for app-data provisioning"
 }
 
 package_app_id() {
