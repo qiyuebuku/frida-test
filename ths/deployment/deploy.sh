@@ -104,7 +104,12 @@ fingerprint=\"\$(\"\${apksigner}\" verify --print-certs \"\${signed}\" | sed -n 
     # installed on the systemd-owned AVD, then wait for Android before bridges.
     remote_sudo "systemctl restart ths-android-emulator.service
 for _ in {1..60}; do
-  if [[ \$(/home/${REMOTE_USER}/android-sdk/platform-tools/adb -s emulator-5556 shell getprop sys.boot_completed 2>/dev/null | tr -d '\\r') == 1 ]]; then exit 0; fi
+  if [[ \$(/home/${REMOTE_USER}/android-sdk/platform-tools/adb -s emulator-5556 shell getprop sys.boot_completed 2>/dev/null | tr -d '\\r') == 1 ]]; then
+    for user_id in 0 10 11 12 13 14 15 16 17; do
+      /home/${REMOTE_USER}/android-sdk/platform-tools/adb -s emulator-5556 shell cmd package install-existing --user \${user_id} com.yuyang.thshook >/dev/null
+    done
+    exit 0
+  fi
   sleep 2
 done
 exit 1"
