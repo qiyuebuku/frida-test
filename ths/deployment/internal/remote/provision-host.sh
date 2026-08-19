@@ -83,9 +83,11 @@ done
 systemctl daemon-reload
 "${SOURCE_DIR}/provision-collectors.sh" "${THS_COLLECTOR_TEMPLATE}"
 
-# LSPosed loads per-user scope at zygote boot. The users above did not exist
-# when this AVD booted, so restart once before launching their App processes.
-systemctl restart ths-android-emulator.service
+# LSPosed loads per-user scope at zygote boot. Flush userdata and reboot Android
+# inside the guest so newly installed APK files are not lost to a forced QEMU
+# shutdown before launching the App processes.
+"${ADB_BIN}" -s "${THS_ANDROID_SERIAL}" shell sync
+"${ADB_BIN}" -s "${THS_ANDROID_SERIAL}" reboot
 for _ in {1..60}; do
     [[ "$("${ADB_BIN}" -s "${THS_ANDROID_SERIAL}" shell getprop sys.boot_completed 2>/dev/null | tr -d '\r')" == "1" ]] && break
     sleep 2
