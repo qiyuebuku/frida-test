@@ -1185,7 +1185,27 @@ migrate_systemd_to_compose() {
         return 1
     fi
     ssh_cmd "touch '${COMPOSE_MIGRATION_MARKER}'"
-    sudo_cmd "systemctl enable smart-fund-compose.service"
+    sudo_cmd "systemctl enable --now smart-fund-compose.service"
+}
+
+cleanup_legacy_systemd_units() {
+    sudo_cmd "rm -f \
+/etc/systemd/system/${TARGET} \
+/etc/systemd/system/${SVC_API}.service \
+/etc/systemd/system/${SVC_PERSIST}.service \
+/etc/systemd/system/${SVC_SCHEDULER}.service \
+/etc/systemd/system/${SVC_WORKER_THS}.service \
+/etc/systemd/system/${SVC_WORKER_THS_SECTOR}.service \
+/etc/systemd/system/smart-fund-worker-http.service \
+/etc/systemd/system/smart-fund-worker-internal.service \
+/etc/systemd/system/${SVC_THS_STREAM}.service \
+/etc/systemd/system/${SVC_KG_CARD}.service \
+/etc/systemd/system/${SVC_KG_RELATION}.service \
+/etc/systemd/system/${SVC_KG_GRAPH}.service \
+/etc/systemd/system/${SVC_MILVUS}.service \
+/etc/systemd/system/${SVC_ETCD}.service
+systemctl daemon-reload
+systemctl reset-failed"
 }
 
 deploy_compose_services() {
@@ -1226,8 +1246,9 @@ deploy_components() {
     build_server_image
     install_compose_service
     migrate_systemd_to_compose
-    sudo_cmd "systemctl enable smart-fund-compose.service"
+    sudo_cmd "systemctl enable --now smart-fund-compose.service"
     deploy_compose_services "${1}"
+    cleanup_legacy_systemd_units
     cleanup_legacy_server_dir
     echo "服务端组件部署完成: ${1}"
 }
