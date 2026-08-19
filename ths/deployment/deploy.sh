@@ -99,7 +99,7 @@ rm -f \"\${signed}\"
   --ks-pass pass:android --key-pass pass:android --out \"\${signed}\" \"\${unsigned}\"
 fingerprint=\"\$(\"\${apksigner}\" verify --print-certs \"\${signed}\" | sed -n 's/^Signer #1 certificate SHA-256 digest: //p')\"
 [[ \"\${fingerprint,,}\" == '9505d29aca6006eef0fe473b68e4eea03afd41019cf5435a5ee6963262559dbf' ]]
-/home/${REMOTE_USER}/android-sdk/platform-tools/adb -s emulator-5556 install -r \"\${signed}\""
+/home/${REMOTE_USER}/android-sdk/platform-tools/adb -s emulator-5556 install --no-streaming -r \"\${signed}\""
     # LSPosed loads module code in zygote. Reboot only after the signed Hook is
     # installed on the systemd-owned AVD, then wait for Android before bridges.
     remote_sudo "systemctl restart ths-android-emulator.service
