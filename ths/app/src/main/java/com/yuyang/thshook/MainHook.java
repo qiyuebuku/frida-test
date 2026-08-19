@@ -7002,6 +7002,71 @@ public class MainHook {
             } catch (Throwable e) {
                 Log.w(TAG, "z7m.w hook failed: " + e);
             }
+            // 登录报文探针（2026-08-19 密码预处理排查）：t3s.b 是密码登录报文
+            // 构造终点（返回 t3s.d = 线上字节）。捕获 App 实际构造的 g6m 全部
+            // 字段（含明文密码 tag4 来源 g6m.c）与完整线上 hex，写
+            // filesDir/thshook_login_probe.log，供与 hook 自建 g6m 对比。
+            try {
+                Class<?> t3sClass = cl.loadClass("t3s");
+                Class<?> v3sClass = cl.loadClass("v3s");
+                Class<?> jmvClass = cl.loadClass("jmv");
+                Pine.hook(t3sClass.getDeclaredMethod("b", v3sClass, jmvClass),
+                        new MethodHook() {
+                            @Override
+                            public void afterCall(Pine.CallFrame callFrame) {
+                                try {
+                                    StringBuilder sb = new StringBuilder();
+                                    sb.append("=== t3s.b pwd login probe ===\n");
+                                    Object v3s = callFrame.args[0];
+                                    Object g6m = v3sClass.getField("d").get(v3s);
+                                    Object r8m = v3sClass.getField("c").get(v3s);
+                                    if (g6m != null) {
+                                        for (Field f : g6m.getClass().getFields()) {
+                                            Class<?> ft = f.getType();
+                                            if (ft == String.class || ft == boolean.class
+                                                    || ft == int.class || ft == long.class) {
+                                                Object v = f.get(g6m);
+                                                if (v != null) {
+                                                    sb.append("g6m.").append(f.getName())
+                                                            .append('=').append(v).append('\n');
+                                                }
+                                            }
+                                        }
+                                    }
+                                    if (r8m != null) {
+                                        for (Field f : r8m.getClass().getFields()) {
+                                            Class<?> ft = f.getType();
+                                            if (ft == String.class || ft == boolean.class
+                                                    || ft == int.class || ft == long.class) {
+                                                Object v = f.get(r8m);
+                                                if (v != null) {
+                                                    sb.append("r8m.").append(f.getName())
+                                                            .append('=').append(v).append('\n');
+                                                }
+                                            }
+                                        }
+                                    }
+                                    Object ret = callFrame.getResult();
+                                    byte[] buf = ret != null
+                                            ? (byte[]) t3sClass.getField("d").get(ret) : null;
+                                    sb.append("buf_len=").append(buf == null ? -1 : buf.length).append('\n');
+                                    if (buf != null) {
+                                        StringBuilder hex = new StringBuilder(buf.length * 2);
+                                        for (byte b : buf) hex.append(String.format("%02x", b));
+                                        sb.append("buf_hex=").append(hex).append('\n');
+                                    }
+                                    sb.append("=== end ===\n");
+                                    Log.i(TAG, sb.toString());
+                                    appendLoginProbeLog(sb.toString());
+                                } catch (Throwable t) {
+                                    Log.w(TAG, "t3s.b probe failed: " + t);
+                                }
+                            }
+                        });
+                Log.i(TAG, "t3s.b login probe installed");
+            } catch (Throwable e) {
+                Log.w(TAG, "t3s.b probe hook failed: " + e);
+            }
             // 设备指纹伪造恢复（filesDir/thshook_spoof.json）：必须在 token
             // import/登录前生效（udid 同时是 token 加密 key）
             try {
@@ -10115,6 +10180,21 @@ public class MainHook {
         }
     }
 
+    /** 登录探针日志追加（filesDir/thshook_login_probe.log），失败静默 */
+    private static void appendLoginProbeLog(String text) {
+        try {
+            if (appInstance == null) return;
+            File f = new File(appInstance.getFilesDir(), "thshook_login_probe.log");
+            java.io.FileOutputStream fos = new java.io.FileOutputStream(f, true);
+            try {
+                fos.write((text + "\n").getBytes("UTF-8"));
+            } finally {
+                fos.close();
+            }
+        } catch (Throwable ignored) {
+        }
+    }
+
     private static void writeFileString(File f, String content) throws Exception {
         java.io.FileOutputStream fos = new java.io.FileOutputStream(f);
         try {
@@ -10271,9 +10351,9 @@ public class MainHook {
         }
     }
 
-    /** 密码登录（2026-08-18）：镜像 SimpleWeituoLogin.weituoLoginRequest 链——
-     *  g6m.a() builder：N(资金账号)/S(密码→h)/R(accountType)/T(yyb索引)/
-     *  Q(空)/U(yyb串=g6m.a(a1s))/M(keepLogin=true)/P("1")/X(true)/H(acctype)/G()
+    /** 密码登录（2026-08-18，8/19 真机探针修正）：镜像 SimpleWeituoLogin 链——
+     *  g6m.a() builder：N(资金账号)/R(密码→g6m.b→线上tag3)/S(空)/T("0")/
+     *  O("0")/Q(空)/U(yyb串=g6m.a(a1s))/M(false)/P("1")/X(true)/H(acctype)/G()
      *  → f2s.d().o(g6m, null, q3s.a().s(0).q(1).v(1).o(true), g8m回调)。
      *  keepLogin=true 使券商下发新 token（z7m.w hook 自动捕获上报）。 */
     private static boolean doPasswordTradeLoginLocked(ClassLoader cl,
@@ -10301,13 +10381,16 @@ public class MainHook {
             String account = (String) mgr.getClass().getMethod("d").invoke(mgr);
             int accType = (Integer) mgr.getClass().getMethod("e").invoke(mgr);
             b.getClass().getMethod("N", String.class).invoke(b, account);
-            b.getClass().getMethod("S", String.class).invoke(b, password);
-            b.getClass().getMethod("R", String.class).invoke(b, "0");
+            // 2026-08-19 真机探针捕获（thshook_login_probe.log）修正：App 实际构造
+            // g6m.b=R(密码)（线上 tag3，券商密码校验位）、g6m.c=S("")（tag4 恒空）。
+            // 此前 S(密码)/R("0") 导致券商把 "0" 当密码 → "[120047]客户交易密码错误"。
+            b.getClass().getMethod("R", String.class).invoke(b, password);
+            b.getClass().getMethod("S", String.class).invoke(b, "");
             b.getClass().getMethod("T", String.class).invoke(b, "0");
             b.getClass().getMethod("O", String.class).invoke(b, "0");
             b.getClass().getMethod("Q", String.class).invoke(b, "");
             b.getClass().getMethod("U", String.class).invoke(b, yybStr);
-            b.getClass().getMethod("M", boolean.class).invoke(b, Boolean.TRUE);
+            b.getClass().getMethod("M", boolean.class).invoke(b, Boolean.FALSE);
             b.getClass().getMethod("P", String.class).invoke(b, "1");
             b.getClass().getMethod("X", boolean.class).invoke(b, Boolean.TRUE);
             b.getClass().getMethod("H", int.class).invoke(b, accType);
