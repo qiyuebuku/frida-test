@@ -188,6 +188,11 @@ grep "Stack:" /tmp/hook.log       # 调用栈
 `knowledge/native-query-routing-and-concurrency.md`。必须先确定身份域、路由槽、完成条件和取消语义，
 不能通过增加线程、HTTP/TCP 连接、App 或模拟器猜测并发能力。
 
+复刻 App 的某条请求（登录/下单/签名）时，反编译读出的 builder 字段语义不可信：字段放错位
+不报协议错、只报业务错（如“密码错误”）。必须在报文构造终点加探针抓一次 App 真实调用做
+字段级对照；凭据类协议先静态穷尽排除、再单次实测（错误次数是硬预算）。完整方法论见
+`knowledge/mirror-invocation-verification.md`。
+
 ---
 
 ## 逆向工作流（7 个 Phase）
@@ -726,6 +731,7 @@ knowledge/
 ├── autojs-guide.md           # AutoJS 自动化指南（UI 操作脚本化）
 ├── runtime-core-extraction.md # 原生业务核心提取、无界面运行和后台稳定性验收
 ├── native-query-routing-and-concurrency.md # QueryClient 身份域、回调收敛和并发实验矩阵
+├── mirror-invocation-verification.md # 镜像内部调用的验证方法论（字段映射探针/尝试预算/跨dex短类名）
 ├── apk-signing-deployment.md # Hook APK 签名检查、安全覆盖与受控重装
 └── static-analysis-guide.md  # DEX 静态分析指南（jadx 使用方法论）
 ```

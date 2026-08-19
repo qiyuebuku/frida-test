@@ -18,6 +18,7 @@
 14. 板块 QueryClient 路由与性能优化
 15. 交易 SDK 只读查询逆向（查询目录/双观察者/进程内调用器/防崩铁律/真实数据/列主序/funds 受阻/滚轮 UI）
 16. 登录链全图、跨设备 token 设备指纹移植与生产部署（14 级拦截器/五大阻断修复/互踢/自愈）
+17. 交易密码登录逆向与 g6m 字段映射破案（第十九轮，2026-08-19，token 依赖终结）
 
 ## 1. 基本信息与目标
 
@@ -886,3 +887,109 @@ scope 表 INSERT（mid,app_pkg_name,user_id）后 **daemon 内存缓存不重读
 
 - body 字节流读（中文 bug，见 pitfalls #58）；SoTimeout 300s（慢 handler 不被掐）
 - 诊断武器：响应带 elapsed_ms（分层计时）；`logcat --pid=N`（多实例日志洪流中过滤单进程，普通 grep 会被缓冲冲掉）；设备内 nc 直测（绕过全链路一击定位）；/health 全链路延迟探针
+
+## 19. 交易密码登录逆向与 g6m 字段映射破案（第十九轮，2026-08-19）
+
+目标：生产 AVD 内用交易密码直接登录券商，终结 token 24h 人工依赖
+（此前 token 过期 → 真机人工登录 → 导出导入 AVD，每天一次）。
+结论：**密码登录已全链路打通**（`POST /stock/trade/login` → `pwd_result=success`，
+1.4s；funds 回归通过；z7m.w 自动捕获新 token）。commit `0a7e675`。
+
+### 19.1 密码登录调用链（全路径已验证）
+
+```
+SimpleWeituoLogin.getTransLoginInfo(1)                     # UI 层取输入框
+  → AbstractWeituoLogin.buildWeituoLoginInfo(...)          # g6m builder
+  → f2s.d().o(g6m, a1s, q3s, g8m回调)                       # loginByPwd 入口
+  → w3s.e(g6m, a1s, q3s) → v3s                             # 请求实体（含 r8m 网关配置）
+  → e2s.W(v3s)                                             # WTLoginClient 发送
+  → t3s.b(v3s, jmv) → t3s                                  # 报文字节构造终点（1803/70024）
+  → s3s.b(g6m, ...) → byte[]                               # 二进制写入（iiw）
+```
+
+hook 复刻只需从 `g6m builder + q3s + f2s.o` 入层，下游链路 App 自己走。
+
+### 19.2 g6m 字段 → 线上 tag 映射（真机探针实测，勿再靠反编译猜）
+
+登录报文 tag 布局（s3s.b 序列化，buf 首字节 0x13=19）：
+
+| 线上 tag | g6m 字段 | builder 方法 | 实测值（密码登录） |
+|---|---|---|---|
+| 1 | f | `T("0")` | "0" |
+| 2 | a | `N(资金账号)` | 9133857 |
+| **3** | **b** | **`R(交易密码)`** | **775823（券商密码校验位）** |
+| **4** | **c** | **`S("")`** | **恒空** |
+| 5 | h | `Q(通讯密码类输入, 空)` | "" |
+| 6 | i | `U(yyb串)` | "2393#16#1#1#" |
+| 7 | - | 登录 id（str 参数） | String.valueOf(...) |
+
+**破案核心**：此前按反编译笔记把密码放 `S()`、`R("0")`，券商从 tag3 读到
+"0" 当密码 → "[120047]客户交易密码错误"。真机探针捕获证实 App 是
+`R(密码)/S(空)`——**反编译读出的 builder 参数语义是猜的，字段放错位不报
+协议错、直接业务错（密码错误），极难排查**。
+
+其余 builder 对齐项：`M(false)`（App 未勾保存密码时）、`P("1")`、`X(true)`、
+`H(acctype)`（登录链 w3s.e 会用 q3s.g() 覆盖 p 字段，非关键）。
+q3s 密码方式参数：`q3s.a().s(0).q(1).v(1).o(true)`（token 方式是 s(1)，
+v(1)=needToken=1 → 登录成功下发新 token，z7m.w hook 自动捕获上报）。
+
+### 19.3 密码"预处理"排查结论（全部排除项，勿重复查）
+
+- `getCommonPwd(A(this.u))`：只是"记住密码"时取 SP 存储值（compwd 明文存储，
+  pzr.l 字段），不做加密
+- `tfm`（getPasswordSecurityProcessor → `new n()`）：安全键盘 UI 控制
+  （防截屏/键盘安全），不碰密码内容
+- `w0s.a(pwd)` = `URLEncoder.encode(Base64(pwd), "UTF-8")`：仅用于**改密码**
+  流程（WeiTuoRevisePassword/RzrqChangePassword），且受券商级
+  `EncodeComplexPassword` 开关控制（h5s.b，配置在
+  `files/weituoswitch/EncodeComplexPassword`，AVD 上不存在=开关关）
+- `yjm`（VIPWTStationManager）里的 RSA+Base64 是加密**资金账号**发 HTTP
+  查询的，与登录无关
+- 登录线上密码（tag3）就是明文，无任何变换
+
+### 19.4 报文探针模式（t3s.b hook，本次破案武器）
+
+hook 报文构造终点 `t3s.b`（静态方法，afterCall）：
+
+- dump `v3s.d`（g6m）和 `v3s.c`（r8m）的全部 String/boolean/int/long 字段
+- dump 返回值 `t3s.d` byte[] 的完整 hex（可逐 tag 解码对照）
+- 写 `filesDir/thshook_login_probe.log` + logcat
+
+r8m.f 里还能拿到券商完整网关配置 JSON（ip/port/backup/accountLen/
+defTxmm 等，诊断登录问题有用）。探针 dex 已部署真机 + AVD，后续登录
+问题直接读 probe log。
+
+### 19.5 真机 UI 自动化触发登录（WSL 可全程自动化）
+
+真机路径（Windows adb 从 WSL 可用：
+`/mnt/d/123pan/Downloads/一加Ace6/adb命令行/adb.exe -s 3B15BJ00GZL00000`）：
+
+1. 交易 tab → 多账号登录 → 选择券商页 → 搜索框输 `CCZQ`（ASCII 可 input，
+   中文不行）→ 点"川财证券"
+2. 登录页：账号框 `input text 9133857`、密码框 `input text 775823`、
+   点"登录"（"保持在线24小时"默认开 = needToken）
+3. 成功后弹"保存密码？"对话框 → 点"忽略"（保持 compwd 存储不变）
+
+正确密码登录不消耗错误次数，可安全用于触发捕获。真机锁屏 PIN 未知时，
+唤醒+上滑即可（无安全锁或已信任），失败则等用户。
+
+### 19.6 密码错误尝试预算管理（6 次锁 12h）
+
+- 每次错误扣 1 次；静态分析阶段**严禁实测密码**
+- 排查顺序：静态穷尽（§19.3）→ 报文探针抓真实值 → 对比差异 → 修复 →
+  **单次验证**（本次一次成功，零浪费）
+- 密码登录 fail 后 hook 自动清存储（防 warmup 盲试）；人工调用绝不重试超 1 次
+- 密码源：`.env` TRADE_PASSWORD（Mac）或 AVD `files/thshook_pwd.json`
+
+### 19.7 新 AVD（5556）密码登录标准序列
+
+```bash
+# 1. 唤醒 CBAS 通道（隔夜必死，onStartCommand 需带 extra 才初始化连接池）
+adb -s emulator-5556 shell su -c 'am start-service -n com.hexin.plat.android/com.hexin.plat.android.CommunicationService --es hexin_connect_hangqing_flag_key hexin_connect_hangqing_flag'
+# 2. forward + 登录
+adb -s emulator-5556 forward tcp:49500 tcp:18900
+curl --noproxy "*" -s -m 105 -X POST http://127.0.0.1:49500/stock/trade/login -H "Content-Type: application/json" -d "{}"
+```
+
+登录端点先试 token、失败自动 fallback 密码登录（pwd_result/pwd_fail_detail
+字段区分）。超时类先重跑 service 唤醒再试一次；密码错误类严禁重试。
