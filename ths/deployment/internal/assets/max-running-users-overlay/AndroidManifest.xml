@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Build input for the max-running-users overlay. -->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    package="com.yuyang.ths.maxrunningusers.overlay"
+    android:versionCode="2"
+    android:versionName="2.0">
+    <uses-sdk android:minSdkVersion="29" android:targetSdkVersion="30" />
+    <application android:hasCode="false" />
+    <overlay
+        android:targetPackage="android"
+        android:isStatic="true"
+        android:priority="999" />
+</manifest>

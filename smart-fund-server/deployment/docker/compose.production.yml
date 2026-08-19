@@ -1,0 +1,166 @@
+x-smart-fund-service: &smart-fund-service
+  image: ${SMART_FUND_IMAGE:?SMART_FUND_IMAGE is required}
+  network_mode: host
+  restart: unless-stopped
+  env_file:
+    - ${SMART_FUND_ENV_FILE:?SMART_FUND_ENV_FILE is required}
+  environment:
+    HOME: /home/app
+    PYTHONUNBUFFERED: "1"
+    EMBEDDING_FILE_CACHE_DIR: /data/embedding_cache
+    LLM_PROXY_FILE_CACHE_DIR: /data/llm_proxy_cache
+    SKILL_DIR: /skills/fund-trade
+    SKILLS_DIR: /skills
+  volumes:
+    - ${SMART_FUND_ARTIFACT_DIR:?SMART_FUND_ARTIFACT_DIR is required}:/artifacts
+    - ${CAMOUFOX_CACHE_DIR:?CAMOUFOX_CACHE_DIR is required}:/home/app/.cache/camoufox:ro
+    - ${SMART_FUND_DATA_DIR:?SMART_FUND_DATA_DIR is required}/embedding_cache:/data/embedding_cache
+    - ${SMART_FUND_DATA_DIR}/llm_proxy_cache:/data/llm_proxy_cache
+    - ${SMART_FUND_SKILLS_DIR:?SMART_FUND_SKILLS_DIR is required}:/skills:ro
+  stop_grace_period: 60s
+  logging:
+    driver: json-file
+    options:
+      max-size: 100m
+      max-file: "5"
+
+services:
+  etcd:
+    image: ${ETCD_IMAGE:-quay.io/coreos/etcd:v3.5.23}
+    container_name: smart-fund-etcd
+    network_mode: host
+    restart: unless-stopped
+    command:
+      - /usr/local/bin/etcd
+      - --name=default
+      - --data-dir=/etcd-data
+      - --listen-client-urls=http://0.0.0.0:2379
+      - --advertise-client-urls=http://127.0.0.1:2379
+      - --listen-peer-urls=http://127.0.0.1:2380
+      - --initial-advertise-peer-urls=http://127.0.0.1:2380
+      - --initial-cluster=default=http://127.0.0.1:2380
+      - --initial-cluster-state=existing
+      - --heartbeat-interval=500
+      - --election-timeout=5000
+      - --initial-election-tick-advance=false
+    volumes:
+      - ${MILVUS_DATA_DIR:?MILVUS_DATA_DIR is required}/volumes/milvus/etcd:/etcd-data
+    healthcheck:
+      test: ["CMD", "etcdctl", "endpoint", "health"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+
+  milvus:
+    image: ${MILVUS_IMAGE:-milvusdb/milvus:v2.6.20}
+    container_name: smart-fund-milvus
+    network_mode: host
+    restart: unless-stopped
+    security_opt:
+      - seccomp:unconfined
+    environment:
+      ETCD_USE_EMBED: "false"
+      COMMON_STORAGETYPE: local
+      DEPLOY_MODE: STANDALONE
+    command: ["milvus", "run", "standalone"]
+    volumes:
+      - ${MILVUS_DATA_DIR}/volumes/milvus:/var/lib/milvus
+      - ${SMART_FUND_CONFIG_DIR:?SMART_FUND_CONFIG_DIR is required}/milvus-user.yaml:/milvus/configs/user.yaml:ro
+    depends_on:
+      etcd:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:9091/healthz || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+
+  api:
+    <<: *smart-fund-service
+    container_name: smart-fund-api
+    command: ["api"]
+    volumes:
+      - ${SMART_FUND_ARTIFACT_DIR}:/artifacts
+      - ${CAMOUFOX_CACHE_DIR}:/home/app/.cache/camoufox:ro
+      - ${SMART_FUND_DATA_DIR}/embedding_cache:/data/embedding_cache
+      - ${SMART_FUND_DATA_DIR}/llm_proxy_cache:/data/llm_proxy_cache
+      - ${SMART_FUND_SKILLS_DIR}:/skills:ro
+      - ${CLAUDE_BIN_PATH:?CLAUDE_BIN_PATH is required}:/usr/local/bin/claude:ro
+      - ${CLAUDE_CONFIG_DIR:?CLAUDE_CONFIG_DIR is required}:/home/app/.claude
+    depends_on:
+      milvus:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8900/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+
+  persist:
+    <<: *smart-fund-service
+    container_name: smart-fund-persist
+    command: ["persist"]
+    healthcheck:
+      test: ["CMD-SHELL", "pgrep -f 'src.interfaces.cli persist' >/dev/null"]
+      interval: 10s
+      timeout: 3s
+      retries: 10
+
+  scheduler:
+    <<: *smart-fund-service
+    container_name: smart-fund-scheduler
+    command: ["scheduler"]
+    depends_on:
+      persist:
+        condition: service_healthy
+
+  worker-ths:
+    <<: *smart-fund-service
+    container_name: smart-fund-worker-ths
+    command: ["worker", "--group", "ths", "-c", "${THS_WORKER_CONCURRENCY:-8}"]
+    depends_on:
+      persist:
+        condition: service_healthy
+      api:
+        condition: service_healthy
+
+  worker-ths-sector:
+    <<: *smart-fund-service
+    container_name: smart-fund-worker-ths-sector
+    command: ["worker", "--group", "ths-sector", "-c", "${THS_SECTOR_WORKER_CONCURRENCY:-4}"]
+    depends_on:
+      persist:
+        condition: service_healthy
+      api:
+        condition: service_healthy
+
+  worker-general:
+    <<: *smart-fund-service
+    container_name: smart-fund-worker-general
+    command: ["worker", "--group", "general", "-c", "${GENERAL_WORKER_CONCURRENCY:-12}"]
+    depends_on:
+      persist:
+        condition: service_healthy
+      api:
+        condition: service_healthy
+
+  ths-realtime-stream:
+    <<: *smart-fund-service
+    container_name: smart-fund-ths-realtime-stream
+    command: ["ths-realtime-stream"]
+
+  kg-card:
+    <<: *smart-fund-service
+    container_name: smart-fund-kg-card
+    command: ["knowledge-worker", "--stage", "card", "-c", "1"]
+
+  kg-relation:
+    <<: *smart-fund-service
+    container_name: smart-fund-kg-relation
+    command: ["knowledge-worker", "--stage", "relation", "-c", "${KG_RELATION_WORKER_CONCURRENCY:-3}"]
+
+  kg-graph:
+    <<: *smart-fund-service
+    container_name: smart-fund-kg-graph
+    command: ["knowledge-worker", "--stage", "graph", "-c", "1"]
+    profiles: ["manual"]

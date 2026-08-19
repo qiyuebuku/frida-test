@@ -548,6 +548,7 @@ class THSRealtimeStreamService:
         )
         self._command_server: asyncio.Server | None = None
         self._command_clients: set[asyncio.StreamWriter] = set()
+        self._command_interface_locks: dict[str, asyncio.Lock] = {}
         self._stream_host = host or os.getenv(
             "THS_NATIVE_STREAM_HOST", "127.0.0.1"
         )
@@ -829,11 +830,25 @@ class THSRealtimeStreamService:
                 1.0,
                 min(float(command.get("timeout_seconds") or 75.0), 180.0),
             )
-            result = await self._client.request(
-                route=route,
-                payload=payload,
-                timeout=timeout,
+            # The persistent broker may accept concurrent callers, but one
+            # native interface (route/protocol/page) reuses App callback state
+            # and must remain single-flight. Distinct interfaces are safe to
+            # execute concurrently and should not block each other.
+            interface_key = ":".join((
+                route,
+                str(payload.get("protocolId") or ""),
+                str(payload.get("pageId") or ""),
+            ))
+            interface_lock = self._command_interface_locks.setdefault(
+                interface_key,
+                asyncio.Lock(),
             )
+            async with interface_lock:
+                result = await self._client.request(
+                    route=route,
+                    payload=payload,
+                    timeout=timeout,
+                )
             response = {
                 "request_id": request_id,
                 "success": True,
@@ -1655,12 +1670,13 @@ class THSRealtimeStreamService:
                 ),
             ))
         if subscriptions:
+            quote_client = self._us_quote_client or self._client
             if defer_remaining:
                 first, *remaining = subscriptions
-                await self._client.add_subscriptions([first])
+                await quote_client.add_subscriptions([first])
                 self._deferred_us_quote_subscriptions.extend(remaining)
             else:
-                await self._client.add_subscriptions(subscriptions)
+                await quote_client.add_subscriptions(subscriptions)
             logger.info(
                 "Registered US security quote streams members=%s chunks=%s total_members=%s",
                 len(discovered),

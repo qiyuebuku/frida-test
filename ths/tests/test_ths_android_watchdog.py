@@ -9,8 +9,9 @@ from unittest.mock import Mock
 MODULE_PATH = (
     Path(__file__).parents[1]
     / "deployment"
-    / "android-emulator"
-    / "ths-android-watchdog.py"
+    / "internal"
+    / "runtime"
+    / "android-watchdog.py"
 )
 SPEC = importlib.util.spec_from_file_location("ths_android_watchdog", MODULE_PATH)
 assert SPEC and SPEC.loader

@@ -77,8 +77,14 @@ COLLECTION_WORKER_GROUPS = {
         "collect_ths_sector_signal_fragment_v2",
     ),
     "ths": (
+        "collect_market_breadth_snapshot",
+        "collect_market_boundary_snapshot",
         "collect_stock_rankings",
         "collect_stock_dynamic_groups",
+        "collect_stock_change_events",
+        "collect_sector_market_snapshot",
+        "collect_sector_fund_flow_snapshot",
+        "collect_cross_market_snapshot",
         "collect_ths_market_events",
         "collect_ths_market_context",
         "collect_ths_market_profile",
@@ -94,7 +100,11 @@ COLLECTION_WORKER_GROUPS = {
         "collect_ths_us_etf_sectors",
         "collect_ths_index_sentiment",
     ),
-    "http": (
+    # HTTP and internal jobs share one general-purpose pool. Their combined
+    # concurrency preserves the previous aggregate capacity while removing a
+    # redundant long-lived worker process. THS lanes remain isolated because
+    # they have device-channel limits and latency-sensitive schedules.
+    "general": (
         "collect_collection_source",
         "advance_collection_backfill",
         "collect_pboc_rate_liquidity",
@@ -103,8 +113,7 @@ COLLECTION_WORKER_GROUPS = {
         "collect_market_valuation",
         "collect_bond_index",
         "collect_etf_daily_shares",
-    ),
-    "internal": (
+        "materialize_sentiment_signal",
         "scan_watchlist_instruments",
         "scan_watchlist_daily",
         "scan_watchlist_reference",

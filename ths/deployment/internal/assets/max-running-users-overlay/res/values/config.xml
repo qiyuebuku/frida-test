@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Build input for the max-running-users overlay. -->
+<resources>
+    <integer name="config_multiuserMaximumUsers">10</integer>
+    <integer name="config_multiuserMaxRunningUsers">10</integer>
+</resources>

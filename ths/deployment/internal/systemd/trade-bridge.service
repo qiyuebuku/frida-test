@@ -1,0 +1,31 @@
+[Unit]
+# Installed by internal/remote/install-services.sh.
+Description=THS isolated trade bridge (Android user 0)
+After=network-online.target ths-android-emulator.service
+Wants=network-online.target
+Requires=ths-android-emulator.service
+
+[Service]
+Type=simple
+User=yuyangruan
+Group=yuyangruan
+Environment=HOME=/home/yuyangruan
+Environment=ANDROID_SDK_ROOT=/home/yuyangruan/android-sdk
+Environment=THS_ANDROID_SERIAL=emulator-5556
+Environment=THS_ANDROID_USER_ID=0
+Environment=THS_ACTIVATE_FOREGROUND_USER=0
+Environment=THS_HOST_PORT=49500
+Environment=THS_DEVICE_PORT=18900
+Environment=THS_PROXY_PORT=49501
+Environment=THS_OPEN_MARKET_PAGE=0
+Environment=THS_PROXY_AUTOMATIC_RECOVERY=0
+ExecStart=/home/yuyangruan/android-runtime/bin/ths-collector-bridge.sh
+Restart=always
+RestartSec=5
+TimeoutStartSec=330
+TimeoutStopSec=30
+StandardOutput=append:/home/yuyangruan/android-runtime/logs/trade-bridge.log
+StandardError=append:/home/yuyangruan/android-runtime/logs/trade-bridge.log
+
+[Install]
+WantedBy=multi-user.target

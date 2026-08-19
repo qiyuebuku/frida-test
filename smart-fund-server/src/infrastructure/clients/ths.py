@@ -210,6 +210,7 @@ class THSClient(BaseClient):
         ).rstrip("/")
         super().__init__(timeout)
         self._native_request_locks: dict[str, asyncio.Lock] = {}
+        self._native_app_transport_lock = asyncio.Lock()
         self._app_http_endpoint_locks: dict[str, asyncio.Lock] = {}
         self._native_load_balanced = os.getenv(
             "THS_NATIVE_LOAD_BALANCED", "0"
@@ -256,7 +257,10 @@ class THSClient(BaseClient):
         self._native_bridge_for(lane)
         if self._native_load_balanced:
             return asyncio.Lock()
-        return self._native_request_locks.setdefault(lane, asyncio.Lock())
+        # Lanes are logical scheduling labels, not independent transports.
+        # A non-load-balanced bridge targets one App process whose native
+        # Ranking/Hurricane/Unified calls share global frame state.
+        return self._native_app_transport_lock
 
     def _native_unified_lock(self, protocol_id: int, page_id: int) -> asyncio.Lock:
         if self._native_load_balanced:
@@ -264,10 +268,7 @@ class THSClient(BaseClient):
             # A fresh client-side lock lets independent App processes execute
             # identical protocol/page requests concurrently.
             return asyncio.Lock()
-        return self._native_request_locks.setdefault(
-            f"unified:{protocol_id}:{page_id}",
-            asyncio.Lock(),
-        )
+        return self._native_app_transport_lock
 
     async def _request_native_command(
         self,

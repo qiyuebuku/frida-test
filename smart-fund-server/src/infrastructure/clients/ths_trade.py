@@ -7,6 +7,8 @@
 - POST /stock/trade/login   → {"result":"already_logged_in"|"success"|"fail",...}
        主动登录（统一登录链）：预热线程与查询登录门同链，冷启动后可主动调
        用替代等待 App 自发静默重登（实测 40s+ vs 旧机制盲等 2~3.5 分钟）
+- GET  /stock/trade/runtime/status → App 内交易运行时分阶段状态
+- POST /stock/trade/runtime/ensure → 幂等恢复模块、账户、会话并执行只读探针
 - POST /stock/trade/order   body={"action","code","price","qty","confirm":"true"}
 - POST /stock/trade/cancel  body={"entrust_no","stock_code","stock_name",
        "market_code","shareholder_account","withdrawable_qty","confirm":"true"}
@@ -110,6 +112,7 @@ class THSTradeClient:
         self,
         base_url: str | None = None,
         timeout: float | None = None,
+        auto_ensure_runtime: bool = True,
     ) -> None:
         self._base_url = (
             base_url
@@ -120,6 +123,7 @@ class THSTradeClient:
             os.getenv("THS_TRADE_TIMEOUT", "30")
         )
         self._lock = threading.Lock()
+        self._auto_ensure_runtime = auto_ensure_runtime
         # Connection: close — 设备端是自研 LightweightHTTP，keep-alive 长连接
         # 空闲后被服务端单方面关闭，httpx 连接池复用死连接会 RemoteProtocolError
         self._client = httpx.Client(
@@ -164,6 +168,8 @@ class THSTradeClient:
         timeout = max(self._timeout, 200.0) if method == "POST" else max(self._timeout, 75.0)
         with self._lock:
             try:
+                if self._auto_ensure_runtime:
+                    self._ensure_runtime_locked()
                 resp = self._client.request(
                     method, url, json=json_body, timeout=timeout
                 )
@@ -192,6 +198,77 @@ class THSTradeClient:
                 raw=payload,
             )
         return payload
+
+    def _runtime_request_locked(
+        self,
+        method: str,
+        path: str,
+        *,
+        json_body: dict[str, Any] | None = None,
+        timeout: float,
+    ) -> dict[str, Any]:
+        try:
+            response = self._client.request(
+                method,
+                f"{self._base_url}{path}",
+                json=json_body,
+                timeout=timeout,
+            )
+        except httpx.HTTPError as exc:
+            raise THSTradeError(
+                f"trade runtime endpoint unreachable: {exc}",
+                reason_code="trade_endpoint_unreachable",
+            ) from exc
+        if response.status_code != 200:
+            raise THSTradeError(
+                f"trade runtime endpoint HTTP {response.status_code}",
+                reason_code="trade_endpoint_http_error",
+            )
+        try:
+            return response.json()
+        except ValueError as exc:
+            raise THSTradeError(
+                "trade runtime endpoint returned non-JSON",
+                reason_code="trade_endpoint_protocol_error",
+            ) from exc
+
+    def _ensure_runtime_locked(self) -> dict[str, Any]:
+        status = self._runtime_request_locked(
+            "GET", "/stock/trade/runtime/status", timeout=max(self._timeout, 10.0)
+        )
+        if status.get("write_ready") is True:
+            return status
+        ensured = self._runtime_request_locked(
+            "POST",
+            "/stock/trade/runtime/ensure",
+            json_body={},
+            timeout=max(self._timeout, 120.0),
+        )
+        runtime = ensured.get("runtime") or {}
+        if ensured.get("ok") is not True or runtime.get("write_ready") is not True:
+            error_text = str(
+                ensured.get("error")
+                or runtime.get("last_error")
+                or "trade runtime ensure did not reach write_ready"
+            )
+            raise THSTradeError(
+                error_text,
+                reason_code=_classify_device_error(error_text),
+                raw=ensured,
+            )
+        return runtime
+
+    def runtime_status(self) -> dict[str, Any]:
+        """读取 App 内交易运行时状态，不触发初始化。"""
+        with self._lock:
+            return self._runtime_request_locked(
+                "GET", "/stock/trade/runtime/status", timeout=max(self._timeout, 10.0)
+            )
+
+    def ensure_runtime(self) -> dict[str, Any]:
+        """状态异常时幂等触发 App 内初始化；不执行任何交易写操作。"""
+        with self._lock:
+            return self._ensure_runtime_locked()
 
     def _read_query(self, name: str) -> dict[str, Any]:
         """只读查询（无缓存，每次直调设备端点取最新数据）。"""

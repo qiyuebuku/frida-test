@@ -77,10 +77,54 @@ POSITIONS_HOLDING_PAYLOAD = {
 
 def make_client(handler, **kwargs) -> THSTradeClient:
     """构造走 httpx.MockTransport 的客户端（不触网）。"""
+    kwargs.setdefault("auto_ensure_runtime", False)
     client = THSTradeClient(base_url="http://device.test", **kwargs)
     transport = httpx.MockTransport(handler)
     client._client = httpx.Client(transport=transport, timeout=client._timeout)
     return client
+
+
+def test_runtime_status_does_not_trigger_ensure() -> None:
+    calls = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls.append((request.method, request.url.path))
+        return httpx.Response(200, json={"ok": False, "write_ready": False})
+
+    client = make_client(handler)
+    status = client.runtime_status()
+
+    assert status["write_ready"] is False
+    assert calls == [("GET", "/stock/trade/runtime/status")]
+
+
+def test_auto_ensure_checks_status_then_initializes_before_query() -> None:
+    calls = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls.append((request.method, request.url.path))
+        if request.url.path == "/stock/trade/runtime/status":
+            return httpx.Response(200, json={"ok": False, "write_ready": False})
+        if request.url.path == "/stock/trade/runtime/ensure":
+            return httpx.Response(
+                200,
+                json={
+                    "ok": True,
+                    "state": "READY",
+                    "runtime": {"write_ready": True},
+                },
+            )
+        return httpx.Response(200, json=POSITIONS_EMPTY_PAYLOAD)
+
+    client = make_client(handler, auto_ensure_runtime=True)
+    result = client.positions()
+
+    assert result["ok"] is True
+    assert calls == [
+        ("GET", "/stock/trade/runtime/status"),
+        ("POST", "/stock/trade/runtime/ensure"),
+        ("GET", "/stock/trade/query"),
+    ]
 
 
 # ----------------------------------------------------------------------

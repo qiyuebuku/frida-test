@@ -7,8 +7,9 @@ from pathlib import Path
 MODULE_PATH = (
     Path(__file__).resolve().parents[1]
     / "deployment"
-    / "android-emulator"
-    / "ths-native-proxy.py"
+    / "internal"
+    / "runtime"
+    / "native-proxy.py"
 )
 SPEC = importlib.util.spec_from_file_location("ths_native_proxy", MODULE_PATH)
 assert SPEC is not None and SPEC.loader is not None

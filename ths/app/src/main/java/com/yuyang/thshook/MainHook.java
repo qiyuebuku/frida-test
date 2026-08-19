@@ -71,6 +71,13 @@ public class MainHook {
     private static final Object marketWireFileLock = new Object();
     private static final AtomicInteger marketWireCaptureActive = new AtomicInteger(0);
     private static volatile String marketWireCaptureId = null;
+    // 启动期行情线报捕获（2026-08-19）：逆 CBAS hangqing 会话建立用。进程起来
+    // 即 arm（不清文件、不被请求级 capture 重置），上限 4MB；POST
+    // /native/wire-capture/boot {"armed":false} 关闭。
+    private static volatile boolean marketWireBootArmed = false;
+    private static final java.util.concurrent.atomic.AtomicLong marketWireBootBytes =
+            new java.util.concurrent.atomic.AtomicLong(0);
+    private static final long MARKET_WIRE_BOOT_CAP_BYTES = 4L * 1024 * 1024;
     private static final ConcurrentHashMap<String, Boolean> hookedBridgeMethods = new ConcurrentHashMap<>();
     private static final AtomicBoolean tradeAccountRegistryHooked = new AtomicBoolean(false);
     private static final AtomicBoolean tradingSdkBridgeHooked = new AtomicBoolean(false);
@@ -111,6 +118,14 @@ public class MainHook {
     // 在途被丢等重连完成立即重发（不登录不持锁）。
     private static volatile boolean cbasReconnecting = false;
     private static volatile long lastCbasReadyMs = 0L;
+    // 采集就绪追踪（2026-08-19）：hook 起来 ≠ 行情可用。真实判据是 unified 请求
+    // 实际成功过（新用户首启卡开户页时 CBAS TCP 能连但无会话，请求全超时）。
+    private static volatile long unifiedLastOkMs = 0L;
+    private static volatile long unifiedOkCount = 0L;
+    private static volatile long unifiedFailCount = 0L;
+    private static volatile String unifiedLastFailReason = "";
+    private static final java.util.concurrent.atomic.AtomicBoolean faceSdkGuardHooked =
+            new java.util.concurrent.atomic.AtomicBoolean(false);
     private static volatile long lastCbasBadMs = 0L;
     private static final Object cbasSignal = new Object();
     // 最近一次 MasterBridge.getConfigInfo 的 query/result 原文（native→Java 要
@@ -673,8 +688,23 @@ public class MainHook {
             }
         }
 
+        // 无人值守加固：开户页退出路径 FS_Init 主线程卡死防护（模拟器人脸引擎
+        // native 永久阻塞 → ANR，2026-08-19 实测 ANR 栈定位）。
+        if (!faceSdkGuardHooked.get()) {
+            try {
+                hookFaceSdkAnrGuard(cl);
+                faceSdkGuardHooked.set(true);
+                Log.i(TAG, "hookFaceSdkAnrGuard done");
+            } catch (Throwable e) {
+                Log.e(TAG, "hookFaceSdkAnrGuard failed (will retry with next classLoader)", e);
+            }
+        }
+
         // 以下 hooks 只在首次运行时安装
         if (firstRun) {
+            try { armMarketWireBootCapture(); }
+            catch (Throwable e) { Log.e(TAG, "boot wire capture arm failed", e); }
+
             try { hookHttpURLConnection(); Log.i(TAG, "hookHttpURLConnection done"); }
             catch (Throwable e) { Log.e(TAG, "hookHttpURLConnection failed", e); }
 
@@ -714,9 +744,35 @@ public class MainHook {
         Log.i(TAG, "=== installAllHooks complete ===");
     }
 
+    /** 无人值守加固（2026-08-19）：开户页退出路径会在主线程同步调
+     *  FS_SDKEngine.FS_Init（人脸引擎 native 初始化）。模拟器无人脸硬件，
+     *  native 层永久阻塞且持 SynchronizedLazyImpl 锁 → 主线程 ANR 卡死
+     *  （实测 ANR 栈：H5KaihuBrowserActi.finish → s.b lazy → FS_Init Native）。
+     *  返回 0 伪装成功，跳过 native 调用。 */
+    private static void hookFaceSdkAnrGuard(ClassLoader cl) throws Exception {
+        Class<?> engineClass = cl.loadClass("com.hexin.facestate.FS_SDKEngine");
+        Method target = null;
+        for (Method m : engineClass.getDeclaredMethods()) {
+            if ("FS_Init".equals(m.getName())) {
+                target = m;
+                break;
+            }
+        }
+        if (target == null) {
+            throw new NoSuchMethodException("FS_Init not found on FS_SDKEngine");
+        }
+        Pine.hook(target, new MethodHook() {
+            @Override
+            public void beforeCall(Pine.CallFrame callFrame) {
+                callFrame.setResult(0);
+                Log.i(TAG, "FS_Init skipped (emulator face-engine ANR guard)");
+            }
+        });
+        Log.i(TAG, "FS_SDKEngine.FS_Init ANR guard installed");
+    }
+
     /** 无人值守加固：阻断交易登录失败弹窗（x0s.S，@MainThread）。 */
-    private static void hookTradeLoginDialogSuppress(ClassLoader cl) throws Exception {
-        Class<?> x0sClass = cl.loadClass("x0s");
+    private static void hookTradeLoginDialogSuppress(ClassLoader cl) throws Exception {        Class<?> x0sClass = cl.loadClass("x0s");
         Method sM = x0sClass.getDeclaredMethod("S", int.class);
         Pine.hook(sM, new MethodHook() {
             @Override
@@ -1038,13 +1094,45 @@ public class MainHook {
             Log.i(TAG, "Proxy request: " + requestLine + " body=" + body.substring(0, Math.min(200, body.length())));
 
             if (requestLine.startsWith("GET /health")) {
+                long unifiedLastOkAge = unifiedLastOkMs > 0
+                        ? System.currentTimeMillis() - unifiedLastOkMs : -1L;
+                // collector_ready：unified 请求 10 分钟内真实成功过（LB/CI 门禁用）。
+                // hook_ready 只代表注入 HTTP 服务存活，不代表行情可用。
+                boolean collectorReady = unifiedLastOkAge >= 0 && unifiedLastOkAge < 600_000L;
                 sendResponse(out, 200, "{\"ok\":true,\"mode\":\"injected_core_probe\""
-                        + ",\"build\":\"20260804-single-bridge-adaptive-v8\""
+                        + ",\"build\":\"20260819-write-ready-gate-v14-wirecap\""
                         + ",\"android_user_id\":" + androidUserId()
                         + ",\"pid\":" + android.os.Process.myPid()
                         + ",\"listen_port\":" + proxyPortForCurrentUser()
+                        + ",\"hook_ready\":true"
+                        + ",\"collector_ready\":" + collectorReady
+                        + ",\"unified_ok_count\":" + unifiedOkCount
+                        + ",\"unified_fail_count\":" + unifiedFailCount
+                        + ",\"unified_last_ok_age_ms\":" + unifiedLastOkAge
+                        + ",\"unified_last_fail_reason\":\"" + esc(unifiedLastFailReason) + "\""
+                        + ",\"trade_hook_ready\":" + tradingSdkBridgeHooked.get()
+                        + ",\"cbas_reconnecting\":" + cbasReconnecting
+                        + ",\"cbas_ready_age_ms\":" + (lastCbasReadyMs > 0
+                            ? System.currentTimeMillis() - lastCbasReadyMs : -1)
                         + ",\"realtime_stream_sessions\":"
                         + realtimeStreamSessions.get() + "}");
+                client.close();
+                return;
+            }
+
+            if (requestLine.startsWith("POST /native/wire-capture/boot")) {
+                // 启动期捕获开关：body {"armed":false} 停止（常规采集实例稳定后
+                // 关闭以省 IO；逆向分析实例保持开启）。
+                boolean armOn = !"false".equals(extractJsonString(body, "armed"));
+                if (armOn) {
+                    armMarketWireBootCapture();
+                } else {
+                    marketWireBootArmed = false;
+                    marketWireCaptureActive.set(0);
+                    Log.i(TAG, "RT_WIRE boot capture disarmed");
+                }
+                sendResponse(out, 200, "{\"success\":true,\"boot_armed\":" + marketWireBootArmed
+                        + ",\"boot_bytes\":" + marketWireBootBytes.get() + "}");
                 client.close();
                 return;
             }
@@ -1309,6 +1397,22 @@ public class MainHook {
             if (requestLine.startsWith("GET /stock/trade/status")) {
                 String result = getTradeStatus();
                 sendResponse(out, 200, result);
+                client.close();
+                return;
+            }
+
+            // App 内交易运行时状态机。服务端只负责调用，不再用 UI 或固定
+            // systemd sleep 猜测交易模块是否完成初始化。
+            if (requestLine.startsWith("GET /stock/trade/runtime/status")) {
+                sendResponse(out, 200, handleTradeRuntimeStatus());
+                client.close();
+                return;
+            }
+
+            // 幂等初始化：启动 CommunicationService、恢复交易模块/账户/登录，
+            // 最后执行只读持仓探针。绝不调用下单、撤单或转账协议。
+            if (requestLine.startsWith("POST /stock/trade/runtime/ensure")) {
+                sendResponse(out, 200, handleTradeRuntimeEnsure(body));
                 client.close();
                 return;
             }
@@ -2949,14 +3053,25 @@ public class MainHook {
                 throw new RuntimeException(startFailure.get());
             }
             if (!latch.await(timeoutSeconds, TimeUnit.SECONDS)) {
+                unifiedFailCount++;
+                unifiedLastFailReason = "timeout";
                 return "{\"success\":false,\"error\":\"unified request timed out\"}";
             }
 
             Object value = response.get();
             if (value == null) {
+                unifiedFailCount++;
+                unifiedLastFailReason = "missing response";
                 return "{\"success\":false,\"error\":\"unified response missing\"}";
             }
             boolean success = unifiedResponseSucceeded(value);
+            if (success) {
+                unifiedLastOkMs = System.currentTimeMillis();
+                unifiedOkCount++;
+            } else {
+                unifiedFailCount++;
+                unifiedLastFailReason = "business error";
+            }
             return "{\"success\":" + success
                     + ",\"onlineId\":\"" + esc(onlineId) + "\""
                     + ",\"response\":" + toJson(value) + "}";
@@ -4470,6 +4585,7 @@ public class MainHook {
     }
 
     private static void beginMarketWireCapture(String key) {
+        if (marketWireBootArmed) return; // 启动期捕获进行中，保留 boot 全量线报
         marketWireCaptureId = System.currentTimeMillis() + "-" + key;
         marketWireCaptureActive.incrementAndGet();
         synchronized (marketWireFileLock) {
@@ -4482,8 +4598,20 @@ public class MainHook {
     }
 
     private static void endMarketWireCapture() {
+        if (marketWireBootArmed) return;
         marketWireCaptureActive.set(0);
         Log.i(TAG, "RT_WIRE capture finished id=" + marketWireCaptureId);
+    }
+
+    /** 启动期线报捕获：进程启动即调用（installAllHooks firstRun），记录 App
+     *  自身（主页面渲染）建立 CBAS hangqing 会话的完整握手，供逆向复刻。 */
+    private static void armMarketWireBootCapture() {
+        marketWireBootArmed = true;
+        marketWireBootBytes.set(0);
+        marketWireCaptureId = System.currentTimeMillis() + "-boot";
+        marketWireCaptureActive.set(1);
+        Log.i(TAG, "RT_WIRE boot capture armed id=" + marketWireCaptureId
+                + " (cap " + MARKET_WIRE_BOOT_CAP_BYTES + " bytes)");
     }
 
     private static File marketWireCaptureFile() {
@@ -4503,6 +4631,10 @@ public class MainHook {
             int offset,
             int length) {
         if (bytes == null || offset < 0 || length <= 0 || offset + length > bytes.length) return;
+        if (marketWireBootArmed
+                && marketWireBootBytes.addAndGet(length) > MARKET_WIRE_BOOT_CAP_BYTES) {
+            return; // 启动期捕获超限，静默丢弃（boot 样本早已覆盖握手阶段）
+        }
         try {
             byte[] copy = new byte[length];
             System.arraycopy(bytes, offset, copy, 0, length);
@@ -4530,9 +4662,11 @@ public class MainHook {
     private static String readMarketWireCapture() {
         synchronized (marketWireFileLock) {
             File file = marketWireCaptureFile();
+            String meta = ",\"boot_armed\":" + marketWireBootArmed
+                    + ",\"boot_bytes\":" + marketWireBootBytes.get();
             if (file == null || !file.exists()) {
                 return "{\"success\":true,\"capture_id\":" + jsonValue(marketWireCaptureId)
-                        + ",\"records\":[]}";
+                        + meta + ",\"records\":[]}";
             }
             StringBuilder records = new StringBuilder();
             try (BufferedReader reader = new BufferedReader(new InputStreamReader(
@@ -4546,7 +4680,7 @@ public class MainHook {
                     records.append(line);
                 }
                 return "{\"success\":true,\"capture_id\":" + jsonValue(marketWireCaptureId)
-                        + ",\"records\":[" + records + "]}";
+                        + meta + ",\"records\":[" + records + "]}";
             } catch (Throwable e) {
                 return "{\"success\":false,\"error\":\"" + esc(e.getMessage()) + "\"}";
             }
@@ -8773,6 +8907,10 @@ public class MainHook {
     /** ensureTradeRuntimeReady 最近一次失败原因（仅结构信息，无业务值） */
     private static volatile String lastEnsureTradeError = "not run";
     private static volatile boolean tradeRuntimeReadyOnce = false;
+    private static volatile String tradeRuntimeEnsureState = "NOT_RUN";
+    private static volatile long tradeRuntimeEnsureStartedMs = 0L;
+    private static volatile long tradeRuntimeEnsureCompletedMs = 0L;
+    private static volatile String tradeRuntimeProbe = "not run";
     /** 交易运行时/主动登录专用锁：登录等待可达 ~60s，与类锁分离——主线程 hook
      *  回调（captureTradeAccountManager 等 synchronized 方法）不能被它阻塞（ANR）。 */
     private static final Object tradeRuntimeLock = new Object();
@@ -9085,6 +9223,16 @@ public class MainHook {
             lastEnsureTradeError = "ensure failed: " + e;
             return false;
         }
+        // ensure 已把 r9h 拉到 ready 后，可立即安全安装 MasterModuleBridge 旁路
+        // Hook；不再等待冷启动的 15/45/90 秒延迟重试档。
+        if (!tradingSdkBridgeHooked.get() && r9hReady(cl)) {
+            try {
+                hookTradingSdkBridge(cl);
+            } catch (Throwable e) {
+                lastEnsureTradeError = "trade bridge hook install failed: " + e;
+                return false;
+            }
+        }
         return true;
     }
 
@@ -9109,6 +9257,148 @@ public class MainHook {
         if (!loggedIn) return false;
         tradeRuntimeReadyOnce = true;
         return true;
+    }
+
+    private static boolean isTradeSessionReady(ClassLoader cl) {
+        try {
+            Object mgr = tradeAccountManagerInstance;
+            if (cl == null || mgr == null) return false;
+            Class<?> izrClass = cl.loadClass("izr");
+            Object izrInst = izrClass.getField("a").get(null);
+            return Boolean.TRUE.equals(izrClass.getMethod("l", cl.loadClass("pzr"))
+                    .invoke(izrInst, mgr));
+        } catch (Throwable ignored) {
+            return false;
+        }
+    }
+
+    private static String handleTradeRuntimeStatus() {
+        JSONObject out = new JSONObject();
+        try {
+            ClassLoader cl = resolveAppClassLoader(null);
+            boolean classloaderReady = cl != null;
+            boolean moduleReady = classloaderReady && r9hReady(cl);
+            boolean hookReady = tradingSdkBridgeHooked.get();
+            boolean accountReady = tradeAccountManagerInstance != null;
+            boolean sessionReady = isTradeSessionReady(cl);
+            long probeAgeMs = lastSuccessfulQueryMs > 0
+                    ? System.currentTimeMillis() - lastSuccessfulQueryMs : -1L;
+            boolean probeReady = probeAgeMs >= 0 && probeAgeMs <= 300000L;
+            boolean writeReady = classloaderReady && moduleReady && hookReady
+                    && accountReady && sessionReady && probeReady;
+            String state = "READY";
+            if ("INITIALIZING".equals(tradeRuntimeEnsureState)) state = "INITIALIZING";
+            else if (!classloaderReady) state = "PROCESS_STARTING";
+            else if (!moduleReady || !hookReady) state = "HOOK_NOT_READY";
+            else if (!accountReady) state = "ACCOUNT_NOT_READY";
+            else if (!sessionReady) state = "SESSION_NOT_READY";
+            else if (!probeReady) state = "PROBE_REQUIRED";
+
+            out.put("ok", writeReady);
+            out.put("state", state);
+            out.put("android_user_id", androidUserId());
+            out.put("pid", android.os.Process.myPid());
+            out.put("process_ready", classloaderReady);
+            out.put("trade_module_ready", moduleReady);
+            out.put("trade_hook_ready", hookReady);
+            out.put("account_ready", accountReady);
+            out.put("session_ready", sessionReady);
+            out.put("readonly_probe_ready", probeReady);
+            out.put("readonly_probe_age_ms", probeAgeMs);
+            out.put("write_ready", writeReady);
+            out.put("ensure_state", tradeRuntimeEnsureState);
+            out.put("ensure_started_at_ms", tradeRuntimeEnsureStartedMs);
+            out.put("ensure_completed_at_ms", tradeRuntimeEnsureCompletedMs);
+            out.put("probe", tradeRuntimeProbe);
+            out.put("last_error", lastEnsureTradeError == null
+                    ? JSONObject.NULL : lastEnsureTradeError);
+        } catch (Throwable e) {
+            try { out.put("ok", false); out.put("state", "ERROR");
+                out.put("last_error", String.valueOf(e)); } catch (Throwable ignored) { }
+        }
+        return out.toString();
+    }
+
+    /** 写端点最终门禁。必须在 App 内重新计算，不能信任调用方曾经调用过 ensure。 */
+    private static String requireTradeWriteReady(JSONObject out) {
+        try {
+            JSONObject runtime = new JSONObject(handleTradeRuntimeStatus());
+            if (runtime.optBoolean("write_ready", false)) return null;
+            out.put("runtime", runtime);
+            return "trade runtime not write-ready: " + runtime.optString("state", "UNKNOWN")
+                    + "; call POST /stock/trade/runtime/ensure first";
+        } catch (Throwable e) {
+            return "trade runtime readiness check failed: " + e;
+        }
+    }
+
+    private static String handleTradeRuntimeEnsure(String body) {
+        synchronized (tradeRuntimeLock) {
+            JSONObject out = new JSONObject();
+            org.json.JSONArray actions = new org.json.JSONArray();
+            long started = System.currentTimeMillis();
+            try {
+                JSONObject current = new JSONObject(handleTradeRuntimeStatus());
+                if (current.optBoolean("write_ready", false)) {
+                    actions.put("already_ready");
+                    out.put("ok", true);
+                    out.put("state", "READY");
+                    out.put("actions", actions);
+                    out.put("elapsed_ms", System.currentTimeMillis() - started);
+                    out.put("runtime", current);
+                    return out.toString();
+                }
+            } catch (Throwable ignored) { }
+            tradeRuntimeEnsureStartedMs = started;
+            tradeRuntimeEnsureState = "INITIALIZING";
+            tradeRuntimeProbe = "pending";
+            try {
+                ClassLoader cl = resolveAppClassLoader(null);
+                if (cl == null) throw new IllegalStateException("classloader not ready");
+
+                // Context.startService is performed inside the App process and does not
+                // require an Activity, foreground user, unlocked screen, or coordinate tap.
+                startLegacyCommunicationService(appInstance, cl);
+                actions.put("communication_service_started");
+
+                if (!ensureTradeRuntimeReadyLocked(cl)) {
+                    throw new IllegalStateException(lastEnsureTradeError);
+                }
+                actions.put("trade_runtime_initialized");
+                actions.put("trade_session_ready");
+                if (tradingSdkBridgeHooked.get()) actions.put("trade_hooks_installed");
+
+                String probeResult = invokeTradeQueryByName("positions");
+                JSONObject probe = new JSONObject(probeResult);
+                if (!probe.optBoolean("ok", false)) {
+                    throw new IllegalStateException("readonly positions probe failed: "
+                            + probe.optString("error", "unknown"));
+                }
+                tradeRuntimeProbe = "positions:ok";
+                actions.put("readonly_positions_probe_passed");
+                tradeRuntimeEnsureState = "READY";
+                tradeRuntimeEnsureCompletedMs = System.currentTimeMillis();
+                lastEnsureTradeError = null;
+                out.put("ok", true);
+                out.put("state", "READY");
+            } catch (Throwable e) {
+                lastEnsureTradeError = String.valueOf(e.getMessage() == null ? e : e.getMessage());
+                tradeRuntimeEnsureState = "FAILED";
+                tradeRuntimeEnsureCompletedMs = System.currentTimeMillis();
+                tradeRuntimeProbe = "failed";
+                try {
+                    out.put("ok", false);
+                    out.put("state", "FAILED");
+                    out.put("error", lastEnsureTradeError);
+                } catch (Throwable ignored) { }
+            }
+            try {
+                out.put("actions", actions);
+                out.put("elapsed_ms", System.currentTimeMillis() - started);
+                out.put("runtime", new JSONObject(handleTradeRuntimeStatus()));
+            } catch (Throwable ignored) { }
+            return out.toString();
+        }
     }
 
     /**
@@ -11531,6 +11821,33 @@ public class MainHook {
             out.put("write", true);
         } catch (JSONException ignored) { }
 
+        // 写响应的确定性确认依赖 ixm/nxm 旁路 hook。启动窗口内不允许降级发送：
+        // 否则请求可能已经执行但响应被 App 常驻观察者抢走，调用方无法定论。
+        if (!tradingSdkBridgeHooked.get()) {
+            return errorJson(out, "trade hook not ready; retry after /health trade_hook_ready=true");
+        }
+        // 设备端是最终安全边界：即使调用方绕过 THSTradeClient 直连 49500，
+        // 也必须具备账户、会话、旁路 Hook 和 5 分钟内真实只读探针。
+        String readinessError = requireTradeWriteReady(out);
+        if (readinessError != null) {
+            return errorJson(out, readinessError);
+        }
+
+        // BUY 超时后的安全重发必须与“发送前”的委托集合比较。只按 code+price
+        // 搜索会命中当天旧委托（回归固定价格时必现），错误地把本次暗丢判成已执行。
+        // 基线查询失败时 fail closed，不执行真实写操作。
+        final java.util.Set<String> buyBaselineEntrustNos = new java.util.HashSet<>();
+        if (isBuy) {
+            JSONObject baseline = queryTodayOrdersBestEffort();
+            org.json.JSONArray baselineRecords = tradeOrderRecords(baseline);
+            if (baselineRecords == null) {
+                return errorJson(out, "pre-write today_order baseline unavailable; write not sent");
+            }
+            collectEntrustNos(baselineRecords, buyBaselineEntrustNos);
+            try { out.put("baseline_order_count", buyBaselineEntrustNos.size()); }
+            catch (JSONException ignored) { }
+        }
+
         // 写前强制刷新登录（2026-08-18 根因修复）：券商对写操作要求新鲜会话，
         // 老化会话上的写会触发服务端安全重置（实测：查询恒稳、写间歇引发
         // 会话失效后全超时再自愈；真机写测试均在刚登录后成功）。force=true
@@ -11566,9 +11883,25 @@ public class MainHook {
             String result = invokeTradeQuery(protoId, pageId, params, false, true);
             boolean timeout = result != null && result.contains("timeout waiting response");
             if (!timeout) {
-                // 有响应（含旁路救回）——直接返回；超时兜底仍附委托状态
+                // 有响应只证明通信完成，不等于券商受理。StuffTextStruct 常用
+                // “[错误码][原因]”同步返回业务拒绝（如收盘后禁止交易）；旧逻辑
+                // 一律写 executed=true，会把拒单伪装成成功。
                 try {
                     JSONObject r = new JSONObject(result);
+                    JSONObject data = r.optJSONObject("data");
+                    String rejection = writeBusinessRejection(data);
+                    if (rejection != null) {
+                        r.put("transport_ok", true);
+                        r.put("business_ok", false);
+                        r.put("executed", false);
+                        r.put("ok", false);
+                        r.put("error", rejection);
+                        r.put("confirmed_via", round == 1
+                                ? "response-rejected" : "retry-response-rejected");
+                        return r.toString();
+                    }
+                    r.put("transport_ok", true);
+                    r.put("business_ok", true);
                     r.put("executed", true);
                     r.put("confirmed_via", round == 1 ? "response" : "retry-response");
                     return r.toString();
@@ -11589,7 +11922,8 @@ public class MainHook {
                 org.json.JSONArray arr = (org.json.JSONArray) recs;
                 boolean executedViaState;
                 if (isBuy) {
-                    executedViaState = orderListContains(arr, code, price);
+                    executedViaState = orderListContainsNewEntrust(
+                            arr, code, price, buyBaselineEntrustNos);
                 } else {
                     // cancel：目标委托状态含"已撤"即已执行
                     executedViaState = entrustNo != null
@@ -11597,6 +11931,19 @@ public class MainHook {
                 }
                 if (executedViaState) {
                     return writeConfirmed(out, true, "order-state", arr, round, t0);
+                }
+                // BUY 也做延迟二次确认。首次查询未见新合同号并不能证明请求未到
+                // 券商；给状态落库留出窗口，避免原请求迟到后又安全重发成重复单。
+                if (isBuy && round < 2) {
+                    try { Thread.sleep(4000); } catch (InterruptedException ie) {
+                        Thread.currentThread().interrupt(); }
+                    JSONObject orders2 = queryTodayOrdersBestEffort();
+                    org.json.JSONArray recs2 = tradeOrderRecords(orders2);
+                    if (recs2 != null && orderListContainsNewEntrust(
+                            recs2, code, price, buyBaselineEntrustNos)) {
+                        return writeConfirmed(out, true, "order-state-2nd",
+                                recs2, round, t0);
+                    }
                 }
                 // 撤单在途二次确认（2026-08-18 user17 实测）：撤单请求被券商执行
                 // 但响应帧丢失（旁路亦未捕获）时，首查（超时后 2.5s）常仍"已报"，
@@ -11643,6 +11990,25 @@ public class MainHook {
         return errorJson(out, "write rounds exhausted");
     }
 
+    /** 返回券商同步拒绝原因；null 表示响应中没有发现拒绝信号。 */
+    private static String writeBusinessRejection(JSONObject data) {
+        if (data == null) return null;
+        if (data.has("business_ok") && !data.optBoolean("business_ok", false)) {
+            String message = data.optString("retmsg", "").trim();
+            return message.isEmpty() ? "broker rejected write request" : message;
+        }
+        if (!"StuffTextStruct".equals(data.optString("struct", ""))) return null;
+        String content = data.optString("content", "").replace("\u0000", "").trim();
+        if (content.isEmpty()) return null;
+        if (content.matches(".*\\[[0-9]{5,}\\].*")
+                || content.contains("错误") || content.contains("失败")
+                || content.contains("不允许") || content.contains("禁止")
+                || content.contains("不足") || content.contains("不存在")) {
+            return content;
+        }
+        return null;
+    }
+
     private static JSONObject queryTodayOrdersBestEffort() {
         try {
             String r = invokeTradeQueryByName("today_order");
@@ -11652,14 +12018,37 @@ public class MainHook {
         }
     }
 
-    private static boolean orderListContains(org.json.JSONArray arr, String code, String price) {
+    private static org.json.JSONArray tradeOrderRecords(JSONObject orders) {
+        if (orders == null || !Boolean.TRUE.equals(orders.opt("ok"))) return null;
+        JSONObject data = orders.optJSONObject("data");
+        if (data == null) return null;
+        Object records = data.opt("records");
+        if (!(records instanceof org.json.JSONArray)) records = data.opt("rows");
+        return records instanceof org.json.JSONArray ? (org.json.JSONArray) records : null;
+    }
+
+    private static void collectEntrustNos(org.json.JSONArray arr,
+                                          java.util.Set<String> target) {
+        for (int i = 0; i < arr.length(); i++) {
+            JSONObject o = arr.optJSONObject(i);
+            if (o == null) continue;
+            String no = o.optString("合同编号", "");
+            if (!no.isEmpty()) target.add(no);
+        }
+    }
+
+    private static boolean orderListContainsNewEntrust(org.json.JSONArray arr, String code,
+                                                        String price,
+                                                        java.util.Set<String> baselineEntrustNos) {
         int n = arr.length();
         for (int i = 0; i < n; i++) {
             org.json.JSONObject o = arr.optJSONObject(i);
             if (o == null) continue;
             String c = o.optString("代码", "");
             String p = o.optString("价格", "");
-            if (code.equals(c) && price.equals(p)) return true;
+            String no = o.optString("合同编号", "");
+            if (code.equals(c) && price.equals(p) && !no.isEmpty()
+                    && !baselineEntrustNos.contains(no)) return true;
         }
         return false;
     }
@@ -11956,6 +12345,10 @@ public class MainHook {
         }
         if (direction == null || !"in".equals(direction.trim())) {
             return errorJson(resp, "only direction=in implemented (transfer-out protocol not yet reversed)");
+        }
+        String readinessError = requireTradeWriteReady(resp);
+        if (readinessError != null) {
+            return errorJson(resp, readinessError);
         }
         String encPwd;
         try {

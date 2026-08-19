@@ -1,0 +1,96 @@
+name: Smart Fund production deployment
+
+on:
+  pull_request:
+    paths:
+      - "deploy.sh"
+      - "deployment/**"
+      - "ths/deployment/**"
+      - "ths/tests/test_ths_bridge_pool_config.py"
+      - "smart-fund-server/deployment/**"
+      - "smart-fund-server/tests/unit/deployment/**"
+      - ".github/workflows/ths-android-production.yml"
+  push:
+    branches: [main]
+    paths:
+      - "deploy.sh"
+      - "deployment/**"
+      - "ths/deployment/**"
+      - "ths/tests/test_ths_bridge_pool_config.py"
+      - "smart-fund-server/deployment/**"
+      - "smart-fund-server/tests/unit/deployment/**"
+      - ".github/workflows/ths-android-production.yml"
+  workflow_dispatch:
+    inputs:
+      deploy:
+        description: "Deploy to the protected production environment"
+        required: true
+        default: false
+        type: boolean
+      component:
+        description: "auto, ths-hook, ths-runtime, server, or a comma-separated list"
+        required: true
+        default: "auto"
+        type: string
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: pip install pytest pyyaml
+      - name: Validate deployment shell scripts
+        run: |
+          bash -n deploy.sh ths/deployment/deploy.sh
+          find ths/deployment/internal -name '*.sh' -print0 | xargs -0 -n1 bash -n
+      - name: Validate 1 trade + 8 collector topology
+        run: |
+          pytest -q -c /dev/null \
+            ths/tests/test_ths_bridge_pool_config.py \
+            smart-fund-server/tests/unit/deployment/test_compose_topology.py
+
+  deploy-production:
+    if: github.event_name == 'workflow_dispatch' && inputs.deploy
+    needs: validate
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment: production
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure production SSH
+        env:
+          SSH_PRIVATE_KEY: ${{ secrets.THS_PRODUCTION_SSH_PRIVATE_KEY }}
+          SSH_HOST: ${{ secrets.THS_PRODUCTION_HOST }}
+          SSH_PORT: ${{ secrets.THS_PRODUCTION_SSH_PORT }}
+        run: |
+          install -d -m 700 ~/.ssh
+          printf '%s\n' "$SSH_PRIVATE_KEY" > ~/.ssh/ths-production
+          chmod 600 ~/.ssh/ths-production
+          ssh-keyscan -p "$SSH_PORT" "$SSH_HOST" >> ~/.ssh/known_hosts
+      - name: Deploy selected Git revision
+        env:
+          SSH_HOST: ${{ secrets.THS_PRODUCTION_HOST }}
+          SSH_PORT: ${{ secrets.THS_PRODUCTION_SSH_PORT }}
+          SSH_USER: ${{ secrets.THS_PRODUCTION_SSH_USER }}
+          REMOTE_SUDO_PASSWORD: ${{ secrets.THS_PRODUCTION_SUDO_PASSWORD }}
+          DEPLOY_GIT_URL: ${{ secrets.DEPLOY_GIT_URL }}
+          COMPONENT: ${{ inputs.component }}
+        run: |
+          install -d deployment
+          cat > deployment/production.env <<EOF
+          REMOTE_HOST=$SSH_HOST
+          REMOTE_PORT=$SSH_PORT
+          REMOTE_USER=$SSH_USER
+          SSH_KEY=$HOME/.ssh/ths-production
+          REMOTE_SUDO_PASSWORD=$REMOTE_SUDO_PASSWORD
+          DEPLOY_GIT_URL=$DEPLOY_GIT_URL
+          EOF
+          if [ "$COMPONENT" = auto ]; then
+            ./deploy.sh production
+          else
+            ./deploy.sh production --component "$COMPONENT"
+          fi

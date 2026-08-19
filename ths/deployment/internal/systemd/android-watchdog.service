@@ -1,0 +1,19 @@
+[Unit]
+# Installed by internal/remote/install-services.sh.
+Description=THS Android guest liveness watchdog
+After=network-online.target ths-android-emulator.service
+Wants=network-online.target ths-android-emulator.service
+
+[Service]
+Type=simple
+User=root
+Group=root
+ExecStart=/usr/bin/python3 /home/yuyangruan/android-runtime/bin/ths-android-watchdog.py
+Restart=always
+RestartSec=10
+TimeoutStopSec=30
+StandardOutput=append:/home/yuyangruan/android-runtime/logs/android-watchdog.log
+StandardError=append:/home/yuyangruan/android-runtime/logs/android-watchdog.log
+
+[Install]
+WantedBy=multi-user.target

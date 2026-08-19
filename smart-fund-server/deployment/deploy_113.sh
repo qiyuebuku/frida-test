@@ -3,6 +3,7 @@
 #
 # 用法:
 #   REMOTE_SUDO_PASSWORD=... ./deployment/deploy_113.sh --init
+#   REMOTE_SUDO_PASSWORD=... ./deployment/deploy_113.sh --components api,workers
 #   REMOTE_SUDO_PASSWORD=... ./deployment/deploy_113.sh  # 同步代码、更新 units 并重启全部服务
 #   ./deployment/deploy_113.sh --sync-only
 #   REMOTE_SUDO_PASSWORD=... ./deployment/deploy_113.sh --restart
@@ -34,12 +35,14 @@ REMOTE_HOST="${REMOTE_HOST:-119.23.227.187}"
 REMOTE_PORT="${REMOTE_PORT:-1113}"
 REMOTE_USER="${REMOTE_USER:-yuyangruan}"
 REMOTE_SUDO_PASSWORD="${REMOTE_SUDO_PASSWORD:-}"
+DEPLOY_REVISION="${DEPLOY_REVISION:-HEAD}"
+DEPLOY_GIT_URL="${DEPLOY_GIT_URL:-git@github.com:qiyuebuku/frida-test.git}"
+REMOTE_GIT_DIR="${REMOTE_GIT_DIR:-/home/${REMOTE_USER}/smart-fund-source}"
 LOCAL_PYTHON="${LOCAL_PYTHON:-python3}"
 COLLECTION_WORKER_CONCURRENCY="${COLLECTION_WORKER_CONCURRENCY:-8}"
 THS_WORKER_CONCURRENCY="${THS_WORKER_CONCURRENCY:-8}"
 THS_SECTOR_WORKER_CONCURRENCY="${THS_SECTOR_WORKER_CONCURRENCY:-4}"
-HTTP_WORKER_CONCURRENCY="${HTTP_WORKER_CONCURRENCY:-8}"
-INTERNAL_WORKER_CONCURRENCY="${INTERNAL_WORKER_CONCURRENCY:-4}"
+GENERAL_WORKER_CONCURRENCY="${GENERAL_WORKER_CONCURRENCY:-12}"
 KG_RELATION_WORKER_CONCURRENCY="${KG_RELATION_WORKER_CONCURRENCY:-3}"
 
 CONDA_BASE="/home/${REMOTE_USER}/anaconda3"
@@ -77,8 +80,7 @@ SVC_PERSIST="smart-fund-persist"
 SVC_SCHEDULER="smart-fund-scheduler"
 SVC_WORKER_THS="smart-fund-worker-ths"
 SVC_WORKER_THS_SECTOR="smart-fund-worker-ths-sector"
-SVC_WORKER_HTTP="smart-fund-worker-http"
-SVC_WORKER_INTERNAL="smart-fund-worker-internal"
+SVC_WORKER_GENERAL="smart-fund-worker-general"
 SVC_THS_STREAM="smart-fund-ths-realtime-stream"
 SVC_KG_CARD="smart-fund-kg-card"
 SVC_KG_RELATION="smart-fund-kg-relation"
@@ -92,12 +94,24 @@ SERVICES=(
     "${SVC_SCHEDULER}"
     "${SVC_WORKER_THS}"
     "${SVC_WORKER_THS_SECTOR}"
-    "${SVC_WORKER_HTTP}"
-    "${SVC_WORKER_INTERNAL}"
+    "${SVC_WORKER_GENERAL}"
     "${SVC_THS_STREAM}"
     "${SVC_KG_CARD}"
     "${SVC_KG_RELATION}"
     "${SVC_KG_GRAPH}"
+)
+REQUIRED_SERVICES=(
+    "${SVC_ETCD}"
+    "${SVC_MILVUS}"
+    "${SVC_API}"
+    "${SVC_PERSIST}"
+    "${SVC_SCHEDULER}"
+    "${SVC_WORKER_THS}"
+    "${SVC_WORKER_THS_SECTOR}"
+    "${SVC_WORKER_GENERAL}"
+    "${SVC_THS_STREAM}"
+    "${SVC_KG_CARD}"
+    "${SVC_KG_RELATION}"
 )
 
 LOCAL_WORKSPACE_ROOT="$(cd "${LOCAL_SERVER_DIR}/.." && pwd)"
@@ -108,6 +122,10 @@ LOCAL_ENV_FILE="${LOCAL_SERVER_DIR}/.env"
 LOCAL_AICLIENT2API_ENV="${LOCAL_AICLIENT2API_ENV:-/home/yuyang/frida-test/AIClient2API/.deployment.local.env}"
 JETTASK_WHEEL="/home/yuyang/easy-task/backend/jettask-rs/bindings/python/dist/jettask_python-0.1.0-py3-none-any.whl"
 REMOTE_LANGFUSE_DEPLOY_DIR="${SERVER_DIR}/deployment/langfuse"
+REMOTE_COMPOSE_FILE="${SERVER_DIR}/deployment/docker/compose.production.yml"
+COMPOSE_ENV_FILE="${CONFIG_DIR}/smart-fund-compose.env"
+COMPOSE_PROJECT="smart-fund"
+COMPOSE_MIGRATION_MARKER="${CONFIG_DIR}/smart-fund-compose.migrated"
 LANGFUSE_ENV_FILE="${CONFIG_DIR}/langfuse.env"
 LANGFUSE_COMPOSE_PROJECT="smart-fund-langfuse"
 REMOTE_FRP_DIR="/home/${REMOTE_USER}/frp_0.52.3_linux_amd64"
@@ -186,12 +204,19 @@ ensure_remote_dirs() {
 }
 
 sync_code() {
-    echo "同步 smart-fund-server..."
+    echo "通过 Git 同步 smart-fund-server revision ${DEPLOY_REVISION}..."
     ensure_remote_dirs
-    rsync -az --delete "${RSYNC_EXCLUDES[@]}" \
-        -e "ssh ${SSH_OPTS[*]}" \
-        "${LOCAL_SERVER_DIR}/" \
-        "${REMOTE_USER}@${REMOTE_HOST}:${SERVER_DIR}/"
+    ssh_cmd "set -euo pipefail
+if [[ ! -d '${REMOTE_GIT_DIR}/.git' ]]; then
+    git clone --filter=blob:none '${DEPLOY_GIT_URL}' '${REMOTE_GIT_DIR}'
+fi
+git -C '${REMOTE_GIT_DIR}' fetch --prune origin
+git -C '${REMOTE_GIT_DIR}' cat-file -e '${DEPLOY_REVISION}^{commit}'
+git -C '${REMOTE_GIT_DIR}' checkout --detach --force '${DEPLOY_REVISION}'
+mkdir -p '${SERVER_DIR}'
+rsync -a --delete --exclude='.git/' --exclude='.env' --exclude='.venv/' \
+  '${REMOTE_GIT_DIR}/smart-fund-server/' '${SERVER_DIR}/'
+printf '%s\n' '${DEPLOY_REVISION}' > '${SERVER_DIR}/.deployed-revision'"
 
     if [[ -d "${LOCAL_FUND_TRADE_DIR}" ]]; then
         rsync -az --delete "${RSYNC_EXCLUDES[@]}" \
@@ -206,7 +231,7 @@ sync_code() {
             "${JETTASK_WHEEL}" \
             "${REMOTE_USER}@${REMOTE_HOST}:${ARTIFACT_DIR}/"
     fi
-    echo "代码同步完成"
+    echo "Git revision 同步完成"
 }
 
 sync_langfuse_files() {
@@ -432,25 +457,22 @@ PY
 
 apply_schema_migrations() {
     echo "执行幂等数据库迁移..."
-    local database_name jettask_database_name
     local remote_migration="/tmp/smart-fund-server-migrations.sql"
     local remote_jettask_migration="/tmp/smart-fund-jettask-migrations.sql"
-    database_name="$(
-        ssh_cmd "cd '${SERVER_DIR}' && set -a && . '${ENV_FILE}' && set +a && \
-            '${PYTHON}' -c 'from src.infrastructure.config.settings import DB_CONFIG; print(DB_CONFIG[\"dbname\"])'"
-    )"
-    jettask_database_name="$(
-        ssh_cmd "cd '${SERVER_DIR}' && set -a && . '${ENV_FILE}' && set +a && \
-            '${PYTHON}' -c 'from src.infrastructure.config.settings import JETTASK_DB_NAME; print(JETTASK_DB_NAME)'"
-    )"
     ssh_cmd "cat '${SERVER_DIR}'/schema/migrations/*.sql \
         > '${remote_migration}' && chmod 644 '${remote_migration}'"
-    sudo_cmd "sudo -u postgres psql -v ON_ERROR_STOP=1 -d '${database_name}' \
-        -f '${remote_migration}' && rm -f '${remote_migration}'"
+    ssh_cmd "set -a; . '${ENV_FILE}'; set +a; \
+        PGPASSWORD=\"\${DB_PASSWORD:-}\" psql -v ON_ERROR_STOP=1 \
+        -h \"\${DB_HOST:-127.0.0.1}\" -p \"\${DB_PORT:-5432}\" \
+        -U \"\${DB_USER:-postgres}\" -d \"\${DB_NAME}\" \
+        -f '${remote_migration}'; rm -f '${remote_migration}'"
     ssh_cmd "cat '${SERVER_DIR}'/schema/jettask_migrations/*.sql \
         > '${remote_jettask_migration}' && chmod 644 '${remote_jettask_migration}'"
-    sudo_cmd "sudo -u postgres psql -v ON_ERROR_STOP=1 -d '${jettask_database_name}' \
-        -f '${remote_jettask_migration}' && rm -f '${remote_jettask_migration}'"
+    ssh_cmd "set -a; . '${ENV_FILE}'; set +a; \
+        PGPASSWORD=\"\${DB_PASSWORD:-}\" psql -v ON_ERROR_STOP=1 \
+        -h \"\${DB_HOST:-127.0.0.1}\" -p \"\${DB_PORT:-5432}\" \
+        -U \"\${DB_USER:-postgres}\" -d \"\${JETTASK_DB_NAME:-jettask_queue}\" \
+        -f '${remote_jettask_migration}'; rm -f '${remote_jettask_migration}'"
     echo "数据库迁移完成"
 }
 
@@ -458,8 +480,9 @@ install_redis() {
     echo "检查系统依赖与 Redis..."
     if ! ssh_cmd "command -v redis-server >/dev/null 2>&1 \
         && command -v tmux >/dev/null 2>&1 \
-        && command -v curl >/dev/null 2>&1"; then
-        sudo_cmd "apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y redis-server tmux curl"
+        && command -v curl >/dev/null 2>&1 \
+        && command -v psql >/dev/null 2>&1"; then
+        sudo_cmd "apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y redis-server tmux curl postgresql-client"
     fi
     sudo_cmd "systemctl enable --now redis-server"
     # 生产数据集较大且写入频繁；默认 save 60 10000 会近乎每分钟全量生成 RDB。
@@ -470,6 +493,15 @@ install_redis() {
     ssh_cmd "REDISCLI_AUTH=\"\$(cat '${CONFIG_DIR}/redis-access.secret' 2>/dev/null || true)\" \
         redis-cli -h 127.0.0.1 ping | grep -q PONG"
     echo "系统依赖与 Redis 可用"
+}
+
+ensure_docker_compose() {
+    if ssh_cmd "command -v docker >/dev/null && docker compose version >/dev/null 2>&1"; then
+        return
+    fi
+    sudo_cmd "apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y docker.io docker-compose-v2"
+    sudo_cmd "systemctl enable --now docker.service; usermod -aG docker ${REMOTE_USER}"
+    ssh_cmd "docker compose version >/dev/null"
 }
 
 camoufox_binary_ready() {
@@ -734,12 +766,11 @@ WantedBy=${TARGET}
 EOF
 
     local worker_name worker_group worker_concurrency
-    for worker_group in ths ths-sector http internal; do
+    for worker_group in ths ths-sector general; do
         case "${worker_group}" in
             ths) worker_name="${SVC_WORKER_THS}"; worker_concurrency="${THS_WORKER_CONCURRENCY}" ;;
             ths-sector) worker_name="${SVC_WORKER_THS_SECTOR}"; worker_concurrency="${THS_SECTOR_WORKER_CONCURRENCY}" ;;
-            http) worker_name="${SVC_WORKER_HTTP}"; worker_concurrency="${HTTP_WORKER_CONCURRENCY}" ;;
-            internal) worker_name="${SVC_WORKER_INTERNAL}"; worker_concurrency="${INTERNAL_WORKER_CONCURRENCY}" ;;
+            general) worker_name="${SVC_WORKER_GENERAL}"; worker_concurrency="${GENERAL_WORKER_CONCURRENCY}" ;;
         esac
     cat > "${unit_dir}/${worker_name}.service" <<EOF
 [Unit]
@@ -885,7 +916,7 @@ EOF
     cat > "${unit_dir}/${TARGET}" <<EOF
 [Unit]
 Description=Smart Fund Collection Stack
-Wants=${SVC_ETCD}.service ${SVC_MILVUS}.service ${SVC_API}.service ${SVC_PERSIST}.service ${SVC_SCHEDULER}.service ${SVC_WORKER_THS}.service ${SVC_WORKER_HTTP}.service ${SVC_WORKER_INTERNAL}.service ${SVC_THS_STREAM}.service ${SVC_KG_CARD}.service ${SVC_KG_RELATION}.service
+Wants=${SVC_ETCD}.service ${SVC_MILVUS}.service ${SVC_API}.service ${SVC_PERSIST}.service ${SVC_SCHEDULER}.service ${SVC_WORKER_THS}.service ${SVC_WORKER_THS_SECTOR}.service ${SVC_WORKER_GENERAL}.service ${SVC_THS_STREAM}.service ${SVC_KG_CARD}.service ${SVC_KG_RELATION}.service
 After=network-online.target
 
 [Install]
@@ -929,8 +960,10 @@ install -m 644 /tmp/${SVC_SCHEDULER}.service /etc/systemd/system/${SVC_SCHEDULER
 systemctl disable --now smart-fund-worker.service 2>/dev/null || true
 rm -f /etc/systemd/system/smart-fund-worker.service
 install -m 644 /tmp/${SVC_WORKER_THS}.service /etc/systemd/system/${SVC_WORKER_THS}.service
-install -m 644 /tmp/${SVC_WORKER_HTTP}.service /etc/systemd/system/${SVC_WORKER_HTTP}.service
-install -m 644 /tmp/${SVC_WORKER_INTERNAL}.service /etc/systemd/system/${SVC_WORKER_INTERNAL}.service
+install -m 644 /tmp/${SVC_WORKER_THS_SECTOR}.service /etc/systemd/system/${SVC_WORKER_THS_SECTOR}.service
+install -m 644 /tmp/${SVC_WORKER_GENERAL}.service /etc/systemd/system/${SVC_WORKER_GENERAL}.service
+systemctl disable --now smart-fund-worker-http.service smart-fund-worker-internal.service 2>/dev/null || true
+rm -f /etc/systemd/system/smart-fund-worker-http.service /etc/systemd/system/smart-fund-worker-internal.service
 install -m 644 /tmp/${SVC_THS_STREAM}.service /etc/systemd/system/${SVC_THS_STREAM}.service
 install -m 644 /tmp/${SVC_KG_CARD}.service /etc/systemd/system/${SVC_KG_CARD}.service
 install -m 644 /tmp/${SVC_KG_RELATION}.service /etc/systemd/system/${SVC_KG_RELATION}.service
@@ -946,7 +979,7 @@ printf '{}\n' > '${CONFIG_DIR}/docker-no-credential/config.json'
 chown -R ${REMOTE_USER}:${REMOTE_USER} '${CONFIG_DIR}/docker-no-credential'
 rm -f /tmp/${SVC_ETCD}.service /tmp/${SVC_MILVUS}.service /tmp/${SVC_API}.service /tmp/${SVC_PERSIST}.service \
     /tmp/${SVC_SCHEDULER}.service /tmp/${SVC_WORKER_THS}.service \
-    /tmp/${SVC_WORKER_HTTP}.service /tmp/${SVC_WORKER_INTERNAL}.service /tmp/${SVC_THS_STREAM}.service \
+    /tmp/${SVC_WORKER_THS_SECTOR}.service /tmp/${SVC_WORKER_GENERAL}.service /tmp/${SVC_THS_STREAM}.service \
     /tmp/${SVC_KG_CARD}.service /tmp/${SVC_KG_RELATION}.service \
     /tmp/${SVC_KG_GRAPH}.service \
     /tmp/${TARGET} /tmp/smart-fund-server.logrotate \
@@ -954,7 +987,7 @@ rm -f /tmp/${SVC_ETCD}.service /tmp/${SVC_MILVUS}.service /tmp/${SVC_API}.servic
     /tmp/smart-fund-milvus-prestart.sh /tmp/smart-fund-milvus-wait-ready.sh
 touch '${LOG_DIR}/etcd.log' '${LOG_DIR}/milvus.log' '${LOG_DIR}/api.log' '${LOG_DIR}/persist.log' \
     '${LOG_DIR}/scheduler.log' '${LOG_DIR}/worker-ths.log' \
-    '${LOG_DIR}/worker-http.log' '${LOG_DIR}/worker-internal.log' \
+    '${LOG_DIR}/worker-ths-sector.log' '${LOG_DIR}/worker-general.log' \
     '${LOG_DIR}/ths-realtime-stream.log' \
     '${LOG_DIR}/kg-card.log' '${LOG_DIR}/kg-relation.log' \
     '${LOG_DIR}/kg-graph.log'
@@ -1032,7 +1065,7 @@ app.close()
 PY"
 
     sudo_cmd "systemctl start ${SVC_SCHEDULER}.service"
-    sudo_cmd "systemctl start ${SVC_WORKER_THS}.service ${SVC_WORKER_HTTP}.service ${SVC_WORKER_INTERNAL}.service"
+    sudo_cmd "systemctl start ${SVC_WORKER_THS}.service ${SVC_WORKER_THS_SECTOR}.service ${SVC_WORKER_GENERAL}.service"
     sudo_cmd "systemctl start ${SVC_THS_STREAM}.service"
     wait_for_ths_command_broker
     sudo_cmd "systemctl start ${SVC_KG_CARD}.service"
@@ -1055,7 +1088,7 @@ restart_all() {
     sleep 2
     register_schedules
     sudo_cmd "systemctl start ${SVC_SCHEDULER}.service"
-    sudo_cmd "systemctl restart ${SVC_WORKER_THS}.service ${SVC_WORKER_HTTP}.service ${SVC_WORKER_INTERNAL}.service"
+    sudo_cmd "systemctl restart ${SVC_WORKER_THS}.service ${SVC_WORKER_THS_SECTOR}.service ${SVC_WORKER_GENERAL}.service"
     sudo_cmd "systemctl restart ${SVC_THS_STREAM}.service"
     wait_for_ths_command_broker
     sudo_cmd "systemctl restart ${SVC_KG_CARD}.service"
@@ -1063,9 +1096,141 @@ restart_all() {
     # KG Graph Worker 资源消耗较高，不随常规部署自动启动或重启。
 }
 
+compose_cmd() {
+    local args="$1"
+    ssh_cmd "docker compose --project-name '${COMPOSE_PROJECT}' --env-file '${COMPOSE_ENV_FILE}' -f '${REMOTE_COMPOSE_FILE}' ${args}"
+}
+
+build_server_image() {
+    local image="smart-fund-server:${DEPLOY_REVISION}"
+    echo "构建服务端镜像 ${image}..."
+    ssh_cmd "set -euo pipefail
+test -s '${ARTIFACT_DIR}/jettask_python-0.1.0-py3-none-any.whl'
+mkdir -p '${SERVER_DIR}/.docker-build'
+cp '${ARTIFACT_DIR}/jettask_python-0.1.0-py3-none-any.whl' '${SERVER_DIR}/.docker-build/jettask.whl'
+if ! docker image inspect '${image}' >/dev/null 2>&1; then
+  docker build --pull --build-arg APP_UID=\$(id -u) --build-arg APP_GID=\$(id -g) -f '${SERVER_DIR}/deployment/docker/Dockerfile' -t '${image}' '${SERVER_DIR}'
+fi
+rm -rf '${SERVER_DIR}/.docker-build'"
+    ssh_cmd "install -d -m 0700 '${CONFIG_DIR}/claude-container'; rsync -a --delete '/home/${REMOTE_USER}/.claude/' '${CONFIG_DIR}/claude-container/'; chmod 0700 '${CONFIG_DIR}/claude-container'"
+    ssh_cmd "cat > '${COMPOSE_ENV_FILE}' <<'EOF'
+SMART_FUND_IMAGE=${image}
+SMART_FUND_ENV_FILE=${ENV_FILE}
+SMART_FUND_ARTIFACT_DIR=${ARTIFACT_DIR}
+SMART_FUND_DATA_DIR=${DATA_DIR}
+SMART_FUND_SKILLS_DIR=${REMOTE_SKILLS_DIR}
+SMART_FUND_CONFIG_DIR=${CONFIG_DIR}
+MILVUS_DATA_DIR=${MILVUS_DATA_DIR}
+CAMOUFOX_CACHE_DIR=${REMOTE_CAMOUFOX_CACHE}
+CLAUDE_BIN_PATH=/home/${REMOTE_USER}/.local/bin/claude
+CLAUDE_CONFIG_DIR=${CONFIG_DIR}/claude-container
+MILVUS_IMAGE=${MILVUS_IMAGE}
+ETCD_IMAGE=${ETCD_IMAGE}
+THS_WORKER_CONCURRENCY=${THS_WORKER_CONCURRENCY}
+THS_SECTOR_WORKER_CONCURRENCY=${THS_SECTOR_WORKER_CONCURRENCY}
+GENERAL_WORKER_CONCURRENCY=${GENERAL_WORKER_CONCURRENCY}
+KG_RELATION_WORKER_CONCURRENCY=${KG_RELATION_WORKER_CONCURRENCY}
+EOF
+chmod 0600 '${COMPOSE_ENV_FILE}'"
+    compose_cmd "config --quiet"
+}
+
+install_compose_service() {
+    sudo_cmd "cat > /etc/systemd/system/smart-fund-compose.service <<'EOF'
+[Unit]
+Description=Smart Fund Docker Compose stack
+Wants=network-online.target docker.service redis-server.service
+After=network-online.target docker.service redis-server.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+User=${REMOTE_USER}
+Group=${REMOTE_USER}
+WorkingDirectory=${SERVER_DIR}
+ExecStart=/usr/bin/docker compose --project-name ${COMPOSE_PROJECT} --env-file ${COMPOSE_ENV_FILE} -f ${REMOTE_COMPOSE_FILE} up -d
+ExecStop=/usr/bin/docker compose --project-name ${COMPOSE_PROJECT} --env-file ${COMPOSE_ENV_FILE} -f ${REMOTE_COMPOSE_FILE} stop
+TimeoutStartSec=600
+TimeoutStopSec=180
+
+[Install]
+WantedBy=multi-user.target
+EOF
+systemctl daemon-reload"
+}
+
+rollback_compose_migration() {
+    echo "Compose 首次迁移失败，恢复旧 systemd 栈..." >&2
+    compose_cmd "down --remove-orphans" || true
+    sudo_cmd "if systemctl cat ${TARGET} >/dev/null 2>&1; then systemctl enable --now ${TARGET}; fi"
+}
+
+migrate_systemd_to_compose() {
+    if ssh_cmd "test -f '${COMPOSE_MIGRATION_MARKER}'"; then
+        return
+    fi
+    echo "首次切换到 Docker Compose；停止旧 systemd 进程但保留全部数据目录..."
+    sudo_cmd "systemctl disable --now ${TARGET} ${SVC_API}.service ${SVC_PERSIST}.service ${SVC_SCHEDULER}.service ${SVC_WORKER_THS}.service ${SVC_WORKER_THS_SECTOR}.service ${SVC_WORKER_GENERAL}.service smart-fund-worker-http.service smart-fund-worker-internal.service ${SVC_THS_STREAM}.service ${SVC_KG_CARD}.service ${SVC_KG_RELATION}.service ${SVC_KG_GRAPH}.service ${SVC_MILVUS}.service ${SVC_ETCD}.service 2>/dev/null || true"
+    if ! compose_cmd "up -d etcd milvus" || ! wait_for_milvus; then
+        rollback_compose_migration
+        return 1
+    fi
+    if ! compose_cmd "up -d api persist scheduler worker-ths worker-ths-sector worker-general ths-realtime-stream kg-card kg-relation" \
+        || ! wait_for_api || ! wait_for_ths_command_broker; then
+        rollback_compose_migration
+        return 1
+    fi
+    ssh_cmd "touch '${COMPOSE_MIGRATION_MARKER}'"
+    sudo_cmd "systemctl enable smart-fund-compose.service"
+}
+
+deploy_compose_services() {
+    local requested=",${1}," services=()
+    [[ "${requested}" == *,api,* ]] && services+=(api)
+    [[ "${requested}" == *,persist,* ]] && services+=(persist)
+    [[ "${requested}" == *,scheduler,* ]] && services+=(scheduler)
+    [[ "${requested}" == *,workers,* ]] && services+=(worker-ths worker-ths-sector worker-general)
+    [[ "${requested}" == *,ths-stream,* ]] && services+=(ths-realtime-stream)
+    [[ "${requested}" == *,kg,* ]] && services+=(kg-card kg-relation)
+    ((${#services[@]} > 0)) || return 0
+    if [[ "${requested}" == *,scheduler,* ]]; then
+        compose_cmd "run --rm --no-deps api init schedules"
+    fi
+    compose_cmd "up -d --no-deps ${services[*]}"
+    [[ "${requested}" == *,api,* ]] && wait_for_api
+    [[ "${requested}" == *,ths-stream,* ]] && wait_for_ths_command_broker
+    local service running
+    running="$(compose_cmd "ps --status running --services")"
+    for service in "${services[@]}"; do
+        grep -qx "${service}" <<<"${running}"
+    done
+}
+
+deploy_components() {
+    local requested=",${1},"
+    if ! production_is_initialized; then
+        echo "检测到服务端尚未初始化，自动执行首次部署"
+        init_deploy
+        return
+    fi
+    sync_code
+    apply_schema_migrations
+    build_server_image
+    install_compose_service
+    migrate_systemd_to_compose
+    sudo_cmd "systemctl enable smart-fund-compose.service"
+    deploy_compose_services "${1}"
+    cleanup_legacy_server_dir
+    echo "服务端组件部署完成: ${1}"
+}
+
 show_status() {
+    if ssh_cmd "test -f '${COMPOSE_MIGRATION_MARKER}'"; then
+        compose_cmd "ps"
+        return
+    fi
     local service
-    for service in "${SERVICES[@]}"; do
+    for service in "${REQUIRED_SERVICES[@]}"; do
         echo "===== ${service} ====="
         ssh_cmd "systemctl status '${service}.service' --no-pager | sed -n '1,14p'" || true
     done
@@ -1075,22 +1240,34 @@ show_logs() {
     local service="${1:-worker-ths}"
     local lines="${2:-100}"
     case "${service}" in
-        milvus|api|persist|scheduler|worker-ths|worker-http|worker-internal|ths-realtime-stream|kg-card|kg-relation|kg-graph) ;;
+        milvus|api|persist|scheduler|worker-ths|worker-ths-sector|worker-general|ths-realtime-stream|kg-card|kg-relation|kg-graph) ;;
         *)
-            echo "日志服务必须是 milvus|api|persist|scheduler|worker-ths|worker-http|worker-internal|ths-realtime-stream|kg-card|kg-relation|kg-graph" >&2
+            echo "日志服务必须是 milvus|api|persist|scheduler|worker-ths|worker-ths-sector|worker-general|ths-realtime-stream|kg-card|kg-relation|kg-graph" >&2
             exit 1
             ;;
     esac
-    ssh_cmd "tail -n '${lines}' '${LOG_DIR}/${service}.log'"
+    if ssh_cmd "test -f '${COMPOSE_MIGRATION_MARKER}'"; then
+        compose_cmd "logs --tail '${lines}' '${service}"
+    else
+        ssh_cmd "tail -n '${lines}' '${LOG_DIR}/${service}.log'"
+    fi
 }
 
 remote_test() {
     echo "执行生产健康检查..."
-    local service
-    for service in "${SERVICES[@]}"; do
-        ssh_cmd "systemctl is-active --quiet '${service}.service'"
-        echo "${service}: active"
-    done
+    local service running
+    if ssh_cmd "test -f '${COMPOSE_MIGRATION_MARKER}'"; then
+        running="$(compose_cmd "ps --status running --services")"
+        for service in etcd milvus api persist scheduler worker-ths worker-ths-sector worker-general ths-realtime-stream kg-card kg-relation; do
+            grep -qx "${service}" <<<"${running}"
+            echo "${service}: running"
+        done
+    else
+        for service in "${REQUIRED_SERVICES[@]}"; do
+            ssh_cmd "systemctl is-active --quiet '${service}.service'"
+            echo "${service}: active"
+        done
+    fi
 
     ssh_cmd "curl --fail --silent http://127.0.0.1:8900/health"
     echo
@@ -1226,8 +1403,7 @@ restart_langfuse_clients() {
         ${SVC_SCHEDULER}.service \
         ${SVC_WORKER_THS}.service \
         ${SVC_WORKER_THS_SECTOR}.service \
-        ${SVC_WORKER_HTTP}.service \
-        ${SVC_WORKER_INTERNAL}.service \
+        ${SVC_WORKER_GENERAL}.service \
         ${SVC_THS_STREAM}.service \
         ${SVC_KG_CARD}.service \
         ${SVC_KG_RELATION}.service \
@@ -1314,12 +1490,23 @@ init_deploy() {
     sync_code
     install_production_config
     install_redis
-    install_dependencies
-    install_units
+    ensure_docker_compose
+    if ! ssh_cmd "test -x '${REMOTE_CAMOUFOX_CACHE}/camoufox-bin'"; then
+        sync_camoufox_cache
+    fi
     apply_schema_migrations
-    initialize_runtime
+    build_server_image
+    install_compose_service
+    migrate_systemd_to_compose
+    compose_cmd "run --rm --no-deps api init state"
+    compose_cmd "run --rm --no-deps api init schedules"
+    compose_cmd "restart scheduler"
     remote_test
     cleanup_legacy_server_dir
+}
+
+production_is_initialized() {
+    ssh_cmd "test -f '${ENV_FILE}' && { test -f '${COMPOSE_MIGRATION_MARKER}' || { test -x '${PYTHON}' && systemctl cat '${SVC_API}.service' >/dev/null 2>&1; }; }"
 }
 
 main() {
@@ -1334,6 +1521,16 @@ main() {
         --restart)
             restart_all
             remote_test
+            ;;
+        --components)
+            [[ -n "${2:-}" ]] || { echo "--components 需要组件列表" >&2; exit 2; }
+            IFS=',' read -r -a requested_components <<<"${2}"
+            for component in "${requested_components[@]}"; do
+                case "${component}" in api|persist|scheduler|workers|ths-stream|kg) ;;
+                    *) echo "未知服务端组件: ${component}" >&2; exit 2 ;;
+                esac
+            done
+            deploy_components "${2}"
             ;;
         --status)
             show_status
@@ -1378,12 +1575,17 @@ main() {
             show_langfuse_credentials
             ;;
         "")
-            sync_code
-            install_units
-            apply_schema_migrations
-            restart_all
-            remote_test
-            cleanup_legacy_server_dir
+            if production_is_initialized; then
+                sync_code
+                install_units
+                apply_schema_migrations
+                restart_all
+                remote_test
+                cleanup_legacy_server_dir
+            else
+                echo "检测到服务端尚未初始化，自动执行首次部署"
+                init_deploy
+            fi
             ;;
         *)
             echo "未知参数: $1" >&2

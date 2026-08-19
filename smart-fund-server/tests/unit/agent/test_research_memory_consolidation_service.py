@@ -109,7 +109,7 @@ def test_memory_consolidation_has_an_independent_hourly_schedule() -> None:
 
     assert schedule.queue == "consolidate_research_memory"
     assert schedule.cron_expression == "25 * * * *"
-    assert "consolidate_research_memory" in COLLECTION_WORKER_GROUPS["internal"]
+    assert "consolidate_research_memory" in COLLECTION_WORKER_GROUPS["general"]
 
 
 def test_memory_search_projection_hides_audit_references_until_open() -> None:

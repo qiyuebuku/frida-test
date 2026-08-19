@@ -1,0 +1,27 @@
+[Unit]
+# Installed by internal/remote/install-services.sh.
+Description=THS Android x86_64 Emulator
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=yuyangruan
+Group=yuyangruan
+Environment=HOME=/home/yuyangruan
+Environment=ANDROID_SDK_ROOT=/home/yuyangruan/android-sdk
+Environment=ANDROID_HOME=/home/yuyangruan/android-sdk
+ExecStart=/home/yuyangruan/android-sdk/emulator/emulator @ths-futures -port 5556 -no-window -no-audio -no-boot-anim -gpu swiftshader_indirect -no-snapshot -memory 12288 -cores 8 -no-metrics -prop ro.iorapd.enable=false
+ExecStartPost=/home/yuyangruan/android-runtime/bin/ths-disable-bluetooth.sh
+ExecStartPost=/home/yuyangruan/android-runtime/bin/ths-optimize-android.sh
+Restart=always
+RestartSec=10
+TimeoutStartSec=300
+TimeoutStopSec=90
+KillMode=mixed
+CPUQuota=300%
+StandardOutput=append:/home/yuyangruan/android-runtime/logs/emulator.log
+StandardError=append:/home/yuyangruan/android-runtime/logs/emulator.log
+
+[Install]
+WantedBy=multi-user.target
