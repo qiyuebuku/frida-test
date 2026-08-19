@@ -27,8 +27,9 @@ ensure_adb_root() {
     for _ in {1..30}; do
         if adb_shell id 2>/dev/null | grep -q 'uid=0'; then
             local caps
-            caps="$(adb_shell sh -c "grep '^CapEff:' /proc/self/status" | tr -d '\r')"
-            [[ "${caps}" != 'CapEff:'$'\t''0000000000000000' ]] \
+            caps="$(adb_shell cat /proc/self/status \
+                | sed -n 's/^CapEff:[[:space:]]*//p' | tr -d '\r')"
+            [[ -n "${caps}" && "${caps}" != '0000000000000000' ]] \
                 || die "root adbd has no effective capabilities"
             return 0
         fi
