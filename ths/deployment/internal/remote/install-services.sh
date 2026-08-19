@@ -127,6 +127,11 @@ ensure_trade_runtime() {
             if grep -q '"write_ready":true' <<<"${status}"; then
                 return 0
             fi
+            if grep -q '"session_ready":false' <<<"${status}"; then
+                login_payload="$(curl -fsS --max-time 120 -X POST \
+                    -H 'Content-Type: application/json' -d '{"method":"pwd"}' \
+                    http://127.0.0.1:49500/stock/trade/login || true)"
+            fi
             payload="$(curl -fsS --max-time 120 -X POST \
                 -H 'Content-Type: application/json' -d '{}' \
                 http://127.0.0.1:49500/stock/trade/runtime/ensure || true)"
@@ -170,6 +175,7 @@ systemctl enable --now ths-android-watchdog.service
 # Collector cold starts currently switch Android's foreground user and may kill
 # user 0 because THS holds audio-record permission. Re-establish the trade
 # process/channel after every collector lane is initialized; this is idempotent.
+systemctl restart ths-trade-bridge.service
 ensure_trade_runtime
 
 # This must be the final deployment action: collector startup temporarily wakes
