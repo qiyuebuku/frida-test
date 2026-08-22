@@ -16,30 +16,6 @@ REVISION=${2:?usage: $0 IMAGE@sha256:DIGEST REVISION}
     exit 1
 }
 
-# Trading identity is sensitive runtime state, not an image build input. A
-# production rollout must prove that a destroyed /data volume can be restored
-# from independently protected secrets before replacing any collector or trade
-# container. Password alone cannot reconstruct the broker account repository.
-trade_account_seed=${THS_TRADE_ACCOUNT_SEED_SECRET:-/home/yuyangruan/redroid-poc/secrets/trade_account_seed}
-trade_token=${THS_TRADE_TOKEN_SECRET:-/home/yuyangruan/redroid-poc/secrets/trade_token}
-trade_password=${THS_TRADE_PASSWORD_SECRET:-/home/yuyangruan/redroid-poc/secrets/trade_password}
-for required_secret in "$trade_account_seed" "$trade_password"; do
-    [[ -s "$required_secret" ]] || {
-        echo "required trade disaster-recovery secret is missing: $required_secret" >&2
-        exit 66
-    }
-done
-if [[ -e "$trade_token" && ! -s "$trade_token" ]]; then
-    echo "trade token secret exists but is empty: $trade_token" >&2
-    exit 66
-fi
-trade_secret_args=(
-    --trade-init secrets
-    --account-seed-secret "$trade_account_seed"
-    --password-secret "$trade_password"
-)
-[[ -s "$trade_token" ]] && trade_secret_args+=(--token-secret "$trade_token")
-
 pulled=false
 for attempt in 1 2 3 4 5; do
     if docker pull "$IMAGE"; then
@@ -98,15 +74,19 @@ for number in 1 2 3 4 5 6 7 8; do
     replace_collector "$number"
 done
 
+trade_data=${THS_TRADE_DATA_DIR:-/home/yuyangruan/redroid-poc/data-trade}
+trade_password=${THS_TRADE_PASSWORD_SECRET:-/home/yuyangruan/redroid-poc/secrets/trade_password}
 old_trade_image=$(docker inspect --format '{{.Config.Image}}' ths-trade)
 docker rm -f ths-trade >/dev/null
 if ! "$SCRIPT_DIR/add-instance.sh" --name ths-trade --mode trade \
     --adb-port 5560 --http-port 49600 --image "$IMAGE" \
-    "${trade_secret_args[@]}" --ready-timeout 360; then
+    --trade-init existing --data-dir "$trade_data" \
+    --password-secret "$trade_password" --ready-timeout 360; then
     docker rm -f ths-trade >/dev/null 2>&1 || true
     "$SCRIPT_DIR/add-instance.sh" --name ths-trade --mode trade \
         --adb-port 5560 --http-port 49600 --image "$old_trade_image" \
-        "${trade_secret_args[@]}" --ready-timeout 360
+        --trade-init existing --data-dir "$trade_data" \
+        --password-secret "$trade_password" --ready-timeout 360
     exit 1
 fi
 
