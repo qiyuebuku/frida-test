@@ -10664,6 +10664,38 @@ public class MainHook {
 
             Object broker = repository.getClass().getMethod("W", String.class)
                     .invoke(repository, qsid);
+            if (broker == null) {
+                // 全新数据卷可能尚未下载 yyb 数据库。仍通过 App 自身的 a1s.y()
+                // 解析器创建券商对象，避免依赖旧设备导出的账户 seed。
+                JSONObject brokerJson = new JSONObject();
+                brokerJson.put("yybname", brokerName);
+                brokerJson.put("accounttype", "0");
+                brokerJson.put("wtid", "");
+                brokerJson.put("qsid", qsid);
+                brokerJson.put("area", "");
+                brokerJson.put("qsname", brokerName);
+                brokerJson.put("pinyin", "");
+                brokerJson.put("dtkltype", "");
+                Class<?> cbClass = cl.loadClass("a1s$a");
+                Object cb = Proxy.newProxyInstance(cl, new Class[]{cbClass},
+                        (p, m, args) -> {
+                            switch (m.getName()) {
+                                case "a": case "h": return null;
+                                case "e": return 0;
+                                case "g": return false;
+                                case "b": case "i": return "";
+                                case "getContext": return appInstance;
+                                case "hashCode": return System.identityHashCode(p);
+                                case "toString": return p.getClass().getName();
+                                case "equals": return p == args[0];
+                                default: return null;
+                            }
+                        });
+                broker = cl.loadClass("a1s")
+                        .getMethod("y", org.json.JSONObject.class, boolean.class, cbClass)
+                        .invoke(null, brokerJson, false, cb);
+                out.put("broker_rebuilt", broker != null);
+            }
             if (broker == null) return errorJson(out, "broker unavailable for configured qsid");
             String actualBrokerName = String.valueOf(broker.getClass().getField("i").get(broker));
             if (!brokerName.equals(actualBrokerName)) {
