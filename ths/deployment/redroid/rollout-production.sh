@@ -10,7 +10,19 @@ REVISION=${2:?usage: $0 IMAGE@sha256:DIGEST REVISION}
 }
 [[ "$REVISION" =~ ^[0-9a-f]{40}$ ]] || exit 64
 
-docker pull "$IMAGE"
+pulled=false
+for attempt in 1 2 3 4 5; do
+    if docker pull "$IMAGE"; then
+        pulled=true
+        break
+    fi
+    echo "registry pull attempt $attempt failed; retrying" >&2
+    sleep $((attempt * 5))
+done
+[[ "$pulled" == true ]] || {
+    echo "unable to pull immutable image after 5 attempts" >&2
+    exit 69
+}
 actual_revision=$(docker image inspect "$IMAGE" --format '{{index .Config.Labels "org.opencontainers.image.revision"}}')
 [[ "$actual_revision" == "$REVISION" ]] || {
     echo "image revision label does not match the main commit" >&2

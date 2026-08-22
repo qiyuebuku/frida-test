@@ -208,6 +208,8 @@ def test_production_workflow_builds_pushes_and_deploys_digest_only() -> None:
     assert "git -C" not in deploy
     assert "@sha256:[0-9a-f]{64}" in rollout
     assert "org.opencontainers.image.revision" in rollout
+    assert "for attempt in 1 2 3 4 5" in rollout
+    assert "unable to pull immutable image after 5 attempts" in rollout
 
 
 def test_rollout_proves_empty_volume_before_touching_production() -> None:
