@@ -11,6 +11,7 @@ on:
       - "deploy.sh"
       - "ths/deployment/deploy.sh"
       - "ths/deployment/internal/**"
+      - ".github/workflows/ths-android-production.yml"
 
 concurrency:
   group: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && 'smart-fund-production' || format('{0}-{1}', github.workflow, github.ref) }}
