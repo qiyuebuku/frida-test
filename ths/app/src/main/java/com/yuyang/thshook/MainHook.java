@@ -11752,7 +11752,13 @@ public class MainHook {
             }
             Class<?> builderClass = cl.loadClass("g6m$a");
             Object b = builderClass.newInstance();
-            String account = (String) mgr.getClass().getMethod("d").invoke(mgr);
+            // 真机 UI 登录的 g6m.a=N(...) 是 7 位资金账号，对应 pzr.x()；
+            // pzr.d() 是券商账号，在全新 Redroid seed 中可为 null。
+            String account = (String) mgr.getClass().getMethod("x").invoke(mgr);
+            if (account == null || account.isEmpty()) {
+                report.put("pwd_error", "fund account unavailable");
+                return false;
+            }
             int accType = (Integer) mgr.getClass().getMethod("e").invoke(mgr);
             b.getClass().getMethod("N", String.class).invoke(b, account);
             // 2026-08-19 真机探针捕获（thshook_login_probe.log）修正：App 实际构造
