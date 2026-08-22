@@ -269,13 +269,6 @@ def test_cancel_order_requires_confirm_and_six_part_entry() -> None:
     assert result["business_ok"] is True
 
 
-def test_transfer_disabled_by_default() -> None:
-    client = make_client(lambda request: httpx.Response(200, json={}))
-    with pytest.raises(THSTradeError) as exc_info:
-        client.transfer(amount="100", bank_password="x", confirm=True)
-    assert exc_info.value.reason_code == "trade_transfer_disabled"
-
-
 def test_business_error_payload_maps_reason() -> None:
     def handler(request: httpx.Request) -> httpx.Response:
         return httpx.Response(
@@ -318,6 +311,20 @@ def test_login_already_logged_in_returns_fast() -> None:
     assert captured["path"] == "/stock/trade/login"
     assert result["result"] == "already_logged_in"
     assert result["ok"] is True
+
+
+def test_status_uses_authoritative_runtime_status() -> None:
+    captured = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured["path"] = request.url.path
+        return httpx.Response(200, json={"state": "ready", "write_ready": True})
+
+    client = make_client(handler)
+    result = client.status()
+
+    assert captured["path"] == "/stock/trade/runtime/status"
+    assert result["write_ready"] is True
 
 
 def test_login_active_success_and_failure_paths() -> None:

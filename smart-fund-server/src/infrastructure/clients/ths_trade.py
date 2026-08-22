@@ -14,7 +14,6 @@
        "market_code","shareholder_account","withdrawable_qty","confirm":"true"}
        → 成功附 business_ok/business_message（25102 stockArr[0].code=="0"）
 - GET  /stock/trade/transfer/banks（只读）
-- POST /stock/trade/transfer（已实现未验证，默认禁用）
 
 设计决策（2026-08-17，用户指定）：交易型接口不挂调度任务、不建快照表、
 不做任何缓存，每次有需求直接调用设备端点取最新数据。
@@ -482,43 +481,13 @@ class THSTradeClient:
         """存管银行列表（只读，协议 1830）。"""
         return self._request("GET", "/stock/trade/transfer/banks")
 
-    def transfer(
-        self,
-        *,
-        amount: str,
-        bank_password: str,
-        bank_index: str = "0",
-        confirm: bool = False,
-        allow_unverified: bool = False,
-    ) -> dict[str, Any]:
-        """银证转账（协议 1826，设备端未重放验证）。默认禁用。"""
-        if not allow_unverified:
-            raise THSTradeError(
-                "transfer endpoint is implemented but replay-unverified; "
-                "pass allow_unverified=True after manual verification",
-                reason_code="trade_transfer_disabled",
-            )
-        if not confirm:
-            raise THSTradeError(
-                "transfer requires explicit confirm=True (real money operation)",
-                reason_code="trade_confirm_required",
-            )
-        body = {
-            "direction": "in",
-            "amount": amount.strip(),
-            "bank_password": bank_password,
-            "bank_index": bank_index.strip(),
-            "confirm": "true",
-        }
-        return self._request("POST", "/stock/trade/transfer", json_body=body)
-
     # ------------------------------------------------------------------
     # 诊断
     # ------------------------------------------------------------------
 
     def status(self) -> dict[str, Any]:
-        """设备端交易 SDK 状态（不进缓存、不抛业务错误）。"""
+        """兼容调用名：返回权威交易运行时状态。"""
         try:
-            return self._request("GET", "/stock/trade/status")
+            return self.runtime_status()
         except THSTradeError as exc:
             return {"ok": False, "error": str(exc), "reason_code": exc.reason_code}

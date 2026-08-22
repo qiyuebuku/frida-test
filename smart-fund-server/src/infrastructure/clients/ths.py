@@ -3560,7 +3560,7 @@ class THSClient(BaseClient):
         preserve_frame_id = bool(bridge_payload.pop("_preserve_frame_id", False))
         if path.startswith("/native/ranking-debug"):
             family = "ranking"
-        elif path.startswith("/native/indicator-list") or (
+        elif (
             path.startswith("/native/hurricane") and payload.get("securities")
         ) or (
             path.startswith("/native/hurricane") and preserve_frame_id
