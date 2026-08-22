@@ -96,15 +96,19 @@ if [[ "$TARGETS" == all || "$TARGETS" == trade ]]; then
         --qsid-secret "$secret_dir/trade_qsid"
         --password-secret "$secret_dir/trade_password"
     )
-    old_trade_image=$(docker inspect --format '{{.Config.Image}}' ths-trade)
-    docker rm -f ths-trade >/dev/null
+    old_trade_image=$(docker inspect --format '{{.Config.Image}}' ths-trade 2>/dev/null || true)
+    docker rm -f ths-trade >/dev/null 2>&1 || true
     if ! "$SCRIPT_DIR/add-instance.sh" --name ths-trade --mode trade \
         --adb-port 5560 --http-port 49600 --image "$IMAGE" \
         "${trade_args[@]}" --ready-timeout 360; then
         docker rm -f ths-trade >/dev/null 2>&1 || true
-        "$SCRIPT_DIR/add-instance.sh" --name ths-trade --mode trade \
-            --adb-port 5560 --http-port 49600 --image "$old_trade_image" \
-            "${trade_args[@]}" --ready-timeout 360
+        if [[ -n "$old_trade_image" ]]; then
+            "$SCRIPT_DIR/add-instance.sh" --name ths-trade --mode trade \
+                --adb-port 5560 --http-port 49600 --image "$old_trade_image" \
+                "${trade_args[@]}" --ready-timeout 360
+        else
+            echo "trade creation failed and no previous container image exists for rollback" >&2
+        fi
         exit 1
     fi
 fi
