@@ -10,8 +10,8 @@ service bootanim /system/bin/bootanimation
 on post-fs-data
     start logd
     exec root root -- /system/etc/init/magisk/magisk --auto-selinux --setup-sbin /system/etc/init/magisk /sbin
-    exec root root -- /system/bin/prepare-riru.sh
     exec root root -- /sbin/magisk --auto-selinux --post-fs-data
+    start ths-rirud
 on nonencrypted
     exec root root -- /sbin/magisk --auto-selinux --service
 on property:vold.decrypt=trigger_restart_framework
@@ -25,3 +25,8 @@ on property:init.svc.zygote=restarting
     exec root root -- /sbin/magisk --auto-selinux --zygote-restart
 on property:init.svc.zygote=stopped
     exec root root -- /sbin/magisk --auto-selinux --zygote-restart
+
+service ths-rirud /system/bin/sh /system/bin/start-rirud.sh
+    class main
+    user root
+    group root
