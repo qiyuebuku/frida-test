@@ -258,10 +258,16 @@ def test_production_workflow_builds_pushes_and_deploys_digest_only() -> None:
     assert "runs-on: [self-hosted, Linux, X64, production-redroid]" in workflow
     assert "DEPLOY_ARTIFACTS_SSH_KEY" in workflow
     assert "ARTIFACT_KNOWN_HOSTS=/tmp/ths-github-known-hosts" in workflow
+    assert "[ssh.github.com]:443 ssh-ed25519" in workflow
     assert "> ~/.ssh/known_hosts" not in workflow
     assert "0608fd9b25c75f9bf1d18f36fc3ce87f002b087a" in (
         REDROID / "fetch-private-artifacts.sh"
     ).read_text(encoding="utf-8")
+    artifact_fetch = (REDROID / "fetch-private-artifacts.sh").read_text(
+        encoding="utf-8"
+    )
+    assert "ssh://git@ssh.github.com:443/" in artifact_fetch
+    assert "ConnectTimeout=15" in artifact_fetch
     assert "docker push" in workflow
     assert "RepoDigests" in workflow
     assert "127.0.0.1:5000/ths-redroid:git-$GITHUB_SHA" in workflow

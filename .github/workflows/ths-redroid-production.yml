@@ -129,7 +129,7 @@ jobs:
         run: |
           printf '%s\n' "$DEPLOY_ARTIFACTS_SSH_KEY" > /tmp/ths-deploy-artifacts-key
           chmod 600 /tmp/ths-deploy-artifacts-key
-          printf '%s\n' 'github.com ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOMqqnkVzrm0SdG6UOoqKLsabgH5C9okWi0dh2l9GKJl' > /tmp/ths-github-known-hosts
+          printf '%s\n' '[ssh.github.com]:443 ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOMqqnkVzrm0SdG6UOoqKLsabgH5C9okWi0dh2l9GKJl' > /tmp/ths-github-known-hosts
           ARTIFACT_SSH_KEY=/tmp/ths-deploy-artifacts-key \
             ARTIFACT_KNOWN_HOSTS=/tmp/ths-github-known-hosts \
             ths/deployment/redroid/fetch-private-artifacts.sh /tmp/ths-redroid-artifacts

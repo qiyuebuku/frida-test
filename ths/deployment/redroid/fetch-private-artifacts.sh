@@ -10,9 +10,9 @@ ARTIFACT_COMMIT=0608fd9b25c75f9bf1d18f36fc3ce87f002b087a
 install -d -m 0700 "$DESTINATION"
 checkout=$(mktemp -d)
 trap 'rm -rf -- "$checkout"' EXIT
-export GIT_SSH_COMMAND="ssh -i $ARTIFACT_SSH_KEY -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes -o UserKnownHostsFile=$ARTIFACT_KNOWN_HOSTS"
+export GIT_SSH_COMMAND="ssh -i $ARTIFACT_SSH_KEY -p 443 -o IdentitiesOnly=yes -o ConnectTimeout=15 -o ServerAliveInterval=10 -o ServerAliveCountMax=3 -o StrictHostKeyChecking=yes -o UserKnownHostsFile=$ARTIFACT_KNOWN_HOSTS"
 git clone --filter=blob:none --no-checkout \
-    git@github.com:qiyuebuku/smart-fund-deploy-artifacts.git "$checkout"
+    ssh://git@ssh.github.com:443/qiyuebuku/smart-fund-deploy-artifacts.git "$checkout"
 git -C "$checkout" checkout --detach "$ARTIFACT_COMMIT"
 "$checkout/materialize.sh" "$DESTINATION"
 "$SCRIPT_DIR/verify-artifacts.sh" "$DESTINATION"
