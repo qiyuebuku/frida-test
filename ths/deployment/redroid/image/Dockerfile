@@ -9,7 +9,7 @@ COPY --chmod=0644 ths-hook.apk /opt/ths/ths-hook.apk
 COPY --chmod=0755 docker-entrypoint.sh /opt/ths/docker-entrypoint.sh
 COPY --chmod=0755 ths-runtime-manager.sh /system/bin/ths-runtime-manager.sh
 COPY --chmod=0755 ths-healthcheck.sh /system/bin/ths-healthcheck.sh
-COPY --chmod=0755 start-rirud.sh /system/bin/start-rirud.sh
+COPY --chmod=0755 prepare-riru.sh /system/bin/prepare-riru.sh
 COPY --chmod=0644 init.ths-runtime.rc /system/etc/init/init.ths-runtime.rc
 COPY --chmod=0644 bootanim.riru.rc /system/etc/init/bootanim.rc
 

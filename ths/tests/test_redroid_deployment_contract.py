@@ -239,6 +239,21 @@ def test_empty_volume_allows_lsposed_first_boot_restart_to_settle() -> None:
     assert "did not enter zygote within 90 seconds" in gate
 
 
+def test_riru_uses_one_ordered_magisk_module_lifecycle() -> None:
+    boot = (REDROID / "image" / "bootanim.riru.rc").read_text(encoding="utf-8")
+    prepare = (REDROID / "image" / "prepare-riru.sh").read_text(
+        encoding="utf-8"
+    )
+
+    setup = boot.index("--setup-sbin")
+    prepare_step = boot.index("exec root root -- /system/bin/prepare-riru.sh")
+    post_fs_data = boot.index("--post-fs-data")
+    assert setup < prepare_step < post_fs_data
+    assert "service ths-rirud" not in boot
+    assert "riru.Daemon" not in prepare
+    assert "--from-service" not in prepare
+
+
 def test_rollout_proves_empty_volume_before_touching_production() -> None:
     rollout = (REDROID / "rollout-production.sh").read_text(encoding="utf-8")
 
