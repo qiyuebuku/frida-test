@@ -365,6 +365,8 @@ def test_trade_can_be_rebuilt_from_minimal_protected_credentials() -> None:
     assert 'getMethod("v", int.class).invoke(q, 1)' in password_login
     official_fallback = password_login[password_login.index("if (!officialReloginStarted)") :]
     assert "forceNativeTradeLoginPath(cl, mgr, report)" in official_fallback
+    assert ".invoke(f2sInst, info, broker, q, callback)" in official_fallback
+    assert ".invoke(f2sInst, info, null, q, callback)" not in official_fallback
     assert "configured broker does not match qsid" in source
     broker_template = ROOT / "app/src/main/assets/trade_brokers/16.json"
     template = json.loads(broker_template.read_text(encoding="utf-8"))

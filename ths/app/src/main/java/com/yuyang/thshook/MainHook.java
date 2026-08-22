@@ -7865,6 +7865,10 @@ public class MainHook {
                                 try {
                                     StringBuilder sb = new StringBuilder();
                                     sb.append("=== t3s.b pwd login probe ===\n");
+                                    sb.append("v3s_shape=")
+                                            .append(describeTradeObjectShape(callFrame.args[0], 2))
+                                            .append('\n');
+                                    sb.append(tradeStackSnippet("T3sBuilderStack")).append('\n');
                                     Object ret = callFrame.getResult();
                                     byte[] buf = ret != null
                                             ? (byte[]) t3sClass.getField("d").get(ret) : null;
@@ -8412,9 +8416,17 @@ public class MainHook {
                     @Override
                     public void beforeCall(Pine.CallFrame callFrame) {
                         String msg = methodLabel + " enter thread="
-                                + Thread.currentThread().getName();
+                                + Thread.currentThread().getName()
+                                + " args=" + describeTradeArgsShape(callFrame.args);
+                        if ("TradePassword.f2s.o".equals(label)) {
+                            msg += tradeStackSnippet("PasswordLoginEntryStack");
+                        }
                         Log.w(TAG, msg);
                         addTradeLog(msg);
+                        if ("TradePassword.f2s.o".equals(label)
+                                || "TradePassword.e2s.W".equals(label)) {
+                            appendLoginProbeLog(msg);
+                        }
                     }
 
                     @Override
@@ -8433,6 +8445,67 @@ public class MainHook {
         } catch (Throwable e) {
             Log.w(TAG, label + " hook failed: " + e);
         }
+    }
+
+    /**
+     * 登录对象脱敏结构摘要：只输出字段名、声明类型、null/长度及嵌套形状，
+     * 不输出任何 String/byte[] 的内容，避免账号、密码、token、网关地址落盘。
+     */
+    private static String describeTradeObjectShape(Object target, int depth) {
+        if (target == null) return "null";
+        Class<?> cls = target.getClass();
+        if (target instanceof String) return "String(len=" + ((String) target).length() + ")";
+        if (target instanceof byte[]) return "byte[](len=" + ((byte[]) target).length + ")";
+        if (cls.isArray()) return cls.getComponentType().getSimpleName() + "[](len="
+                + java.lang.reflect.Array.getLength(target) + ")";
+        if (target instanceof Number || target instanceof Boolean || target instanceof Character
+                || cls.isEnum()) return cls.getSimpleName() + "(present)";
+        StringBuilder out = new StringBuilder(cls.getSimpleName()).append('{');
+        int count = 0;
+        for (Class<?> current = cls; current != null && current != Object.class;
+             current = current.getSuperclass()) {
+            for (java.lang.reflect.Field field : current.getDeclaredFields()) {
+                if (java.lang.reflect.Modifier.isStatic(field.getModifiers())) continue;
+                if (count++ >= 48) {
+                    out.append("…");
+                    return out.append('}').toString();
+                }
+                if (out.charAt(out.length() - 1) != '{') out.append(',');
+                out.append(field.getName()).append(':').append(field.getType().getSimpleName())
+                        .append('=');
+                try {
+                    field.setAccessible(true);
+                    Object value = field.get(target);
+                    if (value == null) out.append("null");
+                    else if (value instanceof String) out.append("len")
+                            .append(((String) value).length());
+                    else if (value instanceof byte[]) out.append("len")
+                            .append(((byte[]) value).length);
+                    else if (field.getType().isPrimitive() || value instanceof Number
+                            || value instanceof Boolean || value.getClass().isEnum()) {
+                        out.append("present");
+                    } else if (depth > 0 && value.getClass().getName().matches(
+                            "^(a1s|fzr|pzr|g6m|r8m|v3s).*$")) {
+                        out.append(describeTradeObjectShape(value, depth - 1));
+                    } else {
+                        out.append(value.getClass().getSimpleName()).append("(present)");
+                    }
+                } catch (Throwable ignored) {
+                    out.append("unreadable");
+                }
+            }
+        }
+        return out.append('}').toString();
+    }
+
+    private static String describeTradeArgsShape(Object[] args) {
+        if (args == null) return "[]";
+        StringBuilder out = new StringBuilder("[");
+        for (int i = 0; i < args.length; i++) {
+            if (i > 0) out.append(',');
+            out.append(i).append('=').append(describeTradeObjectShape(args[i], 1));
+        }
+        return out.append(']').toString();
     }
 
     /** 交易事件栈摘录：过滤 java/android 框架帧，最多 12 帧（诊断刷屏源用） */
@@ -11652,7 +11725,7 @@ public class MainHook {
     /** 密码登录（2026-08-18，8/19 真机探针修正）：镜像 SimpleWeituoLogin 链——
      *  g6m.a() builder：N(资金账号)/R(密码→g6m.b→线上tag3)/S(空)/T("0")/
      *  O("0")/Q(空)/U(yyb串=g6m.a(a1s))/M(false)/P("1")/X(true)/H(acctype)/G()
-     *  → f2s.d().o(g6m, null, q3s.a().s(0).q(1).v(1).o(true), g8m回调)。
+     *  → f2s.d().o(g6m, a1s, q3s.a().s(0).q(1).v(1).o(true), g8m回调)。
      *  keepLogin=true 使券商下发新 token（z7m.w hook 自动捕获上报）。 */
     private static boolean doPasswordTradeLoginLocked(ClassLoader cl,
             JSONObject report, String password) {
@@ -11773,11 +11846,9 @@ public class MainHook {
             }
             report.put("official_relogin_started", officialReloginStarted);
             if (!officialReloginStarted) {
-                // A fresh headless Redroid has no successful-login callback to
-                // set lzr.e. Its CBAS socket can connect and report channel-ok
-                // while password replies never reach g8m. The direct fallback
-                // must therefore use the native jniRequest route; real phones
-                // normally stay on the official x0s.h branch above.
+                // 2026-08-22 真机 UI 登录探针确认 f2s.o 的第二个参数必须是完整
+                // a1s 券商对象。传 null 虽能进入 t3s.b，却会丢失 w3s.e 构建
+                // v3s/r8m 所需的显式券商上下文，表现为通道已连接但无业务回调。
                 if (!forceNativeTradeLoginPath(cl, mgr, report)) {
                     lastEnsureTradeError = "trade pwd login: native path unavailable";
                     return false;
@@ -11786,7 +11857,7 @@ public class MainHook {
                 cl.loadClass("f2s").getMethod("o",
                                 cl.loadClass("g6m"), cl.loadClass("a1s"),
                                 cl.loadClass("q3s"), cl.loadClass("g8m"))
-                        .invoke(f2sInst, info, null, q, callback);
+                        .invoke(f2sInst, info, broker, q, callback);
             }
             boolean done = latch.await(40, TimeUnit.SECONDS);
             if (!done) {
