@@ -11713,9 +11713,12 @@ public class MainHook {
 
             Class<?> q3sClass = cl.loadClass("q3s");
             Object q = q3sClass.getMethod("a").invoke(null);
-            q = q3sClass.getMethod("s", int.class).invoke(q, 1);
-            q = q3sClass.getMethod("q", int.class).invoke(q, 2);
-            q = q3sClass.getMethod("v", int.class).invoke(q, 0);
+            // Password login uses the SimpleWeituoLogin request profile. The
+            // token-login profile (1/2/0) reaches CBAS but is not dispatched as
+            // a password login when x0s.h is unavailable on headless Redroid.
+            q = q3sClass.getMethod("s", int.class).invoke(q, 0);
+            q = q3sClass.getMethod("q", int.class).invoke(q, 1);
+            q = q3sClass.getMethod("v", int.class).invoke(q, 1);
             q = q3sClass.getMethod("p", boolean.class).invoke(q, Boolean.FALSE);
             q = q3sClass.getMethod("o", boolean.class).invoke(q, Boolean.TRUE);
             q = q3sClass.getMethod("u", boolean.class).invoke(q, Boolean.TRUE);

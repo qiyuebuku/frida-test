@@ -357,6 +357,11 @@ def test_trade_can_be_rebuilt_from_minimal_protected_credentials() -> None:
     assert 'getMethod("V", cl.loadClass("a1s"))' in source
     assert 'getMethod("b", cl.loadClass("pzr"))' in source
     assert 'getMethod("x", cl.loadClass("pzr"))' in source
+    password_login = source[source.index("private static boolean doPasswordTradeLoginLocked") :]
+    password_login = password_login[: password_login.index("private static boolean doActiveTradeLoginLocked")]
+    assert 'getMethod("s", int.class).invoke(q, 0)' in password_login
+    assert 'getMethod("q", int.class).invoke(q, 1)' in password_login
+    assert 'getMethod("v", int.class).invoke(q, 1)' in password_login
     assert "configured broker does not match qsid" in source
     assert "trade_account" in manager
     assert "trade_broker" in manager
