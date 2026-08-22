@@ -9,21 +9,54 @@ WORKSPACE = ROOT.parent
 
 def test_image_is_rebuilt_from_locked_artifacts_without_golden_data() -> None:
     dockerfile = (REDROID / "image" / "Dockerfile").read_text(encoding="utf-8")
+    base_dockerfile = (REDROID / "image" / "Dockerfile.base").read_text(
+        encoding="utf-8"
+    )
     builder = (REDROID / "build-image.sh").read_text(encoding="utf-8")
+    base_builder = (REDROID / "build-base-image.sh").read_text(encoding="utf-8")
 
-    assert "redroid/redroid@sha256:" in dockerfile
-    assert "ths.apk /opt/ths/ths.apk" in dockerfile
+    assert "redroid/redroid@sha256:" in base_dockerfile
+    assert "ths.apk /opt/ths/ths.apk" in base_dockerfile
     assert "COPY --chmod=0644 ths-hook.apk /opt/ths/ths-hook.apk" in dockerfile
     assert "data-template" not in dockerfile
     assert "data-template" not in builder
     assert "--hook-apk" in builder
-    assert '"$SCRIPT_DIR/verify-artifacts.sh"' in builder
+    assert "--base-image" in builder
+    assert '"$SCRIPT_DIR/verify-artifacts.sh"' in base_builder
     assert "BUILD_REVISION=$REVISION" in builder
     assert (
         "libriruloader-android11-x86_64.so\" \"$context/libriruloader.so"
-        in builder
+        in base_builder
     )
-    assert "libriruloader.so /system/lib64/libriruloader.so" in dockerfile
+    assert "libriruloader.so /system/lib64/libriruloader.so" in base_dockerfile
+
+
+def test_workflow_reuses_content_addressed_environment_image() -> None:
+    workflow = (
+        WORKSPACE / ".github/workflows/ths-redroid-production.yml"
+    ).read_text(encoding="utf-8")
+
+    assert "Dockerfile.base" in workflow
+    assert "artifacts.lock | sha256sum" in workflow
+    assert "docker pull \"$base_tag\"" in workflow
+    assert "if: env.BUILD_BASE == 'true'" in workflow
+    assert "build-base-image.sh" in workflow
+    assert '--base-image "$BASE_IMAGE_DIGEST"' in workflow
+    assert "Build and publish thin commit image" in workflow
+
+
+def test_local_verification_is_isolated_from_production_rollout() -> None:
+    local_test = (REDROID / "test-local.sh").read_text(encoding="utf-8")
+
+    assert "assembleDebug" in local_test
+    assert "ths-redroid:reproducibility-test" in local_test
+    assert "NAME=ths-local-test" in local_test
+    assert 'docker volume rm "${NAME}-data"' in local_test
+    assert "rollout-production.sh" not in local_test
+    assert "GITHUB_ACTIONS" not in local_test
+    assert "ths-trade" not in local_test
+    assert "CONFIG_ANDROID_BINDER_IPC is disabled" in local_test
+    assert "/dev/binderfs/binder" in local_test
 
 
 def test_runtime_manager_owns_app_start_and_active_readiness() -> None:
@@ -82,6 +115,16 @@ def test_unified_absorbs_single_transport_timeout() -> None:
     assert "attempt <= 3" in source
     assert 'result.contains("\\\"success\\\":true")' in source
     assert "Thread.sleep(300L)" in source
+
+
+def test_okhttp_proxy_preserves_declared_network_exceptions() -> None:
+    source = (
+        ROOT / "app/src/main/java/com/yuyang/thshook/MainHook.java"
+    ).read_text(encoding="utf-8")
+
+    interceptor = source[source.index("class InterceptorHandler") :]
+    assert "catch (java.lang.reflect.InvocationTargetException e)" in interceptor
+    assert "throw cause != null ? cause : e;" in interceptor
 
 
 def test_healthcheck_rejects_stale_ready_marker() -> None:
@@ -225,14 +268,21 @@ def test_production_workflow_builds_pushes_and_deploys_digest_only() -> None:
     assert "runs-on: [self-hosted, Linux, X64, production-redroid]" in workflow
     assert "DEPLOY_ARTIFACTS_SSH_KEY" in workflow
     assert "ARTIFACT_KNOWN_HOSTS=/tmp/ths-github-known-hosts" in workflow
+    assert "[ssh.github.com]:443 ssh-ed25519" in workflow
     assert "> ~/.ssh/known_hosts" not in workflow
     assert "0608fd9b25c75f9bf1d18f36fc3ce87f002b087a" in (
         REDROID / "fetch-private-artifacts.sh"
     ).read_text(encoding="utf-8")
+    artifact_fetch = (REDROID / "fetch-private-artifacts.sh").read_text(
+        encoding="utf-8"
+    )
+    assert "ssh://git@ssh.github.com:443/" in artifact_fetch
+    assert "ConnectTimeout=15" in artifact_fetch
     assert "docker push" in workflow
     assert "RepoDigests" in workflow
     assert "127.0.0.1:5000/ths-redroid:git-$GITHUB_SHA" in workflow
     assert '"$IMAGE_DIGEST" "$GITHUB_SHA" "$THS_REDROID_TARGETS"' in workflow
+    assert '"$ROLLOUT_VERIFY_MODE"' in workflow
     assert "Synchronize protected trade credentials" in workflow
     for secret in (
         "THS_TRADE_ACCOUNT",
@@ -323,6 +373,10 @@ def test_rollout_proves_empty_volume_before_touching_production() -> None:
     assert "docker volume rm ths-rebuild-canary-data" in rollout
     assert 'old_image=$(docker inspect' in rollout
     assert 'old_trade_image=$(docker inspect' in rollout
+    assert '[[ "$VERIFY_MODE" == full ]]' in rollout
+    assert "ROLLOUT_VERIFY_MODE=target" in (
+        WORKSPACE / ".github/workflows/ths-redroid-production.yml"
+    ).read_text(encoding="utf-8")
 
 
 def test_rollout_rebuilds_trade_data_and_reinjects_credentials() -> None:

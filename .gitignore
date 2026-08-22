@@ -37,6 +37,7 @@ qidian/novel_kb/*/plot/outline/.segments/*
 qidian/novel_kb/*
 .env
 deployment/production.env
+deployment/local-secrets/
 .claude/skills/fund-trade/.env
 
 # smart-fund-server 运行时/敏感文件

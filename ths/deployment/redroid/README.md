@@ -22,8 +22,11 @@ dispatch。部分实时指标只在产生新快照时回调，不能把“当前
 
 ## 制品化架构
 
-`image/` 把固定版本的 Android 系统补丁、THS APK、本次提交构建并签名的 Hook APK、
-启动管理器和 Docker HEALTHCHECK 内置进镜像。Dockerfile 仅负责静态制品；新数据卷
+镜像分成两层：`Dockerfile.base` 只包含固定版本的 Android 系统补丁、THS APK、
+Native Bridge、Magisk 和 Riru/LSPosed；`Dockerfile` 从基础镜像继承，只加入本次
+提交构建并签名的 Hook APK、启动管理器和 Docker HEALTHCHECK。基础镜像由
+`Dockerfile.base` 与 `artifacts.lock` 的联合内容哈希寻址，内网 Registry 已存在时，
+Action 会跳过私有制品下载和基础镜像构建。新数据卷
 从空状态创建，只展开 Riru/LSPosed 模块。Android init 服务负责安装并校验两个 APK，
 再显式启动 App、配置 LSPosed 作用域、角色门禁并主动初始化业务运行时。
 创建命令只有在 Docker HEALTHCHECK 验证行情 `runtime_ready=true`（交易实例还要求
@@ -72,16 +75,37 @@ Hook 源码和 `artifacts.lock`；私有仓库
 `.github/workflows/ths-redroid-production.yml` 是唯一生产发布入口：
 
 1. PR 只执行源码构建、shell 和部署契约测试；
-2. 合并 `main` 后下载并校验私有制品，从该 SHA 构建、签名 Hook；
-3. 构建镜像并推送 Docker Hub，取得 registry 返回的不可变 digest；
-4. 生产服务器直接从 Docker Hub 拉取该不可变 digest；公网代理由路由器基础设施维护，
-   发布流程不传输镜像 tar、不维护第二份可变镜像副本；
-5. 生产先用全新卷启动隔离 canary，只有达到 `healthy` 才逐个替换 collector；
+2. 合并 `main` 后在生产自建 Runner 从该 SHA 构建、签名 Hook；
+3. 按内容哈希查找内网基础镜像。仅首次或环境输入变化时下载私有制品并重建基础镜像；
+4. 构建轻量提交镜像，推送到服务器回环 Registry，并取得不可变 digest；整个镜像链路
+   不经过 Docker Hub 或公网；
+5. 环境层变化时先用全新卷启动隔离 canary；普通代码层更新直接由目标实例完成验证，
+   避免重复冷启动；
 6. trade 最后替换，任何实例失败立即恢复该实例原镜像；
-7. 镜像的 OCI revision label 必须等于触发部署的 `github.sha`。
+7. 提交镜像的 OCI revision label 必须等于触发部署的 `github.sha`。
 
 禁止从开发机运行生产 rollout，禁止生产使用可变 tag。交易密码、账户 seed 和 token
 只通过生产服务器只读 Secret 注入，绝不进入 Git、私有制品或镜像层。
+
+### 本地提交前验证
+
+本地开发不调用生产 rollout。`test-local.sh` 直接从当前工作树构建 Debug Hook，叠加到
+本地缓存的环境镜像，并替换固定的 `ths-local-test` 容器及其独立数据卷：
+
+```bash
+ths/deployment/redroid/test-local.sh
+```
+
+默认验证 collector；交易登录使用本地、不进 Git 的 Secret 目录：
+
+```bash
+ths/deployment/redroid/test-local.sh --mode trade \
+  --secret-dir deployment/local-secrets
+```
+
+目录内分别维护 `trade_account`、`trade_broker`、`trade_qsid`、`trade_password` 四个
+权限为 0600 的纯文本文件。该本地验证通过后再提交并推送；它不具备生产发布权限，
+也不会操作 `ths-trade` 或 `ths-collector1-8`。
 
 交易凭据统一在 GitHub `production` Environment Secrets 的 Web UI 维护：
 `THS_TRADE_ACCOUNT`、`THS_TRADE_BROKER`、`THS_TRADE_QSID`、

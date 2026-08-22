@@ -6509,7 +6509,17 @@ public class MainHook {
 
             // 执行请求
             Method proceedMethod = chainClass.getDeclaredMethod("proceed", request.getClass().getClassLoader().loadClass("okhttp3.Request"));
-            Object response = proceedMethod.invoke(chain, request);
+            Object response;
+            try {
+                response = proceedMethod.invoke(chain, request);
+            } catch (java.lang.reflect.InvocationTargetException e) {
+                // InvocationHandler 直接抛 InvocationTargetException 会被动态代理再包成
+                // UndeclaredThrowableException。OkHttp 的异步线程不会捕获它，普通网络
+                // reset 最终会杀死整个 App。恢复原始 IOException/RuntimeException 语义，
+                // 交给 OkHttp 自己的失败回调处理。
+                Throwable cause = e.getCause();
+                throw cause != null ? cause : e;
+            }
 
             if (shouldLog) {
                 try {

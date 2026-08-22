@@ -1,0 +1,12 @@
+ARG REDROID_IMAGE=redroid/redroid@sha256:60b0810684be4578733a847be3314c50b70f73bc92405b5a627ebe9b633ebb5e
+FROM ${REDROID_IMAGE}
+
+COPY native-bridge-overlay/ /
+COPY magisk-bootstrap-overlay/ /
+COPY --chmod=0644 riru-lsposed-redroid-bootstrap.tar.gz /opt/ths/riru-lsposed-redroid-bootstrap.tar.gz
+COPY --chmod=0644 libriruloader.so /system/lib64/libriruloader.so
+COPY --chmod=0644 ths.apk /opt/ths/ths.apk
+
+ARG BASE_CONTENT_ID
+LABEL org.opencontainers.image.source="https://github.com/qiyuebuku/frida-test" \
+      io.smart-fund.ths-redroid.base-content-id="${BASE_CONTENT_ID}"
