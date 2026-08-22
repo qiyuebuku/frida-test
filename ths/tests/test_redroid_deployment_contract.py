@@ -308,3 +308,16 @@ def test_rollout_proves_empty_volume_before_touching_production() -> None:
     assert "docker volume rm ths-rebuild-canary-data" in rollout
     assert 'old_image=$(docker inspect' in rollout
     assert 'old_trade_image=$(docker inspect' in rollout
+
+
+def test_rollout_requires_trade_disaster_recovery_secrets_before_canary() -> None:
+    rollout = (REDROID / "rollout-production.sh").read_text(encoding="utf-8")
+
+    preflight = rollout.index("required trade disaster-recovery secret is missing")
+    canary = rollout.index("--name ths-rebuild-canary")
+    assert preflight < canary
+    assert "trade_account_seed" in rollout
+    assert 'trade_secret_args=(' in rollout
+    assert "--trade-init secrets" in rollout
+    assert "--trade-init existing" not in rollout
+    assert "THS_TRADE_DATA_DIR" not in rollout
