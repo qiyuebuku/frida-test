@@ -74,9 +74,8 @@ Hook 源码和 `artifacts.lock`；私有仓库
 1. PR 只执行源码构建、shell 和部署契约测试；
 2. 合并 `main` 后下载并校验私有制品，从该 SHA 构建、签名 Hook；
 3. 构建镜像并推送 Docker Hub，取得 registry 返回的不可变 digest；
-4. 若生产机不能访问公网 registry，Actions 通过 SSH 隧道把同一镜像推送到仅监听
-   `127.0.0.1:5000` 的私有 registry，并要求其 manifest digest 与 Docker Hub digest
-   完全相等；回环 registry 程序本身也固定官方镜像 digest；
+4. 生产服务器直接从 Docker Hub 拉取该不可变 digest；公网代理由路由器基础设施维护，
+   发布流程不传输镜像 tar、不维护第二份可变镜像副本；
 5. 生产先用全新卷启动隔离 canary，只有达到 `healthy` 才逐个替换 collector；
 6. trade 最后替换，任何实例失败立即恢复该实例原镜像；
 7. 镜像的 OCI revision label 必须等于触发部署的 `github.sha`。
