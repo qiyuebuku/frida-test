@@ -1,0 +1,19 @@
+package com.yuyang.thshook;
+
+/** Non-secret broker routing metadata compiled into the injected Hook DEX. */
+final class BrokerTemplates {
+    private BrokerTemplates() { }
+
+    static String get(String qsid) {
+        if (!"16".equals(qsid)) return null;
+        return "{"
+                + "\"_extra\":{\"c\":\"\",\"d\":\"\",\"e\":\"\",\"n\":\"0\"},"
+                + "\"accounttype\":\" 自动判断|0资金账户|1深圳账户|2上海账户|4深圳Ｂ股|5上海Ｂ股\","
+                + "\"area\":\"全国\",\"dtkltype\":\"1\",\"getzb\":\"1\","
+                + "\"pinyin\":\"cczq\",\"pluginurlandroid\":\"\","
+                + "\"pluginverandroid\":\"0\",\"qsid\":\"16\","
+                + "\"qsname\":\"川财证券\",\"wtid\":\"3708\","
+                + "\"yybfunc\":\"1100000011\",\"yybname\":\"川财成都电信1\","
+                + "\"zztype\":\"1\"}";
+    }
+}
