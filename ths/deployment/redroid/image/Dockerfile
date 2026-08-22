@@ -4,6 +4,7 @@ FROM ${BASE_IMAGE}
 COPY native-bridge-overlay/ /
 COPY magisk-bootstrap-overlay/ /
 COPY --chmod=0644 riru-lsposed-redroid-bootstrap.tar.gz /opt/ths/riru-lsposed-redroid-bootstrap.tar.gz
+COPY --chmod=0644 libriruloader.so /system/lib64/libriruloader.so
 COPY --chmod=0644 ths.apk /opt/ths/ths.apk
 COPY --chmod=0644 ths-hook.apk /opt/ths/ths-hook.apk
 COPY --chmod=0755 docker-entrypoint.sh /opt/ths/docker-entrypoint.sh

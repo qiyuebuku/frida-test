@@ -86,6 +86,14 @@ verify_hurricane_runtime() {
 }
 
 ensure_riru_injected() {
+    loader=/system/lib64/libriruloader.so
+    loader_sha=b803126d57148134faff2d0e9fb9268fbeabf8efd770ed5dfaeec598df4db04e
+    actual_loader_sha=$(sha256sum "$loader" 2>/dev/null | cut -d' ' -f1 || true)
+    if [ "$actual_loader_sha" != "$loader_sha" ]; then
+        json_status riru_loader_invalid "immutable Riru native-bridge loader is missing or corrupt"
+        echo "Riru native-bridge loader digest mismatch"
+        return 1
+    fi
     # 镜像在 post-fs-data 阶段同步准备 Riru/LSPosed 文件，再启动 rirud。
     # 此处只做最终门禁；禁止在运行期重启 zygote，以免多个 redroid 实例
     # 同时重启 framework 给宿主机造成负载尖峰。

@@ -4,7 +4,7 @@ set -euo pipefail
 SCRIPT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 DESTINATION=${1:?usage: $0 DESTINATION}
 : "${ARTIFACT_SSH_KEY:?path to the read-only artifact repository deploy key is required}"
-ARTIFACT_COMMIT=0cb78e3f71fb4a9ffcb82a169a3af1e86310224f
+ARTIFACT_COMMIT=0608fd9b25c75f9bf1d18f36fc3ce87f002b087a
 
 install -d -m 0700 "$DESTINATION"
 checkout=$(mktemp -d)

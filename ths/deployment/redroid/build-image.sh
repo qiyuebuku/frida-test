@@ -26,6 +26,7 @@ tar -xzf "$ARTIFACT_DIR/native-bridge-android11.tar.gz" --strip-components=1 -C 
 tar -xzf "$ARTIFACT_DIR/magisk-bootstrap-android11.tar.gz" --strip-components=1 -C "$context/magisk-bootstrap-overlay"
 install -m 0644 "$ARTIFACT_DIR/ths-11.58.03.apk" "$context/ths.apk"
 install -m 0644 "$ARTIFACT_DIR/riru-lsposed-redroid-bootstrap.tar.gz" "$context/riru-lsposed-redroid-bootstrap.tar.gz"
+install -m 0644 "$ARTIFACT_DIR/libriruloader-android11-x86_64.so" "$context/libriruloader.so"
 install -m 0644 "$HOOK_APK" "$context/ths-hook.apk"
 install -m 0644 "$SCRIPT_DIR/image/Dockerfile" "$context/Dockerfile"
 install -m 0755 "$SCRIPT_DIR/image/docker-entrypoint.sh" "$SCRIPT_DIR/image/ths-runtime-manager.sh" "$SCRIPT_DIR/image/ths-healthcheck.sh" "$SCRIPT_DIR/image/start-rirud.sh" "$context/"
