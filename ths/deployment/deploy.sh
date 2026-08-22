@@ -24,7 +24,7 @@ source "${ENV_FILE}"
 : "${DEPLOY_REVISION:?must be provided by the workspace deploy.sh}"
 DEPLOY_GIT_URL="${DEPLOY_GIT_URL:-ssh://git@ssh.github.com:443/qiyuebuku/frida-test.git}"
 REMOTE_GIT_DIR="${REMOTE_GIT_DIR:-/home/${REMOTE_USER}/smart-fund-source}"
-SSH=(ssh -i "${SSH_KEY}" -p "${REMOTE_PORT}" -o StrictHostKeyChecking=no "${REMOTE_USER}@${REMOTE_HOST}")
+SSH=(ssh -i "${SSH_KEY}" -p "${REMOTE_PORT}" -o StrictHostKeyChecking=yes "${REMOTE_USER}@${REMOTE_HOST}")
 
 remote_sudo() {
     local command="$1" quoted

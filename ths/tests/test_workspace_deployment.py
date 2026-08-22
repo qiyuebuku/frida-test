@@ -14,6 +14,43 @@ def test_workspace_has_one_public_deployment_entrypoint() -> None:
     assert "rsync" not in deploy
 
 
+def test_production_deployment_requires_github_main_push() -> None:
+    deploy = (WORKSPACE / "deploy.sh").read_text(encoding="utf-8")
+    workflow = (
+        WORKSPACE / ".github" / "workflows" / "ths-android-production.yml"
+    ).read_text(encoding="utf-8")
+
+    assert '"${GITHUB_ACTIONS:-}" == "true"' in deploy
+    assert '"${GITHUB_EVENT_NAME:-}" == "push"' in deploy
+    assert '"${GITHUB_REF:-}" == "refs/heads/main"' in deploy
+    assert '"${REVISION}" == "${GITHUB_SHA}"' in deploy
+    assert "git status --porcelain)" in deploy
+    assert "untracked-files=no" not in deploy
+
+    assert "workflow_dispatch:" not in workflow
+    assert "group: smart-fund-production" in workflow
+    assert "cancel-in-progress: false" in workflow
+    assert "github.event_name == 'push'" in workflow
+    assert 'github.ref == \'refs/heads/main\'' in workflow
+    assert 'production --revision "$GITHUB_SHA"' in workflow
+    assert "THS_PRODUCTION_SSH_KNOWN_HOSTS" in workflow
+    assert "ssh-keyscan" not in workflow
+
+
+def test_production_deployment_verifies_ssh_host_key() -> None:
+    workspace_deploy = (WORKSPACE / "deploy.sh").read_text(encoding="utf-8")
+    ths_deploy = (WORKSPACE / "ths" / "deployment" / "deploy.sh").read_text(
+        encoding="utf-8"
+    )
+    server_deploy = (
+        WORKSPACE / "smart-fund-server" / "deployment" / "deploy_113.sh"
+    ).read_text(encoding="utf-8")
+
+    for deploy in (workspace_deploy, ths_deploy, server_deploy):
+        assert "StrictHostKeyChecking=yes" in deploy
+        assert "StrictHostKeyChecking=no" not in deploy
+
+
 def test_component_revisions_are_recorded_independently() -> None:
     deploy = (WORKSPACE / "deploy.sh").read_text(encoding="utf-8")
 

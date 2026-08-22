@@ -135,13 +135,13 @@ SSH_KEY_TMP="/tmp/deploy_key_smart_fund_113"
 SSH_OPTS=(
     -p "${REMOTE_PORT}"
     -i "${SSH_KEY_TMP}"
-    -o StrictHostKeyChecking=no
+    -o StrictHostKeyChecking=yes
     -o ConnectTimeout=10
 )
 SCP_OPTS=(
     -P "${REMOTE_PORT}"
     -i "${SSH_KEY_TMP}"
-    -o StrictHostKeyChecking=no
+    -o StrictHostKeyChecking=yes
     -o ConnectTimeout=10
 )
 
@@ -363,9 +363,9 @@ install_production_config() {
     set_env_value "${plain_env}" "SERVER_PORT" "8900"
     set_env_value "${plain_env}" "SERVICE_BASE_URL" "http://127.0.0.1:8900"
     set_env_value "${plain_env}" "THS_NATIVE_BRIDGE_URL" "http://127.0.0.1:49350"
-    # 交易通道固定路由 trade 专属实例（user17，forward 49390→设备18980；2026-08-18
-    # 起交易与采集解耦：owner/其余 8 实例 role 门禁全关，交易会话独占 user17）
-    set_env_value "${plain_env}" "THS_TRADE_BASE_URL" "http://127.0.0.1:49350"
+    # 交易通道固定路由 redroid trade 专属容器；49350 仅用于
+    # 8 个 collector 的采集调度，不得承载交易写入。
+    set_env_value "${plain_env}" "THS_TRADE_BASE_URL" "http://127.0.0.1:49600"
     remove_env_value "${plain_env}" "THS_NATIVE_BRIDGE_ROUTES"
     set_env_value "${plain_env}" "THS_APP_HTTP_BRIDGE_URL" "http://127.0.0.1:49350"
     set_env_value "${plain_env}" "THS_NATIVE_LOAD_BALANCED" "1"
@@ -1113,7 +1113,7 @@ if ! docker image inspect '${image}' >/dev/null 2>&1; then
       && [[ ! -s /home/${REMOTE_USER}/.docker/cli-plugins/docker-buildx ]]; then
     rm -f /home/${REMOTE_USER}/.docker/cli-plugins/docker-buildx
   fi
-  docker build --pull --build-arg APP_UID=\$(id -u) --build-arg APP_GID=\$(id -g) -f '${SERVER_DIR}/deployment/docker/Dockerfile' -t '${image}' '${SERVER_DIR}'
+  docker build --pull=false --build-arg APP_UID=\$(id -u) --build-arg APP_GID=\$(id -g) -f '${SERVER_DIR}/deployment/docker/Dockerfile' -t '${image}' '${SERVER_DIR}'
 fi
 rm -rf '${SERVER_DIR}/.docker-build'"
     ssh_cmd "install -d -m 0700 '${CONFIG_DIR}/claude-container'; rsync -a --delete '/home/${REMOTE_USER}/.claude/' '${CONFIG_DIR}/claude-container/'; chmod 0700 '${CONFIG_DIR}/claude-container'"
@@ -1213,9 +1213,10 @@ deploy_compose_services() {
     [[ "${requested}" == *,api,* ]] && services+=(api)
     [[ "${requested}" == *,persist,* ]] && services+=(persist)
     [[ "${requested}" == *,scheduler,* ]] && services+=(scheduler)
-    [[ "${requested}" == *,workers,* ]] && services+=(worker-ths worker-ths-sector worker-general)
+    [[ "${requested}" == *,workers,* ]] && services+=(worker-ths worker-ths-sector worker-ths-sector-fragment worker-http worker-general)
     [[ "${requested}" == *,ths-stream,* ]] && services+=(ths-realtime-stream)
     [[ "${requested}" == *,kg,* ]] && services+=(kg-card kg-relation)
+    [[ "${requested}" == *,kg-card,* ]] && services+=(kg-card)
     ((${#services[@]} > 0)) || return 0
     if [[ "${requested}" == *,scheduler,* ]]; then
         compose_cmd "run --rm --no-deps api init schedules"
@@ -1555,7 +1556,7 @@ main() {
             [[ -n "${2:-}" ]] || { echo "--components 需要组件列表" >&2; exit 2; }
             IFS=',' read -r -a requested_components <<<"${2}"
             for component in "${requested_components[@]}"; do
-                case "${component}" in api|persist|scheduler|workers|ths-stream|kg) ;;
+                case "${component}" in api|persist|scheduler|workers|ths-stream|kg|kg-card) ;;
                     *) echo "未知服务端组件: ${component}" >&2; exit 2 ;;
                 esac
             done
