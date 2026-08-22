@@ -104,12 +104,29 @@ CI/CD 使用的外层发布包固定包含 `android-sdk.tar.gz`、`ths-futures-a
 `KEYCODE_SLEEP`，并通过 `dumpsys power` 确认屏幕确实为 `OFF`。屏幕未关闭会使部署失败，避免
 AVD 长期渲染造成额外 GPU/CPU 占用。流水线在服务和 LB 验收后还会再次执行该脚本作为最终门禁。
 
-GitHub Actions 工作流 `.github/workflows/ths-android-production.yml` 会在相关变更的 PR/推送上
-执行 shell 语法检查和 1 交易 + 8 采集拓扑测试。配置受保护的 `production` Environment 及
+GitHub Actions 工作流 `.github/workflows/ths-android-production.yml` 会在所有目标为 `main`
+的 PR 上执行校验；代码合并并推送到受保护的 `main` 后，同一工作流会在测试通过后自动部署
+该次事件唯一对应的 `github.sha`。生产部署不提供本地入口或手动 workflow dispatch，回滚也
+必须通过 revert PR 合并到 `main`。配置受保护的 `production` Environment 及
 `THS_PRODUCTION_HOST`、`THS_PRODUCTION_SSH_PORT`、`THS_PRODUCTION_SSH_USER`、
-`THS_PRODUCTION_SSH_PRIVATE_KEY` 后，可通过 `workflow_dispatch` 勾选 `deploy` 一键同步并执行
-同一个 `install-services.sh`。生产 Environment 应开启人工审批，SSH 用户只授予执行该安装脚本
-所需的 sudo 权限。
+`THS_PRODUCTION_SSH_PRIVATE_KEY`、`THS_PRODUCTION_SSH_KNOWN_HOSTS`、
+`THS_PRODUCTION_SUDO_PASSWORD` 和 `DEPLOY_GIT_URL` 后，
+由 GitHub 托管 Runner 自动执行同一个版本化部署入口。`THS_PRODUCTION_SSH_KNOWN_HOSTS`
+必须由受信任渠道预先采集并核对，流水线禁止运行时接受未知主机密钥。生产 Environment 中的
+SSH 用户只授予执行部署所需的 sudo 权限；个人运维账号仍可独立登录排障。
+
+GitHub 仓库必须额外启用以下保护，工作流文件本身不能代替仓库权限配置：
+
+- `main` 禁止直接 push 和 force push，只允许通过 PR 合并；
+- PR 必须通过 `validate` 以及项目要求的其他测试；
+- `production` Environment 只允许 `main` 部署，并保存全部生产 Secret；
+- 开发机不保存 GitHub Actions 使用的生产 SSH 私钥；根部署入口在非
+  `push main` 的 GitHub Actions 上下文中只允许 `--dry-run`；
+- 回滚通过 revert PR 进入 `main`，不允许手动选择未进入 `main` 的 revision。
+
+首次启用自动部署前，需要从可信终端核对生产服务器 SSH host key，并把完整
+`known_hosts` 行写入 `THS_PRODUCTION_SSH_KNOWN_HOSTS`。流水线不会运行
+`ssh-keyscan` 自动信任当次网络返回的主机身份。
 
 安装脚本会复制运行脚本和 systemd 单元，并立即启用、启动对应服务。更新 Hook APK 后需要重新
 安装 APK，并重启同花顺进程；只有修改 AVD、systemd 单元或运行脚本时才需要重启模拟器服务。

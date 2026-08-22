@@ -23,8 +23,8 @@ done
 
 cd "${WORKSPACE}"
 REVISION="$(git rev-parse --verify "${REVISION}^{commit}")"
-if [[ -n "$(git status --porcelain --untracked-files=no)" ]]; then
-    echo "tracked files have uncommitted changes; commit them before deployment" >&2
+if [[ -n "$(git status --porcelain)" ]]; then
+    echo "working tree has uncommitted or untracked files; commit them before deployment" >&2
     exit 1
 fi
 git fetch --quiet origin
@@ -32,6 +32,21 @@ git merge-base --is-ancestor "${REVISION}" origin/main || {
     echo "revision ${REVISION} has not been pushed to origin/main" >&2
     exit 1
 }
+
+if (( DRY_RUN == 0 )); then
+    [[ "${GITHUB_ACTIONS:-}" == "true" ]] || {
+        echo "production deployment is only allowed from GitHub Actions" >&2
+        exit 1
+    }
+    [[ "${GITHUB_EVENT_NAME:-}" == "push" && "${GITHUB_REF:-}" == "refs/heads/main" ]] || {
+        echo "production deployment requires a push event on refs/heads/main" >&2
+        exit 1
+    }
+    [[ -n "${GITHUB_SHA:-}" && "${REVISION}" == "${GITHUB_SHA}" ]] || {
+        echo "deployment revision must equal GITHUB_SHA" >&2
+        exit 1
+    }
+fi
 
 DEPLOY_ENV="${DEPLOY_ENV:-${WORKSPACE}/deployment/production.env}"
 [[ -f "${DEPLOY_ENV}" ]] || {
@@ -48,7 +63,7 @@ SSH_KEY="${SSH_KEY:-/mnt/c/Users/阮雨阳/.ssh/id_rsa}"
 SSH_KEY_RUNTIME="/tmp/frida-test-production-deploy-key"
 cp "${SSH_KEY}" "${SSH_KEY_RUNTIME}"
 chmod 0600 "${SSH_KEY_RUNTIME}"
-SSH=(ssh -i "${SSH_KEY_RUNTIME}" -p "${REMOTE_PORT}" -o StrictHostKeyChecking=no "${REMOTE_USER}@${REMOTE_HOST}")
+SSH=(ssh -i "${SSH_KEY_RUNTIME}" -p "${REMOTE_PORT}" -o StrictHostKeyChecking=yes "${REMOTE_USER}@${REMOTE_HOST}")
 STATE_FILE="${REMOTE_STATE_FILE:-/home/${REMOTE_USER}/smart-fund/deployment-state.env}"
 
 state="$("${SSH[@]}" "cat '${STATE_FILE}' 2>/dev/null || true")"
@@ -71,19 +86,19 @@ if [[ "${COMPONENTS}" == "auto" ]]; then
         [[ -n "${base}" ]] && git cat-file -e "${base}^{commit}" 2>/dev/null \
             && git diff --name-only "${base}" "${REVISION}" | grep -Eq "${pattern}"
     }
-    if [[ -z "${last_hook}" ]] || component_changed "${last_hook}" '^(ths/app/|deploy\.sh$|deployment/)'; then
+    if [[ -z "${last_hook}" ]] || component_changed "${last_hook}" '^ths/app/'; then
         selected+=(ths-hook)
     fi
-    if [[ -z "${last_runtime}" ]] || component_changed "${last_runtime}" '^(ths/deployment/|deploy\.sh$|deployment/)'; then
+    if [[ -z "${last_runtime}" ]] || component_changed "${last_runtime}" '^ths/deployment/(internal/|redroid/)'; then
         selected+=(ths-runtime)
     fi
     server_component_changed() {
         local base="$1" kind="$2" changes common
         [[ -n "${base}" ]] && git cat-file -e "${base}^{commit}" 2>/dev/null || return 0
         changes="$(git diff --name-only "${base}" "${REVISION}")"
-        grep -Eq '^(deploy\.sh$|deployment/)' <<<"${changes}" && return 0
+        grep -Eq '^smart-fund-server/deployment/(docker/|systemd/)' <<<"${changes}" && return 0
         common="$(grep '^smart-fund-server/' <<<"${changes}" \
-            | grep -Ev '^smart-fund-server/(docs/|tests/|.*\.md$|src/interfaces/(api/|mcp/|tasks/)|src/interfaces/cli/schedules\.py$|src/application/services/ths_realtime_stream_service\.py$|src/(domain/knowledge/|interfaces/cli/knowledge\.py$|application/services/[^/]*knowledge[^/]*\.py$))' || true)"
+            | grep -Ev '^smart-fund-server/(deployment/|docs/|tests/|.*\.md$|src/interfaces/(api/|mcp/|tasks/)|src/interfaces/cli/schedules\.py$|src/application/services/ths_realtime_stream_service\.py$|src/(domain/knowledge/|interfaces/cli/knowledge\.py$|application/services/[^/]*knowledge[^/]*\.py$))' || true)"
         [[ -n "${common}" ]] && return 0
         case "${kind}" in
             api) grep -Eq '^smart-fund-server/src/interfaces/(api|mcp)/' <<<"${changes}" ;;
