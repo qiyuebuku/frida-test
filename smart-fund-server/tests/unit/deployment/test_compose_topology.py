@@ -49,3 +49,11 @@ def test_image_build_requires_staged_internal_jettask_wheel() -> None:
     assert "/app/.docker-build/jettask_python-0.1.0-py3-none-any.whl" in dockerfile
     assert "debug.keystore" not in dockerfile
     assert "production.env" not in dockerfile
+
+
+def test_dependency_layer_precedes_application_source_copy() -> None:
+    dockerfile = DOCKERFILE.read_text(encoding="utf-8")
+
+    dependency_install = dockerfile.index("python -m pip install /app/.docker-build")
+    application_copy = dockerfile.index("COPY . /app")
+    assert dependency_install < application_copy
