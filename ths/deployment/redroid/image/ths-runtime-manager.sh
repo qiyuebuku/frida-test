@@ -365,6 +365,12 @@ if [ "$THS_MODE" = trade ]; then
     initialize_trade_channel \
         || { json_status trade_channel_failed "CommunicationService/CBAS initialization failed"; exit 1; }
     sleep 2
+    # 已验证的冷启动链路必须先通过逆向密码登录接口重建 session，再让
+    # runtime/ensure 装配交易 manager。密码已由 /stock/trade/pwd 写入 Hook
+    # 私有存储，登录请求本身不携带敏感字段。
+    json_status trade_logging_in "rebuilding trading session with stored password"
+    trade_login_result=$(http POST /stock/trade/login '{"method":"pwd"}' 2>/dev/null || true)
+    trade_login_retried=false
     json_status trade_warming "ensuring read-only trading runtime"
     http POST /stock/trade/runtime/ensure '{}' >/dev/null || true
     trade_attempt=1
@@ -375,7 +381,14 @@ if [ "$THS_MODE" = trade ]; then
             trade_ready=true
             break
         fi
-        if printf '%s' "$trade_status" | grep -Eq '"ensure_state":"(FAILED|NOT_RUN)"'; then
+        if [ "$trade_login_retried" = false ] && { \
+            ! printf '%s' "$trade_login_result" | grep -q '"ok":true' \
+            || printf '%s' "$trade_status" | grep -q '"session_ready":false'; \
+        }; then
+            trade_login_result=$(http POST /stock/trade/login '{"method":"pwd"}' 2>/dev/null || true)
+            trade_login_retried=true
+        fi
+        if printf '%s' "$trade_status" | grep -Eq '"ensure_state":"(FAILED|NOT_RUN)"|"session_ready":false'; then
             http POST /stock/trade/runtime/ensure '{}' >/dev/null || true
         fi
         trade_attempt=$((trade_attempt + 1))

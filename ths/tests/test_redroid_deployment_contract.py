@@ -197,9 +197,13 @@ def test_trade_startup_initializes_official_channel_before_runtime_ensure() -> N
 
     service_pos = manager.index("hexin_connect_hangqing_flag_key")
     cbas_pos = manager.index("/stock/trade/cbas")
+    password_pos = manager.index("POST /stock/trade/pwd")
+    login_pos = manager.index("POST /stock/trade/login")
     ensure_pos = manager.index("/stock/trade/runtime/ensure")
     assert service_pos < ensure_pos
     assert cbas_pos < ensure_pos
+    assert password_pos < login_pos < ensure_pos
+    assert "'{\"method\":\"pwd\"}'" in manager
 
 
 def test_production_workflow_builds_pushes_and_deploys_digest_only() -> None:
@@ -310,14 +314,12 @@ def test_rollout_proves_empty_volume_before_touching_production() -> None:
     assert 'old_trade_image=$(docker inspect' in rollout
 
 
-def test_rollout_requires_trade_disaster_recovery_secrets_before_canary() -> None:
+def test_rollout_reuses_trade_data_and_reinjects_password() -> None:
     rollout = (REDROID / "rollout-production.sh").read_text(encoding="utf-8")
 
-    preflight = rollout.index("required trade disaster-recovery secret is missing")
-    canary = rollout.index("--name ths-rebuild-canary")
-    assert preflight < canary
-    assert "trade_account_seed" in rollout
-    assert 'trade_secret_args=(' in rollout
-    assert "--trade-init secrets" in rollout
-    assert "--trade-init existing" not in rollout
-    assert "THS_TRADE_DATA_DIR" not in rollout
+    assert "THS_TRADE_DATA_DIR" in rollout
+    assert "THS_TRADE_PASSWORD_SECRET" in rollout
+    assert "--trade-init existing" in rollout
+    assert "--data-dir \"$trade_data\"" in rollout
+    assert "--password-secret \"$trade_password\"" in rollout
+    assert "required trade disaster-recovery secret is missing" not in rollout
