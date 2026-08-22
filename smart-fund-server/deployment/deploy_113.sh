@@ -1105,6 +1105,18 @@ compose_cmd() {
     ssh_cmd "docker compose --project-name '${COMPOSE_PROJECT}' --env-file '${COMPOSE_ENV_FILE}' -f '${REMOTE_COMPOSE_FILE}' ${args}"
 }
 
+remove_foreign_compose_containers() {
+    local service container project
+    for service in "$@"; do
+        container="smart-fund-${service}"
+        project="$(ssh_cmd "docker inspect -f '{{ index .Config.Labels \"com.docker.compose.project\" }}' '${container}' 2>/dev/null || true")"
+        if [[ -n "${project}" && "${project}" != "${COMPOSE_PROJECT}" ]]; then
+            echo "替换旧 Compose 项目 ${project} 管理的容器 ${container}..."
+            ssh_cmd "docker rm -f '${container}' >/dev/null"
+        fi
+    done
+}
+
 build_server_image() {
     local image="smart-fund-server:${DEPLOY_REVISION}"
     echo "构建服务端镜像 ${image}..."
@@ -1179,6 +1191,7 @@ migrate_systemd_to_compose() {
     fi
     echo "首次切换到 Docker Compose；停止旧 systemd 进程但保留全部数据目录..."
     sudo_cmd "systemctl disable --now ${TARGET} ${SVC_API}.service ${SVC_PERSIST}.service ${SVC_SCHEDULER}.service ${SVC_WORKER_THS}.service ${SVC_WORKER_THS_SECTOR}.service ${SVC_WORKER_GENERAL}.service smart-fund-worker-http.service smart-fund-worker-internal.service ${SVC_THS_STREAM}.service ${SVC_KG_CARD}.service ${SVC_KG_RELATION}.service ${SVC_KG_GRAPH}.service ${SVC_MILVUS}.service ${SVC_ETCD}.service 2>/dev/null || true"
+    remove_foreign_compose_containers etcd milvus api persist scheduler worker-ths worker-ths-sector worker-general ths-realtime-stream kg-card kg-relation
     if ! compose_cmd "up -d etcd milvus" || ! wait_for_milvus; then
         rollback_compose_migration
         return 1
@@ -1225,6 +1238,7 @@ deploy_compose_services() {
     if [[ "${requested}" == *,scheduler,* ]]; then
         compose_cmd "run --rm --no-deps api init schedules"
     fi
+    remove_foreign_compose_containers "${services[@]}"
     compose_cmd "up -d --no-deps ${services[*]}"
     [[ "${requested}" == *,api,* ]] && wait_for_api
     [[ "${requested}" == *,ths-stream,* ]] && wait_for_ths_command_broker

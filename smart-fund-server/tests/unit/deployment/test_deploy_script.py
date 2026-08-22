@@ -24,3 +24,11 @@ def test_schema_migration_temp_files_are_removed_on_failure() -> None:
     )[0]
 
     assert function.count("trap 'rm -f") == 2
+
+
+def test_deployment_reconciles_containers_from_legacy_compose_project() -> None:
+    script = DEPLOY_SCRIPT.read_text(encoding="utf-8")
+
+    assert "remove_foreign_compose_containers()" in script
+    assert 'project}" != "${COMPOSE_PROJECT}' in script
+    assert 'remove_foreign_compose_containers "${services[@]}"' in script
