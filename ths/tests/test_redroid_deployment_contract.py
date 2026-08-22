@@ -237,6 +237,9 @@ def test_private_registry_is_pinned_and_loopback_only() -> None:
     )
 
     assert "registry@sha256:" in registry
+    assert "REGISTRY_NAME=smart-fund-registry" in registry
+    assert "REGISTRY_VOLUME=smart-fund-registry-data" in registry
+    assert "expected_image_id" in registry
     assert "-p 127.0.0.1:5000:5000" in registry
     assert '"${RUNNER_ENVIRONMENT:-}" == self-hosted' in registry
     assert "http://127.0.0.1:5000/v2/" in registry
