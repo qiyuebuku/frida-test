@@ -5,8 +5,13 @@ SCRIPT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 IMAGE=${1:?usage: $0 IMAGE@sha256:DIGEST REVISION}
 REVISION=${2:?usage: $0 IMAGE@sha256:DIGEST REVISION}
 TARGETS=${3:-all}
+VERIFY_MODE=${4:-target}
 [[ "$TARGETS" =~ ^(none|all|collectors|trade)$ ]] || {
     echo "targets must be none, all, collectors, or trade" >&2
+    exit 64
+}
+[[ "$VERIFY_MODE" =~ ^(target|full)$ ]] || {
+    echo "verify mode must be target or full" >&2
     exit 64
 }
 [[ "$IMAGE" =~ ^127\.0\.0\.1:5000/ths-redroid@sha256:[0-9a-f]{64}$ ]] || {
@@ -59,13 +64,15 @@ cleanup_canary() {
     docker rm -f ths-rebuild-canary >/dev/null 2>&1 || true
     docker volume rm ths-rebuild-canary-data >/dev/null 2>&1 || true
 }
-trap cleanup_canary EXIT
-cleanup_canary
-"$SCRIPT_DIR/add-instance.sh" --name ths-rebuild-canary --mode collector \
-    --adb-port 5599 --http-port 49699 --image "$IMAGE" --ready-timeout 360
-wait_healthy ths-rebuild-canary
-cleanup_canary
-trap - EXIT
+if [[ "$VERIFY_MODE" == full ]]; then
+    trap cleanup_canary EXIT
+    cleanup_canary
+    "$SCRIPT_DIR/add-instance.sh" --name ths-rebuild-canary --mode collector \
+        --adb-port 5599 --http-port 49699 --image "$IMAGE" --ready-timeout 360
+    wait_healthy ths-rebuild-canary
+    cleanup_canary
+    trap - EXIT
+fi
 
 replace_collector() {
     local number=$1 name="ths-collector$1" adb_port=$((5560 + number)) http_port=$((49609 + number)) old_image
@@ -117,4 +124,4 @@ if [[ "$TARGETS" == all || "$TARGETS" == trade ]]; then
     fi
 fi
 
-echo "Redroid production rollout completed: $IMAGE ($REVISION), targets=$TARGETS"
+echo "Redroid production rollout completed: $IMAGE ($REVISION), targets=$TARGETS, verify=$VERIFY_MODE"

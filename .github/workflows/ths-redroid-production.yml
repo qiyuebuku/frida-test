@@ -29,6 +29,7 @@ jobs:
         with:
           distribution: temurin
           java-version: "17"
+          cache: gradle
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
@@ -62,6 +63,8 @@ jobs:
         with:
           distribution: temurin
           java-version: "17"
+          cache: gradle
+          cache-dependency-path: ths/**/*.gradle*
       - name: Synchronize protected trade credentials
         env:
           TRADE_ACCOUNT: ${{ secrets.THS_TRADE_ACCOUNT }}
@@ -100,7 +103,27 @@ jobs:
             --ks-pass "pass:$HOOK_STORE_PASSWORD" --key-pass "pass:$HOOK_KEY_PASSWORD" \
             --out /tmp/ths-hook.apk app/build/outputs/apk/release/app-release-unsigned.apk
           "$ANDROID_HOME/build-tools/34.0.0/apksigner" verify --verbose /tmp/ths-hook.apk
-      - name: Download and verify private build inputs
+      - name: Resolve cached environment image
+        run: |
+          ths/deployment/redroid/ensure-local-registry.sh
+          base_content_id=$(sha256sum \
+            ths/deployment/redroid/image/Dockerfile.base \
+            ths/deployment/redroid/artifacts.lock | sha256sum | awk '{print $1}')
+          base_tag="127.0.0.1:5000/ths-redroid-base:env-$base_content_id"
+          if docker pull "$base_tag" >/dev/null 2>&1; then
+            build_base=false
+          else
+            build_base=true
+          fi
+          printf 'BASE_CONTENT_ID=%s\nBASE_TAG=%s\nBUILD_BASE=%s\n' \
+            "$base_content_id" "$base_tag" "$build_base" >> "$GITHUB_ENV"
+          if [[ "$build_base" == true ]]; then
+            printf 'ROLLOUT_VERIFY_MODE=full\n' >> "$GITHUB_ENV"
+          else
+            printf 'ROLLOUT_VERIFY_MODE=target\n' >> "$GITHUB_ENV"
+          fi
+      - name: Download and verify private environment inputs
+        if: env.BUILD_BASE == 'true'
         env:
           DEPLOY_ARTIFACTS_SSH_KEY: ${{ secrets.DEPLOY_ARTIFACTS_SSH_KEY }}
         run: |
@@ -110,12 +133,25 @@ jobs:
           ARTIFACT_SSH_KEY=/tmp/ths-deploy-artifacts-key \
             ARTIFACT_KNOWN_HOSTS=/tmp/ths-github-known-hosts \
             ths/deployment/redroid/fetch-private-artifacts.sh /tmp/ths-redroid-artifacts
-      - name: Build and publish immutable image to the private loopback registry
+      - name: Build environment image on cache miss
+        if: env.BUILD_BASE == 'true'
         run: |
-          ths/deployment/redroid/ensure-local-registry.sh
+          ths/deployment/redroid/build-base-image.sh \
+            --artifact-dir /tmp/ths-redroid-artifacts --image "$BASE_TAG" \
+            --content-id "$BASE_CONTENT_ID"
+          docker push "$BASE_TAG"
+      - name: Resolve immutable environment digest
+        run: |
+          docker pull "$BASE_TAG"
+          base_digest=$(docker image inspect "$BASE_TAG" --format '{{range .RepoDigests}}{{println .}}{{end}}' \
+            | grep -E '^127\.0\.0\.1:5000/ths-redroid-base@sha256:[0-9a-f]{64}$' | head -1)
+          [[ "$base_digest" =~ ^127\.0\.0\.1:5000/ths-redroid-base@sha256:[0-9a-f]{64}$ ]]
+          printf 'BASE_IMAGE_DIGEST=%s\n' "$base_digest" >> "$GITHUB_ENV"
+      - name: Build and publish thin commit image to the private loopback registry
+        run: |
           image="127.0.0.1:5000/ths-redroid:git-$GITHUB_SHA"
           ths/deployment/redroid/build-image.sh \
-            --artifact-dir /tmp/ths-redroid-artifacts \
+            --base-image "$BASE_IMAGE_DIGEST" \
             --hook-apk /tmp/ths-hook.apk --image "$image" --revision "$GITHUB_SHA"
           docker push "$image"
           digest=$(docker image inspect "$image" --format '{{range .RepoDigests}}{{println .}}{{end}}' \
@@ -125,7 +161,8 @@ jobs:
       - name: Roll out the verified digest
         run: |
           ths/deployment/redroid/rollout-production.sh \
-            "$IMAGE_DIGEST" "$GITHUB_SHA" "$THS_REDROID_TARGETS"
+            "$IMAGE_DIGEST" "$GITHUB_SHA" "$THS_REDROID_TARGETS" \
+            "$ROLLOUT_VERIFY_MODE"
       - name: Remove transient signing and deploy-key material
         if: always()
         run: |
