@@ -18,7 +18,6 @@ source "$ENV_FILE"
 SSH_OPTIONS=(-i "$SSH_KEY" -p "$REMOTE_PORT" -o StrictHostKeyChecking=yes)
 REMOTE_TARGET="$REMOTE_USER@$REMOTE_HOST"
 REMOTE_RELEASE_DIR=${REMOTE_RELEASE_DIR:-/home/$REMOTE_USER/.smart-fund-deploy/$REVISION}
-SOURCE_IMAGE="yuyangruan/ths-redroid:git-$REVISION"
 REGISTRY_IMAGE="registry:2.8.3@sha256:a3d8aaa63ed8681a604f1dea0aa03f100d5895b6a58ace528858a7b332415373"
 REGISTRY_BOOTSTRAP_TAG="smart-fund-registry-bootstrap:2.8.3"
 EXPECTED_DIGEST=${IMAGE#*@}
@@ -62,10 +61,10 @@ trap cleanup_tunnel EXIT
 ssh "${SSH_OPTIONS[@]}" -M -S "$control_socket" -fN \
     -L 127.0.0.1:55000:127.0.0.1:5000 "$REMOTE_TARGET"
 local_tag="127.0.0.1:55000/ths-redroid:git-$REVISION"
-docker tag "$SOURCE_IMAGE" "$local_tag"
-push_output=$(docker push "$local_tag" 2>&1)
-printf '%s\n' "$push_output"
-local_digest=$(sed -nE 's/^.*digest: (sha256:[0-9a-f]{64}).*$/\1/p' <<<"$push_output" | tail -n 1)
+skopeo copy --preserve-digests --authfile "$HOME/.docker/config.json" \
+    --dest-tls-verify=false "docker://$IMAGE" "docker://$local_tag"
+local_digest="sha256:$(skopeo inspect --raw --tls-verify=false \
+    "docker://$local_tag" | sha256sum | cut -d' ' -f1)"
 [[ "$local_digest" == "$EXPECTED_DIGEST" ]] || {
     echo "loopback registry digest does not match the published digest" >&2
     exit 71

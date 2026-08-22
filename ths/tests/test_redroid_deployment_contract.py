@@ -209,6 +209,9 @@ def test_production_workflow_builds_pushes_and_deploys_digest_only() -> None:
     assert "git -C" not in deploy
     assert "registry:2.8.3@sha256:a3d8aaa63ed8681a604f1dea0aa03f100d5895b6a58ace528858a7b332415373" in deploy
     assert "-L 127.0.0.1:55000:127.0.0.1:5000" in deploy
+    assert "skopeo copy --preserve-digests" in deploy
+    assert '"docker://$IMAGE" "docker://$local_tag"' in deploy
+    assert "docker push \"$local_tag\"" not in deploy
     assert '[[ "$local_digest" == "$EXPECTED_DIGEST" ]]' in deploy
     assert 'LOCAL_IMAGE="127.0.0.1:5000/ths-redroid@$EXPECTED_DIGEST"' in deploy
     assert "@sha256:[0-9a-f]{64}" in rollout
