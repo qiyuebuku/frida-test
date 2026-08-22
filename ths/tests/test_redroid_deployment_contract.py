@@ -42,6 +42,18 @@ def test_runtime_manager_owns_app_start_and_active_readiness() -> None:
     assert "input swipe" not in manager
 
 
+def test_legacy_hook_signature_migration_never_uninstalls_ths() -> None:
+    manager = (REDROID / "image" / "ths-runtime-manager.sh").read_text(
+        encoding="utf-8"
+    )
+
+    migration = manager[manager.index("INSTALL_FAILED_UPDATE_INCOMPATIBLE") :]
+    assert '"$package" = com.yuyang.thshook' in manager
+    assert 'pm uninstall "$package"' in migration
+    assert "Never apply this migration" in migration
+    assert "pm uninstall com.hexin.plat.android" not in manager
+
+
 def test_first_run_prefers_direct_business_bootstrap_with_observable_fallback() -> None:
     manager = (REDROID / "image" / "ths-runtime-manager.sh").read_text(
         encoding="utf-8"
