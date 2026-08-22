@@ -41,6 +41,9 @@ def test_workflow_reuses_content_addressed_environment_image() -> None:
     assert "docker pull \"$base_tag\"" in workflow
     assert "if: env.BUILD_BASE == 'true'" in workflow
     assert "build-base-image.sh" in workflow
+    assert "THS_BASE_ARTIFACT_CACHE:" in workflow
+    assert 'verify-artifacts.sh "$THS_BASE_ARTIFACT_CACHE"' in workflow
+    assert '--artifact-dir "$THS_BASE_ARTIFACT_CACHE"' in workflow
     assert '--base-image "$BASE_IMAGE_DIGEST"' in workflow
     assert "Build and publish thin commit image" in workflow
 

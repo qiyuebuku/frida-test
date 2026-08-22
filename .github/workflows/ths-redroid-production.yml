@@ -53,6 +53,7 @@ jobs:
       ANDROID_HOME: /home/yuyangruan/android-sdk
       ANDROID_SDK_ROOT: /home/yuyangruan/android-sdk
       THS_REDROID_TARGETS: ${{ vars.THS_REDROID_TARGETS || 'all' }}
+      THS_BASE_ARTIFACT_CACHE: /home/yuyangruan/.cache/ths-redroid-artifacts/bootstrap-v1
     permissions:
       contents: read
     steps:
@@ -127,17 +128,28 @@ jobs:
         env:
           DEPLOY_ARTIFACTS_SSH_KEY: ${{ secrets.DEPLOY_ARTIFACTS_SSH_KEY }}
         run: |
-          printf '%s\n' "$DEPLOY_ARTIFACTS_SSH_KEY" > /tmp/ths-deploy-artifacts-key
-          chmod 600 /tmp/ths-deploy-artifacts-key
-          printf '%s\n' '[ssh.github.com]:443 ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOMqqnkVzrm0SdG6UOoqKLsabgH5C9okWi0dh2l9GKJl' > /tmp/ths-github-known-hosts
-          ARTIFACT_SSH_KEY=/tmp/ths-deploy-artifacts-key \
-            ARTIFACT_KNOWN_HOSTS=/tmp/ths-github-known-hosts \
-            ths/deployment/redroid/fetch-private-artifacts.sh /tmp/ths-redroid-artifacts
+          if ths/deployment/redroid/verify-artifacts.sh "$THS_BASE_ARTIFACT_CACHE"; then
+            echo "using verified persistent environment artifact cache"
+          else
+            printf '%s\n' "$DEPLOY_ARTIFACTS_SSH_KEY" > /tmp/ths-deploy-artifacts-key
+            chmod 600 /tmp/ths-deploy-artifacts-key
+            printf '%s\n' '[ssh.github.com]:443 ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOMqqnkVzrm0SdG6UOoqKLsabgH5C9okWi0dh2l9GKJl' > /tmp/ths-github-known-hosts
+            ARTIFACT_SSH_KEY=/tmp/ths-deploy-artifacts-key \
+              ARTIFACT_KNOWN_HOSTS=/tmp/ths-github-known-hosts \
+              ths/deployment/redroid/fetch-private-artifacts.sh /tmp/ths-redroid-artifacts
+            install -d -m 700 "$THS_BASE_ARTIFACT_CACHE"
+            while IFS='|' read -r file _; do
+              [[ "$file" == \#* || -z "$file" ]] && continue
+              install -m 600 "/tmp/ths-redroid-artifacts/$file" \
+                "$THS_BASE_ARTIFACT_CACHE/$file"
+            done < ths/deployment/redroid/artifacts.lock
+            ths/deployment/redroid/verify-artifacts.sh "$THS_BASE_ARTIFACT_CACHE"
+          fi
       - name: Build environment image on cache miss
         if: env.BUILD_BASE == 'true'
         run: |
           ths/deployment/redroid/build-base-image.sh \
-            --artifact-dir /tmp/ths-redroid-artifacts --image "$BASE_TAG" \
+            --artifact-dir "$THS_BASE_ARTIFACT_CACHE" --image "$BASE_TAG" \
             --content-id "$BASE_CONTENT_ID"
           docker push "$BASE_TAG"
       - name: Resolve immutable environment digest
