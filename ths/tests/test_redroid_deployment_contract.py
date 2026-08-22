@@ -335,6 +335,9 @@ def test_rollout_reuses_trade_data_and_reinjects_password() -> None:
     assert '--broker-secret "$secret_dir/trade_broker"' in rollout
     assert '--qsid-secret "$secret_dir/trade_qsid"' in rollout
     assert '--password-secret "$secret_dir/trade_password"' in rollout
+    assert "2>/dev/null || true" in rollout[rollout.index("old_trade_image=") :]
+    assert 'if [[ -n "$old_trade_image" ]]' in rollout
+    assert "no previous container image exists for rollback" in rollout
     assert "required trade disaster-recovery secret is missing" not in rollout
 
 
