@@ -363,6 +363,8 @@ def test_trade_can_be_rebuilt_from_minimal_protected_credentials() -> None:
     assert 'getMethod("s", int.class).invoke(q, 0)' in password_login
     assert 'getMethod("q", int.class).invoke(q, 1)' in password_login
     assert 'getMethod("v", int.class).invoke(q, 1)' in password_login
+    assert 'getMethod("x").invoke(mgr)' in password_login
+    assert 'getMethod("d").invoke(mgr)' not in password_login
     official_fallback = password_login[password_login.index("if (!officialReloginStarted)") :]
     assert "forceNativeTradeLoginPath(cl, mgr, report)" in official_fallback
     assert ".invoke(f2sInst, info, broker, q, callback)" in official_fallback
