@@ -132,6 +132,18 @@ install_apk_artifact() {
     if [ "$installed_sha" != "$expected_sha" ]; then
         json_status artifact_installing "installing embedded $label artifact"
         install_result=$(pm install -r "$artifact" 2>&1 || true)
+        if [ "$package" = com.yuyang.thshook ] \
+            && printf '%s' "$install_result" | grep -q 'INSTALL_FAILED_UPDATE_INCOMPATIBLE'; then
+            # The pre-CI Redroid fleet used a development-signed Hook. Hook
+            # stores no account/business state, and configure_lsposed_scope()
+            # deterministically recreates its module registration after the
+            # production-signed APK is installed. Never apply this migration
+            # to the THS application itself.
+            echo "migrating legacy development-signed Hook package"
+            pm uninstall "$package" >/dev/null 2>&1 \
+                || { json_status artifact_uninstall_failed "legacy Hook uninstall failed"; return 1; }
+            install_result=$(pm install "$artifact" 2>&1 || true)
+        fi
         printf '%s' "$install_result" | grep -q '^Success' \
             || { echo "$install_result"; json_status artifact_install_failed "embedded $label install failed"; return 1; }
     fi
