@@ -11824,9 +11824,28 @@ public class MainHook {
                             result.set("success");
                             latch.countDown();
                         } else if ("onWeituoLoginFail".equals(name)) {
-                            result.set("fail");
                             failDetail.set(describeStuffStruct(mArgs != null && mArgs.length > 0 ? mArgs[0] : null));
-                            latch.countDown();
+                            // 同一 g8m 可能收到并发查询的 fail（实测 pageId=10151,
+                            // frameId=2605），不能把第一条 fail 直接当登录失败。
+                            // 给真实 success/登录态落地 5 秒窗口，再以 izr.l(pzr)
+                            // 这个权威状态定性；密码错误仍只发一次，不做自动重试。
+                            new Thread(() -> {
+                                try { Thread.sleep(5000L); }
+                                catch (InterruptedException e) {
+                                    Thread.currentThread().interrupt();
+                                }
+                                if ("success".equals(result.get())) return;
+                                try {
+                                    Class<?> izrClass = cl.loadClass("izr");
+                                    boolean logged = Boolean.TRUE.equals(izrClass
+                                            .getMethod("l", cl.loadClass("pzr"))
+                                            .invoke(izrClass.getField("a").get(null), mgr));
+                                    result.set(logged ? "success" : "fail");
+                                } catch (Throwable ignored) {
+                                    result.set("fail");
+                                }
+                                latch.countDown();
+                            }, "ths-pwd-fail-confirm").start();
                         } else if ("interceptTimeout".equals(name) || "onlyMeHandleReceiveData".equals(name)) {
                             return Boolean.FALSE;
                         }
