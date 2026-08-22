@@ -1,4 +1,5 @@
 import json
+import re
 from pathlib import Path
 
 
@@ -105,7 +106,7 @@ def test_first_run_prefers_direct_business_bootstrap_with_observable_fallback() 
     assert 'BOOTSTRAP_STRATEGY=direct' in manager
     assert 'BOOTSTRAP_STRATEGY=view_fallback' in manager
     assert '"bootstrap_strategy":"%s"' in manager
-    assert 'requestLine.startsWith("POST /admin/bootstrap")' in source
+    assert '"admin.bootstrap".equals(api.id)' in source
     assert 'getDeclaredMethod("h")' in source
     assert 'getDeclaredMethod("goToHexin")' in source
 
@@ -422,12 +423,21 @@ def test_trade_can_be_rebuilt_from_minimal_protected_credentials() -> None:
     assert 'getMethod("v", int.class).invoke(q, 1)' in password_login
     assert 'getMethod("x").invoke(mgr)' in password_login
     assert 'getMethod("d").invoke(mgr)' not in password_login
-    assert '"ths-pwd-fail-confirm"' in password_login
+    assert 'TradePassword.callback " + name' in password_login
     assert 'getMethod("l", cl.loadClass("pzr"))' in password_login
-    official_fallback = password_login[password_login.index("if (!officialReloginStarted)") :]
-    assert "forceNativeTradeLoginPath(cl, mgr, report)" in official_fallback
-    assert ".invoke(f2sInst, info, broker, q, callback)" in official_fallback
-    assert ".invoke(f2sInst, info, null, q, callback)" not in official_fallback
+    assert 'report.put("login_credential", "account_password")' in password_login
+    assert 'cl.loadClass("x0s").getMethod("h"' not in password_login
+    assert "forceNativeTradeLoginPath(cl, mgr, report)" in password_login
+    assert ".invoke(f2sInst, info, broker, q, callback)" in password_login
+    assert ".invoke(f2sInst, info, null, q, callback)" not in password_login
+    assert "callback success but authoritative session absent" in password_login
+    assert "resolveLoggedInPasswordAccount" in password_login
+    assert "tradeAccountManagerInstance = authoritativeAccount" in password_login
+    assert 'getMethod("u", cl.loadClass("pzr"))' in password_login
+    assert 'report.put("repository_account_recovered", true)' in password_login
+    assert 'report.put("account_lifecycle_replayed", true)' not in password_login
+    assert 'report.put("via", "account_password_session")' in source
+    assert "pwd_login_callback_confirmed" not in source
     assert "configured broker does not match qsid" in source
     broker_template = ROOT / "app/src/main/assets/trade_brokers/16.json"
     template = json.loads(broker_template.read_text(encoding="utf-8"))
@@ -454,6 +464,52 @@ def test_trade_can_be_rebuilt_from_minimal_protected_credentials() -> None:
     assert "--account-secret" in add_instance
     assert "--broker-secret" in add_instance
     assert "--qsid-secret" in add_instance
+
+
+def test_every_app_http_route_is_declared_in_api_catalog() -> None:
+    """接口实现不得绕过接口层，否则能力清单会再次与代码漂移。"""
+    source = (
+        ROOT / "app/src/main/java/com/yuyang/thshook/MainHook.java"
+    ).read_text(encoding="utf-8")
+    catalog = (
+        ROOT / "app/src/main/java/com/yuyang/thshook/api/AppApiCatalog.java"
+    ).read_text(encoding="utf-8")
+
+    implemented = set(
+        re.findall(r'"([A-Za-z][A-Za-z0-9.]+)"\.equals\(api\.id\)', source)
+    )
+    declared = set(re.findall(r'add\(e,\s*"([^"]+)"', catalog))
+
+    assert implemented == declared
+    assert len(declared) == len(
+        re.findall(
+            r'add\(e,\s*"[^"]+",\s*"(?:GET|POST)",\s*"[^"]+"', catalog
+        )
+    ), "method/path declarations must be unique"
+    assert "AppApiRouter.route(requestLine, body)" in source
+    assert "requestLine.startsWith" not in source
+    assert "requestLine.contains(\"/stock/trade/\")" not in source
+    assert "unknown app api" in source
+    assert '"Proxy request: " + requestLine + " body="' not in source
+
+
+def test_api_catalog_describes_contract_and_risk_for_every_endpoint() -> None:
+    catalog = (
+        ROOT / "app/src/main/java/com/yuyang/thshook/api/AppApiCatalog.java"
+    ).read_text(encoding="utf-8")
+    declarations = re.findall(
+        r'add\(e,\s*"([^"]+)",\s*"(GET|POST)",\s*"([^"]+)",\s*"([^"]+)",',
+        catalog,
+    )
+    assert declarations
+    assert all(
+        identifier and path.startswith("/") and summary
+        for identifier, _, path, summary in declarations
+    )
+    assert "public final String request" in catalog
+    assert "public final String response" in catalog
+    assert "public final Maturity maturity" in catalog
+    assert "public final Risk risk" in catalog
 
 
 def test_redroid_rollout_can_target_trade_without_replacing_collectors() -> None:

@@ -13,6 +13,10 @@ import android.os.Looper;
 import android.os.PowerManager;
 import android.util.Log;
 
+import com.yuyang.thshook.api.AppApiCatalog;
+import com.yuyang.thshook.api.AppApiRequest;
+import com.yuyang.thshook.api.AppApiRouter;
+
 import java.io.BufferedReader;
 import java.io.File;
 import java.io.FileInputStream;
@@ -1217,9 +1221,23 @@ public class MainHook {
                 body = new String(buf, 0, read, "UTF-8");
             }
 
-            Log.i(TAG, "Proxy request: " + requestLine + " body=" + body.substring(0, Math.min(200, body.length())));
+            // 接口层先解析并校验 method/path。MainHook 以下代码只处理已在
+            // AppApiCatalog 声明的接口，禁止再出现“实现了但接口清单不可见”的能力。
+            AppApiRequest apiRequest = AppApiRouter.route(requestLine, body);
+            if (apiRequest == null) {
+                sendResponse(out, 404,
+                        "{\"ok\":false,\"error\":\"unknown app api\"}");
+                client.close();
+                return;
+            }
+            AppApiCatalog.Endpoint api = apiRequest.endpoint;
 
-            if (requestLine.startsWith("GET /health")) {
+            // 不记录 body：接口可能包含密码、token、设备标识或真实交易参数。
+            Log.i(TAG, "Proxy request: api=" + api.id + " method=" + api.method
+                    + " path=" + api.path + " bodyBytes="
+                    + body.getBytes(java.nio.charset.StandardCharsets.UTF_8).length);
+
+            if ("system.health".equals(api.id)) {
                 long unifiedLastOkAge = unifiedLastOkMs > 0
                         ? System.currentTimeMillis() - unifiedLastOkMs : -1L;
                 // collector_ready：unified 请求 10 分钟内真实成功过（LB/CI 门禁用）。
@@ -1246,7 +1264,7 @@ public class MainHook {
                 return;
             }
 
-            if (requestLine.startsWith("POST /native/wire-capture/boot")) {
+            if ("debug.wire.boot".equals(api.id)) {
                 // 启动期捕获开关：body {"armed":false} 停止（常规采集实例稳定后
                 // 关闭以省 IO；逆向分析实例保持开启）。
                 boolean armOn = !"false".equals(extractJsonString(body, "armed"));
@@ -1263,52 +1281,51 @@ public class MainHook {
                 return;
             }
 
-            if (requestLine.startsWith("GET /native/wire-capture")) {
+            if ("debug.wire.read".equals(api.id)) {
                 sendResponse(out, 200, readMarketWireCapture());
                 client.close();
                 return;
             }
 
-            if (requestLine.startsWith("POST /native/table-capture/reset")) {
+            if ("debug.table.reset".equals(api.id)) {
                 resetStuffTableCapture();
                 sendResponse(out, 200, "{\"success\":true}");
                 client.close();
                 return;
             }
 
-            if (requestLine.startsWith("GET /native/table-capture")) {
+            if ("debug.table.read".equals(api.id)) {
                 sendResponse(out, 200, readStuffTableCapture());
                 client.close();
                 return;
             }
 
-            if (requestLine.startsWith("POST /native/indicator-capture/reset")) {
+            if ("debug.indicator.reset".equals(api.id)) {
                 resetIndicatorQueryCapture();
                 sendResponse(out, 200, "{\"success\":true}");
                 client.close();
                 return;
             }
 
-            if (requestLine.startsWith("GET /native/indicator-capture")) {
+            if ("debug.indicator.read".equals(api.id)) {
                 sendResponse(out, 200, readIndicatorQueryCapture());
                 client.close();
                 return;
             }
 
-            if (requestLine.startsWith("POST /admin/view-click")) {
+            if ("admin.viewClick".equals(api.id)) {
                 sendResponse(out, 200, clickCurrentActivityView(body));
                 client.close();
                 return;
             }
 
-            if (requestLine.startsWith("POST /admin/bootstrap")) {
+            if ("admin.bootstrap".equals(api.id)) {
                 sendResponse(out, 200, bootstrapAppDirect(resolveAppClassLoader(cl)));
                 client.close();
                 return;
             }
 
-            if (requestLine.startsWith("POST /native/hurricane")
-                    || requestLine.startsWith("POST /native/indicator-list")) {
+            if ("market.hurricane".equals(api.id)) {
                 ClassLoader effectiveClassLoader = resolveAppClassLoader(cl);
                 String result = callNativeHurricaneQuery(body, effectiveClassLoader);
                 sendResponse(out, 200, result);
@@ -1318,21 +1335,21 @@ public class MainHook {
 
             // 主动初始化行情 native runtime。ensure 只触发一次且立即返回；
             // status 是 Docker HEALTHCHECK 的确定性就绪门禁。
-            if (requestLine.startsWith("POST /native/runtime/ensure")) {
+            if ("market.runtime.ensure".equals(api.id)) {
                 startNativeMarketRuntimeEnsure(resolveAppClassLoader(cl));
                 sendResponse(out, 200, nativeMarketRuntimeStatus());
                 client.close();
                 return;
             }
 
-            if (requestLine.startsWith("GET /native/runtime/status")) {
+            if ("market.runtime.status".equals(api.id)) {
                 sendResponse(out, 200, nativeMarketRuntimeStatus());
                 client.close();
                 return;
             }
 
             // 无需 WebView，直接调用 App 内部的实时行情请求核心。
-            if (requestLine.startsWith("POST /native/realtime")) {
+            if ("market.realtime".equals(api.id)) {
                 ClassLoader effectiveClassLoader = resolveAppClassLoader(cl);
                 String result = callNativeRealTimeData(body, effectiveClassLoader);
                 sendResponse(out, 200, result);
@@ -1341,7 +1358,7 @@ public class MainHook {
             }
 
             // 无需 WebView，直接调用 App 内部的 UnifiedRequest 核心。
-            if (requestLine.startsWith("POST /native/unified")) {
+            if ("market.unified".equals(api.id)) {
                 ClassLoader effectiveClassLoader = resolveAppClassLoader(cl);
                 String result = callNativeUnifiedRequest(body, effectiveClassLoader);
                 sendResponse(out, 200, result);
@@ -1349,7 +1366,7 @@ public class MainHook {
                 return;
             }
 
-            if (requestLine.startsWith("POST /native/ranking-debug")) {
+            if ("market.rankingDebug".equals(api.id)) {
                 ClassLoader effectiveClassLoader = resolveAppClassLoader(cl);
                 String result = callNativeRankingDebug(body, effectiveClassLoader);
                 sendResponse(out, 200, result);
@@ -1358,7 +1375,7 @@ public class MainHook {
             }
 
             // 调试端点: GET /domains
-            if (requestLine.startsWith("GET /domains")) {
+            if ("debug.domains".equals(api.id)) {
                 StringBuilder sb = new StringBuilder("{\"domains\":[");
                 boolean first = true;
                 for (String d : domainClients.keySet()) {
@@ -1374,7 +1391,7 @@ public class MainHook {
             }
 
             // 认证端点: GET /auth — 返回最新捕获的交易认证参数
-            if (requestLine.startsWith("GET /auth")) {
+            if ("debug.auth".equals(api.id)) {
                 StringBuilder sb = new StringBuilder("{");
                 sb.append("\"key1\":\"").append(latestKey1 != null ? latestKey1 : "").append("\"");
                 sb.append(",\"key2\":\"").append(latestKey2 != null ? latestKey2 : "").append("\"");
@@ -1393,74 +1410,8 @@ public class MainHook {
                 return;
             }
 
-            // 基金购买端点: POST /fund/buy_direct — 直接调用app内部购买方法（优先匹配，避免被 /fund/buy 误匹配）
-            if (requestLine.startsWith("POST /fund/buy_direct")) {
-                String result = directBuyFund(body);
-                sendResponse(out, 200, result);
-                client.close();
-                return;
-            }
-
-            // 基金购买端点: POST /fund/buy — 通过 WebView 触发购买（已废弃，用户不接受UI自动化）
-            if (requestLine.startsWith("POST /fund/buy")) {
-                String result = triggerFundBuy(body);
-                sendResponse(out, 200, result);
-                client.close();
-                return;
-            }
-
-            // 打开基金详情页面: POST /fund/open_detail — 触发WebView创建和JSBridge初始化
-            if (requestLine.startsWith("POST /fund/open_detail")) {
-                String result = openFundDetail(body);
-                sendResponse(out, 200, result);
-                client.close();
-                return;
-            }
-
-            // ========== 股票数据查询端点 ==========
-
-            // GET /stock/positions — 查询持仓
-            if (requestLine.startsWith("GET /stock/positions")) {
-                String result = queryStockPositions();
-                sendResponse(out, 200, result);
-                client.close();
-                return;
-            }
-
-            // GET /stock/assets — 查询资产
-            if (requestLine.startsWith("GET /stock/assets")) {
-                String result = queryStockAssets();
-                sendResponse(out, 200, result);
-                client.close();
-                return;
-            }
-
-            // GET /stock/orders — 查询委托
-            if (requestLine.startsWith("GET /stock/orders")) {
-                String result = queryStockOrders();
-                sendResponse(out, 200, result);
-                client.close();
-                return;
-            }
-
-            // GET /stock/history — 查询历史成交
-            if (requestLine.startsWith("GET /stock/history")) {
-                String result = queryStockHistory();
-                sendResponse(out, 200, result);
-                client.close();
-                return;
-            }
-
-            // GET /stock/daily — 查询当日成交
-            if (requestLine.startsWith("GET /stock/daily")) {
-                String result = queryStockDaily();
-                sendResponse(out, 200, result);
-                client.close();
-                return;
-            }
-
             // GET /stock/status — 检查数据库状态
-            if (requestLine.startsWith("GET /stock/status")) {
+            if ("local.status".equals(api.id)) {
                 String result = getStockDbStatus();
                 sendResponse(out, 200, result);
                 client.close();
@@ -1468,14 +1419,8 @@ public class MainHook {
             }
 
             // GET /stock/schema?table=xxx — 查询表结构
-            if (requestLine.startsWith("GET /stock/schema")) {
-                String table = null;
-                int qIdx = requestLine.indexOf("?table=");
-                if (qIdx != -1) {
-                    int endIdx = requestLine.indexOf(" ", qIdx);
-                    if (endIdx == -1) endIdx = requestLine.length();
-                    table = requestLine.substring(qIdx + 7, endIdx);
-                }
+            if ("local.schema".equals(api.id)) {
+                String table = apiRequest.query("table");
                 String result = queryTableSchema(table);
                 sendResponse(out, 200, result);
                 client.close();
@@ -1485,7 +1430,7 @@ public class MainHook {
             // ========== JSBridge 转发端点 ==========
 
             // POST /jsbridge — 通过 WebView 调用 JSBridge
-            if (requestLine.startsWith("POST /jsbridge")) {
+            if ("web.jsBridge".equals(api.id)) {
                 String result = callJSBridge(body);
                 sendResponse(out, 200, result);
                 client.close();
@@ -1493,16 +1438,13 @@ public class MainHook {
             }
 
             // GET /stock/query?sql=xxx — 执行任意查询（调试用）
-            if (requestLine.startsWith("GET /stock/query")) {
-                int qIdx = requestLine.indexOf("?sql=");
-                if (qIdx == -1) {
+            if ("local.query".equals(api.id)) {
+                String sql = apiRequest.query("sql");
+                if (sql == null) {
                     sendResponse(out, 400, "{\"error\":\"missing sql parameter\"}");
                     client.close();
                     return;
                 }
-                int endIdx = requestLine.indexOf(" ", qIdx);
-                if (endIdx == -1) endIdx = requestLine.length();
-                String sql = java.net.URLDecoder.decode(requestLine.substring(qIdx + 5, endIdx), "UTF-8");
                 String result = executeStockQuery(sql, null);
                 sendResponse(out, 200, result);
                 client.close();
@@ -1510,7 +1452,7 @@ public class MainHook {
             }
 
             // GET /stock/databases — 列出所有数据库文件
-            if (requestLine.startsWith("GET /stock/databases")) {
+            if ("local.databases".equals(api.id)) {
                 String result = listDatabases();
                 sendResponse(out, 200, result);
                 client.close();
@@ -1518,16 +1460,13 @@ public class MainHook {
             }
 
             // GET /stock/opendb?path=xxx — 打开指定数据库并列出表
-            if (requestLine.startsWith("GET /stock/opendb")) {
-                int qIdx = requestLine.indexOf("?path=");
-                if (qIdx == -1) {
+            if ("local.openDb".equals(api.id)) {
+                String dbPath = apiRequest.query("path");
+                if (dbPath == null) {
                     sendResponse(out, 400, "{\"error\":\"missing path parameter\"}");
                     client.close();
                     return;
                 }
-                int endIdx = requestLine.indexOf(" ", qIdx);
-                if (endIdx == -1) endIdx = requestLine.length();
-                String dbPath = java.net.URLDecoder.decode(requestLine.substring(qIdx + 6, endIdx), "UTF-8");
                 String result = openAndListTables(dbPath);
                 sendResponse(out, 200, result);
                 client.close();
@@ -1537,8 +1476,8 @@ public class MainHook {
             // 交易主实例门禁：未配置 thshook_trade_role.json 的实例拒绝全部交易
             // 端点（登录/查询/下单/token），防止多实例并发登录互顶会话。
             // /stock/trade/role 自身豁免，否则无法在本实例开启。
-            if (requestLine.contains("/stock/trade/")
-                    && !requestLine.contains("/stock/trade/role")
+            if (api.id.startsWith("trade.")
+                    && !api.id.startsWith("trade.role.")
                     && !isTradeRoleEnabled()) {
                 sendResponse(out, 403,
                         "{\"ok\":false,\"error\":\"trade disabled on this instance\"}");
@@ -1546,17 +1485,9 @@ public class MainHook {
                 return;
             }
 
-            // GET /stock/trade/status — 获取交易 SDK 状态
-            if (requestLine.startsWith("GET /stock/trade/status")) {
-                String result = getTradeStatus();
-                sendResponse(out, 200, result);
-                client.close();
-                return;
-            }
-
             // App 内交易运行时状态机。服务端只负责调用，不再用 UI 或固定
             // systemd sleep 猜测交易模块是否完成初始化。
-            if (requestLine.startsWith("GET /stock/trade/runtime/status")) {
+            if ("trade.runtime.status".equals(api.id)) {
                 sendResponse(out, 200, handleTradeRuntimeStatus());
                 client.close();
                 return;
@@ -1564,14 +1495,14 @@ public class MainHook {
 
             // 幂等初始化：启动 CommunicationService、恢复交易模块/账户/登录，
             // 最后执行只读持仓探针。绝不调用下单、撤单或转账协议。
-            if (requestLine.startsWith("POST /stock/trade/runtime/ensure")) {
+            if ("trade.runtime.ensure".equals(api.id)) {
                 sendResponse(out, 200, handleTradeRuntimeEnsure(body));
                 client.close();
                 return;
             }
 
             // GET /stock/trade/logs — 获取最近的交易日志
-            if (requestLine.startsWith("GET /stock/trade/logs")) {
+            if ("debug.trade.logs".equals(api.id)) {
                 String result = getRecentTradeLogs();
                 sendResponse(out, 200, result);
                 client.close();
@@ -1580,7 +1511,7 @@ public class MainHook {
 
             // GET /stock/trade/write-captures — 导出写协议（买/卖/撤单/转账）捕获的
             // 完整请求参数（含 source 签名），以及各查询协议当前缓存的 params。
-            if (requestLine.startsWith("GET /stock/trade/write-captures")) {
+            if ("debug.trade.writeCaptures".equals(api.id)) {
                 String result = getTradeWriteCaptures();
                 sendResponse(out, 200, result);
                 client.close();
@@ -1589,7 +1520,7 @@ public class MainHook {
 
             // POST /stock/trade/login — 主动登录执行器（token 方式，替代盲等 App
             // 静默重登；2026-08-17 开盘实测 App 自身重登也会超时弹"登录失败"）
-            if (requestLine.startsWith("POST /stock/trade/login")) {
+            if ("trade.login".equals(api.id)) {
                 String result = handleTradeLogin(body);
                 sendResponse(out, 200, result);
                 client.close();
@@ -1598,8 +1529,8 @@ public class MainHook {
 
             // POST /stock/trade/pwd — 设置/清除交易密码（token 过期时自动密码登录）；
             // GET 查询是否已配置。密码不回显不进日志。
-            if (requestLine.startsWith("POST /stock/trade/pwd")
-                    || requestLine.startsWith("GET /stock/trade/pwd")) {
+            if ("trade.password.set".equals(api.id)
+                    || "trade.password.get".equals(api.id)) {
                 String result = handleTradePassword(body);
                 sendResponse(out, 200, result);
                 client.close();
@@ -1608,7 +1539,7 @@ public class MainHook {
 
             // GET /stock/trade/token/export — 导出当前交易 token 明文（跨设备共享
             // 实验：生产 VM 复用手机端刷新的 token，避免 VM 内人工登录）
-            if (requestLine.startsWith("GET /stock/trade/token/export")) {
+            if ("trade.token.export".equals(api.id)) {
                 String result = handleTradeTokenExport();
                 sendResponse(out, 200, result);
                 client.close();
@@ -1617,7 +1548,7 @@ public class MainHook {
 
             // POST /stock/trade/token/import — 写回明文 token 并验证登录（body
             // {"token","time","login":true}，走官方 z7m.o 入口本机重加密入库）
-            if (requestLine.startsWith("POST /stock/trade/token/import")) {
+            if ("trade.token.import".equals(api.id)) {
                 String result = handleTradeTokenImport(body);
                 sendResponse(out, 200, result);
                 client.close();
@@ -1626,7 +1557,7 @@ public class MainHook {
 
             // GET /stock/trade/account/export — 导出交易账户对象（官方 B() 序列化
             // + 元数据），供另一台设备 seed。⚠ 含 compwd/资金账号，受控通道专用。
-            if (requestLine.startsWith("GET /stock/trade/account/export")) {
+            if ("trade.account.export".equals(api.id)) {
                 String result = handleTradeAccountExport();
                 sendResponse(out, 200, result);
                 client.close();
@@ -1635,7 +1566,7 @@ public class MainHook {
 
             // POST /stock/trade/account/seed — 写入导出的交易账户（C() 反序列化 →
             // n0s.b 仓库 → izr.a.x 激活 → 轮询 F(119)），供 token import 前置。
-            if (requestLine.startsWith("POST /stock/trade/account/seed")) {
+            if ("trade.account.seed".equals(api.id)) {
                 String result = handleTradeAccountSeed(body);
                 sendResponse(out, 200, result);
                 client.close();
@@ -1644,7 +1575,7 @@ public class MainHook {
 
             // POST /stock/trade/account/configure — 从受控 Secret 中的 qsid、券商名和
             // 资金账号重建最小官方 fzr 账户对象，不依赖旧设备导出的账户 seed。
-            if (requestLine.startsWith("POST /stock/trade/account/configure")) {
+            if ("trade.account.configure".equals(api.id)) {
                 String result = handleTradeAccountConfigure(body);
                 sendResponse(out, 200, result);
                 client.close();
@@ -1652,7 +1583,7 @@ public class MainHook {
             }
 
             // GET /stock/trade/token/report — token 自动上报状态与当前配置（打码）
-            if (requestLine.startsWith("GET /stock/trade/token/report")) {
+            if ("trade.tokenReport.status".equals(api.id)) {
                 String result = handleTokenReportStatus();
                 sendResponse(out, 200, result);
                 client.close();
@@ -1661,7 +1592,7 @@ public class MainHook {
 
             // POST /stock/trade/token/report — 配置自动上报（url/api_key/enabled，
             // force=true 立即触发一次导出上报；持久化到 filesDir）
-            if (requestLine.startsWith("POST /stock/trade/token/report")) {
+            if ("trade.tokenReport.configure".equals(api.id)) {
                 String result = handleTokenReportConfig(body);
                 sendResponse(out, 200, result);
                 client.close();
@@ -1669,7 +1600,7 @@ public class MainHook {
             }
 
             // GET /stock/trade/role — 交易主实例角色状态（本实例是否启用交易）
-            if (requestLine.startsWith("GET /stock/trade/role")) {
+            if ("trade.role.status".equals(api.id)) {
                 String result = handleTradeRoleStatus();
                 sendResponse(out, 200, result);
                 client.close();
@@ -1679,7 +1610,7 @@ public class MainHook {
             // POST /stock/trade/role — 启用/停用本实例交易能力（body
             // {"enabled":bool}，持久化 filesDir/thshook_trade_role.json）。
             // 主实例运维端点：只有配置过的实例可登录/查询/下单。
-            if (requestLine.startsWith("POST /stock/trade/role")) {
+            if ("trade.role.configure".equals(api.id)) {
                 String result = handleTradeRoleConfig(body);
                 sendResponse(out, 200, result);
                 client.close();
@@ -1687,7 +1618,7 @@ public class MainHook {
             }
 
             // GET /stock/trade/cbas — CBAS（交易通道）诊断：地址列表与最近设置记录
-            if (requestLine.startsWith("GET /stock/trade/cbas")) {
+            if ("trade.cbas.status".equals(api.id)) {
                 String result = handleTradeCbasStatus();
                 sendResponse(out, 200, result);
                 client.close();
@@ -1698,7 +1629,7 @@ public class MainHook {
             // AVD 无头环境推送组件可能不设置 CBAS 地址（o2u.p()=null → hrv.C no-op），
             // 交易通道永远建立不了；从真机抓地址后由此注入（调用官方
             // CommunicationService.resetCbasServer，与 PushConnect 同一路径）。
-            if (requestLine.startsWith("POST /stock/trade/cbas")) {
+            if ("trade.cbas.configure".equals(api.id)) {
                 String result = handleTradeCbasSet(body);
                 sendResponse(out, 200, result);
                 client.close();
@@ -1707,7 +1638,7 @@ public class MainHook {
 
             // GET /stock/trade/device-info — 设备指纹观测（UDID/机型/最近一次
             // getConfigInfo query+result 原文），跨设备 diff 用
-            if (requestLine.startsWith("GET /stock/trade/device-info")) {
+            if ("trade.device.info".equals(api.id)) {
                 String result = handleTradeDeviceInfo();
                 sendResponse(out, 200, result);
                 client.close();
@@ -1716,7 +1647,7 @@ public class MainHook {
 
             // GET /stock/trade/push-events — WT 模块推送事件（委托/成交状态变化
             // 的被动通知，GBK 明文环形缓冲 100 条）
-            if (requestLine.startsWith("GET /stock/trade/push-events")) {
+            if ("trade.pushEvents".equals(api.id)) {
                 String result = handleTradePushEvents();
                 sendResponse(out, 200, result);
                 client.close();
@@ -1727,7 +1658,7 @@ public class MainHook {
             // getconfiginfo, model, brand, enabled}，持久化 filesDir/thshook_spoof.json）。
             // 用途：让 AVD 向券商呈现真机的设备标识（跨设备 token 绑定校验实验）。
             // 注意 udid 同时是 token 加密 key——必须先 spoof 再 import token。
-            if (requestLine.startsWith("POST /stock/trade/device-spoof")) {
+            if ("trade.device.spoof".equals(api.id)) {
                 String result = handleTradeDeviceSpoof(body);
                 sendResponse(out, 200, result);
                 client.close();
@@ -1735,7 +1666,7 @@ public class MainHook {
             }
 
             // POST /stock/trade/order — 买卖委托执行器（真实下单，confirm=true 必填）
-            if (requestLine.startsWith("POST /stock/trade/order")) {
+            if ("trade.order".equals(api.id)) {
                 String result = handleTradeOrder(body);
                 sendResponse(out, 200, result);
                 client.close();
@@ -1744,7 +1675,7 @@ public class MainHook {
 
             // POST /stock/trade/cancel — 撤单执行器（v3p 协议 25102，真机已验证：
             // 撤 1401/1404 成功、假单号返回券商业务错误 250001）
-            if (requestLine.startsWith("POST /stock/trade/cancel")) {
+            if ("trade.cancel".equals(api.id)) {
                 String result = handleTradeCancel(body);
                 sendResponse(out, 200, result);
                 client.close();
@@ -1752,16 +1683,8 @@ public class MainHook {
             }
 
             // GET /stock/trade/transfer/banks — 存管银行列表（只读）
-            if (requestLine.startsWith("GET /stock/trade/transfer/banks")) {
+            if ("trade.transfer.banks".equals(api.id)) {
                 String result = handleTransferBanks();
-                sendResponse(out, 200, result);
-                client.close();
-                return;
-            }
-
-            // POST /stock/trade/transfer — 银证转账转入（源码参数，未重放验证）
-            if (requestLine.startsWith("POST /stock/trade/transfer")) {
-                String result = handleTradeTransfer(body);
                 sendResponse(out, 200, result);
                 client.close();
                 return;
@@ -1769,18 +1692,8 @@ public class MainHook {
 
             // GET /stock/trade/sdk-schema — 只返回运行时交易 SDK 的类型和方法签名。
             // 不返回账户、令牌、请求参数或业务数据。
-            if (requestLine.startsWith("GET /stock/trade/sdk-schema")) {
+            if ("debug.trade.sdkSchema".equals(api.id)) {
                 String result = getTradeSdkSchema();
-                sendResponse(out, 200, result);
-                client.close();
-                return;
-            }
-
-            // GET /stock/trade/positions — 进程内只读调用器：重放 App 自己的
-            // 资金持仓查询（H(2624,1891)+wt_account），返回持仓表格数据。
-            // 前置条件：App 已进过一次持仓页（捕获账户与参数）。
-            if (requestLine.startsWith("GET /stock/trade/positions")) {
-                String result = invokeZjccQuery();
                 sendResponse(out, 200, result);
                 client.close();
                 return;
@@ -1788,11 +1701,8 @@ public class MainHook {
 
             // GET /stock/trade/query?name=positions|today_order|today_deal|hist_order|hist_deal
             // — 通用只读查询调用器（按协议名重放捕获的查询）
-            if (requestLine.startsWith("GET /stock/trade/query")) {
-                int qIdx = requestLine.indexOf("?name=");
-                String name = qIdx == -1 ? null
-                        : requestLine.substring(qIdx + 6, requestLine.indexOf(" ", qIdx) == -1
-                                ? requestLine.length() : requestLine.indexOf(" ", qIdx));
+            if ("trade.query".equals(api.id)) {
+                String name = apiRequest.query("name");
                 String result = name == null
                         ? errorJson(new JSONObject(), "missing ?name= parameter")
                         : invokeTradeQueryByName(name.trim());
@@ -1804,11 +1714,8 @@ public class MainHook {
             // GET /stock/trade/market-route?code=XXXXXX — 只读调用 App 的买入
             // 行情/可买预查询，取券商返回的 36670 trade_stock_type。用于北交所
             // 等不能仅凭代码前缀安全推断的市场路由，也供部署验收使用。
-            if (requestLine.startsWith("GET /stock/trade/market-route")) {
-                int qIdx = requestLine.indexOf("?code=");
-                String code = qIdx == -1 ? null
-                        : requestLine.substring(qIdx + 6, requestLine.indexOf(" ", qIdx) == -1
-                                ? requestLine.length() : requestLine.indexOf(" ", qIdx));
+            if ("trade.marketRoute".equals(api.id)) {
+                String code = apiRequest.query("code");
                 String result = code == null ? errorJson(new JSONObject(), "missing ?code= parameter")
                         : handleTradeMarketRoute(code.trim());
                 sendResponse(out, 200, result);
@@ -1817,7 +1724,7 @@ public class MainHook {
             }
 
             // 调试端点: GET /clients — 列出所有 client 及其 CookieJar 信息
-            if (requestLine.startsWith("GET /clients")) {
+            if ("debug.clients".equals(api.id)) {
                 StringBuilder sb = new StringBuilder("{\"clients\":[");
                 synchronized (allClients) {
                     for (int i = 0; i < allClients.size(); i++) {
@@ -5749,47 +5656,6 @@ public class MainHook {
     }
 
     /**
-     * 查询持仓
-     */
-    private static String queryStockPositions() {
-        return legacyStockDatabaseUnavailable("positions");
-    }
-
-    /**
-     * 查询资产
-     */
-    private static String queryStockAssets() {
-        return legacyStockDatabaseUnavailable("assets");
-    }
-
-    /**
-     * 查询委托
-     */
-    private static String queryStockOrders() {
-        return legacyStockDatabaseUnavailable("orders");
-    }
-
-    /**
-     * 查询历史成交
-     */
-    private static String queryStockHistory() {
-        return legacyStockDatabaseUnavailable("history");
-    }
-
-    /**
-     * 查询当日成交
-     */
-    private static String queryStockDaily() {
-        return legacyStockDatabaseUnavailable("daily_deals");
-    }
-
-    private static String legacyStockDatabaseUnavailable(String capability) {
-        return "{\"status\":\"legacy_unavailable\",\"capability\":\""
-                + escapeJson(capability)
-                + "\",\"reason\":\"THS 11.58.03 obtains broker account data through the trading SDK, not xcs2.db\"}";
-    }
-
-    /**
      * 获取数据库状态
      */
     private static String getStockDbStatus() {
@@ -6908,233 +6774,6 @@ public class MainHook {
             }
         } catch (Throwable e) {
             Log.w(TAG, "extractAuthFromJSBridge failed: " + e.getMessage());
-        }
-    }
-
-    /**
-     * 通过 WebView 触发基金购买
-     */
-    private static String triggerFundBuy(String body) {
-        try {
-            // 解析请求参数
-            String fundCode = extractJsonString(body, "fundCode");
-            String amountStr = extractJsonString(body, "amount");
-            String password = extractJsonString(body, "password");
-
-            if (fundCode == null || fundCode.isEmpty()) {
-                return "{\"success\":false,\"error\":\"Missing fundCode\"}";
-            }
-            if (amountStr == null || amountStr.isEmpty()) {
-                return "{\"success\":false,\"error\":\"Missing amount\"}";
-            }
-
-            Log.i(TAG, "Triggering fund buy: " + fundCode + " amount=" + amountStr);
-
-            if (latestWebView == null) {
-                return "{\"success\":false,\"error\":\"No WebView available\"}";
-            }
-
-            // 构造购买页面 URL
-            String buyUrl = "https://trade.5ifund.com/hxapp/ifundBuyInit/dist/index.html?fundCode="
-                + fundCode + "&amount=" + amountStr + "&transActionAccountId=600113970167";
-
-            // 在主线程中打开购买页面
-            final Object webView = latestWebView;
-            new android.os.Handler(android.os.Looper.getMainLooper()).post(new Runnable() {
-                @Override
-                public void run() {
-                    try {
-                        // 方法1：直接加载 URL
-                        webView.getClass().getMethod("loadUrl", String.class)
-                            .invoke(webView, buyUrl);
-                        Log.i(TAG, "Opened buy page: " + buyUrl);
-
-                        // 方法2：如果提供了密码，延迟2秒后自动填充密码并提交
-                        if (password != null && !password.isEmpty()) {
-                            new android.os.Handler().postDelayed(new Runnable() {
-                                @Override
-                                public void run() {
-                                    try {
-                                        String js = "javascript:(function(){" +
-                                            "var pwd=document.querySelector('input[type=password]');" +
-                                            "if(pwd){pwd.value='" + password + "';}" +
-                                            "var btn=document.querySelector('button.confirm');" +
-                                            "if(btn){btn.click();}" +
-                                            "})()";
-                                        webView.getClass().getMethod("loadUrl", String.class)
-                                            .invoke(webView, js);
-                                        Log.i(TAG, "Auto-filled password and clicked confirm");
-                                    } catch (Throwable e) {
-                                        Log.e(TAG, "Auto-fill failed: " + e.getMessage());
-                                    }
-                                }
-                            }, 2000);
-                        }
-                    } catch (Throwable e) {
-                        Log.e(TAG, "loadUrl failed: " + e.getMessage());
-                    }
-                }
-            });
-
-            return "{\"success\":true,\"fundCode\":\"" + fundCode + "\",\"amount\":\"" + amountStr + "\"}";
-
-        } catch (Throwable e) {
-            Log.e(TAG, "triggerFundBuy failed", e);
-            return "{\"success\":false,\"error\":\"" + e.getMessage() + "\"}";
-        }
-    }
-
-    /**
-     * 直接调用 App 内部的购买方法（不通过 UI 自动化）
-     */
-    private static String directBuyFund(String body) {
-        Log.i(TAG, ">>> directBuyFund called");
-
-        try {
-            // 解析请求参数
-            String fundCode = extractJsonString(body, "fundCode");
-            String amountStr = extractJsonString(body, "amount");
-            String password = extractJsonString(body, "password");
-
-            if (fundCode == null || fundCode.isEmpty()) {
-                return "{\"success\":false,\"error\":\"Missing fundCode\"}";
-            }
-            if (amountStr == null || amountStr.isEmpty()) {
-                return "{\"success\":false,\"error\":\"Missing amount\"}";
-            }
-
-            Log.i(TAG, "Attempting direct buy: fundCode=" + fundCode + ", amount=" + amountStr);
-
-            // 策略1: 尝试通过反射查找购买相关的类
-            // 常见的包名模式: com.hexin.plat.android.fund.*, com.hexin.*.trade.*, 等
-            String[] possiblePackages = {
-                "com.hexin.plat.android.fund",
-                "com.hexin.plat.android.trade",
-                "com.hexin.fund",
-                "com.hexin.trade",
-                "com.ths.fund",
-                "com.ths.trade"
-            };
-
-            // 常见的类名模式
-            String[] possibleClassSuffixes = {
-                ".FundBuyService",
-                ".FundTradeService",
-                ".TradeService",
-                ".BuyService",
-                ".SubscribeService",
-                ".FundSubscribeService",
-                ".manager.FundManager",
-                ".manager.TradeManager",
-                ".presenter.FundBuyPresenter",
-                ".presenter.TradePresenter"
-            };
-
-            Class<?> targetClass = null;
-            String foundClassName = null;
-
-            // 尝试查找类
-            for (String pkg : possiblePackages) {
-                for (String suffix : possibleClassSuffixes) {
-                    try {
-                        String className = pkg + suffix;
-                        targetClass = Class.forName(className);
-                        foundClassName = className;
-                        Log.i(TAG, ">>> Found candidate class: " + className);
-                        break;
-                    } catch (ClassNotFoundException ignored) {}
-                }
-                if (targetClass != null) break;
-            }
-
-            if (targetClass == null) {
-                // 策略2: 如果有保存的JSBridge handler，尝试从中查找购买方法
-                if (jsBridgeHandler != null) {
-                    Log.i(TAG, ">>> Using captured JSBridge handler: " + jsBridgeHandler.getClass().getName());
-
-                    // 枚举handler的所有方法，查找购买相关的方法
-                    Method[] methods = jsBridgeHandler.getClass().getDeclaredMethods();
-                    for (Method m : methods) {
-                        String methodName = m.getName().toLowerCase();
-                        if (methodName.contains("buy") || methodName.contains("subscribe") ||
-                            methodName.contains("purchase") || methodName.contains("trade")) {
-                            Log.i(TAG, ">>> Found potential buy method: " + m.getName() +
-                                " params: " + java.util.Arrays.toString(m.getParameterTypes()));
-                        }
-                    }
-
-                    return "{\"success\":false,\"error\":\"Found JSBridge handler but need manual method identification\",\"handler\":\"" +
-                        jsBridgeHandler.getClass().getName() + "\"}";
-                }
-
-                return "{\"success\":false,\"error\":\"No suitable class or handler found. Need to capture JSBridge handler first by making a real purchase.\"}";
-            }
-
-            // 如果找到了类，枚举其方法
-            Log.i(TAG, ">>> Enumerating methods of class: " + foundClassName);
-            Method[] methods = targetClass.getDeclaredMethods();
-            for (Method m : methods) {
-                Log.i(TAG, "  Method: " + m.getName() + " params: " + java.util.Arrays.toString(m.getParameterTypes()));
-            }
-
-            return "{\"success\":false,\"error\":\"Class found but method invocation not yet implemented\",\"class\":\"" + foundClassName + "\"}";
-
-        } catch (Throwable e) {
-            Log.e(TAG, "directBuyFund failed", e);
-            return "{\"success\":false,\"error\":\"" + e.getMessage() + "\",\"stack\":\"" + Log.getStackTraceString(e) + "\"}";
-        }
-    }
-
-    /**
-     * 打开基金详情页面（触发WebView创建和JSBridge初始化）
-     */
-    private static String openFundDetail(String body) {
-        Log.i(TAG, ">>> openFundDetail called");
-
-        try {
-            String fundCode = extractJsonString(body, "fundCode");
-            if (fundCode == null || fundCode.isEmpty()) {
-                return "{\"success\":false,\"error\":\"Missing fundCode\"}";
-            }
-
-            Log.i(TAG, "Opening fund detail page: " + fundCode);
-
-            // 通过Intent打开基金详情页面
-            // 同花顺的基金详情页面通常使用以下URI scheme:
-            // "thshexin://web?url=https://trade.5ifund.com/hxapp/fund/detail?fundCode=xxx"
-            // 或者直接通过Activity打开
-
-            // 方法1: 尝试通过Intent打开
-            new android.os.Handler(android.os.Looper.getMainLooper()).post(new Runnable() {
-                @Override
-                public void run() {
-                    try {
-                        // 获取当前的Application context
-                        Class<?> atClass = Class.forName("android.app.ActivityThread");
-                        Method currentApp = atClass.getDeclaredMethod("currentApplication");
-                        android.app.Application app = (android.app.Application) currentApp.invoke(null);
-
-                        if (app != null) {
-                            // 创建Intent打开基金详情页面
-                            android.content.Intent intent = new android.content.Intent();
-                            intent.setAction(android.content.Intent.ACTION_VIEW);
-                            intent.setData(android.net.Uri.parse("thshexin://web?url=https://trade.5ifund.com/hxapp/fund/detail?fundCode=" + fundCode));
-                            intent.addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK);
-                            app.startActivity(intent);
-                            Log.i(TAG, "Started fund detail activity via Intent");
-                        }
-                    } catch (Throwable e) {
-                        Log.e(TAG, "Failed to open fund detail via Intent: " + e.getMessage());
-                        e.printStackTrace();
-                    }
-                }
-            });
-
-            return "{\"success\":true,\"fundCode\":\"" + fundCode + "\",\"message\":\"Opening fund detail page\"}";
-
-        } catch (Throwable e) {
-            Log.e(TAG, "openFundDetail failed", e);
-            return "{\"success\":false,\"error\":\"" + e.getMessage() + "\"}";
         }
     }
 
@@ -9656,30 +9295,6 @@ public class MainHook {
 
     // ========== 交易状态和日志查询 ==========
 
-    /**
-     * 获取交易 SDK 状态
-     */
-    private static String getTradeStatus() {
-        StringBuilder sb = new StringBuilder("{");
-        sb.append("\"master_bridge_captured\":").append(masterModuleBridgeInstance != null);
-        sb.append(",\"request_method_captured\":").append(masterModuleBridgeRequestMethod != null);
-
-        if (masterModuleBridgeRequestMethod != null) {
-            sb.append(",\"request_method\":\"").append(masterModuleBridgeRequestMethod.getName()).append("\"");
-            sb.append(",\"request_params\":").append(toJsonArray(
-                java.util.Arrays.stream(masterModuleBridgeRequestMethod.getParameterTypes())
-                    .map(Class::getSimpleName)
-                    .toArray(String[]::new)
-            ));
-        }
-
-        sb.append(",\"log_count\":").append(recentTradeLogs.size());
-        sb.append(",\"ensure_error\":\"").append(lastEnsureTradeError)
-                .append("\",\"trade_role\":").append(isTradeRoleEnabled());
-        sb.append("}");
-        return sb.toString();
-    }
-
     /** 查询名 → {protocolId, fallbackPageId}。均为只读查询协议 */
     private static final java.util.Map<String, int[]> TRADE_QUERY_PROTOCOLS;
     /** 静态兜底 params（eb6 格式，源码逆向自 u2i/sxh 的构造模板）。
@@ -9724,10 +9339,6 @@ public class MainHook {
             java.util.Collections.unmodifiableSet(
                     new java.util.HashSet<>(java.util.Arrays.asList(
                             1820, 1821, 1804, 1805, 22157, 22915, 22917, 2015, 2013)));
-
-    private static String invokeZjccQuery() {
-        return invokeTradeQuery(1891, 2624, null);
-    }
 
     /** ensureTradeRuntimeReady 最近一次失败原因（仅结构信息，无业务值） */
     private static volatile String lastEnsureTradeError = "not run";
@@ -11674,6 +11285,44 @@ public class MainHook {
     }
 
     /**
+     * 密码登录成功时 n2s.d 会按服务端返回重新查找/创建账户并把登录态写到该
+     * pzr 实例。纯净环境中的 seed manager 可能不是仓库最终采用的同一对象，
+     * 因此不能继续只检查旧引用。
+     */
+    private static Object resolveLoggedInPasswordAccount(ClassLoader cl,
+            String account, String accountType, int accountNature, String qsid) {
+        try {
+            Class<?> pzrClass = cl.loadClass("pzr");
+            Class<?> izrClass = cl.loadClass("izr");
+            Object izrInst = izrClass.getField("a").get(null);
+            Method logged = izrClass.getMethod("l", pzrClass);
+            Object direct = cl.loadClass("p0s").getMethod("g", String.class,
+                            String.class, int.class, String.class)
+                    .invoke(null, account, accountType, accountNature, qsid);
+            if (direct != null) {
+                return direct;
+            }
+            Object n0sInst = cl.loadClass("n0s").getMethod("s").invoke(null);
+            java.util.List<?> accounts = (java.util.List<?>) n0sInst.getClass()
+                    .getMethod("i").invoke(n0sInst);
+            if (accounts == null) return null;
+            for (Object candidate : accounts) {
+                if (candidate == null || !pzrClass.isInstance(candidate)) continue;
+                String candidateAccount = String.valueOf(candidate.getClass()
+                        .getMethod("x").invoke(candidate));
+                String candidateQsid = String.valueOf(candidate.getClass()
+                        .getMethod("q").invoke(candidate));
+                if (account.equals(candidateAccount) && qsid.equals(candidateQsid)) {
+                    return candidate;
+                }
+            }
+        } catch (Throwable t) {
+            Log.w(TAG, "resolve password-login account failed: " + t);
+        }
+        return null;
+    }
+
+    /**
      * 无头启动时 CommunicationService 可能早于 trv.a() 创建，导致 onCreateEnd 的
      * 一次性通知被错过，cqv.i() 没有注册 iChannelAuth。结果是 CBAS TCP 已连接，
      * 但 sessionType=1 永远未认证，所有交易请求都在 hrv.u() 被同步丢弃。
@@ -11826,36 +11475,20 @@ public class MainHook {
             CountDownLatch latch = new CountDownLatch(1);
             AtomicReference<String> result = new AtomicReference<>("pending");
             AtomicReference<String> failDetail = new AtomicReference<>();
+            AtomicReference<Object> loggedInAccount = new AtomicReference<>();
             Object callback = Proxy.newProxyInstance(cl,
                     new Class[]{cl.loadClass("g8m")},
                     (proxy, method, mArgs) -> {
                         String name = method.getName();
+                        Log.w(TAG, "TradePassword.callback " + name + " args="
+                                + describeTradeArguments(mArgs));
                         if ("onWeituoLoginSuccess".equals(name)) {
                             result.set("success");
                             latch.countDown();
                         } else if ("onWeituoLoginFail".equals(name)) {
                             failDetail.set(describeStuffStruct(mArgs != null && mArgs.length > 0 ? mArgs[0] : null));
-                            // 同一 g8m 可能收到并发查询的 fail（实测 pageId=10151,
-                            // frameId=2605），不能把第一条 fail 直接当登录失败。
-                            // 给真实 success/登录态落地 5 秒窗口，再以 izr.l(pzr)
-                            // 这个权威状态定性；密码错误仍只发一次，不做自动重试。
-                            new Thread(() -> {
-                                try { Thread.sleep(5000L); }
-                                catch (InterruptedException e) {
-                                    Thread.currentThread().interrupt();
-                                }
-                                if ("success".equals(result.get())) return;
-                                try {
-                                    Class<?> izrClass = cl.loadClass("izr");
-                                    boolean logged = Boolean.TRUE.equals(izrClass
-                                            .getMethod("l", cl.loadClass("pzr"))
-                                            .invoke(izrClass.getField("a").get(null), mgr));
-                                    result.set(logged ? "success" : "fail");
-                                } catch (Throwable ignored) {
-                                    result.set("fail");
-                                }
-                                latch.countDown();
-                            }, "ths-pwd-fail-confirm").start();
+                            result.set("fail");
+                            latch.countDown();
                         } else if ("interceptTimeout".equals(name) || "onlyMeHandleReceiveData".equals(name)) {
                             return Boolean.FALSE;
                         }
@@ -11864,36 +11497,19 @@ public class MainHook {
                         if ("equals".equals(name)) return proxy == (mArgs != null && mArgs.length > 0 ? mArgs[0] : null);
                         return null;
                     });
-            // 优先使用 App 的官方无头自动重登链 x0s.h。该链使用
-            // pzr 中已持久化的密码并构造后台登录参数，不依赖 UI。
-            // Docker Secret 只存在 Hook 私有文件中，冷启动的 pzr.p()
-            // 通常为空。用 App 官方 setter 注入本次进程内存，再走 x0s.h。
-            // 不持久化明文；每次重启都由只读 Secret 重新注入。
-            mgr.getClass().getMethod("U", String.class).invoke(mgr, password);
-            String storedPwd = (String) mgr.getClass().getMethod("p").invoke(mgr);
-            boolean officialReloginStarted = false;
-            if (storedPwd != null && !storedPwd.isEmpty()) {
-                Object started = cl.loadClass("x0s").getMethod("h",
-                                cl.loadClass("pzr"), cl.loadClass("g8m"),
-                                boolean.class, int.class, boolean.class)
-                        .invoke(null, mgr, callback, true, 5, true);
-                officialReloginStarted = Boolean.TRUE.equals(started);
+            // 纯净环境密码登录只允许走官方密码入口 f2s.o。禁止先调用 x0s.h：
+            // x0s.h 是自动重登协调器，可能消费 pzr 中的旧 token、内部凭据或会话
+            // 标识，无法证明实例是仅凭账号密码重建出来的。
+            report.put("login_credential", "account_password");
+            if (!forceNativeTradeLoginPath(cl, mgr, report)) {
+                lastEnsureTradeError = "trade pwd login: native path unavailable";
+                return false;
             }
-            report.put("official_relogin_started", officialReloginStarted);
-            if (!officialReloginStarted) {
-                // 2026-08-22 真机 UI 登录探针确认 f2s.o 的第二个参数必须是完整
-                // a1s 券商对象。传 null 虽能进入 t3s.b，却会丢失 w3s.e 构建
-                // v3s/r8m 所需的显式券商上下文，表现为通道已连接但无业务回调。
-                if (!forceNativeTradeLoginPath(cl, mgr, report)) {
-                    lastEnsureTradeError = "trade pwd login: native path unavailable";
-                    return false;
-                }
-                Object f2sInst = cl.loadClass("f2s").getMethod("d").invoke(null);
-                cl.loadClass("f2s").getMethod("o",
-                                cl.loadClass("g6m"), cl.loadClass("a1s"),
-                                cl.loadClass("q3s"), cl.loadClass("g8m"))
-                        .invoke(f2sInst, info, broker, q, callback);
-            }
+            Object f2sInst = cl.loadClass("f2s").getMethod("d").invoke(null);
+            cl.loadClass("f2s").getMethod("o",
+                            cl.loadClass("g6m"), cl.loadClass("a1s"),
+                            cl.loadClass("q3s"), cl.loadClass("g8m"))
+                    .invoke(f2sInst, info, broker, q, callback);
             boolean done = latch.await(40, TimeUnit.SECONDS);
             if (!done) {
                 report.put("pwd_result", "timeout");
@@ -11907,6 +11523,69 @@ public class MainHook {
                 lastEnsureTradeError = "trade pwd login fail: " + failDetail.get();
                 return false;
             }
+            // 回调只能证明密码请求链返回，最终登录成功必须由账户仓库中的
+            // 权威会话状态确认。不能再把 callback success 当作可用会话。
+            boolean authoritativeSession = false;
+            try {
+                Class<?> izrClass = cl.loadClass("izr");
+                Object izrInst = izrClass.getField("a").get(null);
+                Method loggedMethod = izrClass.getMethod("l", cl.loadClass("pzr"));
+                for (int i = 0; i < 20 && !authoritativeSession; i++) {
+                    String responseAccountType = String.valueOf(
+                            g6mClass.getField("g").get(info));
+                    Object authoritativeAccount = resolveLoggedInPasswordAccount(cl,
+                            account, responseAccountType, accType, brokerId);
+                    if (authoritativeAccount != null) {
+                        loggedInAccount.set(authoritativeAccount);
+                        authoritativeSession = Boolean.TRUE.equals(
+                                loggedMethod.invoke(izrInst, authoritativeAccount));
+                    }
+                    if (!authoritativeSession) Thread.sleep(500L);
+                }
+            } catch (Throwable t) {
+                Log.w(TAG, "authoritative pwd session check failed: " + t);
+            }
+            if (!authoritativeSession) {
+                // 券商已明确回调密码登录成功，但纯净 seed 的账户检索键可能与
+                // 响应 accountType 不一致，导致 n2s.d 未命中。这里只收编账户
+                // 仓库中账号+券商均匹配的真实对象，禁止对独立 seed 引用补状态。
+                Object repositoryAccount = loggedInAccount.get();
+                if (repositoryAccount == null) {
+                    repositoryAccount = recoverSeedAccountAfterPasswordSuccess(
+                            cl, mgr, info, broker, accType);
+                    if (repositoryAccount != null) {
+                        loggedInAccount.set(repositoryAccount);
+                        report.put("seed_account_materialized", true);
+                    }
+                }
+                if (repositoryAccount != null) {
+                    try {
+                        Class<?> izrClass = cl.loadClass("izr");
+                        Object izrInst = izrClass.getField("a").get(null);
+                        izrClass.getMethod("u", cl.loadClass("pzr"))
+                                .invoke(izrInst, repositoryAccount);
+                        authoritativeSession = Boolean.TRUE.equals(izrClass
+                                .getMethod("l", cl.loadClass("pzr"))
+                                .invoke(izrInst, repositoryAccount));
+                        if (authoritativeSession) {
+                            report.put("repository_account_recovered", true);
+                        }
+                    } catch (Throwable t) {
+                        Log.w(TAG, "password-login repository recovery failed: " + t);
+                    }
+                }
+            }
+            report.put("logged_in_state", authoritativeSession);
+            if (!authoritativeSession) {
+                lastEnsureTradeError =
+                        "trade pwd login: callback success but authoritative session absent";
+                return false;
+            }
+            Object authoritativeAccount = loggedInAccount.get();
+            if (authoritativeAccount != null) {
+                report.put("account_instance_rebound", authoritativeAccount != mgr);
+                tradeAccountManagerInstance = authoritativeAccount;
+            }
             lastEnsureTradeError = null;
             return true;
         } catch (InterruptedException e) {
@@ -11919,6 +11598,52 @@ public class MainHook {
             } catch (Throwable ignored) { }
             lastEnsureTradeError = "trade pwd login error: " + cause;
             return false;
+        }
+    }
+
+    /**
+     * n2s.d 的纯净 seed 兼容分支。券商明确返回密码登录成功后，如果 p0s.g/p0s.b
+     * 因账户列表尚未物化而均未命中，就在 p0s.F(119) 已选出的 seed manager 上
+     * 重放 n2s.d 的账户字段落地，再通过 n0s.c 写回仓库。调用方随后仍需 izr.l
+     * 和真实资金查询双重验收。
+     */
+    private static Object recoverSeedAccountAfterPasswordSuccess(ClassLoader cl,
+            Object mgr, Object loginInfo, Object broker, int accountNature) {
+        try {
+            Class<?> g6mClass = cl.loadClass("g6m");
+            Class<?> pzrClass = cl.loadClass("pzr");
+            Class<?> a1sClass = cl.loadClass("a1s");
+            mgr.getClass().getMethod("Q", boolean.class)
+                    .invoke(mgr, g6mClass.getField("k").getBoolean(loginInfo));
+            mgr.getClass().getMethod("D", String.class)
+                    .invoke(mgr, g6mClass.getField("a").get(loginInfo));
+            mgr.getClass().getMethod("F", String.class)
+                    .invoke(mgr, g6mClass.getField("g").get(loginInfo));
+            mgr.getClass().getMethod("H", String.class)
+                    .invoke(mgr, g6mClass.getField("c").get(loginInfo));
+            mgr.getClass().getMethod("N", String.class)
+                    .invoke(mgr, g6mClass.getField("b").get(loginInfo));
+            mgr.getClass().getMethod("I", String.class)
+                    .invoke(mgr, g6mClass.getField("h").get(loginInfo));
+            mgr.getClass().getMethod("O", String.class)
+                    .invoke(mgr, broker.getClass().getField("g").get(broker));
+            mgr.getClass().getMethod("E", int.class).invoke(mgr, accountNature);
+            mgr.getClass().getMethod("W", String.class)
+                    .invoke(mgr, broker.getClass().getField("f").get(broker));
+            String accountType = String.valueOf(mgr.getClass().getMethod("f").invoke(mgr));
+            Object accountName = broker.getClass().getMethod("i", String.class)
+                    .invoke(broker, accountType);
+            mgr.getClass().getMethod("G", String.class).invoke(mgr, accountName);
+            a1sClass.getMethod("a", pzrClass).invoke(broker, mgr);
+            mgr.getClass().getMethod("V", a1sClass).invoke(mgr, broker);
+            Object n0sInst = cl.loadClass("n0s").getMethod("s").invoke(null);
+            n0sInst.getClass().getMethod("c", pzrClass, boolean.class)
+                    .invoke(n0sInst, mgr, false);
+            forceNativeTradeLoginPath(cl, mgr, null);
+            return mgr;
+        } catch (Throwable t) {
+            Log.w(TAG, "materialize seed account after password success failed: " + t);
+            return null;
         }
     }
 
@@ -12049,24 +11774,11 @@ public class MainHook {
                         if (tokenInfo != null) {
                             schedulePostLoginTokenReport();
                         } else {
-                            // z7m.i 仍 null（livetime 坑）：onWeituoLoginSuccess 回调
-                            // 本身就是券商确认（2026-08-19 实测：此分支下 funds
-                            // 2s 成功，会话已建立，izr.l 置位有异步延迟）——轮询
-                            // izr.l 最多 5s 作参考，无论真假都判成功，绝不再误报
-                            // token unavailable
-                            boolean loggedInState = false;
-                            try {
-                                for (int i = 0; i < 10 && !loggedInState; i++) {
-                                    loggedInState = Boolean.TRUE.equals(
-                                            izrInst.getClass()
-                                                    .getMethod("l", cl.loadClass("pzr"))
-                                                    .invoke(izrInst, mgr));
-                                    if (!loggedInState) Thread.sleep(500);
-                                }
-                            } catch (Throwable ignore) { }
-                            report.put("logged_in_state", loggedInState);
+                            // 密码响应已由 doPasswordTradeLoginLocked 使用 izr.l
+                            // 权威确认。Token 落盘/读回可能稍后完成，不应倒退为
+                            // token unavailable；外层 runtime 仍会以 funds 探针验收。
                             report.put("result", "success");
-                            report.put("via", "pwd_login_callback_confirmed");
+                            report.put("via", "account_password_session");
                             lastEnsureTradeError = null;
                             schedulePostLoginTokenReport();
                             return true;
@@ -13571,56 +13283,6 @@ public class MainHook {
         JSONObject resp = new JSONObject();
         resp.put("endpoint", "transfer_banks");
         return invokeTradeQuery(1830, 1830, "reqctrl=6013", true);
-    }
-
-    /**
-     * POST /stock/trade/transfer — 银证转账（转入证券账户）。
-     * body: {"direction":"in","amount":"100","bank_password":"...","bank_index":"0","confirm":true}
-     * 协议 1826 reqctrl=6015：116=银行索引, 103=金额, 120=w0s.b(银行密码)（客户端加密）。
-     * 源码逆向自 c1m.J → d1m.a。⚠️ 未真机验证（需银行密码+交易日窗口）。
-     */
-    private static String handleTradeTransfer(String body) throws org.json.JSONException {
-        JSONObject resp = new JSONObject();
-        resp.put("endpoint", "transfer");
-        String direction = extractJsonString(body, "direction");
-        String amount = extractJsonString(body, "amount");
-        String bankPassword = extractJsonString(body, "bank_password");
-        String bankIndex = extractJsonString(body, "bank_index");
-        String confirm = extractJsonString(body, "confirm");
-        if (amount == null || bankPassword == null) {
-            return errorJson(resp, "missing amount/bank_password");
-        }
-        if (!"true".equals(confirm)) {
-            return errorJson(resp, "confirm!=true: write endpoints require explicit confirmation");
-        }
-        if (direction == null || !"in".equals(direction.trim())) {
-            return errorJson(resp, "only direction=in implemented (transfer-out protocol not yet reversed)");
-        }
-        String readinessError = requireTradeWriteReady(resp);
-        if (readinessError != null) {
-            return errorJson(resp, readinessError);
-        }
-        String encPwd;
-        try {
-            Class<?> w0s = thsAppClassLoader.loadClass("w0s");
-            java.lang.reflect.Method b = w0s.getDeclaredMethod("b", String.class);
-            b.setAccessible(true);
-            Object r = b.invoke(null, bankPassword);
-            encPwd = r == null ? null : String.valueOf(r);
-        } catch (Throwable e) {
-            return errorJson(resp, "w0s.b password encrypt failed: " + e);
-        }
-        if (encPwd == null) {
-            return errorJson(resp, "w0s.b returned null");
-        }
-        String params = "ctrlcount=3\r\nctrlid_0=116\r\nctrlvalue_0=" + (bankIndex == null ? "0" : bankIndex.trim())
-                + "\r\nctrlid_1=103\r\nctrlvalue_1=" + amount.trim()
-                + "\r\nctrlid_2=120\r\nctrlvalue_2=" + encPwd
-                + "\r\nreqctrl=6015";
-        resp.put("protocolId", 1826);
-        resp.put("pageId", 1826);
-        resp.put("unverified", "source-derived params (d1m.a), not yet replay-verified");
-        return invokeTradeQuery(1826, 1826, params, true, true);
     }
 
     /**
