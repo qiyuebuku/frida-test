@@ -1119,12 +1119,23 @@ remove_foreign_compose_containers() {
 
 build_server_image() {
     local image="smart-fund-server:${DEPLOY_REVISION}"
+    local base_image="python:3.12-slim-bookworm"
     echo "构建服务端镜像 ${image}..."
     ssh_cmd "set -euo pipefail
 test -s '${ARTIFACT_DIR}/jettask_python-0.1.0-py3-none-any.whl'
 mkdir -p '${SERVER_DIR}/.docker-build'
 cp '${ARTIFACT_DIR}/jettask_python-0.1.0-py3-none-any.whl' '${SERVER_DIR}/.docker-build/jettask_python-0.1.0-py3-none-any.whl'
 if ! docker image inspect '${image}' >/dev/null 2>&1; then
+  if ! docker image inspect '${base_image}' >/dev/null 2>&1; then
+    for attempt in 1 2 3 4 5; do
+      docker pull '${base_image}' && break
+      if [[ \"\${attempt}\" == 5 ]]; then
+        echo '无法拉取生产基础镜像 ${base_image}' >&2
+        exit 1
+      fi
+      sleep \$((attempt * 5))
+    done
+  fi
   if [[ -e /home/${REMOTE_USER}/.docker/cli-plugins/docker-buildx ]] \
       && [[ ! -s /home/${REMOTE_USER}/.docker/cli-plugins/docker-buildx ]]; then
     rm -f /home/${REMOTE_USER}/.docker/cli-plugins/docker-buildx
