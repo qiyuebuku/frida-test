@@ -10668,19 +10668,11 @@ public class MainHook {
                 // 全新数据卷尚未下载 yyb 数据库。券商路由配置不是秘密，随
                 // Hook 版本化保存；禁止用只有名称/qsid 的最小假对象，因为它
                 // 缺少 wtid、营业部和交易网关策略，最终只会静默登录超时。
-                String assetName = "trade_brokers/" + qsid + ".json";
-                android.content.Context hookContext = appInstance.createPackageContext(
-                        "com.yuyang.thshook", android.content.Context.CONTEXT_IGNORE_SECURITY);
-                java.io.InputStream brokerInput = hookContext.getAssets().open(assetName);
-                java.io.ByteArrayOutputStream brokerBytes = new java.io.ByteArrayOutputStream();
-                byte[] brokerBuffer = new byte[2048];
-                int brokerRead;
-                while ((brokerRead = brokerInput.read(brokerBuffer)) > 0) {
-                    brokerBytes.write(brokerBuffer, 0, brokerRead);
+                String brokerTemplate = BrokerTemplates.get(qsid);
+                if (brokerTemplate == null) {
+                    return errorJson(out, "versioned broker template unavailable");
                 }
-                brokerInput.close();
-                JSONObject brokerJson = new JSONObject(
-                        new String(brokerBytes.toByteArray(), "UTF-8"));
+                JSONObject brokerJson = new JSONObject(brokerTemplate);
                 if (!qsid.equals(brokerJson.optString("qsid"))
                         || !brokerName.equals(brokerJson.optString("qsname"))) {
                     return errorJson(out, "versioned broker template mismatch");
