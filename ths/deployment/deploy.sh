@@ -38,6 +38,14 @@ remote_sudo() {
     fi
 }
 
+# Production has moved from the legacy systemd AVD to Redroid containers.
+# Until CI publishes and rolls out an immutable Redroid image, fail closed:
+# running the legacy installer here could stop or replace the live trade path.
+if "${SSH[@]}" "docker container inspect ths-trade >/dev/null 2>&1"; then
+    echo "Redroid production detected; immutable Redroid image deployment is required" >&2
+    exit 1
+fi
+
 install_fresh_host_config() {
     local required value payload=""
     for required in \

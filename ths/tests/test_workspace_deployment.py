@@ -51,6 +51,18 @@ def test_production_deployment_verifies_ssh_host_key() -> None:
         assert "StrictHostKeyChecking=no" not in deploy
 
 
+def test_legacy_ths_deployer_fails_closed_on_redroid_production() -> None:
+    deploy = (WORKSPACE / "ths" / "deployment" / "deploy.sh").read_text(
+        encoding="utf-8"
+    )
+
+    assert 'docker container inspect ths-trade' in deploy
+    assert "Redroid production detected" in deploy
+    assert deploy.index("docker container inspect ths-trade") < deploy.index(
+        "git -C '${REMOTE_GIT_DIR}' fetch"
+    )
+
+
 def test_component_revisions_are_recorded_independently() -> None:
     deploy = (WORKSPACE / "deploy.sh").read_text(encoding="utf-8")
 
