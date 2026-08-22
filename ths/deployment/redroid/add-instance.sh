@@ -8,6 +8,9 @@ usage: add-instance.sh --name NAME --mode collector|trade --adb-port PORT --http
   --account-seed-secret FILE       required for trade secrets initialization
   --token-secret FILE              optional exported token JSON
   --password-secret FILE           optional plain trading password
+  --account-secret FILE            optional plain broker account identifier
+  --broker-secret FILE             optional broker display name
+  --qsid-secret FILE               optional broker qsid
   --password-levels 1|2            explicit trade password policy metadata
   --trade-init secrets|existing    default: secrets
   --ready-timeout SECONDS          default: 300; command succeeds only when healthy
@@ -18,7 +21,7 @@ EOF
 
 NAME= MODE= ADB_PORT= HTTP_PORT=
 IMAGE=yuyangruan/ths-redroid:1.2.50-headless
-ACCOUNT_SEED= TOKEN= PASSWORD= PASSWORD_LEVELS=1 TRADE_INIT=secrets READY_TIMEOUT=300 DATA_DIR=
+ACCOUNT_SEED= TOKEN= PASSWORD= ACCOUNT= BROKER= QSID= PASSWORD_LEVELS=1 TRADE_INIT=secrets READY_TIMEOUT=300 DATA_DIR=
 while (($#)); do
     case "$1" in
         --name) NAME=${2:-}; shift 2 ;;
@@ -29,6 +32,9 @@ while (($#)); do
         --account-seed-secret) ACCOUNT_SEED=${2:-}; shift 2 ;;
         --token-secret) TOKEN=${2:-}; shift 2 ;;
         --password-secret) PASSWORD=${2:-}; shift 2 ;;
+        --account-secret) ACCOUNT=${2:-}; shift 2 ;;
+        --broker-secret) BROKER=${2:-}; shift 2 ;;
+        --qsid-secret) QSID=${2:-}; shift 2 ;;
         --password-levels) PASSWORD_LEVELS=${2:-}; shift 2 ;;
         --trade-init) TRADE_INIT=${2:-}; shift 2 ;;
         --ready-timeout) READY_TIMEOUT=${2:-}; shift 2 ;;
@@ -100,6 +106,9 @@ mount_secret() {
 mount_secret THS_TRADE_ACCOUNT_SEED_FILE "$ACCOUNT_SEED" trade_account_seed
 mount_secret THS_TRADE_TOKEN_FILE "$TOKEN" trade_token
 mount_secret THS_TRADE_PASSWORD_FILE "$PASSWORD" trade_password
+mount_secret THS_TRADE_ACCOUNT_FILE "$ACCOUNT" trade_account
+mount_secret THS_TRADE_BROKER_FILE "$BROKER" trade_broker
+mount_secret THS_TRADE_QSID_FILE "$QSID" trade_qsid
 
 args+=("$IMAGE"
     ro.product.cpu.abilist=x86_64,arm64-v8a,x86,armeabi-v7a,armeabi

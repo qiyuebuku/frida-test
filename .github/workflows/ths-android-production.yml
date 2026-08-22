@@ -5,6 +5,12 @@ on:
     branches: [main]
   push:
     branches: [main]
+    paths:
+      - "smart-fund-server/**"
+      - "!smart-fund-server/docs/**"
+      - "deploy.sh"
+      - "ths/deployment/deploy.sh"
+      - "ths/deployment/internal/**"
 
 concurrency:
   group: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && 'smart-fund-production' || format('{0}-{1}', github.workflow, github.ref) }}

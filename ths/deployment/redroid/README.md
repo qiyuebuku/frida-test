@@ -83,6 +83,13 @@ Hook 源码和 `artifacts.lock`；私有仓库
 禁止从开发机运行生产 rollout，禁止生产使用可变 tag。交易密码、账户 seed 和 token
 只通过生产服务器只读 Secret 注入，绝不进入 Git、私有制品或镜像层。
 
+交易凭据统一在 GitHub `production` Environment Secrets 的 Web UI 维护：
+`THS_TRADE_ACCOUNT`、`THS_TRADE_BROKER`、`THS_TRADE_QSID`、
+`THS_TRADE_PASSWORD`。`main` 的自建 Runner 在构建前将它们原子同步为权限 0600 的
+服务器运行时文件；容器只读挂载。Hook 先按 qsid 从固定 APK 的券商库校验券商名称，
+再用资金账号创建/复用官方 `fzr` 账户对象，最后只执行一次密码登录。任何 Secret
+缺失、券商与 qsid 不匹配、账户未激活或 `write_ready=false` 都会阻止部署成功。
+
 新增采集实例：
 
 ```bash
