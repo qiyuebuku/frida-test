@@ -4,8 +4,8 @@ set -euo pipefail
 SCRIPT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 IMAGE=${1:?usage: $0 IMAGE@sha256:DIGEST REVISION}
 REVISION=${2:?usage: $0 IMAGE@sha256:DIGEST REVISION}
-[[ "$IMAGE" =~ ^yuyangruan/ths-redroid@sha256:[0-9a-f]{64}$ ]] || {
-    echo "production requires an immutable yuyangruan/ths-redroid digest" >&2
+[[ "$IMAGE" =~ ^(yuyangruan/ths-redroid|127\.0\.0\.1:5000/ths-redroid)@sha256:[0-9a-f]{64}$ ]] || {
+    echo "production requires an approved immutable ths-redroid digest" >&2
     exit 64
 }
 [[ "$REVISION" =~ ^[0-9a-f]{40}$ ]] || exit 64
