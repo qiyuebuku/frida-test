@@ -10729,10 +10729,13 @@ public class MainHook {
                 Thread.sleep(1000);
                 captured = f119.invoke(null, 119);
             }
-            if (captured == null) return errorJson(out, "configured account was not activated");
-            captureTradeAccountManager(captured);
+            // izr.x() 已完成官方账户激活；全新/冷启动环境里 F(119) 的 manager
+            // 可能要等 MasterModule 后续初始化才出现。这里不能把异步未就绪误判为
+            // 账户配置失败，登录与 runtime/ensure 会继续等待并捕获 manager。
+            if (captured != null) captureTradeAccountManager(captured);
             out.put("ok", true);
-            out.put("captured", true);
+            out.put("captured", captured != null);
+            out.put("activated", true);
             return out.toString();
         } catch (Throwable e) {
             Throwable cause = e.getCause() != null ? e.getCause() : e;
