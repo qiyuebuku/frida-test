@@ -18,60 +18,10 @@ source "$ENV_FILE"
 SSH_OPTIONS=(-i "$SSH_KEY" -p "$REMOTE_PORT" -o StrictHostKeyChecking=yes)
 REMOTE_TARGET="$REMOTE_USER@$REMOTE_HOST"
 REMOTE_RELEASE_DIR=${REMOTE_RELEASE_DIR:-/home/$REMOTE_USER/.smart-fund-deploy/$REVISION}
-REGISTRY_IMAGE="registry:2.8.3@sha256:a3d8aaa63ed8681a604f1dea0aa03f100d5895b6a58ace528858a7b332415373"
-REGISTRY_BOOTSTRAP_TAG="smart-fund-registry-bootstrap:2.8.3"
-EXPECTED_DIGEST=${IMAGE#*@}
 
 tar -C "$WORKSPACE" -czf - ths/deployment/redroid \
     | ssh "${SSH_OPTIONS[@]}" "$REMOTE_TARGET" \
         "set -euo pipefail; install -d '$REMOTE_RELEASE_DIR'; tar -xzf - -C '$REMOTE_RELEASE_DIR'"
 
-# The host currently cannot establish outbound TLS to public registries.
-# Bootstrap a digest-pinned loopback registry over SSH, then push the exact
-# Actions-built image through an SSH tunnel. Its manifest digest must equal the
-# public registry digest before rollout is allowed.
-docker pull "$REGISTRY_IMAGE"
-docker tag "$REGISTRY_IMAGE" "$REGISTRY_BOOTSTRAP_TAG"
-registry_image_id=$(docker image inspect "$REGISTRY_BOOTSTRAP_TAG" --format '{{.Id}}')
-docker save "$REGISTRY_BOOTSTRAP_TAG" | gzip -1 \
-    | ssh "${SSH_OPTIONS[@]}" "$REMOTE_TARGET" 'gzip -d | docker load >/dev/null'
-ssh "${SSH_OPTIONS[@]}" "$REMOTE_TARGET" "set -euo pipefail
-[[ \"\$(docker image inspect '$REGISTRY_BOOTSTRAP_TAG' --format '{{.Id}}')\" == '$registry_image_id' ]]
-if docker container inspect smart-fund-registry >/dev/null 2>&1; then
-    [[ \"\$(docker inspect smart-fund-registry --format '{{.Config.Image}}')\" == '$REGISTRY_BOOTSTRAP_TAG' ]]
-    docker start smart-fund-registry >/dev/null
-else
-    docker run -d --name smart-fund-registry --restart unless-stopped \
-        -p 127.0.0.1:5000:5000 -v smart-fund-registry-data:/var/lib/registry \
-        '$REGISTRY_BOOTSTRAP_TAG' >/dev/null
-fi
-for attempt in \$(seq 1 30); do
-    curl -fsS http://127.0.0.1:5000/v2/ >/dev/null && exit 0
-    sleep 1
-done
-exit 70"
-
-control_dir=$(mktemp -d /tmp/ths-registry-tunnel.XXXXXX)
-control_socket="$control_dir/control"
-cleanup_tunnel() {
-    ssh "${SSH_OPTIONS[@]}" -S "$control_socket" -O exit "$REMOTE_TARGET" >/dev/null 2>&1 || true
-    rmdir "$control_dir" 2>/dev/null || true
-}
-trap cleanup_tunnel EXIT
-ssh "${SSH_OPTIONS[@]}" -M -S "$control_socket" -fN \
-    -L 127.0.0.1:55000:127.0.0.1:5000 "$REMOTE_TARGET"
-local_tag="127.0.0.1:55000/ths-redroid:git-$REVISION"
-skopeo copy --preserve-digests --authfile "$HOME/.docker/config.json" \
-    --dest-tls-verify=false "docker://$IMAGE" "docker://$local_tag"
-local_digest="sha256:$(skopeo inspect --raw --tls-verify=false \
-    "docker://$local_tag" | sha256sum | cut -d' ' -f1)"
-[[ "$local_digest" == "$EXPECTED_DIGEST" ]] || {
-    echo "loopback registry digest does not match the published digest" >&2
-    exit 71
-}
-cleanup_tunnel
-trap - EXIT
-
-LOCAL_IMAGE="127.0.0.1:5000/ths-redroid@$EXPECTED_DIGEST"
 ssh "${SSH_OPTIONS[@]}" "$REMOTE_TARGET" \
-    "'$REMOTE_RELEASE_DIR/ths/deployment/redroid/rollout-production.sh' '$LOCAL_IMAGE' '$REVISION'"
+    "'$REMOTE_RELEASE_DIR/ths/deployment/redroid/rollout-production.sh' '$IMAGE' '$REVISION'"
