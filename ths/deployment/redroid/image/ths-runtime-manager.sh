@@ -346,6 +346,17 @@ if [ "$THS_MODE" = trade ]; then
         1|2) ;;
         *) json_status trade_config_invalid "password levels must be 1 or 2"; exit 1 ;;
     esac
+    if [ -s "$SECRETS/trade_account" ] && [ -s "$SECRETS/trade_broker" ] \
+        && [ -s "$SECRETS/trade_qsid" ]; then
+        account=$(sed 's/\\/\\\\/g; s/"/\\"/g' "$SECRETS/trade_account" | tr -d '\r\n')
+        broker=$(sed 's/\\/\\\\/g; s/"/\\"/g' "$SECRETS/trade_broker" | tr -d '\r\n')
+        qsid=$(sed 's/\\/\\\\/g; s/"/\\"/g' "$SECRETS/trade_qsid" | tr -d '\r\n')
+        http POST /stock/trade/account/configure \
+            "{\"account\":\"$account\",\"broker\":\"$broker\",\"qsid\":\"$qsid\"}" \
+            | grep -q '"ok":true' \
+            || { json_status trade_account_failed "configured account was rejected"; exit 1; }
+        unset account broker qsid
+    fi
     if [ "$THS_TRADE_INIT" != existing ]; then
         [ -s "$SECRETS/trade_account_seed" ] || { json_status trade_secret_missing "account seed is required"; exit 1; }
         http POST /stock/trade/account/seed "$(cat "$SECRETS/trade_account_seed")" | grep -q '"ok":true' \
@@ -369,8 +380,7 @@ if [ "$THS_MODE" = trade ]; then
     # runtime/ensure 装配交易 manager。密码已由 /stock/trade/pwd 写入 Hook
     # 私有存储，登录请求本身不携带敏感字段。
     json_status trade_logging_in "rebuilding trading session with stored password"
-    trade_login_result=$(http POST /stock/trade/login '{"method":"pwd"}' 2>/dev/null || true)
-    trade_login_retried=false
+    http POST /stock/trade/login '{"method":"pwd"}' >/dev/null 2>&1 || true
     json_status trade_warming "ensuring read-only trading runtime"
     http POST /stock/trade/runtime/ensure '{}' >/dev/null || true
     trade_attempt=1
@@ -380,13 +390,6 @@ if [ "$THS_MODE" = trade ]; then
         if printf '%s' "$trade_status" | grep -q '"write_ready":true'; then
             trade_ready=true
             break
-        fi
-        if [ "$trade_login_retried" = false ] && { \
-            ! printf '%s' "$trade_login_result" | grep -q '"ok":true' \
-            || printf '%s' "$trade_status" | grep -q '"session_ready":false'; \
-        }; then
-            trade_login_result=$(http POST /stock/trade/login '{"method":"pwd"}' 2>/dev/null || true)
-            trade_login_retried=true
         fi
         if printf '%s' "$trade_status" | grep -Eq '"ensure_state":"(FAILED|NOT_RUN)"|"session_ready":false'; then
             http POST /stock/trade/runtime/ensure '{}' >/dev/null || true

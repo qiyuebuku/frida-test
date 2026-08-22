@@ -1642,6 +1642,15 @@ public class MainHook {
                 return;
             }
 
+            // POST /stock/trade/account/configure — 从受控 Secret 中的 qsid、券商名和
+            // 资金账号重建最小官方 fzr 账户对象，不依赖旧设备导出的账户 seed。
+            if (requestLine.startsWith("POST /stock/trade/account/configure")) {
+                String result = handleTradeAccountConfigure(body);
+                sendResponse(out, 200, result);
+                client.close();
+                return;
+            }
+
             // GET /stock/trade/token/report — token 自动上报状态与当前配置（打码）
             if (requestLine.startsWith("GET /stock/trade/token/report")) {
                 String result = handleTokenReportStatus();
@@ -10605,6 +10614,98 @@ public class MainHook {
         }
         out.put("elapsed_ms", System.currentTimeMillis() - t0);
         return out.toString();
+    }
+
+    /**
+     * 从最小生产凭据重建交易账户。资金账号只进入 App 官方账户对象和加密仓库，
+     * 响应、日志均不回显。券商必须能从固定 APK 自带的 yyb 数据库按 qsid 找到，
+     * 并且名称与 Secret 一致，禁止把账号绑定到错误券商。
+     */
+    private static String handleTradeAccountConfigure(String body) throws org.json.JSONException {
+        JSONObject out = new JSONObject();
+        out.put("endpoint", "account_configure");
+        ClassLoader cl = resolveAppClassLoader(null);
+        if (cl == null) return errorJson(out, "classloader not ready");
+        if (!ensureTradeMasterModule(cl)) return errorJson(out, lastEnsureTradeError);
+        JSONObject req;
+        try {
+            req = new JSONObject(body);
+        } catch (Throwable e) {
+            return errorJson(out, "bad json body");
+        }
+        String qsid = req.optString("qsid", "").trim();
+        String brokerName = req.optString("broker", "").trim();
+        String account = req.optString("account", "").trim();
+        if (!qsid.matches("[0-9]{1,8}") || brokerName.isEmpty()
+                || !account.matches("[A-Za-z0-9]{4,32}")) {
+            return errorJson(out, "invalid qsid, broker, or account format");
+        }
+        try {
+            Object c1sInst = cl.loadClass("c1s").getMethod("m").invoke(null);
+            Object repository = cl.loadClass("c1s").getMethod("p").invoke(c1sInst);
+            try {
+                repository.getClass().getMethod("K0").invoke(repository);
+            } catch (Throwable ignored) { }
+
+            // 优先复用仓库中同 qsid+账号的对象，避免冷启动重复添加。
+            Object selected = null;
+            java.util.List<?> accounts = (java.util.List<?>) repository.getClass()
+                    .getMethod("H").invoke(repository);
+            if (accounts != null) {
+                for (Object candidate : accounts) {
+                    if (candidate != null
+                            && qsid.equals(String.valueOf(candidate.getClass().getMethod("q").invoke(candidate)))
+                            && account.equals(String.valueOf(candidate.getClass().getMethod("d").invoke(candidate)))) {
+                        selected = candidate;
+                        break;
+                    }
+                }
+            }
+
+            Object broker = repository.getClass().getMethod("W", String.class)
+                    .invoke(repository, qsid);
+            if (broker == null) return errorJson(out, "broker unavailable for configured qsid");
+            String actualBrokerName = String.valueOf(broker.getClass().getField("i").get(broker));
+            if (!brokerName.equals(actualBrokerName)) {
+                return errorJson(out, "configured broker does not match qsid");
+            }
+
+            if (selected == null) {
+                Class<?> fzrClass = cl.loadClass("fzr");
+                selected = fzrClass.getConstructor(int.class).newInstance(0);
+                // pzr.C() 对应字段：d=券商账号、o=资金账号、e=账户性质、j=账户类型。
+                fzrClass.getMethod("K", String.class).invoke(selected, account);
+                fzrClass.getMethod("X", String.class).invoke(selected, account);
+                fzrClass.getMethod("E", int.class).invoke(selected, 0);
+                fzrClass.getMethod("F", String.class).invoke(selected, "0");
+                fzrClass.getMethod("V", cl.loadClass("a1s")).invoke(selected, broker);
+                cl.loadClass("n0s").getMethod("b", cl.loadClass("pzr"))
+                        .invoke(cl.loadClass("n0s").getMethod("s").invoke(null), selected);
+                out.put("created", true);
+            } else {
+                out.put("created", false);
+            }
+
+            Class<?> izrClass = cl.loadClass("izr");
+            izrClass.getMethod("x", cl.loadClass("pzr"))
+                    .invoke(izrClass.getField("a").get(null), selected);
+            Class<?> p0sClass = cl.loadClass("p0s");
+            Method f119 = p0sClass.getDeclaredMethod("F", int.class);
+            f119.setAccessible(true);
+            Object captured = null;
+            for (int i = 0; i < 30 && captured == null; i++) {
+                Thread.sleep(1000);
+                captured = f119.invoke(null, 119);
+            }
+            if (captured == null) return errorJson(out, "configured account was not activated");
+            captureTradeAccountManager(captured);
+            out.put("ok", true);
+            out.put("captured", true);
+            return out.toString();
+        } catch (Throwable e) {
+            Throwable cause = e.getCause() != null ? e.getCause() : e;
+            return errorJson(out, "account configure failed: " + cause.getClass().getSimpleName());
+        }
     }
 
     /**

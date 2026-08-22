@@ -231,7 +231,17 @@ def test_production_workflow_builds_pushes_and_deploys_digest_only() -> None:
     assert "docker push" in workflow
     assert "RepoDigests" in workflow
     assert "127.0.0.1:5000/ths-redroid:git-$GITHUB_SHA" in workflow
-    assert 'rollout-production.sh "$IMAGE_DIGEST" "$GITHUB_SHA"' in workflow
+    assert '"$IMAGE_DIGEST" "$GITHUB_SHA" "$THS_REDROID_TARGETS"' in workflow
+    assert "Synchronize protected trade credentials" in workflow
+    for secret in (
+        "THS_TRADE_ACCOUNT",
+        "THS_TRADE_BROKER",
+        "THS_TRADE_QSID",
+        "THS_TRADE_PASSWORD",
+    ):
+        assert f"secrets.{secret}" in workflow
+    assert 'temporary=$(mktemp "$secret_dir/.${file_name}.XXXXXX")' in workflow
+    assert 'mv -f "$temporary" "$secret_dir/$file_name"' in workflow
     assert "THS_PRODUCTION_SSH_PRIVATE_KEY" not in workflow
     assert '"${GITHUB_ACTIONS:-}" == true' in deploy
     assert '"${GITHUB_SHA:-}" == "$REVISION"' in deploy
@@ -318,8 +328,48 @@ def test_rollout_reuses_trade_data_and_reinjects_password() -> None:
     rollout = (REDROID / "rollout-production.sh").read_text(encoding="utf-8")
 
     assert "THS_TRADE_DATA_DIR" in rollout
-    assert "THS_TRADE_PASSWORD_SECRET" in rollout
+    assert "THS_TRADE_SECRET_DIR" in rollout
     assert "--trade-init existing" in rollout
     assert "--data-dir \"$trade_data\"" in rollout
-    assert "--password-secret \"$trade_password\"" in rollout
+    assert '--account-secret "$secret_dir/trade_account"' in rollout
+    assert '--broker-secret "$secret_dir/trade_broker"' in rollout
+    assert '--qsid-secret "$secret_dir/trade_qsid"' in rollout
+    assert '--password-secret "$secret_dir/trade_password"' in rollout
     assert "required trade disaster-recovery secret is missing" not in rollout
+
+
+def test_trade_can_be_rebuilt_from_minimal_protected_credentials() -> None:
+    source = (
+        ROOT / "app/src/main/java/com/yuyang/thshook/MainHook.java"
+    ).read_text(encoding="utf-8")
+    manager = (REDROID / "image/ths-runtime-manager.sh").read_text(encoding="utf-8")
+    add_instance = (REDROID / "add-instance.sh").read_text(encoding="utf-8")
+
+    assert 'POST /stock/trade/account/configure' in source
+    assert 'private static String handleTradeAccountConfigure' in source
+    assert 'getMethod("W", String.class)' in source
+    assert 'getMethod("K", String.class)' in source
+    assert 'getMethod("X", String.class)' in source
+    assert 'getMethod("V", cl.loadClass("a1s"))' in source
+    assert 'getMethod("b", cl.loadClass("pzr"))' in source
+    assert 'getMethod("x", cl.loadClass("pzr"))' in source
+    assert "configured broker does not match qsid" in source
+    assert "trade_account" in manager
+    assert "trade_broker" in manager
+    assert "trade_qsid" in manager
+    configure_pos = manager.index("POST /stock/trade/account/configure")
+    password_pos = manager.index("POST /stock/trade/pwd")
+    login_pos = manager.index("POST /stock/trade/login")
+    assert configure_pos < password_pos < login_pos
+    assert manager.count("POST /stock/trade/login") == 1
+    assert "--account-secret" in add_instance
+    assert "--broker-secret" in add_instance
+    assert "--qsid-secret" in add_instance
+
+
+def test_redroid_rollout_can_target_trade_without_replacing_collectors() -> None:
+    rollout = (REDROID / "rollout-production.sh").read_text(encoding="utf-8")
+
+    assert '^(none|all|collectors|trade)$' in rollout
+    assert '[[ "$TARGETS" == all || "$TARGETS" == collectors ]]' in rollout
+    assert '[[ "$TARGETS" == all || "$TARGETS" == trade ]]' in rollout

@@ -95,6 +95,9 @@ copy_secret() {
 copy_secret trade_account_seed "${THS_TRADE_ACCOUNT_SEED_FILE:-}"
 copy_secret trade_token "${THS_TRADE_TOKEN_FILE:-}"
 copy_secret trade_password "${THS_TRADE_PASSWORD_FILE:-}"
+copy_secret trade_account "${THS_TRADE_ACCOUNT_FILE:-}"
+copy_secret trade_broker "${THS_TRADE_BROKER_FILE:-}"
+copy_secret trade_qsid "${THS_TRADE_QSID_FILE:-}"
 
 umask 077
 {

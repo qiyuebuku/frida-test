@@ -51,6 +51,7 @@ jobs:
     env:
       ANDROID_HOME: /home/yuyangruan/android-sdk
       ANDROID_SDK_ROOT: /home/yuyangruan/android-sdk
+      THS_REDROID_TARGETS: ${{ vars.THS_REDROID_TARGETS || 'all' }}
     permissions:
       contents: read
     steps:
@@ -61,6 +62,29 @@ jobs:
         with:
           distribution: temurin
           java-version: "17"
+      - name: Synchronize protected trade credentials
+        env:
+          TRADE_ACCOUNT: ${{ secrets.THS_TRADE_ACCOUNT }}
+          TRADE_BROKER: ${{ secrets.THS_TRADE_BROKER }}
+          TRADE_QSID: ${{ secrets.THS_TRADE_QSID }}
+          TRADE_PASSWORD: ${{ secrets.THS_TRADE_PASSWORD }}
+        run: |
+          set +x
+          secret_dir=/home/yuyangruan/redroid-poc/secrets
+          install -d -m 700 "$secret_dir"
+          for mapping in \
+            TRADE_ACCOUNT:trade_account TRADE_BROKER:trade_broker \
+            TRADE_QSID:trade_qsid TRADE_PASSWORD:trade_password; do
+            env_name=${mapping%%:*}
+            file_name=${mapping#*:}
+            value=${!env_name:-}
+            [[ -n "$value" ]] || { echo "required production secret is missing: $env_name" >&2; exit 66; }
+            temporary=$(mktemp "$secret_dir/.${file_name}.XXXXXX")
+            chmod 600 "$temporary"
+            printf '%s' "$value" > "$temporary"
+            mv -f "$temporary" "$secret_dir/$file_name"
+            unset value
+          done
       - name: Build and sign Hook from this commit
         env:
           HOOK_KEYSTORE_B64: ${{ secrets.THS_HOOK_KEYSTORE_B64 }}
@@ -100,7 +124,8 @@ jobs:
           printf 'IMAGE_DIGEST=%s\n' "$digest" >> "$GITHUB_ENV"
       - name: Roll out the verified digest
         run: |
-          ths/deployment/redroid/rollout-production.sh "$IMAGE_DIGEST" "$GITHUB_SHA"
+          ths/deployment/redroid/rollout-production.sh \
+            "$IMAGE_DIGEST" "$GITHUB_SHA" "$THS_REDROID_TARGETS"
       - name: Remove transient signing and deploy-key material
         if: always()
         run: |
