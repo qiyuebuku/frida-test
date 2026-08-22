@@ -73,15 +73,30 @@ Hook 源码和 `artifacts.lock`；私有仓库
 
 1. PR 只执行源码构建、shell 和部署契约测试；
 2. 合并 `main` 后下载并校验私有制品，从该 SHA 构建、签名 Hook；
-3. 构建镜像并推送 Docker Hub，取得 registry 返回的不可变 digest；
-4. 生产服务器直接从 Docker Hub 拉取该不可变 digest；公网代理由路由器基础设施维护，
-   发布流程不传输镜像 tar、不维护第二份可变镜像副本；
-5. 生产先用全新卷启动隔离 canary，只有达到 `healthy` 才逐个替换 collector；
-6. trade 最后替换，任何实例失败立即恢复该实例原镜像；
+3. 自建 Runner 在生产宿主机完成镜像构建，并推送到仅监听
+   `127.0.0.1:5000` 的私有 Registry，取得不可变 digest；
+4. rollout 只接受 `127.0.0.1:5000/ths-redroid@sha256:...`，镜像层不经过公网、
+   不传输 tar，也不依赖开发机上的 Docker 缓存；
+5. 实际更新前先用全新卷启动隔离 canary，只有达到 `healthy` 才进入目标服务更新；
+6. collector 默认逐个滚动替换，也可选择并行全量替换；trade 独立选择并最后替换，
+   任何实例失败立即恢复原镜像；
 7. 镜像的 OCI revision label 必须等于触发部署的 `github.sha`。
 
 禁止从开发机运行生产 rollout，禁止生产使用可变 tag。交易密码、账户 seed 和 token
 只通过生产服务器只读 Secret 注入，绝不进入 Git、私有制品或镜像层。
+
+生产 `Environment` 支持以下受控变量；它们只改变下一次 `main` push 自动部署的目标，
+不会开放 `workflow_dispatch` 或开发机部署入口：
+
+- `THS_REDROID_TARGETS=all|collectors|trade|none`：分别更新全部 Android 实例、
+  仅采集集群、仅交易实例，或只发布已校验镜像而不更新运行实例；
+- `THS_REDROID_STRATEGY=rolling|parallel`：collector 逐个滚动或 8 个并行全量更新。
+  `parallel` 会造成采集集群短暂整体不可用，但失败时会恢复完整旧 fleet；trade 始终
+  单独更新，不参与 collector 并行批次。
+
+Smart Fund Server 使用独立工作流并配置路径过滤：Redroid/Hook 文件变化不会触发
+Smart Fund Server 部署，`smart-fund-server/**` 或其部署脚本变化也不会触发 Android
+镜像构建。两条生产链仍共享生产并发锁，避免同时修改生产环境。
 
 新增采集实例：
 

@@ -3,8 +3,22 @@ name: Smart Fund production deployment
 on:
   pull_request:
     branches: [main]
+    paths:
+      - "smart-fund-server/**"
+      - "deploy.sh"
+      - "ths/deployment/deploy.sh"
+      - "ths/deployment/internal/**"
+      - "ths/tests/test_workspace_deployment.py"
+      - "ths/tests/test_ths_bridge_pool_config.py"
+      - ".github/workflows/ths-android-production.yml"
   push:
     branches: [main]
+    paths:
+      - "smart-fund-server/**"
+      - "deploy.sh"
+      - "ths/deployment/deploy.sh"
+      - "ths/deployment/internal/**"
+      - ".github/workflows/ths-android-production.yml"
 
 concurrency:
   group: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && 'smart-fund-production' || format('{0}-{1}', github.workflow, github.ref) }}

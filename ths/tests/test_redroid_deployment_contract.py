@@ -232,6 +232,10 @@ def test_production_workflow_builds_pushes_and_deploys_digest_only() -> None:
     assert "RepoDigests" in workflow
     assert "127.0.0.1:5000/ths-redroid:git-$GITHUB_SHA" in workflow
     assert 'rollout-production.sh "$IMAGE_DIGEST" "$GITHUB_SHA"' in workflow
+    assert '--targets "$THS_REDROID_TARGETS"' in workflow
+    assert '--strategy "$THS_REDROID_STRATEGY"' in workflow
+    assert "vars.THS_REDROID_TARGETS || 'all'" in workflow
+    assert "vars.THS_REDROID_STRATEGY || 'rolling'" in workflow
     assert "THS_PRODUCTION_SSH_PRIVATE_KEY" not in workflow
     assert '"${GITHUB_ACTIONS:-}" == true' in deploy
     assert '"${GITHUB_SHA:-}" == "$REVISION"' in deploy
@@ -323,3 +327,24 @@ def test_rollout_reuses_trade_data_and_reinjects_password() -> None:
     assert "--data-dir \"$trade_data\"" in rollout
     assert "--password-secret \"$trade_password\"" in rollout
     assert "required trade disaster-recovery secret is missing" not in rollout
+
+
+def test_rollout_supports_selective_targets_and_parallel_collectors() -> None:
+    rollout = (REDROID / "rollout-production.sh").read_text(encoding="utf-8")
+    smart_workflow = (
+        WORKSPACE / ".github/workflows/ths-android-production.yml"
+    ).read_text(encoding="utf-8")
+
+    assert '--targets) TARGETS=' in rollout
+    assert '--strategy) STRATEGY=' in rollout
+    assert '^(none|all|collectors|trade)$' in rollout
+    assert '^(rolling|parallel)$' in rollout
+    assert "replace_collectors_parallel" in rollout
+    assert 'local -A old_images=() pids=()' in rollout
+    assert "restoring the complete previous fleet" in rollout
+    assert '[[ "$TARGETS" == all || "$TARGETS" == collectors ]]' in rollout
+    assert '[[ "$TARGETS" == all || "$TARGETS" == trade ]]' in rollout
+    assert '[[ "$TARGETS" == none ]]' in rollout
+    assert 'paths:' in smart_workflow
+    assert '"smart-fund-server/**"' in smart_workflow
+    assert '"ths/deployment/redroid/**"' not in smart_workflow

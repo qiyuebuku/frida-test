@@ -4,6 +4,18 @@ set -euo pipefail
 SCRIPT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 IMAGE=${1:?usage: $0 IMAGE@sha256:DIGEST REVISION}
 REVISION=${2:?usage: $0 IMAGE@sha256:DIGEST REVISION}
+shift 2
+TARGETS=all
+STRATEGY=rolling
+while (($#)); do
+    case "$1" in
+        --targets) TARGETS=${2:?--targets requires none, all, collectors, or trade}; shift 2 ;;
+        --strategy) STRATEGY=${2:?--strategy requires rolling or parallel}; shift 2 ;;
+        *) echo "unknown rollout option: $1" >&2; exit 64 ;;
+    esac
+done
+[[ "$TARGETS" =~ ^(none|all|collectors|trade)$ ]] || { echo "invalid rollout targets: $TARGETS" >&2; exit 64; }
+[[ "$STRATEGY" =~ ^(rolling|parallel)$ ]] || { echo "invalid rollout strategy: $STRATEGY" >&2; exit 64; }
 [[ "$IMAGE" =~ ^127\.0\.0\.1:5000/ths-redroid@sha256:[0-9a-f]{64}$ ]] || {
     echo "production requires an approved immutable ths-redroid digest" >&2
     exit 64
@@ -15,6 +27,11 @@ REVISION=${2:?usage: $0 IMAGE@sha256:DIGEST REVISION}
     echo "production rollout is only allowed from the main push on the self-hosted GitHub Actions runner" >&2
     exit 1
 }
+
+if [[ "$TARGETS" == none ]]; then
+    echo "Redroid image published without runtime rollout: $IMAGE ($REVISION)"
+    exit 0
+fi
 
 pulled=false
 for attempt in 1 2 3 4 5; do
@@ -70,24 +87,67 @@ replace_collector() {
     fi
 }
 
-for number in 1 2 3 4 5 6 7 8; do
-    replace_collector "$number"
-done
+replace_collectors_parallel() {
+    local number name failed=false
+    local -A old_images=() pids=()
+    for number in 1 2 3 4 5 6 7 8; do
+        name="ths-collector$number"
+        old_images[$number]=$(docker inspect --format '{{.Config.Image}}' "$name")
+    done
+    for number in 1 2 3 4 5 6 7 8; do
+        docker rm -f "ths-collector$number" >/dev/null
+    done
+    for number in 1 2 3 4 5 6 7 8; do
+        "$SCRIPT_DIR/add-instance.sh" --name "ths-collector$number" --mode collector \
+            --adb-port "$((5560 + number))" --http-port "$((49609 + number))" \
+            --image "$IMAGE" --ready-timeout 360 &
+        pids[$number]=$!
+    done
+    for number in 1 2 3 4 5 6 7 8; do
+        wait "${pids[$number]}" || failed=true
+    done
+    [[ "$failed" == false ]] && return 0
 
-trade_data=${THS_TRADE_DATA_DIR:-/home/yuyangruan/redroid-poc/data-trade}
-trade_password=${THS_TRADE_PASSWORD_SECRET:-/home/yuyangruan/redroid-poc/secrets/trade_password}
-old_trade_image=$(docker inspect --format '{{.Config.Image}}' ths-trade)
-docker rm -f ths-trade >/dev/null
-if ! "$SCRIPT_DIR/add-instance.sh" --name ths-trade --mode trade \
-    --adb-port 5560 --http-port 49600 --image "$IMAGE" \
-    --trade-init existing --data-dir "$trade_data" \
-    --password-secret "$trade_password" --ready-timeout 360; then
-    docker rm -f ths-trade >/dev/null 2>&1 || true
-    "$SCRIPT_DIR/add-instance.sh" --name ths-trade --mode trade \
-        --adb-port 5560 --http-port 49600 --image "$old_trade_image" \
-        --trade-init existing --data-dir "$trade_data" \
-        --password-secret "$trade_password" --ready-timeout 360
-    exit 1
+    echo "parallel collector rollout failed; restoring the complete previous fleet" >&2
+    for number in 1 2 3 4 5 6 7 8; do
+        docker rm -f "ths-collector$number" >/dev/null 2>&1 || true
+        "$SCRIPT_DIR/add-instance.sh" --name "ths-collector$number" --mode collector \
+            --adb-port "$((5560 + number))" --http-port "$((49609 + number))" \
+            --image "${old_images[$number]}" --ready-timeout 360 &
+        pids[$number]=$!
+    done
+    for number in 1 2 3 4 5 6 7 8; do
+        wait "${pids[$number]}" || true
+    done
+    return 1
+}
+
+if [[ "$TARGETS" == all || "$TARGETS" == collectors ]]; then
+    if [[ "$STRATEGY" == parallel ]]; then
+        replace_collectors_parallel
+    else
+        for number in 1 2 3 4 5 6 7 8; do
+            replace_collector "$number"
+        done
+    fi
 fi
 
-echo "Redroid production rollout completed: $IMAGE ($REVISION)"
+if [[ "$TARGETS" == all || "$TARGETS" == trade ]]; then
+    trade_data=${THS_TRADE_DATA_DIR:-/home/yuyangruan/redroid-poc/data-trade}
+    trade_password=${THS_TRADE_PASSWORD_SECRET:-/home/yuyangruan/redroid-poc/secrets/trade_password}
+    old_trade_image=$(docker inspect --format '{{.Config.Image}}' ths-trade)
+    docker rm -f ths-trade >/dev/null
+    if ! "$SCRIPT_DIR/add-instance.sh" --name ths-trade --mode trade \
+        --adb-port 5560 --http-port 49600 --image "$IMAGE" \
+        --trade-init existing --data-dir "$trade_data" \
+        --password-secret "$trade_password" --ready-timeout 360; then
+        docker rm -f ths-trade >/dev/null 2>&1 || true
+        "$SCRIPT_DIR/add-instance.sh" --name ths-trade --mode trade \
+            --adb-port 5560 --http-port 49600 --image "$old_trade_image" \
+            --trade-init existing --data-dir "$trade_data" \
+            --password-secret "$trade_password" --ready-timeout 360
+        exit 1
+    fi
+fi
+
+echo "Redroid production rollout completed: $IMAGE ($REVISION), targets=$TARGETS strategy=$STRATEGY"

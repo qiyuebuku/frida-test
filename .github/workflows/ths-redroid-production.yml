@@ -51,6 +51,8 @@ jobs:
     env:
       ANDROID_HOME: /home/yuyangruan/android-sdk
       ANDROID_SDK_ROOT: /home/yuyangruan/android-sdk
+      THS_REDROID_TARGETS: ${{ vars.THS_REDROID_TARGETS || 'all' }}
+      THS_REDROID_STRATEGY: ${{ vars.THS_REDROID_STRATEGY || 'rolling' }}
     permissions:
       contents: read
     steps:
@@ -100,7 +102,8 @@ jobs:
           printf 'IMAGE_DIGEST=%s\n' "$digest" >> "$GITHUB_ENV"
       - name: Roll out the verified digest
         run: |
-          ths/deployment/redroid/rollout-production.sh "$IMAGE_DIGEST" "$GITHUB_SHA"
+          ths/deployment/redroid/rollout-production.sh "$IMAGE_DIGEST" "$GITHUB_SHA" \
+            --targets "$THS_REDROID_TARGETS" --strategy "$THS_REDROID_STRATEGY"
       - name: Remove transient signing and deploy-key material
         if: always()
         run: |
