@@ -229,6 +229,16 @@ def test_empty_volume_declares_native_bridge_before_android_init() -> None:
     assert marker < android_init
 
 
+def test_empty_volume_allows_lsposed_first_boot_restart_to_settle() -> None:
+    manager = (REDROID / "image" / "ths-runtime-manager.sh").read_text(
+        encoding="utf-8"
+    )
+
+    gate = manager[manager.index("ensure_riru_injected()") :]
+    assert 'while [ "$attempt" -le 90 ]' in gate
+    assert "did not enter zygote within 90 seconds" in gate
+
+
 def test_rollout_proves_empty_volume_before_touching_production() -> None:
     rollout = (REDROID / "rollout-production.sh").read_text(encoding="utf-8")
 

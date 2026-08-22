@@ -89,8 +89,11 @@ ensure_riru_injected() {
     # 镜像在 post-fs-data 阶段同步准备 Riru/LSPosed 文件，再启动 rirud。
     # 此处只做最终门禁；禁止在运行期重启 zygote，以免多个 redroid 实例
     # 同时重启 framework 给宿主机造成负载尖峰。
+    # On a genuinely empty volume LSPosed performs its own first-boot
+    # system_server/zygote restart after Riru loads. Do not power off the whole
+    # container while that deterministic initialization is still converging.
     attempt=1
-    while [ "$attempt" -le 15 ]; do
+    while [ "$attempt" -le 90 ]; do
         zygote_pid=$(pidof zygote64 2>/dev/null | awk '{print $1}')
         if [ -n "$zygote_pid" ] \
             && grep -q '/libriru\.so' "/proc/$zygote_pid/maps" 2>/dev/null \
@@ -101,7 +104,7 @@ ensure_riru_injected() {
         sleep 1
         attempt=$((attempt + 1))
     done
-    json_status riru_unavailable "Riru/LSPosed did not enter zygote"
+    json_status riru_unavailable "Riru/LSPosed did not enter zygote within 90 seconds"
     echo "Riru/LSPosed injection missing; requesting automatic container reboot"
     # Android init exits on poweroff; Docker's unless-stopped policy starts the
     # same immutable instance again. This replaces the former manual docker
