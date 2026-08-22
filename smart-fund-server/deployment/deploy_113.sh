@@ -1129,7 +1129,10 @@ if ! docker image inspect '${image}' >/dev/null 2>&1; then
       && [[ ! -s /home/${REMOTE_USER}/.docker/cli-plugins/docker-buildx ]]; then
     rm -f /home/${REMOTE_USER}/.docker/cli-plugins/docker-buildx
   fi
-  docker build --pull=false --build-arg APP_UID=\$(id -u) --build-arg APP_GID=\$(id -g) -f '${SERVER_DIR}/deployment/docker/Dockerfile' -t '${image}' '${SERVER_DIR}'
+  # BuildKit resolves FROM metadata over Docker Hub even with --pull=false.
+  # Production keeps the pinned base tag locally, so use the classic builder
+  # to avoid making an otherwise local build depend on the public registry.
+  DOCKER_BUILDKIT=0 docker build --pull=false --build-arg APP_UID=\$(id -u) --build-arg APP_GID=\$(id -g) -f '${SERVER_DIR}/deployment/docker/Dockerfile' -t '${image}' '${SERVER_DIR}'
 fi
 rm -rf '${SERVER_DIR}/.docker-build'"
     ssh_cmd "install -d -m 0700 '${CONFIG_DIR}/claude-container'; rsync -a --delete '/home/${REMOTE_USER}/.claude/' '${CONFIG_DIR}/claude-container/'; chmod 0700 '${CONFIG_DIR}/claude-container'"

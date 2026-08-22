@@ -32,3 +32,9 @@ def test_deployment_reconciles_containers_from_legacy_compose_project() -> None:
     assert "remove_foreign_compose_containers()" in script
     assert 'project}" != "${COMPOSE_PROJECT}' in script
     assert 'remove_foreign_compose_containers "${services[@]}"' in script
+
+
+def test_production_image_build_uses_local_base_cache() -> None:
+    script = DEPLOY_SCRIPT.read_text(encoding="utf-8")
+
+    assert "DOCKER_BUILDKIT=0 docker build --pull=false" in script
