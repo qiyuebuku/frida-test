@@ -18,6 +18,11 @@ def test_image_is_rebuilt_from_locked_artifacts_without_golden_data() -> None:
     assert "--hook-apk" in builder
     assert '"$SCRIPT_DIR/verify-artifacts.sh"' in builder
     assert "BUILD_REVISION=$REVISION" in builder
+    assert (
+        "libriruloader-android11-x86_64.so\" \"$context/libriruloader.so"
+        in builder
+    )
+    assert "libriruloader.so /system/lib64/libriruloader.so" in dockerfile
 
 
 def test_runtime_manager_owns_app_start_and_active_readiness() -> None:
@@ -153,6 +158,10 @@ def test_artifact_verifier_checks_size_and_digest() -> None:
     assert "sha256sum" in verifier
     assert "ths-11.58.03.apk|183278446|03f8d870" in lock
     assert "riru-lsposed-redroid-bootstrap.tar.gz" in lock
+    assert (
+        "libriruloader-android11-x86_64.so|11416|b803126d57148134"
+        in lock
+    )
 
 
 def test_existing_trade_volume_still_reinjects_password_secret() -> None:
@@ -197,7 +206,7 @@ def test_production_workflow_builds_pushes_and_deploys_digest_only() -> None:
     assert "github.event_name == 'push'" in workflow
     assert "refs/heads/main" in workflow
     assert "DEPLOY_ARTIFACTS_SSH_KEY" in workflow
-    assert "0cb78e3f71fb4a9ffcb82a169a3af1e86310224f" in (
+    assert "0608fd9b25c75f9bf1d18f36fc3ce87f002b087a" in (
         REDROID / "fetch-private-artifacts.sh"
     ).read_text(encoding="utf-8")
     assert "docker push" in workflow
@@ -235,11 +244,14 @@ def test_empty_volume_allows_lsposed_first_boot_restart_to_settle() -> None:
     )
 
     gate = manager[manager.index("ensure_riru_injected()") :]
+    assert "/system/lib64/libriruloader.so" in gate
+    assert "b803126d57148134faff2d0e9fb9268fbeabf8efd770ed5d" in gate
+    assert "riru_loader_invalid" in gate
     assert 'while [ "$attempt" -le 90 ]' in gate
     assert "did not enter zygote within 90 seconds" in gate
 
 
-def test_custom_riru_compatibility_service_starts_after_magisk_post_fs_data() -> None:
+def test_custom_riru_compatibility_service_starts_before_zygote_can_load_bridge() -> None:
     boot = (REDROID / "image" / "bootanim.riru.rc").read_text(encoding="utf-8")
     start = (REDROID / "image" / "start-rirud.sh").read_text(
         encoding="utf-8"
@@ -248,7 +260,7 @@ def test_custom_riru_compatibility_service_starts_after_magisk_post_fs_data() ->
     setup = boot.index("--setup-sbin")
     post_fs_data = boot.index("--post-fs-data")
     start_service = boot.index("start ths-rirud")
-    assert setup < post_fs_data < start_service
+    assert setup < start_service < post_fs_data
     assert boot.count("start ths-rirud") == 1
     assert "service ths-rirud" in boot
     assert "riru.Daemon" in start
