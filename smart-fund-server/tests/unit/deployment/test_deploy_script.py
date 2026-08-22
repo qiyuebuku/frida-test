@@ -1,0 +1,26 @@
+from pathlib import Path
+
+
+SERVER_ROOT = Path(__file__).resolve().parents[3]
+DEPLOY_SCRIPT = SERVER_ROOT / "deployment" / "deploy_113.sh"
+
+
+def test_schema_migrations_run_as_local_postgres_owner() -> None:
+    script = DEPLOY_SCRIPT.read_text(encoding="utf-8")
+    function = script.split("apply_schema_migrations() {", 1)[1].split(
+        "\n}\n\ninstall_redis()", 1
+    )[0]
+
+    assert function.count("sudo_cmd") == 2
+    assert function.count("sudo -u postgres psql -v ON_ERROR_STOP=1") == 2
+    assert "-U \"\\${DB_USER:-postgres}\"" not in function
+    assert "PGPASSWORD=" not in function
+
+
+def test_schema_migration_temp_files_are_removed_on_failure() -> None:
+    script = DEPLOY_SCRIPT.read_text(encoding="utf-8")
+    function = script.split("apply_schema_migrations() {", 1)[1].split(
+        "\n}\n\ninstall_redis()", 1
+    )[0]
+
+    assert function.count("trap 'rm -f") == 2

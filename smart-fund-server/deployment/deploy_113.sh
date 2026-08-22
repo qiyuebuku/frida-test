@@ -461,18 +461,22 @@ apply_schema_migrations() {
     local remote_jettask_migration="/tmp/smart-fund-jettask-migrations.sql"
     ssh_cmd "cat '${SERVER_DIR}'/schema/migrations/*.sql \
         > '${remote_migration}' && chmod 644 '${remote_migration}'"
-    ssh_cmd "set -a; . '${ENV_FILE}'; set +a; \
-        PGPASSWORD=\"\${DB_PASSWORD:-}\" psql -v ON_ERROR_STOP=1 \
-        -h \"\${DB_HOST:-127.0.0.1}\" -p \"\${DB_PORT:-5432}\" \
-        -U \"\${DB_USER:-postgres}\" -d \"\${DB_NAME}\" \
-        -f '${remote_migration}' && rm -f '${remote_migration}'"
+    # Production tables can be owned by postgres even though the application runs
+    # as the restricted DB_USER. Migrations are an administrative deployment task,
+    # so execute them through the local Unix socket as the table-owning OS account.
+    # This deliberately does not grant the application account broader privileges.
+    sudo_cmd "set -a; . '${ENV_FILE}'; set +a; \
+        trap 'rm -f \"${remote_migration}\"' EXIT; \
+        sudo -u postgres psql -v ON_ERROR_STOP=1 \
+        -p \"\${DB_PORT:-5432}\" -d \"\${DB_NAME:?DB_NAME is required}\" \
+        -f '${remote_migration}'"
     ssh_cmd "cat '${SERVER_DIR}'/schema/jettask_migrations/*.sql \
         > '${remote_jettask_migration}' && chmod 644 '${remote_jettask_migration}'"
-    ssh_cmd "set -a; . '${ENV_FILE}'; set +a; \
-        PGPASSWORD=\"\${DB_PASSWORD:-}\" psql -v ON_ERROR_STOP=1 \
-        -h \"\${DB_HOST:-127.0.0.1}\" -p \"\${DB_PORT:-5432}\" \
-        -U \"\${DB_USER:-postgres}\" -d \"\${JETTASK_DB_NAME:-jettask_queue}\" \
-        -f '${remote_jettask_migration}' && rm -f '${remote_jettask_migration}'"
+    sudo_cmd "set -a; . '${ENV_FILE}'; set +a; \
+        trap 'rm -f \"${remote_jettask_migration}\"' EXIT; \
+        sudo -u postgres psql -v ON_ERROR_STOP=1 \
+        -p \"\${DB_PORT:-5432}\" -d \"\${JETTASK_DB_NAME:-jettask_queue}\" \
+        -f '${remote_jettask_migration}'"
     echo "数据库迁移完成"
 }
 
