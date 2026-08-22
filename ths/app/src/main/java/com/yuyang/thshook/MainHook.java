@@ -10665,17 +10665,24 @@ public class MainHook {
             Object broker = repository.getClass().getMethod("W", String.class)
                     .invoke(repository, qsid);
             if (broker == null) {
-                // 全新数据卷可能尚未下载 yyb 数据库。仍通过 App 自身的 a1s.y()
-                // 解析器创建券商对象，避免依赖旧设备导出的账户 seed。
-                JSONObject brokerJson = new JSONObject();
-                brokerJson.put("yybname", brokerName);
-                brokerJson.put("accounttype", "0");
-                brokerJson.put("wtid", "");
-                brokerJson.put("qsid", qsid);
-                brokerJson.put("area", "");
-                brokerJson.put("qsname", brokerName);
-                brokerJson.put("pinyin", "");
-                brokerJson.put("dtkltype", "");
+                // 全新数据卷尚未下载 yyb 数据库。券商路由配置不是秘密，随
+                // Hook 版本化保存；禁止用只有名称/qsid 的最小假对象，因为它
+                // 缺少 wtid、营业部和交易网关策略，最终只会静默登录超时。
+                String assetName = "trade_brokers/" + qsid + ".json";
+                java.io.InputStream brokerInput = appInstance.getAssets().open(assetName);
+                java.io.ByteArrayOutputStream brokerBytes = new java.io.ByteArrayOutputStream();
+                byte[] brokerBuffer = new byte[2048];
+                int brokerRead;
+                while ((brokerRead = brokerInput.read(brokerBuffer)) > 0) {
+                    brokerBytes.write(brokerBuffer, 0, brokerRead);
+                }
+                brokerInput.close();
+                JSONObject brokerJson = new JSONObject(
+                        new String(brokerBytes.toByteArray(), "UTF-8"));
+                if (!qsid.equals(brokerJson.optString("qsid"))
+                        || !brokerName.equals(brokerJson.optString("qsname"))) {
+                    return errorJson(out, "versioned broker template mismatch");
+                }
                 Class<?> cbClass = cl.loadClass("a1s$a");
                 Object cb = Proxy.newProxyInstance(cl, new Class[]{cbClass},
                         (p, m, args) -> {
@@ -10694,6 +10701,16 @@ public class MainHook {
                 broker = cl.loadClass("a1s")
                         .getMethod("y", org.json.JSONObject.class, boolean.class, cbClass)
                         .invoke(null, brokerJson, false, cb);
+                JSONObject extra = brokerJson.optJSONObject("_extra");
+                if (extra != null && broker != null) {
+                    Class<?> brokerClass = broker.getClass();
+                    for (String fieldName : new String[]{"c", "d", "e", "n"}) {
+                        try {
+                            brokerClass.getField(fieldName).set(
+                                    broker, extra.optString(fieldName, ""));
+                        } catch (Throwable ignored) { }
+                    }
+                }
                 out.put("broker_rebuilt", broker != null);
             }
             if (broker == null) return errorJson(out, "broker unavailable for configured qsid");

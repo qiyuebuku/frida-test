@@ -1,3 +1,4 @@
+import json
 from pathlib import Path
 
 
@@ -365,6 +366,15 @@ def test_trade_can_be_rebuilt_from_minimal_protected_credentials() -> None:
     official_fallback = password_login[password_login.index("if (!officialReloginStarted)") :]
     assert "forceNativeTradeLoginPath(cl, mgr, report)" in official_fallback
     assert "configured broker does not match qsid" in source
+    broker_template = ROOT / "app/src/main/assets/trade_brokers/16.json"
+    template = json.loads(broker_template.read_text(encoding="utf-8"))
+    assert template["qsid"] == "16"
+    assert template["qsname"] == "川财证券"
+    assert template["wtid"]
+    assert template["accounttype"]
+    assert "last_select" not in template
+    assert '"trade_brokers/" + qsid + ".json"' in source
+    assert "versioned broker template mismatch" in source
     assert "trade_account" in manager
     assert "trade_broker" in manager
     assert "trade_qsid" in manager
