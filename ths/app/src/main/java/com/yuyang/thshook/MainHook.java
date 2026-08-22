@@ -11762,6 +11762,15 @@ public class MainHook {
             }
             report.put("official_relogin_started", officialReloginStarted);
             if (!officialReloginStarted) {
+                // A fresh headless Redroid has no successful-login callback to
+                // set lzr.e. Its CBAS socket can connect and report channel-ok
+                // while password replies never reach g8m. The direct fallback
+                // must therefore use the native jniRequest route; real phones
+                // normally stay on the official x0s.h branch above.
+                if (!forceNativeTradeLoginPath(cl, mgr, report)) {
+                    lastEnsureTradeError = "trade pwd login: native path unavailable";
+                    return false;
+                }
                 Object f2sInst = cl.loadClass("f2s").getMethod("d").invoke(null);
                 cl.loadClass("f2s").getMethod("o",
                                 cl.loadClass("g6m"), cl.loadClass("a1s"),
