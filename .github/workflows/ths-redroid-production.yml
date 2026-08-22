@@ -42,11 +42,15 @@ jobs:
   publish-and-deploy:
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     needs: redroid-validate
-    runs-on: ubuntu-latest
-    # The first disaster-recovery publish may transfer the complete Redroid
-    # base image before the empty-volume canary and nine-instance rollout.
+    runs-on: [self-hosted, Linux, X64, production-redroid]
+    # Build and rollout share the production host's Docker daemon. Large image
+    # layers stay on the private loopback registry instead of crossing the
+    # public Internet through Docker Hub.
     timeout-minutes: 180
     environment: production
+    env:
+      ANDROID_HOME: /home/yuyangruan/android-sdk
+      ANDROID_SDK_ROOT: /home/yuyangruan/android-sdk
     permissions:
       contents: read
     steps:
@@ -76,48 +80,30 @@ jobs:
         env:
           DEPLOY_ARTIFACTS_SSH_KEY: ${{ secrets.DEPLOY_ARTIFACTS_SSH_KEY }}
         run: |
-          install -d -m 700 ~/.ssh
-          printf '%s\n' "$DEPLOY_ARTIFACTS_SSH_KEY" > ~/.ssh/deploy-artifacts
-          chmod 600 ~/.ssh/deploy-artifacts
-          printf '%s\n' 'github.com ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOMqqnkVzrm0SdG6UOoqKLsabgH5C9okWi0dh2l9GKJl' > ~/.ssh/known_hosts
-          ARTIFACT_SSH_KEY="$HOME/.ssh/deploy-artifacts" \
+          printf '%s\n' "$DEPLOY_ARTIFACTS_SSH_KEY" > /tmp/ths-deploy-artifacts-key
+          chmod 600 /tmp/ths-deploy-artifacts-key
+          printf '%s\n' 'github.com ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOMqqnkVzrm0SdG6UOoqKLsabgH5C9okWi0dh2l9GKJl' > /tmp/ths-github-known-hosts
+          ARTIFACT_SSH_KEY=/tmp/ths-deploy-artifacts-key \
+            ARTIFACT_KNOWN_HOSTS=/tmp/ths-github-known-hosts \
             ths/deployment/redroid/fetch-private-artifacts.sh /tmp/ths-redroid-artifacts
-      - name: Build and push immutable image
-        env:
-          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
-          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+      - name: Build and publish immutable image to the private loopback registry
         run: |
-          printf '%s' "$DOCKERHUB_TOKEN" | docker login --username "$DOCKERHUB_USERNAME" --password-stdin
-          image="yuyangruan/ths-redroid:git-$GITHUB_SHA"
+          ths/deployment/redroid/ensure-local-registry.sh
+          image="127.0.0.1:5000/ths-redroid:git-$GITHUB_SHA"
           ths/deployment/redroid/build-image.sh \
             --artifact-dir /tmp/ths-redroid-artifacts \
             --hook-apk /tmp/ths-hook.apk --image "$image" --revision "$GITHUB_SHA"
           docker push "$image"
-          digest=$(docker image inspect "$image" --format '{{index .RepoDigests 0}}')
-          [[ "$digest" =~ ^yuyangruan/ths-redroid@sha256:[0-9a-f]{64}$ ]]
+          digest=$(docker image inspect "$image" --format '{{range .RepoDigests}}{{println .}}{{end}}' \
+            | grep -E '^127\.0\.0\.1:5000/ths-redroid@sha256:[0-9a-f]{64}$' | head -1)
+          [[ "$digest" =~ ^127\.0\.0\.1:5000/ths-redroid@sha256:[0-9a-f]{64}$ ]]
           printf 'IMAGE_DIGEST=%s\n' "$digest" >> "$GITHUB_ENV"
-      - name: Configure production SSH
-        env:
-          SSH_PRIVATE_KEY: ${{ secrets.THS_PRODUCTION_SSH_PRIVATE_KEY }}
-          SSH_KNOWN_HOSTS: ${{ secrets.THS_PRODUCTION_SSH_KNOWN_HOSTS }}
-        run: |
-          install -d -m 700 ~/.ssh
-          printf '%s\n' "$SSH_PRIVATE_KEY" > ~/.ssh/ths-production
-          chmod 600 ~/.ssh/ths-production
-          printf '%s\n' "$SSH_KNOWN_HOSTS" >> ~/.ssh/known_hosts
-          chmod 600 ~/.ssh/known_hosts
       - name: Roll out the verified digest
-        env:
-          SSH_HOST: ${{ secrets.THS_PRODUCTION_HOST }}
-          SSH_PORT: ${{ secrets.THS_PRODUCTION_SSH_PORT }}
-          SSH_USER: ${{ secrets.THS_PRODUCTION_SSH_USER }}
         run: |
-          {
-            printf 'REMOTE_HOST=%q\n' "$SSH_HOST"
-            printf 'REMOTE_PORT=%q\n' "$SSH_PORT"
-            printf 'REMOTE_USER=%q\n' "$SSH_USER"
-            printf 'SSH_KEY=%q\n' "$HOME/.ssh/ths-production"
-          } > /tmp/ths-redroid-production.env
-          chmod 600 /tmp/ths-redroid-production.env
-          ths/deployment/redroid/deploy-production.sh \
-            "$IMAGE_DIGEST" "$GITHUB_SHA" /tmp/ths-redroid-production.env
+          ths/deployment/redroid/rollout-production.sh "$IMAGE_DIGEST" "$GITHUB_SHA"
+      - name: Remove transient signing and deploy-key material
+        if: always()
+        run: |
+          find /tmp/ths-redroid-artifacts -type f -exec shred -u {} + 2>/dev/null || true
+          shred -u /tmp/ths-hook-release.keystore /tmp/ths-hook.apk \
+            /tmp/ths-deploy-artifacts-key /tmp/ths-github-known-hosts 2>/dev/null || true
