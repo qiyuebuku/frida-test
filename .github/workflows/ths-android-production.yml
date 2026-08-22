@@ -47,7 +47,9 @@ jobs:
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     needs: validate
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    # A cold Python dependency layer can exceed 15 minutes on the production
+    # runner. Keep a bounded timeout while allowing a cache-miss build to finish.
+    timeout-minutes: 60
     environment: production
     steps:
       - uses: actions/checkout@v4
