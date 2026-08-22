@@ -62,6 +62,13 @@ if [ "$NEW_INSTANCE" = true ]; then
     touch /data/.ths-empty-volume-created
 fi
 
+# Riru's daemon reads this persistent selector before zygote starts. The former
+# golden /data happened to contain it; an actually empty volume must derive it
+# from the immutable native-bridge overlay instead of relying on copied state.
+mkdir -p /data/adb/riru
+printf '%s\n' 'libndk_translation.so' > /data/adb/riru/native_bridge
+chmod 0666 /data/adb/riru/native_bridge
+
 mkdir -p "$STATE_DIR" /data/local/tmp/ths-secrets
 chmod 0700 "$STATE_DIR" /data/local/tmp/ths-secrets
 

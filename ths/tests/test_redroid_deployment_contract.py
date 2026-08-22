@@ -217,6 +217,18 @@ def test_production_workflow_builds_pushes_and_deploys_digest_only() -> None:
     assert "unable to pull immutable image after 5 attempts" in rollout
 
 
+def test_empty_volume_declares_native_bridge_before_android_init() -> None:
+    entrypoint = (REDROID / "image" / "docker-entrypoint.sh").read_text(
+        encoding="utf-8"
+    )
+
+    marker = entrypoint.index("/data/adb/riru/native_bridge")
+    android_init = entrypoint.rindex("exec /init")
+    assert "libndk_translation.so" in entrypoint
+    assert "chmod 0666 /data/adb/riru/native_bridge" in entrypoint
+    assert marker < android_init
+
+
 def test_rollout_proves_empty_volume_before_touching_production() -> None:
     rollout = (REDROID / "rollout-production.sh").read_text(encoding="utf-8")
 
