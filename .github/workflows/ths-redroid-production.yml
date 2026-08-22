@@ -3,11 +3,9 @@ name: THS Redroid immutable production image
 on:
   pull_request:
     branches: [main]
-    paths:
-      - "ths/app/**"
-      - "ths/deployment/redroid/**"
-      - "ths/tests/test_redroid_deployment_contract.py"
-      - ".github/workflows/ths-redroid-production.yml"
+    # redroid-validate is a required branch-protection check. It must be
+    # created for every PR; otherwise unrelated PRs remain permanently in the
+    # "Expected" state and cannot be merged.
   push:
     branches: [main]
     paths:
