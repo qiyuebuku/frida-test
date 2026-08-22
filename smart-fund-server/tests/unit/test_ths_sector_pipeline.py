@@ -909,12 +909,8 @@ async def test_native_sector_constituents_uses_board_selector_and_maps_rows() ->
     assert body["sort_indicator_id"] == ""
     assert body["order"] == ""
     assert body["hurricane_type"] is None
-    assert body["required_hurricane_indicator_ids"] == [
-        "security_name",
-        "last_price",
-        "hq-fncdict-199112",
-    ]
-    assert body["completion_mode"] == "all_required_rows"
+    assert body["required_hurricane_indicator_ids"] == ["security_name"]
+    assert body["completion_mode"] == "settled"
     assert body["timeout_ms"] == 8000
     assert result["data"]["total_count"] == 54
     assert result["data"]["constituents"][0]["security_name"] == "华数传媒"
@@ -937,15 +933,12 @@ async def test_native_sector_constituents_pages_past_upstream_100_row_limit() ->
         side_effect=[
             {
                 "success": True,
-                "data": {"total": 150, "rows": [native_row(i) for i in range(100)]},
-            },
-            {
-                "success": True,
                 "data": {
                     "total": 150,
-                    "rows": [native_row(i) for i in range(100, 150)],
+                    "rows": [native_row(i) for i in range(start, min(start + 20, 150))],
                 },
-            },
+            }
+            for start in range(0, 150, 20)
         ]
     )
     client._request_native_sector_bridge = request  # type: ignore[method-assign]
@@ -954,10 +947,11 @@ async def test_native_sector_constituents_pages_past_upstream_100_row_limit() ->
     finally:
         await client.close()
 
-    assert request.await_count == 2
-    assert request.await_args_list[0].args[1]["start"] == 0
-    assert request.await_args_list[0].args[1]["count"] == 100
-    assert request.await_args_list[1].args[1]["start"] == 100
+    assert request.await_count == 8
+    assert [call.args[1]["start"] for call in request.await_args_list] == list(
+        range(0, 150, 20)
+    )
+    assert [call.args[1]["count"] for call in request.await_args_list] == [20] * 8
     assert result["data"]["count"] == 150
     assert result["data"]["total_count"] == 150
 
@@ -1497,7 +1491,9 @@ async def test_sector_reference_ignores_stale_trade_date_candidates(
     batch = await service._collect_ths_sector_references()
 
     assert batch.details["requested_sector_codes"] == ["886068"]
-    constituents.assert_awaited_once_with("886068", market_code="48", count=1000)
+    constituents.assert_awaited_once_with(
+        "886068", market_code="48", count=1000, sector_name="AI视频"
+    )
 
 
 def _snapshot(

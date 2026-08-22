@@ -785,6 +785,10 @@ ALTER TABLE ONLY public.ft_market_snapshots
     UNIQUE (data_type, subject_id, provider, bucket_at);
 CREATE INDEX ix_ft_market_snapshots_subject_time
     ON public.ft_market_snapshots (subject_id, data_type, bucket_at);
+CREATE INDEX ix_ft_market_snapshots_latest
+    ON public.ft_market_snapshots (data_type, subject_id, provider, bucket_at DESC);
+CREATE INDEX ix_ft_market_snapshots_bucket_at
+    ON public.ft_market_snapshots (bucket_at);
 CREATE INDEX ix_ft_market_snapshots_trade_type
     ON public.ft_market_snapshots (trade_date, data_type);
 CREATE INDEX ix_ft_market_snapshots_freshness
@@ -806,6 +810,8 @@ ALTER TABLE ONLY public.ft_collection_runs
     ADD CONSTRAINT ft_collection_runs_pkey PRIMARY KEY (id);
 CREATE INDEX ix_ft_collection_runs_task_started
     ON public.ft_collection_runs (task_name, started_at);
+CREATE INDEX ix_ft_collection_runs_task_source_started
+    ON public.ft_collection_runs (task_name, source_name, started_at DESC);
 CREATE INDEX ix_ft_collection_runs_source_started
     ON public.ft_collection_runs (source_name, started_at);
 CREATE INDEX ix_ft_collection_runs_status_started

@@ -73,6 +73,15 @@ def test_component_revisions_are_recorded_independently() -> None:
     assert "DEPLOYED_SERVER_THS_STREAM" in deploy
 
 
+def test_source_deployer_never_mutates_redroid_runtime() -> None:
+    deploy = (WORKSPACE / "deploy.sh").read_text(encoding="utf-8")
+
+    selection = deploy[deploy.index('if [[ "${COMPONENTS}" == "auto" ]]'):]
+    assert "selected+=(ths-hook)" not in selection
+    assert "selected+=(ths-runtime)" not in selection
+    assert '"${WORKSPACE}/ths/deployment/deploy.sh"' not in deploy
+
+
 def test_ths_public_directory_is_not_flattened_with_internal_files() -> None:
     deployment = WORKSPACE / "ths" / "deployment"
     public_files = sorted(path.name for path in deployment.iterdir() if path.is_file())

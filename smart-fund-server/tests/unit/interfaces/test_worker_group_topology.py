@@ -2,7 +2,13 @@ from src.interfaces.cli.main import COLLECTION_WORKER_GROUPS, COLLECTION_WORKER_
 
 
 def test_collection_worker_groups_are_reduced_and_non_overlapping() -> None:
-    assert set(COLLECTION_WORKER_GROUPS) == {"ths", "ths-sector", "general"}
+    assert set(COLLECTION_WORKER_GROUPS) == {
+        "ths",
+        "ths-sector",
+        "ths-sector-fragment",
+        "http",
+        "general",
+    }
 
     owners: dict[str, str] = {}
     for group, queues in COLLECTION_WORKER_GROUPS.items():
@@ -13,10 +19,9 @@ def test_collection_worker_groups_are_reduced_and_non_overlapping() -> None:
             owners[queue] = group
 
 
-def test_general_worker_owns_http_and_internal_work() -> None:
+def test_general_worker_owns_internal_work() -> None:
     queues = set(COLLECTION_WORKER_GROUPS["general"])
 
-    assert "collect_collection_source" in queues
     assert "collect_market_daily_bars" in queues
     assert "scan_watchlist_instruments" in queues
     assert "run_research_agent" in queues
@@ -35,7 +40,14 @@ def test_every_default_collection_queue_has_exactly_one_group_owner() -> None:
 
 def test_latency_sensitive_ths_sector_remains_isolated() -> None:
     assert set(COLLECTION_WORKER_GROUPS["ths-sector"]) == {
-        "collect_ths_sector_fragment_v2",
         "collect_ths_sector_reference_snapshot_v2",
         "collect_ths_sector_signal_fragment_v2",
     }
+    assert set(COLLECTION_WORKER_GROUPS["ths-sector-fragment"]) == {
+        "collect_ths_sector_fragment_v2",
+    }
+
+
+def test_http_collection_isolated_from_general_backlogs() -> None:
+    assert COLLECTION_WORKER_GROUPS["http"] == ("collect_collection_source",)
+    assert "collect_collection_source" not in COLLECTION_WORKER_GROUPS["general"]

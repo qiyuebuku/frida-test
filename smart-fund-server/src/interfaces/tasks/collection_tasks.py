@@ -10,8 +10,10 @@ jettask-rs 接入边界:
 - 不在 task 层写业务逻辑,避免任务框架替换污染 application service。
 """
 import asyncio
+import functools
 import logging
 import time
+import uuid
 from datetime import datetime, timezone
 
 import redis
@@ -135,12 +137,47 @@ def _register_task(
     jettask-rs 的 Python binding 使用秒级数值退避参数；这里集中声明，
     避免散落旧框架的布尔 retry_backoff 写法。
     """
-    return router.task(
-        queue=queue,
-        max_retries=max_retries,
-        retry_backoff=retry_backoff,
-        retry_backoff_max=retry_backoff_max,
-    )
+    def decorator(operation):
+        @functools.wraps(operation)
+        async def observed_operation(*args, **kwargs):
+            execution_id = uuid.uuid4().hex[:12]
+            started_at = time.monotonic()
+            logger.info(
+                "jettask handler started execution_id=%s queue=%s args=%r kwargs=%r",
+                execution_id,
+                queue,
+                args,
+                kwargs,
+            )
+            try:
+                result = await operation(*args, **kwargs)
+            except BaseException as exc:
+                logger.error(
+                    "jettask handler ended execution_id=%s queue=%s "
+                    "outcome=%s duration_seconds=%.3f",
+                    execution_id,
+                    queue,
+                    type(exc).__name__,
+                    time.monotonic() - started_at,
+                )
+                raise
+            logger.info(
+                "jettask handler ended execution_id=%s queue=%s "
+                "outcome=success duration_seconds=%.3f",
+                execution_id,
+                queue,
+                time.monotonic() - started_at,
+            )
+            return result
+
+        return router.task(
+            queue=queue,
+            max_retries=max_retries,
+            retry_backoff=retry_backoff,
+            retry_backoff_max=retry_backoff_max,
+        )(observed_operation)
+
+    return decorator
 
 
 # ==================== P0: 核心任务 ====================
@@ -351,11 +388,19 @@ async def collect_ths_sector_fragment_v2(
 ):
     """独立采集并立即持久化一个同花顺板块数据分片。"""
 
-    return await _market_observation.collect_ths_sector_fragment(
-        kind,
-        classification,
-        metric,
-    )
+    # JetTask's outer timeout did not recover two Redis deliveries after the
+    # native request path stalled: both remained pending for nearly an hour.
+    # Keep the deadline in the application coroutine so its finally blocks
+    # release the per-source lock and the worker slot deterministically.
+    # The gateway intentionally allows up to 120 seconds for a free Android
+    # backend. Two bounded native attempts therefore need a task-level budget
+    # larger than one minute, while still ending before the process watchdog.
+    async with asyncio.timeout(280):
+        return await _market_observation.collect_ths_sector_fragment(
+            kind,
+            classification,
+            metric,
+        )
 
 
 @_register_task(queue="collect_ths_sector_reference_snapshot_v2", max_retries=0)

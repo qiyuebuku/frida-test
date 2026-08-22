@@ -121,8 +121,10 @@ CHART_SERIES_SPECS = {
     "bond_long": ("bond_market_price", "cn:bond_futures:T9999", 520, False),
     "bond_short": ("bond_market_price", "cn:bond_futures:TS9999", 520, False),
     "bond_benchmark": ("bond_market_price", "cn:index:ths_all_a", 520, False),
-    "market_anomaly": ("market_anomaly", "cn:a_share:ths_anomaly", 300, True),
-    "call_auction": ("call_auction", "cn:a_share:call_auction", 120, True),
+    # These panels render only the latest frame's full curve/events. Returning
+    # hundreds of complete event arrays duplicated megabytes on every refresh.
+    "market_anomaly": ("market_anomaly", "cn:a_share:ths_anomaly", 1, True),
+    "call_auction": ("call_auction", "cn:a_share:call_auction", 1, True),
 }
 CHINA_TIMEZONE = ZoneInfo("Asia/Shanghai")
 
@@ -643,7 +645,7 @@ class MarketObservabilityService:
             limit=5000,
         )
         latest_by_type = _group_by_data_type(latest)
-        chart_series = self._chart_series(latest_by_type)
+        chart_series = self._chart_series(latest_by_type, since=since)
         northbound_current = max(
             latest_by_type.get("northbound_capital_current", [])
             or latest_by_type.get("northbound_capital", []),
@@ -836,6 +838,8 @@ class MarketObservabilityService:
     def _chart_series(
         self,
         latest_by_type: dict[str, list[dict[str, Any]]],
+        *,
+        since: datetime,
     ) -> dict[str, dict[str, Any]]:
         batch_query = getattr(self._snapshots, "query_histories", None)
         latest_by_series = {
@@ -872,7 +876,10 @@ class MarketObservabilityService:
             date_windows[key] = (
                 trade_date
                 if spec[3]
-                else trade_date - timedelta(days=history_days),
+                else max(
+                    trade_date - timedelta(days=history_days),
+                    since.date(),
+                ),
                 trade_date,
             )
         batch_rows = (
@@ -882,6 +889,12 @@ class MarketObservabilityService:
                 limit_per_series=max(
                     spec[2] for spec in CHART_SERIES_SPECS.values()
                 ),
+                limits_by_series={
+                    (data_type, subject_id): limit
+                    for data_type, subject_id, limit, _intraday in (
+                        CHART_SERIES_SPECS.values()
+                    )
+                },
             )
             if callable(batch_query)
             else None
@@ -1627,7 +1640,12 @@ def _watchlist_row(
     snapshots: dict[tuple[str, str], dict[str, Any]],
 ) -> dict[str, Any]:
     latest = [
-        _compact_snapshot(row)
+        {
+            "id": row.get("id"),
+            "data_type": row.get("data_type"),
+            "bucket_at": row.get("bucket_at"),
+            "freshness_status": row.get("freshness_status"),
+        }
         for (code, _data_type), row in snapshots.items()
         if code == item.code
     ]

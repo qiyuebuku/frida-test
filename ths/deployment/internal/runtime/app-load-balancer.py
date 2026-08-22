@@ -70,10 +70,14 @@ class BackendPool:
         timeout: float,
         *,
         elastic_pool: bool = False,
+        passive_recovery: bool = False,
+        hook_health_only: bool = False,
     ) -> None:
         self.backends = backends
         self.timeout = timeout
         self.elastic_pool = elastic_pool
+        self.passive_recovery = passive_recovery
+        self.hook_health_only = hook_health_only
         self.http_max_inflight = 1 if elastic_pool else 8
         self._selection_lock = threading.Lock()
         self._capacity_changed = threading.Condition(self._selection_lock)
@@ -107,7 +111,7 @@ class BackendPool:
             # 2026-08-19: hook 存活 ≠ 采集可用（新用户首启卡开户页时 /health 全绿
             # 但行情全超时）。新版 hook 暴露 collector_ready（unified 请求 10 分钟
             # 内真实成功过）；字段缺失（旧 dex）时退回 ok 判定。
-            if healthy and "collector_ready" in payload:
+            if healthy and not self.hook_health_only and "collector_ready" in payload:
                 healthy = payload.get("collector_ready") is True
                 if not healthy:
                     error = "collector not ready (unified probe stale)"
@@ -305,6 +309,11 @@ class BackendPool:
                 connection.request(method, path, body=body or None, headers=request_headers)
                 response = connection.getresponse()
                 payload = response.read()
+                if response.status >= 500 and self._is_native_request(path):
+                    raise OSError(
+                        f"backend HTTP {response.status}: "
+                        f"{payload[:240].decode('utf-8', errors='replace')}"
+                    )
                 return (
                     response.status,
                     payload,
@@ -328,6 +337,39 @@ class BackendPool:
             backend.last_error = f"{type(exc).__name__}: {exc}"
 
         def recover() -> None:
+            if self.passive_recovery:
+                # Let an in-process unified dispatch fully unwind before the
+                # backend becomes eligible again.  /health is served by a
+                # separate Hook thread and can stay green while that dispatch
+                # is still timing out.
+                time.sleep(5)
+                for _ in range(45):
+                    connection = http.client.HTTPConnection(
+                        backend.host, backend.port, timeout=3
+                    )
+                    try:
+                        connection.request("GET", "/health", headers={"Connection": "close"})
+                        response = connection.getresponse()
+                        payload = json.loads(response.read())
+                        if response.status == 200 and payload.get("ok") is True:
+                            with backend.lock:
+                                backend.draining = False
+                                backend.healthy = True
+                                backend.consecutive_health_failures = 0
+                                backend.last_error = None
+                            with self._capacity_changed:
+                                self._capacity_changed.notify_all()
+                            LOGGER.info("backend=%s passive recovery completed", backend.name)
+                            return
+                    except Exception as recovery_exc:  # noqa: BLE001
+                        with backend.lock:
+                            backend.last_error = (
+                                f"passive recovery {type(recovery_exc).__name__}: {recovery_exc}"
+                            )
+                    finally:
+                        connection.close()
+                    time.sleep(2)
+                return
             # Android user switching and App restarts are device-global operations.
             # Only the gateway may run one recovery at a time.
             with self._recovery_lock:
@@ -365,6 +407,10 @@ class BackendPool:
 
     @staticmethod
     def _queue_timeout(path: str, body: bytes) -> float:
+        # Production has more worker concurrency than the eight single-flight
+        # Android processes. Apply bounded backpressure instead of returning a
+        # premature 503 after 10-15 seconds. The upper bound remains below the
+        # callers' 90-second transport timeout.
         if path.startswith("/native/") and body:
             try:
                 payload = json.loads(body)
@@ -373,10 +419,10 @@ class BackendPool:
                     or payload.get("timeout_seconds")
                     or 8
                 )
-                return max(2.0, min(15.0, request_timeout + 2.0))
+                return max(30.0, min(60.0, request_timeout + 30.0))
             except (TypeError, ValueError, json.JSONDecodeError):
                 pass
-        return 10.0
+        return 45.0
 
     def health_payload(self) -> bytes:
         snapshots = [item.snapshot() for item in self.backends]
@@ -831,6 +877,15 @@ class LoadBalancerHandler(BaseHTTPRequestHandler):
                 status,
                 round((time.monotonic() - started) * 1000),
             )
+        except (BrokenPipeError, ConnectionResetError):
+            # The upstream response has already been completed. A caller that
+            # closes its socket must not be recorded as a gateway-generated
+            # 503, nor can a second HTTP response be sent on this connection.
+            LOGGER.warning(
+                "client disconnected before response body completed method=%s path=%s",
+                method,
+                self.path,
+            )
         except Exception as exc:  # noqa: BLE001 - gateway boundary
             LOGGER.exception("request failed method=%s path=%s", method, self.path)
             payload = json.dumps(
@@ -863,13 +918,21 @@ def main() -> None:
     parser.add_argument("--stream-listen-port", type=int, default=49352)
     parser.add_argument("--stream-backend", action="append", required=True)
     parser.add_argument("--elastic-pool", action="store_true")
+    parser.add_argument("--passive-recovery", action="store_true")
+    parser.add_argument("--hook-health-only", action="store_true")
     args = parser.parse_args()
     backends = []
     for item in args.backend:
         name, address = item.split("=", 1)
         host, port = address.rsplit(":", 1)
         backends.append(Backend(name=name, host=host, port=int(port)))
-    pool = BackendPool(backends, args.timeout, elastic_pool=args.elastic_pool)
+    pool = BackendPool(
+        backends,
+        args.timeout,
+        elastic_pool=args.elastic_pool,
+        passive_recovery=args.passive_recovery,
+        hook_health_only=args.hook_health_only,
+    )
     for backend in backends:
         pool._check_health(backend)
     pool.start_health_monitor(args.health_interval)

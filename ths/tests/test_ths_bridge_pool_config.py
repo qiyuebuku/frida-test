@@ -48,18 +48,23 @@ def test_production_collectors_use_users_10_through_17_only() -> None:
     assert configured_users == set(range(10, 18))
 
 
-def test_collector_units_target_5556_and_lb_excludes_trade() -> None:
+def test_collector_units_target_5556_and_docker_gateway_excludes_trade() -> None:
     template = (INTERNAL_DIR / "systemd" / "collector-bridge@.service").read_text(
         encoding="utf-8"
     )
-    load_balancer = (INTERNAL_DIR / "systemd" / "app-load-balancer.service").read_text(
+    gateway_entrypoint = (
+        DEPLOYMENT_DIR / "redroid" / "gateway" / "gateway-entrypoint.sh"
+    ).read_text(
         encoding="utf-8"
     )
 
     assert "THS_ANDROID_SERIAL=emulator-5556" in template
-    assert "--backend primary=127.0.0.1:49301" in load_balancer
-    assert "--backend trade=" not in load_balancer
-    assert "49391" not in load_balancer
+    for collector_index in range(1, 9):
+        port = 49609 + collector_index
+        assert f"--backend collector{collector_index}=127.0.0.1:{port}" in gateway_entrypoint
+    assert "--backend trade=" not in gateway_entrypoint
+    assert "49600" not in gateway_entrypoint
+    assert not (INTERNAL_DIR / "systemd" / "app-load-balancer.service").exists()
 
 
 def test_trade_bridge_is_managed_separately_and_write_ready_is_gated() -> None:

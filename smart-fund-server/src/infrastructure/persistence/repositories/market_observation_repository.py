@@ -6,8 +6,9 @@ from datetime import date, datetime
 from decimal import Decimal
 from typing import Any
 
-from sqlalchemy import and_, func, or_, select, tuple_, update
+from sqlalchemy import and_, func, or_, select, text, true, tuple_, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
+from sqlalchemy.orm import aliased
 
 from src.infrastructure.connections import get_session
 from src.infrastructure.persistence.models.collection import (
@@ -39,6 +40,31 @@ _UNCHANGED_PAYLOAD_DEDUP_DATA_TYPES = frozenset(
         "ths_etf_cross_border",
         "ths_etf_hot_ranking",
     }
+)
+
+
+_LATEST_PAYLOADS_SQL = text(
+    """
+    SELECT keys.data_type,
+           keys.subject_id,
+           keys.provider,
+           latest.trade_date,
+           latest.payload_hash
+    FROM unnest(
+        CAST(:data_types AS text[]),
+        CAST(:subject_ids AS text[]),
+        CAST(:providers AS text[])
+    ) AS keys(data_type, subject_id, provider)
+    JOIN LATERAL (
+        SELECT snapshot.trade_date, snapshot.payload_hash
+        FROM ft_market_snapshots AS snapshot
+        WHERE snapshot.data_type = keys.data_type
+          AND snapshot.subject_id = keys.subject_id
+          AND snapshot.provider = keys.provider
+        ORDER BY snapshot.bucket_at DESC
+        LIMIT 1
+    ) AS latest ON true
+    """
 )
 
 
@@ -106,38 +132,18 @@ class MarketSnapshotRepository:
             ] = {}
             for start in range(0, len(dedup_candidates), self.CHUNK_SIZE):
                 chunk = dedup_candidates[start : start + self.CHUNK_SIZE]
-                keys = {
+                keys = sorted({
                     (item["data_type"], item["subject_id"], item["provider"])
                     for item in chunk
-                }
-                statement = (
-                    select(
-                        MarketSnapshot.data_type,
-                        MarketSnapshot.subject_id,
-                        MarketSnapshot.provider,
-                        MarketSnapshot.trade_date,
-                        MarketSnapshot.payload_hash,
-                    )
-                    .where(
-                        tuple_(
-                            MarketSnapshot.data_type,
-                            MarketSnapshot.subject_id,
-                            MarketSnapshot.provider,
-                        ).in_(keys)
-                    )
-                    .order_by(
-                        MarketSnapshot.data_type,
-                        MarketSnapshot.subject_id,
-                        MarketSnapshot.provider,
-                        MarketSnapshot.bucket_at.desc(),
-                    )
-                    .distinct(
-                        MarketSnapshot.data_type,
-                        MarketSnapshot.subject_id,
-                        MarketSnapshot.provider,
-                    )
-                )
-                for row in session.execute(statement):
+                })
+                for row in session.execute(
+                    _LATEST_PAYLOADS_SQL,
+                    {
+                        "data_types": [key[0] for key in keys],
+                        "subject_ids": [key[1] for key in keys],
+                        "providers": [key[2] for key in keys],
+                    },
+                ):
                     latest_payloads[(row[0], row[1], row[2])] = (row[3], row[4])
             values_to_save = _drop_consecutive_unchanged_snapshots(
                 values_to_save,
@@ -240,32 +246,54 @@ class MarketSnapshotRepository:
         """
 
         with get_session() as session:
-            statement = (
-                select(MarketSnapshot)
-                .order_by(
-                    MarketSnapshot.data_type,
-                    MarketSnapshot.subject_id,
-                    MarketSnapshot.provider,
-                    MarketSnapshot.bucket_at.desc(),
-                )
-                .distinct(
-                    MarketSnapshot.data_type,
-                    MarketSnapshot.subject_id,
-                    MarketSnapshot.provider,
-                )
-            )
+            latest_keys = select(
+                MarketSnapshot.data_type.label("data_type"),
+                MarketSnapshot.subject_id.label("subject_id"),
+                MarketSnapshot.provider.label("provider"),
+            ).distinct()
             if data_types:
-                statement = statement.where(
+                latest_keys = latest_keys.where(
                     MarketSnapshot.data_type.in_(data_types)
                 )
             if subject_type:
-                statement = statement.where(
+                latest_keys = latest_keys.where(
                     MarketSnapshot.subject_type == subject_type
                 )
             if cutoff_at is not None:
-                statement = statement.where(
+                latest_keys = latest_keys.where(
                     MarketSnapshot.bucket_at <= cutoff_at
                 )
+            latest_keys = latest_keys.subquery()
+            latest_statement = (
+                select(MarketSnapshot)
+                .where(
+                    MarketSnapshot.data_type == latest_keys.c.data_type,
+                    MarketSnapshot.subject_id == latest_keys.c.subject_id,
+                    MarketSnapshot.provider == latest_keys.c.provider,
+                )
+                .order_by(MarketSnapshot.bucket_at.desc())
+                .limit(1)
+            )
+            if subject_type:
+                latest_statement = latest_statement.where(
+                    MarketSnapshot.subject_type == subject_type
+                )
+            if cutoff_at is not None:
+                latest_statement = latest_statement.where(
+                    MarketSnapshot.bucket_at <= cutoff_at
+                )
+            latest_lateral = latest_statement.lateral()
+            latest_snapshot = aliased(MarketSnapshot, latest_lateral)
+            statement = (
+                select(latest_snapshot)
+                .select_from(latest_keys)
+                .join(latest_lateral, true())
+                .order_by(
+                    latest_snapshot.data_type,
+                    latest_snapshot.subject_id,
+                    latest_snapshot.provider,
+                )
+            )
             statement = statement.limit(max(1, min(int(limit), 10000)))
             return [
                 self._snapshot_to_dict(row)
@@ -549,51 +577,57 @@ class MarketSnapshotRepository:
 
         with get_session() as session:
             base_filter = MarketSnapshot.bucket_at >= since
-            total = session.scalar(
-                select(func.count(MarketSnapshot.id)).where(base_filter)
-            ) or 0
             subject_count = session.scalar(
                 select(func.count(func.distinct(MarketSnapshot.subject_id))).where(
                     base_filter
                 )
             ) or 0
-            latest_bucket_at = session.scalar(
-                select(func.max(MarketSnapshot.bucket_at)).where(base_filter)
-            )
-            type_rows = session.execute(
+            grouped_rows = session.execute(
                 select(
                     MarketSnapshot.data_type,
+                    MarketSnapshot.freshness_status,
                     func.count(MarketSnapshot.id),
                     func.max(MarketSnapshot.bucket_at),
                 )
                 .where(base_filter)
-                .group_by(MarketSnapshot.data_type)
-                .order_by(func.count(MarketSnapshot.id).desc())
-            ).all()
-            freshness_rows = session.execute(
-                select(
+                .group_by(
+                    MarketSnapshot.data_type,
                     MarketSnapshot.freshness_status,
-                    func.count(MarketSnapshot.id),
                 )
-                .where(base_filter)
-                .group_by(MarketSnapshot.freshness_status)
             ).all()
+            total = 0
+            latest_bucket_at = None
+            by_type: dict[str, dict[str, Any]] = {}
+            by_freshness: dict[str, int] = {}
+            for data_type, freshness_status, count, latest in grouped_rows:
+                count_value = int(count or 0)
+                total += count_value
+                type_summary = by_type.setdefault(
+                    str(data_type),
+                    {"data_type": data_type, "count": 0, "latest_bucket_at": None},
+                )
+                type_summary["count"] += count_value
+                if latest and (
+                    type_summary["latest_bucket_at"] is None
+                    or latest > type_summary["latest_bucket_at"]
+                ):
+                    type_summary["latest_bucket_at"] = latest
+                status = str(freshness_status or "unknown")
+                by_freshness[status] = by_freshness.get(status, 0) + count_value
+                if latest and (
+                    latest_bucket_at is None or latest > latest_bucket_at
+                ):
+                    latest_bucket_at = latest
             return {
                 "total": int(total),
                 "subject_count": int(subject_count),
                 "latest_bucket_at": latest_bucket_at,
-                "by_data_type": [
-                    {
-                        "data_type": data_type,
-                        "count": int(count or 0),
-                        "latest_bucket_at": latest,
-                    }
-                    for data_type, count, latest in type_rows
-                ],
-                "by_freshness": {
-                    str(status or "unknown"): int(count or 0)
-                    for status, count in freshness_rows
-                },
+                "by_data_type": sorted(
+                    by_type.values(),
+                    key=lambda item: item["count"],
+                    reverse=True,
+                ),
+                "by_freshness": by_freshness,
             }
 
     def query_history(
@@ -640,6 +674,7 @@ class MarketSnapshotRepository:
         ] | None = None,
         cutoff_at: datetime | None = None,
         limit_per_series: int = 600,
+        limits_by_series: dict[tuple[str, str], int] | None = None,
     ) -> dict[tuple[str, str], list[dict[str, Any]]]:
         """Read several independent histories with one database round trip."""
 
@@ -647,6 +682,10 @@ class MarketSnapshotRepository:
             return {}
         unique_series = list(dict.fromkeys(series))
         normalized_limit = max(1, min(int(limit_per_series), 2000))
+        series_limits = {
+            key: max(1, min(int(limit), normalized_limit))
+            for key, limit in (limits_by_series or {}).items()
+        }
         windows = date_windows or {}
         filters = []
         for key in unique_series:
@@ -683,23 +722,40 @@ class MarketSnapshotRepository:
                 .where(or_(*filters))
                 .subquery()
             )
-            rows = session.scalars(
+            row_statement = (
                 select(MarketSnapshot)
                 .join(
                     ranked,
                     ranked.c.snapshot_id == MarketSnapshot.id,
                 )
-                .where(ranked.c.series_rank <= normalized_limit)
                 .order_by(
                     MarketSnapshot.data_type,
                     MarketSnapshot.subject_id,
                     MarketSnapshot.bucket_at.desc(),
                 )
-            ).all()
+            )
+            if series_limits:
+                row_statement = row_statement.where(or_(*[
+                    and_(
+                        MarketSnapshot.data_type == key[0],
+                        MarketSnapshot.subject_id == key[1],
+                        ranked.c.series_rank <= series_limits.get(
+                            key, normalized_limit
+                        ),
+                    )
+                    for key in unique_series
+                ]))
+            else:
+                row_statement = row_statement.where(
+                    ranked.c.series_rank <= normalized_limit
+                )
+            rows = session.scalars(row_statement).all()
         grouped = {key: [] for key in unique_series}
         for row in rows:
             key = (row.data_type, row.subject_id)
-            if key in grouped and len(grouped[key]) < normalized_limit:
+            if key in grouped and len(grouped[key]) < series_limits.get(
+                key, normalized_limit
+            ):
                 grouped[key].append(self._snapshot_to_dict(row))
         return grouped
 
@@ -996,12 +1052,29 @@ class CollectionRunRepository:
         """Return the latest run for every task/source pair."""
 
         with get_session() as session:
+            latest_keys = (
+                select(
+                    CollectionRun.task_name.label("task_name"),
+                    CollectionRun.source_name.label("source_name"),
+                    func.max(CollectionRun.started_at).label("started_at"),
+                )
+                .group_by(CollectionRun.task_name, CollectionRun.source_name)
+                .subquery()
+            )
             statement = (
                 select(CollectionRun)
+                .join(
+                    latest_keys,
+                    and_(
+                        CollectionRun.task_name == latest_keys.c.task_name,
+                        CollectionRun.source_name == latest_keys.c.source_name,
+                        CollectionRun.started_at == latest_keys.c.started_at,
+                    ),
+                )
                 .order_by(
                     CollectionRun.task_name,
                     CollectionRun.source_name,
-                    CollectionRun.started_at.desc(),
+                    CollectionRun.id.desc(),
                 )
                 .distinct(
                     CollectionRun.task_name,

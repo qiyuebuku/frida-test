@@ -1,0 +1,121 @@
+name: THS Redroid immutable production image
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - "ths/app/**"
+      - "ths/deployment/redroid/**"
+      - "ths/tests/test_redroid_deployment_contract.py"
+      - ".github/workflows/ths-redroid-production.yml"
+  push:
+    branches: [main]
+    paths:
+      - "ths/app/**"
+      - "ths/deployment/redroid/**"
+      - ".github/workflows/ths-redroid-production.yml"
+
+concurrency:
+  group: smart-fund-production
+  cancel-in-progress: false
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: pip install pytest
+      - name: Validate reproducible image contracts
+        run: |
+          find ths/deployment/redroid -name '*.sh' -print0 | xargs -0 -n1 bash -n
+          pytest -q -c /dev/null ths/tests/test_redroid_deployment_contract.py
+          cd ths && ./gradlew --no-daemon :app:assembleRelease -x lintVitalAnalyzeRelease
+
+  publish-and-deploy:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: validate
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    environment: production
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+      - name: Build and sign Hook from this commit
+        env:
+          HOOK_KEYSTORE_B64: ${{ secrets.THS_HOOK_KEYSTORE_B64 }}
+          HOOK_STORE_PASSWORD: ${{ secrets.THS_HOOK_STORE_PASSWORD }}
+          HOOK_KEY_ALIAS: ${{ secrets.THS_HOOK_KEY_ALIAS }}
+          HOOK_KEY_PASSWORD: ${{ secrets.THS_HOOK_KEY_PASSWORD }}
+        run: |
+          cd ths
+          ./gradlew --no-daemon :app:assembleRelease -x lintVitalAnalyzeRelease
+          printf '%s' "$HOOK_KEYSTORE_B64" | base64 -d > /tmp/ths-hook-release.keystore
+          "$ANDROID_HOME/build-tools/34.0.0/apksigner" sign \
+            --ks /tmp/ths-hook-release.keystore --ks-key-alias "$HOOK_KEY_ALIAS" \
+            --ks-pass "pass:$HOOK_STORE_PASSWORD" --key-pass "pass:$HOOK_KEY_PASSWORD" \
+            --out /tmp/ths-hook.apk app/build/outputs/apk/release/app-release-unsigned.apk
+          "$ANDROID_HOME/build-tools/34.0.0/apksigner" verify --verbose /tmp/ths-hook.apk
+      - name: Download and verify private build inputs
+        env:
+          DEPLOY_ARTIFACTS_SSH_KEY: ${{ secrets.DEPLOY_ARTIFACTS_SSH_KEY }}
+        run: |
+          install -d -m 700 ~/.ssh
+          printf '%s\n' "$DEPLOY_ARTIFACTS_SSH_KEY" > ~/.ssh/deploy-artifacts
+          chmod 600 ~/.ssh/deploy-artifacts
+          printf '%s\n' 'github.com ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOMqqnkVzrm0SdG6UOoqKLsabgH5C9okWi0dh2l9GKJl' > ~/.ssh/known_hosts
+          ARTIFACT_SSH_KEY="$HOME/.ssh/deploy-artifacts" \
+            ths/deployment/redroid/fetch-private-artifacts.sh /tmp/ths-redroid-artifacts
+      - name: Build and push immutable image
+        env:
+          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+        run: |
+          printf '%s' "$DOCKERHUB_TOKEN" | docker login --username "$DOCKERHUB_USERNAME" --password-stdin
+          image="yuyangruan/ths-redroid:git-$GITHUB_SHA"
+          ths/deployment/redroid/build-image.sh \
+            --artifact-dir /tmp/ths-redroid-artifacts \
+            --hook-apk /tmp/ths-hook.apk --image "$image" --revision "$GITHUB_SHA"
+          docker push "$image"
+          digest=$(docker image inspect "$image" --format '{{index .RepoDigests 0}}')
+          [[ "$digest" =~ ^yuyangruan/ths-redroid@sha256:[0-9a-f]{64}$ ]]
+          printf 'IMAGE_DIGEST=%s\n' "$digest" >> "$GITHUB_ENV"
+      - name: Configure production SSH
+        env:
+          SSH_PRIVATE_KEY: ${{ secrets.THS_PRODUCTION_SSH_PRIVATE_KEY }}
+          SSH_KNOWN_HOSTS: ${{ secrets.THS_PRODUCTION_SSH_KNOWN_HOSTS }}
+        run: |
+          install -d -m 700 ~/.ssh
+          printf '%s\n' "$SSH_PRIVATE_KEY" > ~/.ssh/ths-production
+          chmod 600 ~/.ssh/ths-production
+          printf '%s\n' "$SSH_KNOWN_HOSTS" >> ~/.ssh/known_hosts
+          chmod 600 ~/.ssh/known_hosts
+      - name: Roll out the verified digest
+        env:
+          SSH_HOST: ${{ secrets.THS_PRODUCTION_HOST }}
+          SSH_PORT: ${{ secrets.THS_PRODUCTION_SSH_PORT }}
+          SSH_USER: ${{ secrets.THS_PRODUCTION_SSH_USER }}
+        run: |
+          {
+            printf 'REMOTE_HOST=%q\n' "$SSH_HOST"
+            printf 'REMOTE_PORT=%q\n' "$SSH_PORT"
+            printf 'REMOTE_USER=%q\n' "$SSH_USER"
+            printf 'SSH_KEY=%q\n' "$HOME/.ssh/ths-production"
+          } > /tmp/ths-redroid-production.env
+          chmod 600 /tmp/ths-redroid-production.env
+          ths/deployment/redroid/deploy-production.sh \
+            "$IMAGE_DIGEST" "$GITHUB_SHA" /tmp/ths-redroid-production.env

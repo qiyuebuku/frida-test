@@ -120,3 +120,12 @@ def test_draining_backend_is_removed_from_new_reservations() -> None:
     assert state["draining"] is True
     assert state["healthy"] is False
     assert selected is clone
+
+
+def test_queue_timeout_applies_bounded_backpressure() -> None:
+    queue_timeout = MODULE.BackendPool._queue_timeout
+
+    assert queue_timeout("/native/unified", b'{"timeout_seconds":10}') == 40.0
+    assert queue_timeout("/native/unified", b'{"timeoutSeconds":-5}') == 30.0
+    assert queue_timeout("/native/unified", b'{"timeoutSeconds":300}') == 60.0
+    assert queue_timeout("/jsbridge", b"{}") == 45.0

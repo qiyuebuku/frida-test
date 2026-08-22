@@ -1,0 +1,9 @@
+service ths-runtime-manager /system/bin/ths-runtime-manager.sh
+    class late_start
+    user root
+    group root shell system
+    disabled
+    restart_period 30
+
+on property:sys.boot_completed=1
+    start ths-runtime-manager
