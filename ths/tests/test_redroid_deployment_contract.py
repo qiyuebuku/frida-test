@@ -324,13 +324,14 @@ def test_rollout_proves_empty_volume_before_touching_production() -> None:
     assert 'old_trade_image=$(docker inspect' in rollout
 
 
-def test_rollout_reuses_trade_data_and_reinjects_password() -> None:
+def test_rollout_rebuilds_trade_data_and_reinjects_credentials() -> None:
     rollout = (REDROID / "rollout-production.sh").read_text(encoding="utf-8")
 
-    assert "THS_TRADE_DATA_DIR" in rollout
+    assert "THS_TRADE_DATA_DIR" not in rollout
     assert "THS_TRADE_SECRET_DIR" in rollout
     assert "--trade-init existing" in rollout
-    assert "--data-dir \"$trade_data\"" in rollout
+    assert "--data-dir" not in rollout
+    assert "docker volume rm ths-trade-data" in rollout
     assert '--account-secret "$secret_dir/trade_account"' in rollout
     assert '--broker-secret "$secret_dir/trade_broker"' in rollout
     assert '--qsid-secret "$secret_dir/trade_qsid"' in rollout
