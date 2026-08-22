@@ -28,7 +28,8 @@ def test_production_deployment_requires_github_main_push() -> None:
     assert "untracked-files=no" not in deploy
 
     assert "workflow_dispatch:" not in workflow
-    assert "group: smart-fund-production" in workflow
+    assert "'smart-fund-production'" in workflow
+    assert "github.workflow, github.ref" in workflow
     assert "cancel-in-progress: false" in workflow
     assert "github.event_name == 'push'" in workflow
     assert 'github.ref == \'refs/heads/main\'' in workflow

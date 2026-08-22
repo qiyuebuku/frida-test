@@ -7,7 +7,7 @@ on:
     branches: [main]
 
 concurrency:
-  group: smart-fund-production
+  group: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && 'smart-fund-production' || format('{0}-{1}', github.workflow, github.ref) }}
   cancel-in-progress: false
 
 jobs:
