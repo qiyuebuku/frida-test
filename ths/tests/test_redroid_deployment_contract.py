@@ -348,3 +348,6 @@ def test_rollout_supports_selective_targets_and_parallel_collectors() -> None:
     assert 'paths:' in smart_workflow
     assert '"smart-fund-server/**"' in smart_workflow
     assert '"ths/deployment/redroid/**"' not in smart_workflow
+    assert "production-changes:" in smart_workflow
+    assert "git diff --name-only \"$BEFORE_SHA\" \"$GITHUB_SHA\"" in smart_workflow
+    assert "needs.production-changes.outputs.deploy-smart == 'true'" in smart_workflow

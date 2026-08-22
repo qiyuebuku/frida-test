@@ -25,6 +25,32 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  production-changes:
+    runs-on: ubuntu-latest
+    outputs:
+      deploy-smart: ${{ steps.changed.outputs.deploy-smart }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - id: changed
+        name: Detect Smart Fund production changes
+        env:
+          BEFORE_SHA: ${{ github.event.before }}
+        run: |
+          deploy=false
+          if [[ "$GITHUB_EVENT_NAME" == push ]]; then
+            while IFS= read -r path; do
+              case "$path" in
+                smart-fund-server/*|deploy.sh|ths/deployment/deploy.sh|ths/deployment/internal/*)
+                  deploy=true
+                  break
+                  ;;
+              esac
+            done < <(git diff --name-only "$BEFORE_SHA" "$GITHUB_SHA")
+          fi
+          printf 'deploy-smart=%s\n' "$deploy" >> "$GITHUB_OUTPUT"
+
   validate:
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -52,8 +78,10 @@ jobs:
           cd ths && ./gradlew --no-daemon :app:assembleRelease -x lintVitalAnalyzeRelease
 
   deploy-production:
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-    needs: validate
+    if: >-
+      github.event_name == 'push' && github.ref == 'refs/heads/main' &&
+      needs.production-changes.outputs.deploy-smart == 'true'
+    needs: [validate, production-changes]
     runs-on: ubuntu-latest
     timeout-minutes: 15
     environment: production
