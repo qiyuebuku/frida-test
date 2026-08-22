@@ -204,6 +204,8 @@ def test_production_workflow_builds_pushes_and_deploys_digest_only() -> None:
     assert '"$IMAGE_DIGEST" "$GITHUB_SHA"' in workflow
     assert '"${GITHUB_ACTIONS:-}" == true' in deploy
     assert '"${GITHUB_SHA:-}" == "$REVISION"' in deploy
+    assert 'tar -C "$WORKSPACE" -czf - ths/deployment/redroid' in deploy
+    assert "git -C" not in deploy
     assert "@sha256:[0-9a-f]{64}" in rollout
     assert "org.opencontainers.image.revision" in rollout
 
