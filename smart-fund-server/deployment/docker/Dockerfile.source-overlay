@@ -1,0 +1,6 @@
+ARG BASE_IMAGE=smart-fund-server:latest
+FROM ${BASE_IMAGE}
+
+# Fast, deterministic source-only rebuild for an already dependency-complete
+# application image. The canonical source remains in this repository.
+COPY --chown=app:app src /app/src

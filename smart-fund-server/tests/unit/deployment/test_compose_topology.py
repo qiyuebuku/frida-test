@@ -18,9 +18,11 @@ def test_compose_uses_one_server_image_with_distinct_commands() -> None:
         "api": ["api"],
         "persist": ["persist"],
         "scheduler": ["scheduler"],
-        "worker-ths": ["worker", "--group", "ths", "-c", "${THS_WORKER_CONCURRENCY:-8}"],
-        "worker-ths-sector": ["worker", "--group", "ths-sector", "-c", "${THS_SECTOR_WORKER_CONCURRENCY:-4}"],
+        "worker-ths": ["worker", "--discard-backlog", "--group", "ths", "-c", "${THS_WORKER_CONCURRENCY:-8}"],
+        "worker-ths-sector": ["worker", "--discard-backlog", "--group", "ths-sector", "-c", "${THS_SECTOR_WORKER_CONCURRENCY:-4}"],
+        "worker-ths-sector-fragment": ["worker", "--discard-backlog", "--group", "ths-sector-fragment", "-c", "${THS_SECTOR_FRAGMENT_WORKER_CONCURRENCY:-4}"],
         "worker-general": ["worker", "--group", "general", "-c", "${GENERAL_WORKER_CONCURRENCY:-12}"],
+        "worker-http": ["worker", "--discard-backlog", "--group", "http", "-c", "${HTTP_WORKER_CONCURRENCY:-8}"],
         "ths-realtime-stream": ["ths-realtime-stream"],
         "kg-card": ["knowledge-worker", "--stage", "card", "-c", "1"],
         "kg-relation": ["knowledge-worker", "--stage", "relation", "-c", "${KG_RELATION_WORKER_CONCURRENCY:-3}"],
@@ -44,6 +46,6 @@ def test_android_runtime_is_not_in_server_compose() -> None:
 def test_image_build_requires_staged_internal_jettask_wheel() -> None:
     dockerfile = DOCKERFILE.read_text(encoding="utf-8")
 
-    assert "/app/.docker-build/jettask.whl" in dockerfile
+    assert "/app/.docker-build/jettask_python-0.1.0-py3-none-any.whl" in dockerfile
     assert "debug.keystore" not in dockerfile
     assert "production.env" not in dockerfile

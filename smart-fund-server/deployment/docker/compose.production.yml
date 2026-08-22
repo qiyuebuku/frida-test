@@ -117,7 +117,7 @@ services:
   worker-ths:
     <<: *smart-fund-service
     container_name: smart-fund-worker-ths
-    command: ["worker", "--group", "ths", "-c", "${THS_WORKER_CONCURRENCY:-8}"]
+    command: ["worker", "--discard-backlog", "--group", "ths", "-c", "${THS_WORKER_CONCURRENCY:-8}"]
     depends_on:
       persist:
         condition: service_healthy
@@ -127,7 +127,17 @@ services:
   worker-ths-sector:
     <<: *smart-fund-service
     container_name: smart-fund-worker-ths-sector
-    command: ["worker", "--group", "ths-sector", "-c", "${THS_SECTOR_WORKER_CONCURRENCY:-4}"]
+    command: ["worker", "--discard-backlog", "--group", "ths-sector", "-c", "${THS_SECTOR_WORKER_CONCURRENCY:-4}"]
+    depends_on:
+      persist:
+        condition: service_healthy
+      api:
+        condition: service_healthy
+
+  worker-ths-sector-fragment:
+    <<: *smart-fund-service
+    container_name: smart-fund-worker-ths-sector-fragment
+    command: ["worker", "--discard-backlog", "--group", "ths-sector-fragment", "-c", "${THS_SECTOR_FRAGMENT_WORKER_CONCURRENCY:-4}"]
     depends_on:
       persist:
         condition: service_healthy
@@ -144,10 +154,21 @@ services:
       api:
         condition: service_healthy
 
+  worker-http:
+    <<: *smart-fund-service
+    container_name: smart-fund-worker-http
+    command: ["worker", "--discard-backlog", "--group", "http", "-c", "${HTTP_WORKER_CONCURRENCY:-8}"]
+    depends_on:
+      persist:
+        condition: service_healthy
+      api:
+        condition: service_healthy
+
   ths-realtime-stream:
     <<: *smart-fund-service
     container_name: smart-fund-ths-realtime-stream
     command: ["ths-realtime-stream"]
+    profiles: ["manual"]
 
   kg-card:
     <<: *smart-fund-service
@@ -158,6 +179,7 @@ services:
     <<: *smart-fund-service
     container_name: smart-fund-kg-relation
     command: ["knowledge-worker", "--stage", "relation", "-c", "${KG_RELATION_WORKER_CONCURRENCY:-3}"]
+    profiles: ["manual"]
 
   kg-graph:
     <<: *smart-fund-service

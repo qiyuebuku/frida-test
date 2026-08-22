@@ -376,7 +376,8 @@ def test_dashboard_composes_market_and_collection_views() -> None:
     assert result["sector_quotes"][0]["sector_name"] == "半导体"
     assert result["sector_quotes"][-1]["sector_name"] == "银行"
     assert result["sector_flows"][0]["main_net_inflow"] == 10_000_000
-    assert result["watchlist"][0]["latest"][0]["data"]["price"] == 40
+    assert result["watchlist"][0]["latest"][0]["data_type"] == "quote"
+    assert "data" not in result["watchlist"][0]["latest"][0]
     assert [
         item["source_name"] for item in result["collection_sources"]
     ] == ["market_breadth", "sh600036"]

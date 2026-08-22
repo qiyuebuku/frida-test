@@ -50,8 +50,6 @@ install -m 0644 "${SYSTEMD_SOURCE}/collector-bridge@.service" \
     /etc/systemd/system/ths-collector-bridge@.service
 install -m 0644 "${SYSTEMD_SOURCE}/trade-bridge.service" \
     /etc/systemd/system/ths-trade-bridge.service
-install -m 0644 "${SYSTEMD_SOURCE}/app-load-balancer.service" \
-    /etc/systemd/system/ths-app-load-balancer.service
 install -m 0644 "${SYSTEMD_SOURCE}/android-watchdog.service" \
     /etc/systemd/system/ths-android-watchdog.service
 install -m 0644 "${SYSTEMD_SOURCE}/android-pool-manager.service" \
@@ -177,7 +175,14 @@ start_bridge_serially ths-collector-bridge@pool5.service 49341
 start_bridge_serially ths-collector-bridge@pool6.service 49361
 start_bridge_serially ths-collector-bridge@pool7.service 49371
 start_bridge_serially ths-collector-bridge@pool8.service 49381
-systemctl enable --now ths-app-load-balancer.service
+# The redroid gateway and its DNS rule are Docker-managed. Remove the retired
+# systemd ownership so a subsequent deployment cannot race port 49350.
+systemctl disable --now ths-app-load-balancer.service \
+    ths-redroid-dns-forward.service ths-redroid-stack.service \
+    >/dev/null 2>&1 || true
+rm -f /etc/systemd/system/ths-app-load-balancer.service
+docker compose -f "${INTERNAL_DIR}/../redroid/compose.gateway.yml" \
+    -p ths-gateway up -d --build
 systemctl enable --now ths-android-watchdog.service
 
 # Collector cold starts currently switch Android's foreground user and may kill

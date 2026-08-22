@@ -7,7 +7,7 @@ on:
     branches: [main]
 
 concurrency:
-  group: smart-fund-production
+  group: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && 'smart-fund-production' || format('{0}-{1}', github.workflow, github.ref) }}
   cancel-in-progress: false
 
 jobs:
@@ -16,6 +16,10 @@ jobs:
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
@@ -24,11 +28,14 @@ jobs:
         run: |
           bash -n deploy.sh ths/deployment/deploy.sh
           find ths/deployment/internal -name '*.sh' -print0 | xargs -0 -n1 bash -n
+          find ths/deployment/redroid -name '*.sh' -print0 | xargs -0 -n1 bash -n
       - name: Validate 1 trade + 8 collector topology
         run: |
           pytest -q -c /dev/null \
             ths/tests/test_workspace_deployment.py \
-            ths/tests/test_ths_bridge_pool_config.py
+            ths/tests/test_ths_bridge_pool_config.py \
+            ths/tests/test_redroid_deployment_contract.py
+          cd ths && ./gradlew --no-daemon :app:assembleRelease -x lintVitalAnalyzeRelease
 
   deploy-production:
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'

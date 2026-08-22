@@ -2,11 +2,14 @@
 
 import asyncio
 import base64
+import importlib.util
 import json
 import logging
 import math
 import os
 import re
+import shutil
+from pathlib import Path
 from datetime import date, datetime, timedelta, timezone
 from typing import Optional
 from urllib.parse import urlencode, urlsplit
@@ -1029,38 +1032,14 @@ class THSClient(BaseClient):
                         "sort_indicator_id": sort_indicator_id,
                         "order": order,
                         "http_source_id": "securities-ranking-slider",
-                        "timeout_ms": 30000,
+                        "timeout_ms": 5000,
                     },
                     lane="hurricane",
                 )
                 native_data = native.get("data") or {}
-                stocks = []
-                for rank, row in enumerate(native_data.get("rows") or [], 1):
-                    indicators = row.get("indicators") or {}
-
-                    def value(indicator_id: str) -> object:
-                        cell = indicators.get(indicator_id)
-                        return cell.get("content") if isinstance(cell, dict) else cell
-
-                    stocks.append(
-                        {
-                            "rank": rank,
-                            "code": row.get("code"),
-                            "market_code": row.get("market"),
-                            "name": row.get("name") or value("55"),
-                            "latest": _native_number(value("10")),
-                            "change_rate": _native_number(value("34818")),
-                            "speed": _native_number(value("48")),
-                            "indicators": {
-                                str(indicator_id): (
-                                    cell.get("content")
-                                    if isinstance(cell, dict)
-                                    else cell
-                                )
-                                for indicator_id, cell in indicators.items()
-                            },
-                        }
-                    )
+                stocks = self._parse_native_dynamic_group_rows(
+                    native_data.get("rows") or []
+                )
                 results.append(
                     {
                         "display_order": display_order,
@@ -1094,13 +1073,20 @@ class THSClient(BaseClient):
                             securities.append(
                                 (str(stock["code"]), str(stock["market_code"]))
                             )
-                quotes = await self._request_native_stock_quotes(securities)
+                quotes = {}
+                if securities:
+                    try:
+                        quotes = await self._request_native_stock_quotes(securities)
+                    except Exception as quote_exc:
+                        logger.warning(
+                            "THS dynamic group quote hydration failed; keeping source quotes: %s",
+                            quote_exc,
+                        )
                 for result in results:
                     for stock in result.get("stocks") or []:
                         quote = quotes.get(str(stock.get("code") or ""))
-                        if not quote:
-                            continue
-                        stock.update(quote)
+                        if quote:
+                            stock.update(quote)
             return market_result(
                 provider="ths_native",
                 market="cn",
@@ -1123,6 +1109,191 @@ class THSClient(BaseClient):
                     "capability": "stock_dynamic_groups",
                 },
             )
+
+    @staticmethod
+    def _parse_native_dynamic_group_rows(rows: list[dict]) -> list[dict]:
+        stocks = []
+        for rank, row in enumerate(rows, 1):
+            indicators = row.get("indicators") or {}
+
+            def value(indicator_id: str) -> object:
+                cell = indicators.get(indicator_id)
+                return cell.get("content") if isinstance(cell, dict) else cell
+
+            stocks.append(
+                {
+                    "rank": rank,
+                    "code": row.get("code"),
+                    "market_code": row.get("market"),
+                    "name": row.get("name") or value("55"),
+                    "latest": _native_number(value("10")),
+                    "change_rate": _native_number(value("34818")),
+                    "speed": _native_number(value("48")),
+                    "indicators": {
+                        str(indicator_id): (
+                            cell.get("content")
+                            if isinstance(cell, dict)
+                            else cell
+                        )
+                        for indicator_id, cell in indicators.items()
+                    },
+                }
+            )
+        return stocks
+
+    @staticmethod
+    def _iwencai_field(row: dict, *prefixes: str) -> object:
+        for prefix in prefixes:
+            for key, value in row.items():
+                if str(key).startswith(prefix) and value not in (None, "", "--"):
+                    return value
+        return None
+
+    @classmethod
+    def _parse_signed_iwencai_rows(cls, payload: dict, limit: int) -> list[dict]:
+        rows: list[dict] = []
+        for answer in (payload.get("data") or {}).get("answer") or []:
+            for text_item in answer.get("txt") or []:
+                content = text_item.get("content") or {}
+                if not isinstance(content, dict):
+                    continue
+                for component in content.get("components") or []:
+                    data_rows = ((component.get("data") or {}).get("datas") or [])
+                    for raw in data_rows:
+                        raw_code = str(raw.get("股票代码") or "").strip().upper()
+                        name = str(raw.get("股票简称") or "").strip()
+                        if not raw_code or not name:
+                            continue
+                        code, _, suffix = raw_code.partition(".")
+                        market_code = {"SH": "17", "SZ": "33", "BJ": "151"}.get(
+                            suffix
+                        )
+                        rows.append(
+                            {
+                                "rank": len(rows) + 1,
+                                "code": code,
+                                "market_code": market_code,
+                                "exchange": suffix or None,
+                                "name": name,
+                                "latest": _native_number(
+                                    cls._iwencai_field(raw, "最新价", "收盘价")
+                                ),
+                                "change_rate": _native_number(
+                                    cls._iwencai_field(raw, "涨跌幅", "最新涨跌幅")
+                                ),
+                                "speed": _native_number(
+                                    cls._iwencai_field(raw, "涨速")
+                                ),
+                                "indicators": raw,
+                            }
+                        )
+                        if len(rows) >= limit:
+                            return rows
+        return rows
+
+    @staticmethod
+    def _iwencai_node_path() -> str:
+        node = shutil.which("node")
+        if node:
+            return node
+        try:
+            import playwright
+
+            bundled = Path(playwright.__file__).parent / "driver" / "node"
+            if bundled.is_file():
+                return str(bundled)
+        except ImportError:
+            pass
+        raise RuntimeError("Node.js runtime is unavailable for iwencai signing")
+
+    async def _generate_iwencai_hexin_v(self) -> str:
+        spec = importlib.util.find_spec("pywencai")
+        if spec is None or spec.origin is None:
+            raise RuntimeError("pywencai signing bundle is not installed")
+        bundle = Path(spec.origin).parent / "hexin-v.bundle.js"
+        if not bundle.is_file():
+            raise RuntimeError("pywencai signing bundle is incomplete")
+        process = await asyncio.create_subprocess_exec(
+            self._iwencai_node_path(),
+            str(bundle),
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        try:
+            stdout, stderr = await asyncio.wait_for(process.communicate(), timeout=10)
+        except TimeoutError:
+            process.kill()
+            await process.communicate()
+            raise RuntimeError("iwencai token generation timed out")
+        token = stdout.decode().strip().splitlines()[-1] if stdout else ""
+        if process.returncode != 0 or len(token) < 20:
+            detail = stderr.decode(errors="replace").strip()[-500:]
+            raise RuntimeError(f"iwencai token generation failed: {detail}")
+        return token
+
+    async def _request_signed_iwencai_stocks(
+        self,
+        question: str,
+        limit: int,
+    ) -> list[dict]:
+        lock = getattr(self, "_signed_iwencai_lock", None)
+        if lock is None:
+            lock = asyncio.Lock()
+            self._signed_iwencai_lock = lock
+        async with lock:
+            last_error: Exception | None = None
+            for attempt in range(3):
+                try:
+                    rows = await self._request_signed_iwencai_stocks_once(
+                        question,
+                        limit,
+                    )
+                    if rows:
+                        return rows
+                    last_error = RuntimeError("signed iwencai returned no stock rows")
+                except (httpx.HTTPError, RuntimeError, ValueError) as exc:
+                    last_error = exc
+                if attempt < 2:
+                    await asyncio.sleep(0.8 * (attempt + 1))
+            raise last_error or RuntimeError("signed iwencai request failed")
+
+    async def _request_signed_iwencai_stocks_once(
+        self,
+        question: str,
+        limit: int,
+    ) -> list[dict]:
+        token = await self._generate_iwencai_hexin_v()
+        response = await self._client.post(
+            "https://www.iwencai.com/customized/chart/get-robot-data",
+            json={
+                "question": question,
+                "perpage": limit,
+                "page": 1,
+                "source": "Ths_iwencai_Xuangu",
+                "version": "2.0",
+                "secondary_intent": "stock",
+                "add_info": (
+                    '{"urp":{"scene":1,"company":1,"business":1},'
+                    '"content_type":"stock","search_cat":"stock"}'
+                ),
+            },
+            headers={
+                "User-Agent": (
+                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                    "AppleWebKit/537.36 (KHTML, like Gecko) "
+                    "Chrome/120.0.0.0 Safari/537.36"
+                ),
+                "Cookie": f"v={token}",
+                "Referer": "https://www.iwencai.com/unifiedwap/home/index",
+                "hexin-v": token,
+            },
+            timeout=20,
+        )
+        response.raise_for_status()
+        payload = response.json()
+        if payload.get("code") == -2 or (payload.get("data") or {}).get("captcha_url"):
+            raise RuntimeError("signed iwencai request was challenged by captcha")
+        return self._parse_signed_iwencai_rows(payload, limit)
 
     async def _request_native_stock_quotes(
         self,
@@ -3402,7 +3573,12 @@ class THSClient(BaseClient):
 
         async def execute() -> dict:
             last_error: Exception | None = None
-            for attempt in range(2):
+            max_attempts = 1 if family == "hurricane" else 2
+            bridge_timeout = min(
+                75.0,
+                max(3.0, float(bridge_payload.get("timeout_ms") or 72000) / 1000 + 3),
+            )
+            for attempt in range(max_attempts):
                 try:
                     request_payload = dict(bridge_payload)
                     if family == "hurricane":
@@ -3422,13 +3598,13 @@ class THSClient(BaseClient):
                         result = await self._request_native_command(
                             route=route,
                             payload=request_payload,
-                            timeout_seconds=75,
+                            timeout_seconds=bridge_timeout,
                         )
                     else:
                         response = await self._client.post(
                             f"{self._native_bridge_for(lane)}{path}",
                             json=request_payload,
-                            timeout=75,
+                            timeout=bridge_timeout,
                         )
                         response.raise_for_status()
                         try:
@@ -3464,7 +3640,8 @@ class THSClient(BaseClient):
                         # board/query snapshot. Repeating the full native wait
                         # only doubles latency and cannot create missing rows.
                         break
-                    await asyncio.sleep(1.5 if attempt == 0 else 0.9)
+                    if attempt + 1 < max_attempts:
+                        await asyncio.sleep(1.5 if attempt == 0 else 0.9)
             raise last_error or RuntimeError("THS native request failed")
 
         # All native families eventually share the App's single transport.
@@ -3651,7 +3828,8 @@ class THSClient(BaseClient):
                         "ths-hot-data-minute-attention-rate"
                     ),
                     "order": "DESCENDING",
-                    "http_source_id": "AStockSector",
+                    "http_source_id": "sif-quoter-dataapi-sector-statistics",
+                    "source_header_id": "sif-quoter-dataapi-sector-statistics",
                     "hurricane_ids": [hurricane_ids[board_type]],
                     "hurricane_indicator_ids": [
                         "ths-hot-data-minute-attention-rate"
@@ -3753,6 +3931,7 @@ class THSClient(BaseClient):
         *,
         market_code: str = "48",
         count: int = 100,
+        sector_name: str | None = None,
     ) -> dict:
         """Return a board's constituent stocks using the native THS board query."""
 
@@ -3762,6 +3941,7 @@ class THSClient(BaseClient):
             raise ValueError("sector_code is required")
         if not normalized_market:
             raise ValueError("market_code is required")
+        requested_count = max(1, min(int(count), 1000))
         indicator_ids = [
             "security_name",
             "last_price",
@@ -3773,7 +3953,6 @@ class THSClient(BaseClient):
             "turnover",
         ]
         try:
-            requested_count = max(1, min(int(count), 1000))
             rows: list[dict] = []
             total_count: int | None = None
             while len(rows) < requested_count:
@@ -3793,6 +3972,7 @@ class THSClient(BaseClient):
                         "order": "",
                         "hurricane_type": None,
                         "http_source_id": "sif-constituent-stock",
+                        "source_header_id": "sif-constituent-stock",
                         "hurricane_ids": [],
                         "hurricane_indicator_ids": indicator_ids,
                         # Constituents are reference data: identity/name is the
@@ -3871,6 +4051,51 @@ class THSClient(BaseClient):
                 },
             )
         except Exception as exc:
+            normalized_name = str(sector_name or "").strip()
+            if normalized_name:
+                try:
+                    stocks = await self._request_signed_iwencai_stocks(
+                        f"{normalized_name}板块成分股",
+                        requested_count,
+                    )
+                    constituents = [
+                        {
+                            "rank": rank,
+                            "security_code": row.get("code"),
+                            "security_name": row.get("name"),
+                            "market_code": row.get("market_code"),
+                            "latest": row.get("latest"),
+                            "change_pct": row.get("change_rate"),
+                            "float_market_value": None,
+                            "total_market_value": None,
+                            "speed_pct": row.get("speed"),
+                            "turnover_rate": None,
+                            "turnover": None,
+                        }
+                        for rank, row in enumerate(stocks, start=1)
+                    ]
+                    return market_result(
+                        provider="ths_iwencai",
+                        market="cn",
+                        data={
+                            "provider_sector_code": normalized_code,
+                            "market_code": normalized_market,
+                            "count": len(constituents),
+                            "total_count": len(constituents),
+                            "constituents": constituents,
+                        },
+                        timezone_name="Asia/Shanghai",
+                        provider_metadata={
+                            "source_component": "signed_iwencai",
+                            "fallback_from": "sif-constituent-stock",
+                            "native_error": str(exc),
+                            "app_runtime_required": False,
+                        },
+                    )
+                except Exception as fallback_exc:
+                    exc = RuntimeError(
+                        f"native={exc}; signed_iwencai={fallback_exc}"
+                    )
             return market_error(
                 provider="ths_native",
                 market="cn",

@@ -1,0 +1,32 @@
+service bootanim /system/bin/bootanimation
+    class core animation
+    user graphics
+    group graphics audio
+    disabled
+    oneshot
+    ioprio rt 0
+    task_profiles MaxPerformance
+
+on post-fs-data
+    start logd
+    exec root root -- /system/etc/init/magisk/magisk --auto-selinux --setup-sbin /system/etc/init/magisk /sbin
+    start ths-rirud
+    exec root root -- /sbin/magisk --auto-selinux --post-fs-data
+on nonencrypted
+    exec root root -- /sbin/magisk --auto-selinux --service
+on property:vold.decrypt=trigger_restart_framework
+    exec root root -- /sbin/magisk --auto-selinux --service
+on property:sys.boot_completed=1
+    mkdir /data/adb/magisk 755
+    exec root root -- /sbin/magisk --auto-selinux --boot-complete
+    exec -- /system/bin/sh -c "if [ ! -e /data/data/io.github.huskydg.magisk ] ; then pm install /system/etc/init/magisk/magisk.apk ; fi"
+
+on property:init.svc.zygote=restarting
+    exec root root -- /sbin/magisk --auto-selinux --zygote-restart
+on property:init.svc.zygote=stopped
+    exec root root -- /sbin/magisk --auto-selinux --zygote-restart
+
+service ths-rirud /system/bin/sh /system/bin/start-rirud.sh
+    class main
+    user root
+    group root

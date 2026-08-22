@@ -664,6 +664,99 @@ async def test_ths_native_stock_dynamic_groups_keep_full_configuration() -> None
 
 
 @pytest.mark.asyncio
+async def test_ths_dynamic_groups_fail_closed_when_native_hurricane_fails() -> None:
+    config = {
+        "data": {
+            "gegufeaturelist": [
+                {
+                    "title": "同花顺热榜",
+                    "query": "热度最高的前100支股票",
+                    "promptId": "prompt-hot",
+                    "headers": [{"indicatorId": "34818"}],
+                    "data_code": "rebanggegu1h",
+                    "key": "rebanggegu1h",
+                }
+            ]
+        }
+    }
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith("/config_list"):
+            return httpx.Response(200, request=request, json=config)
+        if request.url.path == "/native/hurricane":
+            return httpx.Response(
+                200,
+                request=request,
+                json={"success": False, "status": 20, "message": None},
+            )
+        raise AssertionError(f"unexpected request: {request.url}")
+
+    client = THSClient(
+        native_bridge_url="http://native-bridge",
+        native_command_stream_enabled=False,
+    )
+    await client._client.aclose()
+    client._client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+
+    try:
+        result = await client.get_native_stock_dynamic_groups(2)
+    finally:
+        await client.close()
+
+    assert result["status"] == "upstream_error"
+    assert result["provider_metadata"]["channel"] == "android_native_hurricane"
+    assert result["message"] == "THS native request failed"
+
+
+@pytest.mark.asyncio
+async def test_ths_dynamic_groups_preserve_successful_empty_native_group() -> None:
+    config = {
+        "data": {
+            "gegufeaturelist": [
+                {
+                    "title": "冲刺涨停的股票",
+                    "promptId": "prompt-limit-up",
+                    "headers": [{"indicatorId": "34818"}],
+                    "data_code": "hotgainian",
+                    "key": "hotgainian",
+                }
+            ]
+        }
+    }
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith("/config_list"):
+            return httpx.Response(200, request=request, json=config)
+        if request.url.path == "/native/hurricane":
+            return httpx.Response(
+                200,
+                request=request,
+                json={
+                    "success": True,
+                    "data": {"total": 0, "rows": []},
+                },
+            )
+        raise AssertionError(f"unexpected request: {request.url}")
+
+    client = THSClient(
+        native_bridge_url="http://native-bridge",
+        native_command_stream_enabled=False,
+    )
+    await client._client.aclose()
+    client._client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    try:
+        result = await client.get_native_stock_dynamic_groups(5)
+    finally:
+        await client.close()
+
+    assert result["status"] == "ok"
+    assert result["provider_metadata"]["channel"] == "android_native_hurricane"
+    assert result["data"]["groups"][0]["total"] == 0
+    assert result["data"]["groups"][0]["count"] == 0
+    assert result["data"]["groups"][0]["stocks"] == []
+
+
+@pytest.mark.asyncio
 async def test_ths_native_realtime_indicator_names_chart_points() -> None:
     def handler(request: httpx.Request) -> httpx.Response:
         return httpx.Response(

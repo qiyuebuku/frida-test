@@ -17,6 +17,7 @@ from sqlalchemy import (
     Boolean,
     Date,
     DateTime,
+    desc,
     Float,
     Index,
     Integer,
@@ -453,6 +454,14 @@ class MarketSnapshot(Base):
             "bucket_at",
         ),
         Index(
+            "ix_ft_market_snapshots_latest",
+            "data_type",
+            "subject_id",
+            "provider",
+            desc("bucket_at"),
+        ),
+        Index("ix_ft_market_snapshots_bucket_at", "bucket_at"),
+        Index(
             "ix_ft_market_snapshots_trade_type",
             "trade_date",
             "data_type",
@@ -558,6 +567,12 @@ class CollectionRun(Base):
             "ix_ft_collection_runs_task_started",
             "task_name",
             "started_at",
+        ),
+        Index(
+            "ix_ft_collection_runs_task_source_started",
+            "task_name",
+            "source_name",
+            desc("started_at"),
         ),
         Index(
             "ix_ft_collection_runs_source_started",

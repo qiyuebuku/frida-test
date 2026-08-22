@@ -1334,7 +1334,12 @@ class THSRealtimeStreamService:
                     )
 
     async def _etf_home_refresh_loop(self) -> None:
-        """Refresh one ETF home category per interval when push membership is quiet."""
+        """Refresh one ETF home category per interval independently.
+
+        US quote restoration can register thousands of members and keep the
+        dynamic-subscription queue non-ready for a long time. ETF freshness
+        must not wait for that unrelated queue to drain.
+        """
 
         interval = max(
             10.0,
@@ -1349,46 +1354,45 @@ class THSRealtimeStreamService:
         categories = ("industry", "index", "t0")
         position = 0
         while not self._stop_event.is_set():
-            if self._client.dynamic_subscriptions_ready:
-                category = categories[position % len(categories)]
-                position += 1
-                definition = self._event_definitions[f"etf_home_{category}"]
-                try:
-                    response = await self._client.request(
-                        route="unified",
-                        payload={
-                            "onlineId": f"{definition.online_id}Calibration",
-                            "protocolId": definition.protocol_id,
-                            "pageId": definition.page_id,
-                            "requestType": 262144,
-                            "requestDic": definition.request_dic,
-                            "cancelRequestDic": definition.cancel_request_dic,
-                            "timeoutSeconds": 15,
-                        },
-                        timeout=30,
-                    )
-                    if not response.get("success"):
-                        raise RuntimeError(str(
-                            response.get("error") or "ETF home calibration failed"
-                        ))
-                    native_response = response.get("response")
-                    if not isinstance(native_response, dict):
-                        raise RuntimeError("ETF home calibration response is missing")
-                    await self._enqueue_event({
-                        "type": "event",
-                        "topic": "unified",
-                        "subscription_id": definition.subscription_id,
-                        "emitted_at": int(
-                            datetime.now(timezone.utc).timestamp() * 1000
-                        ),
-                        "data": native_response,
-                    })
-                    logger.info("Calibrated ETF home category=%s", category)
-                except Exception:
-                    logger.exception(
-                        "Failed to calibrate ETF home category=%s",
-                        category,
-                    )
+            category = categories[position % len(categories)]
+            position += 1
+            definition = self._event_definitions[f"etf_home_{category}"]
+            try:
+                response = await self._client.request(
+                    route="unified",
+                    payload={
+                        "onlineId": f"{definition.online_id}Calibration",
+                        "protocolId": definition.protocol_id,
+                        "pageId": definition.page_id,
+                        "requestType": 262144,
+                        "requestDic": definition.request_dic,
+                        "cancelRequestDic": definition.cancel_request_dic,
+                        "timeoutSeconds": 15,
+                    },
+                    timeout=30,
+                )
+                if not response.get("success"):
+                    raise RuntimeError(str(
+                        response.get("error") or "ETF home calibration failed"
+                    ))
+                native_response = response.get("response")
+                if not isinstance(native_response, dict):
+                    raise RuntimeError("ETF home calibration response is missing")
+                await self._enqueue_event({
+                    "type": "event",
+                    "topic": "unified",
+                    "subscription_id": definition.subscription_id,
+                    "emitted_at": int(
+                        datetime.now(timezone.utc).timestamp() * 1000
+                    ),
+                    "data": native_response,
+                })
+                logger.info("Calibrated ETF home category=%s", category)
+            except Exception:
+                logger.exception(
+                    "Failed to calibrate ETF home category=%s",
+                    category,
+                )
             try:
                 await asyncio.wait_for(self._stop_event.wait(), timeout=interval)
                 return

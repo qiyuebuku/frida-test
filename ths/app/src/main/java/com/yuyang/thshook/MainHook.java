@@ -8,6 +8,7 @@ import android.app.Service;
 import android.content.Context;
 import android.os.Build;
 import android.os.Handler;
+import android.os.HandlerThread;
 import android.os.Looper;
 import android.os.PowerManager;
 import android.util.Log;
@@ -29,9 +30,11 @@ import java.net.Socket;
 import java.net.URL;
 import java.util.ArrayList;
 import java.util.Collection;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.ArrayBlockingQueue;
 import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.ConcurrentHashMap;
@@ -88,6 +91,8 @@ public class MainHook {
     private static final AtomicLong lastTradeSessionCheckLogMs = new AtomicLong(0L);
     // 最近一次 resetCbasServer 记录（host:port），/stock/trade/cbas/status 回显
     private static volatile String lastCbasServerReset = "never";
+    private static final Object tradeChannelBootstrapLock = new Object();
+    private static volatile Object tradeChannelBootstrappedService = null;
     // 写端点响应旁路捕获（2026-08-18 压测发现：写协议响应帧被 App 常驻观察者
     // 竞争消费，自注册 observer 大概率收不到——操作执行成功但响应丢失）。
     // 写请求发出前按 protocolId 登记 pending，ixm/nxm receive hook 检测到
@@ -124,6 +129,16 @@ public class MainHook {
     private static volatile long unifiedOkCount = 0L;
     private static volatile long unifiedFailCount = 0L;
     private static volatile String unifiedLastFailReason = "";
+    // 行情运行时主动初始化状态。Docker 只读取该状态，不再用业务请求超时猜测
+    // App 是否完成预热。
+    private static final AtomicBoolean marketRuntimeEnsureStarted = new AtomicBoolean(false);
+    private static volatile String marketRuntimeEnsureState = "idle";
+    private static volatile String marketRuntimeEnsureError = "";
+    private static volatile long marketRuntimeEnsureStartedMs = 0L;
+    private static volatile long marketRuntimeEnsureCompletedMs = 0L;
+    private static volatile boolean marketRuntimeRealtimeVerified = false;
+    private static volatile boolean marketRuntimeRealtimeTransportReady = false;
+    private static volatile Object marketRuntimeRealtimeClient = null;
     private static final java.util.concurrent.atomic.AtomicBoolean faceSdkGuardHooked =
             new java.util.concurrent.atomic.AtomicBoolean(false);
     private static volatile long lastCbasBadMs = 0L;
@@ -548,6 +563,15 @@ public class MainHook {
                     Application app = (Application) callFrame.thisObject;
                     appInstance = app;
                     Log.i(TAG, "Application.onCreate: " + app.getClass().getName());
+                    if (!getPropJniGuardHooked.get()) {
+                        try {
+                            hookGetPropJniGuard(app.getClassLoader());
+                            getPropJniGuardHooked.set(true);
+                            Log.i(TAG, "GetPropJni guard installed from Application ClassLoader");
+                        } catch (Throwable e) {
+                            Log.i(TAG, "GetPropJni still unavailable at Application.onCreate: " + e);
+                        }
+                    }
                     hookCommunicationServiceKeepAlive(app.getClassLoader());
                     hookRealTimeDataCore(app.getClassLoader());
                     hookMarketProtocolBoundary(app.getClassLoader());
@@ -555,6 +579,12 @@ public class MainHook {
                     hookStuffTableReads(app.getClassLoader());
                     hookIndicatorQueries(app.getClassLoader());
                     installAllHooks(app.getClassLoader());
+                }
+
+                @Override
+                public void afterCall(Pine.CallFrame callFrame) {
+                    Application app = (Application) callFrame.thisObject;
+                    startNativeMarketRuntimeEnsure(app.getClassLoader());
                 }
             });
             Log.i(TAG, "Hook installed on Application.onCreate");
@@ -603,6 +633,8 @@ public class MainHook {
 
     private static volatile boolean okHttpHooked = false;
     private static volatile boolean unifiedRequestModelHooked = false;
+    private static final AtomicBoolean getPropJniGuardHooked = new AtomicBoolean(false);
+    private static final AtomicBoolean getPropJniWatcherHooked = new AtomicBoolean(false);
 
     private static synchronized void installAllHooks(ClassLoader cl) {
         // 允许重入：如果 OkHttp 还没 hook 成功，用新的 classLoader 重试
@@ -613,6 +645,24 @@ public class MainHook {
         appClassLoader = cl;
 
         Log.i(TAG, "=== installAllHooks start === firstRun=" + firstRun + " okHttpHooked=" + okHttpHooked + " cl=" + cl);
+
+        // redroid + libndk_translation 下，同花顺自带的 ARM libgetprop.so 会在
+        // GetPropJni.getSystemProp() 内进入不可中断 D 状态，主线程因此永远卡在
+        // Hexin.initHexinWindow，系统只能显示 Splash。改用 Android framework 的
+        // SystemProperties Java 入口读取同一份属性，避免跨 ISA 的 native 读取器。
+        if (!getPropJniGuardHooked.get()) {
+            try {
+                hookGetPropJniGuard(cl);
+                getPropJniGuardHooked.set(true);
+            } catch (Throwable e) {
+                Log.i(TAG, "GetPropJni not visible yet; waiting for dynamic dex: " + e);
+                try {
+                    hookGetPropJniLoadWatcher();
+                } catch (Throwable watcherError) {
+                    Log.e(TAG, "GetPropJni load watcher unavailable", watcherError);
+                }
+            }
+        }
 
         // 启用 WebView 调试
         try {
@@ -742,6 +792,82 @@ public class MainHook {
         }
 
         Log.i(TAG, "=== installAllHooks complete ===");
+    }
+
+    private static void hookGetPropJniGuard(ClassLoader cl) throws Exception {
+        hookGetPropJniGuard(cl.loadClass("com.hexin.android.service.push.GetPropJni"));
+    }
+
+    private static void hookGetPropJniLoadWatcher() throws Exception {
+        if (!getPropJniWatcherHooked.compareAndSet(false, true)) return;
+        Method loadClass = ClassLoader.class.getDeclaredMethod("loadClass", String.class);
+        Pine.hook(loadClass, new MethodHook() {
+            @Override
+            public void afterCall(Pine.CallFrame callFrame) {
+                if (getPropJniGuardHooked.get() || callFrame.args == null
+                        || callFrame.args.length == 0
+                        || !"com.hexin.android.service.push.GetPropJni".equals(callFrame.args[0])) {
+                    return;
+                }
+                try {
+                    Object result = callFrame.getResult();
+                    if (result instanceof Class) {
+                        hookGetPropJniGuard((Class<?>) result);
+                        getPropJniGuardHooked.set(true);
+                    }
+                } catch (Throwable e) {
+                    Log.e(TAG, "Dynamic GetPropJni guard install failed", e);
+                }
+            }
+        });
+        Log.i(TAG, "GetPropJni dynamic class-load watcher installed");
+    }
+
+    private static synchronized void hookGetPropJniGuard(Class<?> getPropClass) throws Exception {
+        if (getPropJniGuardHooked.get()) return;
+        Class<?> systemPropertiesClass = Class.forName("android.os.SystemProperties");
+        Method frameworkGet = systemPropertiesClass.getDeclaredMethod(
+                "get", String.class, String.class);
+        frameworkGet.setAccessible(true);
+
+        int hooked = 0;
+        for (Method method : getPropClass.getDeclaredMethods()) {
+            if (!"getSystemProp".equals(method.getName())) continue;
+            if (method.getReturnType() != String.class) {
+                Log.w(TAG, "Skip unsupported GetPropJni signature: " + method);
+                continue;
+            }
+            method.setAccessible(true);
+            Pine.hook(method, new MethodHook() {
+                @Override
+                public void beforeCall(Pine.CallFrame callFrame) throws Throwable {
+                    String key = "";
+                    String fallback = "";
+                    if (callFrame.args != null) {
+                        if (callFrame.args.length > 0 && callFrame.args[0] instanceof String) {
+                            key = (String) callFrame.args[0];
+                        }
+                        if (callFrame.args.length > 1 && callFrame.args[1] instanceof String) {
+                            fallback = (String) callFrame.args[1];
+                        }
+                    }
+                    if (key.startsWith("getprop ")) {
+                        key = key.substring("getprop ".length()).trim();
+                    }
+                    String value = key.isEmpty()
+                            ? fallback
+                            : (String) frameworkGet.invoke(null, key, fallback);
+                    callFrame.setResult(value);
+                    Log.i(TAG, "GetPropJni bypass key=" + key + " valueLen=" + value.length());
+                }
+            });
+            hooked++;
+            Log.i(TAG, "GetPropJni guard installed: " + method);
+        }
+        if (hooked == 0) {
+            throw new NoSuchMethodException("String getSystemProp not found on GetPropJni");
+        }
+        getPropJniGuardHooked.set(true);
     }
 
     /** 无人值守加固（2026-08-19）：开户页退出路径会在主线程同步调
@@ -1169,11 +1295,38 @@ public class MainHook {
                 return;
             }
 
+            if (requestLine.startsWith("POST /admin/view-click")) {
+                sendResponse(out, 200, clickCurrentActivityView(body));
+                client.close();
+                return;
+            }
+
+            if (requestLine.startsWith("POST /admin/bootstrap")) {
+                sendResponse(out, 200, bootstrapAppDirect(resolveAppClassLoader(cl)));
+                client.close();
+                return;
+            }
+
             if (requestLine.startsWith("POST /native/hurricane")
                     || requestLine.startsWith("POST /native/indicator-list")) {
                 ClassLoader effectiveClassLoader = resolveAppClassLoader(cl);
                 String result = callNativeHurricaneQuery(body, effectiveClassLoader);
                 sendResponse(out, 200, result);
+                client.close();
+                return;
+            }
+
+            // 主动初始化行情 native runtime。ensure 只触发一次且立即返回；
+            // status 是 Docker HEALTHCHECK 的确定性就绪门禁。
+            if (requestLine.startsWith("POST /native/runtime/ensure")) {
+                startNativeMarketRuntimeEnsure(resolveAppClassLoader(cl));
+                sendResponse(out, 200, nativeMarketRuntimeStatus());
+                client.close();
+                return;
+            }
+
+            if (requestLine.startsWith("GET /native/runtime/status")) {
+                sendResponse(out, 200, nativeMarketRuntimeStatus());
                 client.close();
                 return;
             }
@@ -1634,6 +1787,21 @@ public class MainHook {
                 String result = name == null
                         ? errorJson(new JSONObject(), "missing ?name= parameter")
                         : invokeTradeQueryByName(name.trim());
+                sendResponse(out, 200, result);
+                client.close();
+                return;
+            }
+
+            // GET /stock/trade/market-route?code=XXXXXX — 只读调用 App 的买入
+            // 行情/可买预查询，取券商返回的 36670 trade_stock_type。用于北交所
+            // 等不能仅凭代码前缀安全推断的市场路由，也供部署验收使用。
+            if (requestLine.startsWith("GET /stock/trade/market-route")) {
+                int qIdx = requestLine.indexOf("?code=");
+                String code = qIdx == -1 ? null
+                        : requestLine.substring(qIdx + 6, requestLine.indexOf(" ", qIdx) == -1
+                                ? requestLine.length() : requestLine.indexOf(" ", qIdx));
+                String result = code == null ? errorJson(new JSONObject(), "missing ?code= parameter")
+                        : handleTradeMarketRoute(code.trim());
                 sendResponse(out, 200, result);
                 client.close();
                 return;
@@ -2386,6 +2554,129 @@ public class MainHook {
         }
     }
 
+    private static synchronized void startNativeMarketRuntimeEnsure(ClassLoader cl) {
+        if ("starting".equals(marketRuntimeEnsureState)
+                || "ready".equals(marketRuntimeEnsureState)) {
+            return;
+        }
+        marketRuntimeEnsureStarted.set(true);
+        marketRuntimeEnsureState = "starting";
+        marketRuntimeEnsureError = "";
+        marketRuntimeEnsureStartedMs = System.currentTimeMillis();
+        marketRuntimeEnsureCompletedMs = 0L;
+        new Thread(() -> {
+            Throwable lastError = null;
+            for (int attempt = 1; attempt <= 20; attempt++) {
+                try {
+                    ClassLoader effective = resolveAppClassLoader(cl);
+                    String unified = "";
+                    boolean unifiedReady = false;
+                    int consecutiveUnifiedSuccesses = 0;
+                    for (int handshake = 1; handshake <= 12; handshake++) {
+                        unified = callNativeUnifiedRequest(
+                                "{\"onlineId\":\"profile_dxp\",\"protocolId\":1264,"
+                                + "\"pageId\":2312,\"requestDic\":"
+                                + "\"startrow=0\\r\\nsortid=-1\\r\\nrowcount=2\\r\\n"
+                                + "newrealtime=0\\r\\nselfstockcustom=1\\r\\nupdate=1\\r\\n"
+                                + "columnorder=55|4|34338|34818\\r\\nmarketlist=16|16\\r\\n"
+                                + "stocklist=1B0300|1B0852\",\"timeoutSeconds\":3}",
+                                effective);
+                        if (unified.contains("\"success\":true")) {
+                            consecutiveUnifiedSuccesses++;
+                            Log.i(TAG, "MARKET_RUNTIME unified handshake=" + handshake
+                                    + " consecutive=" + consecutiveUnifiedSuccesses);
+                            if (consecutiveUnifiedSuccesses >= 2) {
+                                unifiedReady = true;
+                                break;
+                            }
+                        } else {
+                            consecutiveUnifiedSuccesses = 0;
+                        }
+                        Thread.sleep(250);
+                    }
+                    if (!unifiedReady) {
+                        throw new IllegalStateException("unified handshake failed: " + unified);
+                    }
+                    ensureRealtimeTransportDispatched(effective);
+                    marketRuntimeEnsureState = "ready";
+                    marketRuntimeEnsureCompletedMs = System.currentTimeMillis();
+                    Log.i(TAG, "MARKET_RUNTIME ready attempt=" + attempt
+                            + " elapsedMs=" + (marketRuntimeEnsureCompletedMs
+                            - marketRuntimeEnsureStartedMs));
+                    return;
+                } catch (Throwable error) {
+                    lastError = error;
+                    Log.i(TAG, "MARKET_RUNTIME active init attempt=" + attempt
+                            + " not ready: " + error.getMessage());
+                    try { Thread.sleep(500); } catch (InterruptedException interrupted) {
+                        Thread.currentThread().interrupt();
+                        lastError = interrupted;
+                        break;
+                    }
+                }
+            }
+            marketRuntimeEnsureError = lastError == null
+                    ? "active initialization exhausted"
+                    : lastError.getClass().getSimpleName() + ": " + lastError.getMessage();
+            marketRuntimeEnsureState = "failed";
+            marketRuntimeEnsureCompletedMs = System.currentTimeMillis();
+            Log.e(TAG, "MARKET_RUNTIME active initialization failed: "
+                    + marketRuntimeEnsureError);
+        }, "THSHook-market-runtime-ensure").start();
+    }
+
+    private static void ensureRealtimeTransportDispatched(ClassLoader cl) throws Exception {
+        if (marketRuntimeRealtimeTransportReady) return;
+        CountDownLatch dispatched = new CountDownLatch(1);
+        AtomicReference<Throwable> failure = new AtomicReference<>();
+        new Handler(Looper.getMainLooper()).post(() -> {
+            try {
+                Object application = currentApplication();
+                if (application == null) throw new IllegalStateException("Application is not ready");
+                startLegacyCommunicationService(application, cl);
+                RealtimeClassSet classes = resolveRealtimeClassSet(cl);
+                Object model = newRealtimeRequestModel(classes.modelClass,
+                        "sjdp_us_dog", "sjdp_us_dog data", "sjdp_us_dog_channel");
+                Object client = classes.clientClass.getConstructor(classes.modelClass)
+                        .newInstance(model);
+                Object callback = Proxy.newProxyInstance(cl,
+                        new Class<?>[]{classes.callbackClass}, (proxy, method, args) -> {
+                            if (args != null && args.length == 1 && args[0] != null) {
+                                marketRuntimeRealtimeVerified = true;
+                            }
+                            return defaultValue(method.getReturnType());
+                        });
+                classes.clientClass.getMethod("e", classes.callbackClass).invoke(client, callback);
+                requestRealtimeSnapshot(client);
+                marketRuntimeRealtimeClient = client;
+                marketRuntimeRealtimeTransportReady = true;
+            } catch (Throwable error) {
+                failure.set(error);
+            } finally {
+                dispatched.countDown();
+            }
+        });
+        if (!dispatched.await(5, TimeUnit.SECONDS)) {
+            throw new IllegalStateException("realtime transport dispatch timed out");
+        }
+        if (failure.get() != null) throw new RuntimeException(failure.get());
+    }
+
+    private static String nativeMarketRuntimeStatus() {
+        long now = System.currentTimeMillis();
+        return "{\"ok\":true,\"state\":\"" + esc(marketRuntimeEnsureState) + "\""
+                + ",\"runtime_ready\":" + "ready".equals(marketRuntimeEnsureState)
+                + ",\"realtime_transport_ready\":" + marketRuntimeRealtimeTransportReady
+                + ",\"realtime_verified\":" + marketRuntimeRealtimeVerified
+                + ",\"started_at_ms\":" + marketRuntimeEnsureStartedMs
+                + ",\"completed_at_ms\":" + marketRuntimeEnsureCompletedMs
+                + ",\"elapsed_ms\":" + (marketRuntimeEnsureStartedMs > 0
+                    ? ((marketRuntimeEnsureCompletedMs > 0
+                        ? marketRuntimeEnsureCompletedMs : now) - marketRuntimeEnsureStartedMs)
+                    : 0)
+                + ",\"error\":\"" + esc(marketRuntimeEnsureError) + "\"}";
+    }
+
     private static String callNativeRealTimeData(String body, ClassLoader cl) {
         String key = extractJsonString(body, "key");
         String requestParam = extractJsonString(body, "requestParam");
@@ -2608,17 +2899,26 @@ public class MainHook {
         org.json.JSONObject reqAccount = request.optJSONObject("reqAccount");
         int timeoutSeconds = Math.max(1, Math.min(request.optInt("timeoutSeconds", 25), 60));
         synchronized (unifiedRequestLock) {
-            return callNativeUnifiedRequestLocked(
-                    onlineId,
-                    protocolId,
-                    pageId,
-                    requestDic,
-                    requestType,
-                    compressType,
-                    cancelRequestDic,
-                    reqAccount,
-                    timeoutSeconds,
-                    cl);
+            String result = null;
+            for (int attempt = 1; attempt <= 3; attempt++) {
+                result = callNativeUnifiedRequestLocked(
+                        onlineId,
+                        protocolId,
+                        pageId,
+                        requestDic,
+                        requestType,
+                        compressType,
+                        cancelRequestDic,
+                        reqAccount,
+                        timeoutSeconds,
+                        cl);
+                if (result.contains("\"success\":true")) break;
+                if (attempt < 3) {
+                    Log.i(TAG, "Unified attempt " + attempt
+                            + " was not successful; retry bridge");
+                }
+            }
+            return result;
         }
     }
 
@@ -2957,6 +3257,7 @@ public class MainHook {
             org.json.JSONObject reqAccount,
             int timeoutSeconds,
             ClassLoader cl) {
+        Set<Thread> threadsBeforeRequest = snapshotJavaThreads();
         AtomicReference<Object> bridgeRef = new AtomicReference<>();
         AtomicReference<PowerManager.WakeLock> requestWakeLock = new AtomicReference<>();
         beginMarketWireCapture(onlineId);
@@ -3085,6 +3386,7 @@ public class MainHook {
                     + ": " + String.valueOf(cause.getMessage())) + "\"}";
         } finally {
             cleanupUnifiedRequestBridge(bridgeRef.get());
+            cleanupRequestHandlerThreads(threadsBeforeRequest, "unified");
             PowerManager.WakeLock wakeLock = requestWakeLock.get();
             if (wakeLock != null && wakeLock.isHeld()) {
                 wakeLock.release();
@@ -3125,6 +3427,12 @@ public class MainHook {
                 // removeRequest() unregisters the local callback/buffer
                 // synchronously, but its explicit cancel frame is asynchronous.
                 Thread.sleep(800L);
+            } else {
+                // Even one-shot requests release the native frame/page route
+                // asynchronously. Immediate reuse under sustained collector
+                // load produced periodic 4/8/12-second timeouts; a short quiet
+                // window keeps the next bridge behind that release boundary.
+                Thread.sleep(300L);
             }
             Log.i(TAG, "Unified cleanup ack released=" + released
                     + " cancelDrain=" + requiresCancelDrain);
@@ -3154,6 +3462,34 @@ public class MainHook {
             removeRequest.invoke(bridge);
         } catch (Throwable e) {
             Log.w(TAG, "Unified request cleanup failed: " + e.getMessage());
+        }
+    }
+
+    private static Set<Thread> snapshotJavaThreads() {
+        return new HashSet<>(Thread.getAllStackTraces().keySet());
+    }
+
+    private static void cleanupRequestHandlerThreads(
+            Set<Thread> threadsBeforeRequest,
+            String requestKind) {
+        int stopped = 0;
+        for (Thread thread : Thread.getAllStackTraces().keySet()) {
+            if (threadsBeforeRequest.contains(thread)
+                    || !(thread instanceof HandlerThread)
+                    || !thread.getName().startsWith("queued-default")) {
+                continue;
+            }
+            HandlerThread handlerThread = (HandlerThread) thread;
+            boolean requested = Build.VERSION.SDK_INT >= Build.VERSION_CODES.JELLY_BEAN_MR2
+                    ? handlerThread.quitSafely()
+                    : handlerThread.quit();
+            if (requested) {
+                stopped++;
+            }
+        }
+        if (stopped > 0) {
+            Log.i(TAG, "Native request HandlerThread cleanup kind=" + requestKind
+                    + " stopped=" + stopped);
         }
     }
 
@@ -3410,6 +3746,259 @@ public class MainHook {
         return application;
     }
 
+    private static String clickCurrentActivityView(String body) {
+        CountDownLatch latch = new CountDownLatch(1);
+        AtomicReference<String> response = new AtomicReference<>();
+        try {
+            org.json.JSONObject request = new org.json.JSONObject(body == null ? "{}" : body);
+            int viewId = request.getInt("view_id");
+            Class<?> activityThreadClass = Class.forName("android.app.ActivityThread");
+            Object activityThread = activityThreadClass
+                    .getMethod("currentActivityThread").invoke(null);
+            Field activitiesField = activityThreadClass.getDeclaredField("mActivities");
+            activitiesField.setAccessible(true);
+            Object records = activitiesField.get(activityThread);
+            if (!(records instanceof Map)) {
+                throw new IllegalStateException("ActivityThread.mActivities unavailable");
+            }
+            AtomicReference<android.app.Activity> resumed = new AtomicReference<>();
+            for (Object record : ((Map<?, ?>) records).values()) {
+                Object pausedValue = readFieldValue(record, "paused");
+                Object activityValue = readFieldValue(record, "activity");
+                if (activityValue instanceof android.app.Activity
+                        && !Boolean.TRUE.equals(pausedValue)) {
+                    resumed.set((android.app.Activity) activityValue);
+                    break;
+                }
+            }
+            android.app.Activity activity = resumed.get();
+            if (activity == null) throw new IllegalStateException("no resumed Activity");
+            new Handler(Looper.getMainLooper()).post(() -> {
+                try {
+                    android.view.View view = activity.findViewById(viewId);
+                    if (view == null) {
+                        // Privacy consent is hosted in a Dialog Window rather
+                        // than the Activity decor. Search every WindowManager
+                        // root so onboarding can use the App's real listener.
+                        Class<?> globalClass = Class.forName(
+                                "android.view.WindowManagerGlobal");
+                        Object global = globalClass.getMethod("getInstance").invoke(null);
+                        Field rootsField = globalClass.getDeclaredField("mRoots");
+                        rootsField.setAccessible(true);
+                        Object roots = rootsField.get(global);
+                        if (roots instanceof Iterable) {
+                            for (Object root : (Iterable<?>) roots) {
+                                Object rootView = readFieldValue(root, "mView");
+                                if (rootView instanceof android.view.View) {
+                                    view = ((android.view.View) rootView).findViewById(viewId);
+                                    if (view != null) break;
+                                }
+                            }
+                        }
+                    }
+                    if (view == null) {
+                        response.set("{\"success\":false,\"error\":\"view not found\"}");
+                    } else {
+                        boolean clicked = view.performClick();
+                        response.set("{\"success\":" + clicked
+                                + ",\"view_id\":" + viewId + "}");
+                    }
+                } catch (Throwable error) {
+                    response.set("{\"success\":false,\"error\":\""
+                            + esc(String.valueOf(error)) + "\"}");
+                } finally {
+                    latch.countDown();
+                }
+            });
+            if (!latch.await(5, TimeUnit.SECONDS)) {
+                return "{\"success\":false,\"error\":\"main thread timeout\"}";
+            }
+            return response.get();
+        } catch (Throwable error) {
+            return "{\"success\":false,\"error\":\""
+                    + esc(String.valueOf(error)) + "\"}";
+        }
+    }
+
+    /**
+     * Complete THS first-run initialization through the App's own business
+     * callbacks. This deliberately does not synthesize input or depend on a
+     * rendered button. The endpoint is idempotent: the privacy callback is
+     * only invoked while THS reports consent as incomplete, and
+     * NewUserTagsSelectContainer.goToHexin() has its own completion guard.
+     */
+    private static String bootstrapAppDirect(ClassLoader classLoader) {
+        CountDownLatch latch = new CountDownLatch(1);
+        AtomicReference<String> response = new AtomicReference<>();
+        long startedAt = System.currentTimeMillis();
+        try {
+            android.app.Activity activity = findResumedActivity();
+            if (activity == null) throw new IllegalStateException("no resumed Activity");
+            new Handler(Looper.getMainLooper()).post(() -> {
+                boolean privacyAlreadyConfirmed = false;
+                boolean privacyContinuationInvoked = false;
+                boolean onboardingCompleted = false;
+                String phase = "start";
+                try {
+                    Class<?> privacyClass = Class.forName("yg6", false, classLoader);
+                    Object privacySingleton = readStaticFieldValue(privacyClass, "a");
+                    Method privacyConfirmed = privacySingleton.getClass()
+                            .getDeclaredMethod("d");
+                    privacyConfirmed.setAccessible(true);
+                    privacyAlreadyConfirmed = Boolean.TRUE.equals(
+                            privacyConfirmed.invoke(privacySingleton));
+
+                    if (!privacyAlreadyConfirmed) {
+                        phase = "privacy_callback";
+                        // yg6.H/k0 (the official consent wrappers) persist
+                        // these values immediately before dispatching
+                        // ym8$b.onAgree(). Reproduce that business sequence,
+                        // including the App's current protocol version, so a
+                        // repeated bootstrap never re-runs SDK initialization.
+                        Method currentPrivacyVersion = privacySingleton.getClass()
+                                .getDeclaredMethod("i");
+                        currentPrivacyVersion.setAccessible(true);
+                        Object privacyVersion = currentPrivacyVersion.invoke(privacySingleton);
+                        Class<?> preferencesClass = Class.forName("ah6", false, classLoader);
+                        Method putBoolean = preferencesClass.getDeclaredMethod(
+                                "f", String.class, String.class, boolean.class);
+                        putBoolean.setAccessible(true);
+                        putBoolean.invoke(null, "sp_name_privacy_policy",
+                                "sp_key_privacy_policy_confirm", true);
+                        Method putInt = preferencesClass.getDeclaredMethod(
+                                "g", String.class, String.class, int.class);
+                        putInt.setAccessible(true);
+                        putInt.invoke(null, "sp_name_privacy_policy",
+                                "sp_key_privacy_ver", ((Number) privacyVersion).intValue());
+
+                        Class<?> initializerClass = Class.forName("ym8", false, classLoader);
+                        Constructor<?> initializerConstructor = null;
+                        for (Constructor<?> constructor : initializerClass.getDeclaredConstructors()) {
+                            Class<?>[] parameters = constructor.getParameterTypes();
+                            if (parameters.length == 2
+                                    && parameters[0].isAssignableFrom(activity.getClass())
+                                    && android.os.Bundle.class.isAssignableFrom(parameters[1])) {
+                                initializerConstructor = constructor;
+                                break;
+                            }
+                        }
+                        if (initializerConstructor == null) {
+                            throw new NoSuchMethodException("ym8(Activity, Bundle)");
+                        }
+                        initializerConstructor.setAccessible(true);
+                        Object initializer = initializerConstructor.newInstance(activity, null);
+                        // ym8$b.onAgree() also finishes bn8's current Activity.
+                        // That is correct for THS's dedicated consent UI, but
+                        // unsafe for a headless bootstrap where the resumed
+                        // Activity can already be the main Hexin Activity.
+                        // Its final continuation is ym8.h(); invoke that
+                        // official post-privacy startup entry directly.
+                        Method continueStartup = initializerClass.getDeclaredMethod("h");
+                        continueStartup.setAccessible(true);
+                        continueStartup.invoke(initializer);
+                        privacyContinuationInvoked = true;
+                    }
+
+                    phase = "new_user_completion";
+                    Object onboarding = findViewByClassName(
+                            "com.hexin.android.biz_firstpage.newuser.view.NewUserTagsSelectContainer");
+                    if (onboarding != null) {
+                        Method goToHexin = onboarding.getClass().getDeclaredMethod("goToHexin");
+                        goToHexin.setAccessible(true);
+                        goToHexin.invoke(onboarding);
+                        onboardingCompleted = true;
+                    }
+                    response.set("{\"success\":true,\"strategy\":\"direct\""
+                            + ",\"privacy_already_confirmed\":" + privacyAlreadyConfirmed
+                            + ",\"privacy_continuation_invoked\":"
+                            + privacyContinuationInvoked
+                            + ",\"onboarding_completed\":" + onboardingCompleted
+                            + ",\"elapsed_ms\":" + (System.currentTimeMillis() - startedAt)
+                            + "}");
+                } catch (Throwable error) {
+                    response.set("{\"success\":false,\"strategy\":\"direct\""
+                            + ",\"phase\":\"" + esc(phase) + "\""
+                            + ",\"error\":\"" + esc(unwrapReflectionError(error)) + "\""
+                            + ",\"elapsed_ms\":" + (System.currentTimeMillis() - startedAt)
+                            + "}");
+                } finally {
+                    latch.countDown();
+                }
+            });
+            if (!latch.await(8, TimeUnit.SECONDS)) {
+                return "{\"success\":false,\"strategy\":\"direct\","
+                        + "\"error\":\"main thread timeout\"}";
+            }
+            return response.get();
+        } catch (Throwable error) {
+            return "{\"success\":false,\"strategy\":\"direct\",\"error\":\""
+                    + esc(unwrapReflectionError(error)) + "\"}";
+        }
+    }
+
+    private static android.app.Activity findResumedActivity() throws Exception {
+        Class<?> activityThreadClass = Class.forName("android.app.ActivityThread");
+        Object activityThread = activityThreadClass
+                .getMethod("currentActivityThread").invoke(null);
+        Field activitiesField = activityThreadClass.getDeclaredField("mActivities");
+        activitiesField.setAccessible(true);
+        Object records = activitiesField.get(activityThread);
+        if (!(records instanceof Map)) return null;
+        for (Object record : ((Map<?, ?>) records).values()) {
+            Object pausedValue = readFieldValue(record, "paused");
+            Object activityValue = readFieldValue(record, "activity");
+            if (activityValue instanceof android.app.Activity
+                    && !Boolean.TRUE.equals(pausedValue)) {
+                return (android.app.Activity) activityValue;
+            }
+        }
+        return null;
+    }
+
+    private static Object findViewByClassName(String className) throws Exception {
+        Class<?> globalClass = Class.forName("android.view.WindowManagerGlobal");
+        Object global = globalClass.getMethod("getInstance").invoke(null);
+        Field rootsField = globalClass.getDeclaredField("mRoots");
+        rootsField.setAccessible(true);
+        Object roots = rootsField.get(global);
+        if (!(roots instanceof Iterable)) return null;
+        for (Object root : (Iterable<?>) roots) {
+            Object rootView = readFieldValue(root, "mView");
+            Object match = findViewByClassNameRecursive(rootView, className);
+            if (match != null) return match;
+        }
+        return null;
+    }
+
+    private static Object findViewByClassNameRecursive(Object candidate, String className) {
+        if (!(candidate instanceof android.view.View)) return null;
+        android.view.View view = (android.view.View) candidate;
+        if (className.equals(view.getClass().getName())) return view;
+        if (view instanceof android.view.ViewGroup) {
+            android.view.ViewGroup group = (android.view.ViewGroup) view;
+            for (int index = 0; index < group.getChildCount(); index++) {
+                Object match = findViewByClassNameRecursive(group.getChildAt(index), className);
+                if (match != null) return match;
+            }
+        }
+        return null;
+    }
+
+    private static Object readStaticFieldValue(Class<?> type, String name) throws Exception {
+        Field field = type.getDeclaredField(name);
+        field.setAccessible(true);
+        return field.get(null);
+    }
+
+    private static String unwrapReflectionError(Throwable error) {
+        Throwable current = error;
+        while (current instanceof java.lang.reflect.InvocationTargetException
+                && ((java.lang.reflect.InvocationTargetException) current).getTargetException() != null) {
+            current = ((java.lang.reflect.InvocationTargetException) current).getTargetException();
+        }
+        return String.valueOf(current);
+    }
+
     private static ClassLoader resolveAppClassLoader(ClassLoader fallback) {
         try {
             Object application = currentApplication();
@@ -3657,6 +4246,7 @@ public class MainHook {
     }
 
     private static String callNativeHurricaneQuery(String body, ClassLoader cl) {
+        Set<Thread> threadsBeforeRequest = snapshotJavaThreads();
         CountDownLatch latch = new CountDownLatch(1);
         AtomicReference<String> result = new AtomicReference<>();
         AtomicReference<String> error = new AtomicReference<>();
@@ -3684,7 +4274,10 @@ public class MainHook {
             if ("null".equalsIgnoreCase(orderName)) {
                 orderName = "";
             }
-            String httpSourceId = request.optString("http_source_id", "AStockSector");
+            String httpSourceId = request.optString(
+                    "http_source_id", "HurricaneDataSource");
+            String sourceHeaderId = request.optString(
+                    "source_header_id", "watchlist-dataapi-header");
             java.util.List<String> hurricaneIds = jsonStringList(
                     request.optJSONArray("hurricane_ids"), "cn_concept");
             java.util.List<String> hurricaneIndicatorIds = jsonStringList(
@@ -3736,18 +4329,23 @@ public class MainHook {
             Class<?> formatterClass = cl.loadClass(
                     "com.hexin.android.biz_securities_indicator_fetcher_model.DataFormatter");
             java.util.List<Object> indicators = new ArrayList<>();
+            Object querySortIndicatorValue = null;
             java.lang.reflect.Constructor<?> indicatorConstructor = indicatorClass.getConstructor(
                     String.class, String.class, Long.class, formatterClass);
             for (String indicatorId : mobileIndicatorIds) {
-                indicators.add(indicatorConstructor.newInstance(
-                        indicatorId, "Mobilehq1264DataSource", null, null));
+                Object indicator = indicatorConstructor.newInstance(
+                        indicatorId, "Mobilehq1264DataSource", null, null);
+                indicators.add(indicator);
+                if (indicatorId.equals(sortId)) querySortIndicatorValue = indicator;
             }
             java.lang.reflect.Constructor<?> hurricaneIndicatorConstructor =
                     hurricaneIndicatorClass.getConstructor(String.class, String.class,
                             String.class, String.class, Map.class, Long.class, formatterClass);
             for (String indicatorId : hurricaneIndicatorIds) {
-                indicators.add(hurricaneIndicatorConstructor.newInstance(
-                        indicatorId, "HurricaneDataSource", null, null, null, null, null));
+                Object indicator = hurricaneIndicatorConstructor.newInstance(
+                        indicatorId, "HurricaneDataSource", null, null, null, null, null);
+                indicators.add(indicator);
+                if (indicatorId.equals(sortId)) querySortIndicatorValue = indicator;
             }
 
             Class<?> rangeClass = cl.loadClass(
@@ -3804,11 +4402,21 @@ public class MainHook {
                     "com.hexin.android.biz_securities_indicator_fetcher_model.securities_source.SecuritiesSource");
             Class<?> sortIndicatorClass = cl.loadClass(
                     "com.hexin.android.biz_securities_indicator_fetcher_model.SortIndicator");
+            // HurricaneSecuritiesSource already carries sortIndicatorId/order.
+            // The App passes null as QueryParam.sortIndicator for sourced
+            // queries; providing a second Hurricane SortIndicator makes the
+            // backend reject the request with callback error 20.  Explicit
+            // security-list queries may still use QueryParam sorting.
+            Object querySortIndicator = source != null
+                    || querySortIndicatorValue == null || order == null
+                    ? null
+                    : sortIndicatorClass.getConstructor(indicatorClass, orderClass)
+                            .newInstance(querySortIndicatorValue, order);
             Class<?> queryParamClass = cl.loadClass(
                     "com.hexin.android.biz_securities_indicator_fetcher_model.QueryParam");
             Object queryParam = queryParamClass.getConstructor(List.class, List.class,
                     sortIndicatorClass, rangeClass, securitiesSourceClass)
-                    .newInstance(explicitSecurities, indicators, null, range, source);
+                    .newInstance(explicitSecurities, indicators, querySortIndicator, range, source);
 
             Class<?> managerClass = cl.loadClass(
                     "com.hexin.android.biz_securities_indicator_fetcher_api.IndicatorManager");
@@ -3824,7 +4432,9 @@ public class MainHook {
                 }
             }
             if (obtainClient == null) throw new NoSuchMethodException("obtainClient(int, Function1)");
-            Object client = obtainClient.invoke(service, frameId, null);
+            Object clientConfigurator = createIndicatorClientConfigurator(
+                    cl, httpSourceId, sourceHeaderId);
+            Object client = obtainClient.invoke(service, frameId, clientConfigurator);
             if (client == null) throw new IllegalStateException("QueryClient is null");
             Class<?> callbackClass = cl.loadClass(
                     "com.hexin.android.biz_securities_indicator_fetcher_api.QueryCallback");
@@ -3950,10 +4560,22 @@ public class MainHook {
                     incompletePayload.put("data", mergedData.get());
                     response = incompletePayload.toString();
                 } else {
-                    response = result.get() != null
-                            ? result.get()
-                            : "{\"success\":false,\"error\":\""
-                                    + esc(error.get()) + "\"}";
+                    if (result.get() != null) {
+                        response = result.get();
+                    } else if (request.optBoolean("include_debug", false)) {
+                        org.json.JSONObject debugPayload = new org.json.JSONObject();
+                        debugPayload.put("success", false);
+                        debugPayload.put("error", error.get());
+                        debugPayload.put("query", String.valueOf(queryParam));
+                        debugPayload.put("source", describeObjectFields(source, 32000));
+                        debugPayload.put("client", describeObjectFields(finalClient, 120000));
+                        debugPayload.put("client_config",
+                                describeIndicatorClientConfig(finalClient));
+                        response = debugPayload.toString();
+                    } else {
+                        response = "{\"success\":false,\"error\":\""
+                                + esc(error.get()) + "\"}";
+                    }
                 }
             }
 
@@ -3984,7 +4606,92 @@ public class MainHook {
         } catch (Throwable e) {
             Log.e(TAG, "INDICATOR_DIRECT request failed", e);
             return "{\"success\":false,\"error\":\"" + esc(String.valueOf(e)) + "\"}";
+        } finally {
+            cleanupRequestHandlerThreads(threadsBeforeRequest, "hurricane");
         }
+    }
+
+    private static String describeIndicatorClientConfig(Object client) {
+        if (client == null) return "null";
+        try {
+            Class<?> current = client.getClass();
+            while (current != null) {
+                for (Field field : current.getDeclaredFields()) {
+                    if (!"com.hexin.android.biz_securities_indicator_fetcher_api.Config"
+                            .equals(field.getType().getName())) continue;
+                    field.setAccessible(true);
+                    Object config = field.get(client);
+                    if (config == null) return "null";
+                    Object httpConfigMap = config.getClass()
+                            .getMethod("getHttpConfigMap").invoke(config);
+                    return "config=" + describeObjectFields(config, 120000)
+                            + "; httpConfigMap=" + String.valueOf(httpConfigMap);
+                }
+                current = current.getSuperclass();
+            }
+            return "Config field not found";
+        } catch (Throwable error) {
+            return "Config inspection failed: " + error;
+        }
+    }
+
+    private static Object createIndicatorClientConfigurator(
+            ClassLoader cl, String sourceKey, String sourceHeaderId) throws Exception {
+        Class<?> httpConfigClass = cl.loadClass(
+                "com.hexin.android.biz_securities_indicator_fetcher_api.HttpDataSourceConfig");
+        Object httpConfig = Proxy.newProxyInstance(cl, new Class[]{httpConfigClass},
+                (proxy, method, args) -> {
+                    String name = method.getName();
+                    if ("customHttpHeaderFields".equals(name)) {
+                        return java.util.Collections.singletonMap(
+                                "Source-Id", sourceHeaderId);
+                    }
+                    if ("toString".equals(name)) {
+                        return "BridgeHttpDataSourceConfig(sourceHeaderId="
+                                + sourceHeaderId + ")";
+                    }
+                    if ("hashCode".equals(name)) return System.identityHashCode(proxy);
+                    if ("equals".equals(name)) return proxy == (args == null ? null : args[0]);
+                    return null;
+                });
+        // Config.Builder is keyed by the indicator data-source implementation,
+        // not by HurricaneSecuritiesSource.httpSourceId.  The production App
+        // always registers this config under "HurricaneDataSource" (sector,
+        // ranking and futures pages all do so).  Using AStockSector,
+        // FuturesSynthesis or sif-constituent-stock here leaves the actual
+        // Hurricane client unconfigured and it deterministically calls
+        // QueryCallback.onError(20).
+        java.util.Map<String, Object> httpConfigMap =
+                java.util.Collections.singletonMap("HurricaneDataSource", httpConfig);
+        Class<?> function1Class = cl.loadClass("kotlin.jvm.functions.Function1");
+        return Proxy.newProxyInstance(cl, new Class[]{function1Class},
+                (proxy, method, args) -> {
+                    if ("invoke".equals(method.getName())
+                            && args != null && args.length == 1 && args[0] != null) {
+                        args[0].getClass().getMethod("setHttpConfigMap", Map.class)
+                                .invoke(args[0], httpConfigMap);
+                        // Match the App's PlateCard/PlateCardV2 configurator.
+                        // Leaving the builder's default priority in place can
+                        // bypass the registered HurricaneDataSource config and
+                        // the native client reports callback error 20.
+                        args[0].getClass()
+                                .getMethod("setCustomDataSourcePriority", List.class)
+                                .invoke(args[0], java.util.Collections.emptyList());
+                        Class<?> unitClass = cl.loadClass("kotlin.Unit");
+                        return unitClass.getField("INSTANCE").get(null);
+                    }
+                    if ("toString".equals(method.getName())) {
+                        return "BridgeIndicatorClientConfigurator(sourceKey="
+                                + sourceKey + ")";
+                    }
+                    if ("hashCode".equals(method.getName())) {
+                        return System.identityHashCode(proxy);
+                    }
+                    if ("equals".equals(method.getName())) {
+                        return proxy == (args == null ? null : args[0]);
+                    }
+                    return null;
+                });
     }
 
     private static java.util.List<String> jsonStringList(
@@ -7136,10 +7843,8 @@ public class MainHook {
             } catch (Throwable e) {
                 Log.w(TAG, "z7m.w hook failed: " + e);
             }
-            // 登录报文探针（2026-08-19 密码预处理排查）：t3s.b 是密码登录报文
-            // 构造终点（返回 t3s.d = 线上字节）。捕获 App 实际构造的 g6m 全部
-            // 字段（含明文密码 tag4 来源 g6m.c）与完整线上 hex，写
-            // filesDir/thshook_login_probe.log，供与 hook 自建 g6m 对比。
+            // 登录报文探针：t3s.b 是密码登录报文构造终点。这里只记录是否到达
+            // 和报文长度；请求字段及字节流可能含账户、密码和 token，严禁落盘。
             try {
                 Class<?> t3sClass = cl.loadClass("t3s");
                 Class<?> v3sClass = cl.loadClass("v3s");
@@ -7151,44 +7856,10 @@ public class MainHook {
                                 try {
                                     StringBuilder sb = new StringBuilder();
                                     sb.append("=== t3s.b pwd login probe ===\n");
-                                    Object v3s = callFrame.args[0];
-                                    Object g6m = v3sClass.getField("d").get(v3s);
-                                    Object r8m = v3sClass.getField("c").get(v3s);
-                                    if (g6m != null) {
-                                        for (Field f : g6m.getClass().getFields()) {
-                                            Class<?> ft = f.getType();
-                                            if (ft == String.class || ft == boolean.class
-                                                    || ft == int.class || ft == long.class) {
-                                                Object v = f.get(g6m);
-                                                if (v != null) {
-                                                    sb.append("g6m.").append(f.getName())
-                                                            .append('=').append(v).append('\n');
-                                                }
-                                            }
-                                        }
-                                    }
-                                    if (r8m != null) {
-                                        for (Field f : r8m.getClass().getFields()) {
-                                            Class<?> ft = f.getType();
-                                            if (ft == String.class || ft == boolean.class
-                                                    || ft == int.class || ft == long.class) {
-                                                Object v = f.get(r8m);
-                                                if (v != null) {
-                                                    sb.append("r8m.").append(f.getName())
-                                                            .append('=').append(v).append('\n');
-                                                }
-                                            }
-                                        }
-                                    }
                                     Object ret = callFrame.getResult();
                                     byte[] buf = ret != null
                                             ? (byte[]) t3sClass.getField("d").get(ret) : null;
                                     sb.append("buf_len=").append(buf == null ? -1 : buf.length).append('\n');
-                                    if (buf != null) {
-                                        StringBuilder hex = new StringBuilder(buf.length * 2);
-                                        for (byte b : buf) hex.append(String.format("%02x", b));
-                                        sb.append("buf_hex=").append(hex).append('\n');
-                                    }
                                     sb.append("=== end ===\n");
                                     Log.i(TAG, sb.toString());
                                     appendLoginProbeLog(sb.toString());
@@ -7593,11 +8264,11 @@ public class MainHook {
         //     任一环节不回调即"无发送无失败"地挂起（AVD 病灶定位关键）。
         //     h9m.c() 是链的"继续"调用；每个 intercept() 入口打点。
         String[] chainClasses = {"t9m", "j9m", "m9m", "v9m", "o9m", "i9m", "x9m",
-                "z9m", "p9m", "w9m", "u9m", "y9m", "n9m", "r9m", "s9m"};
+                "z9m", "p9m", "w9m", "u9m", "y9m", "n9m", "r9m", "s9m", "q9m"};
         for (String chainName : chainClasses) {
             try {
                 Class<?> chainCls = cl.loadClass(chainName);
-                Method intercept = chainCls.getDeclaredMethod("intercept");
+                Method intercept = findMethodInHierarchy(chainCls, "intercept");
                 intercept.setAccessible(true);
                 Pine.hook(intercept, new MethodHook() {
                     @Override
@@ -7690,6 +8361,68 @@ public class MainHook {
             Log.i(TAG, "z9m phone-bind bypass hook installed");
         } catch (Throwable e) {
             Log.w(TAG, "z9m hook failed: " + e);
+        }
+
+        // 14. 密码登录完整边界。此前只观察 f2s.q（token 登录），而无人值守
+        // 密码分支实际从 f2s.o 进入，经 w3s.e/f2s.u/e2s.W/s8m.d 后才创建
+        // 拦截器链；任一阶段未到达都必须能从日志中确定。只记录阶段和返回类型，
+        // 绝不打印请求对象，避免账户、密码或 token 进入日志。
+        hookTradeStageMethods(cl, "f2s", "o", "TradePassword.f2s.o");
+        hookTradeStageMethods(cl, "w3s", "e", "TradePassword.w3s.e");
+        hookTradeStageMethods(cl, "f2s", "u", "TradePassword.f2s.u");
+        hookTradeStageMethods(cl, "e2s", "W", "TradePassword.e2s.W");
+        hookTradeStageMethods(cl, "s8m", "d", "TradePassword.s8m.d");
+        hookTradeStageMethods(cl, "aqv$c", "onChannelOk", "TradePassword.aqv$c.onChannelOk");
+        hookTradeStageMethods(cl, "aqv$c", "onChannelBad", "TradePassword.aqv$c.onChannelBad");
+    }
+
+    private static Method findMethodInHierarchy(Class<?> cls, String name,
+                                                 Class<?>... parameterTypes)
+            throws NoSuchMethodException {
+        Class<?> current = cls;
+        while (current != null && current != Object.class) {
+            try {
+                return current.getDeclaredMethod(name, parameterTypes);
+            } catch (NoSuchMethodException ignored) {
+                current = current.getSuperclass();
+            }
+        }
+        throw new NoSuchMethodException(cls.getName() + "." + name);
+    }
+
+    private static void hookTradeStageMethods(ClassLoader cl, String className,
+                                              String methodName, String label) {
+        try {
+            Class<?> cls = cl.loadClass(className);
+            int count = 0;
+            for (Method method : cls.getDeclaredMethods()) {
+                if (!methodName.equals(method.getName())) continue;
+                method.setAccessible(true);
+                final String methodLabel = label + "/" + method.getParameterTypes().length;
+                Pine.hook(method, new MethodHook() {
+                    @Override
+                    public void beforeCall(Pine.CallFrame callFrame) {
+                        String msg = methodLabel + " enter thread="
+                                + Thread.currentThread().getName();
+                        Log.w(TAG, msg);
+                        addTradeLog(msg);
+                    }
+
+                    @Override
+                    public void afterCall(Pine.CallFrame callFrame) {
+                        Object result = callFrame.getResult();
+                        String msg = methodLabel + " return="
+                                + (result == null ? "void/null" : result.getClass().getSimpleName());
+                        Log.w(TAG, msg);
+                        addTradeLog(msg);
+                    }
+                });
+                count++;
+            }
+            if (count == 0) throw new NoSuchMethodException(className + "." + methodName);
+            Log.i(TAG, label + " hooks installed count=" + count);
+        } catch (Throwable e) {
+            Log.w(TAG, label + " hook failed: " + e);
         }
     }
 
@@ -9368,14 +10101,16 @@ public class MainHook {
                 actions.put("trade_session_ready");
                 if (tradingSdkBridgeHooked.get()) actions.put("trade_hooks_installed");
 
-                String probeResult = invokeTradeQueryByName("positions");
-                JSONObject probe = new JSONObject(probeResult);
-                if (!probe.optBoolean("ok", false)) {
-                    throw new IllegalStateException("readonly positions probe failed: "
-                            + probe.optString("error", "unknown"));
+                String[] requiredReadQueries = {"funds", "positions", "today_order"};
+                for (String queryName : requiredReadQueries) {
+                    JSONObject probe = new JSONObject(invokeTradeQueryByName(queryName));
+                    if (!probe.optBoolean("ok", false)) {
+                        throw new IllegalStateException("readonly " + queryName
+                                + " probe failed: " + probe.optString("error", "unknown"));
+                    }
+                    actions.put("readonly_" + queryName + "_probe_passed");
                 }
-                tradeRuntimeProbe = "positions:ok";
-                actions.put("readonly_positions_probe_passed");
+                tradeRuntimeProbe = "funds+positions+today_order:ok";
                 tradeRuntimeEnsureState = "READY";
                 tradeRuntimeEnsureCompletedMs = System.currentTimeMillis();
                 lastEnsureTradeError = null;
@@ -10673,6 +11408,96 @@ public class MainHook {
         }
     }
 
+    /**
+     * 冷启动的 seed 账户没有经历 App 的登录成功回调，lzr.e 默认 false；此时
+     * f2s 的登录请求会走依赖前台 PushConnect 的 CBAS 路径。无头容器里该路径
+     * 可能只完成 TCP 连接却不建立交易会话，最终表现为登录回调永久不返回。
+     * App 登录成功后本来也会把该位设为 true，因此在主动登录前提前置位，统一
+     * 使用已经验证过的 jniRequest native 路径。
+     */
+    private static boolean setNativeTradeLoginPath(ClassLoader cl, Object mgr,
+            JSONObject report, boolean enabled) {
+        try {
+            Class<?> mzrClass = cl.loadClass("mzr");
+            Object mzrA = mzrClass.getField("a").get(null);
+            Object lzr = mzrClass.getMethod("b", cl.loadClass("pzr"))
+                    .invoke(mzrA, mgr);
+            lzr.getClass().getMethod("p", boolean.class).invoke(lzr, enabled);
+            if (report != null) report.put("native_path_forced", enabled);
+            return true;
+        } catch (Throwable t) {
+            Log.w(TAG, "force lzr.e=true failed: " + t);
+            try {
+                if (report != null) report.put("native_path_forced", false);
+            } catch (Throwable ignored) { }
+            return false;
+        }
+    }
+
+    private static boolean forceNativeTradeLoginPath(ClassLoader cl, Object mgr,
+            JSONObject report) {
+        return setNativeTradeLoginPath(cl, mgr, report, true);
+    }
+
+    /**
+     * 无头启动时 CommunicationService 可能早于 trv.a() 创建，导致 onCreateEnd 的
+     * 一次性通知被错过，cqv.i() 没有注册 iChannelAuth。结果是 CBAS TCP 已连接，
+     * 但 sessionType=1 永远未认证，所有交易请求都在 hrv.u() 被同步丢弃。
+     */
+    private static boolean ensureTradeChannelSession(ClassLoader cl, JSONObject report) {
+        try {
+            Class<?> serviceClass = cl.loadClass(
+                    "com.hexin.plat.android.CommunicationService");
+            Object service = serviceClass.getMethod("getCommunicationService").invoke(null);
+            if (service == null) {
+                report.put("channel_error", "CommunicationService unavailable");
+                return false;
+            }
+            synchronized (tradeChannelBootstrapLock) {
+                if (tradeChannelBootstrappedService != service) {
+                    // 安装官方 Lynv 监听器，并补发已经错过的 onCreateEnd 初始化。
+                    cl.loadClass("trv").getMethod("a").invoke(null);
+                    Object listener = cl.loadClass("cqv").newInstance();
+                    listener.getClass().getMethod("i").invoke(listener);
+                    tradeChannelBootstrappedService = service;
+                    report.put("channel_auth_listener_installed", true);
+                }
+            }
+            java.lang.reflect.Field poolField =
+                    serviceClass.getDeclaredField("mSocketConnectionPool");
+            poolField.setAccessible(true);
+            Object pool = poolField.get(service);
+            if (pool == null) {
+                report.put("channel_error", "socket pool unavailable");
+                return false;
+            }
+            Method ready = pool.getClass().getMethod("i0", int.class);
+            if (!Boolean.TRUE.equals(ready.invoke(pool, 1))) {
+                pool.getClass().getMethod("C").invoke(pool);
+                for (int i = 0; i < 30
+                        && !Boolean.TRUE.equals(ready.invoke(pool, 1)); i++) {
+                    Thread.sleep(500);
+                }
+            }
+            boolean sessionReady = Boolean.TRUE.equals(ready.invoke(pool, 1));
+            report.put("channel_session1_ready", sessionReady);
+            if (!sessionReady) {
+                lastEnsureTradeError = "trade channel sessionType=1 auth not ready";
+            }
+            return sessionReady;
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            return false;
+        } catch (Throwable t) {
+            Throwable cause = t.getCause() != null ? t.getCause() : t;
+            Log.w(TAG, "trade channel bootstrap failed: " + cause);
+            try { report.put("channel_error", String.valueOf(cause)); }
+            catch (Throwable ignored) { }
+            lastEnsureTradeError = "trade channel bootstrap failed: " + cause;
+            return false;
+        }
+    }
+
     /** 密码登录（2026-08-18，8/19 真机探针修正）：镜像 SimpleWeituoLogin 链——
      *  g6m.a() builder：N(资金账号)/R(密码→g6m.b→线上tag3)/S(空)/T("0")/
      *  O("0")/Q(空)/U(yyb串=g6m.a(a1s))/M(false)/P("1")/X(true)/H(acctype)/G()
@@ -10689,6 +11514,9 @@ public class MainHook {
             Object broker = mgr.getClass().getMethod("v").invoke(mgr);
             if (broker == null) {
                 report.put("pwd_error", "no broker info");
+                return false;
+            }
+            if (!ensureTradeChannelSession(cl, report)) {
                 return false;
             }
             Class<?> g6mClass = cl.loadClass("g6m");
@@ -10715,15 +11543,42 @@ public class MainHook {
             b.getClass().getMethod("M", boolean.class).invoke(b, Boolean.FALSE);
             b.getClass().getMethod("P", String.class).invoke(b, "1");
             b.getClass().getMethod("X", boolean.class).invoke(b, Boolean.TRUE);
+            b.getClass().getMethod("K", boolean.class).invoke(b, Boolean.TRUE);
             b.getClass().getMethod("H", int.class).invoke(b, accType);
+            // 完整镜像 AbstractWeituoLogin.buildWeituoLoginInfo。这些字段会参与
+            // 券商分发/密码编码选择，不能仅构造基础 tag。
+            boolean accountFlag = Boolean.TRUE.equals(
+                    mgr.getClass().getMethod("z").invoke(mgr));
+            String accountExtra = (String) mgr.getClass().getMethod("k").invoke(mgr);
+            b.getClass().getMethod("W", boolean.class).invoke(b, accountFlag);
+            b.getClass().getMethod("I", String.class).invoke(b, accountExtra);
+            java.lang.reflect.Field brokerIdField = broker.getClass().getField("g");
+            String brokerId = String.valueOf(brokerIdField.get(broker));
+            Class<?> proxyUtil = cl.loadClass(
+                    "com.myhexin.android.b2c.platform.TradeNeedProxyUtil");
+            Object proxyApi = proxyUtil.getField("tradeNeedProxyApi").get(null);
+            boolean specialBroker = Boolean.TRUE.equals(proxyApi.getClass().getMethod(
+                    "WeituoEncodePWDHandler_Holder_ins_isSpecialQsIdSwitchOn",
+                    String.class).invoke(proxyApi, brokerId));
+            b.getClass().getMethod("V", boolean.class).invoke(b, specialBroker);
+            b.getClass().getMethod("L", String.class).invoke(b, brokerId);
             Object info = b.getClass().getMethod("G").invoke(b);
+
+            // 密码登录保持 App 官方 CBAS 会话路径。lzr.e 是登录成功后
+            // 的 native/token 路径标志，在密码请求前强制置位会让请求无回调。
+            if (!setNativeTradeLoginPath(cl, mgr, report, false)) {
+                lastEnsureTradeError = "trade pwd login: CBAS path unavailable";
+                return false;
+            }
 
             Class<?> q3sClass = cl.loadClass("q3s");
             Object q = q3sClass.getMethod("a").invoke(null);
-            q = q3sClass.getMethod("s", int.class).invoke(q, 0);
-            q = q3sClass.getMethod("q", int.class).invoke(q, 1);
-            q = q3sClass.getMethod("v", int.class).invoke(q, 1);
+            q = q3sClass.getMethod("s", int.class).invoke(q, 1);
+            q = q3sClass.getMethod("q", int.class).invoke(q, 2);
+            q = q3sClass.getMethod("v", int.class).invoke(q, 0);
+            q = q3sClass.getMethod("p", boolean.class).invoke(q, Boolean.FALSE);
             q = q3sClass.getMethod("o", boolean.class).invoke(q, Boolean.TRUE);
+            q = q3sClass.getMethod("u", boolean.class).invoke(q, Boolean.TRUE);
 
             CountDownLatch latch = new CountDownLatch(1);
             AtomicReference<String> result = new AtomicReference<>("pending");
@@ -10747,11 +11602,29 @@ public class MainHook {
                         if ("equals".equals(name)) return proxy == (mArgs != null && mArgs.length > 0 ? mArgs[0] : null);
                         return null;
                     });
-            Object f2sInst = cl.loadClass("f2s").getMethod("d").invoke(null);
-            cl.loadClass("f2s").getMethod("o",
-                            cl.loadClass("g6m"), cl.loadClass("a1s"),
-                            cl.loadClass("q3s"), cl.loadClass("g8m"))
-                    .invoke(f2sInst, info, null, q, callback);
+            // 优先使用 App 的官方无头自动重登链 x0s.h。该链使用
+            // pzr 中已持久化的密码并构造后台登录参数，不依赖 UI。
+            // Docker Secret 只存在 Hook 私有文件中，冷启动的 pzr.p()
+            // 通常为空。用 App 官方 setter 注入本次进程内存，再走 x0s.h。
+            // 不持久化明文；每次重启都由只读 Secret 重新注入。
+            mgr.getClass().getMethod("U", String.class).invoke(mgr, password);
+            String storedPwd = (String) mgr.getClass().getMethod("p").invoke(mgr);
+            boolean officialReloginStarted = false;
+            if (storedPwd != null && !storedPwd.isEmpty()) {
+                Object started = cl.loadClass("x0s").getMethod("h",
+                                cl.loadClass("pzr"), cl.loadClass("g8m"),
+                                boolean.class, int.class, boolean.class)
+                        .invoke(null, mgr, callback, true, 5, true);
+                officialReloginStarted = Boolean.TRUE.equals(started);
+            }
+            report.put("official_relogin_started", officialReloginStarted);
+            if (!officialReloginStarted) {
+                Object f2sInst = cl.loadClass("f2s").getMethod("d").invoke(null);
+                cl.loadClass("f2s").getMethod("o",
+                                cl.loadClass("g6m"), cl.loadClass("a1s"),
+                                cl.loadClass("q3s"), cl.loadClass("g8m"))
+                        .invoke(f2sInst, info, null, q, callback);
+            }
             boolean done = latch.await(40, TimeUnit.SECONDS);
             if (!done) {
                 report.put("pwd_result", "timeout");
@@ -10983,16 +11856,7 @@ public class MainHook {
             // 未被 PushConnect 设置，请求排队至死（35s 无回调）。主动置位
             // lzr.e=true 等价于登录成功回调的效果，登录请求即路由到
             // jniRequest native 路径（真机同款，warmup 实测 attempt=1 成功）。
-            try {
-                Class<?> mzrClass = cl.loadClass("mzr");
-                Object mzrA = mzrClass.getField("a").get(null);
-                Object lzr = mzrClass.getMethod("b", cl.loadClass("pzr"))
-                        .invoke(mzrA, mgr);
-                lzr.getClass().getMethod("p", boolean.class).invoke(lzr, true);
-                report.put("native_path_forced", true);
-            } catch (Throwable t) {
-                Log.w(TAG, "force lzr.e=true failed: " + t);
-            }
+            forceNativeTradeLoginPath(cl, mgr, report);
             Class<?> f2sClass = cl.loadClass("f2s");
             Object f2sInst = f2sClass.getMethod("d").invoke(null);
             f2sClass.getMethod("q", tokenCls, q3sClass, cl.loadClass("g8m"))
@@ -11536,6 +12400,16 @@ public class MainHook {
             Object content = c.getField("content").get(first);
             out.put("caption", caption == null ? "" : caption);
             out.put("content", content == null ? "" : content);
+        } else if ("com.hexin.middleware.data.mobile.StuffCtrlStruct".equals(c.getName())) {
+            // 买卖行情预查询的交易所路由由券商在 36670 返回；同时保留少量
+            // 与市场解析有关的字段。不得把整个 StuffCtrlStruct/账户字段导出。
+            JSONObject ctrl = new JSONObject();
+            Method getCtrlContent = c.getMethod("getCtrlContent", int.class);
+            for (int fieldId : new int[]{2102, 2103, 2108, 36670, 36671}) {
+                Object value = getCtrlContent.invoke(first, fieldId);
+                if (value != null) ctrl.put(String.valueOf(fieldId), String.valueOf(value).trim());
+            }
+            out.put("ctrl", ctrl);
         } else if ("com.hexin.middleware.data.mobile.StuffResourceStruct".equals(c.getName())) {
             // 写响应（撤单等）业务结果在 buffer：GBK 编码 JSON，retcode=="0" 成功、
             // retmsg 为失败原因（源码 b8p.s 解析逻辑）
@@ -11759,6 +12633,88 @@ public class MainHook {
     }
 
     /**
+     * 券商普通委托的 36670 是同花顺交易市场路由，不是行情 marketId：
+     * 上海=11（券商 exchange_type=1、委托查询交易市场=2），深圳=24
+     * （券商 exchange_type=2、委托查询交易市场=1）。值来自 App UI 对同一账户
+     * 分别提交 601005 与 000001 时捕获的 1820 原始参数。
+     *
+     * 北交所及 B 股的路由尚未捕获，必须 fail closed，禁止按沪深猜测发送。
+     */
+    private static final java.util.concurrent.ConcurrentHashMap<String, String>
+            TRADE_MARKET_ROUTE_CACHE = new java.util.concurrent.ConcurrentHashMap<>();
+
+    private static String queryOfficialTradeMarketRoute(String code) {
+        String cached = TRADE_MARKET_ROUTE_CACHE.get(code);
+        if (cached != null) return cached;
+        // WeituoRequestTextBuilder.getBuyAndSellHQRequestText：1804/2682，
+        // reqctrl=4491。响应 StuffCtrlStruct 的 36670 是官方 trade_stock_type。
+        String params = "reqtype=262144\nctrlid_0=2102\nctrlvalue_0=" + code
+                + "\nctrlid_1=2218\nctrlvalue_1=1"
+                + "\nctrlid_2=37000\nctrlvalue_2=1"
+                + "\nctrlid_3=2219\nctrlvalue_3=1"
+                + "\nreqctrl=4491\nctrlcount=4";
+        try {
+            JSONObject response = new JSONObject(
+                    invokeTradeQuery(1804, 2682, params, true, true));
+            if (!response.optBoolean("ok", false)) return null;
+            JSONObject data = response.optJSONObject("data");
+            JSONObject ctrl = data == null ? null : data.optJSONObject("ctrl");
+            String route = ctrl == null ? "" : ctrl.optString("36670", "").trim();
+            // 当前协议值为短数字枚举；拒绝任意服务端文本进入委托参数。
+            if (!route.matches("[0-9]{1,3}")) return null;
+            TRADE_MARKET_ROUTE_CACHE.put(code, route);
+            return route;
+        } catch (Throwable e) {
+            Log.w(TAG, "official trade market route query failed for code=" + code
+                    + " error=" + e.getClass().getSimpleName());
+            return null;
+        }
+    }
+
+    private static String tradeMarketRouteForCode(String code) {
+        if (code == null || !code.matches("[0-9]{6}")) return null;
+        char prefix = code.charAt(0);
+        if (prefix == '5' || prefix == '6') return "11"; // 上海 A 股/基金
+        if (prefix == '0' || prefix == '1' || prefix == '2' || prefix == '3') return "24"; // 深圳
+        // 北交所代码范围由 App 的远程 wtflag 动态维护（含 4/8 旧代码与 920
+        // 新代码），不能硬编码前缀；以券商 1804 预查询返回值为准。
+        if (prefix == '4' || prefix == '8' || code.startsWith("920")) {
+            // 2026-08-20 券商实测：北交所 920 新代码返回 27；仍属全国股转
+            // 系统的 4/8 代码返回 97。只接受券商返回 27，避免把新三板误路由
+            // 为北交所。App 本地 wtflag 可能尚未加载，不能作为冷启动门禁。
+            String officialRoute = queryOfficialTradeMarketRoute(code);
+            return "27".equals(officialRoute) ? officialRoute : null;
+        }
+        return null;
+    }
+
+    private static String marketNameForRoute(String route) {
+        if ("11".equals(route)) return "SH";
+        if ("24".equals(route)) return "SZ";
+        return "BSE";
+    }
+
+    private static String handleTradeMarketRoute(String code) {
+        JSONObject out = new JSONObject();
+        try {
+            out.put("code", code);
+            if (code == null || !code.matches("[0-9]{6}")) {
+                return errorJson(out, "security code must contain six digits");
+            }
+            String route = tradeMarketRouteForCode(code);
+            if (route == null) return errorJson(out, "official market route unavailable");
+            out.put("ok", true);
+            out.put("market_route", route);
+            out.put("exchange", marketNameForRoute(route));
+            out.put("source", "27".equals(route)
+                    ? "broker_prequery" : "verified_exchange_rule");
+        } catch (Throwable e) {
+            return errorJson(out, "market route resolve failed: " + e.getClass().getSimpleName());
+        }
+        return out.toString();
+    }
+
+    /**
      * POST /stock/trade/order — 买卖委托执行器（真实下单！）。
      * body: {"action":"buy|sell","code":"159740","price":"0.588","qty":"100","confirm":true}
      * 模板取自真机捕获的 1820/1821 请求（含 source 签名，签名只覆盖页面标签串、
@@ -11783,16 +12739,23 @@ public class MainHook {
             return errorJson(resp, "unknown action '" + action + "', supported: " + TRADE_ORDER_SPECS.keySet());
         }
         int protoId = spec[0], pageId = spec[1], qtyKey = spec[2];
+        String marketRoute = tradeMarketRouteForCode(code.trim());
+        if (marketRoute == null) {
+            return errorJson(resp, "unsupported or ambiguous security market for code '"
+                    + code + "' (only Shanghai/Shenzhen routes are verified)");
+        }
         String template = capturedQueryParams.get(protoId);
         if (template == null) template = TRADE_ORDER_STATIC_TEMPLATES.get(protoId);
         if (template == null) {
             return errorJson(resp, "order template (protocol " + protoId + ") unavailable");
         }
-        String params = replaceCtrlValue(replaceCtrlValue(replaceCtrlValue(
-                template, "2102", code.trim()), "2127", price.trim()), String.valueOf(qtyKey), qty.trim());
+        String params = replaceCtrlValue(replaceCtrlValue(replaceCtrlValue(replaceCtrlValue(
+                template, "2102", code.trim()), "2127", price.trim()),
+                String.valueOf(qtyKey), qty.trim()), "36670", marketRoute);
         resp.put("protocolId", protoId);
         resp.put("pageId", pageId);
         resp.put("action", action);
+        resp.put("market_route", marketNameForRoute(marketRoute));
         return executeWriteWithConfirm(protoId, pageId, params,
                 "buy".equals(action.trim().toLowerCase()), code.trim(), price.trim());
     }
@@ -12024,7 +12987,25 @@ public class MainHook {
         if (data == null) return null;
         Object records = data.opt("records");
         if (!(records instanceof org.json.JSONArray)) records = data.opt("rows");
-        return records instanceof org.json.JSONArray ? (org.json.JSONArray) records : null;
+        if (records instanceof org.json.JSONArray) {
+            return (org.json.JSONArray) records;
+        }
+        // 当日尚无委托时，StuffTableStruct 可能只返回 row=0/col/columns，省略
+        // records 和 rows。该响应是有效的空基线，不应被误判为查询失败；否则
+        // 每个交易日的第一笔买单都会被 fail-closed 门禁永久拦截。
+        if (data.optInt("row", -1) == 0) {
+            return new org.json.JSONArray();
+        }
+        // 券商在“当天完全没有委托”时也可能返回 StuffTextStruct，而不是空的
+        // StuffTableStruct。明确的无数据提示同样是成功的空基线；其他文本响应
+        // 仍保持 fail closed，避免把业务错误当成空列表。
+        if ("StuffTextStruct".equals(data.optString("struct", ""))) {
+            String content = data.optString("content", "").trim();
+            if (content.contains("没有委托数据")) {
+                return new org.json.JSONArray();
+            }
+        }
+        return null;
     }
 
     private static void collectEntrustNos(org.json.JSONArray arr,

@@ -81,17 +81,8 @@ last_server_stream="$(state_value DEPLOYED_SERVER_THS_STREAM)"
 last_server_kg="$(state_value DEPLOYED_SERVER_KG)"
 if [[ "${COMPONENTS}" == "auto" ]]; then
     selected=()
-    component_changed() {
-        local base="$1" pattern="$2"
-        [[ -n "${base}" ]] && git cat-file -e "${base}^{commit}" 2>/dev/null \
-            && git diff --name-only "${base}" "${REVISION}" | grep -Eq "${pattern}"
-    }
-    if [[ -z "${last_hook}" ]] || component_changed "${last_hook}" '^ths/app/'; then
-        selected+=(ths-hook)
-    fi
-    if [[ -z "${last_runtime}" ]] || component_changed "${last_runtime}" '^ths/deployment/(internal/|redroid/)'; then
-        selected+=(ths-runtime)
-    fi
+    # THS/Redroid has its own immutable-image workflow. This source deployment
+    # entrypoint must never rebuild or mutate the Android production runtime.
     server_component_changed() {
         local base="$1" kind="$2" changes common
         [[ -n "${base}" ]] && git cat-file -e "${base}^{commit}" 2>/dev/null || return 0
@@ -128,7 +119,7 @@ for component in ${COMPONENTS//,/ }; do
 done
 COMPONENTS="$(IFS=,; echo "${expanded_components[*]}")"
 for component in ${COMPONENTS//,/ }; do
-    case "${component}" in ths-hook|ths-runtime|server-api|server-persist|server-scheduler|server-workers|server-ths-stream|server-kg) ;; *) echo "invalid component: ${component}" >&2; exit 2 ;; esac
+        case "${component}" in server-api|server-persist|server-scheduler|server-workers|server-ths-stream|server-kg) ;; *) echo "invalid component: ${component}" >&2; exit 2 ;; esac
 done
 if [[ -z "${COMPONENTS}" ]]; then
     echo "No deployable changes detected."
@@ -139,10 +130,6 @@ echo "revision:   ${REVISION}"
 echo "components: ${COMPONENTS}"
 (( DRY_RUN == 0 )) || exit 0
 
-if [[ ",${COMPONENTS}," == *,ths-hook,* || ",${COMPONENTS}," == *,ths-runtime,* ]]; then
-    SSH_KEY="${SSH_KEY_RUNTIME}" DEPLOY_REVISION="${REVISION}" "${WORKSPACE}/ths/deployment/deploy.sh" \
-        --component "${COMPONENTS}" --env-file "${DEPLOY_ENV}"
-fi
 server_components=()
 for component in ${COMPONENTS//,/ }; do
     [[ "${component}" == server-* ]] && server_components+=("${component#server-}")
@@ -153,8 +140,6 @@ if ((${#server_components[@]} > 0)); then
         "${WORKSPACE}/smart-fund-server/deployment/deploy_113.sh" --components "${server_component_csv}"
 fi
 
-[[ ",${COMPONENTS}," == *,ths-hook,* ]] && last_hook="${REVISION}"
-[[ ",${COMPONENTS}," == *,ths-runtime,* ]] && last_runtime="${REVISION}"
 [[ ",${COMPONENTS}," == *,server-api,* ]] && last_server_api="${REVISION}"
 [[ ",${COMPONENTS}," == *,server-persist,* ]] && last_server_persist="${REVISION}"
 [[ ",${COMPONENTS}," == *,server-scheduler,* ]] && last_server_scheduler="${REVISION}"

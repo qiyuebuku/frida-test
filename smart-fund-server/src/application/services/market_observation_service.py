@@ -1030,7 +1030,9 @@ class MarketObservationService:
             metadata = response.get("provider_metadata") or {}
             if (
                 response.get("provider") != "ths_native"
-                or metadata.get("channel") != "android_native_hurricane"
+                or not str(metadata.get("channel") or "").startswith(
+                    "android_native_hurricane"
+                )
             ):
                 raise RuntimeError(
                     f"THS {label} stock dynamic group response is not native"
@@ -1061,7 +1063,9 @@ class MarketObservationService:
             candidate_metadata = candidate_response.get("provider_metadata") or {}
             if (
                 candidate_response.get("provider") != "ths_native"
-                or candidate_metadata.get("channel") != "android_native_hurricane"
+                or not str(candidate_metadata.get("channel") or "").startswith(
+                    "android_native_hurricane"
+                )
             ):
                 raise RuntimeError(
                     "THS candidate stock dynamic group response is not native"
@@ -1987,11 +1991,12 @@ class MarketObservationService:
             if not code:
                 continue
             sector_type = str(data.get("sector_type") or "all")
-            # THS style/all rows such as 883404 (情绪指数), 883420
-            # (减持新规) and 883421 (同花顺全A) are statistical boards,
-            # not constituent-query blocks. Sending them to sif-constituent-
-            # stock deterministically returns native callback error code 20.
-            if sector_type not in {"concept", "industry", "index", "region"}:
+            # THS style/all rows and exchange/provider index identifiers such
+            # as 931743, 399441 and H30184 are not HQ_BLOCK_CODE blocks.
+            # Sending them to sif-constituent-stock deterministically returns
+            # native callback error code 20.  Index constituents belong to the
+            # dedicated index-reference source, not this board query.
+            if sector_type not in {"concept", "industry", "region"}:
                 continue
             candidate = {
                 **data,
@@ -2063,59 +2068,72 @@ class MarketObservationService:
             for item in sorted(candidates.values(), key=due_key)
             if needs_refresh(item)
         ]
-        due = all_due[:3]
-        if not due:
+        if not all_due:
             raise CollectionSkipped("all active THS sector references are current")
 
         snapshots: list[dict[str, Any]] = []
         errors: list[str] = []
-        responses = await asyncio.gather(
-            *(
-                clients.ths.get_native_sector_constituents(
-                    item["provider_sector_code"],
-                    market_code=str(item.get("market_code") or "48"),
-                    count=1000,
-                )
-                for item in due
-            ),
-            return_exceptions=True,
-        )
-        for item, response in zip(due, responses, strict=True):
-            code = item["provider_sector_code"]
-            if isinstance(response, Exception):
-                errors.append(f"{code}:exception:{type(response).__name__}")
-                continue
-            if response.get("status") != MarketDataStatus.OK.value:
-                errors.append(
-                    f"{code}:{response.get('status')}:{response.get('message')}"
-                )
-                continue
-            enriched = {
-                **response,
-                "data": {
-                    **(response.get("data") or {}),
-                    "sector_name": item.get("sector_name"),
-                    "sector_type": item.get("sector_type"),
-                    "representative_etf_code": item.get(
-                        "representative_etf_code"
-                    ),
-                    "representative_etf_name": item.get(
-                        "representative_etf_name"
-                    ),
-                },
-            }
-            snapshots.append(
-                _snapshot_from_response(
-                    response=enriched,
-                    data_type="ths_sector_constituents",
-                    subject_type="sector",
-                    subject_id=(
-                        f"ths_native:{item.get('sector_type') or 'all'}:{code}"
-                    ),
-                    bucket_seconds=86400,
-                    trade_date_override=quote_trade_date,
-                )
+        requested_sector_codes: list[str] = []
+        # A provider can permanently reject a statistical/index board with
+        # callback code 20.  Do not let the same three oldest rows starve every
+        # valid board behind them forever.  Keep native concurrency bounded to
+        # three, advance past rejected rows, and stop after filling one normal
+        # three-snapshot batch (or twelve attempts).
+        for offset in range(0, min(len(all_due), 12), 3):
+            batch_due = all_due[offset : offset + 3]
+            requested_sector_codes.extend(
+                item["provider_sector_code"] for item in batch_due
             )
+            responses = await asyncio.gather(
+                *(
+                    clients.ths.get_native_sector_constituents(
+                        item["provider_sector_code"],
+                        market_code=str(item.get("market_code") or "48"),
+                        count=1000,
+                        sector_name=str(item.get("sector_name") or ""),
+                    )
+                    for item in batch_due
+                ),
+                return_exceptions=True,
+            )
+            for item, response in zip(batch_due, responses, strict=True):
+                code = item["provider_sector_code"]
+                if isinstance(response, Exception):
+                    errors.append(f"{code}:exception:{type(response).__name__}")
+                    continue
+                if response.get("status") != MarketDataStatus.OK.value:
+                    errors.append(
+                        f"{code}:{response.get('status')}:{response.get('message')}"
+                    )
+                    continue
+                enriched = {
+                    **response,
+                    "data": {
+                        **(response.get("data") or {}),
+                        "sector_name": item.get("sector_name"),
+                        "sector_type": item.get("sector_type"),
+                        "representative_etf_code": item.get(
+                            "representative_etf_code"
+                        ),
+                        "representative_etf_name": item.get(
+                            "representative_etf_name"
+                        ),
+                    },
+                }
+                snapshots.append(
+                    _snapshot_from_response(
+                        response=enriched,
+                        data_type="ths_sector_constituents",
+                        subject_type="sector",
+                        subject_id=(
+                            f"ths_native:{item.get('sector_type') or 'all'}:{code}"
+                        ),
+                        bucket_seconds=86400,
+                        trade_date_override=quote_trade_date,
+                    )
+                )
+            if len(snapshots) >= 3:
+                break
         if not snapshots:
             raise RuntimeError(f"all THS sector reference sources failed: {errors}")
         return ObservationBatch(
@@ -2125,7 +2143,7 @@ class MarketObservationService:
             details={
                 "errors": errors,
                 "metadata_errors": metadata_errors,
-                "requested_sector_codes": [item["provider_sector_code"] for item in due],
+                "requested_sector_codes": requested_sector_codes,
                 "remaining_due_count": max(0, len(all_due) - len(snapshots)),
                 "source": "ths_app_vm",
             },

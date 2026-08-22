@@ -28,7 +28,8 @@ def test_production_deployment_requires_github_main_push() -> None:
     assert "untracked-files=no" not in deploy
 
     assert "workflow_dispatch:" not in workflow
-    assert "group: smart-fund-production" in workflow
+    assert "'smart-fund-production'" in workflow
+    assert "github.workflow, github.ref" in workflow
     assert "cancel-in-progress: false" in workflow
     assert "github.event_name == 'push'" in workflow
     assert 'github.ref == \'refs/heads/main\'' in workflow
@@ -71,6 +72,15 @@ def test_component_revisions_are_recorded_independently() -> None:
     assert "DEPLOYED_SERVER_API" in deploy
     assert "DEPLOYED_SERVER_WORKERS" in deploy
     assert "DEPLOYED_SERVER_THS_STREAM" in deploy
+
+
+def test_source_deployer_never_mutates_redroid_runtime() -> None:
+    deploy = (WORKSPACE / "deploy.sh").read_text(encoding="utf-8")
+
+    selection = deploy[deploy.index('if [[ "${COMPONENTS}" == "auto" ]]'):]
+    assert "selected+=(ths-hook)" not in selection
+    assert "selected+=(ths-runtime)" not in selection
+    assert '"${WORKSPACE}/ths/deployment/deploy.sh"' not in deploy
 
 
 def test_ths_public_directory_is_not_flattened_with_internal_files() -> None:

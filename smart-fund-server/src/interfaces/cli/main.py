@@ -14,7 +14,10 @@
     python -m src.interfaces.cli init all
 """
 import asyncio
+import os
 import sys
+import threading
+import time
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
@@ -71,10 +74,18 @@ COLLECTION_WORKER_GROUPS = {
     # worker-pool owner: registering the same queue in multiple pools lets one
     # process reserve messages that the other pool can no longer execute in
     # time, producing an ever-growing stale snapshot backlog.
-    "ths-sector": (
+    "ths-sector-fragment": (
         "collect_ths_sector_fragment_v2",
+    ),
+    "ths-sector": (
         "collect_ths_sector_reference_snapshot_v2",
         "collect_ths_sector_signal_fragment_v2",
+    ),
+    # Public HTTP/news/macro feeds must not share capacity with research Agent,
+    # backfill, or watchlist work. Those queues can build large retry backlogs
+    # and otherwise prevent freshness-sensitive collection from advancing.
+    "http": (
+        "collect_collection_source",
     ),
     "ths": (
         "collect_market_breadth_snapshot",
@@ -105,7 +116,6 @@ COLLECTION_WORKER_GROUPS = {
     # redundant long-lived worker process. THS lanes remain isolated because
     # they have device-channel limits and latency-sensitive schedules.
     "general": (
-        "collect_collection_source",
         "advance_collection_backfill",
         "collect_pboc_rate_liquidity",
         "collect_market_daily_bars",
@@ -200,6 +210,11 @@ def _ensure_jettask_partitions(db_url: str, *, months_back: int = 3, months_ahea
 @cli.command()
 @click.option("-c", "--concurrency", type=int, default=1, help="并发数")
 @click.option(
+    "--discard-backlog",
+    is_flag=True,
+    help="启动前丢弃所选周期采集队列的历史积压，仅消费启动后的新任务",
+)
+@click.option(
     "--group",
     "worker_group",
     type=click.Choice(sorted(COLLECTION_WORKER_GROUPS)),
@@ -209,6 +224,7 @@ def _ensure_jettask_partitions(db_url: str, *, months_back: int = 3, months_ahea
 @click.argument("tasks", nargs=-1)
 def worker(
     concurrency: int,
+    discard_backlog: bool,
     worker_group: str | None,
     tasks: tuple[str, ...],
 ):
@@ -240,6 +256,91 @@ def worker(
         f"🚀 启动 Worker（通道={worker_group or 'all'}，并发={concurrency}）"
     )
     click.echo(f"   任务: {', '.join(task_names)}")
+    if discard_backlog:
+        from redis import Redis
+        from redis.exceptions import ResponseError
+        from src.infrastructure.config.settings import REDIS_URL, JETTASK_PREFIX
+
+        redis_client = Redis.from_url(REDIS_URL, decode_responses=True)
+        discarded = {}
+        for task_name in task_names:
+            stream = f"{JETTASK_PREFIX}:stream:{task_name}"
+            group = f"{JETTASK_PREFIX}:group:{task_name}:{task_name}"
+            try:
+                pending = int(redis_client.xpending(stream, group)["pending"])
+                while True:
+                    entries = redis_client.xpending_range(
+                        stream, group, min="-", max="+", count=1000
+                    )
+                    if not entries:
+                        break
+                    redis_client.xack(
+                        stream,
+                        group,
+                        *(entry["message_id"] for entry in entries),
+                    )
+                for consumer in redis_client.xinfo_consumers(stream, group):
+                    redis_client.xgroup_delconsumer(
+                        stream, group, consumer["name"]
+                    )
+                redis_client.xgroup_setid(stream, group, "$")
+                if pending:
+                    discarded[task_name] = pending
+            except ResponseError:
+                # 首次部署时 Stream/Group 可能尚未由 Jettask 创建。
+                continue
+        click.echo(f"   已快进周期队列，丢弃历史 pending: {discarded}")
+
+    if worker_group == "ths-sector-fragment":
+        def monitor_stale_pending() -> None:
+            """Escape a broken JetTask handler/ACK loop without human action."""
+
+            from redis import Redis
+            from redis.exceptions import RedisError, ResponseError
+            from src.infrastructure.config.settings import REDIS_URL, JETTASK_PREFIX
+
+            stream = f"{JETTASK_PREFIX}:stream:collect_ths_sector_fragment_v2"
+            group = (
+                f"{JETTASK_PREFIX}:group:collect_ths_sector_fragment_v2:"
+                "collect_ths_sector_fragment_v2"
+            )
+            stale_after_ms = 360_000
+            while True:
+                time.sleep(15)
+                client = Redis.from_url(REDIS_URL, decode_responses=True)
+                try:
+                    pending = client.xpending_range(
+                        stream,
+                        group,
+                        min="-",
+                        max="+",
+                        count=1,
+                        consumername="worker-1",
+                        idle=stale_after_ms,
+                    )
+                    if pending:
+                        item = pending[0]
+                        click.echo(
+                            "CRITICAL: 板块采集消息超过 360 秒未 ACK，"
+                            f"message_id={item['message_id']} "
+                            f"idle_ms={item['time_since_delivered']}，"
+                            "退出容器交由 Docker 自动恢复",
+                            err=True,
+                        )
+                        os._exit(70)
+                except ResponseError:
+                    # Stream/group may not exist during the first startup.
+                    pass
+                except RedisError as exc:
+                    click.echo(f"板块 worker watchdog Redis 检查失败: {exc}", err=True)
+                finally:
+                    client.close()
+
+        threading.Thread(
+            target=monitor_stale_pending,
+            name="ths-sector-fragment-watchdog",
+            daemon=True,
+        ).start()
     # Keep the reservation window proportional to executable capacity.  A
     # fixed prefetch=100 let one process claim hours of periodic snapshots;
     # after a restart Jettask reclaimed those stale PEL entries before current
