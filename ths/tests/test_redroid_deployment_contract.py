@@ -205,25 +205,41 @@ def test_production_workflow_builds_pushes_and_deploys_digest_only() -> None:
     assert "github.workflow, github.ref" in workflow
     assert "github.event_name == 'push'" in workflow
     assert "refs/heads/main" in workflow
+    assert "runs-on: [self-hosted, Linux, X64, production-redroid]" in workflow
     assert "DEPLOY_ARTIFACTS_SSH_KEY" in workflow
+    assert "ARTIFACT_KNOWN_HOSTS=/tmp/ths-github-known-hosts" in workflow
+    assert "> ~/.ssh/known_hosts" not in workflow
     assert "0608fd9b25c75f9bf1d18f36fc3ce87f002b087a" in (
         REDROID / "fetch-private-artifacts.sh"
     ).read_text(encoding="utf-8")
     assert "docker push" in workflow
     assert "RepoDigests" in workflow
-    assert '"$IMAGE_DIGEST" "$GITHUB_SHA"' in workflow
+    assert "127.0.0.1:5000/ths-redroid:git-$GITHUB_SHA" in workflow
+    assert 'rollout-production.sh "$IMAGE_DIGEST" "$GITHUB_SHA"' in workflow
+    assert "THS_PRODUCTION_SSH_PRIVATE_KEY" not in workflow
     assert '"${GITHUB_ACTIONS:-}" == true' in deploy
     assert '"${GITHUB_SHA:-}" == "$REVISION"' in deploy
     assert 'tar -C "$WORKSPACE" -czf - ths/deployment/redroid' in deploy
     assert "git -C" not in deploy
     assert "docker save" not in deploy
-    assert "127.0.0.1:5000" not in deploy
     assert "'$IMAGE' '$REVISION'" in deploy
     assert "@sha256:[0-9a-f]{64}" in rollout
-    assert "127\\.0\\.0\\.1:5000/ths-redroid" not in rollout
+    assert "127\\.0\\.0\\.1:5000/ths-redroid" in rollout
+    assert '"${RUNNER_ENVIRONMENT:-}" == self-hosted' in rollout
     assert "org.opencontainers.image.revision" in rollout
     assert "for attempt in 1 2 3 4 5" in rollout
     assert "unable to pull immutable image after 5 attempts" in rollout
+
+
+def test_private_registry_is_pinned_and_loopback_only() -> None:
+    registry = (REDROID / "ensure-local-registry.sh").read_text(
+        encoding="utf-8"
+    )
+
+    assert "registry@sha256:" in registry
+    assert "-p 127.0.0.1:5000:5000" in registry
+    assert '"${RUNNER_ENVIRONMENT:-}" == self-hosted' in registry
+    assert "http://127.0.0.1:5000/v2/" in registry
 
 
 def test_empty_volume_declares_native_bridge_before_android_init() -> None:
