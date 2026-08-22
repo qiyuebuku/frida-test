@@ -38,3 +38,5 @@ def test_production_image_build_uses_local_base_cache() -> None:
     script = DEPLOY_SCRIPT.read_text(encoding="utf-8")
 
     assert "DOCKER_BUILDKIT=0 docker build --pull=false" in script
+    assert "docker image inspect '${base_image}'" in script
+    assert "for attempt in 1 2 3 4 5" in script
