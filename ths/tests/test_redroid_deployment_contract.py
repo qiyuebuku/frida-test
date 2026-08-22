@@ -117,6 +117,16 @@ def test_unified_absorbs_single_transport_timeout() -> None:
     assert "Thread.sleep(300L)" in source
 
 
+def test_okhttp_proxy_preserves_declared_network_exceptions() -> None:
+    source = (
+        ROOT / "app/src/main/java/com/yuyang/thshook/MainHook.java"
+    ).read_text(encoding="utf-8")
+
+    interceptor = source[source.index("class InterceptorHandler") :]
+    assert "catch (java.lang.reflect.InvocationTargetException e)" in interceptor
+    assert "throw cause != null ? cause : e;" in interceptor
+
+
 def test_healthcheck_rejects_stale_ready_marker() -> None:
     healthcheck = (REDROID / "image" / "ths-healthcheck.sh").read_text(
         encoding="utf-8"
