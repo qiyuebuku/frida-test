@@ -87,10 +87,9 @@ if [[ "$TARGETS" == all || "$TARGETS" == collectors ]]; then
 fi
 
 if [[ "$TARGETS" == all || "$TARGETS" == trade ]]; then
-    trade_data=${THS_TRADE_DATA_DIR:-/home/yuyangruan/redroid-poc/data-trade}
     secret_dir=${THS_TRADE_SECRET_DIR:-/home/yuyangruan/redroid-poc/secrets}
     trade_args=(
-        --trade-init existing --data-dir "$trade_data"
+        --trade-init existing
         --account-secret "$secret_dir/trade_account"
         --broker-secret "$secret_dir/trade_broker"
         --qsid-secret "$secret_dir/trade_qsid"
@@ -98,10 +97,15 @@ if [[ "$TARGETS" == all || "$TARGETS" == trade ]]; then
     )
     old_trade_image=$(docker inspect --format '{{.Config.Image}}' ths-trade 2>/dev/null || true)
     docker rm -f ths-trade >/dev/null 2>&1 || true
+    # Runtime state must be reproducible from the immutable image and protected
+    # credentials. Never inherit an AVD directory containing drifted APKs,
+    # SQLite locks, or stale session data.
+    docker volume rm ths-trade-data >/dev/null 2>&1 || true
     if ! "$SCRIPT_DIR/add-instance.sh" --name ths-trade --mode trade \
         --adb-port 5560 --http-port 49600 --image "$IMAGE" \
         "${trade_args[@]}" --ready-timeout 360; then
         docker rm -f ths-trade >/dev/null 2>&1 || true
+        docker volume rm ths-trade-data >/dev/null 2>&1 || true
         if [[ -n "$old_trade_image" ]]; then
             "$SCRIPT_DIR/add-instance.sh" --name ths-trade --mode trade \
                 --adb-port 5560 --http-port 49600 --image "$old_trade_image" \
