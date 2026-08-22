@@ -10721,6 +10721,10 @@ public class MainHook {
             Class<?> izrClass = cl.loadClass("izr");
             izrClass.getMethod("x", cl.loadClass("pzr"))
                     .invoke(izrClass.getField("a").get(null), selected);
+            // tradeAccountManagerInstance 的运行时类型本来就是 fzr/pzr。Redroid
+            // 空 yyb 仓库不会让 n0s 持久化该对象，也就永远等不到 F(119)；保留
+            // 已经由官方 izr.x() 激活的对象，后续登录链可直接复用。
+            captureTradeAccountManager(selected);
             Class<?> p0sClass = cl.loadClass("p0s");
             Method f119 = p0sClass.getDeclaredMethod("F", int.class);
             f119.setAccessible(true);
