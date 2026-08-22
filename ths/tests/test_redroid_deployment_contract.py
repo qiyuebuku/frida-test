@@ -374,6 +374,8 @@ def test_trade_can_be_rebuilt_from_minimal_protected_credentials() -> None:
     assert template["accounttype"]
     assert "last_select" not in template
     assert '"trade_brokers/" + qsid + ".json"' in source
+    assert 'createPackageContext(' in source
+    assert '"com.yuyang.thshook", android.content.Context.CONTEXT_IGNORE_SECURITY' in source
     assert "versioned broker template mismatch" in source
     assert "trade_account" in manager
     assert "trade_broker" in manager

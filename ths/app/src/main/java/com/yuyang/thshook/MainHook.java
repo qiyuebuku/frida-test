@@ -10669,7 +10669,9 @@ public class MainHook {
                 // Hook 版本化保存；禁止用只有名称/qsid 的最小假对象，因为它
                 // 缺少 wtid、营业部和交易网关策略，最终只会静默登录超时。
                 String assetName = "trade_brokers/" + qsid + ".json";
-                java.io.InputStream brokerInput = appInstance.getAssets().open(assetName);
+                android.content.Context hookContext = appInstance.createPackageContext(
+                        "com.yuyang.thshook", android.content.Context.CONTEXT_IGNORE_SECURITY);
+                java.io.InputStream brokerInput = hookContext.getAssets().open(assetName);
                 java.io.ByteArrayOutputStream brokerBytes = new java.io.ByteArrayOutputStream();
                 byte[] brokerBuffer = new byte[2048];
                 int brokerRead;
