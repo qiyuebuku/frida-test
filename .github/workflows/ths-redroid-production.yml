@@ -43,7 +43,9 @@ jobs:
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     needs: redroid-validate
     runs-on: ubuntu-latest
-    timeout-minutes: 90
+    # The first disaster-recovery publish may transfer the complete Redroid
+    # base image before the empty-volume canary and nine-instance rollout.
+    timeout-minutes: 180
     environment: production
     permissions:
       contents: read

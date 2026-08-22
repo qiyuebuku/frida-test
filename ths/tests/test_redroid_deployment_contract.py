@@ -191,6 +191,7 @@ def test_production_workflow_builds_pushes_and_deploys_digest_only() -> None:
     assert "workflow_dispatch:" not in workflow
     assert "redroid-validate:" in workflow
     assert "needs: redroid-validate" in workflow
+    assert "timeout-minutes: 180" in workflow
     assert "'smart-fund-production'" in workflow
     assert "github.workflow, github.ref" in workflow
     assert "github.event_name == 'push'" in workflow
